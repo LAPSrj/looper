@@ -29,6 +29,7 @@ const api: LooperApi = {
   },
   openPath: (p) => ipcRenderer.invoke('openPath', p),
   openEditor: (taskId) => ipcRenderer.invoke('editor:open', taskId),
+  updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   onEvent: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: EngineEvent) => cb(ev);
     ipcRenderer.on('engine:event', listener);

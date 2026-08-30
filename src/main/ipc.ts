@@ -40,6 +40,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
   ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
+  ipcMain.handle('settings:update', (_e, patch: unknown) => engine.updateSettings(patch));
 
   engine.on((event) => {
     for (const w of BrowserWindow.getAllWindows()) {

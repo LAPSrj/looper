@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Task, TaskInput } from '@shared/types';
+import type { Target, Task, TaskInput } from '@shared/types';
 import { slugify, validateTask } from '@shared/validate';
 import { EXAMPLE_TASK } from '@shared/example-task';
 
 interface Props {
   task: Task | null;
+  /** Preselected environment for new tasks (from global settings). */
+  defaultTarget?: Target;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }
@@ -14,12 +16,13 @@ type Draft = TaskInput & {
   check: NonNullable<TaskInput['check']>;
 };
 
-function blankDraft(): Draft {
+function blankDraft(defaultTarget?: Target): Draft {
   return {
     ...EXAMPLE_TASK,
     id: '',
     name: '',
     cwd: '',
+    target: defaultTarget ?? { kind: 'wsl' },
     check: { command: '', timeoutSec: 60 },
     classifier: undefined,
     agent: { ...EXAMPLE_TASK.agent, prompt: '' },
@@ -58,8 +61,8 @@ const PERMISSION_MODES: [string, string][] = [
   ['', "None — use claude's own default"],
 ];
 
-export function TaskEditor({ task, onSaved, onCancel }: Props) {
-  const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blankDraft()));
+export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
+  const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blankDraft(defaultTarget)));
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
@@ -129,7 +132,6 @@ export function TaskEditor({ task, onSaved, onCancel }: Props) {
   return (
     <div className="editor">
       <div className="editor-toolbar">
-        <span className="editor-title">{task ? `Edit "${task.name}"` : 'New task'}</span>
         <span className="spacer" />
         <label className="inline-check">
           <input type="checkbox" checked={jsonMode} onChange={(e) => setJsonMode(e.target.checked)} /> Edit as JSON

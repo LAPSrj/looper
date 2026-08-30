@@ -75,6 +75,8 @@ export type Target = z.infer<typeof TargetSchema>;
 // ---------- Settings ----------
 
 export const SettingsSchema = z.object({
+  /** Environment preselected for new tasks. */
+  defaultTarget: z.enum(['wsl', 'windows']).default('wsl'),
   /** WSL distro used when a task does not name one (Windows host only). */
   defaultDistro: z.string().optional(),
   /** Where Windows drives are mounted inside WSL. */

@@ -71,10 +71,12 @@ code,
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
-.brand {
+.sidebar-title {
+  font-size: 11.5px;
   font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-muted);
 }
 .task-list {
   list-style: none;
@@ -119,13 +121,6 @@ code,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sidebar-footer {
-  padding: 8px 14px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 12px;
-}
-
 /* ---------- badges ---------- */
 .badge {
   font-size: 11px;
@@ -397,10 +392,6 @@ code,
   background: #3a1f1f;
   color: var(--red);
 }
-.editor-title {
-  font-weight: 600;
-  font-size: 14px;
-}
 .inline-check {
   display: flex;
   align-items: center;
@@ -578,4 +569,34 @@ code,
 }
 .log-warn {
   color: var(--yellow);
+}
+
+/* ---------- desktop feel ---------- */
+/* Chrome (labels, lists, buttons) is not selectable text; content and inputs are. */
+body {
+  user-select: none;
+}
+input,
+textarea,
+select,
+pre,
+code,
+.output,
+.engine-log-body,
+.runlog-table td,
+.detail-meta {
+  user-select: text;
+}
+/* Desktop apps use the arrow cursor for controls, not the browser hand. */
+button,
+.btn,
+.tab,
+.task-item,
+.advanced summary,
+select,
+label {
+  cursor: default;
+}
+.link {
+  cursor: pointer;
 }

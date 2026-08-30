@@ -96,19 +96,32 @@ function createWindow(): void {
   loadRenderer(win);
 }
 
-export function openEditorWindow(taskId?: string): void {
-  const editor = new BrowserWindow({
-    width: 780,
-    height: 940,
-    minWidth: 560,
-    minHeight: 480,
-    title: taskId ? 'Looper — Edit Task' : 'Looper — New Task',
+function openChildWindow(hash: string, title: string, width: number, height: number): void {
+  const child = new BrowserWindow({
+    width,
+    height,
+    minWidth: 520,
+    minHeight: 420,
+    title,
     backgroundColor: '#14161a',
     autoHideMenuBar: true,
     webPreferences: webPreferences(),
   });
-  editor.setMenuBarVisibility(false);
-  loadRenderer(editor, taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor');
+  child.setMenuBarVisibility(false);
+  loadRenderer(child, hash);
+}
+
+export function openEditorWindow(taskId?: string): void {
+  openChildWindow(
+    taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor',
+    taskId ? 'Edit Task — Looper' : 'New Task — Looper',
+    780,
+    940,
+  );
+}
+
+function openSettingsWindow(): void {
+  openChildWindow('settings', 'Settings — Looper', 660, 640);
 }
 
 function buildMenu(): void {
@@ -117,6 +130,8 @@ function buildMenu(): void {
       label: '&File',
       submenu: [
         { label: 'New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
+        { type: 'separator' },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         {
           label: 'Open Data Directory',

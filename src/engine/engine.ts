@@ -1,12 +1,13 @@
 import path from 'node:path';
 import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskRuntime } from '../shared/types';
+import { SettingsSchema } from '../shared/types';
 import { detectHost, type HostKind } from './host';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir } from './store/fsutil';
 import { RunStore } from './store/runs';
-import { loadSettings } from './store/settings';
+import { loadSettings, saveSettings } from './store/settings';
 import { StateStore } from './store/state';
 import { TaskStore } from './store/tasks';
 
@@ -24,6 +25,8 @@ export interface Engine {
   readonly log: Logger;
   start(): void;
   stop(): Promise<void>;
+  /** Validate, persist and apply a settings patch. Running components see it immediately. */
+  updateSettings(patch: unknown): Settings;
   on(listener: (e: EngineEvent) => void): () => void;
   // tasks
   listTasks(): Task[];
@@ -135,6 +138,18 @@ export function createEngine(opts: EngineOptions): Engine {
     on(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
+    },
+    updateSettings(patch: unknown): Settings {
+      const merged = { ...settings, ...(patch as Record<string, unknown>) };
+      // Empty strings mean "unset" for optional fields.
+      if (merged.defaultDistro === '') delete merged.defaultDistro;
+      const parsed = SettingsSchema.parse(merged);
+      saveSettings(dataDir, parsed);
+      // The settings object is shared by reference across the engine: swap its contents in place.
+      for (const key of Object.keys(settings)) delete (settings as Record<string, unknown>)[key];
+      Object.assign(settings, parsed);
+      log.info('settings updated');
+      return { ...settings };
     },
     listTasks: () => tasks.list(),
     getTask: (id) => tasks.get(id),

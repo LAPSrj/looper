@@ -4,12 +4,15 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { App } from './App';
 import { EditorApp } from './EditorApp';
+import { SettingsApp } from './SettingsApp';
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    {editorMatch ? <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} /> : <App />}
-  </React.StrictMode>,
-);
+function pickRoot() {
+  if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
+  if (hash === 'settings') return <SettingsApp />;
+  return <App />;
+}
+
+createRoot(document.getElementById('root')!).render(<React.StrictMode>{pickRoot()}</React.StrictMode>);

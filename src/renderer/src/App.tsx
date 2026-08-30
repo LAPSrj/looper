@@ -84,22 +84,12 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <span className="brand">Looper</span>
+          <span className="sidebar-title">Tasks</span>
           <button className="btn small" onClick={() => void window.looper.openEditor()} title="New task (Ctrl+N)">
             + New
           </button>
         </div>
         <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
-        <div className="sidebar-footer">
-          <button className="link" onClick={() => setShowLog((v) => !v)}>
-            {showLog ? 'hide' : 'show'} engine log
-          </button>
-          {info && (
-            <button className="link" title={info.dataDir} onClick={() => void window.looper.openPath(info.dataDir)}>
-              data dir
-            </button>
-          )}
-        </div>
       </aside>
       <main className="main">
         {task ? (
