@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RunPhase, RunRecord, Task } from '@shared/types';
 import { fmtTime, formatDuration, stripAnsi } from '../format';
 
@@ -13,6 +13,21 @@ export function RunLog({ task, records }: Props) {
   const [phase, setPhase] = useState<RunPhase | 'all'>('all');
   const [hideNoop, setHideNoop] = useState(false);
   const [output, setOutput] = useState<{ runId: string; text: string } | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Modal keyboard semantics: Esc closes, focus lands on the close button.
+  useEffect(() => {
+    if (!output) return;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOutput(null);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [output]);
 
   const rows = useMemo(() => {
     let list = records;
@@ -102,7 +117,7 @@ export function RunLog({ task, records }: Props) {
               <span>
                 output of run <span className="mono">{output.runId}</span>
               </span>
-              <button className="btn small" onClick={() => setOutput(null)}>
+              <button ref={closeRef} className="btn small" onClick={() => setOutput(null)}>
                 close
               </button>
             </div>

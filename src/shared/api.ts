@@ -45,5 +45,11 @@ export interface LooperApi {
 }
 
 export interface UiEvent {
-  type: 'toggle-log';
+  type:
+    | 'toggle-log'
+    | 'run-now'
+    | 'stop-agent'
+    | 'pause-resume'
+    | 'edit-task'
+    | 'delete-task';
 }

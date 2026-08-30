@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Settings } from '@shared/types';
 
 function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
@@ -22,6 +22,22 @@ export function SettingsApp() {
     void window.looper.info().then((info) => setSettings(info.settings));
   }, []);
 
+  // Dialog keys: Esc = cancel, Enter on an input or Ctrl+Enter anywhere = save.
+  const saveRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        window.close();
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        void saveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!settings) return <div className="empty">Loading…</div>;
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
@@ -37,6 +53,7 @@ export function SettingsApp() {
       setSaving(false);
     }
   };
+  saveRef.current = save;
 
   return (
     <div className="editor">
@@ -53,6 +70,7 @@ export function SettingsApp() {
           <div className="row">
             <Field label="Default environment" help="Preselected for new tasks.">
               <select
+                autoFocus
                 value={settings.defaultTarget}
                 onChange={(e) => set('defaultTarget', e.target.value as Settings['defaultTarget'])}
               >

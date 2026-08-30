@@ -124,47 +124,57 @@ function openSettingsWindow(): void {
   openChildWindow('settings', 'Settings — Looper', 660, 640);
 }
 
+/** Send a UI command to the main window (menu accelerators act on the selected task there). */
+function sendUi(type: string): void {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('ui:event', { type });
+    win.focus();
+  }
+}
+
 function buildMenu(): void {
   const menu = Menu.buildFromTemplate([
     {
       label: '&File',
       submenu: [
-        { label: 'New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
+        { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         {
-          label: 'Open Data Directory',
+          label: 'Open &Data Directory',
           click: () => {
             if (engine) void shell.openPath(engine.dataDir);
           },
         },
         {
-          label: 'Open Inbox Directory',
+          label: 'Open &Inbox Directory',
           click: () => {
             if (engine) void shell.openPath(engine.inboxDir());
           },
         },
         { type: 'separator' },
-        { role: 'quit', label: 'Exit' },
+        { role: 'quit', label: 'E&xit' },
+      ],
+    },
+    {
+      label: '&Task',
+      submenu: [
+        { label: '&Run Now', accelerator: 'F5', click: () => sendUi('run-now') },
+        { label: '&Stop Agent', accelerator: 'Shift+F5', click: () => sendUi('stop-agent') },
+        { label: '&Pause / Resume', accelerator: 'CmdOrCtrl+P', click: () => sendUi('pause-resume') },
+        { type: 'separator' },
+        { label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', click: () => sendUi('edit-task') },
+        { label: '&Delete Task', click: () => sendUi('delete-task') },
       ],
     },
     {
       label: '&View',
       submenu: [
-        {
-          label: 'Engine Log',
-          accelerator: 'CmdOrCtrl+L',
-          click: () => {
-            if (win && !win.isDestroyed()) {
-              win.webContents.send('ui:event', { type: 'toggle-log' });
-              win.focus();
-            }
-          },
-        },
+        { label: '&Engine Log', accelerator: 'CmdOrCtrl+L', click: () => sendUi('toggle-log') },
         { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
+        { role: 'reload', label: '&Reload UI' },
+        { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
       ],
     },
   ]);

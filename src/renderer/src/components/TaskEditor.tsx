@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Target, Task, TaskInput } from '@shared/types';
 import { slugify, validateTask } from '@shared/validate';
 import { EXAMPLE_TASK } from '@shared/example-task';
@@ -7,6 +7,8 @@ interface Props {
   task: Task | null;
   /** Preselected environment for new tasks (from global settings). */
   defaultTarget?: Target;
+  /** True when the editor is its own window: enables dialog keys (Esc, Enter, Ctrl+Tab). */
+  standalone?: boolean;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }
@@ -64,7 +66,7 @@ const PERMISSION_MODES: [string, string][] = [
   ['', 'None'],
 ];
 
-export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
+export function TaskEditor({ task, defaultTarget, standalone, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blankDraft(defaultTarget)));
   const [tab, setTab] = useState<EditorTab>('general');
   const [jsonText, setJsonText] = useState('');
@@ -152,6 +154,43 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
     }
   };
 
+  // Dialog keyboard semantics (standalone window only, to not fight the main window's keys):
+  // Esc = cancel, Enter on a single-line input or Ctrl+Enter anywhere = save,
+  // Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
+  const keysRef = useRef({ tab, save, onCancel, switchTab });
+  keysRef.current = { tab, save, onCancel, switchTab };
+  useEffect(() => {
+    if (!standalone) return;
+    const order = TABS.map(([id]) => id);
+    const onKey = (e: KeyboardEvent) => {
+      const k = keysRef.current;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        k.onCancel();
+        return;
+      }
+      if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        void k.save();
+        return;
+      }
+      const cycle = (dir: number) =>
+        k.switchTab(order[(order.indexOf(k.tab) + dir + order.length) % order.length]);
+      if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault();
+        cycle(e.shiftKey ? -1 : 1);
+      } else if (e.ctrlKey && e.key === 'PageDown') {
+        e.preventDefault();
+        cycle(1);
+      } else if (e.ctrlKey && e.key === 'PageUp') {
+        e.preventDefault();
+        cycle(-1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [standalone]);
+
   return (
     <div className="editor">
       <nav className="tabs editor-tabs">
@@ -172,7 +211,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
         {tab === 'general' && (
           <div className="form">
             <Field label="Task name" help="Shown in the task list.">
-              <input value={draft.name} onChange={(e) => set('name', e.target.value)} />
+              <input autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} />
             </Field>
             <div className="row">
               <Field label="Status" help="Disabled tasks are kept but never run.">
@@ -231,6 +270,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
             <div className="row">
               <Field label="Repeat">
                 <select
+                  autoFocus
                   value={scheduleKind}
                   onChange={(e) => set('schedule', e.target.value === 'cron' ? { cron: '*/10 * * * *' } : { every: '10m' })}
                 >
@@ -278,6 +318,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
             </p>
             <Field label="Classifier step">
               <select
+                autoFocus
                 value={draft.classifier ? 'on' : 'off'}
                 onChange={(e) => set('classifier', e.target.value === 'on' ? { ...EXAMPLE_TASK.classifier! } : undefined)}
               >
@@ -330,7 +371,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
             <p className="help tab-intro">What actually runs when there is work: a fresh claude session in the task's directory.</p>
             <div className="row">
               <Field label="Model" help="e.g. sonnet, opus, haiku. Empty = your claude default.">
-                <input value={draft.agent.model ?? ''} onChange={(e) => setAgent('model', e.target.value || undefined)} />
+                <input autoFocus value={draft.agent.model ?? ''} onChange={(e) => setAgent('model', e.target.value || undefined)} />
               </Field>
               <Field
                 label="Session type"
@@ -377,7 +418,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
             <p className="help tab-intro">Limits that keep a run from hanging forever, and what to do when the task keeps failing.</p>
             <div className="row">
               <Field label="Max runtime (minutes)" help="Hard stop for a single agent run.">
-                <input type="number" min={1} value={draft.agent.maxRuntimeMin ?? 120} onChange={(e) => setAgent('maxRuntimeMin', Number(e.target.value))} />
+                <input autoFocus type="number" min={1} value={draft.agent.maxRuntimeMin ?? 120} onChange={(e) => setAgent('maxRuntimeMin', Number(e.target.value))} />
               </Field>
               <Field label="Idle grace (minutes)" help="How long the agent may sit idle — turn finished, or waiting on a prompt — without signalling done.">
                 <input type="number" min={1} value={draft.agent.idleGraceMin ?? 3} onChange={(e) => setAgent('idleGraceMin', Number(e.target.value))} />
@@ -403,7 +444,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
         )}
 
         {tab === 'json' && (
-          <textarea className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
+          <textarea autoFocus className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
         )}
       </div>
       <div className="editor-footer">

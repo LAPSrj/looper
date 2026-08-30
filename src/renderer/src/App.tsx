@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo } from '@shared/api';
 import type { LogLine, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
@@ -19,6 +19,10 @@ export function App() {
   const [tab, setTab] = useState<DetailTab>('log');
   const [showLog, setShowLog] = useState(false);
   const [now, setNow] = useState(Date.now());
+
+  // Menu commands arrive through a single subscription; the ref keeps them acting on current state.
+  const uiRef = useRef({ selected, tasks, runtimes });
+  uiRef.current = { selected, tasks, runtimes };
 
   useEffect(() => {
     void window.looper.info().then(setInfo);
@@ -53,7 +57,33 @@ export function App() {
       }
     });
     const unsubUi = window.looper.onUi((e) => {
-      if (e.type === 'toggle-log') setShowLog((v) => !v);
+      const { selected: sel, tasks: ts, runtimes: rts } = uiRef.current;
+      switch (e.type) {
+        case 'toggle-log':
+          setShowLog((v) => !v);
+          break;
+        case 'run-now':
+          if (sel) void window.looper.runtime.runNow(sel).catch(() => undefined);
+          break;
+        case 'stop-agent':
+          if (sel) void window.looper.runtime.stopAgent(sel);
+          break;
+        case 'pause-resume':
+          if (sel) {
+            const rt = rts[sel];
+            if (rt?.state === 'paused') void window.looper.runtime.resume(sel);
+            else void window.looper.runtime.pause(sel);
+          }
+          break;
+        case 'edit-task':
+          if (sel) void window.looper.openEditor(sel);
+          break;
+        case 'delete-task': {
+          const t = ts.find((x) => x.id === sel);
+          if (t && window.confirm(`Delete task "${t.name}"?`)) void window.looper.tasks.remove(t.id);
+          break;
+        }
+      }
     });
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
@@ -61,6 +91,29 @@ export function App() {
       unsubUi();
       clearInterval(t);
     };
+  }, []);
+
+  // Keyboard: Ctrl+Tab / Ctrl+PageDown|PageUp cycle the detail tabs; Esc closes the engine log.
+  useEffect(() => {
+    const order: DetailTab[] = ['log', 'terminal', 'edit'];
+    const onKey = (e: KeyboardEvent) => {
+      const cycle = (dir: number) =>
+        setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);
+      if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault();
+        cycle(e.shiftKey ? -1 : 1);
+      } else if (e.ctrlKey && e.key === 'PageDown') {
+        e.preventDefault();
+        cycle(1);
+      } else if (e.ctrlKey && e.key === 'PageUp') {
+        e.preventDefault();
+        cycle(-1);
+      } else if (e.key === 'Escape') {
+        setShowLog(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   useEffect(() => {

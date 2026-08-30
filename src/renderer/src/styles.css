@@ -610,3 +610,13 @@ label {
 .link {
   cursor: pointer;
 }
+/* Visible keyboard focus everywhere, invisible for mouse clicks. */
+button:focus-visible,
+.tab:focus-visible,
+.link:focus-visible,
+.task-list:focus-visible,
+.advanced summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
