@@ -37,6 +37,8 @@ export interface LooperApi {
   openPath(p: string): Promise<void>;
   /** Open the task editor in its own window (no id = new task). */
   openEditor(taskId?: string): Promise<void>;
+  /** Open the editor prefilled with the example task (not saved until confirmed). */
+  openExampleEditor(): Promise<void>;
   /** Validate, persist and apply a global settings patch; returns the effective settings. */
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   onEvent(cb: (e: EngineEvent) => void): () => void;

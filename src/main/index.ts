@@ -30,7 +30,11 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     engine = createEngine({ dataDir: defaultDataDir() });
     engine.start();
-    registerIpc(engine, { getWindow: () => win, openEditor: openEditorWindow });
+    registerIpc(engine, {
+      getWindow: () => win,
+      openEditor: openEditorWindow,
+      openExample: openExampleEditorWindow,
+    });
     buildMenu();
     createWindow();
     app.on('activate', () => {
@@ -120,6 +124,10 @@ export function openEditorWindow(taskId?: string): void {
   );
 }
 
+function openExampleEditorWindow(): void {
+  openChildWindow('editor-example', 'New Task — Looper', 780, 940);
+}
+
 function openSettingsWindow(): void {
   openChildWindow('settings', 'Settings — Looper', 660, 640);
 }
@@ -138,6 +146,7 @@ function buildMenu(): void {
       label: '&File',
       submenu: [
         { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
+        { label: 'New Task from E&xample…', click: () => openExampleEditorWindow() },
         { type: 'separator' },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },

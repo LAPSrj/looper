@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { Target, Task } from '@shared/types';
+import type { Target, Task, TaskInput } from '@shared/types';
+import { EXAMPLE_TASK } from '@shared/example-task';
 import { TaskEditor } from './components/TaskEditor';
 
 /** Standalone editor window (opened from the menu or the + New button). */
-export function EditorApp({ taskId }: { taskId?: string }) {
+export function EditorApp({ taskId, example }: { taskId?: string; example?: boolean }) {
   // undefined = still loading; null = new task
   const [task, setTask] = useState<Task | null | undefined>(taskId ? undefined : null);
   const [defaultTarget, setDefaultTarget] = useState<Target | undefined>(undefined);
+  const [initial, setInitial] = useState<TaskInput | undefined>(undefined);
   const [ready, setReady] = useState(!!taskId);
 
   useEffect(() => {
@@ -20,17 +22,21 @@ export function EditorApp({ taskId }: { taskId?: string }) {
     } else {
       void window.looper.info().then((info) => {
         const s = info.settings;
-        setDefaultTarget(s.defaultTarget === 'windows' ? { kind: 'windows' } : { kind: 'wsl', distro: s.defaultDistro });
+        const target: Target =
+          s.defaultTarget === 'windows' ? { kind: 'windows' } : { kind: 'wsl', distro: s.defaultDistro };
+        setDefaultTarget(target);
+        if (example) setInitial({ ...EXAMPLE_TASK, id: '', target });
         setReady(true);
       });
     }
-  }, [taskId]);
+  }, [taskId, example]);
 
   if (task === undefined || !ready) return <div className="empty">Loading…</div>;
   return (
     <div className="editor-window">
       <TaskEditor
         task={task}
+        initial={initial}
         defaultTarget={defaultTarget}
         standalone
         onSaved={() => window.close()}

@@ -159,7 +159,11 @@ export function App() {
           <div className="empty">
             <h2>No tasks yet</h2>
             <p>
-              Create one with <b>+ New</b>, or drop a task JSON into the inbox
+              Create one with <b>+ New</b>, start from{' '}
+              <button className="link" onClick={() => void window.looper.openExampleEditor()}>
+                the example task
+              </button>
+              , or drop a task JSON into the inbox
               {info ? <code> {info.inboxDir}</code> : null} (e.g. <code>looper add task.json</code>).
             </p>
           </div>

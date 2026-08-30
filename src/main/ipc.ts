@@ -6,6 +6,7 @@ import type { AppInfo } from '../shared/api';
 export interface IpcHost {
   getWindow: () => BrowserWindow | null;
   openEditor: (taskId?: string) => void;
+  openExample: () => void;
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
@@ -40,6 +41,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
   ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
+  ipcMain.handle('editor:open-example', () => host.openExample());
   ipcMain.handle('settings:update', (_e, patch: unknown) => engine.updateSettings(patch));
 
   engine.on((event) => {

@@ -5,6 +5,8 @@ import { EXAMPLE_TASK } from '@shared/example-task';
 
 interface Props {
   task: Task | null;
+  /** Prefill for a NEW task (e.g. the example task); ignored when editing. */
+  initial?: TaskInput;
   /** Preselected environment for new tasks (from global settings). */
   defaultTarget?: Target;
   /** True when the editor is its own window: enables dialog keys (Esc, Enter, Ctrl+Tab). */
@@ -66,13 +68,17 @@ const PERMISSION_MODES: [string, string][] = [
   ['', 'None'],
 ];
 
-export function TaskEditor({ task, defaultTarget, standalone, onSaved, onCancel }: Props) {
-  const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blankDraft(defaultTarget)));
+export function TaskEditor({ task, initial, defaultTarget, standalone, onSaved, onCancel }: Props) {
+  const [draft, setDraft] = useState<Draft>(() =>
+    task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultTarget),
+  );
   const [tab, setTab] = useState<EditorTab>('general');
   const [jsonText, setJsonText] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const [extraArgsText, setExtraArgsText] = useState((task?.agent.extraArgs ?? []).join('\n'));
+  const [extraArgsText, setExtraArgsText] = useState(
+    ((task ?? initial)?.agent?.extraArgs ?? []).join('\n'),
+  );
 
   const scheduleKind = 'cron' in draft.schedule ? 'cron' : 'every';
   const scheduleValue = 'cron' in draft.schedule ? draft.schedule.cron : draft.schedule.every;
