@@ -24,12 +24,10 @@ function describeTarget(task: Task): string {
   return task.target.distro ? `WSL (${task.target.distro})` : 'WSL (default distro)';
 }
 
-function statusDetail(runtime: TaskRuntime | undefined, now: number): string {
+function statusDetail(runtime: TaskRuntime | undefined): string {
   if (!runtime) return '';
   if (runtime.held) return 'The agent is waiting for you in the Terminal tab';
   switch (runtime.state) {
-    case 'idle':
-      return runtime.nextRunAt ? `Next run in ${fmtCountdown(runtime.nextRunAt, now)}` : '';
     case 'running':
       return runtime.currentRunId ? `Run ${runtime.currentRunId}` : '';
     case 'paused':
@@ -37,6 +35,13 @@ function statusDetail(runtime: TaskRuntime | undefined, now: number): string {
     default:
       return '';
   }
+}
+
+function describeNextRun(runtime: TaskRuntime | undefined, now: number): string {
+  if (!runtime || runtime.nextRunAt === null) return 'Not scheduled';
+  const countdown = fmtCountdown(runtime.nextRunAt, now);
+  const at = fmtTime(new Date(runtime.nextRunAt).toISOString());
+  return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
 }
 
 export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
@@ -60,7 +65,7 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
   };
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
-  const detail = statusDetail(runtime, now);
+  const detail = statusDetail(runtime);
 
   return (
     <div className="detail">
@@ -124,6 +129,8 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
               </dd>
               <dt>Schedule</dt>
               <dd>{describeSchedule(task)}</dd>
+              <dt>Next run</dt>
+              <dd>{describeNextRun(runtime, now)}</dd>
               <dt>Environment</dt>
               <dd>{describeTarget(task)}</dd>
               <dt>Working directory</dt>
