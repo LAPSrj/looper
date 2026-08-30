@@ -4,7 +4,6 @@ import type { LogLine, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
-import { TaskEditor } from './components/TaskEditor';
 import { EngineLog } from './components/EngineLog';
 
 const MAX_RECORDS = 500;
@@ -18,7 +17,6 @@ export function App() {
   const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<DetailTab>('log');
-  const [creating, setCreating] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [now, setNow] = useState(Date.now());
 
@@ -54,9 +52,13 @@ export function App() {
           break;
       }
     });
+    const unsubUi = window.looper.onUi((e) => {
+      if (e.type === 'toggle-log') setShowLog((v) => !v);
+    });
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       unsub();
+      unsubUi();
       clearInterval(t);
     };
   }, []);
@@ -74,7 +76,6 @@ export function App() {
 
   const select = useCallback((id: string) => {
     setSelected(id);
-    setCreating(false);
   }, []);
 
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
@@ -84,11 +85,11 @@ export function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="brand">Looper</span>
-          <button className="btn small" onClick={() => setCreating(true)} title="New task">
+          <button className="btn small" onClick={() => void window.looper.openEditor()} title="New task (Ctrl+N)">
             + New
           </button>
         </div>
-        <TaskList tasks={tasks} runtimes={runtimes} selected={creating ? null : selected} now={now} onSelect={select} />
+        <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
         <div className="sidebar-footer">
           <button className="link" onClick={() => setShowLog((v) => !v)}>
             {showLog ? 'hide' : 'show'} engine log
@@ -101,17 +102,7 @@ export function App() {
         </div>
       </aside>
       <main className="main">
-        {creating ? (
-          <TaskEditor
-            task={null}
-            onSaved={(t) => {
-              setCreating(false);
-              setSelected(t.id);
-              setTab('log');
-            }}
-            onCancel={() => setCreating(false)}
-          />
-        ) : task ? (
+        {task ? (
           <TaskDetail
             key={task.id}
             task={task}

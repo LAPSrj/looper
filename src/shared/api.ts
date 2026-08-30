@@ -35,5 +35,13 @@ export interface LooperApi {
     resize(id: string, cols: number, rows: number): void;
   };
   openPath(p: string): Promise<void>;
+  /** Open the task editor in its own window (no id = new task). */
+  openEditor(taskId?: string): Promise<void>;
   onEvent(cb: (e: EngineEvent) => void): () => void;
+  /** UI commands pushed from the application menu. */
+  onUi(cb: (e: UiEvent) => void): () => void;
+}
+
+export interface UiEvent {
+  type: 'toggle-log';
 }

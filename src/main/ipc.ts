@@ -1,9 +1,14 @@
-import { app, ipcMain, shell, type BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import type { Engine } from '../engine/engine';
 import { EXAMPLE_TASK } from '../shared/example-task';
 import type { AppInfo } from '../shared/api';
 
-export function registerIpc(engine: Engine, getWindow: () => BrowserWindow | null): void {
+export interface IpcHost {
+  getWindow: () => BrowserWindow | null;
+  openEditor: (taskId?: string) => void;
+}
+
+export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('info', (): AppInfo => ({
     version: app.getVersion(),
     dataDir: engine.dataDir,
@@ -34,10 +39,11 @@ export function registerIpc(engine: Engine, getWindow: () => BrowserWindow | nul
   );
 
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
+  ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
 
   engine.on((event) => {
-    const win = getWindow();
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send('engine:event', event);
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('engine:event', event);
+    }
   });
 }

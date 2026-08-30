@@ -397,69 +397,113 @@ code,
   background: #3a1f1f;
   color: var(--red);
 }
-.form {
-  overflow-y: auto;
-  padding: 10px 18px 30px;
+.editor-title {
+  font-weight: 600;
+  font-size: 14px;
 }
-fieldset {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  margin: 10px 0;
-  padding: 8px 14px 12px;
-}
-legend {
-  color: var(--fg-muted);
-  padding: 0 6px;
-}
-.form label {
+.inline-check {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 8px 0;
-  color: var(--fg-muted);
-}
-.form label.inline {
-  flex-direction: row;
   align-items: center;
   gap: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.editor-window {
+  height: 100%;
+}
+.form {
+  overflow-y: auto;
+  padding: 4px 24px 48px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+.form section {
+  margin: 22px 0 6px;
+}
+.form section h3 {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 14px 0;
+  flex: 1;
+  min-width: 0;
+}
+.field-label {
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--fg);
 }
-.form label.short {
-  max-width: 260px;
-  flex: 1;
+.help {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+.help code {
+  background: var(--bg-3);
+  padding: 0 4px;
+  border-radius: 3px;
 }
 .form .row {
   display: flex;
-  gap: 14px;
+  gap: 18px;
   flex-wrap: wrap;
 }
-.form .row > label {
-  flex: 1;
-  min-width: 200px;
+.form .row > .field {
+  min-width: 190px;
 }
-.hint {
-  font-size: 11px;
-  opacity: 0.8;
-}
-.form input:not([type='checkbox']),
-.form select,
-.form textarea,
+.field input,
+.field select,
+.field textarea,
 .json-editor {
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 5px 8px;
+  border-radius: 5px;
+  padding: 6px 9px;
   color: var(--fg);
 }
-.form input:focus,
-.form select:focus,
-.form textarea:focus,
+.field input:disabled {
+  opacity: 0.55;
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
 .json-editor:focus {
   outline: none;
   border-color: var(--accent);
 }
-.form textarea {
+.field textarea {
   resize: vertical;
+}
+.advanced {
+  margin: 26px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 16px 4px;
+}
+.advanced summary {
+  cursor: pointer;
+  padding: 10px 2px;
+  color: var(--fg-muted);
+  font-weight: 500;
+  user-select: none;
+}
+.advanced summary:hover {
+  color: var(--fg);
+}
+.advanced[open] summary {
+  border-bottom: 1px solid var(--border);
 }
 .json-editor {
   flex: 1;

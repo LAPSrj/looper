@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LooperApi } from '../shared/api';
+import type { LooperApi, UiEvent } from '../shared/api';
 import type { EngineEvent } from '../shared/types';
 
 const api: LooperApi = {
@@ -28,10 +28,16 @@ const api: LooperApi = {
     resize: (id, cols, rows) => ipcRenderer.send('agent:resize', id, cols, rows),
   },
   openPath: (p) => ipcRenderer.invoke('openPath', p),
+  openEditor: (taskId) => ipcRenderer.invoke('editor:open', taskId),
   onEvent: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: EngineEvent) => cb(ev);
     ipcRenderer.on('engine:event', listener);
     return () => ipcRenderer.removeListener('engine:event', listener);
+  },
+  onUi: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, ev: UiEvent) => cb(ev);
+    ipcRenderer.on('ui:event', listener);
+    return () => ipcRenderer.removeListener('ui:event', listener);
   },
 };
 

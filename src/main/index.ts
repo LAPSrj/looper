@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import path from 'node:path';
 import { createEngine, type Engine } from '../engine/engine';
 import { defaultDataDir } from '../engine/host';
@@ -30,7 +30,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     engine = createEngine({ dataDir: defaultDataDir() });
     engine.start();
-    registerIpc(engine, () => win);
+    registerIpc(engine, { getWindow: () => win, openEditor: openEditorWindow });
+    buildMenu();
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -52,6 +53,23 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
+function webPreferences(): Electron.WebPreferences {
+  return {
+    preload: path.join(__dirname, '../preload/index.js'),
+    contextIsolation: true,
+    sandbox: false,
+    nodeIntegration: false,
+  };
+}
+
+function loadRenderer(target: BrowserWindow, hash?: string): void {
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void target.loadURL(process.env.ELECTRON_RENDERER_URL + (hash ? `#${hash}` : ''));
+  } else {
+    void target.loadFile(path.join(__dirname, '../renderer/index.html'), hash ? { hash } : undefined);
+  }
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400,
@@ -60,13 +78,8 @@ function createWindow(): void {
     minHeight: 600,
     title: 'Looper',
     backgroundColor: '#14161a',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      sandbox: false,
-      nodeIntegration: false,
-    },
+    autoHideMenuBar: false,
+    webPreferences: webPreferences(),
   });
   win.on('closed', () => {
     win = null;
@@ -80,10 +93,65 @@ function createWindow(): void {
     engine?.log.error(`renderer gone (${details.reason}); reloading`);
     if (win && !win.isDestroyed()) win.webContents.reload();
   });
+  loadRenderer(win);
+}
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+export function openEditorWindow(taskId?: string): void {
+  const editor = new BrowserWindow({
+    width: 780,
+    height: 940,
+    minWidth: 560,
+    minHeight: 480,
+    title: taskId ? 'Looper — Edit Task' : 'Looper — New Task',
+    backgroundColor: '#14161a',
+    autoHideMenuBar: true,
+    webPreferences: webPreferences(),
+  });
+  editor.setMenuBarVisibility(false);
+  loadRenderer(editor, taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor');
+}
+
+function buildMenu(): void {
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '&File',
+      submenu: [
+        { label: 'New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
+        { type: 'separator' },
+        {
+          label: 'Open Data Directory',
+          click: () => {
+            if (engine) void shell.openPath(engine.dataDir);
+          },
+        },
+        {
+          label: 'Open Inbox Directory',
+          click: () => {
+            if (engine) void shell.openPath(engine.inboxDir());
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit', label: 'Exit' },
+      ],
+    },
+    {
+      label: '&View',
+      submenu: [
+        {
+          label: 'Engine Log',
+          accelerator: 'CmdOrCtrl+L',
+          click: () => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('ui:event', { type: 'toggle-log' });
+              win.focus();
+            }
+          },
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'toggleDevTools' },
+      ],
+    },
+  ]);
+  Menu.setApplicationMenu(menu);
 }
