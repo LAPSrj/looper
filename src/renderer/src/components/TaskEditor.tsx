@@ -172,7 +172,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
         {tab === 'general' && (
           <div className="form">
             <Field label="Task name" help="Shown in the task list.">
-              <input value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Issues triage" />
+              <input value={draft.name} onChange={(e) => set('name', e.target.value)} />
             </Field>
             <div className="row">
               <Field label="Status" help="Disabled tasks are kept but never run.">
@@ -185,7 +185,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                 </select>
               </Field>
               <Field label="Task ID" help={task ? 'Fixed after creation.' : 'Leave empty to generate it from the name.'}>
-                <input className="mono" value={draft.id} disabled={!!task} onChange={(e) => set('id', e.target.value)} placeholder="issues-triage" />
+                <input className="mono" value={draft.id} disabled={!!task} onChange={(e) => set('id', e.target.value)} />
               </Field>
             </div>
             <section>
@@ -202,12 +202,12 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                 </Field>
                 {isWsl && (
                   <Field label="WSL distro" help="Leave empty to use the default distro.">
-                    <input value={wslTarget?.distro ?? ''} onChange={(e) => setWsl({ distro: e.target.value || undefined })} placeholder="Ubuntu-22.04" />
+                    <input value={wslTarget?.distro ?? ''} onChange={(e) => setWsl({ distro: e.target.value || undefined })} />
                   </Field>
                 )}
                 {isWsl && (
                   <Field label="Shell" help="Default bash -lic loads your login + interactive profile (nvm, PATH).">
-                    <input className="mono" value={wslTarget?.shell ?? ''} onChange={(e) => setWsl({ shell: e.target.value || undefined })} placeholder="bash -lic" />
+                    <input className="mono" value={wslTarget?.shell ?? ''} onChange={(e) => setWsl({ shell: e.target.value || undefined })} />
                   </Field>
                 )}
               </div>
@@ -216,7 +216,6 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                   className="mono"
                   value={draft.cwd}
                   onChange={(e) => set('cwd', e.target.value)}
-                  placeholder={isWsl ? '/home/me/repos/project' : 'C:\\repos\\project'}
                 />
               </Field>
             </section>
@@ -251,7 +250,6 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                   className="mono"
                   value={scheduleValue}
                   onChange={(e) => set('schedule', scheduleKind === 'cron' ? { cron: e.target.value } : { every: e.target.value })}
-                  placeholder={scheduleKind === 'every' ? '10m' : '*/10 * * * *'}
                 />
               </Field>
               <Field label="Check timeout (seconds)">
@@ -332,7 +330,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
             <p className="help tab-intro">What actually runs when there is work: a fresh claude session in the task's directory.</p>
             <div className="row">
               <Field label="Model" help="e.g. sonnet, opus, haiku. Empty = your claude default.">
-                <input value={draft.agent.model ?? ''} onChange={(e) => setAgent('model', e.target.value || undefined)} placeholder="sonnet" />
+                <input value={draft.agent.model ?? ''} onChange={(e) => setAgent('model', e.target.value || undefined)} />
               </Field>
               <Field
                 label="Session type"
@@ -369,7 +367,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
               <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
             </Field>
             <Field label="Extra claude arguments" help="One per line, appended to the claude command line as-is.">
-              <textarea className="mono" rows={3} value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} placeholder={'--add-dir\n/home/me/other-repo'} />
+              <textarea className="mono" rows={3} value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
             </Field>
           </div>
         )}

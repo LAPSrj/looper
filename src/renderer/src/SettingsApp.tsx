@@ -67,7 +67,6 @@ export function SettingsApp() {
               <input
                 value={settings.defaultDistro ?? ''}
                 onChange={(e) => set('defaultDistro', e.target.value || undefined)}
-                placeholder="Ubuntu-22.04"
               />
             </Field>
           </div>
