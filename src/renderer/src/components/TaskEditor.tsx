@@ -55,13 +55,13 @@ function Field({ label, help, children }: { label: string; help?: ReactNode; chi
 }
 
 const PERMISSION_MODES: [string, string][] = [
-  ['auto', 'Auto — approve routine actions (default)'],
-  ['acceptEdits', 'Accept edits — auto-approve file edits'],
-  ['manual', 'Manual — ask for everything'],
+  ['auto', 'Auto'],
+  ['acceptEdits', 'Accept edits'],
+  ['manual', 'Manual'],
   ['dontAsk', "Don't ask"],
   ['plan', 'Plan mode'],
-  ['bypassPermissions', 'Bypass — approve everything (dangerous)'],
-  ['', "None — use claude's own default"],
+  ['bypassPermissions', 'Bypass'],
+  ['', 'None'],
 ];
 
 export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
@@ -281,8 +281,8 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                 value={draft.classifier ? 'on' : 'off'}
                 onChange={(e) => set('classifier', e.target.value === 'on' ? { ...EXAMPLE_TASK.classifier! } : undefined)}
               >
-                <option value="off">Off — every positive check starts the agent</option>
-                <option value="on">On — a cheap model filters first</option>
+                <option value="off">Off</option>
+                <option value="on">On</option>
               </select>
             </Field>
             {draft.classifier && (
