@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RunPhase, RunRecord, Task } from '@shared/types';
-import { fmtTime, formatDuration, stripAnsi } from '../format';
+import { capFirst, fmtTime, formatDuration, stripAnsi } from '../format';
 
 interface Props {
   task: Task;
@@ -45,17 +45,18 @@ export function RunLog({ task, records }: Props) {
     <div className="runlog">
       <div className="runlog-toolbar">
         <label>
-          phase{' '}
+          Phase:{' '}
           <select value={phase} onChange={(e) => setPhase(e.target.value as RunPhase | 'all')}>
             {PHASES.map((p) => (
               <option key={p} value={p}>
-                {p}
+                {p === 'all' ? 'All' : capFirst(p)}
               </option>
             ))}
           </select>
         </label>
         <label>
-          <input type="checkbox" checked={hideNoop} onChange={(e) => setHideNoop(e.target.checked)} /> hide "nothing to do"
+          <input type="checkbox" checked={hideNoop} onChange={(e) => setHideNoop(e.target.checked)} /> Hide "nothing to do"
+          rows
         </label>
         <span className="muted">{records.length} records</span>
       </div>
@@ -63,12 +64,12 @@ export function RunLog({ task, records }: Props) {
         <table className="runlog-table">
           <thead>
             <tr>
-              <th>time</th>
-              <th>run</th>
-              <th>phase</th>
-              <th>result</th>
-              <th>duration</th>
-              <th>details</th>
+              <th>Time</th>
+              <th>Run</th>
+              <th>Phase</th>
+              <th>Result</th>
+              <th>Duration</th>
+              <th>Details</th>
               <th></th>
             </tr>
           </thead>
@@ -77,7 +78,7 @@ export function RunLog({ task, records }: Props) {
               <tr key={`${r.ts}-${i}`} className={`result-${r.result}`}>
                 <td className="nowrap">{fmtTime(r.ts)}</td>
                 <td className="mono nowrap">{r.runId}</td>
-                <td>{r.phase}</td>
+                <td>{capFirst(r.phase)}</td>
                 <td>
                   <span className={`pill pill-${r.result}`}>{r.result}</span>
                 </td>
@@ -89,12 +90,12 @@ export function RunLog({ task, records }: Props) {
                 <td className="nowrap">
                   {r.phase === 'agent' && r.result !== 'started' && (
                     <button className="link" onClick={() => void showOutput(r.runId)}>
-                      output
+                      Output
                     </button>
                   )}{' '}
                   {r.runId !== '-' && (
                     <button className="link" onClick={() => void window.looper.runs.openDir(task.id, r.runId)}>
-                      folder
+                      Open folder
                     </button>
                   )}
                 </td>
@@ -103,7 +104,7 @@ export function RunLog({ task, records }: Props) {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  no runs yet
+                  No runs yet.
                 </td>
               </tr>
             )}
@@ -115,10 +116,10 @@ export function RunLog({ task, records }: Props) {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span>
-                output of run <span className="mono">{output.runId}</span>
+                Output — run <span className="mono">{output.runId}</span>
               </span>
               <button ref={closeRef} className="btn small" onClick={() => setOutput(null)}>
-                close
+                Close
               </button>
             </div>
             <pre className="output">{output.text}</pre>

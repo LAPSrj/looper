@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
-import { fmtCountdown, fmtTime, stateLabel } from '../format';
+import { capFirst, fmtCountdown, fmtTime, stateLabel } from '../format';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
-import { TaskEditor } from './TaskEditor';
 
-export type DetailTab = 'log' | 'terminal' | 'edit';
+export type DetailTab = 'log' | 'terminal';
 
 interface Props {
   task: Task;
@@ -16,9 +15,32 @@ interface Props {
   onTab: (t: DetailTab) => void;
 }
 
+function describeSchedule(task: Task): string {
+  return 'every' in task.schedule ? `Every ${task.schedule.every}` : `Cron ${task.schedule.cron}`;
+}
+
+function describeTarget(task: Task): string {
+  if (task.target.kind === 'windows') return 'Windows (PowerShell)';
+  return task.target.distro ? `WSL (${task.target.distro})` : 'WSL (default distro)';
+}
+
+function describeStatus(runtime: TaskRuntime | undefined, now: number): string {
+  if (!runtime) return 'Idle';
+  if (runtime.held) return 'Needs attention — the agent is waiting for you in the Terminal tab';
+  switch (runtime.state) {
+    case 'idle':
+      return runtime.nextRunAt ? `Idle — next run in ${fmtCountdown(runtime.nextRunAt, now)}` : 'Idle';
+    case 'running':
+      return runtime.currentRunId ? `Running — run ${runtime.currentRunId}` : 'Running';
+    case 'paused':
+      return `Paused — ${runtime.pausedReason ?? 'paused'}`;
+    default:
+      return stateLabel(runtime);
+  }
+}
+
 export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
   const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const active = runtime && ['checking', 'classifying', 'running'].includes(runtime.state);
   const running = runtime?.state === 'running';
 
@@ -33,43 +55,20 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
     }
   };
 
+  const remove = () => {
+    if (window.confirm(`Delete task "${task.name}"?`)) void act(() => window.looper.tasks.remove(task.id));
+  };
+
+  const lastRun = runtime?.lastRunAt
+    ? `${fmtTime(new Date(runtime.lastRunAt).toISOString())}${runtime.lastResult ? ` — ${capFirst(runtime.lastResult)}` : ''}`
+    : 'Never';
+
   return (
     <div className="detail">
       <header className="detail-header">
         <div className="detail-title">
           <h1>{task.name}</h1>
           <span className={`badge state-${runtime?.held ? 'held' : runtime?.state ?? 'idle'}`}>{stateLabel(runtime)}</span>
-        </div>
-        <div className="detail-meta">
-          <span>
-            <b>id</b> {task.id}
-          </span>
-          <span>
-            <b>schedule</b> {'every' in task.schedule ? `every ${task.schedule.every}` : `cron ${task.schedule.cron}`}
-          </span>
-          <span>
-            <b>target</b> {task.target.kind}
-            {task.target.kind === 'wsl' && task.target.distro ? `:${task.target.distro}` : ''}
-          </span>
-          <span>
-            <b>cwd</b> {task.cwd}
-          </span>
-          {runtime?.state === 'idle' && (
-            <span>
-              <b>next</b> {fmtCountdown(runtime.nextRunAt, now)}
-            </span>
-          )}
-          {runtime?.lastRunAt && (
-            <span>
-              <b>last</b> {fmtTime(new Date(runtime.lastRunAt).toISOString())}
-              {runtime.lastResult ? ` — ${runtime.lastResult}` : ''}
-            </span>
-          )}
-          {runtime?.pausedReason && (
-            <span className="warn">
-              <b>paused</b> {runtime.pausedReason}
-            </span>
-          )}
         </div>
         <div className="actions">
           <button className="btn" disabled={busy || active} onClick={() => act(() => window.looper.runtime.runNow(task.id))}>
@@ -92,6 +91,9 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
           <button className="btn danger" disabled={busy || !running} onClick={() => act(() => window.looper.runtime.stopAgent(task.id))}>
             Stop agent
           </button>
+          <button className="btn" disabled={busy} onClick={() => void window.looper.openEditor(task.id)}>
+            Edit…
+          </button>
           <button
             className="btn"
             disabled={busy}
@@ -99,33 +101,36 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
           >
             {task.enabled ? 'Disable' : 'Enable'}
           </button>
-          {confirmDelete ? (
-            <>
-              <button className="btn danger" disabled={busy} onClick={() => act(() => window.looper.tasks.remove(task.id))}>
-                Confirm delete
-              </button>
-              <button className="btn" onClick={() => setConfirmDelete(false)}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button className="btn" disabled={busy} onClick={() => setConfirmDelete(true)}>
-              Delete
-            </button>
-          )}
+          <button className="btn danger" disabled={busy} onClick={remove}>
+            Delete
+          </button>
         </div>
+        <dl className="props">
+          <dt>Status</dt>
+          <dd>{describeStatus(runtime, now)}</dd>
+          <dt>Schedule</dt>
+          <dd>{describeSchedule(task)}</dd>
+          <dt>Environment</dt>
+          <dd>{describeTarget(task)}</dd>
+          <dt>Working directory</dt>
+          <dd className="mono">{task.cwd}</dd>
+          <dt>Last run</dt>
+          <dd>{lastRun}</dd>
+          <dt>Task ID</dt>
+          <dd className="mono">{task.id}</dd>
+        </dl>
       </header>
       <nav className="tabs">
-        {(['log', 'terminal', 'edit'] as DetailTab[]).map((t) => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => onTab(t)}>
-            {t === 'log' ? 'Run log' : t === 'terminal' ? (running ? '● Terminal' : 'Terminal') : 'Edit'}
-          </button>
-        ))}
+        <button className={`tab ${tab === 'log' ? 'active' : ''}`} onClick={() => onTab('log')}>
+          Run log
+        </button>
+        <button className={`tab ${tab === 'terminal' ? 'active' : ''}`} onClick={() => onTab('terminal')}>
+          {running ? '● Terminal' : 'Terminal'}
+        </button>
       </nav>
       <section className="tab-body">
         {tab === 'log' && <RunLog task={task} records={records} />}
         {tab === 'terminal' && <Terminal taskId={task.id} running={!!running} runtime={runtime} />}
-        {tab === 'edit' && <TaskEditor task={task} onSaved={() => onTab('log')} onCancel={() => onTab('log')} />}
       </section>
     </div>
   );

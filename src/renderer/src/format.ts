@@ -17,10 +17,23 @@ export function fmtCountdown(ts: number | null, now: number): string {
   return formatDuration(diff);
 }
 
+const STATE_LABELS: Record<string, string> = {
+  idle: 'Idle',
+  checking: 'Checking',
+  classifying: 'Classifying',
+  running: 'Running',
+  paused: 'Paused',
+  disabled: 'Disabled',
+};
+
 export function stateLabel(rt: TaskRuntime | undefined): string {
-  if (!rt) return 'idle';
-  if (rt.held) return 'needs attention';
-  return rt.state;
+  if (!rt) return 'Idle';
+  if (rt.held) return 'Needs attention';
+  return STATE_LABELS[rt.state] ?? rt.state;
+}
+
+export function capFirst(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 export function stripAnsi(s: string): string {

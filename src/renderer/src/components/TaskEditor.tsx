@@ -9,8 +9,6 @@ interface Props {
   initial?: TaskInput;
   /** Preselected environment for new tasks (from global settings). */
   defaultTarget?: Target;
-  /** True when the editor is its own window: enables dialog keys (Esc, Enter, Ctrl+Tab). */
-  standalone?: boolean;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }
@@ -68,7 +66,7 @@ const PERMISSION_MODES: [string, string][] = [
   ['', 'None'],
 ];
 
-export function TaskEditor({ task, initial, defaultTarget, standalone, onSaved, onCancel }: Props) {
+export function TaskEditor({ task, initial, defaultTarget, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultTarget),
   );
@@ -160,13 +158,11 @@ export function TaskEditor({ task, initial, defaultTarget, standalone, onSaved, 
     }
   };
 
-  // Dialog keyboard semantics (standalone window only, to not fight the main window's keys):
-  // Esc = cancel, Enter on a single-line input or Ctrl+Enter anywhere = save,
-  // Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
+  // Dialog keyboard semantics: Esc = cancel, Enter on a single-line input or
+  // Ctrl+Enter anywhere = save, Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
   const keysRef = useRef({ tab, save, onCancel, switchTab });
   keysRef.current = { tab, save, onCancel, switchTab };
   useEffect(() => {
-    if (!standalone) return;
     const order = TABS.map(([id]) => id);
     const onKey = (e: KeyboardEvent) => {
       const k = keysRef.current;
@@ -195,7 +191,7 @@ export function TaskEditor({ task, initial, defaultTarget, standalone, onSaved, 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [standalone]);
+  }, []);
 
   return (
     <div className="editor">

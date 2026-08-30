@@ -38,7 +38,6 @@ export function EditorApp({ taskId, example }: { taskId?: string; example?: bool
         task={task}
         initial={initial}
         defaultTarget={defaultTarget}
-        standalone
         onSaved={() => window.close()}
         onCancel={() => window.close()}
       />

@@ -95,7 +95,7 @@ export function App() {
 
   // Keyboard: Ctrl+Tab / Ctrl+PageDown|PageUp cycle the detail tabs; Esc closes the engine log.
   useEffect(() => {
-    const order: DetailTab[] = ['log', 'terminal', 'edit'];
+    const order: DetailTab[] = ['log', 'terminal'];
     const onKey = (e: KeyboardEvent) => {
       const cycle = (dir: number) =>
         setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);

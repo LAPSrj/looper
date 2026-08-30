@@ -10,9 +10,9 @@ export function EngineLog({ lines, onClose }: { lines: LogLine[]; onClose: () =>
   return (
     <div className="engine-log">
       <div className="engine-log-header">
-        <span>engine log</span>
+        <span>Engine Log</span>
         <button className="btn small" onClick={onClose}>
-          close
+          Close
         </button>
       </div>
       <div className="engine-log-body" ref={ref}>

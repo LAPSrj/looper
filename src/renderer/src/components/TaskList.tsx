@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { Task, TaskRuntime } from '@shared/types';
-import { fmtCountdown, stateLabel } from '../format';
+import { capFirst, fmtCountdown, stateLabel } from '../format';
 
 interface Props {
   tasks: Task[];
@@ -52,12 +52,15 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
       {tasks.map((t) => {
         const rt = runtimes[t.id];
         const label = stateLabel(rt);
+        const countdown = rt?.state === 'idle' ? fmtCountdown(rt.nextRunAt, now) : '';
         const sub =
           rt?.state === 'idle'
-            ? `next ${fmtCountdown(rt.nextRunAt, now)}`
+            ? countdown === 'now' || countdown === '—'
+              ? `Next run ${countdown}`
+              : `Next run in ${countdown}`
             : rt?.state === 'paused'
-              ? rt.pausedReason ?? 'paused'
-              : rt?.lastResult ?? '';
+              ? capFirst(rt.pausedReason ?? 'paused')
+              : capFirst(rt?.lastResult ?? '');
         return (
           <li
             key={t.id}

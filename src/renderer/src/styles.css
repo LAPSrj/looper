@@ -129,7 +129,6 @@ code,
   background: var(--bg-3);
   color: var(--fg-muted);
   white-space: nowrap;
-  text-transform: lowercase;
 }
 .badge.state-running {
   background: #1f3b2e;
@@ -185,18 +184,22 @@ code,
   font-size: 18px;
   font-weight: 600;
 }
-.detail-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 18px;
-  margin: 8px 0;
-  color: var(--fg-muted);
-  font-size: 12px;
+.props {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 26px;
+  margin: 12px 0 2px;
+  font-size: 12.5px;
 }
-.detail-meta b {
-  color: var(--fg);
-  font-weight: 500;
-  margin-right: 4px;
+.props dt {
+  color: var(--fg-muted);
+}
+.props dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .actions {
   display: flex;
@@ -594,7 +597,7 @@ code,
 .output,
 .engine-log-body,
 .runlog-table td,
-.detail-meta {
+.props dd {
   user-select: text;
 }
 /* Desktop apps use the arrow cursor for controls, not the browser hand. */
