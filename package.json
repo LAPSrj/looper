@@ -1,0 +1,67 @@
+{
+  "name": "looper",
+  "version": "0.1.0",
+  "description": "Cron-style manager for AI agent loops: cheap checks, fresh claude sessions only when there is work, one agent per task.",
+  "main": "./out/main/index.js",
+  "author": "Leandro Amorim",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "looper": "./bin/looper.js"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --external:node-pty --outfile=dist/cli.js",
+    "build:all": "npm run build && npm run build:cli",
+    "start": "electron-vite preview",
+    "serve": "tsx src/cli/index.ts serve",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "package": "npm run build:all && electron-builder --win",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "commander": "^13.1.0",
+    "croner": "^9.0.0",
+    "node-pty": "^1.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^5.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.0"
+  },
+  "build": {
+    "appId": "com.lemorim.looper",
+    "productName": "Looper",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "dist/**",
+      "bin/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
+  }
+}

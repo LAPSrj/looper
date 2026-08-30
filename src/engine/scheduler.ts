@@ -1,0 +1,464 @@
+import { EventEmitter } from 'node:events';
+import { Cron } from 'croner';
+import type {
+  EngineEvent,
+  RunPhase,
+  RunRecord,
+  RunResult,
+  Settings,
+  Task,
+  TaskRuntime,
+} from '../shared/types';
+import { parseDuration } from '../shared/duration';
+import type { HostKind } from './host';
+import { errMsg, type Logger } from './log';
+import { createTarget } from './target';
+import { runCheck as defaultRunCheck } from './steps/check';
+import { runClassify as defaultRunClassify } from './steps/classify';
+import { startAgent as defaultStartAgent, type AgentEnd, type AgentHandle } from './steps/agent';
+import type { RunContext } from './steps/common';
+import { newRunId, type RunStore } from './store/runs';
+import type { StateStore } from './store/state';
+import type { TaskStore } from './store/tasks';
+
+export interface SchedulerSteps {
+  runCheck: typeof defaultRunCheck;
+  runClassify: typeof defaultRunClassify;
+  startAgent: typeof defaultStartAgent;
+}
+
+export interface SchedulerDeps {
+  dataDir: string;
+  host: HostKind;
+  settings: Settings;
+  tasks: TaskStore;
+  runs: RunStore;
+  state: StateStore;
+  log: Logger;
+  steps?: Partial<SchedulerSteps>;
+  now?: () => number;
+}
+
+const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classifying', 'running']);
+
+export class Scheduler extends EventEmitter {
+  private readonly runtimes = new Map<string, TaskRuntime>();
+  private readonly agents = new Map<string, AgentHandle>();
+  private readonly buffers = new Map<string, { runId: string; data: string }>();
+  private readonly steps: SchedulerSteps;
+  private readonly now: () => number;
+  private timer: NodeJS.Timeout | null = null;
+  private stopping = false;
+
+  constructor(private readonly d: SchedulerDeps) {
+    super();
+    this.steps = {
+      runCheck: d.steps?.runCheck ?? defaultRunCheck,
+      runClassify: d.steps?.runClassify ?? defaultRunClassify,
+      startAgent: d.steps?.startAgent ?? defaultStartAgent,
+    };
+    this.now = d.now ?? (() => Date.now());
+  }
+
+  // ---------- lifecycle ----------
+
+  start(): void {
+    const previous = this.d.state.load();
+    const tasks = this.d.tasks.list();
+    tasks.forEach((task, i) => {
+      const prev = previous[task.id];
+      if (prev && ACTIVE.has(prev.state) && prev.currentRunId) {
+        this.record(task.id, prev.currentRunId, 'system', 'interrupted', {
+          summary: `looper restarted while ${prev.state}`,
+        });
+      }
+      this.initRuntime(task, i, prev);
+    });
+    this.d.tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) =>
+      this.onTaskChange(task, kind, previous),
+    );
+    this.persist();
+    this.timer = setInterval(() => this.tick(), this.d.settings.tickMs);
+    this.d.log.info(`scheduler started with ${tasks.length} task(s)`);
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    const stops = [...this.agents.values()].map((h) =>
+      h.stop('stopped', 'looper shutting down').catch(() => undefined),
+    );
+    await Promise.all(stops);
+    this.d.state.flush();
+  }
+
+  // ---------- queries ----------
+
+  list(): TaskRuntime[] {
+    return [...this.runtimes.values()];
+  }
+
+  get(taskId: string): TaskRuntime | undefined {
+    return this.runtimes.get(taskId);
+  }
+
+  getBuffer(taskId: string): { runId: string; data: string } | null {
+    return this.buffers.get(taskId) ?? null;
+  }
+
+  // ---------- commands ----------
+
+  runNow(taskId: string): boolean {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    if (rt.state === 'paused') {
+      rt.pausedReason = null;
+      rt.consecutiveErrors = 0;
+      rt.state = 'idle';
+    }
+    if (rt.state !== 'idle') {
+      this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
+        summary: `manual run ignored: task is ${rt.state}`,
+      });
+      return false;
+    }
+    void this.runCycle(task, 'manual');
+    return true;
+  }
+
+  pause(taskId: string, reason = 'paused by user'): void {
+    const rt = this.must(taskId);
+    rt.pausedReason = reason;
+    if (rt.state === 'idle' || rt.state === 'disabled') {
+      rt.state = 'paused';
+      rt.nextRunAt = null;
+    }
+    // While active: takes effect when the cycle ends.
+    this.emitRuntime(rt);
+  }
+
+  resume(taskId: string): void {
+    const rt = this.must(taskId);
+    const task = this.d.tasks.get(taskId);
+    rt.pausedReason = null;
+    rt.consecutiveErrors = 0;
+    if (rt.state === 'paused') {
+      if (task?.enabled) {
+        rt.state = 'idle';
+        rt.nextRunAt = this.now() + 1000;
+      } else {
+        rt.state = 'disabled';
+      }
+    }
+    this.emitRuntime(rt);
+  }
+
+  async stopAgent(taskId: string, reason = 'stopped by user'): Promise<boolean> {
+    const h = this.agents.get(taskId);
+    if (!h) return false;
+    await h.stop('stopped', reason);
+    return true;
+  }
+
+  writeAgent(taskId: string, data: string): void {
+    this.agents.get(taskId)?.write(data);
+  }
+
+  resizeAgent(taskId: string, cols: number, rows: number): void {
+    this.agents.get(taskId)?.resize(cols, rows);
+  }
+
+  // ---------- internals ----------
+
+  private must(taskId: string): TaskRuntime {
+    const rt = this.runtimes.get(taskId);
+    if (!rt) throw new Error(`unknown task ${taskId}`);
+    return rt;
+  }
+
+  private initRuntime(task: Task, index: number, prev?: TaskRuntime): TaskRuntime {
+    const rt: TaskRuntime = {
+      taskId: task.id,
+      state: task.enabled ? 'idle' : 'disabled',
+      held: false,
+      nextRunAt: task.enabled ? this.now() + this.d.settings.startDelaySec * 1000 + index * 1000 : null,
+      lastRunAt: prev?.lastRunAt ?? null,
+      lastResult: prev?.lastResult ?? null,
+      consecutiveErrors: 0,
+      currentRunId: null,
+      pausedReason: null,
+    };
+    this.runtimes.set(task.id, rt);
+    this.emitRuntime(rt);
+    return rt;
+  }
+
+  private onTaskChange(task: Task, kind: 'create' | 'update' | 'remove', previous?: Task): void {
+    this.emitEvent({ type: 'tasks', tasks: this.d.tasks.list() });
+    if (kind === 'remove') {
+      void this.stopAgent(task.id, 'task removed');
+      const rt = this.runtimes.get(task.id);
+      if (rt && !ACTIVE.has(rt.state)) {
+        this.runtimes.delete(task.id);
+        this.buffers.delete(task.id);
+        this.persist();
+      }
+      return;
+    }
+    const rt = this.runtimes.get(task.id);
+    if (!rt) {
+      this.initRuntime(task, this.runtimes.size);
+      this.persist();
+      return;
+    }
+    if (ACTIVE.has(rt.state)) return; // applied when the cycle finishes
+    if (!task.enabled) {
+      rt.state = 'disabled';
+      rt.nextRunAt = null;
+    } else if (rt.state === 'disabled') {
+      rt.state = 'idle';
+      rt.nextRunAt = this.now() + this.d.settings.startDelaySec * 1000;
+    } else if (
+      rt.state === 'idle' &&
+      JSON.stringify(previous?.schedule) !== JSON.stringify(task.schedule)
+    ) {
+      rt.nextRunAt = this.computeNext(task, this.now());
+    }
+    this.emitRuntime(rt);
+    this.persist();
+  }
+
+  private computeNext(task: Task, from: number): number | null {
+    try {
+      if ('every' in task.schedule) return from + parseDuration(task.schedule.every);
+      const next = new Cron(task.schedule.cron).nextRun(new Date(from));
+      return next ? next.getTime() : null;
+    } catch (e) {
+      this.d.log.error(`[${task.id}] bad schedule: ${errMsg(e)}`);
+      return null;
+    }
+  }
+
+  private tick(): void {
+    if (this.stopping) return;
+    const now = this.now();
+    for (const task of this.d.tasks.list()) {
+      const rt = this.runtimes.get(task.id);
+      if (!rt || rt.nextRunAt === null || rt.nextRunAt > now) continue;
+      try {
+        if (rt.state === 'idle') {
+          void this.runCycle(task, 'timer');
+        } else if (ACTIVE.has(rt.state)) {
+          // A cron slot passed while a cycle is in progress: skip it, never overlap.
+          this.record(task.id, rt.currentRunId ?? '-', 'skip', 'skipped', {
+            summary: `scheduled run skipped: task is ${rt.state}`,
+          });
+          rt.nextRunAt = this.computeNext(task, now);
+          this.emitRuntime(rt);
+        }
+      } catch (e) {
+        this.d.log.error(`[${task.id}] tick failed: ${errMsg(e)}`);
+      }
+    }
+  }
+
+  private async runCycle(task: Task, trigger: 'timer' | 'manual'): Promise<void> {
+    const rt = this.runtimes.get(task.id);
+    if (!rt || rt.state !== 'idle') return;
+    const runId = newRunId(new Date(this.now()));
+    let runDir: string;
+    try {
+      runDir = this.d.runs.createRunDir(task.id, runId);
+    } catch (e) {
+      this.d.log.error(`[${task.id}] cannot create run dir: ${errMsg(e)}`);
+      rt.consecutiveErrors += 1;
+      rt.nextRunAt = this.computeNext(task, this.now());
+      return;
+    }
+
+    rt.state = 'checking';
+    rt.currentRunId = runId;
+    rt.lastRunAt = this.now();
+    rt.held = false;
+    // `every` counts from the end of the cycle; cron keeps its wall-clock slots (skipped while busy).
+    rt.nextRunAt = 'every' in task.schedule ? null : this.computeNext(task, this.now());
+    this.emitRuntime(rt);
+    this.persist();
+
+    let errored = false;
+    let result = 'nothing to do';
+    try {
+      const ctx: RunContext = {
+        task,
+        runId,
+        runDir,
+        target: createTarget(task, { host: this.d.host, settings: this.d.settings }),
+        settings: this.d.settings,
+        host: this.d.host,
+        log: this.d.log,
+        vars: { task: task.name, taskId: task.id, runId, trigger },
+      };
+
+      const check = await this.steps.runCheck(ctx);
+      this.record(task.id, runId, 'check', check.status, {
+        durationMs: check.durationMs,
+        exitCode: check.exitCode,
+        summary: check.summary,
+        error: check.error,
+        stdoutTail: check.stdoutTail,
+      });
+      if (check.status === 'error') {
+        errored = true;
+        result = `check error: ${check.error}`;
+      } else if (check.status === 'noop') {
+        result = check.summary ?? 'nothing to do';
+      } else {
+        ctx.vars.summary = check.summary ?? '';
+        ctx.vars.context = check.context;
+        let go = true;
+        if (task.classifier) {
+          rt.state = 'classifying';
+          this.emitRuntime(rt);
+          const cls = await this.steps.runClassify(ctx);
+          this.record(task.id, runId, 'classify', cls.status, {
+            durationMs: cls.durationMs,
+            exitCode: cls.exitCode,
+            summary: cls.reason,
+            error: cls.error,
+            detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
+          });
+          if (cls.status === 'error') {
+            errored = true;
+            go = false;
+            result = `classifier error: ${cls.error}`;
+          } else if (cls.status === 'noop') {
+            go = false;
+            result = `classifier: ${cls.reason ?? 'no'}`;
+          }
+        }
+        if (go) {
+          rt.state = 'running';
+          this.emitRuntime(rt);
+          this.record(task.id, runId, 'agent', 'started', { summary: check.summary });
+          const end = await this.runAgent(task, rt, ctx);
+          this.record(task.id, runId, 'agent', end.reason, {
+            durationMs: end.durationMs,
+            exitCode: end.exitCode,
+            summary: end.message,
+            detail: { wasHeld: end.wasHeld },
+          });
+          result = end.message ? `${end.reason}: ${end.message}` : end.reason;
+          if (end.reason === 'error') errored = true;
+        }
+      }
+    } catch (e) {
+      errored = true;
+      result = `error: ${errMsg(e)}`;
+      this.d.log.error(`[${task.id}] run ${runId} failed: ${errMsg(e)}`);
+      this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
+    } finally {
+      this.agents.delete(task.id);
+      this.finishCycle(task.id, rt, errored, result);
+    }
+  }
+
+  private finishCycle(taskId: string, rt: TaskRuntime, errored: boolean, result: string): void {
+    rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
+    rt.lastResult = result;
+    rt.currentRunId = null;
+    rt.held = false;
+    const fresh = this.d.tasks.get(taskId);
+    if (!fresh) {
+      this.runtimes.delete(taskId);
+      this.buffers.delete(taskId);
+      this.persist();
+      return;
+    }
+    if (!fresh.enabled) {
+      rt.state = 'disabled';
+      rt.nextRunAt = null;
+    } else if (rt.pausedReason) {
+      rt.state = 'paused';
+      rt.nextRunAt = null;
+    } else if (errored && rt.consecutiveErrors >= fresh.backoff.maxConsecutiveErrors) {
+      rt.state = 'paused';
+      rt.pausedReason = `auto-paused after ${rt.consecutiveErrors} consecutive errors`;
+      rt.nextRunAt = null;
+      this.d.log.warn(`[${taskId}] ${rt.pausedReason}`);
+    } else {
+      rt.state = 'idle';
+      rt.nextRunAt = this.computeNext(fresh, this.now());
+    }
+    this.emitRuntime(rt);
+    this.persist();
+  }
+
+  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd> {
+    const max = this.d.settings.outputBufferBytes;
+    this.buffers.set(task.id, { runId: ctx.runId, data: '' });
+    const handle = await this.steps.startAgent(ctx, {
+      onData: (data) => {
+        const buf = this.buffers.get(task.id);
+        if (buf && buf.runId === ctx.runId) {
+          buf.data += data;
+          if (buf.data.length > max) buf.data = buf.data.slice(buf.data.length - max);
+        }
+        this.emitEvent({ type: 'agent:data', taskId: task.id, runId: ctx.runId, data });
+      },
+      onHold: () => {
+        rt.held = true;
+        this.record(task.id, ctx.runId, 'agent', 'held', {
+          summary: `idle for ${task.agent.idleGraceMin} min without looper-done; holding for a human`,
+        });
+        this.emitRuntime(rt);
+      },
+      onResume: () => {
+        rt.held = false;
+        this.emitRuntime(rt);
+      },
+    });
+    this.agents.set(task.id, handle);
+    const end = await handle.finished;
+    this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
+    return end;
+  }
+
+  private record(
+    taskId: string,
+    runId: string,
+    phase: RunPhase,
+    result: RunResult,
+    extra: Partial<RunRecord> = {},
+  ): void {
+    const rec: RunRecord = { ts: new Date(this.now()).toISOString(), taskId, runId, phase, result };
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) (rec as unknown as Record<string, unknown>)[k] = v;
+    }
+    try {
+      this.d.runs.append(rec);
+    } catch (e) {
+      this.d.log.error(`[${taskId}] cannot write run log: ${errMsg(e)}`);
+    }
+    this.emitEvent({ type: 'record', record: rec });
+  }
+
+  private emitRuntime(rt: TaskRuntime): void {
+    this.emitEvent({ type: 'runtime', runtime: { ...rt } });
+  }
+
+  private emitEvent(e: EngineEvent): void {
+    try {
+      this.emit('event', e);
+    } catch (err) {
+      this.d.log.error(`event listener failed: ${errMsg(err)}`);
+    }
+  }
+
+  private persist(): void {
+    const snapshot: Record<string, TaskRuntime> = {};
+    for (const [id, rt] of this.runtimes) snapshot[id] = { ...rt };
+    this.d.state.save(snapshot);
+  }
+}
