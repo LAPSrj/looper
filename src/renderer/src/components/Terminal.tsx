@@ -44,7 +44,7 @@ export function Terminal({ taskId, running, runtime }: Props) {
         currentRun = buf.runId;
         term.write(buf.data);
       } else {
-        term.write(`${DIM}no agent session for this task yet — output appears here when one starts${RESET}\r\n`);
+        term.write(`${DIM}No agent session for this task yet. Output appears here when one starts.${RESET}\r\n`);
       }
       loaded = true;
       window.looper.agent.resize(taskId, term.cols, term.rows);

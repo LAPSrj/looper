@@ -11,7 +11,7 @@ export function fmtTime(iso: string): string {
 }
 
 export function fmtCountdown(ts: number | null, now: number): string {
-  if (ts === null) return '—';
+  if (ts === null) return '';
   const diff = ts - now;
   if (diff <= 0) return 'now';
   return formatDuration(diff);

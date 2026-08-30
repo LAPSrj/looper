@@ -266,8 +266,8 @@ export function TaskEditor({ task, initial, defaultTarget, onSaved, onCancel }: 
         {tab === 'trigger' && (
           <div className="form">
             <p className="help tab-intro">
-              On every scheduled slot the check command runs and decides whether there is work. Nothing else happens — and no
-              tokens are spent — unless it says so.
+              On every scheduled slot the check command runs and decides whether there is work. Nothing else happens, and no
+              tokens are spent, unless it says so.
             </p>
             <div className="row">
               <Field label="Repeat">
@@ -284,7 +284,7 @@ export function TaskEditor({ task, initial, defaultTarget, onSaved, onCancel }: 
                 label={scheduleKind === 'every' ? 'Interval' : 'Cron expression'}
                 help={
                   scheduleKind === 'every'
-                    ? 'Counted after each run finishes — e.g. 90s, 5m, 1h30m.'
+                    ? 'Counted after each run finishes, e.g. 90s, 5m, 1h30m.'
                     : 'Wall-clock schedule. Slots that pass while a run is busy are skipped, never overlapped.'
                 }
               >
@@ -422,7 +422,7 @@ export function TaskEditor({ task, initial, defaultTarget, onSaved, onCancel }: 
               <Field label="Max runtime (minutes)" help="Hard stop for a single agent run.">
                 <input autoFocus type="number" min={1} value={draft.agent.maxRuntimeMin ?? 120} onChange={(e) => setAgent('maxRuntimeMin', Number(e.target.value))} />
               </Field>
-              <Field label="Idle grace (minutes)" help="How long the agent may sit idle — turn finished, or waiting on a prompt — without signalling done.">
+              <Field label="Idle grace (minutes)" help="How long the agent may sit idle (turn finished, or waiting on a prompt) without signalling done.">
                 <input type="number" min={1} value={draft.agent.idleGraceMin ?? 3} onChange={(e) => setAgent('idleGraceMin', Number(e.target.value))} />
               </Field>
             </div>

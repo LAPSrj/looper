@@ -16,7 +16,7 @@ export function App() {
   const [records, setRecords] = useState<Record<string, RunRecord[]>>({});
   const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<DetailTab>('log');
+  const [tab, setTab] = useState<DetailTab>('status');
   const [showLog, setShowLog] = useState(false);
   const [now, setNow] = useState(Date.now());
 
@@ -95,7 +95,7 @@ export function App() {
 
   // Keyboard: Ctrl+Tab / Ctrl+PageDown|PageUp cycle the detail tabs; Esc closes the engine log.
   useEffect(() => {
-    const order: DetailTab[] = ['log', 'terminal'];
+    const order: DetailTab[] = ['status', 'log', 'terminal'];
     const onKey = (e: KeyboardEvent) => {
       const cycle = (dir: number) =>
         setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);
@@ -137,10 +137,7 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <span className="sidebar-title">Tasks</span>
-          <button className="btn small" onClick={() => void window.looper.openEditor()} title="New task (Ctrl+N)">
-            + New
-          </button>
+          <span className="pane-title">Tasks</span>
         </div>
         <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
       </aside>
@@ -159,7 +156,7 @@ export function App() {
           <div className="empty">
             <h2>No tasks yet</h2>
             <p>
-              Create one with <b>+ New</b>, start from{' '}
+              Create one from the File menu (<b>Ctrl+N</b>), start from{' '}
               <button className="link" onClick={() => void window.looper.openExampleEditor()}>
                 the example task
               </button>

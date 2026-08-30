@@ -96,7 +96,7 @@ export function SettingsApp() {
             label="Claude command"
             help={
               <>
-                Command or full path used to launch claude inside the task's environment — e.g. <code>claude</code> or{' '}
+                Command or full path used to launch claude inside the task's environment, e.g. <code>claude</code> or{' '}
                 <code>/home/me/.local/bin/claude</code>. Quote it yourself if the path contains spaces.
               </>
             }

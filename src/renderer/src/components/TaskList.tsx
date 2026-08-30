@@ -55,9 +55,11 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
         const countdown = rt?.state === 'idle' ? fmtCountdown(rt.nextRunAt, now) : '';
         const sub =
           rt?.state === 'idle'
-            ? countdown === 'now' || countdown === '—'
-              ? `Next run ${countdown}`
-              : `Next run in ${countdown}`
+            ? countdown === ''
+              ? 'Not scheduled'
+              : countdown === 'now'
+                ? 'Next run now'
+                : `Next run in ${countdown}`
             : rt?.state === 'paused'
               ? capFirst(rt.pausedReason ?? 'paused')
               : capFirst(rt?.lastResult ?? '');

@@ -116,7 +116,7 @@ export function RunLog({ task, records }: Props) {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span>
-                Output — run <span className="mono">{output.runId}</span>
+                Output of run <span className="mono">{output.runId}</span>
               </span>
               <button ref={closeRef} className="btn small" onClick={() => setOutput(null)}>
                 Close

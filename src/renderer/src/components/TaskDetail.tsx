@@ -4,7 +4,7 @@ import { capFirst, fmtCountdown, fmtTime, stateLabel } from '../format';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
 
-export type DetailTab = 'log' | 'terminal';
+export type DetailTab = 'status' | 'log' | 'terminal';
 
 interface Props {
   task: Task;
@@ -24,18 +24,18 @@ function describeTarget(task: Task): string {
   return task.target.distro ? `WSL (${task.target.distro})` : 'WSL (default distro)';
 }
 
-function describeStatus(runtime: TaskRuntime | undefined, now: number): string {
-  if (!runtime) return 'Idle';
-  if (runtime.held) return 'Needs attention — the agent is waiting for you in the Terminal tab';
+function statusDetail(runtime: TaskRuntime | undefined, now: number): string {
+  if (!runtime) return '';
+  if (runtime.held) return 'The agent is waiting for you in the Terminal tab';
   switch (runtime.state) {
     case 'idle':
-      return runtime.nextRunAt ? `Idle — next run in ${fmtCountdown(runtime.nextRunAt, now)}` : 'Idle';
+      return runtime.nextRunAt ? `Next run in ${fmtCountdown(runtime.nextRunAt, now)}` : '';
     case 'running':
-      return runtime.currentRunId ? `Running — run ${runtime.currentRunId}` : 'Running';
+      return runtime.currentRunId ? `Run ${runtime.currentRunId}` : '';
     case 'paused':
-      return `Paused — ${runtime.pausedReason ?? 'paused'}`;
+      return capFirst(runtime.pausedReason ?? '');
     default:
-      return stateLabel(runtime);
+      return '';
   }
 }
 
@@ -59,68 +59,18 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
     if (window.confirm(`Delete task "${task.name}"?`)) void act(() => window.looper.tasks.remove(task.id));
   };
 
-  const lastRun = runtime?.lastRunAt
-    ? `${fmtTime(new Date(runtime.lastRunAt).toISOString())}${runtime.lastResult ? ` — ${capFirst(runtime.lastResult)}` : ''}`
-    : 'Never';
+  const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
+  const detail = statusDetail(runtime, now);
 
   return (
     <div className="detail">
-      <header className="detail-header">
-        <div className="detail-title">
-          <h1>{task.name}</h1>
-          <span className={`badge state-${runtime?.held ? 'held' : runtime?.state ?? 'idle'}`}>{stateLabel(runtime)}</span>
-        </div>
-        <div className="actions">
-          <button className="btn" disabled={busy || active} onClick={() => act(() => window.looper.runtime.runNow(task.id))}>
-            Run now
-          </button>
-          {runtime?.state === 'paused' ? (
-            <button className="btn" disabled={busy} onClick={() => act(() => window.looper.runtime.resume(task.id))}>
-              Resume
-            </button>
-          ) : (
-            <button
-              className="btn"
-              disabled={busy || runtime?.state === 'disabled'}
-              onClick={() => act(() => window.looper.runtime.pause(task.id))}
-              title={active ? 'Pauses after the current run finishes' : undefined}
-            >
-              Pause
-            </button>
-          )}
-          <button className="btn danger" disabled={busy || !running} onClick={() => act(() => window.looper.runtime.stopAgent(task.id))}>
-            Stop agent
-          </button>
-          <button className="btn" disabled={busy} onClick={() => void window.looper.openEditor(task.id)}>
-            Edit…
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() => act(() => window.looper.tasks.save({ ...task, enabled: !task.enabled }))}
-          >
-            {task.enabled ? 'Disable' : 'Enable'}
-          </button>
-          <button className="btn danger" disabled={busy} onClick={remove}>
-            Delete
-          </button>
-        </div>
-        <dl className="props">
-          <dt>Status</dt>
-          <dd>{describeStatus(runtime, now)}</dd>
-          <dt>Schedule</dt>
-          <dd>{describeSchedule(task)}</dd>
-          <dt>Environment</dt>
-          <dd>{describeTarget(task)}</dd>
-          <dt>Working directory</dt>
-          <dd className="mono">{task.cwd}</dd>
-          <dt>Last run</dt>
-          <dd>{lastRun}</dd>
-          <dt>Task ID</dt>
-          <dd className="mono">{task.id}</dd>
-        </dl>
-      </header>
+      <div className="detail-bar">
+        <span className="pane-title">{task.name}</span>
+      </div>
       <nav className="tabs">
+        <button className={`tab ${tab === 'status' ? 'active' : ''}`} onClick={() => onTab('status')}>
+          Status
+        </button>
         <button className={`tab ${tab === 'log' ? 'active' : ''}`} onClick={() => onTab('log')}>
           Run log
         </button>
@@ -129,6 +79,64 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
         </button>
       </nav>
       <section className="tab-body">
+        {tab === 'status' && (
+          <div className="status-pane">
+            <div className="actions">
+              <button className="btn" disabled={busy || active} onClick={() => act(() => window.looper.runtime.runNow(task.id))}>
+                Run now
+              </button>
+              {runtime?.state === 'paused' ? (
+                <button className="btn" disabled={busy} onClick={() => act(() => window.looper.runtime.resume(task.id))}>
+                  Resume
+                </button>
+              ) : (
+                <button
+                  className="btn"
+                  disabled={busy || runtime?.state === 'disabled'}
+                  onClick={() => act(() => window.looper.runtime.pause(task.id))}
+                  title={active ? 'Pauses after the current run finishes' : undefined}
+                >
+                  Pause
+                </button>
+              )}
+              <button className="btn danger" disabled={busy || !running} onClick={() => act(() => window.looper.runtime.stopAgent(task.id))}>
+                Stop agent
+              </button>
+              <button className="btn" disabled={busy} onClick={() => void window.looper.openEditor(task.id)}>
+                Edit…
+              </button>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() => act(() => window.looper.tasks.save({ ...task, enabled: !task.enabled }))}
+              >
+                {task.enabled ? 'Disable' : 'Enable'}
+              </button>
+              <button className="btn danger" disabled={busy} onClick={remove}>
+                Delete
+              </button>
+            </div>
+            <dl className="props">
+              <dt>Status</dt>
+              <dd>
+                <span className={`badge state-${runtime?.held ? 'held' : runtime?.state ?? 'idle'}`}>{stateLabel(runtime)}</span>
+                {detail ? ` ${detail}` : ''}
+              </dd>
+              <dt>Schedule</dt>
+              <dd>{describeSchedule(task)}</dd>
+              <dt>Environment</dt>
+              <dd>{describeTarget(task)}</dd>
+              <dt>Working directory</dt>
+              <dd className="mono">{task.cwd}</dd>
+              <dt>Last run</dt>
+              <dd>{lastRun}</dd>
+              <dt>Last result</dt>
+              <dd>{runtime?.lastResult ? capFirst(runtime.lastResult) : 'None'}</dd>
+              <dt>Task ID</dt>
+              <dd className="mono">{task.id}</dd>
+            </dl>
+          </div>
+        )}
         {tab === 'log' && <RunLog task={task} records={records} />}
         {tab === 'terminal' && <Terminal taskId={task.id} running={!!running} runtime={runtime} />}
       </section>
