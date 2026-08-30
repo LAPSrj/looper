@@ -6,3 +6,4 @@ release/
 .DS_Store
 .vite/
 e2e-tmp/
+*.tsbuildinfo

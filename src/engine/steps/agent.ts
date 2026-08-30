@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type * as PtyNS from 'node-pty';
-import { stripAnsi } from '../../shared/ansi';
+import { ScreenModel } from '../screen';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
@@ -58,9 +58,8 @@ export const TRUST_PROMPT_RE = /trust\s+this\s+folder/i;
  * turn has not ended so the Stop hook will not fire; treat it as idle.
  */
 export const WAITING_PROMPT_RE = /Esc\s+to\s+cancel/i;
-const TRUST_WINDOW = 6000;
-/** Printable output after a prompt that means "the agent moved on" (auto mode approved it, or a human answered). */
-const PROMPT_RESOLVED_CHARS = 300;
+const PTY_COLS = 120;
+const PTY_ROWS = 32;
 
 let ptyModule: typeof PtyNS | null = null;
 function loadPty(): typeof PtyNS {
@@ -111,8 +110,8 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   const pty = loadPty();
   const proc = pty.spawn(launcher.spec.command, launcher.spec.args, {
     name: 'xterm-256color',
-    cols: 120,
-    rows: 32,
+    cols: PTY_COLS,
+    rows: PTY_ROWS,
     cwd: ctx.runDir,
     env: childEnv(),
   });
@@ -137,6 +136,10 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   );
   const idleGraceMs = a.idleGraceMin * 60_000;
 
+  const screen = headless ? null : new ScreenModel(PTY_COLS, PTY_ROWS);
+  let trustHandled = headless || !settings.autoTrustWorkspace;
+  let promptSince: number | null = null;
+
   const killTree = async (): Promise<void> => {
     try {
       proc.kill();
@@ -155,6 +158,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
     clearTimeout(maxTimer);
     if (!exited) await killTree();
     out.end();
+    screen?.dispose();
     resolveFinished({
       reason,
       exitCode,
@@ -166,41 +170,9 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
 
   const maxTimer = setTimeout(() => void finish('max-runtime', `exceeded ${a.maxRuntimeMin} min`), a.maxRuntimeMin * 60_000);
 
-  let trustHandled = headless || !settings.autoTrustWorkspace;
-  let recent = '';
-  let promptSince: number | null = null;
-  let printableSincePrompt = 0;
   proc.onData((d) => {
     out.write(d);
-    if (!headless) {
-      const plain = stripAnsi(d);
-      recent = (recent + plain).slice(-TRUST_WINDOW);
-      if (!trustHandled && TRUST_PROMPT_RE.test(recent)) {
-        trustHandled = true;
-        ctx.log.info(`[${task.id}] answering the workspace trust dialog for ${task.cwd}`);
-        // Options are "No, exit" (preselected) / "Yes, I trust this folder": Down, then Enter.
-        setTimeout(() => !ended && proc.write('\x1b[B'), 400);
-        setTimeout(() => {
-          if (ended) return;
-          proc.write('\r');
-          promptSince = null;
-          recent = '';
-        }, 800);
-      } else if (WAITING_PROMPT_RE.test(plain)) {
-        // A prompt is on screen (re-renders keep hitting this branch while it waits).
-        if (promptSince === null) {
-          promptSince = Date.now();
-          ctx.log.info(`[${task.id}] agent is waiting on a prompt`);
-        }
-        printableSincePrompt = 0;
-      } else if (promptSince !== null) {
-        printableSincePrompt += plain.replace(/\s+/g, '').length;
-        if (printableSincePrompt > PROMPT_RESOLVED_CHARS) {
-          promptSince = null;
-          ctx.log.info(`[${task.id}] prompt resolved; agent continues`);
-        }
-      }
-    }
+    if (screen && !ended) void screen.write(d);
     try {
       cb.onData(d);
     } catch {
@@ -224,6 +196,25 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
         if (idleSince === null || mtime > idleSince) idleSince = mtime;
       },
       onTick: (now) => {
+        if (ended || !screen) return;
+        if (!trustHandled && screen.contains(TRUST_PROMPT_RE)) {
+          trustHandled = true;
+          ctx.log.info(`[${task.id}] answering the workspace trust dialog for ${task.cwd}`);
+          // Options are "No, exit" (preselected) / "Yes, I trust this folder": Down, then Enter.
+          setTimeout(() => !ended && proc.write('\x1b[B'), 300);
+          setTimeout(() => !ended && proc.write('\r'), 700);
+          return;
+        }
+        // A prompt visible on screen = the agent is waiting for a human; treat as idle.
+        if (screen.contains(WAITING_PROMPT_RE)) {
+          if (promptSince === null) {
+            promptSince = now;
+            ctx.log.info(`[${task.id}] agent is waiting on a prompt`);
+          }
+        } else if (promptSince !== null) {
+          promptSince = null;
+          ctx.log.info(`[${task.id}] prompt resolved; agent continues`);
+        }
         if (held) return;
         const since = idleSince ?? promptSince;
         if (since === null) return;
@@ -259,6 +250,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       if (ended) return;
       try {
         proc.resize(Math.max(2, cols), Math.max(2, rows));
+        screen?.resize(cols, rows);
       } catch {
         /* ignore */
       }

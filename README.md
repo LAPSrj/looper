@@ -152,9 +152,10 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
   dependency so this is a packaging change.
 - Interactive claude shows a "trust this folder?" dialog on first use of a
   directory; Looper answers it (`autoTrustWorkspace`, default on).
-- Any other interactive prompt (permission request, question) is detected by
-  its "Esc to cancel" footer and starts the idle clock: after `idleGraceMin`
-  the run ends, or is held for you if `onIdleTimeout: "hold"`. In testing,
+- Any other interactive prompt (permission request, question) is detected on a
+  headless terminal model of the session (its "Esc to cancel" footer is
+  visible on screen) and starts the idle clock: after `idleGraceMin` the run
+  ends, or is held for you if `onIdleTimeout: "hold"`. In testing,
   `--permission-mode auto` still prompted before creating a file, so for fully
   unattended tasks use `acceptEdits` / `--allowedTools …` in `extraArgs`, or
   set `hold` and answer prompts in the terminal tab.

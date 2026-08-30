@@ -242,7 +242,33 @@ responses.
 5. **Registration inbox, packaging, autostart, notifications, run-dir
    retention/cleanup.**
 
-## 13. Risks / open points
+## 13. Status (2026-08-30)
+
+Milestones 0–5 built in one pass; see README for usage. Verified live in WSL
+(host=wsl → target=wsl): check contract incl. error path, headless agent,
+interactive agent with `looper-done`, trust-dialog auto-answer, prompt-wait
+detection, clean shutdown killing a live agent, inbox registration via the CLI,
+Electron main boot under WSLg. Unit tests cover duration/template/check
+parsing/classifier parsing/targets/scheduler state machine/prompt detection.
+
+Not yet verified: Windows host (node-pty ConPTY + `wsl.exe` spawn), the
+`windows` PowerShell target, WSL-host → Windows-target, the classifier step
+end to end (its output parsing is tested against a real `claude -p` envelope).
+
+Findings that changed the design during the build:
+- Interactive claude blocks on a "trust this folder?" dialog → answered
+  automatically (`autoTrustWorkspace`).
+- Permission prompts do not fire the Stop hook → the pty stream is also fed
+  into a headless xterm (`@xterm/headless`); a visible "Esc to cancel" footer
+  starts the idle clock, and it clears when the footer leaves the screen. A
+  byte-stream heuristic was tried first and failed: claude partially redraws
+  the screen while a prompt waits.
+- `looper-done` is itself a Bash call → pre-allowed through the injected
+  `--settings` (`permissions.allow`), verified with `claude -p`.
+- `bash -lic` without a pty prints job-control noise → filtered from stderr.
+- Nested-session env markers (`CLAUDECODE`, …) are stripped from child envs.
+
+## 14. Risks / open points
 
 - node-pty native build under Electron on Windows (ConPTY) — spike.
 - Killing the WSL side of a run reliably — marker + pkill fallback.

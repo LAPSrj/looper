@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stripAnsi } from '../src/shared/ansi';
+import { ScreenModel } from '../src/engine/screen';
 import { TRUST_PROMPT_RE, WAITING_PROMPT_RE, systemFooter } from '../src/engine/steps/agent';
 
 // Real fragments captured from a claude pty session (cursor-column moves between words).
@@ -11,15 +12,36 @@ const PERMISSION_PROMPT =
   '\x1b[1B\x1b[22m\x1b[38;5;246m3. \x1b[39mNo\x1b[1C\x1b[2B\x1b[38;5;246mEsc to cancel · Tab to amend\x1b[39m';
 const WORKING = '\x1b[38;5;246m✻ Thinking… (esc to interrupt)\x1b[39m';
 
-describe('prompt detection', () => {
+describe('prompt detection (regexes on stripped bytes)', () => {
   it('sees the trust dialog through cursor moves', () => {
     expect(TRUST_PROMPT_RE.test(stripAnsi(TRUST_DIALOG))).toBe(true);
     expect(TRUST_PROMPT_RE.test(stripAnsi(PERMISSION_PROMPT))).toBe(false);
   });
   it('sees a permission prompt but not a working spinner', () => {
     expect(WAITING_PROMPT_RE.test(stripAnsi(PERMISSION_PROMPT))).toBe(true);
-    expect(WAITING_PROMPT_RE.test(stripAnsi(TRUST_DIALOG))).toBe(true);
     expect(WAITING_PROMPT_RE.test(stripAnsi(WORKING))).toBe(false);
+  });
+});
+
+describe('ScreenModel', () => {
+  it('reports what is visible, and forgets a prompt once the screen is redrawn without it', async () => {
+    const screen = new ScreenModel(120, 32);
+    await screen.write('\x1b[?1049h\x1b[H' + PERMISSION_PROMPT);
+    expect(screen.contains(WAITING_PROMPT_RE)).toBe(true);
+    // Partial re-render of the top of the screen must NOT hide the prompt.
+    await screen.write('\x1b[H\x1b[1mCheck output\x1b[22m lots of text redrawn at the top');
+    expect(screen.contains(WAITING_PROMPT_RE)).toBe(true);
+    // Full clear + working spinner: prompt gone.
+    await screen.write('\x1b[2J\x1b[H' + WORKING);
+    expect(screen.contains(WAITING_PROMPT_RE)).toBe(false);
+    expect(screen.text()).toContain('Thinking');
+    screen.dispose();
+  });
+  it('sees the trust dialog', async () => {
+    const screen = new ScreenModel(120, 32);
+    await screen.write(TRUST_DIALOG);
+    expect(screen.contains(TRUST_PROMPT_RE)).toBe(true);
+    screen.dispose();
   });
 });
 
