@@ -40,15 +40,6 @@ export function SettingsApp() {
 
   return (
     <div className="editor">
-      <div className="editor-toolbar">
-        <span className="spacer" />
-        <button className="btn" onClick={() => window.close()} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-      </div>
       {errors.length > 0 && (
         <ul className="errors">
           {errors.map((e, i) => (
@@ -126,6 +117,14 @@ export function SettingsApp() {
           </div>
         </details>
         <p className="help">Changes apply immediately; already-running agent sessions keep their current configuration.</p>
+      </div>
+      <div className="editor-footer">
+        <button className="btn" onClick={() => window.close()} disabled={saving}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={() => void save()} disabled={saving}>
+          Save
+        </button>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Target, Task, TaskInput } from '@shared/types';
 import { slugify, validateTask } from '@shared/validate';
 import { EXAMPLE_TASK } from '@shared/example-task';
@@ -15,6 +15,17 @@ type Draft = TaskInput & {
   agent: NonNullable<TaskInput['agent']>;
   check: NonNullable<TaskInput['check']>;
 };
+
+type EditorTab = 'general' | 'trigger' | 'conditions' | 'action' | 'settings' | 'json';
+
+const TABS: [EditorTab, string][] = [
+  ['general', 'General'],
+  ['trigger', 'Trigger'],
+  ['conditions', 'Conditions'],
+  ['action', 'Action'],
+  ['settings', 'Settings'],
+  ['json', 'JSON'],
+];
 
 function blankDraft(defaultTarget?: Target): Draft {
   return {
@@ -33,15 +44,7 @@ function toDraft(t: Task): Draft {
   return JSON.parse(JSON.stringify(t)) as Draft;
 }
 
-function Field({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help?: ReactNode;
-  children: ReactNode;
-}) {
+function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
   return (
     <div className="field">
       <label className="field-label">{label}</label>
@@ -63,15 +66,11 @@ const PERMISSION_MODES: [string, string][] = [
 
 export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blankDraft(defaultTarget)));
-  const [jsonMode, setJsonMode] = useState(false);
+  const [tab, setTab] = useState<EditorTab>('general');
   const [jsonText, setJsonText] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [extraArgsText, setExtraArgsText] = useState((task?.agent.extraArgs ?? []).join('\n'));
-
-  useEffect(() => {
-    if (jsonMode) setJsonText(JSON.stringify(assemble(), null, 2));
-  }, [jsonMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scheduleKind = 'cron' in draft.schedule ? 'cron' : 'every';
   const scheduleValue = 'cron' in draft.schedule ? draft.schedule.cron : draft.schedule.every;
@@ -100,11 +99,35 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
     };
   }
 
+  /** Fold hand-edited JSON back into the form state. Throws on parse errors. */
+  function applyJson(text: string): Record<string, unknown> {
+    const obj = JSON.parse(text) as Record<string, unknown>;
+    const agent = (obj.agent ?? {}) as Record<string, unknown>;
+    setDraft(obj as unknown as Draft);
+    setExtraArgsText(Array.isArray(agent.extraArgs) ? (agent.extraArgs as string[]).join('\n') : '');
+    return obj;
+  }
+
+  const switchTab = (next: EditorTab) => {
+    if (next === tab) return;
+    if (tab === 'json') {
+      try {
+        applyJson(jsonText);
+      } catch (e) {
+        setErrors([`JSON: ${(e as Error).message}`]);
+        return;
+      }
+      setErrors([]);
+    }
+    if (next === 'json') setJsonText(JSON.stringify(assemble(), null, 2));
+    setTab(next);
+  };
+
   const save = async () => {
     let obj: Record<string, unknown>;
-    if (jsonMode) {
+    if (tab === 'json') {
       try {
-        obj = JSON.parse(jsonText) as Record<string, unknown>;
+        obj = applyJson(jsonText);
       } catch (e) {
         setErrors([`JSON: ${(e as Error).message}`]);
         return;
@@ -131,18 +154,13 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
 
   return (
     <div className="editor">
-      <div className="editor-toolbar">
-        <span className="spacer" />
-        <label className="inline-check">
-          <input type="checkbox" checked={jsonMode} onChange={(e) => setJsonMode(e.target.checked)} /> Edit as JSON
-        </label>
-        <button className="btn" onClick={onCancel} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          {task ? 'Save changes' : 'Create task'}
-        </button>
-      </div>
+      <nav className="tabs editor-tabs">
+        {TABS.map(([id, label]) => (
+          <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => switchTab(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
       {errors.length > 0 && (
         <ul className="errors">
           {errors.map((e, i) => (
@@ -150,12 +168,9 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
           ))}
         </ul>
       )}
-      {jsonMode ? (
-        <textarea className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
-      ) : (
-        <div className="form">
-          <section>
-            <h3>Basics</h3>
+      <div className="editor-body">
+        {tab === 'general' && (
+          <div className="form">
             <Field label="Task name" help="Shown in the task list.">
               <input value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Issues triage" />
             </Field>
@@ -169,6 +184,52 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                   <option value="disabled">Disabled</option>
                 </select>
               </Field>
+              <Field label="Task ID" help={task ? 'Fixed after creation.' : 'Leave empty to generate it from the name.'}>
+                <input className="mono" value={draft.id} disabled={!!task} onChange={(e) => set('id', e.target.value)} placeholder="issues-triage" />
+              </Field>
+            </div>
+            <section>
+              <h3>Environment</h3>
+              <div className="row">
+                <Field label="Runs in">
+                  <select
+                    value={draft.target.kind}
+                    onChange={(e) => set('target', e.target.value === 'windows' ? { kind: 'windows' } : { kind: 'wsl' })}
+                  >
+                    <option value="wsl">WSL / Linux shell</option>
+                    <option value="windows">Windows (PowerShell)</option>
+                  </select>
+                </Field>
+                {isWsl && (
+                  <Field label="WSL distro" help="Leave empty to use the default distro.">
+                    <input value={wslTarget?.distro ?? ''} onChange={(e) => setWsl({ distro: e.target.value || undefined })} placeholder="Ubuntu-22.04" />
+                  </Field>
+                )}
+                {isWsl && (
+                  <Field label="Shell" help="Default bash -lic loads your login + interactive profile (nvm, PATH).">
+                    <input className="mono" value={wslTarget?.shell ?? ''} onChange={(e) => setWsl({ shell: e.target.value || undefined })} placeholder="bash -lic" />
+                  </Field>
+                )}
+              </div>
+              <Field label="Working directory" help="Where the check script and the agent run, written the way that environment sees it.">
+                <input
+                  className="mono"
+                  value={draft.cwd}
+                  onChange={(e) => set('cwd', e.target.value)}
+                  placeholder={isWsl ? '/home/me/repos/project' : 'C:\\repos\\project'}
+                />
+              </Field>
+            </section>
+          </div>
+        )}
+
+        {tab === 'trigger' && (
+          <div className="form">
+            <p className="help tab-intro">
+              On every scheduled slot the check command runs and decides whether there is work. Nothing else happens — and no
+              tokens are spent — unless it says so.
+            </p>
+            <div className="row">
               <Field label="Repeat">
                 <select
                   value={scheduleKind}
@@ -193,66 +254,31 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                   placeholder={scheduleKind === 'every' ? '10m' : '*/10 * * * *'}
                 />
               </Field>
-            </div>
-          </section>
-
-          <section>
-            <h3>Where it runs</h3>
-            <div className="row">
-              <Field label="Environment">
-                <select
-                  value={draft.target.kind}
-                  onChange={(e) => set('target', e.target.value === 'windows' ? { kind: 'windows' } : { kind: 'wsl' })}
-                >
-                  <option value="wsl">WSL / Linux shell</option>
-                  <option value="windows">Windows (PowerShell)</option>
-                </select>
+              <Field label="Check timeout (seconds)">
+                <input type="number" min={1} value={draft.check.timeoutSec ?? 60} onChange={(e) => setCheck('timeoutSec', Number(e.target.value))} />
               </Field>
-              {isWsl && (
-                <Field label="WSL distro" help="Leave empty to use the default distro.">
-                  <input
-                    value={wslTarget?.distro ?? ''}
-                    onChange={(e) => setWsl({ distro: e.target.value || undefined })}
-                    placeholder="Ubuntu-22.04"
-                  />
-                </Field>
-              )}
             </div>
-            <Field
-              label="Working directory"
-              help="Where the check script and the agent run, written the way that environment sees it."
-            >
-              <input
-                className="mono"
-                value={draft.cwd}
-                onChange={(e) => set('cwd', e.target.value)}
-                placeholder={isWsl ? '/home/me/repos/project' : 'C:\\repos\\project'}
-              />
-            </Field>
-          </section>
-
-          <section>
-            <h3>Check</h3>
             <Field
               label="Check command"
               help={
                 <>
-                  A cheap script that decides whether there is anything to do. The last line it prints must be JSON:{' '}
-                  <code>{'{"act": true, "summary": "3 new issues", "context": …}'}</code>. A failing or malformed check is an
-                  error and never starts an agent.
+                  The last line it prints must be JSON: <code>{'{"act": true, "summary": "3 new issues", "context": …}'}</code>. A
+                  failing or malformed check is an error and never starts an agent.
                 </>
               }
             >
-              <textarea className="mono" rows={3} value={draft.check.command} onChange={(e) => setCheck('command', e.target.value)} />
+              <textarea className="mono" rows={4} value={draft.check.command} onChange={(e) => setCheck('command', e.target.value)} />
             </Field>
-          </section>
+          </div>
+        )}
 
-          <section>
-            <h3>Classifier</h3>
-            <Field
-              label="Classifier step"
-              help="A cheap model reads the check output and decides whether starting the full agent is worth it. Useful when the check catches noise."
-            >
+        {tab === 'conditions' && (
+          <div className="form">
+            <p className="help tab-intro">
+              An optional gate between the check and the agent: a cheap model reads the check output and decides whether starting
+              the full agent is actually worth it. Useful when the check catches noise.
+            </p>
+            <Field label="Classifier step">
               <select
                 value={draft.classifier ? 'on' : 'off'}
                 onChange={(e) => set('classifier', e.target.value === 'on' ? { ...EXAMPLE_TASK.classifier! } : undefined)}
@@ -265,10 +291,7 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
               <>
                 <div className="row">
                   <Field label="Model">
-                    <input
-                      value={draft.classifier.model ?? 'haiku'}
-                      onChange={(e) => set('classifier', { ...draft.classifier!, model: e.target.value })}
-                    />
+                    <input value={draft.classifier.model ?? 'haiku'} onChange={(e) => set('classifier', { ...draft.classifier!, model: e.target.value })} />
                   </Field>
                   <Field label="Budget limit (USD)">
                     <input
@@ -297,14 +320,16 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                     </>
                   }
                 >
-                  <textarea rows={4} value={draft.classifier.prompt} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
+                  <textarea rows={5} value={draft.classifier.prompt} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
                 </Field>
               </>
             )}
-          </section>
+          </div>
+        )}
 
-          <section>
-            <h3>Agent</h3>
+        {tab === 'action' && (
+          <div className="form">
+            <p className="help tab-intro">What actually runs when there is work: a fresh claude session in the task's directory.</p>
             <div className="row">
               <Field label="Model" help="e.g. sonnet, opus, haiku. Empty = your claude default.">
                 <input value={draft.agent.model ?? ''} onChange={(e) => setAgent('model', e.target.value || undefined)} placeholder="sonnet" />
@@ -322,37 +347,6 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                   <option value="headless">Headless (claude -p)</option>
                 </select>
               </Field>
-            </div>
-            <Field
-              label="Agent prompt"
-              help={
-                <>
-                  What the agent should do. <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output
-                  (appended automatically if you don't use them). Good practice: end with "finish by running{' '}
-                  <code>looper-done "&lt;one line summary&gt;"</code>".
-                </>
-              }
-            >
-              <textarea rows={7} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
-            </Field>
-          </section>
-
-          <details className="advanced">
-            <summary>Advanced settings</summary>
-            <div className="row">
-              <Field label="Task ID" help={task ? 'Fixed after creation.' : 'Leave empty to generate it from the name.'}>
-                <input className="mono" value={draft.id} disabled={!!task} onChange={(e) => set('id', e.target.value)} placeholder="issues-triage" />
-              </Field>
-              {isWsl && (
-                <Field label="Shell" help="Launches the check and the agent. The default bash -lic loads your login + interactive profile (nvm, PATH).">
-                  <input className="mono" value={wslTarget?.shell ?? ''} onChange={(e) => setWsl({ shell: e.target.value || undefined })} placeholder="bash -lic" />
-                </Field>
-              )}
-            </div>
-            <div className="row">
-              <Field label="Check timeout (seconds)">
-                <input type="number" min={1} value={draft.check.timeoutSec ?? 60} onChange={(e) => setCheck('timeoutSec', Number(e.target.value))} />
-              </Field>
               <Field label="Permission mode" help="Passed to claude as --permission-mode.">
                 <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
                   {PERMISSION_MODES.map(([value, label]) => (
@@ -363,9 +357,26 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                 </select>
               </Field>
             </div>
+            <Field
+              label="Agent prompt"
+              help={
+                <>
+                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output (appended automatically if
+                  you don't use them). Good practice: end with "finish by running <code>looper-done "&lt;one line summary&gt;"</code>".
+                </>
+              }
+            >
+              <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
+            </Field>
             <Field label="Extra claude arguments" help="One per line, appended to the claude command line as-is.">
               <textarea className="mono" rows={3} value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} placeholder={'--add-dir\n/home/me/other-repo'} />
             </Field>
+          </div>
+        )}
+
+        {tab === 'settings' && (
+          <div className="form">
+            <p className="help tab-intro">Limits that keep a run from hanging forever, and what to do when the task keeps failing.</p>
             <div className="row">
               <Field label="Max runtime (minutes)" help="Hard stop for a single agent run.">
                 <input type="number" min={1} value={draft.agent.maxRuntimeMin ?? 120} onChange={(e) => setAgent('maxRuntimeMin', Number(e.target.value))} />
@@ -373,6 +384,8 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
               <Field label="Idle grace (minutes)" help="How long the agent may sit idle — turn finished, or waiting on a prompt — without signalling done.">
                 <input type="number" min={1} value={draft.agent.idleGraceMin ?? 3} onChange={(e) => setAgent('idleGraceMin', Number(e.target.value))} />
               </Field>
+            </div>
+            <div className="row">
               <Field label="When idle too long">
                 <select value={draft.agent.onIdleTimeout ?? 'finish'} onChange={(e) => setAgent('onIdleTimeout', e.target.value as 'finish' | 'hold')}>
                   <option value="finish">End the run</option>
@@ -388,9 +401,21 @@ export function TaskEditor({ task, defaultTarget, onSaved, onCancel }: Props) {
                 />
               </Field>
             </div>
-          </details>
-        </div>
-      )}
+          </div>
+        )}
+
+        {tab === 'json' && (
+          <textarea className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
+        )}
+      </div>
+      <div className="editor-footer">
+        <button className="btn" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={() => void save()} disabled={saving}>
+          {task ? 'Save changes' : 'Create task'}
+        </button>
+      </div>
     </div>
   );
 }
