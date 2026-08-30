@@ -18,8 +18,7 @@
     "serve": "tsx src/cli/index.ts serve",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "package": "npm run build:all && electron-builder --win",
-    "postinstall": "electron-builder install-app-deps"
+    "package": "npm run build:all && electron-builder --win"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -27,7 +26,7 @@
     "@xterm/xterm": "^6.0.0",
     "commander": "^13.1.0",
     "croner": "^9.0.0",
-    "node-pty": "^1.1.0",
+    "node-pty": "1.2.0-beta.15",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^3.24.0"
@@ -48,6 +47,7 @@
   },
   "build": {
     "appId": "com.lemorim.looper",
+    "npmRebuild": false,
     "productName": "Looper",
     "directories": {
       "output": "release"

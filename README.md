@@ -48,8 +48,11 @@ logged as skipped, never overlapped.
 
 ## Install / run
 
+No compiler toolchain needed on any platform: node-pty ships N-API prebuilds
+(win32/linux/mac), which work in both Node and Electron as-is.
+
 ```bash
-npm install            # also rebuilds node-pty for Electron
+npm install
 npm run dev            # Electron app with hot reload
 npm run build:all      # out/ (app) + dist/cli.js
 npm run package        # Windows installer/portable in release/
