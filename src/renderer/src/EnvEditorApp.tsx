@@ -1,17 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { ENVIRONMENT_KINDS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
-
-function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
-      {help && <p className="help">{help}</p>}
-    </div>
-  );
-}
+import { Field, TabBar, EditorFooter } from './components/ui';
+import { useDialogKeys } from './components/hooks';
+import { SelectList, ListActions } from './components/SelectList';
 
 type EnvTab = 'general' | 'harnesses' | 'advanced';
 
@@ -96,40 +89,14 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     ...(hasAdvanced ? ([['advanced', 'Advanced']] as [EnvTab, string][]) : []),
   ];
 
-  // Dialog keys: Esc = cancel, Enter on an input or Ctrl+Enter anywhere = save,
-  // Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
-  const keysRef = useRef({ tabs, tab });
-  keysRef.current = { tabs, tab };
   const saveRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        window.close();
-        return;
-      }
-      if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        void saveRef.current();
-        return;
-      }
-      const order = keysRef.current.tabs.map(([id]) => id);
-      const cycle = (dir: number) =>
-        setTab(order[(order.indexOf(keysRef.current.tab) + dir + order.length) % order.length]);
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycle(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && e.key === 'PageDown') {
-        e.preventDefault();
-        cycle(1);
-      } else if (e.ctrlKey && e.key === 'PageUp') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys({
+    onSave: () => void saveRef.current(),
+    onCancel: () => window.close(),
+    tabs: tabs.map(([id]) => id),
+    tab,
+    onTab: setTab,
+  });
 
   if (missing) return <div className="empty">This environment no longer exists.</div>;
   if (!live || !draft || !env) return <div className="empty">Loading…</div>;
@@ -170,35 +137,6 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     setSelected(harnesses.find((h) => h.id !== harness.id)?.id ?? null);
   };
 
-  const onListKey = (e: React.KeyboardEvent) => {
-    if (!harnesses.length) return;
-    const idx = harness ? harnesses.findIndex((x) => x.id === harness.id) : -1;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(harnesses.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = harnesses.length - 1;
-        break;
-      case 'Enter':
-        e.preventDefault();
-        e.stopPropagation();
-        if (harness) void window.looper.openHarnessEditor(envId, harness.id);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    setSelected(harnesses[next].id);
-  };
-
   const doSave = async (): Promise<boolean> => {
     const folded: Environment = {
       ...env,
@@ -232,13 +170,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
 
   return (
     <div className="editor">
-      <nav className="tabs editor-tabs">
-        {tabs.map(([id, label]) => (
-          <button key={id} className={`tab ${shown === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
-      </nav>
+      <TabBar tabs={tabs} active={shown} onSelect={setTab} className="editor-tabs" />
       <div className="editor-body">
         {shown === 'general' && (
           <div className="form">
@@ -278,52 +210,27 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
 
         {shown === 'harnesses' && (
           <div className="form env-tab">
-            <ul
-              className="env-list boxed"
-              role="listbox"
-              aria-label="Harnesses"
-              tabIndex={0}
-              onKeyDown={onListKey}
-              aria-activedescendant={harness ? `harness-${harness.id}` : undefined}
-            >
-              {harnesses.map((h) => (
-                <li
-                  key={h.id}
-                  id={`harness-${h.id}`}
-                  role="option"
-                  aria-selected={h.id === selected}
-                  className={`env-item ${h.id === selected ? 'selected' : ''}`}
-                  onClick={() => setSelected(h.id)}
-                  onDoubleClick={() => void window.looper.openHarnessEditor(envId, h.id)}
-                >
-                  <div className="env-item-name">{h.name}</div>
-                  <div className="env-item-sub">{harnessKindLabel(h.kind)}</div>
-                </li>
-              ))}
-            </ul>
-            <div className="env-actions">
-              <button className="btn" onClick={() => void addHarness()}>
-                Add…
-              </button>
-              <button
-                className="btn"
-                disabled={!harness}
-                onClick={() => harness && void window.looper.openHarnessEditor(envId, harness.id)}
-              >
-                Edit…
-              </button>
-              <button className="btn" disabled={!harness} onClick={() => void duplicateHarness()}>
-                Duplicate
-              </button>
-              <button
-                className="btn danger"
-                disabled={!harness || harnesses.length <= 1}
-                title={harnesses.length <= 1 ? 'At least one harness is required' : undefined}
-                onClick={() => void removeHarness()}
-              >
-                Remove
-              </button>
-            </div>
+            <SelectList
+              items={harnesses}
+              label="Harnesses"
+              idPrefix="harness"
+              selectedKey={selected}
+              itemKey={(h) => h.id}
+              itemName={(h) => h.name}
+              itemSub={(h) => harnessKindLabel(h.kind)}
+              onSelect={(h) => setSelected(h.id)}
+              onOpen={(h) => void window.looper.openHarnessEditor(envId, h.id)}
+            />
+            <ListActions
+              onAdd={() => void addHarness()}
+              onEdit={() => harness && void window.looper.openHarnessEditor(envId, harness.id)}
+              editDisabled={!harness}
+              onDuplicate={() => void duplicateHarness()}
+              duplicateDisabled={!harness}
+              onRemove={() => void removeHarness()}
+              removeDisabled={!harness || harnesses.length <= 1}
+              removeTitle={harnesses.length <= 1 ? 'At least one harness is required' : undefined}
+            />
           </div>
         )}
 
@@ -354,17 +261,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
           </div>
         )}
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-        <button className="btn" onClick={() => window.close()} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn" onClick={() => void apply()} disabled={saving}>
-          Apply
-        </button>
-      </div>
+      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
     </div>
   );
 }

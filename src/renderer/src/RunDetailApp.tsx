@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RunRecord } from '@shared/types';
 import { capFirst, fmtTime, formatDuration, stripAnsi } from './format';
+import { useListNav, useDragResize } from './components/hooks';
 
 function formatOutput(text: string): string {
   const trimmed = text.trim();
@@ -32,10 +33,9 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [outputText, setOutputText] = useState<string | null>(null);
-  const [raw, setRaw] = useState(false);
+  const [, setRaw] = useState(false); // forces a re-render when the raw toggle flips rawRef
   const [splitPct, setSplitPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
   const rawRef = useRef(false);
 
   const loadOutput = useCallback(
@@ -82,55 +82,18 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
     });
   }, [records, selected, loadOutput]);
 
-  useEffect(() => {
-    if (selected === null) return;
-    document.getElementById(`step-${selected}`)?.scrollIntoView({ block: 'nearest' });
-  }, [selected]);
+  const onKeyDown = useListNav({
+    count: records.length,
+    index: selected ?? -1,
+    onIndex: (i) => void loadOutput(i, records, rawRef.current),
+    scrollToId: selected !== null ? `step-${selected}` : null,
+  });
 
-  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!records.length) return;
-    const idx = selected ?? -1;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(records.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = records.length - 1;
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    void loadOutput(next, records, rawRef.current);
-  }, [records, selected, loadOutput]);
-
-  const onDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    document.body.style.cursor = 'row-resize';
-
-    const onMove = (me: MouseEvent) => {
-      if (!dragging.current || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const pct = ((me.clientY - rect.top) / rect.height) * 100;
-      setSplitPct(Math.max(15, Math.min(85, pct)));
-    };
-    const onUp = () => {
-      dragging.current = false;
-      document.body.style.cursor = '';
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, []);
+  const onDragStart = useDragResize({
+    axis: 'y',
+    containerRef,
+    onDrag: (y, rect) => setSplitPct(Math.max(15, Math.min(85, (y / rect.height) * 100))),
+  });
 
   return (
     <div className="run-detail-app" ref={containerRef}>

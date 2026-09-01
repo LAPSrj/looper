@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo } from '@shared/api';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
+import { useDialogKeys, useDragResize } from './components/hooks';
 
 const MAX_RECORDS = 500;
 
@@ -101,26 +102,7 @@ export function App() {
     };
   }, []);
 
-  // Keyboard: Ctrl+Tab / Ctrl+PageDown|PageUp cycle the detail tabs; Esc closes the engine log.
-  useEffect(() => {
-    const order: DetailTab[] = ['status', 'log', 'terminal'];
-    const onKey = (e: KeyboardEvent) => {
-      const cycle = (dir: number) =>
-        setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycle(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && e.key === 'PageDown') {
-        e.preventDefault();
-        cycle(1);
-      } else if (e.ctrlKey && e.key === 'PageUp') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys<DetailTab>({ tabs: ['status', 'log', 'terminal'], tab, onTab: setTab });
 
   useEffect(() => {
     if (!selected || records[selected]) return;
@@ -148,27 +130,12 @@ export function App() {
 
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const appRef = useRef<HTMLDivElement>(null);
-  const draggingSidebar = useRef(false);
 
-  const onSidebarDragStart = useCallback((e: ReactMouseEvent) => {
-    e.preventDefault();
-    draggingSidebar.current = true;
-    document.body.style.cursor = 'col-resize';
-    const onMove = (me: globalThis.MouseEvent) => {
-      if (!draggingSidebar.current || !appRef.current) return;
-      const rect = appRef.current.getBoundingClientRect();
-      const w = me.clientX - rect.left;
-      setSidebarWidth(Math.max(180, Math.min(rect.width * 0.5, w)));
-    };
-    const onUp = () => {
-      draggingSidebar.current = false;
-      document.body.style.cursor = '';
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, []);
+  const onSidebarDragStart = useDragResize({
+    axis: 'x',
+    containerRef: appRef,
+    onDrag: (x, rect) => setSidebarWidth(Math.max(180, Math.min(rect.width * 0.5, x))),
+  });
 
   return (
     <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>

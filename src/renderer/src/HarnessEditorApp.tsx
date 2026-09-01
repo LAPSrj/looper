@@ -1,18 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-
-function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
-      {help && <p className="help">{help}</p>}
-    </div>
-  );
-}
+import { Field, TabBar, EditorFooter } from './components/ui';
+import { useDialogKeys } from './components/hooks';
+import { SelectList, ListActions } from './components/SelectList';
 
 const DEFAULT_COMMANDS: Record<Harness['kind'], string> = {
   'claude-code': 'claude',
@@ -77,38 +70,14 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
     });
   }, [envId, harnessId, isNew]);
 
-  // Dialog keys: Esc = cancel, Enter on an input or Ctrl+Enter anywhere = save,
-  // Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
   const saveRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
-    const order = TABS.map(([id]) => id);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        window.close();
-        return;
-      }
-      if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        void saveRef.current();
-        return;
-      }
-      const cycle = (dir: number) =>
-        setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycle(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && e.key === 'PageDown') {
-        e.preventDefault();
-        cycle(1);
-      } else if (e.ctrlKey && e.key === 'PageUp') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys({
+    onSave: () => void saveRef.current(),
+    onCancel: () => window.close(),
+    tabs: TABS.map(([id]) => id),
+    tab,
+    onTab: setTab,
+  });
 
   if (missing) return <div className="empty">This harness no longer exists.</div>;
   if (!settings || !draft) return <div className="empty">Loading…</div>;
@@ -134,34 +103,6 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
-  };
-
-  const onModelsKey = (e: React.KeyboardEvent) => {
-    if (!models.length) return;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = modelIdx === null ? 0 : Math.min(models.length - 1, modelIdx + 1);
-        break;
-      case 'ArrowUp':
-        next = modelIdx === null ? 0 : Math.max(0, modelIdx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = models.length - 1;
-        break;
-      case 'Enter':
-        e.preventDefault();
-        e.stopPropagation();
-        if (modelIdx !== null) void window.looper.openModelEditor(envId, harnessId, modelIdx);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    setSelectedModel(next);
   };
 
   const doSave = async (): Promise<boolean> => {
@@ -211,13 +152,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
 
   return (
     <div className="editor">
-      <nav className="tabs editor-tabs">
-        {TABS.map(([id, label]) => (
-          <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
-      </nav>
+      <TabBar tabs={TABS} active={tab} onSelect={setTab} className="editor-tabs" />
       <div className="editor-body">
         {tab === 'general' && (
         <div className="form">
@@ -275,58 +210,28 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
         )}
         {tab === 'models' && (
           <div className="form env-tab">
-            <ul
-              className="env-list boxed"
-              role="listbox"
-              aria-label="Models"
-              tabIndex={0}
-              onKeyDown={onModelsKey}
-              aria-activedescendant={modelIdx !== null ? `model-${modelIdx}` : undefined}
-            >
-              {models.map((m, i) => (
-                <li
-                  key={i}
-                  id={`model-${i}`}
-                  role="option"
-                  aria-selected={i === modelIdx}
-                  className={`env-item ${i === modelIdx ? 'selected' : ''}`}
-                  onClick={() => setSelectedModel(i)}
-                  onDoubleClick={() => void window.looper.openModelEditor(envId, harnessId, i)}
-                >
-                  <div className="env-item-name">{m.name}</div>
-                  <div className="env-item-sub">{m.id}</div>
-                </li>
-              ))}
-            </ul>
-            <div className="env-actions">
-              <button className="btn" onClick={() => void window.looper.openModelEditor(envId, harnessId)}>
-                Add…
-              </button>
-              <button
-                className="btn"
-                disabled={modelIdx === null}
-                onClick={() => modelIdx !== null && void window.looper.openModelEditor(envId, harnessId, modelIdx)}
-              >
-                Edit…
-              </button>
-              <button className="btn danger" disabled={modelIdx === null} onClick={() => void removeModel()}>
-                Remove
-              </button>
-            </div>
+            <SelectList
+              items={models}
+              label="Models"
+              idPrefix="model"
+              selectedKey={modelIdx !== null ? String(modelIdx) : null}
+              itemKey={(_, i) => String(i)}
+              itemName={(m) => m.name}
+              itemSub={(m) => m.id}
+              onSelect={(_, i) => setSelectedModel(i)}
+              onOpen={(_, i) => void window.looper.openModelEditor(envId, harnessId, i)}
+            />
+            <ListActions
+              onAdd={() => void window.looper.openModelEditor(envId, harnessId)}
+              onEdit={() => modelIdx !== null && void window.looper.openModelEditor(envId, harnessId, modelIdx)}
+              editDisabled={modelIdx === null}
+              onRemove={() => void removeModel()}
+              removeDisabled={modelIdx === null}
+            />
           </div>
         )}
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-        <button className="btn" onClick={() => window.close()} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn" onClick={() => void apply()} disabled={saving}>
-          Apply
-        </button>
-      </div>
+      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
     </div>
   );
 }

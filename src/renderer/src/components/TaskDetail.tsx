@@ -4,8 +4,15 @@ import { cronToForm } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtTime, stateLabel } from '../format';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
+import { TabBar } from './ui';
 
 export type DetailTab = 'status' | 'log' | 'terminal';
+
+const TABS: [DetailTab, string][] = [
+  ['status', 'Status'],
+  ['log', 'Run log'],
+  ['terminal', 'Terminal'],
+];
 
 interface Props {
   task: Task;
@@ -46,7 +53,7 @@ function describeSchedule(task: Task): string {
     case 'weekly':
       return `${fmtDays(f.days)} at ${hhmm(f.hour, f.minute)}`;
     case 'monthly':
-      return `Monthly on day ${f.day} at ${hhmm(f.hour, f.minute)}`;
+      return `Monthly on day${f.days.length === 1 ? '' : 's'} ${[...f.days].sort((a, b) => a - b).join(', ')} at ${hhmm(f.hour, f.minute)}`;
     case 'custom':
       return `Cron ${f.cron}`;
   }
@@ -75,7 +82,6 @@ function describeNextRun(runtime: TaskRuntime | undefined, now: number): string 
 export function TaskDetail({ task, environments, runtime, records, now, tab, onTab }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
-  const running = runtime?.state === 'running';
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
   const detail = statusDetail(runtime);
@@ -88,17 +94,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
       <div className="detail-bar">
         <span className="pane-title">{task.name}</span>
       </div>
-      <nav className="tabs">
-        <button className={`tab ${tab === 'status' ? 'active' : ''}`} onClick={() => onTab('status')}>
-          Status
-        </button>
-        <button className={`tab ${tab === 'log' ? 'active' : ''}`} onClick={() => onTab('log')}>
-          Run log
-        </button>
-        <button className={`tab ${tab === 'terminal' ? 'active' : ''}`} onClick={() => onTab('terminal')}>
-          Terminal
-        </button>
-      </nav>
+      <TabBar tabs={TABS} active={tab} onSelect={onTab} />
       <section className="tab-body">
         {tab === 'status' && (
           <div className="status-pane">

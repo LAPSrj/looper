@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Cron } from 'croner';
 import type { Environment, Task, TaskInput } from '@shared/types';
 import { ALL_DAYS, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
-import { DEFAULT_MODELS, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
+import { harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { joinTokens, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
+import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
+import { useDialogKeys } from './hooks';
 
 interface Props {
   task: Task | null;
@@ -54,16 +56,6 @@ function blankDraft(environmentId?: string): Draft {
 
 function toDraft(t: Task): Draft {
   return JSON.parse(JSON.stringify(t)) as Draft;
-}
-
-function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
-      {help && <p className="help">{help}</p>}
-    </div>
-  );
 }
 
 const PERMISSION_MODES: [string, string][] = [
@@ -244,50 +236,11 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const save = async () => { if (await doSave()) onSaved({} as Task); };
   const apply = async () => { await doSave(); };
 
-  // Dialog keyboard semantics: Esc = cancel, Enter on a single-line input or
-  // Ctrl+Enter anywhere = save, Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
-  const keysRef = useRef({ tab, save, onCancel, switchTab });
-  keysRef.current = { tab, save, onCancel, switchTab };
-  useEffect(() => {
-    const order = TABS.map(([id]) => id);
-    const onKey = (e: KeyboardEvent) => {
-      const k = keysRef.current;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        k.onCancel();
-        return;
-      }
-      if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        void k.save();
-        return;
-      }
-      const cycle = (dir: number) =>
-        k.switchTab(order[(order.indexOf(k.tab) + dir + order.length) % order.length]);
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycle(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && e.key === 'PageDown') {
-        e.preventDefault();
-        cycle(1);
-      } else if (e.ctrlKey && e.key === 'PageUp') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys<EditorTab>({ onSave: save, onCancel, tabs: TABS.map(([id]) => id), tab, onTab: switchTab });
 
   return (
     <div className="editor">
-      <nav className="tabs editor-tabs">
-        {TABS.map(([id, label]) => (
-          <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => switchTab(id)}>
-            {label}
-          </button>
-        ))}
-      </nav>
+      <TabBar tabs={TABS} active={tab} onSelect={switchTab} className="editor-tabs" />
       <div className="editor-body">
         <div className={`editor-panel${tab !== 'general' ? ' hidden' : ''}`}>
           <div className="form">
@@ -347,42 +300,34 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
                 <Field label="Every">
                   <div className="browse-row">
-                    <div className="input-suffix">
-                      <input
-                        type="number"
-                        min={0}
-                        max={23}
-                        value={everyH}
-                        onChange={(e) => {
-                          const h = Number(e.target.value);
-                          if (!Number.isInteger(h) || h < 0 || h > 23) return;
-                          if (h === 0) {
-                            setSchedule({ mode: 'minutes', step: Math.max(1, everyM), from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                          } else {
-                            setSchedule({ mode: 'hours', step: h, minute: everyM, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                          }
-                        }}
-                      />
-                      <span className="suffix">h</span>
-                    </div>
-                    <div className="input-suffix">
-                      <input
-                        type="number"
-                        min={everyH > 0 ? 0 : 1}
-                        max={59}
-                        value={everyM}
-                        onChange={(e) => {
-                          const m = Number(e.target.value);
-                          if (!Number.isInteger(m) || m < 0 || m > 59) return;
-                          if (everyH === 0) {
-                            if (m >= 1) setSchedule({ mode: 'minutes', step: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                          } else {
-                            setSchedule({ mode: 'hours', step: everyH, minute: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                          }
-                        }}
-                      />
-                      <span className="suffix">min</span>
-                    </div>
+                    <NumberInput
+                      min={0}
+                      max={23}
+                      suffix="h"
+                      value={everyH}
+                      onChange={(h) => {
+                        if (!Number.isInteger(h) || h < 0 || h > 23) return;
+                        if (h === 0) {
+                          setSchedule({ mode: 'minutes', step: Math.max(1, everyM), from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                        } else {
+                          setSchedule({ mode: 'hours', step: h, minute: everyM, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                        }
+                      }}
+                    />
+                    <NumberInput
+                      min={everyH > 0 ? 0 : 1}
+                      max={59}
+                      suffix="min"
+                      value={everyM}
+                      onChange={(m) => {
+                        if (!Number.isInteger(m) || m < 0 || m > 59) return;
+                        if (everyH === 0) {
+                          if (m >= 1) setSchedule({ mode: 'minutes', step: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                        } else {
+                          setSchedule({ mode: 'hours', step: everyH, minute: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                        }
+                      }}
+                    />
                   </div>
                 </Field>
               )}
@@ -419,12 +364,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   />
                 </Field>
               )}
-              <Field label="Check timeout">
-                <div className="input-suffix">
-                  <input type="number" min={1} value={draft.check.timeoutSec ?? 60} onChange={(e) => setCheck('timeoutSec', Number(e.target.value))} />
-                  <span className="suffix">s</span>
-                </div>
-              </Field>
+              <NumberField
+                label="Check timeout"
+                suffix="s"
+                min={1}
+                value={draft.check.timeoutSec ?? 60}
+                onChange={(n) => setCheck('timeoutSec', n)}
+              />
             {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
               <>
                 <Field label="Active hours">
@@ -619,17 +565,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   )}
                 </div>
                 <div className="row">
-                  <Field label="Timeout">
-                    <div className="input-suffix">
-                      <input
-                        type="number"
-                        min={1}
-                        value={draft.classifier.timeoutSec ?? 180}
-                        onChange={(e) => set('classifier', { ...draft.classifier!, timeoutSec: Number(e.target.value) })}
-                      />
-                      <span className="suffix">s</span>
-                    </div>
-                  </Field>
+                  <NumberField
+                    label="Timeout"
+                    suffix="s"
+                    min={1}
+                    value={draft.classifier.timeoutSec ?? 180}
+                    onChange={(n) => set('classifier', { ...draft.classifier!, timeoutSec: n })}
+                  />
                 </div>
                 <Field
                   label="Classifier prompt"
@@ -738,31 +680,29 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
         <div className={`editor-panel${tab !== 'settings' ? ' hidden' : ''}`}>
           <div className="form">
             <div className="row">
-              <Field label="Max runtime">
-                <div className="input-suffix">
-                  <input type="number" min={1} value={draft.agent.maxRuntimeMin ?? 120} onChange={(e) => setAgent('maxRuntimeMin', Number(e.target.value))} />
-                  <span className="suffix">min</span>
-                </div>
-              </Field>
-              <Field label="Auto-pause after">
-                <div className="input-suffix">
-                  <input
-                    type="number"
-                    min={1}
-                    value={draft.backoff?.maxConsecutiveErrors ?? 5}
-                    onChange={(e) => set('backoff', { maxConsecutiveErrors: Number(e.target.value) })}
-                  />
-                  <span className="suffix">errors</span>
-                </div>
-              </Field>
+              <NumberField
+                label="Max runtime"
+                suffix="min"
+                min={1}
+                value={draft.agent.maxRuntimeMin ?? 120}
+                onChange={(n) => setAgent('maxRuntimeMin', n)}
+              />
+              <NumberField
+                label="Auto-pause after"
+                suffix="errors"
+                min={1}
+                value={draft.backoff?.maxConsecutiveErrors ?? 5}
+                onChange={(n) => set('backoff', { maxConsecutiveErrors: n })}
+              />
             </div>
             <div className="row">
-              <Field label="Idle grace">
-                <div className="input-suffix">
-                  <input type="number" min={1} value={draft.agent.idleGraceMin ?? 3} onChange={(e) => setAgent('idleGraceMin', Number(e.target.value))} />
-                  <span className="suffix">min</span>
-                </div>
-              </Field>
+              <NumberField
+                label="Idle grace"
+                suffix="min"
+                min={1}
+                value={draft.agent.idleGraceMin ?? 3}
+                onChange={(n) => setAgent('idleGraceMin', n)}
+              />
               <Field label="When idle too long">
                 <select value={draft.agent.onIdleTimeout ?? 'finish'} onChange={(e) => setAgent('onIdleTimeout', e.target.value as 'finish' | 'hold')}>
                   <option value="finish">End the run</option>
@@ -777,17 +717,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
           <textarea className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-        <button className="btn" onClick={onCancel} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn" onClick={() => void apply()} disabled={saving}>
-          Apply
-        </button>
-      </div>
+      <EditorFooter onPrimary={() => void save()} onCancel={onCancel} onApply={() => void apply()} saving={saving} />
     </div>
   );
 }

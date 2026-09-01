@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { RunRecord, Task } from '@shared/types';
 import { fmtTime, formatDuration } from '../format';
+import { useListNav } from './hooks';
 
 interface Props {
   task: Task;
@@ -89,40 +90,21 @@ export function RunLog({ task, records }: Props) {
     }
   }, [groups, selected]);
 
-  useEffect(() => {
-    if (!selected) return;
-    document.getElementById(`run-${selected}`)?.scrollIntoView({ block: 'nearest' });
-  }, [selected]);
-
+  const idx = groups.findIndex((g) => g.runId === selected);
+  const nav = useListNav({
+    count: groups.length,
+    index: idx,
+    onIndex: (i) => setSelected(groups[i].runId),
+    onActivate: (i) => void window.looper.openRunDetail(task.id, groups[i].runId),
+    scrollToId: selected ? `run-${selected}` : null,
+  });
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!groups.length) return;
-    const idx = groups.findIndex((g) => g.runId === selected);
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(groups.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = groups.length - 1;
-        break;
-      case 'Enter':
-        if (idx >= 0) void window.looper.openRunDetail(task.id, groups[idx].runId);
-        return;
-      default:
-        if (e.ctrlKey && e.key === 'c' && idx >= 0) {
-          void navigator.clipboard.writeText(groups[idx].details);
-          e.preventDefault();
-        }
-        return;
+    if (e.ctrlKey && e.key === 'c' && idx >= 0) {
+      void navigator.clipboard.writeText(groups[idx].details);
+      e.preventDefault();
+      return;
     }
-    e.preventDefault();
-    if (groups[next]) setSelected(groups[next].runId);
+    nav(e);
   };
 
   return (

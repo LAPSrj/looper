@@ -1,16 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
-
-function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
-      {help && <p className="help">{help}</p>}
-    </div>
-  );
-}
+import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
+import { useDialogKeys } from './components/hooks';
+import { SelectList, ListActions } from './components/SelectList';
 
 type SettingsTab = 'general' | 'environments' | 'templates' | 'advanced';
 
@@ -84,38 +77,8 @@ export function SettingsApp() {
     });
   }, []);
 
-  // Dialog keys: Esc = cancel, Enter on an input or Ctrl+Enter anywhere = save,
-  // Ctrl+Tab / Ctrl+PageDown|PageUp = cycle tabs.
   const saveRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
-    const order = TABS.map(([id]) => id);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        window.close();
-        return;
-      }
-      if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        void saveRef.current();
-        return;
-      }
-      const cycle = (dir: number) =>
-        setTab((t) => order[(order.indexOf(t) + dir + order.length) % order.length]);
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycle(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && e.key === 'PageDown') {
-        e.preventDefault();
-        cycle(1);
-      } else if (e.ctrlKey && e.key === 'PageUp') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: TABS.map(([id]) => id), tab, onTab: setTab });
 
   if (!live || defaultEnvId === null || closeToTray === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null) return <div className="empty">Loading…</div>;
 
@@ -170,35 +133,6 @@ export function SettingsApp() {
     }
   };
 
-  const onListKey = (e: React.KeyboardEvent) => {
-    if (!envs.length) return;
-    const idx = env ? envs.findIndex((x) => x.id === env.id) : -1;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(envs.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = envs.length - 1;
-        break;
-      case 'Enter':
-        e.preventDefault();
-        e.stopPropagation();
-        if (env) void window.looper.openEnvironmentEditor(env.id);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    setSelected(envs[next].id);
-  };
-
   // ---------- Templates ----------
 
   const tpl = templates.find((t) => t.id === selectedTpl);
@@ -229,37 +163,6 @@ export function SettingsApp() {
       void window.looper.showError((e as Error).message);
     }
   };
-
-  const onTplListKey = (e: React.KeyboardEvent) => {
-    if (!templates.length) return;
-    const idx = tpl ? templates.findIndex((x) => x.id === tpl.id) : -1;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(templates.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = templates.length - 1;
-        break;
-      case 'Enter':
-        e.preventDefault();
-        e.stopPropagation();
-        if (tpl) void window.looper.openTemplateEditor(tpl.id);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    setSelectedTpl(templates[next].id);
-  };
-
-  const envName = (id: string) => envs.find((e) => e.id === id)?.name ?? id;
 
   // ---------- Store files ----------
 
@@ -329,13 +232,7 @@ export function SettingsApp() {
 
   return (
     <div className="editor">
-      <nav className="tabs editor-tabs">
-        {TABS.map(([id, label]) => (
-          <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
-      </nav>
+      <TabBar tabs={TABS} active={tab} onSelect={setTab} className="editor-tabs" />
       <div className="editor-body">
         {tab === 'general' && (
           <div className="form">
@@ -353,42 +250,9 @@ export function SettingsApp() {
               Stagger overdue tasks on startup
             </label>
             <div className={`stagger-fields${staggerEnabled ? '' : ' disabled'}`}>
-              <Field label="Minimum delay">
-                <div className="input-suffix">
-                  <input
-                    type="number"
-                    min={0}
-                    disabled={!staggerEnabled}
-                    value={staggerMin}
-                    onChange={(e) => setStaggerMin(Number(e.target.value))}
-                  />
-                  <span className="suffix">s</span>
-                </div>
-              </Field>
-              <Field label="Maximum delay">
-                <div className="input-suffix">
-                  <input
-                    type="number"
-                    min={1}
-                    disabled={!staggerEnabled}
-                    value={staggerMax}
-                    onChange={(e) => setStaggerMax(Number(e.target.value))}
-                  />
-                  <span className="suffix">s</span>
-                </div>
-              </Field>
-              <Field label="Minimum interval">
-                <div className="input-suffix">
-                  <input
-                    type="number"
-                    min={0}
-                    disabled={!staggerEnabled}
-                    value={staggerInterval}
-                    onChange={(e) => setStaggerInterval(Number(e.target.value))}
-                  />
-                  <span className="suffix">s</span>
-                </div>
-              </Field>
+              <NumberField label="Minimum delay" suffix="s" min={0} disabled={!staggerEnabled} value={staggerMin} onChange={setStaggerMin} />
+              <NumberField label="Maximum delay" suffix="s" min={1} disabled={!staggerEnabled} value={staggerMax} onChange={setStaggerMax} />
+              <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
             <label className="checkbox-field">
               <input type="checkbox" checked={closeToTray} onChange={(e) => setCloseToTray(e.target.checked)} />
@@ -399,57 +263,40 @@ export function SettingsApp() {
 
         {tab === 'environments' && (
           <div className="form env-tab">
-            <ul
-              className="env-list boxed"
-              role="listbox"
-              aria-label="Environments"
-              tabIndex={0}
-              onKeyDown={onListKey}
-              aria-activedescendant={env ? `env-${env.id}` : undefined}
-            >
-              {envs.map((e) => {
+            <SelectList
+              items={envs}
+              label="Environments"
+              idPrefix="env"
+              selectedKey={selected}
+              itemKey={(e) => e.id}
+              itemName={(e) => (
+                <>
+                  {e.name}
+                  {live.defaultEnvironmentId === e.id && <span className="muted"> (default)</span>}
+                </>
+              )}
+              itemSub={(e) => {
                 const n = usedBy(e.id);
                 return (
-                  <li
-                    key={e.id}
-                    id={`env-${e.id}`}
-                    role="option"
-                    aria-selected={e.id === selected}
-                    className={`env-item ${e.id === selected ? 'selected' : ''}`}
-                    onClick={() => setSelected(e.id)}
-                    onDoubleClick={() => void window.looper.openEnvironmentEditor(e.id)}
-                  >
-                    <div className="env-item-name">
-                      {e.name}
-                      {live.defaultEnvironmentId === e.id && <span className="muted"> (default)</span>}
-                    </div>
-                    <div className="env-item-sub">
-                      {describeEnvironment(e)} · {e.harnesses.length === 1 ? '1 harness' : `${e.harnesses.length} harnesses`}
-                      {n > 0 ? ` · ${n} task${n === 1 ? '' : 's'}` : ''}
-                    </div>
-                  </li>
+                  <>
+                    {describeEnvironment(e)} · {e.harnesses.length === 1 ? '1 harness' : `${e.harnesses.length} harnesses`}
+                    {n > 0 ? ` · ${n} task${n === 1 ? '' : 's'}` : ''}
+                  </>
                 );
-              })}
-            </ul>
-            <div className="env-actions">
-              <button className="btn" onClick={() => void addEnv()}>
-                Add…
-              </button>
-              <button className="btn" disabled={!env} onClick={() => env && void window.looper.openEnvironmentEditor(env.id)}>
-                Edit…
-              </button>
-              <button className="btn" disabled={!env} onClick={() => void duplicateEnv()}>
-                Duplicate
-              </button>
-              <button
-                className="btn danger"
-                disabled={!env || envs.length <= 1}
-                title={envs.length <= 1 ? 'At least one environment is required' : undefined}
-                onClick={() => void removeEnv()}
-              >
-                Remove
-              </button>
-            </div>
+              }}
+              onSelect={(e) => setSelected(e.id)}
+              onOpen={(e) => void window.looper.openEnvironmentEditor(e.id)}
+            />
+            <ListActions
+              onAdd={() => void addEnv()}
+              onEdit={() => env && void window.looper.openEnvironmentEditor(env.id)}
+              editDisabled={!env}
+              onDuplicate={() => void duplicateEnv()}
+              duplicateDisabled={!env}
+              onRemove={() => void removeEnv()}
+              removeDisabled={!env || envs.length <= 1}
+              removeTitle={envs.length <= 1 ? 'At least one environment is required' : undefined}
+            />
           </div>
         )}
 
@@ -474,62 +321,31 @@ export function SettingsApp() {
 
         {tab === 'templates' && (
           <div className="form env-tab">
-            <ul
-              className="env-list boxed"
-              role="listbox"
-              aria-label="Templates"
-              tabIndex={0}
-              onKeyDown={onTplListKey}
-              aria-activedescendant={tpl ? `tpl-${tpl.id}` : undefined}
-            >
-              {templates.length === 0 && (
-                <li className="env-item muted" style={{ textAlign: 'center', cursor: 'default' }}>
-                  No templates
-                </li>
-              )}
-              {templates.map((t) => (
-                <li
-                  key={t.id}
-                  id={`tpl-${t.id}`}
-                  role="option"
-                  aria-selected={t.id === selectedTpl}
-                  className={`env-item ${t.id === selectedTpl ? 'selected' : ''}`}
-                  onClick={() => setSelectedTpl(t.id)}
-                  onDoubleClick={() => void window.looper.openTemplateEditor(t.id)}
-                >
-                  <div className="env-item-name">{t.name}</div>
-                </li>
-              ))}
-            </ul>
-            <div className="env-actions">
-              <button className="btn" onClick={() => void window.looper.openTemplateEditor()}>
-                Add…
-              </button>
-              <button className="btn" disabled={!tpl} onClick={() => tpl && void window.looper.openTemplateEditor(tpl.id)}>
-                Edit…
-              </button>
-              <button className="btn" disabled={!tpl} onClick={() => void duplicateTpl()}>
-                Duplicate
-              </button>
-              <button className="btn danger" disabled={!tpl} onClick={() => void removeTpl()}>
-                Remove
-              </button>
-            </div>
+            <SelectList
+              items={templates}
+              label="Templates"
+              idPrefix="tpl"
+              selectedKey={selectedTpl}
+              itemKey={(t) => t.id}
+              itemName={(t) => t.name}
+              empty="No templates"
+              onSelect={(t) => setSelectedTpl(t.id)}
+              onOpen={(t) => void window.looper.openTemplateEditor(t.id)}
+            />
+            <ListActions
+              onAdd={() => void window.looper.openTemplateEditor()}
+              onEdit={() => tpl && void window.looper.openTemplateEditor(tpl.id)}
+              editDisabled={!tpl}
+              onDuplicate={() => void duplicateTpl()}
+              duplicateDisabled={!tpl}
+              onRemove={() => void removeTpl()}
+              removeDisabled={!tpl}
+            />
           </div>
         )}
 
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-        <button className="btn" onClick={() => window.close()} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn" onClick={() => void apply()} disabled={saving}>
-          Apply
-        </button>
-      </div>
+      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
     </div>
   );
 }

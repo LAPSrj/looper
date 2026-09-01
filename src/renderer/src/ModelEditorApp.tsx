@@ -1,16 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, sameModels } from '@shared/environments';
-
-function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
-      {help && <p className="help">{help}</p>}
-    </div>
-  );
-}
+import { Field, EditorFooter } from './components/ui';
+import { useDialogKeys } from './components/hooks';
 
 function findHarness(settings: Settings, envId: string, harnessId: string): Harness | undefined {
   return settings.environments.find((e) => e.id === envId)?.harnesses.find((h) => h.id === harnessId);
@@ -53,21 +45,8 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
     });
   }, [envId, harnessId, index, isNew]);
 
-  // Dialog keys: Esc = cancel, Enter on an input or Ctrl+Enter anywhere = save.
   const saveRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        window.close();
-      } else if (e.key === 'Enter' && (e.ctrlKey || e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        void saveRef.current();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
 
   if (missing) return <div className="empty">This model no longer exists.</div>;
   if (!settings) return <div className="empty">Loading…</div>;
@@ -121,14 +100,7 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
           </Field>
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" onClick={() => void save()} disabled={saving}>
-          Save
-        </button>
-        <button className="btn" onClick={() => window.close()} disabled={saving}>
-          Cancel
-        </button>
-      </div>
+      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
     </div>
   );
 }

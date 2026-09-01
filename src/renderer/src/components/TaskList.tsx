@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
 import type { Task, TaskRuntime } from '@shared/types';
 import { capFirst, fmtCountdown, stateLabel } from '../format';
+import { useListNav } from './hooks';
 
 interface Props {
   tasks: Task[];
@@ -11,34 +11,15 @@ interface Props {
 }
 
 export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
-  useEffect(() => {
-    if (!selected) return;
-    document.getElementById(`task-${selected}`)?.scrollIntoView({ block: 'nearest' });
-  }, [selected]);
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!tasks.length) return;
-    const idx = tasks.findIndex((t) => t.id === selected);
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = idx < 0 ? 0 : Math.min(tasks.length - 1, idx + 1);
-        break;
-      case 'ArrowUp':
-        next = idx < 0 ? 0 : Math.max(0, idx - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = tasks.length - 1;
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    if (tasks[next] && tasks[next].id !== selected) onSelect(tasks[next].id);
-  };
+  const idx = tasks.findIndex((t) => t.id === selected);
+  const onKeyDown = useListNav({
+    count: tasks.length,
+    index: idx,
+    onIndex: (i) => {
+      if (tasks[i].id !== selected) onSelect(tasks[i].id);
+    },
+    scrollToId: selected ? `task-${selected}` : null,
+  });
 
   return (
     <ul
