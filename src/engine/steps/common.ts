@@ -59,8 +59,17 @@ export interface Launcher {
   spec: SpawnSpec;
 }
 
-/** Write the done helper + a launcher script into the run dir and return how to spawn it. */
-export function writeLauncher(ctx: RunContext, name: string, body: string): Launcher {
+/**
+ * Write the done helper + a launcher script into the run dir and return how to
+ * spawn it. `extraEnv` (e.g. a harness's env vars) can never override the
+ * LOOPER_* variables.
+ */
+export function writeLauncher(
+  ctx: RunContext,
+  name: string,
+  body: string,
+  extraEnv: Record<string, string> = {},
+): Launcher {
   const helper = path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile);
   writeText(helper, ctx.target.renderDoneHelper(), 0o755);
   const hostPath = path.join(ctx.runDir, name + ctx.target.launcherExt);
@@ -70,7 +79,7 @@ export function writeLauncher(ctx: RunContext, name: string, body: string): Laun
       taskId: ctx.task.id,
       runId: ctx.runId,
       cwd: ctx.task.cwd,
-      env: baseEnv(ctx),
+      env: { ...extraEnv, ...baseEnv(ctx) },
       binDir: targetFile(ctx, 'bin'),
       body,
     }),

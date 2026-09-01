@@ -2,8 +2,8 @@
   "id": "issues-triage",
   "name": "Issues triage",
   "enabled": true,
-  "schedule": { "every": "10m" },
-  "target": { "kind": "wsl", "distro": "Ubuntu" },
+  "schedule": { "cron": "*/10 * * * *" },
+  "environmentId": "local",
   "cwd": "/home/me/repos/project",
   "check": {
     "command": "bash scripts/check-github-issues.sh",
@@ -11,15 +11,14 @@
   },
   "classifier": {
     "model": "haiku",
-    "prompt": "You decide whether a coding agent should be started. Start it only if the items below need real work (bug reports, review requests, failing CI). Ignore noise (bots, thanks, duplicates).\n\nSummary: {{summary}}\n\n{{context}}",
-    "timeoutSec": 180,
-    "maxBudgetUsd": 0.1
+    "prompt": "Decide whether the agent should act now. Say yes only if the items below represent real work that needs handling. Ignore noise, duplicates, and items that need no action.\n\nSummary: {{summary}}\n\n{{context}}",
+    "timeoutSec": 180
   },
   "agent": {
     "model": "sonnet",
     "mode": "interactive",
     "permissionMode": "auto",
-    "prompt": "Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go, and finish by running `looper-done \"<one line summary>\"`.",
+    "prompt": "Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go.",
     "extraArgs": [],
     "maxRuntimeMin": 90,
     "idleGraceMin": 3,

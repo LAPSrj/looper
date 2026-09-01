@@ -19,20 +19,23 @@ export class BashTarget implements Target {
   readonly launcherExt = '.sh';
   readonly doneHelperFile = 'looper-done';
   private readonly shellParts: string[];
+  private readonly mountPrefix: string;
 
   constructor(
     private readonly ctx: TargetContext,
     private readonly distro: string | undefined,
     shell?: string,
+    mountPrefix?: string,
   ) {
     this.shellParts = (shell?.trim() || DEFAULT_SHELL).split(/\s+/);
+    this.mountPrefix = mountPrefix?.trim() || '/mnt';
   }
 
   toTargetPath(hostPath: string): string {
     return translatePath(hostPath, {
       host: this.ctx.host,
       targetKind: 'wsl',
-      wslMountPrefix: this.ctx.settings.wslMountPrefix,
+      wslMountPrefix: this.mountPrefix,
       hostDistro: wslDistroName(),
     });
   }

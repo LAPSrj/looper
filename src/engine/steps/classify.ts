@@ -1,4 +1,6 @@
 import path from 'node:path';
+import type { Harness } from '../../shared/types';
+import { resolveClassifierHarness, resolveEnvironment } from '../../shared/environments';
 import { tail, writeJsonAtomic, writeText } from '../store/fsutil';
 import { buildPrompt, runCaptured, targetFile, writeLauncher, type RunContext } from './common';
 
@@ -15,7 +17,7 @@ export const CLASSIFIER_SCHEMA = {
   type: 'object',
   properties: {
     act: { type: 'boolean', description: 'true if an agent should be started now' },
-    reason: { type: 'string', description: 'one sentence' },
+    reason: { type: 'string', description: 'one sentence explaining why action is or isn\'t needed' },
   },
   required: ['act', 'reason'],
   additionalProperties: false,
@@ -56,13 +58,20 @@ export function parseClassifierOutput(stdout: string): ParsedClassifier {
 export async function runClassify(ctx: RunContext): Promise<ClassifyResult> {
   const { task, target, settings } = ctx;
   const cls = task.classifier!;
+  let harness: Harness;
+  try {
+    harness = resolveClassifierHarness(task, resolveEnvironment(task, settings));
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message, durationMs: 0, exitCode: null };
+  }
   const promptText = buildPrompt(cls.prompt, ctx.vars);
   writeText(path.join(ctx.runDir, 'classify-prompt.txt'), promptText);
   writeJsonAtomic(path.join(ctx.runDir, 'classify-schema.json'), CLASSIFIER_SCHEMA);
 
   const q = (s: string) => target.quote(s);
   const parts = [
-    settings.claudeCommand,
+    harness.command,
+    ...harness.args.map(q),
     '-p',
     '--model',
     q(cls.model),
@@ -70,11 +79,9 @@ export async function runClassify(ctx: RunContext): Promise<ClassifyResult> {
     'json',
     '--json-schema',
     target.catFile(targetFile(ctx, 'classify-schema.json')),
-    '--max-budget-usd',
-    String(cls.maxBudgetUsd),
     target.catFile(targetFile(ctx, 'classify-prompt.txt')),
   ];
-  const launcher = writeLauncher(ctx, 'classify', parts.join(' '));
+  const launcher = writeLauncher(ctx, 'classify', parts.join(' '), harness.env);
   const res = await runCaptured(launcher.spec, {
     timeoutMs: cls.timeoutSec * 1000,
     onTimeout: () => target.killLeftovers(ctx.runId),

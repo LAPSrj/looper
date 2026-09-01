@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { RunRecord, Task, TaskRuntime } from '@shared/types';
+import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
+import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
+import { cronToForm } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtTime, stateLabel } from '../format';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
@@ -8,6 +9,7 @@ export type DetailTab = 'status' | 'log' | 'terminal';
 
 interface Props {
   task: Task;
+  environments: Environment[];
   runtime: TaskRuntime | undefined;
   records: RunRecord[];
   now: number;
@@ -15,13 +17,39 @@ interface Props {
   onTab: (t: DetailTab) => void;
 }
 
-function describeSchedule(task: Task): string {
-  return 'every' in task.schedule ? `Every ${task.schedule.every}` : `Cron ${task.schedule.cron}`;
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const hhmm = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+function fmtDays(days: number[]): string {
+  const d = [...days].sort((a, b) => a - b);
+  const contiguous = d.length > 1 && d.every((x, i) => i === 0 || x === d[i - 1] + 1);
+  return contiguous ? `${DAY_NAMES[d[0]]}–${DAY_NAMES[d[d.length - 1]]}` : d.map((x) => DAY_NAMES[x]).join(', ');
 }
 
-function describeTarget(task: Task): string {
-  if (task.target.kind === 'windows') return 'Windows (PowerShell)';
-  return task.target.distro ? `WSL (${task.target.distro})` : 'WSL (default distro)';
+function describeSchedule(task: Task): string {
+  const f = cronToForm(task.schedule.cron);
+  switch (f.mode) {
+    case 'minutes':
+    case 'hours': {
+      const base =
+        f.mode === 'minutes'
+          ? f.step === 1
+            ? 'Every minute'
+            : `Every ${f.step} minutes`
+          : (f.step === 1 ? 'Hourly' : `Every ${f.step} hours`) +
+            (f.minute ? ` at :${String(f.minute).padStart(2, '0')}` : '');
+      const win = f.from !== undefined && f.to !== undefined ? `, ${f.from}–${f.to}h` : '';
+      return base + win + (f.days ? `, ${fmtDays(f.days)}` : '');
+    }
+    case 'daily':
+      return `Daily at ${f.times.map((t) => hhmm(t.hour, t.minute)).join(', ')}`;
+    case 'weekly':
+      return `${fmtDays(f.days)} at ${hhmm(f.hour, f.minute)}`;
+    case 'monthly':
+      return `Monthly on day ${f.day} at ${hhmm(f.hour, f.minute)}`;
+    case 'custom':
+      return `Cron ${f.cron}`;
+  }
 }
 
 function statusDetail(runtime: TaskRuntime | undefined): string {
@@ -44,28 +72,16 @@ function describeNextRun(runtime: TaskRuntime | undefined, now: number): string 
   return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
 }
 
-export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
-  const [busy, setBusy] = useState(false);
-  const active = runtime && ['checking', 'classifying', 'running'].includes(runtime.state);
+export function TaskDetail({ task, environments, runtime, records, now, tab, onTab }: Props) {
+  const env = environments.find((e) => e.id === task.environmentId);
+  const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
   const running = runtime?.state === 'running';
-
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    try {
-      await fn();
-    } catch (e) {
-      alert((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = () => {
-    if (window.confirm(`Delete task "${task.name}"?`)) void act(() => window.looper.tasks.remove(task.id));
-  };
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
   const detail = statusDetail(runtime);
+  const status = runtime?.state === 'paused' && detail
+    ? detail
+    : `${stateLabel(runtime)}${detail ? ` (${detail})` : ''}`;
 
   return (
     <div className="detail">
@@ -80,67 +96,43 @@ export function TaskDetail({ task, runtime, records, now, tab, onTab }: Props) {
           Run log
         </button>
         <button className={`tab ${tab === 'terminal' ? 'active' : ''}`} onClick={() => onTab('terminal')}>
-          {running ? '● Terminal' : 'Terminal'}
+          Terminal
         </button>
       </nav>
       <section className="tab-body">
         {tab === 'status' && (
           <div className="status-pane">
-            <div className="actions">
-              <button className="btn" disabled={busy || active} onClick={() => act(() => window.looper.runtime.runNow(task.id))}>
-                Run now
-              </button>
-              {runtime?.state === 'paused' ? (
-                <button className="btn" disabled={busy} onClick={() => act(() => window.looper.runtime.resume(task.id))}>
-                  Resume
-                </button>
-              ) : (
-                <button
-                  className="btn"
-                  disabled={busy || runtime?.state === 'disabled'}
-                  onClick={() => act(() => window.looper.runtime.pause(task.id))}
-                  title={active ? 'Pauses after the current run finishes' : undefined}
-                >
-                  Pause
-                </button>
-              )}
-              <button className="btn danger" disabled={busy || !running} onClick={() => act(() => window.looper.runtime.stopAgent(task.id))}>
-                Stop agent
-              </button>
-              <button className="btn" disabled={busy} onClick={() => void window.looper.openEditor(task.id)}>
-                Edit…
-              </button>
-              <button
-                className="btn"
-                disabled={busy}
-                onClick={() => act(() => window.looper.tasks.save({ ...task, enabled: !task.enabled }))}
-              >
-                {task.enabled ? 'Disable' : 'Enable'}
-              </button>
-              <button className="btn danger" disabled={busy} onClick={remove}>
-                Delete
-              </button>
-            </div>
             <dl className="props">
               <dt>Status</dt>
-              <dd>
-                <span className={`badge state-${runtime?.held ? 'held' : runtime?.state ?? 'idle'}`}>{stateLabel(runtime)}</span>
-                {detail ? ` ${detail}` : ''}
-              </dd>
+              <dd>{status}</dd>
               <dt>Schedule</dt>
               <dd>{describeSchedule(task)}</dd>
               <dt>Next run</dt>
               <dd>{describeNextRun(runtime, now)}</dd>
-              <dt>Environment</dt>
-              <dd>{describeTarget(task)}</dd>
-              <dt>Working directory</dt>
-              <dd className="mono">{task.cwd}</dd>
               <dt>Last run</dt>
               <dd>{lastRun}</dd>
               <dt>Last result</dt>
               <dd>{runtime?.lastResult ? capFirst(runtime.lastResult) : 'None'}</dd>
-              <dt>Task ID</dt>
-              <dd className="mono">{task.id}</dd>
+              <dt>Trigger command</dt>
+              <dd className="mono">{task.check.command}</dd>
+              <dt>Classifier</dt>
+              <dd>{task.classifier ? 'Yes' : 'No'}</dd>
+              <dt>Harness</dt>
+              <dd>{harness ? `${harness.name} (${harnessKindLabel(harness.kind)})` : 'None'}</dd>
+              <dt>Model</dt>
+              <dd>{task.agent.model ? (harness ? harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model : task.agent.model) : 'Default'}</dd>
+              <dt>Session type</dt>
+              <dd>{capFirst(task.agent.mode)}</dd>
+              <dt>Environment</dt>
+              <dd>
+                {env ? (
+                  `${env.name} (${describeEnvironment(env)})`
+                ) : (
+                  <span className="warn">Unknown environment "{task.environmentId}"</span>
+                )}
+              </dd>
+              <dt>Working directory</dt>
+              <dd className="mono">{task.cwd}</dd>
             </dl>
           </div>
         )}

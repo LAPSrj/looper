@@ -1,11 +1,9 @@
 import fs from 'node:fs';
-import type { LogLine } from '../shared/types';
 
-export type LogListener = (line: LogLine) => void;
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export class Logger {
   private stream: fs.WriteStream | null = null;
-  private listeners = new Set<LogListener>();
 
   constructor(file?: string, private readonly echo = false) {
     if (file) {
@@ -20,25 +18,12 @@ export class Logger {
     }
   }
 
-  onLine(fn: LogListener): () => void {
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
-  }
-
-  log(level: LogLine['level'], message: string): void {
-    const line: LogLine = { ts: new Date().toISOString(), level, message };
-    const text = `${line.ts} [${level}] ${message}`;
+  log(level: LogLevel, message: string): void {
+    const text = `${new Date().toISOString()} [${level}] ${message}`;
     if (this.stream) this.stream.write(text + '\n');
     if (this.echo) {
       if (level === 'error' || level === 'warn') console.error(text);
       else console.log(text);
-    }
-    for (const fn of this.listeners) {
-      try {
-        fn(line);
-      } catch {
-        /* listener errors never propagate */
-      }
     }
   }
 

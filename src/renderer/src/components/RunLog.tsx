@@ -1,109 +1,172 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { RunPhase, RunRecord, Task } from '@shared/types';
-import { capFirst, fmtTime, formatDuration, stripAnsi } from '../format';
+import { useEffect, useMemo, useState } from 'react';
+import type { RunRecord, Task } from '@shared/types';
+import { fmtTime, formatDuration } from '../format';
 
 interface Props {
   task: Task;
   records: RunRecord[];
 }
 
-const PHASES: (RunPhase | 'all')[] = ['all', 'check', 'classify', 'agent', 'skip', 'system'];
+interface RunGroup {
+  runId: string;
+  startTs: string;
+  endTs: string;
+  result: string;
+  totalDurationMs: number;
+  details: string;
+  records: RunRecord[];
+}
+
+const RESULT_LABELS: Record<string, string> = {
+  act: 'Action',
+  done: 'Done',
+  noop: 'No action',
+  skipped: 'Skipped',
+  started: 'Started',
+  error: 'Error',
+  'max-runtime': 'Timed out',
+  interrupted: 'Interrupted',
+  'idle-timeout': 'Idle timeout',
+  held: 'Held',
+  stopped: 'Stopped',
+};
+
+function resultLabel(result: string): string {
+  return RESULT_LABELS[result] ?? result;
+}
+
+function bestResult(records: RunRecord[]): string {
+  const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'done', 'started', 'noop', 'skipped', 'act'];
+  for (const p of priority) {
+    if (records.some((r) => r.result === p)) return p;
+  }
+  return records[records.length - 1]?.result ?? '';
+}
+
+function lastDetail(records: RunRecord[]): string {
+  const last = records[records.length - 1];
+  if (!last) return '';
+  const text = last.error ?? last.summary ?? '';
+  const cost = last.detail?.costUsd !== undefined ? ` ($${Number(last.detail.costUsd).toFixed(3)})` : '';
+  return text + cost;
+}
 
 export function RunLog({ task, records }: Props) {
-  const [phase, setPhase] = useState<RunPhase | 'all'>('all');
-  const [hideNoop, setHideNoop] = useState(false);
-  const [output, setOutput] = useState<{ runId: string; text: string } | null>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const [selected, setSelected] = useState<string | null>(null);
 
-  // Modal keyboard semantics: Esc closes, focus lands on the close button.
-  useEffect(() => {
-    if (!output) return;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOutput(null);
+  const groups = useMemo(() => {
+    const map = new Map<string, RunRecord[]>();
+    for (const r of records) {
+      let list = map.get(r.runId);
+      if (!list) {
+        list = [];
+        map.set(r.runId, list);
       }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [output]);
+      list.push(r);
+    }
+    const result: RunGroup[] = [];
+    for (const [runId, recs] of map) {
+      const sorted = [...recs].sort((a, b) => a.ts.localeCompare(b.ts));
+      const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
+      const totalMs = durations.reduce((a, b) => a + b, 0);
+      result.push({
+        runId,
+        startTs: sorted[0].ts,
+        endTs: sorted[sorted.length - 1].ts,
+        result: bestResult(sorted),
+        totalDurationMs: totalMs,
+        details: lastDetail(sorted),
+        records: sorted,
+      });
+    }
+    result.sort((a, b) => b.startTs.localeCompare(a.startTs));
+    return result;
+  }, [records]);
 
-  const rows = useMemo(() => {
-    let list = records;
-    if (phase !== 'all') list = list.filter((r) => r.phase === phase);
-    if (hideNoop) list = list.filter((r) => r.result !== 'noop');
-    return [...list].reverse();
-  }, [records, phase, hideNoop]);
+  useEffect(() => {
+    if (selected && !groups.some((g) => g.runId === selected)) {
+      setSelected(groups[0]?.runId ?? null);
+    }
+  }, [groups, selected]);
 
-  const showOutput = async (runId: string) => {
-    const text = await window.looper.runs.output(task.id, runId);
-    setOutput({ runId, text: stripAnsi(text) || '(no output captured)' });
+  useEffect(() => {
+    if (!selected) return;
+    document.getElementById(`run-${selected}`)?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!groups.length) return;
+    const idx = groups.findIndex((g) => g.runId === selected);
+    let next: number;
+    switch (e.key) {
+      case 'ArrowDown':
+        next = idx < 0 ? 0 : Math.min(groups.length - 1, idx + 1);
+        break;
+      case 'ArrowUp':
+        next = idx < 0 ? 0 : Math.max(0, idx - 1);
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = groups.length - 1;
+        break;
+      case 'Enter':
+        if (idx >= 0) void window.looper.openRunDetail(task.id, groups[idx].runId);
+        return;
+      default:
+        if (e.ctrlKey && e.key === 'c' && idx >= 0) {
+          void navigator.clipboard.writeText(groups[idx].details);
+          e.preventDefault();
+        }
+        return;
+    }
+    e.preventDefault();
+    if (groups[next]) setSelected(groups[next].runId);
   };
 
   return (
     <div className="runlog">
       <div className="runlog-toolbar">
-        <label>
-          Phase:{' '}
-          <select value={phase} onChange={(e) => setPhase(e.target.value as RunPhase | 'all')}>
-            {PHASES.map((p) => (
-              <option key={p} value={p}>
-                {p === 'all' ? 'All' : capFirst(p)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <input type="checkbox" checked={hideNoop} onChange={(e) => setHideNoop(e.target.checked)} /> Hide "nothing to do"
-          rows
-        </label>
-        <span className="muted">{records.length} records</span>
+        <span className="muted">{groups.length} runs</span>
       </div>
-      <div className="runlog-table-wrap">
+      <div className="runlog-table-wrap" tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Run</th>
-              <th>Phase</th>
+              <th>Start</th>
+              <th>End</th>
               <th>Result</th>
               <th>Duration</th>
               <th>Details</th>
-              <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={`${r.ts}-${i}`} className={`result-${r.result}`}>
-                <td className="nowrap">{fmtTime(r.ts)}</td>
-                <td className="mono nowrap">{r.runId}</td>
-                <td>{capFirst(r.phase)}</td>
-                <td>
-                  <span className={`pill pill-${r.result}`}>{r.result}</span>
-                </td>
-                <td className="nowrap">{r.durationMs !== undefined ? formatDuration(r.durationMs) : ''}</td>
-                <td className="details" title={r.error ?? r.summary ?? ''}>
-                  {r.error ?? r.summary ?? ''}
-                  {r.detail?.costUsd !== undefined ? ` ($${Number(r.detail.costUsd).toFixed(3)})` : ''}
-                </td>
-                <td className="nowrap">
-                  {r.phase === 'agent' && r.result !== 'started' && (
-                    <button className="link" onClick={() => void showOutput(r.runId)}>
-                      Output
-                    </button>
-                  )}{' '}
-                  {r.runId !== '-' && (
-                    <button className="link" onClick={() => void window.looper.runs.openDir(task.id, r.runId)}>
-                      Open folder
-                    </button>
-                  )}
+            {groups.map((g) => (
+              <tr
+                key={g.runId}
+                id={`run-${g.runId}`}
+                className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
+                onClick={() => setSelected(g.runId)}
+                onDoubleClick={() => void window.looper.openRunDetail(task.id, g.runId)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSelected(g.runId);
+                  window.looper.showRunContextMenu({ taskId: task.id, runId: g.runId, details: g.details });
+                }}
+              >
+                <td className="nowrap">{fmtTime(g.startTs)}</td>
+                <td className="nowrap">{fmtTime(g.endTs)}</td>
+                <td>{resultLabel(g.result)}</td>
+                <td className="nowrap">{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
+                <td className="details" title={g.details}>
+                  {g.details}
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
+            {groups.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={5} className="muted">
                   No runs yet.
                 </td>
               </tr>
@@ -111,21 +174,6 @@ export function RunLog({ task, records }: Props) {
           </tbody>
         </table>
       </div>
-      {output && (
-        <div className="modal-backdrop" onClick={() => setOutput(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>
-                Output of run <span className="mono">{output.runId}</span>
-              </span>
-              <button ref={closeRef} className="btn small" onClick={() => setOutput(null)}>
-                Close
-              </button>
-            </div>
-            <pre className="output">{output.text}</pre>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

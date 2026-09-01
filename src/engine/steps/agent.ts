@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type * as PtyNS from 'node-pty';
+import { autoTrustWorkspace, resolveEnvironment, resolveHarness } from '../../shared/environments';
+import { CleanLog } from '../cleanlog';
 import { ScreenModel } from '../screen';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
@@ -39,11 +41,12 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
   ];
   if (headless) {
-    lines.push('When you are finished, end your response with a one-line summary of what you did.');
+    lines.push('When you are finished, end your response with a one-line summary of what changed — state the outcome, not that you are done.');
   } else {
     lines.push(
       'When you are finished — or if there is nothing to do — your VERY LAST action must be to run the shell command:',
-      '    looper-done "<one line summary of what you did>"',
+      '    looper-done "<one line summary of what changed>"',
+      'State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
       'This signals Looper to close this session. Do not wait for further input after running it.',
     );
   }
@@ -79,33 +82,49 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   const { task, target, settings } = ctx;
   const a = task.agent;
   const headless = a.mode === 'headless';
+  const env = resolveEnvironment(task, settings);
+  const harness = resolveHarness(task, env);
+  const claude = harness.kind === 'claude-code';
 
-  writeText(path.join(ctx.runDir, 'prompt.txt'), buildPrompt(a.prompt, ctx.vars));
-  writeText(path.join(ctx.runDir, 'system.txt'), systemFooter(task.name, ctx.runId, headless));
-  writeJsonAtomic(path.join(ctx.runDir, 'settings.json'), {
-    // The done signal must never be blocked by a permission prompt.
-    permissions: { allow: ['Bash(looper-done:*)', 'Bash(looper-done)'] },
-    hooks: {
-      Stop: [{ hooks: [{ type: 'command', command: target.renderIdleHook(targetFile(ctx, 'idle')) }] }],
-    },
-  });
+  // Claude Code gets its instructions as a system prompt; other harnesses have
+  // no equivalent flag, so the footer is prepended to the prompt itself.
+  const footer = systemFooter(task.name, ctx.runId, headless);
+  const promptText = buildPrompt(a.prompt, ctx.vars);
+  writeText(path.join(ctx.runDir, 'prompt.txt'), claude ? promptText : footer + '\n\n' + promptText);
+  if (claude) {
+    writeText(path.join(ctx.runDir, 'system.txt'), footer);
+    writeJsonAtomic(path.join(ctx.runDir, 'settings.json'), {
+      // The done signal must never be blocked by a permission prompt.
+      permissions: { allow: ['Bash(looper-done:*)', 'Bash(looper-done)'] },
+      hooks: {
+        Stop: [{ hooks: [{ type: 'command', command: target.renderIdleHook(targetFile(ctx, 'idle')) }] }],
+      },
+    });
+  }
 
   const q = (s: string) => target.quote(s);
-  const parts: string[] = [settings.claudeCommand];
-  if (a.model) parts.push('--model', q(a.model));
-  if (a.permissionMode) parts.push('--permission-mode', q(a.permissionMode));
-  parts.push('--append-system-prompt', target.catFile(targetFile(ctx, 'system.txt')));
-  parts.push('--settings', q(targetFile(ctx, 'settings.json')));
-  if (headless) parts.push('-p', '--output-format', 'stream-json', '--verbose');
+  const parts: string[] = [harness.command];
+  if (claude) {
+    if (a.model) parts.push('--model', q(a.model));
+    if (a.permissionMode) parts.push('--permission-mode', q(a.permissionMode));
+    parts.push('--append-system-prompt', target.catFile(targetFile(ctx, 'system.txt')));
+    parts.push('--settings', q(targetFile(ctx, 'settings.json')));
+    if (headless) parts.push('-p', '--output-format', 'stream-json', '--verbose');
+  } else if (harness.kind === 'codex') {
+    if (headless) parts.push('exec');
+    if (a.model) parts.push('--model', q(a.model));
+  }
+  for (const arg of harness.args) parts.push(q(arg));
   for (const extra of a.extraArgs) parts.push(q(extra));
   parts.push(target.catFile(targetFile(ctx, 'prompt.txt')));
   const body = (target.kind === 'windows' ? '' : 'exec ') + parts.join(' ');
-  const launcher = writeLauncher(ctx, 'run', body);
+  const launcher = writeLauncher(ctx, 'run', body, harness.env);
 
   const out = fs.createWriteStream(path.join(ctx.runDir, 'output.log'), { flags: 'a' });
   out.on('error', () => {
     /* never fatal */
   });
+  const cleanLog = new CleanLog(path.join(ctx.runDir, 'output.txt'), PTY_COLS, PTY_ROWS);
 
   const pty = loadPty();
   const proc = pty.spawn(launcher.spec.command, launcher.spec.args, {
@@ -124,6 +143,9 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   let exited = false;
   let lastInputAt = 0;
   let idleSince: number | null = null;
+  let headlessResult: string | undefined;
+  let streamBuf = '';
+  let prevEndedNewline = false;
   let resolveFinished!: (e: AgentEnd) => void;
   const finished = new Promise<AgentEnd>((r) => (resolveFinished = r));
   let exitResolve: (() => void) | null = null;
@@ -136,8 +158,10 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   );
   const idleGraceMs = a.idleGraceMin * 60_000;
 
-  const screen = headless ? null : new ScreenModel(PTY_COLS, PTY_ROWS);
-  let trustHandled = headless || !settings.autoTrustWorkspace;
+  // The trust dialog and the waiting-prompt footer are Claude Code UI; other
+  // harnesses end only via looper-done, process exit or the max runtime.
+  const screen = headless || !claude ? null : new ScreenModel(PTY_COLS, PTY_ROWS);
+  let trustHandled = headless || !autoTrustWorkspace(harness);
   let promptSince: number | null = null;
 
   const killTree = async (): Promise<void> => {
@@ -158,6 +182,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
     clearTimeout(maxTimer);
     if (!exited) await killTree();
     out.end();
+    await cleanLog.close();
     screen?.dispose();
     resolveFinished({
       reason,
@@ -172,9 +197,32 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
 
   proc.onData((d) => {
     out.write(d);
+    cleanLog.write(d);
     if (screen && !ended) void screen.write(d);
+    if (headless) {
+      streamBuf += d;
+      let nl: number;
+      while ((nl = streamBuf.indexOf('\n')) !== -1) {
+        const line = streamBuf.slice(0, nl).trimEnd();
+        streamBuf = streamBuf.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type === 'result' && typeof obj.result === 'string') {
+            headlessResult = obj.result;
+          }
+        } catch { /* not JSON */ }
+      }
+    }
     try {
-      cb.onData(d);
+      if (headless) {
+        let display = d.replace(/(\r?\n){2,}/g, '\r\n');
+        if (prevEndedNewline) display = display.replace(/^\r?\n/, '');
+        prevEndedNewline = /\r?\n$/.test(d);
+        cb.onData(display);
+      } else {
+        cb.onData(d);
+      }
     } catch {
       /* UI listener errors never affect the run */
     }
@@ -184,8 +232,21 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
     exitCode = code;
     exitResolve?.();
     if (ended) return;
-    if (headless) void finish(code === 0 ? 'done' : 'exited', code === 0 ? undefined : `claude exited ${code}`);
-    else void finish('exited', `claude exited ${code}`);
+    if (headless) {
+      // The final result line may still be in streamBuf without a trailing \n.
+      const remaining = streamBuf.trimEnd();
+      if (remaining && !headlessResult) {
+        try {
+          const obj = JSON.parse(remaining);
+          if (obj.type === 'result' && typeof obj.result === 'string') {
+            headlessResult = obj.result;
+          }
+        } catch { /* not valid JSON */ }
+      }
+      void finish(code === 0 ? 'done' : 'exited', headlessResult ?? (code === 0 ? undefined : `${harness.name} exited ${code}`));
+    } else {
+      void finish('exited', `${harness.name} exited ${code}`);
+    }
   });
 
   if (!headless) {
@@ -251,6 +312,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       try {
         proc.resize(Math.max(2, cols), Math.max(2, rows));
         screen?.resize(cols, rows);
+        cleanLog.resize(cols, rows);
       } catch {
         /* ignore */
       }

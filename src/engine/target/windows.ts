@@ -6,14 +6,20 @@ export class WindowsTarget implements Target {
   readonly kind = 'windows' as const;
   readonly launcherExt = '.ps1';
   readonly doneHelperFile = 'looper-done.cmd';
+  private readonly mountPrefix: string;
 
-  constructor(private readonly ctx: TargetContext) {}
+  constructor(
+    private readonly ctx: TargetContext,
+    mountPrefix?: string,
+  ) {
+    this.mountPrefix = mountPrefix?.trim() || '/mnt';
+  }
 
   toTargetPath(hostPath: string): string {
     return translatePath(hostPath, {
       host: this.ctx.host,
       targetKind: 'windows',
-      wslMountPrefix: this.ctx.settings.wslMountPrefix,
+      wslMountPrefix: this.mountPrefix,
       hostDistro: wslDistroName(),
     });
   }

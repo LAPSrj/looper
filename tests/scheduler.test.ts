@@ -15,8 +15,8 @@ import type { ClassifyResult } from '../src/engine/steps/classify';
 const baseTask: TaskInput = {
   id: 't1',
   name: 'Task one',
-  schedule: { every: '10s' },
-  target: { kind: 'wsl' },
+  schedule: { cron: '*/1 * * * *' },
+  environmentId: 'local',
   cwd: '/tmp',
   check: { command: 'true' },
   agent: { prompt: 'do it' },
@@ -51,7 +51,7 @@ async function flush(): Promise<void> {
 
 async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
-  const settings = SettingsSchema.parse({ startDelaySec: 0, tickMs: 100000 });
+  const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
   const tasks = new TaskStore(path.join(dir, 'tasks.json'));
   tasks.load();
   tasks.upsert(taskInput);
@@ -134,13 +134,13 @@ describe('Scheduler', () => {
     expect(rt.nextRunAt).toBe(h.clock.now);
   });
 
-  it('noop check goes back to idle and reschedules from cycle end', async () => {
+  it('noop check goes back to idle and reschedules to the next cron slot', async () => {
     h.checks.push(check('noop', { summary: 'quiet' }));
     await h.tickN(1);
     const rt = h.sched.get('t1')!;
     expect(rt.state).toBe('idle');
     expect(rt.lastResult).toBe('quiet');
-    expect(rt.nextRunAt).toBe(h.clock.now + 10_000);
+    expect(rt.nextRunAt).toBe(1_020_000); // next whole minute after 1_000_000
     expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:noop']);
     expect(h.agentStarted).toBe(0);
   });
@@ -171,7 +171,7 @@ describe('Scheduler', () => {
   });
 
   it('classifier gate: noop stops the cycle, act proceeds', async () => {
-    h.tasks.patch('t1', { classifier: { model: 'haiku', prompt: 'p', timeoutSec: 10, maxBudgetUsd: 0.1 } });
+    h.tasks.patch('t1', { classifier: { model: 'haiku', prompt: 'p', timeoutSec: 10 } });
     h.checks.push(check('act'), check('act'));
     h.classifies.push({ status: 'noop', reason: 'just noise', durationMs: 1, exitCode: 0 });
     h.classifies.push({ status: 'act', reason: 'real work', durationMs: 1, exitCode: 0 });
@@ -179,7 +179,7 @@ describe('Scheduler', () => {
     await h.tickN(1);
     expect(h.agentStarted).toBe(0);
     expect(h.sched.get('t1')!.lastResult).toBe('classifier: just noise');
-    h.clock.now += 10_000;
+    h.clock.now += 60_000;
     await h.tickN(1);
     expect(h.agentStarted).toBe(1);
   });
@@ -190,7 +190,7 @@ describe('Scheduler', () => {
     await h.tickN(1);
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
-    h.clock.now += 10_000;
+    h.clock.now += 60_000;
     await h.tickN(1);
     const rt = h.sched.get('t1')!;
     expect(rt.state).toBe('paused');
@@ -224,7 +224,7 @@ describe('Scheduler', () => {
     expect(h.sched.get('t1')!.state).toBe('disabled');
     h.tasks.patch('t1', { enabled: true });
     expect(h.sched.get('t1')!.state).toBe('idle');
-    expect(h.sched.get('t1')!.nextRunAt).toBe(h.clock.now);
+    expect(h.sched.get('t1')!.nextRunAt).toBe(1_020_000);
   });
 
   it('cron schedules skip slots that pass while busy', async () => {
@@ -238,6 +238,92 @@ describe('Scheduler', () => {
     expect(records().some((r) => r.phase === 'skip' && r.result === 'skipped')).toBe(true);
     h.liveAgent!.end(agentEnd('done'));
     await flush();
+  });
+});
+
+describe('startup overdue filtering', () => {
+  it('non-overdue tasks wait for their next cron slot instead of running immediately', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
+    const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
+    const tasks = new TaskStore(path.join(dir, 'tasks.json'));
+    tasks.load();
+    tasks.upsert({ ...baseTask, schedule: { cron: '*/5 * * * *' } });
+    const state = new StateStore(path.join(dir, 'state.json'));
+    // Last run at 10:01, now is 10:02 — the next */5 slot (10:05) hasn't passed.
+    const now = new Date('2026-01-15T10:02:00Z').getTime();
+    state.save({
+      t1: {
+        taskId: 't1',
+        state: 'idle',
+        held: false,
+        nextRunAt: null,
+        lastRunAt: new Date('2026-01-15T10:01:00Z').getTime(),
+        lastResult: 'ok',
+        consecutiveErrors: 0,
+        currentRunId: null,
+        pausedReason: null,
+      },
+    });
+    state.flush();
+    const runs = new RunStore(dir);
+    const sched = new Scheduler({
+      dataDir: dir,
+      host: 'wsl',
+      settings,
+      tasks,
+      runs,
+      state: new StateStore(path.join(dir, 'state.json')),
+      log: new Logger(),
+      now: () => now,
+    });
+    sched.start();
+    const rt = sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.nextRunAt).toBe(new Date('2026-01-15T10:05:00Z').getTime());
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('overdue tasks run on startup with the stagger delay', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
+    const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
+    const tasks = new TaskStore(path.join(dir, 'tasks.json'));
+    tasks.load();
+    tasks.upsert({ ...baseTask, schedule: { cron: '*/5 * * * *' } });
+    const state = new StateStore(path.join(dir, 'state.json'));
+    // Last run 10 minutes ago — the 5-minute cron has fired since.
+    const now = new Date('2026-01-15T10:10:00Z').getTime();
+    state.save({
+      t1: {
+        taskId: 't1',
+        state: 'idle',
+        held: false,
+        nextRunAt: null,
+        lastRunAt: now - 10 * 60_000,
+        lastResult: 'ok',
+        consecutiveErrors: 0,
+        currentRunId: null,
+        pausedReason: null,
+      },
+    });
+    state.flush();
+    const runs = new RunStore(dir);
+    const sched = new Scheduler({
+      dataDir: dir,
+      host: 'wsl',
+      settings,
+      tasks,
+      runs,
+      state: new StateStore(path.join(dir, 'state.json')),
+      log: new Logger(),
+      now: () => now,
+    });
+    sched.start();
+    const rt = sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.nextRunAt).toBe(now);
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 

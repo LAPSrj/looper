@@ -2,27 +2,98 @@ import { z } from 'zod';
 
 // ---------- Task definition ----------
 
-export const ScheduleSchema = z.union([
-  z.object({ every: z.string().min(1) }).strict(),
-  z.object({ cron: z.string().min(1) }).strict(),
-]);
+export const ScheduleSchema = z.object({ cron: z.string().min(1) }).strict();
+
+// ---------- Environments & harnesses ----------
 
 /**
- * `wsl` = a Linux bash environment. From a Windows host that is a WSL distro
- * (`distro`, or the default one). When looper itself runs inside WSL/Linux it
- * is simply the local shell.
- * `windows` = native Windows (PowerShell). From a WSL host this goes through
+ * One entry of a harness's Model dropdown: `id` is the `--model` value, `name`
+ * the label shown to the user. A bare string or a name-less entry means both.
+ */
+export const HarnessModelSchema = z
+  .union([z.string().min(1), z.object({ id: z.string().min(1), name: z.string().min(1).optional() })])
+  .transform((m) => (typeof m === 'string' ? { id: m, name: m } : { id: m.id, name: m.name ?? m.id }));
+export type HarnessModel = z.output<typeof HarnessModelSchema>;
+
+/**
+ * A harness is one installed agent CLI inside an environment. `claude-code`
+ * gets full integration (model / permission-mode flags, injected system
+ * prompt, idle Stop hook, workspace-trust auto-answer). `codex` and `custom`
+ * are invoked as `command [args…] "<prompt>"`; codex additionally gets the
+ * `exec` subcommand in headless mode and a `--model` flag when the task sets
+ * one. The `looper-done` helper is on PATH for every harness.
+ */
+export const HarnessSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  kind: z.enum(['claude-code', 'codex', 'custom']).default('claude-code'),
+  /** Command or full path inside the environment. Quote it yourself if it contains spaces. */
+  command: z.string().min(1),
+  /** Arguments always added before the prompt. */
+  args: z.array(z.string()).default([]),
+  /** Extra environment variables for this harness's runs (e.g. two installs on different accounts). */
+  env: z.record(z.string()).default({}),
+  /** Models offered in the task editor's Model dropdown. Unset = the kind's main models. */
+  models: z.array(HarnessModelSchema).optional(),
+  /** Kind-specific behavior switches. */
+  options: z
+    .object({
+      /**
+       * claude-code only. Interactive claude asks "do you trust this folder?" the first time it
+       * runs in a directory and blocks until answered. The task's cwd was chosen deliberately,
+       * so looper answers "yes" for you unless this is false.
+       */
+      autoTrustWorkspace: z.boolean().optional(),
+    })
+    .optional(),
+});
+export type Harness = z.infer<typeof HarnessSchema>;
+
+/**
+ * A place where checks and agents run: the local shell, or a bridge to
+ * another world. A bridge owns everything about the crossing — how to spawn
+ * into it and how it sees the host's files.
+ *
+ * `local` = the native shell of the machine looper runs on (bash/zsh on
+ * Linux/mac/WSL, PowerShell on Windows).
+ * `wsl` = a WSL distro (`distro`, or the default one), reachable from a
+ * Windows host through `wsl.exe`.
+ * `windows` = native Windows (PowerShell), reachable from inside WSL through
  * interop (`powershell.exe`).
  */
-export const TargetSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('wsl'),
-    distro: z.string().optional(),
-    /** Shell + flags used to source the launcher. Default: "bash -lic". */
-    shell: z.string().optional(),
-  }),
-  z.object({ kind: z.literal('windows') }),
-]);
+export const EnvironmentSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  kind: z.enum(['local', 'wsl', 'windows']),
+  /** wsl only: distro name; empty = the system default distro. */
+  distro: z.string().optional(),
+  /** local (POSIX hosts) and wsl: shell + flags used to source the launcher. Default: "bash -lic". */
+  shell: z.string().optional(),
+  /** wsl/windows bridges: where Windows drives are mounted inside WSL. Default: /mnt. */
+  mountPrefix: z.string().optional(),
+  harnesses: z.array(HarnessSchema).min(1),
+});
+export type Environment = z.infer<typeof EnvironmentSchema>;
+
+/**
+ * The out-of-the-box environments for a given host: always the local shell,
+ * plus the bridge the host can actually reach (WSL from Windows, Windows from
+ * WSL). Without a host only the local environment is produced.
+ */
+export function defaultEnvironments(host?: string): Environment[] {
+  const claude = (): Harness => ({
+    id: 'claude',
+    name: 'Claude Code',
+    kind: 'claude-code',
+    command: 'claude',
+    args: [],
+    env: {},
+  });
+  const envs: Environment[] = [{ id: 'local', name: 'Local Shell', kind: 'local', harnesses: [claude()] }];
+  if (host === 'windows') envs.push({ id: 'wsl', name: 'WSL', kind: 'wsl', harnesses: [claude()] });
+  if (host === 'wsl') envs.push({ id: 'windows', name: 'Windows (PowerShell)', kind: 'windows', harnesses: [claude()] });
+  return envs;
+}
 
 export const CheckSchema = z.object({
   command: z.string().min(1),
@@ -30,16 +101,18 @@ export const CheckSchema = z.object({
 });
 
 export const ClassifierSchema = z.object({
+  harnessId: z.string().min(1).optional(),
   model: z.string().min(1).default('haiku'),
   prompt: z.string().min(1),
   timeoutSec: z.number().positive().default(180),
-  maxBudgetUsd: z.number().positive().default(0.1),
 });
 
 export const AgentSchema = z.object({
+  /** Harness from the task's environment; empty = the environment's first harness. */
+  harnessId: z.string().min(1).optional(),
   model: z.string().optional(),
   prompt: z.string().min(1),
-  /** Appended verbatim to the `claude` command line. */
+  /** Appended verbatim to the harness command line. */
   extraArgs: z.array(z.string()).default([]),
   mode: z.enum(['interactive', 'headless']).default('interactive'),
   /** Passed as --permission-mode. Empty string omits the flag. */
@@ -55,8 +128,9 @@ export const TaskSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,
-  target: TargetSchema,
-  /** Working directory in the target's native form (/home/... or C:\...). */
+  /** Environment (from Settings) the task runs in. */
+  environmentId: z.string().min(1),
+  /** Working directory in the environment's native form (/home/... or C:\...). */
   cwd: z.string().min(1),
   check: CheckSchema,
   classifier: ClassifierSchema.optional(),
@@ -70,31 +144,68 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskInput = z.input<typeof TaskSchema>;
-export type Target = z.infer<typeof TargetSchema>;
+
+export type Template = Task;
+export type TemplateInput = TaskInput;
 
 // ---------- Settings ----------
 
 export const SettingsSchema = z.object({
+  /** Where checks and agents can run, each with its own harness list. */
+  environments: z.array(EnvironmentSchema).min(1).default(() => defaultEnvironments()),
   /** Environment preselected for new tasks. */
-  defaultTarget: z.enum(['wsl', 'windows']).default('wsl'),
-  /** WSL distro used when a task does not name one (Windows host only). */
-  defaultDistro: z.string().optional(),
-  /** Where Windows drives are mounted inside WSL. */
-  wslMountPrefix: z.string().default('/mnt'),
-  claudeCommand: z.string().default('claude'),
+  defaultEnvironmentId: z.string().min(1).default('local'),
   tickMs: z.number().int().positive().default(1000),
   inboxPollMs: z.number().int().positive().default(2000),
   signalPollMs: z.number().int().positive().default(1000),
-  /** Delay before the first check of each task after startup / creation. */
-  startDelaySec: z.number().nonnegative().default(5),
+  /** Stagger overdue tasks on startup so they don't all fire at once. */
+  staggerFirstRun: z.object({
+    enabled: z.boolean().default(true),
+    minDelaySec: z.number().nonnegative().default(60),
+    maxDelaySec: z.number().positive().default(600),
+    minIntervalSec: z.number().nonnegative().default(30),
+  }).default({}),
   /** Bytes of live terminal output kept per task for late-attaching UIs. */
   outputBufferBytes: z.number().int().positive().default(262144),
-  /**
-   * Interactive claude asks "do you trust this folder?" the first time it runs in a
-   * directory and blocks until answered. The task's cwd was chosen deliberately, so
-   * looper answers "yes" for you. Set false to answer it yourself in the terminal.
-   */
-  autoTrustWorkspace: z.boolean().default(true),
+  /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
+  tasksFile: z.string().min(1).optional(),
+  /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */
+  templatesFile: z.string().min(1).optional(),
+  /** Hide to the system tray instead of quitting when the window is closed. */
+  closeToTray: z.boolean().default(false),
+}).superRefine((s, ctx) => {
+  const envIds = new Set<string>();
+  for (const env of s.environments) {
+    if (envIds.has(env.id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['environments'], message: `duplicate environment id "${env.id}"` });
+    }
+    envIds.add(env.id);
+    const harnessIds = new Set<string>();
+    for (const h of env.harnesses) {
+      if (harnessIds.has(h.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['environments'],
+          message: `environment "${env.name}": duplicate harness id "${h.id}"`,
+        });
+      }
+      harnessIds.add(h.id);
+    }
+  }
+  if (!envIds.has(s.defaultEnvironmentId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['defaultEnvironmentId'],
+      message: `unknown environment "${s.defaultEnvironmentId}"`,
+    });
+  }
+  if (s.staggerFirstRun.enabled && s.staggerFirstRun.minDelaySec > s.staggerFirstRun.maxDelaySec) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['staggerFirstRun', 'minDelaySec'],
+      message: 'min delay must be ≤ max delay',
+    });
+  }
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -163,12 +274,6 @@ export interface InboxCommand {
   reason?: string;
 }
 
-export interface LogLine {
-  ts: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
-  message: string;
-}
-
 // ---------- Engine events (also the IPC contract) ----------
 
 export type EngineEvent =
@@ -177,4 +282,5 @@ export type EngineEvent =
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
   | { type: 'agent:end'; taskId: string; runId: string }
   | { type: 'tasks'; tasks: Task[] }
-  | { type: 'log'; line: LogLine };
+  | { type: 'templates'; templates: Template[] }
+  | { type: 'settings'; settings: Settings };

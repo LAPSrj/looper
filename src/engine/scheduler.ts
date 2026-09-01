@@ -9,7 +9,6 @@ import type {
   Task,
   TaskRuntime,
 } from '../shared/types';
-import { parseDuration } from '../shared/duration';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
@@ -65,21 +64,37 @@ export class Scheduler extends EventEmitter {
   start(): void {
     const previous = this.d.state.load();
     const tasks = this.d.tasks.list();
-    tasks.forEach((task, i) => {
+    const now = this.now();
+
+    const overdue = new Set<string>();
+    for (const task of tasks) {
+      if (!task.enabled) continue;
+      const prev = previous[task.id];
+      if (this.isOverdue(task, prev?.lastRunAt ?? null, now)) {
+        overdue.add(task.id);
+      }
+    }
+
+    const delays = this.computeStartDelays(tasks.filter((t) => overdue.has(t.id)));
+    tasks.forEach((task) => {
       const prev = previous[task.id];
       if (prev && ACTIVE.has(prev.state) && prev.currentRunId) {
         this.record(task.id, prev.currentRunId, 'system', 'interrupted', {
           summary: `looper restarted while ${prev.state}`,
         });
       }
-      this.initRuntime(task, i, prev);
+      const rt = this.initRuntime(task, delays.get(task.id) ?? 0, prev);
+      if (task.enabled && !overdue.has(task.id)) {
+        rt.nextRunAt = this.computeNext(task, now);
+        this.emitRuntime(rt);
+      }
     });
     this.d.tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) =>
       this.onTaskChange(task, kind, previous),
     );
     this.persist();
     this.timer = setInterval(() => this.tick(), this.d.settings.tickMs);
-    this.d.log.info(`scheduler started with ${tasks.length} task(s)`);
+    this.d.log.info(`scheduler started with ${tasks.length} task(s), ${overdue.size} overdue`);
   }
 
   async stop(): Promise<void> {
@@ -113,7 +128,7 @@ export class Scheduler extends EventEmitter {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
-    if (rt.state === 'paused') {
+    if (rt.state === 'paused' || rt.state === 'disabled') {
       rt.pausedReason = null;
       rt.consecutiveErrors = 0;
       rt.state = 'idle';
@@ -178,12 +193,22 @@ export class Scheduler extends EventEmitter {
     return rt;
   }
 
-  private initRuntime(task: Task, index: number, prev?: TaskRuntime): TaskRuntime {
+  private isOverdue(task: Task, lastRunAt: number | null, now: number): boolean {
+    if (lastRunAt === null) return true;
+    try {
+      const next = new Cron(task.schedule.cron).nextRun(new Date(lastRunAt));
+      return next !== null && next.getTime() <= now;
+    } catch {
+      return false;
+    }
+  }
+
+  private initRuntime(task: Task, delayMs: number, prev?: TaskRuntime): TaskRuntime {
     const rt: TaskRuntime = {
       taskId: task.id,
       state: task.enabled ? 'idle' : 'disabled',
       held: false,
-      nextRunAt: task.enabled ? this.now() + this.d.settings.startDelaySec * 1000 + index * 1000 : null,
+      nextRunAt: task.enabled ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
       lastResult: prev?.lastResult ?? null,
       consecutiveErrors: 0,
@@ -193,6 +218,35 @@ export class Scheduler extends EventEmitter {
     this.runtimes.set(task.id, rt);
     this.emitRuntime(rt);
     return rt;
+  }
+
+  private computeStartDelays(tasks: Task[]): Map<string, number> {
+    const { staggerFirstRun: stagger } = this.d.settings;
+    const result = new Map<string, number>();
+
+    if (!stagger.enabled) {
+      tasks.forEach((t, i) => result.set(t.id, i * 1000));
+      return result;
+    }
+
+    const minMs = stagger.minDelaySec * 1000;
+    const rangeMs = (stagger.maxDelaySec - stagger.minDelaySec) * 1000;
+    const intervalMs = stagger.minIntervalSec * 1000;
+
+    const entries = tasks
+      .filter((t) => t.enabled)
+      .map((t) => ({ id: t.id, delay: minMs + Math.random() * rangeMs }));
+
+    entries.sort((a, b) => a.delay - b.delay);
+
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i].delay - entries[i - 1].delay < intervalMs) {
+        entries[i].delay = entries[i - 1].delay + intervalMs;
+      }
+    }
+
+    for (const e of entries) result.set(e.id, e.delay);
+    return result;
   }
 
   private onTaskChange(task: Task, kind: 'create' | 'update' | 'remove', previous?: Task): void {
@@ -209,7 +263,11 @@ export class Scheduler extends EventEmitter {
     }
     const rt = this.runtimes.get(task.id);
     if (!rt) {
-      this.initRuntime(task, this.runtimes.size);
+      const newRt = this.initRuntime(task, 0);
+      if (task.enabled) {
+        newRt.nextRunAt = this.computeNext(task, this.now());
+        this.emitRuntime(newRt);
+      }
       this.persist();
       return;
     }
@@ -219,7 +277,7 @@ export class Scheduler extends EventEmitter {
       rt.nextRunAt = null;
     } else if (rt.state === 'disabled') {
       rt.state = 'idle';
-      rt.nextRunAt = this.now() + this.d.settings.startDelaySec * 1000;
+      rt.nextRunAt = this.computeNext(task, this.now());
     } else if (
       rt.state === 'idle' &&
       JSON.stringify(previous?.schedule) !== JSON.stringify(task.schedule)
@@ -232,7 +290,6 @@ export class Scheduler extends EventEmitter {
 
   private computeNext(task: Task, from: number): number | null {
     try {
-      if ('every' in task.schedule) return from + parseDuration(task.schedule.every);
       const next = new Cron(task.schedule.cron).nextRun(new Date(from));
       return next ? next.getTime() : null;
     } catch (e) {
@@ -282,8 +339,8 @@ export class Scheduler extends EventEmitter {
     rt.currentRunId = runId;
     rt.lastRunAt = this.now();
     rt.held = false;
-    // `every` counts from the end of the cycle; cron keeps its wall-clock slots (skipped while busy).
-    rt.nextRunAt = 'every' in task.schedule ? null : this.computeNext(task, this.now());
+    // Cron keeps its wall-clock slots while a cycle runs (skipped, never overlapped).
+    rt.nextRunAt = this.computeNext(task, this.now());
     this.emitRuntime(rt);
     this.persist();
 

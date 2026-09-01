@@ -4,8 +4,8 @@ export const EXAMPLE_TASK: TaskInput = {
   id: 'issues-triage',
   name: 'Issues triage',
   enabled: true,
-  schedule: { every: '10m' },
-  target: { kind: 'wsl', distro: 'Ubuntu' },
+  schedule: { cron: '*/10 * * * *' },
+  environmentId: 'local',
   cwd: '/home/me/repos/project',
   check: {
     command: 'node scripts/looper-check.js',
@@ -14,7 +14,7 @@ export const EXAMPLE_TASK: TaskInput = {
   classifier: {
     model: 'haiku',
     prompt:
-      'You decide whether a coding agent should be started. Start it only if the items below need real work (bug reports, review requests, failing CI). Ignore noise (bots, thanks, duplicates).\n\nSummary: {{summary}}\n\n{{context}}',
+      'Decide whether the agent should act now. Say yes only if the items below represent real work that needs handling. Ignore noise, duplicates, and items that need no action.\n\nSummary: {{summary}}\n\n{{context}}',
   },
   agent: {
     model: 'sonnet',

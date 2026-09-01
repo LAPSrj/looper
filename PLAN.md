@@ -148,7 +148,7 @@ agent starts with the facts instead of re-discovering them.
 ```
 claude -p --model <classifier.model> --output-format json \
        --json-schema '{"type":"object","properties":{"act":{"type":"boolean"},"reason":{"type":"string"}},"required":["act","reason"]}' \
-       --max-budget-usd 0.05 "<rendered classifier prompt>"
+       "<rendered classifier prompt>"
 ```
 Context goes on stdin. Runs through the same target abstraction (so it uses
 the WSL `claude` auth). Result + reason logged. Direct Anthropic API call is

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { validateTask } from '../../shared/validate';
-import type { Task } from '../../shared/types';
+import type { Environment, Task } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
 
 interface TasksFile {
@@ -11,15 +11,25 @@ interface TasksFile {
 export class TaskStore extends EventEmitter {
   private tasks = new Map<string, Task>();
 
-  constructor(private readonly file: string) {
+  constructor(
+    private file: string,
+    /** Current environments, so environment/harness references are checked on load and save. */
+    private readonly environments?: () => Environment[],
+    private readonly host?: string,
+  ) {
     super();
+  }
+
+  setFile(file: string): void {
+    this.file = file;
+    this.load();
   }
 
   load(): void {
     const data = readJson<TasksFile>(this.file, { version: 1, tasks: [] });
     this.tasks.clear();
     for (const raw of data.tasks ?? []) {
-      const v = validateTask(raw);
+      const v = validateTask(raw, this.environments?.(), this.host);
       if (v.ok) this.tasks.set(v.task.id, v.task);
       else this.emit('invalid', raw, v.errors);
     }
@@ -35,7 +45,7 @@ export class TaskStore extends EventEmitter {
 
   /** Validate + persist. Throws with the joined error list on invalid input. */
   upsert(input: unknown): Task {
-    const v = validateTask(input);
+    const v = validateTask(input, this.environments?.(), this.host);
     if (!v.ok) throw new Error(v.errors.join('; '));
     const now = new Date().toISOString();
     const existing = this.tasks.get(v.task.id);

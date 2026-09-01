@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,4 +29,83 @@ export function defaultDataDir(): string {
 
 export function wslDistroName(): string | undefined {
   return process.env.WSL_DISTRO_NAME;
+}
+
+/** `/mnt/c/` -> `/mnt`. Undefined when the output is not a drive mount path. */
+export function mountPrefixFromWslPath(output: string): string | undefined {
+  const out = output.replace(/\0/g, '').trim();
+  const m = /^(.+)\/c\/?$/i.exec(out);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * The Windows-drive mount root of a WSL distro (its automount root, usually
+ * /mnt), read by running `wslpath -u C:\` inside it. Without a distro name:
+ * the default distro from a Windows host, looper's own distro from WSL.
+ */
+export function detectWslMountPrefix(distro?: string): Promise<string | undefined> {
+  const local = !distro && detectHost() === 'wsl';
+  const cmd = local ? 'wslpath' : 'wsl.exe';
+  const args = local ? ['-u', 'C:\\'] : [...(distro ? ['-d', distro] : []), 'wslpath', '-u', 'C:\\'];
+  return new Promise((resolve) => {
+    try {
+      // The child's stdout passes through as UTF-8 (unlike wsl.exe's own UTF-16 listings).
+      execFile(cmd, args, { timeout: 15_000, windowsHide: true }, (err, stdout) => {
+        resolve(err || !stdout ? undefined : mountPrefixFromWslPath(String(stdout)));
+      });
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+/**
+ * Convert a path with `wslpath` inside the given distro: to 'windows'
+ * (/home/x -> \\wsl.localhost\<distro>\home\x, /mnt/c/y -> C:\y) or to
+ * 'posix' (C:\y -> /mnt/c/y). Without a distro name: the default distro from
+ * a Windows host, looper's own distro from WSL. Undefined when wslpath fails.
+ */
+export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: string): Promise<string | undefined> {
+  const local = !distro && detectHost() === 'wsl';
+  const flag = to === 'windows' ? '-w' : '-u';
+  const cmd = local ? 'wslpath' : 'wsl.exe';
+  const args = local ? [flag, p] : [...(distro ? ['-d', distro] : []), 'wslpath', flag, p];
+  return new Promise((resolve) => {
+    try {
+      execFile(cmd, args, { timeout: 15_000, windowsHide: true }, (err, stdout) => {
+        const out = stdout ? String(stdout).replace(/\0/g, '').trim() : '';
+        resolve(err || !out ? undefined : out);
+      });
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+/**
+ * Installed WSL distros via `wsl.exe --list --quiet` (works on a Windows host
+ * and from inside WSL through interop). Empty when wsl.exe is unavailable.
+ */
+export function listWslDistros(): Promise<string[]> {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        'wsl.exe',
+        ['--list', '--quiet'],
+        { encoding: 'buffer', timeout: 15_000, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) return resolve([]);
+          // wsl.exe prints UTF-16LE.
+          const names = stdout
+            .toString('utf16le')
+            .split(/\r?\n/)
+            .map((s) => s.replace(/\0/g, '').trim())
+            .filter(Boolean);
+          resolve(names);
+        },
+      );
+    } catch {
+      resolve([]);
+    }
+  });
 }

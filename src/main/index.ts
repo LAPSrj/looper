@@ -1,11 +1,13 @@
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
-import { defaultDataDir } from '../engine/host';
+import { convertWslPath, defaultDataDir } from '../engine/host';
 import { registerIpc } from './ipc';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
+let tray: Tray | null = null;
 let quitting = false;
 
 // The engine must survive anything the UI or a child process throws at it.
@@ -22,6 +24,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     if (win) {
+      if (!win.isVisible()) win.show();
       if (win.isMinimized()) win.restore();
       win.focus();
     }
@@ -32,10 +35,19 @@ if (!app.requestSingleInstanceLock()) {
     engine.start();
     registerIpc(engine, {
       getWindow: () => win,
+      openRunDetail: openRunDetailWindow,
       openEditor: openEditorWindow,
-      openExample: openExampleEditorWindow,
+
+      openEnvEditor: openEnvEditorWindow,
+      openHarnessEditor: openHarnessEditorWindow,
+      openModelEditor: openModelEditorWindow,
+      openTemplateEditor: openTemplateEditorWindow,
+      openTemplatePicker: openTemplatePickerWindow,
+      openEditorFromTemplate: openEditorFromTemplateWindow,
+      updateTaskMenu,
     });
     buildMenu();
+    createTray();
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -43,7 +55,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    if (!engine?.settings.closeToTray) app.quit();
   });
 
   app.on('before-quit', (event) => {
@@ -55,6 +67,38 @@ if (!app.requestSingleInstanceLock()) {
       .catch(() => undefined)
       .finally(() => app.quit());
   });
+}
+
+const appIcon = path.join(__dirname, '../../build/icon.png');
+const trayIcon = process.platform === 'win32'
+  ? path.join(__dirname, '../../build/icon.ico')
+  : appIcon;
+
+function showWindow(): void {
+  if (!win || win.isDestroyed()) {
+    createWindow();
+  } else {
+    win.show();
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+}
+
+function createTray(): void {
+  tray = new Tray(nativeImage.createFromPath(trayIcon));
+  tray.setToolTip('Looper');
+  tray.on('double-click', showWindow);
+  const menu = Menu.buildFromTemplate([
+    { label: 'Show Looper', click: showWindow },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+  tray.setContextMenu(menu);
+}
+
+/** Pre-paint window background; must match the CSS --bg for the active theme. */
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? '#14161a' : '#f3f3f3';
 }
 
 function webPreferences(): Electron.WebPreferences {
@@ -81,9 +125,20 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: 'Looper',
-    backgroundColor: '#14161a',
+    icon: appIcon,
+    backgroundColor: windowBackground(),
     autoHideMenuBar: false,
     webPreferences: webPreferences(),
+  });
+  win.on('close', (e) => {
+    if (!quitting && engine?.settings.closeToTray) {
+      e.preventDefault();
+      win?.hide();
+      return;
+    }
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w !== win && !w.isDestroyed()) w.close();
+    }
   });
   win.on('closed', () => {
     win = null;
@@ -100,18 +155,94 @@ function createWindow(): void {
   loadRenderer(win);
 }
 
-function openChildWindow(hash: string, title: string, width: number, height: number): void {
+function openChildWindow(
+  hash: string,
+  title: string,
+  width: number,
+  height: number,
+  modalParent?: BrowserWindow | null,
+  opts?: { minWidth?: number; minHeight?: number; resizable?: boolean },
+): BrowserWindow {
+  const parent = modalParent && !modalParent.isDestroyed() ? modalParent : undefined;
   const child = new BrowserWindow({
     width,
     height,
+    minWidth: opts?.minWidth ?? 520,
+    minHeight: opts?.minHeight ?? 420,
+    title,
+    icon: appIcon,
+    backgroundColor: windowBackground(),
+    maximizable: false,
+    resizable: opts?.resizable ?? true,
+    webPreferences: webPreferences(),
+    ...(parent ? { parent, modal: true, minimizable: false } : {}),
+  });
+  // Detach the app menu entirely; hiding it would leave Alt able to summon it.
+  child.removeMenu();
+  loadRenderer(child, hash);
+  return child;
+}
+
+function openRunDetailWindow(taskId: string, runId: string): void {
+  const task = engine?.getTask(taskId);
+  const title = task ? `${task.name} – ${runId}` : `Run ${runId}`;
+  const hash = `run-detail/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`;
+  const child = new BrowserWindow({
+    width: 800,
+    height: 500,
     minWidth: 520,
     minHeight: 420,
     title,
-    backgroundColor: '#14161a',
-    autoHideMenuBar: true,
+    icon: appIcon,
+    backgroundColor: windowBackground(),
+    maximizable: true,
     webPreferences: webPreferences(),
   });
-  child.setMenuBarVisibility(false);
+  const send = (type: string) => {
+    if (!child.isDestroyed()) child.webContents.send('ui:event', { type });
+  };
+  const openHostPath = async (p: string) => {
+    if (process.platform === 'win32' && p.startsWith('/')) {
+      const winPath = await convertWslPath(p, 'windows');
+      if (winPath) { void shell.openPath(winPath); return; }
+    }
+    void shell.openPath(p);
+  };
+  const outputFile = (raw: boolean): string => {
+    if (!engine) return '';
+    const dir = engine.runDir(taskId, runId);
+    const clean = path.join(dir, 'output.txt');
+    return !raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
+  };
+  let rawChecked = false;
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '&File',
+      submenu: [
+        {
+          label: 'Open &Output File',
+          click: () => void openHostPath(outputFile(rawChecked)),
+        },
+        { type: 'separator' },
+        {
+          label: 'Open &Run Folder',
+          click: () => { if (engine) void openHostPath(engine.runDir(taskId, runId)); },
+        },
+        {
+          label: 'Open &Working Directory',
+          enabled: !!task?.cwd,
+          click: () => { if (task?.cwd) void openHostPath(task.cwd); },
+        },
+      ],
+    },
+    {
+      label: '&View',
+      submenu: [
+        { id: 'raw-output', label: '&Raw Terminal Log', type: 'checkbox', checked: false, click: (item) => { rawChecked = item.checked; send('toggle-raw-output'); } },
+      ],
+    },
+  ]);
+  child.setMenu(menu);
   loadRenderer(child, hash);
 }
 
@@ -120,16 +251,83 @@ export function openEditorWindow(taskId?: string): void {
     taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor',
     taskId ? 'Edit Task — Looper' : 'New Task — Looper',
     780,
-    940,
+    700,
   );
 }
 
-function openExampleEditorWindow(): void {
-  openChildWindow('editor-example', 'New Task — Looper', 780, 940);
-}
 
 function openSettingsWindow(): void {
-  openChildWindow('settings', 'Settings — Looper', 660, 640);
+  openChildWindow('settings', 'Settings — Looper', 720, 620, win);
+}
+
+function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: BrowserWindow | null): void {
+  openChildWindow(
+    `env-editor/${encodeURIComponent(envId)}${isNew ? '/new' : ''}`,
+    isNew ? 'New Environment — Looper' : 'Edit Environment — Looper',
+    700,
+    560,
+    parent,
+  );
+}
+
+function openHarnessEditorWindow(
+  envId: string,
+  harnessId: string,
+  isNew?: boolean,
+  parent?: BrowserWindow | null,
+): void {
+  openChildWindow(
+    `harness-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}${isNew ? '/new' : ''}`,
+    isNew ? 'New Harness — Looper' : 'Edit Harness — Looper',
+    640,
+    620,
+    parent,
+  );
+}
+
+function openModelEditorWindow(
+  envId: string,
+  harnessId: string,
+  index?: number,
+  parent?: BrowserWindow | null,
+): void {
+  openChildWindow(
+    `model-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}/${index === undefined ? 'new' : index}`,
+    index === undefined ? 'New Model — Looper' : 'Edit Model — Looper',
+    420,
+    290,
+    parent,
+    { minWidth: 420, minHeight: 290, resizable: false },
+  );
+}
+
+function openTemplateEditorWindow(templateId?: string, _parent?: BrowserWindow | null): void {
+  openChildWindow(
+    templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
+    templateId ? 'Edit Template — Looper' : 'New Template — Looper',
+    780,
+    700,
+  );
+}
+
+function openTemplatePickerWindow(): void {
+  openChildWindow('template-picker', 'New Task from Template — Looper', 480, 420, win);
+}
+
+function openEditorFromTemplateWindow(templateId: string): void {
+  const child = openChildWindow(
+    `editor-from-template/${encodeURIComponent(templateId)}`,
+    'New Task — Looper',
+    780,
+    700,
+  );
+  // The picker is modal to main; closing it auto-focuses main.
+  // Intercept that focus event and redirect to the editor.
+  if (win && !win.isDestroyed()) {
+    const redirect = () => { if (!child.isDestroyed()) child.focus(); };
+    win.once('focus', redirect);
+    child.once('closed', () => win?.removeListener('focus', redirect));
+  }
 }
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
@@ -140,16 +338,39 @@ function sendUi(type: string): void {
   }
 }
 
-function buildMenu(): void {
+function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string): void {
+  buildMenu(hasTask, taskEnabled, taskPaused, taskState);
+}
+
+function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string): void {
+  const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   const menu = Menu.buildFromTemplate([
     {
       label: '&File',
       submenu: [
         { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
-        { label: 'New Task from E&xample…', click: () => openExampleEditorWindow() },
+        { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
         { type: 'separator' },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
+        { role: 'quit', label: 'E&xit' },
+      ],
+    },
+    {
+      label: '&Task',
+      submenu: [
+        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && !active, click: () => sendUi('run-now') },
+        { id: 'task-stop-agent', label: '&Stop Agent', accelerator: 'Shift+F5', enabled: hasTask && taskState === 'running', click: () => sendUi('stop-agent') },
+        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
+        { id: 'task-enable-disable', label: taskEnabled === false ? '&Enable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
+        { type: 'separator' },
+        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
+        { id: 'task-delete', label: '&Delete Task', enabled: hasTask, click: () => sendUi('delete-task') },
+      ],
+    },
+    {
+      label: '&Advanced',
+      submenu: [
         {
           label: 'Open &Data Directory',
           click: () => {
@@ -162,25 +383,6 @@ function buildMenu(): void {
             if (engine) void shell.openPath(engine.inboxDir());
           },
         },
-        { type: 'separator' },
-        { role: 'quit', label: 'E&xit' },
-      ],
-    },
-    {
-      label: '&Task',
-      submenu: [
-        { label: '&Run Now', accelerator: 'F5', click: () => sendUi('run-now') },
-        { label: '&Stop Agent', accelerator: 'Shift+F5', click: () => sendUi('stop-agent') },
-        { label: '&Pause / Resume', accelerator: 'CmdOrCtrl+P', click: () => sendUi('pause-resume') },
-        { type: 'separator' },
-        { label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', click: () => sendUi('edit-task') },
-        { label: '&Delete Task', click: () => sendUi('delete-task') },
-      ],
-    },
-    {
-      label: '&View',
-      submenu: [
-        { label: '&Engine Log', accelerator: 'CmdOrCtrl+L', click: () => sendUi('toggle-log') },
         { type: 'separator' },
         { role: 'reload', label: '&Reload UI' },
         { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },

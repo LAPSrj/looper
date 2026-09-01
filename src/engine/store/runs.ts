@@ -62,9 +62,12 @@ export class RunStore {
     return out;
   }
 
-  /** Tail of the raw terminal capture for a run. */
-  readOutput(taskId: string, runId: string, maxBytes = 262144): string {
-    const file = path.join(this.runDir(taskId, runId), 'output.log');
+  /** Read the clean log when available, falling back to the raw terminal capture. */
+  readOutput(taskId: string, runId: string, maxBytes = 262144, forceRaw = false): string {
+    const dir = this.runDir(taskId, runId);
+    const clean = path.join(dir, 'output.txt');
+    const raw = path.join(dir, 'output.log');
+    const file = !forceRaw && fs.existsSync(clean) ? clean : raw;
     try {
       const st = fs.statSync(file);
       const fd = fs.openSync(file, 'r');
@@ -72,7 +75,13 @@ export class RunStore {
         const start = Math.max(0, st.size - maxBytes);
         const buf = Buffer.alloc(st.size - start);
         fs.readSync(fd, buf, 0, buf.length, start);
-        return buf.toString('utf8');
+        const text = buf.toString('utf8');
+        if (start > 0) {
+          const totalKB = Math.round(st.size / 1024);
+          const shownKB = Math.round(maxBytes / 1024);
+          return `--- truncated: showing last ${shownKB} KB of ${totalKB} KB ---\n${text}`;
+        }
+        return text;
       } finally {
         fs.closeSync(fd);
       }

@@ -63,6 +63,12 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
             : rt?.state === 'paused'
               ? capFirst(rt.pausedReason ?? 'paused')
               : capFirst(rt?.lastResult ?? '');
+        const active = rt?.state === 'running' || rt?.state === 'checking' || rt?.state === 'classifying';
+        const subLine = active
+          ? label
+          : rt?.state === 'disabled'
+            ? 'Disabled'
+            : sub;
         return (
           <li
             key={t.id}
@@ -71,13 +77,18 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
             aria-selected={selected === t.id}
             className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held ? 'held' : ''}`}
             onClick={() => onSelect(t.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onSelect(t.id);
+              const rt2 = runtimes[t.id];
+              window.looper.showTaskContextMenu({ enabled: t.enabled, state: rt2?.state, held: !!rt2?.held });
+            }}
           >
             <div className="task-item-row">
               <span className="task-name">{t.name}</span>
-              <span className={`badge state-${rt?.held ? 'held' : rt?.state ?? 'idle'}`}>{label}</span>
             </div>
-            <div className="task-item-sub" title={sub}>
-              {sub}
+            <div className="task-item-sub" title={subLine}>
+              {subLine}
             </div>
           </li>
         );

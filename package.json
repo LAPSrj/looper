@@ -1,5 +1,6 @@
 {
   "name": "looper",
+  "productName": "Looper",
   "version": "0.1.0",
   "description": "Cron-style manager for AI agent loops: cheap checks, fresh claude sessions only when there is work, one agent per task.",
   "main": "./out/main/index.js",
@@ -56,9 +57,11 @@
       "out/**",
       "dist/**",
       "bin/**",
+      "build/icon.png",
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"

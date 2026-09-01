@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { translatePath } from '../src/engine/target/paths';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
-import { SettingsSchema } from '../src/shared/types';
-
-const settings = SettingsSchema.parse({});
 
 describe('translatePath', () => {
   it('windows host -> wsl target', () => {
@@ -37,18 +34,22 @@ describe('translatePath', () => {
 
 describe('BashTarget', () => {
   it('spawns through wsl.exe from windows', () => {
-    const t = new BashTarget({ host: 'windows', settings }, 'Ubuntu');
+    const t = new BashTarget({ host: 'windows' }, 'Ubuntu');
     const spec = t.spawnSpec('C:\\data\\runs\\r1\\run.sh');
     expect(spec.command).toBe('wsl.exe');
     expect(spec.args).toEqual(['-d', 'Ubuntu', '--', 'bash', '-lic', "source '/mnt/c/data/runs/r1/run.sh'"]);
   });
   it('spawns bash directly on a linux host, honouring a custom shell', () => {
-    const t = new BashTarget({ host: 'wsl', settings }, undefined, 'zsh -lc');
+    const t = new BashTarget({ host: 'wsl' }, undefined, 'zsh -lc');
     const spec = t.spawnSpec('/home/me/.config/looper/runs/r1/run.sh');
     expect(spec).toEqual({ command: 'zsh', args: ['-lc', "source '/home/me/.config/looper/runs/r1/run.sh'"] });
   });
+  it('honours a custom mount prefix', () => {
+    const t = new BashTarget({ host: 'windows' }, 'Ubuntu', undefined, '/drives');
+    expect(t.toTargetPath('C:\\data\\x')).toBe('/drives/c/data/x');
+  });
   it('renders a launcher with env, PATH, helper and cd guard', () => {
-    const t = new BashTarget({ host: 'wsl', settings }, undefined);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
     const script = t.renderLauncher({
       taskId: 't',
       runId: 'r',
@@ -64,7 +65,7 @@ describe('BashTarget', () => {
     expect(script.trim().endsWith('exec claude "$(cat \'/x/prompt.txt\')"')).toBe(true);
   });
   it('quotes', () => {
-    const t = new BashTarget({ host: 'wsl', settings }, undefined);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
     expect(t.quote("a'b")).toBe("'a'\\''b'");
     expect(t.catFile('/p/x')).toBe(`"$(cat '/p/x')"`);
   });
@@ -72,13 +73,13 @@ describe('BashTarget', () => {
 
 describe('WindowsTarget', () => {
   it('spawns powershell with the translated path from WSL', () => {
-    const t = new WindowsTarget({ host: 'wsl', settings });
+    const t = new WindowsTarget({ host: 'wsl' });
     const spec = t.spawnSpec('/mnt/c/data/runs/r1/run.ps1');
     expect(spec.command).toBe('powershell.exe');
     expect(spec.args.at(-1)).toBe('C:\\data\\runs\\r1\\run.ps1');
   });
   it('renders a launcher', () => {
-    const t = new WindowsTarget({ host: 'windows', settings });
+    const t = new WindowsTarget({ host: 'windows' });
     const script = t.renderLauncher({
       taskId: 't',
       runId: 'r',

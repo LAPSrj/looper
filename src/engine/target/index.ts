@@ -1,5 +1,6 @@
 import type { HostKind } from '../host';
 import type { Settings, Task } from '../../shared/types';
+import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
 import { WindowsTarget } from './windows';
 
@@ -43,12 +44,33 @@ export interface Target {
 
 export interface TargetContext {
   host: HostKind;
-  settings: Settings;
 }
 
-export function createTarget(task: Task, ctx: TargetContext): Target {
-  if (task.target.kind === 'windows') return new WindowsTarget(ctx);
-  return new BashTarget(ctx, task.target.distro ?? ctx.settings.defaultDistro, task.target.shell);
+/** Automount roots detected via wslpath ('' key = the default / host distro). */
+const detectedMountPrefixes = new Map<string, string>();
+
+export function setDetectedMountPrefix(distro: string | undefined, prefix: string): void {
+  detectedMountPrefixes.set(distro ?? '', prefix);
+}
+
+function mountPrefixFor(env: { distro?: string; mountPrefix?: string }, key?: string): string | undefined {
+  return env.mountPrefix ?? detectedMountPrefixes.get(key ?? '');
+}
+
+export function createTarget(task: Task, opts: { host: HostKind; settings: Settings }): Target {
+  const env = resolveEnvironment(task, opts.settings);
+  const ctx: TargetContext = { host: opts.host };
+  switch (env.kind) {
+    case 'windows':
+      return new WindowsTarget(ctx, mountPrefixFor(env));
+    case 'wsl':
+      if (opts.host !== 'windows') {
+        throw new Error(`environment "${env.name}" is a WSL bridge and only works from a Windows host`);
+      }
+      return new BashTarget(ctx, env.distro, env.shell, mountPrefixFor(env, env.distro));
+    case 'local':
+      return opts.host === 'windows' ? new WindowsTarget(ctx) : new BashTarget(ctx, undefined, env.shell);
+  }
 }
 
 export { BashTarget, WindowsTarget };

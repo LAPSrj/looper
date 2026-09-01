@@ -1,7 +1,9 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
-import { detectHost, type HostKind } from './host';
+import { detectHost, detectWslMountPrefix, type HostKind } from './host';
+import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { Scheduler, type SchedulerSteps } from './scheduler';
@@ -10,6 +12,7 @@ import { RunStore } from './store/runs';
 import { loadSettings, saveSettings } from './store/settings';
 import { StateStore } from './store/state';
 import { TaskStore } from './store/tasks';
+import { TemplateStore } from './store/templates';
 
 export interface EngineOptions {
   dataDir: string;
@@ -27,12 +30,18 @@ export interface Engine {
   stop(): Promise<void>;
   /** Validate, persist and apply a settings patch. Running components see it immediately. */
   updateSettings(patch: unknown): Settings;
+  /** Move the current tasks/templates store file to a new path. Call before updateSettings. */
+  moveStoreFile(store: 'tasks' | 'templates', targetFile: string): void;
   on(listener: (e: EngineEvent) => void): () => void;
   // tasks
   listTasks(): Task[];
   getTask(id: string): Task | undefined;
   saveTask(input: unknown): Task;
   removeTask(id: string): boolean;
+  // templates
+  listTemplates(): Task[];
+  saveTemplate(input: unknown): Task;
+  removeTemplate(id: string): boolean;
   // runtime
   listRuntimes(): TaskRuntime[];
   runNow(id: string): boolean;
@@ -44,7 +53,7 @@ export interface Engine {
   agentBuffer(id: string): { runId: string; data: string } | null;
   // history
   listRuns(id: string, limit?: number): RunRecord[];
-  readOutput(id: string, runId: string, maxBytes?: number): string;
+  readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
   runDir(id: string, runId: string): string;
   inboxDir(): string;
 }
@@ -53,9 +62,14 @@ export function createEngine(opts: EngineOptions): Engine {
   const dataDir = opts.dataDir;
   ensureDir(dataDir);
   const host = detectHost();
-  const settings = loadSettings(dataDir);
+  const settings = loadSettings(dataDir, host);
   const log = new Logger(path.join(dataDir, 'engine.log'), opts.echoLog ?? false);
-  const tasks = new TaskStore(path.join(dataDir, 'tasks.json'));
+  const storeFile = (store: 'tasks' | 'templates'): string => {
+    const custom = store === 'tasks' ? settings.tasksFile : settings.templatesFile;
+    return custom ?? path.join(dataDir, `${store}.json`);
+  };
+  const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host);
+  const templates = new TemplateStore(storeFile('templates'));
   const runs = new RunStore(dataDir);
   const state = new StateStore(path.join(dataDir, 'state.json'));
   const listeners = new Set<(e: EngineEvent) => void>();
@@ -69,12 +83,21 @@ export function createEngine(opts: EngineOptions): Engine {
       }
     }
   };
-  log.onLine((line) => emit({ type: 'log', line }));
-
   tasks.on('invalid', (raw: unknown, errors: string[]) => {
     const id = (raw as { id?: string })?.id ?? '?';
     log.error(`tasks.json: skipping invalid task ${id}: ${errors.join('; ')}`);
   });
+
+  /** Detect the automount root of bridge environments without an explicit mount prefix. */
+  const warmMountPrefixes = () => {
+    for (const env of settings.environments) {
+      if (env.kind === 'local' || env.mountPrefix) continue;
+      const distro = env.kind === 'wsl' ? env.distro : undefined;
+      void detectWslMountPrefix(distro).then((prefix) => {
+        if (prefix) setDetectedMountPrefix(distro, prefix);
+      });
+    }
+  };
 
   const scheduler = new Scheduler({ dataDir, host, settings, tasks, runs, state, log, steps: opts.steps });
   scheduler.on('event', emit);
@@ -123,7 +146,10 @@ export function createEngine(opts: EngineOptions): Engine {
       if (started) return;
       started = true;
       log.info(`looper engine starting (host=${host}, dataDir=${dataDir})`);
+      warmMountPrefixes();
       tasks.load();
+      templates.load();
+      templates.on('change', () => emit({ type: 'templates', templates: templates.list() }));
       scheduler.start();
       inbox.start();
     },
@@ -139,22 +165,46 @@ export function createEngine(opts: EngineOptions): Engine {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
+    moveStoreFile(store: 'tasks' | 'templates', targetFile: string): void {
+      const srcFile = storeFile(store);
+      if (srcFile === targetFile) return;
+      if (!fs.existsSync(srcFile)) return;
+      ensureDir(path.dirname(targetFile));
+      fs.copyFileSync(srcFile, targetFile);
+      fs.unlinkSync(srcFile);
+      log.info(`moved ${store} store from ${srcFile} to ${targetFile}`);
+    },
     updateSettings(patch: unknown): Settings {
+      const oldTasksFile = settings.tasksFile;
+      const oldTemplatesFile = settings.templatesFile;
       const merged = { ...settings, ...(patch as Record<string, unknown>) };
-      // Empty strings mean "unset" for optional fields.
-      if (merged.defaultDistro === '') delete merged.defaultDistro;
       const parsed = SettingsSchema.parse(merged);
       saveSettings(dataDir, parsed);
       // The settings object is shared by reference across the engine: swap its contents in place.
       for (const key of Object.keys(settings)) delete (settings as Record<string, unknown>)[key];
       Object.assign(settings, parsed);
+      if (parsed.tasksFile !== oldTasksFile) {
+        tasks.setFile(storeFile('tasks'));
+        log.info(`tasks file changed: ${oldTasksFile ?? '(default)'} -> ${parsed.tasksFile ?? '(default)'}`);
+      }
+      if (parsed.templatesFile !== oldTemplatesFile) {
+        templates.setFile(storeFile('templates'));
+        log.info(`templates file changed: ${oldTemplatesFile ?? '(default)'} -> ${parsed.templatesFile ?? '(default)'}`);
+      }
       log.info('settings updated');
+      warmMountPrefixes();
+      emit({ type: 'settings', settings: { ...settings } });
+      if (parsed.tasksFile !== oldTasksFile) emit({ type: 'tasks', tasks: tasks.list() });
+      if (parsed.templatesFile !== oldTemplatesFile) emit({ type: 'templates', templates: templates.list() });
       return { ...settings };
     },
     listTasks: () => tasks.list(),
     getTask: (id) => tasks.get(id),
     saveTask: (input) => tasks.upsert(input),
     removeTask: (id) => tasks.remove(id),
+    listTemplates: () => templates.list(),
+    saveTemplate: (input) => templates.upsert(input),
+    removeTemplate: (id) => templates.remove(id),
     listRuntimes: () => scheduler.list(),
     runNow: (id) => scheduler.runNow(id),
     pause: (id, reason) => scheduler.pause(id, reason),
@@ -164,7 +214,7 @@ export function createEngine(opts: EngineOptions): Engine {
     resizeAgent: (id, c, r) => scheduler.resizeAgent(id, c, r),
     agentBuffer: (id) => scheduler.getBuffer(id),
     listRuns: (id, limit) => runs.list(id, limit),
-    readOutput: (id, runId, max) => runs.readOutput(id, runId, max),
+    readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
     runDir: (id, runId) => runs.runDir(id, runId),
     inboxDir: () => path.join(dataDir, 'inbox'),
   };

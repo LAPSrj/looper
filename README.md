@@ -25,26 +25,59 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
    Non-zero exit, timeout or non-JSON output is an **error**, never a trigger.
 2. **Classify** (optional) — `claude -p --model haiku` gets the summary/context
    and answers `{act, reason}` under a strict schema and a dollar budget.
-3. **Agent** — `claude` starts in the task's directory with your prompt (the
-   check output is templated in via `{{summary}}` / `{{context}}`, or appended
-   if you don't reference them). Interactive by default, in a real pty shown in
-   Looper's terminal tab. The run ends on the first of:
+3. **Agent** — the task's harness (Claude Code, Codex, or any custom agent
+   CLI) starts in the task's directory with your prompt (the check output is
+   templated in via `{{summary}}` / `{{context}}`, or appended if you don't
+   reference them). Interactive by default, in a real pty shown in Looper's
+   terminal tab. The run ends on the first of:
    - the agent runs `looper-done "summary"` (its instructions say to),
-   - it sits idle after a turn longer than `idleGraceMin` without signalling
-     (a `Stop` hook Looper injects reports idleness) — ends the run, or holds
-     it for a human if `onIdleTimeout: "hold"`,
-   - the claude process exits, or
+   - Claude Code only: it sits idle after a turn longer than `idleGraceMin`
+     without signalling (a `Stop` hook Looper injects reports idleness) — ends
+     the run, or holds it for a human if `onIdleTimeout: "hold"`,
+   - the agent process exits, or
    - `maxRuntimeMin` is exceeded.
 
-   `mode: "headless"` uses `claude -p` instead: process exit is the signal,
-   nothing to type into.
+   `mode: "headless"` runs without a terminal (`claude -p` / `codex exec`):
+   process exit is the signal, nothing to type into.
+
+## Environments & harnesses
+
+**Settings → Environments** defines where things run and what runs there:
+
+- An **environment** is either the local shell or a bridge to another world:
+  - `local` — the native shell of whatever machine Looper runs on (bash/zsh
+    on Linux/macOS/WSL, PowerShell on Windows). The only kind most users need.
+  - `wsl` — a WSL distro, reachable from a Windows host through `wsl.exe`.
+  - `windows` — native PowerShell, reachable from inside WSL through interop.
+
+  A bridge owns everything about its crossing, including how it sees the
+  host's files (the Windows-drive mount prefix, default `/mnt`, is a
+  per-environment advanced field). The environment editor only offers the
+  kinds your host can actually reach.
+- Each environment holds one or more **harnesses**: agent CLIs installed
+  there. `claude-code` gets full integration (model / permission-mode flags,
+  injected system prompt, idle detection, per-harness workspace-trust
+  auto-answer). `codex` and `custom` are invoked as `command [args…]
+  "<prompt>"` with the instruction footer prepended to the prompt;
+  `looper-done` is on PATH for all of them. A harness can also carry its own
+  environment variables — handy for two installs of the same tool on
+  different accounts or config dirs — and a preset list of models (Models
+  tab) that fills the task editor's Model dropdown; by default it holds the
+  unprefixed main models of the CLI (`fable`, `opus`, `sonnet`, `haiku` for
+  Claude Code, the `gpt-…` line for Codex).
+
+A task picks an environment (General tab) and one of its harnesses (Action
+tab). The optional classifier always runs Claude Code: the task's harness if
+it is one, otherwise the environment's first `claude-code` harness.
+
+First run creates a "This machine" environment, plus the reachable bridge
+(WSL on a Windows host, Windows inside WSL).
 
 Every run is a fresh session — no context accumulation, no compaction. Put
 anything the agent must remember between runs in the project's `CLAUDE.md`.
 
-`every` intervals count from the **end** of the previous cycle. `cron`
-schedules keep wall-clock slots; a slot that passes while a cycle is busy is
-logged as skipped, never overlapped.
+Schedules are cron expressions and keep wall-clock slots; a slot that passes
+while a cycle is busy is logged as skipped, never overlapped.
 
 ## Install / run
 
@@ -88,7 +121,7 @@ Windows: `%APPDATA%\looper` · Linux/WSL: `~/.config/looper` · override with
 `LOOPER_HOME`.
 
 ```
-settings.json          # defaultDistro, wslMountPrefix, claudeCommand, autoTrustWorkspace, …
+settings.json          # environments (each with its harnesses), defaultEnvironmentId, timings
 tasks.json
 state.json             # runtime snapshot (for the CLI and crash recovery)
 engine.log
@@ -110,8 +143,8 @@ always see exactly what was executed and re-run it by hand.
 
 Looper spawns `wsl.exe -d <distro> -- bash -lic "source /mnt/c/…/run.sh"`.
 The login+interactive shell is what makes an nvm-installed `claude` resolve;
-override per task with `target.shell` (e.g. `zsh -lc`). The run directory is
-reached from WSL through `/mnt/c` (`wslMountPrefix` in settings), which is also
+override it in the environment's Shell field (e.g. `zsh -lc`). The run directory is
+reached from WSL through `/mnt/c` (the environment's mount prefix), which is also
 how the `done` / `idle` signal files cross the boundary — no networking.
 
 ## Task definition
@@ -120,15 +153,16 @@ See `examples/task.example.json`. Fields:
 
 | field | notes |
 |---|---|
-| `schedule` | `{"every": "5m"}` or `{"cron": "*/10 * * * *"}` |
-| `target` | `{"kind": "wsl", "distro": "Ubuntu", "shell": "bash -lic"}` or `{"kind": "windows"}` |
-| `cwd` | as the target sees it (`/home/…` or `C:\…`) |
+| `schedule` | `{"cron": "*/10 * * * *"}` |
+| `environmentId` | id of an environment from Settings (e.g. `"local"`) |
+| `cwd` | as the environment sees it (`/home/…` or `C:\…`) |
 | `check.command` | shell command; `timeoutSec` default 60 |
-| `classifier` | optional; `model`, `prompt`, `timeoutSec`, `maxBudgetUsd` |
-| `agent.model` | any `--model` value; blank = claude default |
+| `classifier` | optional; `model`, `prompt`, `timeoutSec` |
+| `agent.harnessId` | harness from the environment; blank = its first one |
+| `agent.model` | Claude Code / Codex: passed as `--model`; blank = the CLI's default. The editor offers the harness's preset models plus a custom value |
 | `agent.mode` | `interactive` (default) or `headless` |
-| `agent.permissionMode` | passed as `--permission-mode`; default `auto`, blank omits it |
-| `agent.extraArgs` | appended verbatim to the `claude` command line |
+| `agent.permissionMode` | Claude Code only: passed as `--permission-mode`; default `auto`, blank omits it |
+| `agent.extraArgs` | appended verbatim to the harness command line |
 | `agent.maxRuntimeMin` / `idleGraceMin` / `onIdleTimeout` | run limits (see above) |
 | `backoff.maxConsecutiveErrors` | auto-pause the task after N failed cycles in a row |
 
@@ -162,7 +196,14 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
   `--permission-mode auto` still prompted before creating a file, so for fully
   unattended tasks use `acceptEdits` / `--allowedTools …` in `extraArgs`, or
   set `hold` and answer prompts in the terminal tab.
-- The Windows-native (`powershell`) target and the WSL-host → Windows-target
-  path are implemented but untested so far; the WSL/Linux target is tested
-  end to end (headless and interactive, including the `looper-done` signal).
+- The Windows-native (`powershell`) environment and the WSL-host →
+  Windows-environment path are implemented but untested so far; the WSL/Linux
+  environment is tested end to end (headless and interactive, including the
+  `looper-done` signal).
+- `codex` / `custom` harnesses have no idle detection (the `Stop` hook and the
+  prompt-on-screen check are Claude Code specific): interactive runs end only
+  via `looper-done`, process exit or `maxRuntimeMin`. The `codex exec`
+  headless form has not been tested against a real Codex install yet.
+- Remote environments (SSH) would need launcher/signal transport beyond the
+  shared filesystem the WSL↔Windows pair relies on; not implemented.
 - Run directories are never pruned automatically yet (`RunStore.prune` exists).

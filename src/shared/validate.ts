@@ -1,13 +1,18 @@
 import { Cron } from 'croner';
-import { TaskSchema, type Task } from './types';
-import { parseDuration } from './duration';
+import { TaskSchema, type Environment, type Task } from './types';
+import { pathFlavor } from './environments';
 
 export type ValidationResult =
   | { ok: true; task: Task }
   | { ok: false; errors: string[] };
 
-/** Schema validation plus the checks zod cannot express (schedule syntax). */
-export function validateTask(input: unknown): ValidationResult {
+/**
+ * Schema validation plus the checks zod cannot express (schedule syntax, and —
+ * when the configured environments are provided — environment/harness
+ * references and the cwd path style; the host is needed to decide the path
+ * style of `local` environments).
+ */
+export function validateTask(input: unknown, environments?: Environment[], host?: string): ValidationResult {
   const parsed = TaskSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -17,24 +22,27 @@ export function validateTask(input: unknown): ValidationResult {
   }
   const task = parsed.data;
   const errors: string[] = [];
-  if ('every' in task.schedule) {
-    try {
-      parseDuration(task.schedule.every);
-    } catch (e) {
-      errors.push(`schedule.every: ${(e as Error).message}`);
-    }
-  } else {
-    try {
-      new Cron(task.schedule.cron);
-    } catch (e) {
-      errors.push(`schedule.cron: ${(e as Error).message}`);
-    }
+  try {
+    new Cron(task.schedule.cron);
+  } catch (e) {
+    errors.push(`schedule.cron: ${(e as Error).message}`);
   }
-  if (task.target.kind === 'windows' && /^\//.test(task.cwd)) {
-    errors.push('cwd: windows target expects a Windows path (C:\\...)');
-  }
-  if (task.target.kind === 'wsl' && /^[A-Za-z]:[\\/]/.test(task.cwd)) {
-    errors.push('cwd: wsl target expects a Linux path (/home/...)');
+  if (environments) {
+    const env = environments.find((e) => e.id === task.environmentId);
+    if (!env) {
+      errors.push(`environmentId: unknown environment "${task.environmentId}"`);
+    } else {
+      if (task.agent.harnessId && !env.harnesses.some((h) => h.id === task.agent.harnessId)) {
+        errors.push(`agent.harnessId: environment "${env.name}" has no harness "${task.agent.harnessId}"`);
+      }
+      const flavor = pathFlavor(env, host);
+      if (flavor === 'windows' && /^\//.test(task.cwd)) {
+        errors.push(`cwd: environment "${env.name}" expects a Windows path (C:\\...)`);
+      }
+      if (flavor === 'posix' && /^[A-Za-z]:[\\/]/.test(task.cwd)) {
+        errors.push(`cwd: environment "${env.name}" expects a POSIX path (/home/...)`);
+      }
+    }
   }
   return errors.length ? { ok: false, errors } : { ok: true, task };
 }
