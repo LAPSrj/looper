@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { AppInfo } from '@shared/api';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
@@ -146,14 +146,39 @@ export function App() {
 
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
 
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const appRef = useRef<HTMLDivElement>(null);
+  const draggingSidebar = useRef(false);
+
+  const onSidebarDragStart = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault();
+    draggingSidebar.current = true;
+    document.body.style.cursor = 'col-resize';
+    const onMove = (me: globalThis.MouseEvent) => {
+      if (!draggingSidebar.current || !appRef.current) return;
+      const rect = appRef.current.getBoundingClientRect();
+      const w = me.clientX - rect.left;
+      setSidebarWidth(Math.max(180, Math.min(rect.width * 0.5, w)));
+    };
+    const onUp = () => {
+      draggingSidebar.current = false;
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
   return (
-    <div className="app">
+    <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="pane-title">Tasks</span>
         </div>
         <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
       </aside>
+      <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
       <main className="main">
         {task ? (
           <TaskDetail

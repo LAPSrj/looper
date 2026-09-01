@@ -82,7 +82,7 @@ code,
 
 .app {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 300px 5px 1fr;
   height: 100%;
   border-top: 1px solid var(--border);
 }
@@ -90,10 +90,13 @@ code,
 /* ---------- sidebar ---------- */
 .sidebar {
   background: var(--bg-2);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+.sidebar-divider {
+  cursor: col-resize;
+  background: var(--border);
 }
 .sidebar-header {
   display: flex;
@@ -312,13 +315,6 @@ code,
   height: 100%;
   min-height: 0;
 }
-.runlog-toolbar {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  padding: 8px 18px;
-  border-bottom: 1px solid var(--border);
-}
 .runlog-table-wrap {
   overflow: auto;
   flex: 1;
@@ -397,9 +393,6 @@ code,
   flex: none;
   cursor: row-resize;
   background: var(--border);
-}
-.run-detail-divider:hover {
-  background: var(--accent);
 }
 .run-detail-output {
   overflow: auto;

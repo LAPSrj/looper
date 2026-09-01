@@ -127,9 +127,6 @@ export function RunLog({ task, records }: Props) {
 
   return (
     <div className="runlog">
-      <div className="runlog-toolbar">
-        <span className="muted">{groups.length} runs</span>
-      </div>
       <div className="runlog-table-wrap" tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
           <thead>
@@ -157,7 +154,7 @@ export function RunLog({ task, records }: Props) {
               >
                 <td className="nowrap">{fmtTime(g.startTs)}</td>
                 <td className="nowrap">{fmtTime(g.endTs)}</td>
-                <td>{resultLabel(g.result)}</td>
+                <td className="nowrap">{resultLabel(g.result)}</td>
                 <td className="nowrap">{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
                 <td className="details" title={g.details}>
                   {g.details}

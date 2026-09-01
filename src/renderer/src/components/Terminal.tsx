@@ -6,14 +6,13 @@ import { subscribe } from '../events';
 
 interface Props {
   taskId: string;
-  running: boolean;
   runtime: TaskRuntime | undefined;
 }
 
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
 
-export function Terminal({ taskId, running, runtime }: Props) {
+export function Terminal({ taskId, runtime }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -93,7 +92,6 @@ export function Terminal({ taskId, running, runtime }: Props) {
           terminal to continue it, or press <b>Stop agent</b>.
         </div>
       )}
-      {!running && <div className="banner muted">No agent running. Showing the last session's output.</div>}
       <div className="terminal" ref={ref} />
     </div>
   );

@@ -137,7 +137,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
           </div>
         )}
         {tab === 'log' && <RunLog task={task} records={records} />}
-        {tab === 'terminal' && <Terminal taskId={task.id} running={!!running} runtime={runtime} />}
+        {tab === 'terminal' && <Terminal taskId={task.id} runtime={runtime} />}
       </section>
     </div>
   );
