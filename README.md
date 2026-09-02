@@ -20,7 +20,11 @@ IDLE ──schedule──▶ CHECKING ──act:false──▶ IDLE
 CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes──▶ RUNNING ──done──▶ IDLE
 ```
 
-1. **Check** — your script runs in the task's directory. The last line of its
+The check and the classifier are both optional — each has a checkbox in the
+task editor that keeps its configuration while off. Without a check, every
+slot goes straight to the classifier/agent.
+
+1. **Check** (optional) — your script runs in the task's directory. The last line of its
    stdout must be JSON: `{"act": true, "summary": "3 new issues", "context": {…}}`.
    Non-zero exit, timeout or non-JSON output is an **error**, never a trigger.
 2. **Classify** (optional) — `claude -p --model haiku` gets the summary/context
@@ -74,7 +78,7 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
   unprefixed main models of the CLI (`fable`, `opus`, `sonnet`, `haiku` for
   Claude Code, the `gpt-…` line for Codex).
 
-A task picks an environment (General tab) and one of its harnesses (Action
+A task picks an environment (General tab) and one of its harnesses (Agent
 tab). The optional classifier always runs Claude Code: the task's harness if
 it is one, otherwise the environment's first `claude-code` harness.
 
@@ -86,7 +90,9 @@ anything the agent must remember between runs in the project's `CLAUDE.md`.
 
 Schedules are cron expressions and keep wall-clock slots, evaluated in the
 task's timezone (default: the computer's); a slot that passes while a cycle is
-busy is logged as skipped, never overlapped.
+busy is logged as skipped, never overlapped. The schedule itself can also be
+turned off (Schedule tab): a **manual task** never fires on its own and runs
+only via Run Now (F5, toolbar, context menu) or the CLI/inbox `run` command.
 
 ## Install / run
 
@@ -135,7 +141,9 @@ tasks.json
 state.json             # runtime snapshot (for the CLI and crash recovery)
 engine.log
 inbox/                 # + processed/ rejected/
-tasks/<id>/runs.jsonl  # one record per phase per run
+tasks/<id>/runs.jsonl  # one record per phase per run; records and run folders
+                       # older than Settings → Run log retention (default 30
+                       # days) are pruned automatically
 tasks/<id>/runs/<runId>/
   check.sh|ps1  check.out.txt  check.err.txt
   classify.sh   classify-prompt.txt  classify.out.txt
@@ -170,12 +178,12 @@ See `examples/task.example.json`. Fields:
 
 | field | notes |
 |---|---|
-| `schedule` | `{"cron": "*/10 * * * *"}`; optional `timezone` (IANA name, e.g. `"Europe/Lisbon"`) the slots are evaluated in — unset means the computer's |
+| `schedule` | `{"cron": "*/10 * * * *"}`; optional `timezone` (IANA name, e.g. `"Europe/Lisbon"`) the slots are evaluated in — unset means the computer's; `"enabled": false` makes the task manual (schedule kept, never fires) |
 | `environmentId` | id of an environment from Settings (e.g. `"local"`) |
 | `cwd` | as the environment sees it (`/home/…` or `C:\…`) |
 | `env` | extra environment variables for every step of the task; override the harness's |
-| `check.command` | shell command; `timeoutSec` default 60 |
-| `classifier` | optional; `model`, `prompt`, `timeoutSec` |
+| `check` | optional; `command` (shell), `timeoutSec` default 60; absent = the agent runs every slot; `"enabled": false` keeps the config but skips the step |
+| `classifier` | optional; `model`, `prompt`, `timeoutSec`, and the same `enabled` switch |
 | `agent.harnessId` | harness from the environment; blank = its first one |
 | `agent.model` | Claude Code / Codex: passed as `--model`; blank = the CLI's default. The editor offers the harness's preset models plus a custom value |
 | `agent.mode` | `interactive` (default) or `headless` |
@@ -183,7 +191,7 @@ See `examples/task.example.json`. Fields:
 | `agent.extraArgs` | appended verbatim to the harness command line |
 | `agent.maxRuntimeMin` / `idleGraceMin` / `onIdleTimeout` | run limits (see above) |
 | `backoff.maxConsecutiveErrors` | auto-pause the task after N failed cycles in a row |
-| `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the task's context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) does not |
+| `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the Task menu, toolbar or context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) does not |
 
 Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 `{{runId}}`, `{{trigger}}`.
@@ -232,4 +240,3 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
   headless form has not been tested against a real Codex install yet.
 - Remote environments (SSH) would need launcher/signal transport beyond the
   shared filesystem the WSL↔Windows pair relies on; not implemented.
-- Run directories are never pruned automatically yet (`RunStore.prune` exists).
