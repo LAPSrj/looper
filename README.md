@@ -1,17 +1,29 @@
 # Looper
 
-Cron-style manager for AI agent loops.
+**A manager for agentic loops.** Schedule AI agents like cron jobs, watch them
+work in real terminals, and stop burning tokens on idle polling.
 
-An agent that polls for work burns tokens and context on every idle check, and
-its conversation eventually fills up and gets compacted. Looper flips that
-around: a **cheap script** polls on a schedule, an optional **cheap classifier
-model** decides whether the result is worth acting on, and only then a **fresh
-`claude` session** is started in a terminal you can watch (and type into). When
-the agent is done it signals Looper, the session closes, and the loop resumes.
-At most one agent runs per task, ever.
+An agent that polls for its own work wastes tokens and context on every empty
+check — and its conversation eventually fills up and gets compacted. Looper
+inverts the loop: a cheap check script (and optionally a small classifier
+model) decides whether there is work, and only then a fresh agent session is
+started. No idle burn, no context rot, at most one agent per task, ever.
 
-Main use case: Looper runs on Windows, the agents run inside WSL. It also runs
-inside WSL/Linux directly, and can drive native Windows PowerShell agents.
+- **Cron-style scheduling** — wall-clock slots, timezones, active-hours
+  windows and weekday constraints; or fully manual tasks you fire on demand.
+- **Easy task setup** — an editor with Schedule / Check / Classifier / Agent
+  tabs, templates, import/export; agents and scripts can register tasks by
+  dropping a JSON file in the inbox.
+- **Monitoring built in** — per-task run log with results and reports, live
+  status, and a real terminal tab you can watch *and type into* mid-run.
+- **Token savings by design** — a shell check and an optional haiku-class
+  classifier gate every run, so the expensive model only starts when there is
+  real work to do.
+- **Fresh session every run** — no context accumulation; the agent signals
+  `looper-done`, files its report, and the loop resumes.
+- **Any harness, any environment** — Claude Code, Codex, or a custom agent
+  CLI. The main setup is Looper on Windows driving agents inside WSL; it also
+  runs on Linux/WSL directly and can drive native PowerShell agents.
 
 ## How a task runs
 
