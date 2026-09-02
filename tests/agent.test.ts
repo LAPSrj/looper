@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { stripAnsi } from '../src/shared/ansi';
 import { ScreenModel } from '../src/engine/screen';
-import { HEADLINE_MAX, TRUST_PROMPT_RE, WAITING_PROMPT_RE, headlineOf, systemFooter } from '../src/engine/steps/agent';
+import { HEADLINE_MAX, TRUST_PROMPT_RE, WAITING_PROMPT_RE, headlineOf, parseDoneSignal, systemFooter } from '../src/engine/steps/agent';
 
 // Real fragments captured from a claude pty session (cursor-column moves between words).
 const TRUST_DIALOG =
@@ -52,15 +52,34 @@ describe('stripAnsi', () => {
 });
 
 describe('systemFooter', () => {
-  it('asks for a looper-done headline followed by a final report message in both modes', () => {
+  it('asks for a looper-done status + headline followed by a final report message in both modes', () => {
     for (const headless of [false, true]) {
       const footer = systemFooter('T', 'r1', headless);
-      expect(footer).toContain('looper-done "<headline>"');
+      expect(footer).toContain('looper-done <status> "<headline>"');
+      expect(footer).toContain('success, warning or error');
       expect(footer).toContain('final message');
     }
     // Only the interactive session is closed by Looper.
     expect(systemFooter('T', 'r1', false)).toContain('closes this session');
     expect(systemFooter('T', 'r1', true)).not.toContain('closes this session');
+  });
+});
+
+describe('parseDoneSignal', () => {
+  it('reads the status from the first line, the headline from the rest', () => {
+    expect(parseDoneSignal('warning\nDeployed with caveats\n')).toEqual({
+      status: 'warning',
+      message: 'Deployed with caveats',
+    });
+    expect(parseDoneSignal('error\nBlocked: staging DB unreachable')).toEqual({
+      status: 'error',
+      message: 'Blocked: staging DB unreachable',
+    });
+    expect(parseDoneSignal('success\ndone\n')).toEqual({ status: 'success', message: 'done' });
+  });
+  it('treats a file without a status line as success', () => {
+    expect(parseDoneSignal('Fixed 3 tests')).toEqual({ status: 'success', message: 'Fixed 3 tests' });
+    expect(parseDoneSignal('warning')).toEqual({ status: 'warning', message: '' });
   });
 });
 

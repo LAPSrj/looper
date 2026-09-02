@@ -30,10 +30,13 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
    templated in via `{{summary}}` / `{{context}}`, or appended if you don't
    reference them). Interactive by default, in a real pty shown in Looper's
    terminal tab. The run ends on the first of:
-   - the agent runs `looper-done "<headline>"` and then writes its final
-     message (its instructions say to). The headline is the run's result, the
-     message its detailed report; a `Stop` hook Looper injects delivers the
-     message when the turn ends and the session is closed,
+   - the agent runs `looper-done <status> "<headline>"` and then writes its
+     final message (its instructions say to). The status is `success`
+     (everything fully done), `warning` (fully done, but read the report) or
+     `error` (couldn't complete — counts toward auto-pause); omitted means
+     success. The headline is the run's result, the message its detailed
+     report; a `Stop` hook Looper injects delivers the message when the turn
+     ends and the session is closed,
    - Claude Code only: it sits idle after a turn longer than `idleGraceMin`
      without signalling (the same `Stop` hook reports idleness) — ends
      the run, or holds it for a human if `onIdleTimeout: "hold"`,
@@ -81,8 +84,9 @@ First run creates a "This machine" environment, plus the reachable bridge
 Every run is a fresh session — no context accumulation, no compaction. Put
 anything the agent must remember between runs in the project's `CLAUDE.md`.
 
-Schedules are cron expressions and keep wall-clock slots; a slot that passes
-while a cycle is busy is logged as skipped, never overlapped.
+Schedules are cron expressions and keep wall-clock slots, evaluated in the
+task's timezone (default: the computer's); a slot that passes while a cycle is
+busy is logged as skipped, never overlapped.
 
 ## Install / run
 
@@ -137,7 +141,7 @@ tasks/<id>/runs/<runId>/
   classify.sh   classify-prompt.txt  classify.out.txt
   run.sh|ps1    prompt.txt  system.txt  settings.json
   output.log    # raw terminal capture of the agent session
-  done  stop.json    # signal files: looper-done text, last Stop hook payload
+  done  stop.json    # signal files: looper-done status + headline, last Stop hook payload
   bin/looper-done
 ```
 
@@ -166,9 +170,10 @@ See `examples/task.example.json`. Fields:
 
 | field | notes |
 |---|---|
-| `schedule` | `{"cron": "*/10 * * * *"}` |
+| `schedule` | `{"cron": "*/10 * * * *"}`; optional `timezone` (IANA name, e.g. `"Europe/Lisbon"`) the slots are evaluated in — unset means the computer's |
 | `environmentId` | id of an environment from Settings (e.g. `"local"`) |
 | `cwd` | as the environment sees it (`/home/…` or `C:\…`) |
+| `env` | extra environment variables for every step of the task; override the harness's |
 | `check.command` | shell command; `timeoutSec` default 60 |
 | `classifier` | optional; `model`, `prompt`, `timeoutSec` |
 | `agent.harnessId` | harness from the environment; blank = its first one |
@@ -178,6 +183,7 @@ See `examples/task.example.json`. Fields:
 | `agent.extraArgs` | appended verbatim to the harness command line |
 | `agent.maxRuntimeMin` / `idleGraceMin` / `onIdleTimeout` | run limits (see above) |
 | `backoff.maxConsecutiveErrors` | auto-pause the task after N failed cycles in a row |
+| `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the task's context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) does not |
 
 Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 `{{runId}}`, `{{trigger}}`.
@@ -189,6 +195,10 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 - Every child process has a timeout and is tree-killed (`taskkill /T` on
   Windows; on the Linux side leftovers are found by the `LOOPER_RUN` marker in
   `/proc/*/environ` and killed).
+- A Claude Code usage-limit hit — the rejected `rate_limit_event` in headless
+  runs, the "hit your … limit · resets …" banner on the interactive screen —
+  ends the run as an error that retries at the advertised reset time; it
+  neither counts toward auto-pause nor consumes a one-off note.
 - Uncaught exceptions in the main process are logged, not fatal. A renderer
   crash reloads the UI; the engine (main process) is unaffected.
 - Runtime state is persisted after every transition; on restart, runs that
@@ -197,8 +207,10 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 
 ## Known limitations / next
 
-- Closing the window quits Looper (and stops running agents). Tray mode and
-  a standalone daemon are the obvious next step; the engine has no Electron
+- Closing the window quits Looper (and stops running agents) unless "Close to
+  system tray" is on in Settings. `looper --hidden` starts straight into the
+  tray, and Settings → "Start with the computer" registers exactly that as a
+  login item. A standalone daemon is still open; the engine has no Electron
   dependency so this is a packaging change.
 - Interactive claude shows a "trust this folder?" dialog on first use of a
   directory; Looper answers it (`autoTrustWorkspace`, default on).

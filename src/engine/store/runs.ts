@@ -90,6 +90,12 @@ export class RunStore {
     }
   }
 
+  /** Delete a task's whole run history: the record log and every run directory. */
+  clear(taskId: string): void {
+    fs.rmSync(this.logFile(taskId), { force: true });
+    fs.rmSync(path.join(this.taskDir(taskId), 'runs'), { recursive: true, force: true });
+  }
+
   listRunIds(taskId: string): string[] {
     try {
       return fs
@@ -101,17 +107,56 @@ export class RunStore {
     }
   }
 
-  /** Delete run directories beyond the newest `keep`. */
-  prune(taskId: string, keep: number): number {
-    const ids = this.listRunIds(taskId);
-    const doomed = ids.slice(0, Math.max(0, ids.length - keep));
-    for (const id of doomed) {
+  /** Every task id with run history on disk, including tasks that no longer exist. */
+  listTaskIds(): string[] {
+    try {
+      return fs
+        .readdirSync(path.join(this.dataDir, 'tasks'), { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Delete records and run directories older than `cutoffMs`, sparing
+   * `keepRunId` (the run currently in progress).
+   */
+  pruneOlderThan(taskId: string, cutoffMs: number, keepRunId?: string | null): { records: number; dirs: number } {
+    // Run ids start with a local-time stamp, so an id below the cutoff's stamp is older.
+    const c = new Date(cutoffMs);
+    const cutoffStamp =
+      `${c.getFullYear()}${pad(c.getMonth() + 1)}${pad(c.getDate())}-` +
+      `${pad(c.getHours())}${pad(c.getMinutes())}${pad(c.getSeconds())}`;
+    let dirs = 0;
+    for (const id of this.listRunIds(taskId)) {
+      if (id === keepRunId || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;
       try {
         fs.rmSync(this.runDir(taskId, id), { recursive: true, force: true });
+        dirs++;
       } catch {
         /* best effort */
       }
     }
-    return doomed.length;
+    let text: string;
+    try {
+      text = fs.readFileSync(this.logFile(taskId), 'utf8');
+    } catch {
+      return { records: 0, dirs };
+    }
+    const lines = text.split('\n').filter(Boolean);
+    const kept = lines.filter((line) => {
+      try {
+        const r = JSON.parse(line) as RunRecord;
+        return r.runId === keepRunId || Date.parse(r.ts) >= cutoffMs;
+      } catch {
+        return false;
+      }
+    });
+    if (kept.length === lines.length) return { records: 0, dirs };
+    if (kept.length === 0) fs.rmSync(this.logFile(taskId), { force: true });
+    else fs.writeFileSync(this.logFile(taskId), kept.join('\n') + '\n', 'utf8');
+    return { records: lines.length - kept.length, dirs };
   }
 }

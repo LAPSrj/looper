@@ -40,7 +40,7 @@ export function TemplatePickerApp() {
           <div className="field">
             <label className="field-label">Template</label>
             {templates.length === 0 ? (
-              <div className="empty">No templates. Create one in Settings.</div>
+              <div className="empty">No templates. Create one in File → Templates.</div>
             ) : (
               <SelectList
                 items={templates}

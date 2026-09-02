@@ -80,11 +80,28 @@ code,
   flex: 1;
 }
 
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 .app {
   display: grid;
   grid-template-columns: 300px 5px 1fr;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   border-top: 1px solid var(--border);
+}
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
 }
 
 /* ---------- sidebar ---------- */
@@ -369,6 +386,9 @@ code,
 }
 .runlog-table tr.result-error td {
   color: var(--red);
+}
+.runlog-table tr.result-warning td {
+  color: var(--yellow);
 }
 .runlog-table tr.result-noop td,
 .runlog-table tr.result-skipped td {
@@ -738,6 +758,19 @@ code,
   flex: 1;
   min-width: 0;
 }
+
+.hours-row select {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.hours-row .input-suffix {
+  flex: 0 0 84px;
+}
+
+.hours-row .input-suffix input {
+  padding-right: 26px;
+}
 .input-suffix {
   position: relative;
   flex: 1;
@@ -931,6 +964,7 @@ select,
 pre,
 code,
 .output,
+.markdown,
 .props dd {
   user-select: text;
 }

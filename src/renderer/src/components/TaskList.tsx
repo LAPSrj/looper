@@ -1,5 +1,5 @@
 import type { Task, TaskRuntime } from '@shared/types';
-import { capFirst, fmtCountdown, stateLabel } from '../format';
+import { capFirst, fmtCountdown, resultLabel, stateLabel } from '../format';
 import { useListNav } from './hooks';
 
 interface Props {
@@ -43,7 +43,7 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
                 : `Next run in ${countdown}`
             : rt?.state === 'paused'
               ? capFirst(rt.pausedReason ?? 'paused')
-              : capFirst(rt?.lastResult ?? '');
+              : capFirst(rt?.lastDetail ?? '') || resultLabel(rt?.lastResult ?? '');
         const active = rt?.state === 'running' || rt?.state === 'checking' || rt?.state === 'classifying';
         const subLine = active
           ? label
@@ -62,7 +62,7 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
               e.preventDefault();
               onSelect(t.id);
               const rt2 = runtimes[t.id];
-              window.looper.showTaskContextMenu({ enabled: t.enabled, state: rt2?.state, held: !!rt2?.held });
+              window.looper.showTaskContextMenu({ enabled: t.enabled, state: rt2?.state, held: !!rt2?.held, hasNote: !!t.note });
             }}
           >
             <div className="task-item-row">

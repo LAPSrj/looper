@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
 import type { Environment, Task, TaskInput } from '@shared/types';
-import { ALL_DAYS, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
+import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
-import { joinTokens, tokenize } from '@shared/cmdline';
+import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
 import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
 import { useDialogKeys } from './hooks';
@@ -58,6 +58,22 @@ function toDraft(t: Task): Draft {
   return JSON.parse(JSON.stringify(t)) as Draft;
 }
 
+const TIMEZONES = [...Intl.supportedValuesOf('timeZone'), ...Object.keys(TIMEZONE_ALIASES)].sort();
+
+/** Timezones grouped by region prefix; labels drop the region and read as words. */
+const TIMEZONE_GROUPS = (() => {
+  const groups = new Map<string, { id: string; label: string }[]>();
+  for (const tz of TIMEZONES) {
+    const slash = tz.indexOf('/');
+    const region = slash === -1 ? 'Other' : tz.slice(0, slash);
+    const label = (slash === -1 ? tz : tz.slice(slash + 1)).replaceAll('_', ' ').replaceAll('/', ' / ');
+    let list = groups.get(region);
+    if (!list) groups.set(region, (list = []));
+    list.push({ id: tz, label });
+  }
+  return [...groups.entries()];
+})();
+
 const PERMISSION_MODES: [string, string][] = [
   ['auto', 'Auto'],
   ['acceptEdits', 'Accept edits'],
@@ -76,6 +92,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const [jsonText, setJsonText] = useState('');
   const [saving, setSaving] = useState(false);
   const [extraArgsText, setExtraArgsText] = useState(() => joinTokens((task ?? initial)?.agent?.extraArgs ?? []));
+  const [envText, setEnvText] = useState(() => envToLine((task ?? initial)?.env ?? {}));
   // Pins the Model dropdown on "Custom" even while the typed value matches a preset.
   const [customModel, setCustomModel] = useState(false);
   const [customClsModel, setCustomClsModel] = useState(false);
@@ -90,7 +107,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const schedForm: CronForm = customCron ? { mode: 'custom', cron: cronExpr } : cronToForm(cronExpr);
   const setSchedule = (f: CronForm) => {
     setTimesWarn(false);
-    set('schedule', { cron: formToCron(f) });
+    set('schedule', { ...draft.schedule, cron: formToCron(f) });
   };
   const schedTime =
     'hour' in schedForm
@@ -141,9 +158,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   };
   let cronNext: string | undefined;
   try {
-    cronNext = new Cron(cronExpr).nextRun()?.toLocaleString() ?? undefined;
+    cronNext = new Cron(cronExpr, cronTz(draft.schedule.timezone)).nextRun()?.toLocaleString() ?? undefined;
   } catch {
-    /* invalid expression: preview shows an error instead */
+    /* invalid expression or timezone: preview shows an error instead */
   }
   const env = environments.find((e) => e.id === draft.environmentId);
   const harnesses = env?.harnesses ?? [];
@@ -173,13 +190,16 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       return { ...d, environmentId: id, agent: { ...d.agent, harnessId: keepHarness ? d.agent.harnessId : undefined } };
     });
 
-  /** Throws when the extra-arguments line has unbalanced quotes. */
+  /** Throws when the extra-arguments or env line is malformed. */
   function assemble(): Record<string, unknown> {
     const parsedArgs = tokenize(extraArgsText);
     if (!parsedArgs.ok) throw new Error(`extra arguments: ${parsedArgs.error}`);
+    const parsedEnv = lineToEnv(envText);
+    if (typeof parsedEnv === 'string') throw new Error(`environment variables: ${parsedEnv}`);
     return {
       ...draft,
       id: draft.id?.trim() || slugify(draft.name),
+      env: parsedEnv,
       agent: {
         ...draft.agent,
         extraArgs: parsedArgs.tokens,
@@ -193,6 +213,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     const agent = (obj.agent ?? {}) as Record<string, unknown>;
     setDraft(obj as unknown as Draft);
     setExtraArgsText(Array.isArray(agent.extraArgs) ? joinTokens(agent.extraArgs as string[]) : '');
+    setEnvText(obj.env && typeof obj.env === 'object' ? envToLine(obj.env as Record<string, string>) : '');
     return obj;
   }
 
@@ -374,7 +395,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
               <>
                 <Field label="Active hours">
-                  <div className="browse-row">
+                  <div className="browse-row hours-row">
                     <select
                       value={schedForm.from !== undefined ? 'window' : 'all'}
                       onChange={(e) =>
@@ -390,30 +411,27 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     </select>
                     {schedForm.from !== undefined && schedForm.to !== undefined && (
                       <>
-                        <input
-                          type="number"
+                        <NumberInput
                           min={0}
                           max={23}
+                          suffix="h"
                           value={schedForm.from}
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
+                          onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
                               setSchedule({ ...schedForm, from: v, to: Math.max(v, schedForm.to!) });
                           }}
                         />
                         <span className="muted">to</span>
-                        <input
-                          type="number"
+                        <NumberInput
                           min={0}
                           max={23}
+                          suffix="h"
                           value={schedForm.to}
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
+                          onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
                               setSchedule({ ...schedForm, to: v, from: Math.min(v, schedForm.from!) });
                           }}
                         />
-                        <span className="muted">h</span>
                       </>
                     )}
                   </div>
@@ -493,10 +511,32 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             )}
             {schedForm.mode === 'custom' && (
               <Field label="Cron expression">
-                <input className="mono" value={cronExpr} onChange={(e) => set('schedule', { cron: e.target.value })} />
+                <input className="mono" value={cronExpr} onChange={(e) => set('schedule', { ...draft.schedule, cron: e.target.value })} />
               </Field>
             )}
             {!cronNext && <p className="help"><span className="warn">Invalid cron expression.</span></p>}
+            <Field label="Timezone">
+              <select
+                value={draft.schedule.timezone ?? ''}
+                onChange={(e) =>
+                  set('schedule', { cron: cronExpr, ...(e.target.value ? { timezone: e.target.value } : {}) })
+                }
+              >
+                <option value="">Use computer timezone</option>
+                {draft.schedule.timezone && !TIMEZONES.includes(draft.schedule.timezone) && (
+                  <option value={draft.schedule.timezone}>{draft.schedule.timezone}</option>
+                )}
+                {TIMEZONE_GROUPS.map(([region, zones]) => (
+                  <optgroup key={region} label={region}>
+                    {zones.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </Field>
             <Field label="Check command">
               <input className="mono" value={draft.check.command} onChange={(e) => setCheck('command', e.target.value)} />
             </Field>
@@ -647,18 +687,18 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     />
                   </Field>
                 )}
+                {isClaude && (
+                  <Field label="Permission mode">
+                    <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
+                      {PERMISSION_MODES.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
               </div>
-            )}
-            {isClaude && (
-              <Field label="Permission mode">
-                <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
-                  {PERMISSION_MODES.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
             )}
             <Field
               label="Agent prompt"
@@ -673,6 +713,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             </Field>
             <Field label="Extra command-line arguments">
               <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
+            </Field>
+            <Field label="Extra environment variables">
+              <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
             </Field>
           </div>
         </div>

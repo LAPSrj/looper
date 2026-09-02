@@ -6,6 +6,7 @@ import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
+import { openTaskTerminal } from './open-terminal';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir } from './store/fsutil';
 import { RunStore } from './store/runs';
@@ -51,9 +52,13 @@ export interface Engine {
   writeAgent(id: string, data: string): void;
   resizeAgent(id: string, cols: number, rows: number): void;
   agentBuffer(id: string): { runId: string; data: string } | null;
+  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
+  openTaskTerminal(id: string): Promise<void>;
   // history
   listRuns(id: string, limit?: number): RunRecord[];
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
+  /** Delete a task's run history. Refused while the task is mid-cycle. */
+  clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
   inboxDir(): string;
 }
@@ -101,6 +106,24 @@ export function createEngine(opts: EngineOptions): Engine {
 
   const scheduler = new Scheduler({ dataDir, host, settings, tasks, runs, state, log, steps: opts.steps });
   scheduler.on('event', emit);
+
+  // Run-log retention: delete records and run folders past their age limit,
+  // sparing whatever run is currently in progress.
+  const RETENTION_SWEEP_MS = 60 * 60 * 1000;
+  let retentionTimer: NodeJS.Timeout | null = null;
+  const sweepRunLogs = () => {
+    const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
+    for (const taskId of runs.listTaskIds()) {
+      try {
+        const { records, dirs } = runs.pruneOlderThan(taskId, cutoffMs, scheduler.get(taskId)?.currentRunId);
+        if (records || dirs) {
+          log.info(`${taskId}: pruned ${records} run records and ${dirs} run folders older than ${settings.runRetentionDays} days`);
+        }
+      } catch (err) {
+        log.error(`run-log prune of ${taskId} failed: ${errMsg(err)}`);
+      }
+    }
+  };
 
   const inbox = new Inbox(
     path.join(dataDir, 'inbox'),
@@ -152,10 +175,14 @@ export function createEngine(opts: EngineOptions): Engine {
       templates.on('change', () => emit({ type: 'templates', templates: templates.list() }));
       scheduler.start();
       inbox.start();
+      sweepRunLogs();
+      retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
     },
     async stop() {
       if (!started) return;
       started = false;
+      if (retentionTimer) clearInterval(retentionTimer);
+      retentionTimer = null;
       inbox.stop();
       await scheduler.stop();
       log.info('looper engine stopped');
@@ -213,8 +240,21 @@ export function createEngine(opts: EngineOptions): Engine {
     writeAgent: (id, data) => scheduler.writeAgent(id, data),
     resizeAgent: (id, c, r) => scheduler.resizeAgent(id, c, r),
     agentBuffer: (id) => scheduler.getBuffer(id),
+    openTaskTerminal(id: string): Promise<void> {
+      const task = tasks.get(id);
+      if (!task) throw new Error(`unknown task ${id}`);
+      return openTaskTerminal(task, { host, settings, taskDir: runs.taskDir(id), log });
+    },
     listRuns: (id, limit) => runs.list(id, limit),
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
+    clearRuns(id: string): void {
+      const state = scheduler.get(id)?.state;
+      if (state === 'checking' || state === 'classifying' || state === 'running') {
+        throw new Error(`The task is ${state}; wait for the run to end or stop the agent first.`);
+      }
+      runs.clear(id);
+      log.info(`cleared run history of ${id}`);
+    },
     runDir: (id, runId) => runs.runDir(id, runId),
     inboxDir: () => path.join(dataDir, 'inbox'),
   };

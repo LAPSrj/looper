@@ -82,6 +82,14 @@ export function App() {
         case 'edit-task':
           if (sel) void window.looper.openEditor(sel);
           break;
+        case 'edit-note':
+          if (sel) void window.looper.openNoteEditor(sel);
+          break;
+        case 'clear-note': {
+          const t = ts.find((x) => x.id === sel);
+          if (t?.note) void window.looper.tasks.save({ ...t, note: undefined });
+          break;
+        }
         case 'export-task':
           if (sel) void window.looper.tasks.export(sel);
           break;
@@ -93,6 +101,24 @@ export function App() {
         case 'delete-task': {
           const t = ts.find((x) => x.id === sel);
           if (t) void window.looper.confirm(`Delete task "${t.name}"?`).then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
+          break;
+        }
+        case 'open-terminal':
+          if (sel) void window.looper.openTaskTerminal(sel).catch((e) => void window.looper.showError((e as Error).message));
+          break;
+        case 'open-work-folder':
+          if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
+          break;
+        case 'clear-runs': {
+          const t = ts.find((x) => x.id === sel);
+          if (!t) break;
+          void window.looper.confirm(`Clear the run history of "${t.name}"? All run logs and outputs are deleted.`).then((ok) => {
+            if (!ok) return;
+            void window.looper.runs
+              .clear(t.id)
+              .then(() => setRecords((m) => ({ ...m, [t.id]: [] })))
+              .catch((e) => void window.looper.showError((e as Error).message));
+          });
           break;
         }
       }
@@ -122,7 +148,7 @@ export function App() {
 
   useEffect(() => {
     const t = tasks.find((x) => x.id === selected);
-    window.looper.reportSelection(!!selected, t?.enabled, selectedState === 'paused', selectedState);
+    window.looper.reportSelection(!!selected, t?.enabled, selectedState === 'paused', selectedState, !!t?.note);
   }, [selected, tasks, selectedState]);
 
   const select = useCallback((id: string) => {
@@ -140,31 +166,51 @@ export function App() {
     onDrag: (x, rect) => setSidebarWidth(Math.max(180, Math.min(rect.width * 0.5, x))),
   });
 
+  const counts = useMemo(() => {
+    const enabled = tasks.filter((t) => t.enabled).length;
+    let paused = 0;
+    let running = 0;
+    for (const t of tasks) {
+      const state = runtimes[t.id]?.state;
+      if (state === 'paused') paused += 1;
+      else if (state === 'running') running += 1;
+    }
+    return { enabled, disabled: tasks.length - enabled, paused, running };
+  }, [tasks, runtimes]);
+
   return (
-    <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <span className="pane-title">Tasks</span>
-        </div>
-        <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
-      </aside>
-      <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
-      <main className="main">
-        {task ? (
-          <TaskDetail
-            key={task.id}
-            task={task}
-            environments={info?.settings.environments ?? []}
-            runtime={runtimes[task.id]}
-            records={records[task.id] ?? []}
-            now={now}
-            tab={tab}
-            onTab={setTab}
-          />
-        ) : (
-          <div className="empty" />
-        )}
-      </main>
+    <div className="app-shell">
+      <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <span className="pane-title">Tasks</span>
+          </div>
+          <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
+        </aside>
+        <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
+        <main className="main">
+          {task ? (
+            <TaskDetail
+              key={task.id}
+              task={task}
+              environments={info?.settings.environments ?? []}
+              runtime={runtimes[task.id]}
+              records={records[task.id] ?? []}
+              now={now}
+              tab={tab}
+              onTab={setTab}
+            />
+          ) : (
+            <div className="empty" />
+          )}
+        </main>
+      </div>
+      <div className="statusbar">
+        <span className="spacer" />
+        <span>
+          {counts.enabled} enabled · {counts.disabled} disabled · {counts.paused} paused · {counts.running} running
+        </span>
+      </div>
     </div>
   );
 }

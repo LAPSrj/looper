@@ -39,6 +39,8 @@ export function stateLabel(rt: TaskRuntime | undefined): string {
 const RESULT_LABELS: Record<string, string> = {
   act: 'Action',
   done: 'Done',
+  success: 'Success',
+  warning: 'Warning',
   noop: 'No action',
   skipped: 'Skipped',
   started: 'Started',

@@ -142,7 +142,8 @@ describe('Scheduler', () => {
     await h.tickN(1);
     const rt = h.sched.get('t1')!;
     expect(rt.state).toBe('idle');
-    expect(rt.lastResult).toBe('quiet');
+    expect(rt.lastResult).toBe('noop');
+    expect(rt.lastDetail).toBe('quiet');
     expect(rt.nextRunAt).toBe(1_020_000); // next whole minute after 1_000_000
     expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:noop']);
     expect(h.agentStarted).toBe(0);
@@ -156,7 +157,8 @@ describe('Scheduler', () => {
     expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:act', 'agent:started', 'agent:done', 'result:done']);
     expect(records().at(-1)!.summary).toBe('fixed both');
     expect(records().at(-1)!.body).toBe('Fixed **a** and **b**.\n\nNothing left open.');
-    expect(h.sched.get('t1')!.lastResult).toBe('done: fixed both');
+    expect(h.sched.get('t1')!.lastResult).toBe('done');
+    expect(h.sched.get('t1')!.lastDetail).toBe('fixed both');
     expect(h.sched.get('t1')!.state).toBe('idle');
   });
 
@@ -183,7 +185,8 @@ describe('Scheduler', () => {
     h.agentEnds.push(agentEnd('done'));
     await h.tickN(1);
     expect(h.agentStarted).toBe(0);
-    expect(h.sched.get('t1')!.lastResult).toBe('classifier: just noise');
+    expect(h.sched.get('t1')!.lastResult).toBe('noop');
+    expect(h.sched.get('t1')!.lastDetail).toBe('classifier: just noise');
     h.clock.now += 60_000;
     await h.tickN(1);
     expect(h.agentStarted).toBe(1);
@@ -205,6 +208,23 @@ describe('Scheduler', () => {
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
   });
 
+  it('records the looper-done status as the run outcome; error status counts as an error', async () => {
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push({ ...agentEnd('done', 'Deployed with caveats', 'Cache config needs a look.'), doneStatus: 'warning' });
+    h.agentEnds.push({ ...agentEnd('done', 'Blocked: staging DB unreachable'), doneStatus: 'error' });
+    await h.tickN(1);
+    expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:warning', 'result:warning']);
+    expect(h.sched.get('t1')!.lastResult).toBe('warning');
+    expect(h.sched.get('t1')!.lastDetail).toBe('Deployed with caveats');
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:error', 'result:error']);
+    expect(h.sched.get('t1')!.lastResult).toBe('error');
+    expect(h.sched.get('t1')!.lastDetail).toBe('Blocked: staging DB unreachable');
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
+  });
+
   it('a usage-limited run retries at the reset time instead of the cron slot, without auto-pausing', async () => {
     h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 } });
     h.checks.push(check('act'));
@@ -218,8 +238,36 @@ describe('Scheduler', () => {
     expect(rt.state).toBe('idle');
     expect(rt.nextRunAt).toBe(retryAt);
     expect(rt.consecutiveErrors).toBe(0);
-    expect(rt.lastResult).toBe('error: usage limit reached · resets 5:50am');
+    expect(rt.lastResult).toBe('error');
+    expect(rt.lastDetail).toBe('usage limit reached · resets 5:50am');
     expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:error', 'result:error']);
+  });
+
+  it('consumes a one-off note per run the agent received, clearing it at zero', async () => {
+    h.tasks.patch('t1', { note: { text: 'skip the flaky mirror', runsLeft: 2 } });
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'), agentEnd('done'));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'skip the flaky mirror', runsLeft: 1 });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.note).toBeUndefined();
+  });
+
+  it('an error end (spawn failure, usage limit) does not consume the note', async () => {
+    h.tasks.patch('t1', { note: { text: 'hint', runsLeft: 1 } });
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('error', 'cannot start Fake'));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
+  });
+
+  it('a cycle that never starts the agent leaves the note untouched', async () => {
+    h.tasks.patch('t1', { note: { text: 'hint', runsLeft: 1 } });
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(0);
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
   });
 
   it('pause during a run takes effect after the cycle', async () => {
@@ -247,6 +295,13 @@ describe('Scheduler', () => {
     h.tasks.patch('t1', { enabled: true });
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(h.sched.get('t1')!.nextRunAt).toBe(1_020_000);
+  });
+
+  it('evaluates the schedule in the task timezone', async () => {
+    // Now 10:02 UTC; daily at 09:00 Asia/Tokyo (UTC+9) = 00:00 UTC → next slot is tomorrow 00:00 UTC.
+    h.clock.now = new Date('2026-01-15T10:02:00Z').getTime();
+    h.tasks.patch('t1', { schedule: { cron: '0 9 * * *', timezone: 'Asia/Tokyo' } });
+    expect(h.sched.get('t1')!.nextRunAt).toBe(new Date('2026-01-16T00:00:00Z').getTime());
   });
 
   it('cron schedules skip slots that pass while busy', async () => {
@@ -280,7 +335,8 @@ describe('startup overdue filtering', () => {
         held: false,
         nextRunAt: null,
         lastRunAt: new Date('2026-01-15T10:01:00Z').getTime(),
-        lastResult: 'ok',
+        lastResult: 'success',
+        lastDetail: null,
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
@@ -322,7 +378,8 @@ describe('startup overdue filtering', () => {
         held: false,
         nextRunAt: null,
         lastRunAt: now - 10 * 60_000,
-        lastResult: 'ok',
+        lastResult: 'success',
+        lastDetail: null,
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
@@ -364,6 +421,7 @@ describe('interrupted runs', () => {
         nextRunAt: null,
         lastRunAt: 1,
         lastResult: null,
+        lastDetail: null,
         consecutiveErrors: 0,
         currentRunId: 'old-run',
         pausedReason: null,

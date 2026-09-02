@@ -60,7 +60,9 @@ export class BashTarget implements Target {
       lines.push(`export ${k}=${this.quote(v)}`);
     }
     lines.push(`export PATH=${this.quote(spec.binDir)}":$PATH"`);
-    lines.push(`looper-done() { printf '%s\\n' "\${*:-done}" > "$LOOPER_DONE_FILE"; }`);
+    lines.push(
+      `looper-done() { local s=success; case "$1" in success|warning|error) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
+    );
     lines.push('export -f looper-done 2>/dev/null');
     lines.push(
       `cd ${this.quote(spec.cwd)} || { echo "looper: cannot cd to ${spec.cwd}" >&2; exit 97; }`,
@@ -71,7 +73,13 @@ export class BashTarget implements Target {
   }
 
   renderDoneHelper(): string {
-    return `#!/usr/bin/env bash\nprintf '%s\\n' "\${*:-done}" > "$LOOPER_DONE_FILE"\n`;
+    return [
+      '#!/usr/bin/env bash',
+      's=success',
+      'case "$1" in success|warning|error) s="$1"; shift;; esac',
+      `printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"`,
+      '',
+    ].join('\n');
   }
 
   renderStopHook(stopTargetPath: string): string {

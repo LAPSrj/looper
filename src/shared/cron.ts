@@ -18,6 +18,16 @@ export type CronForm =
 
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
+/** Extra timezone names offered and accepted alongside the IANA list, resolved to a real zone. */
+export const TIMEZONE_ALIASES: Record<string, string> = {
+  'America/Rio_de_Janeiro': 'America/Sao_Paulo',
+};
+
+/** Croner options for a schedule's timezone; unset = the computer's timezone. */
+export function cronTz(timezone?: string): { timezone: string } | undefined {
+  return timezone ? { timezone: TIMEZONE_ALIASES[timezone] ?? timezone } : undefined;
+}
+
 /** [1,2,3,4,5] -> "1-5"; [1,3,5] -> "1,3,5"; all seven -> "*". */
 function buildDow(days: number[] | undefined): string {
   if (!days || days.length === 0 || days.length === 7) return '*';

@@ -187,6 +187,14 @@ describe('validateTask with environments', () => {
     if (!badHarness.ok) expect(badHarness.errors[0]).toMatch(/no harness/);
   });
 
+  it('accepts a known schedule timezone and rejects an unknown one', () => {
+    expect(validateTask(task({ schedule: { cron: '0 9 * * *', timezone: 'Asia/Tokyo' } }), environments).ok).toBe(true);
+    expect(validateTask(task({ schedule: { cron: '0 9 * * *', timezone: 'America/Rio_de_Janeiro' } }), environments).ok).toBe(true);
+    const bad = validateTask(task({ schedule: { cron: '0 9 * * *', timezone: 'Not/AZone' } }), environments);
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors[0]).toMatch(/schedule\.timezone/);
+  });
+
   it('requires environmentId', () => {
     const v = validateTask({ ...task(), environmentId: undefined });
     expect(v.ok).toBe(false);

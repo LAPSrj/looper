@@ -59,6 +59,11 @@ describe('importTaskDraft', () => {
     expect(importTaskDraft({ ...good, schedule: { cron: 'every day' } }, opts).schedule.cron).toBe('');
   });
 
+  it('keeps a known schedule timezone and drops an unknown one', () => {
+    expect(importTaskDraft({ ...good, schedule: { cron: '0 3 * * *', timezone: 'Asia/Tokyo' } }, opts).schedule.timezone).toBe('Asia/Tokyo');
+    expect(importTaskDraft({ ...good, schedule: { cron: '0 3 * * *', timezone: 'Not/AZone' } }, opts).schedule.timezone).toBeUndefined();
+  });
+
   it('falls back to the default environment and drops unknown harnesses', () => {
     const d = importTaskDraft({ ...good, environmentId: 'mars', agent: { ...good.agent, harnessId: 'nope' } }, opts);
     expect(d.environmentId).toBe('local');

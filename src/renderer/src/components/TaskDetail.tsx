@@ -1,7 +1,7 @@
 import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
 import { cronToForm } from '@shared/cron';
-import { capFirst, fmtCountdown, fmtTime, stateLabel } from '../format';
+import { capFirst, fmtCountdown, fmtTime, resultLabel, stateLabel } from '../format';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
 import { TabBar } from './ui';
@@ -34,7 +34,12 @@ function fmtDays(days: number[]): string {
 }
 
 function describeSchedule(task: Task): string {
-  const f = cronToForm(task.schedule.cron);
+  const tz = task.schedule.timezone ? ` (${task.schedule.timezone})` : '';
+  return describeCron(task.schedule.cron) + tz;
+}
+
+function describeCron(cron: string): string {
+  const f = cronToForm(cron);
   switch (f.mode) {
     case 'minutes':
     case 'hours': {
@@ -105,10 +110,21 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
               <dd>{describeSchedule(task)}</dd>
               <dt>Next run</dt>
               <dd>{describeNextRun(runtime, now)}</dd>
+              {task.note && (
+                <>
+                  <dt>Next run guidance</dt>
+                  <dd>
+                    {task.note.text}
+                    {task.note.runsLeft > 1 ? ` (next ${task.note.runsLeft} runs)` : ''}
+                  </dd>
+                </>
+              )}
               <dt>Last run</dt>
               <dd>{lastRun}</dd>
-              <dt>Last result</dt>
-              <dd>{runtime?.lastResult ? capFirst(runtime.lastResult) : 'None'}</dd>
+              <dt>Last run result</dt>
+              <dd>{runtime?.lastResult ? resultLabel(runtime.lastResult) : 'None'}</dd>
+              <dt>Last run details</dt>
+              <dd>{runtime?.lastDetail ? capFirst(runtime.lastDetail) : 'None'}</dd>
               <dt>Trigger command</dt>
               <dd className="mono">{task.check.command}</dd>
               <dt>Classifier</dt>

@@ -2,7 +2,13 @@ import { z } from 'zod';
 
 // ---------- Task definition ----------
 
-export const ScheduleSchema = z.object({ cron: z.string().min(1) }).strict();
+export const ScheduleSchema = z
+  .object({
+    cron: z.string().min(1),
+    /** IANA timezone the cron slots are evaluated in. Unset = the computer's timezone. */
+    timezone: z.string().min(1).optional(),
+  })
+  .strict();
 
 // ---------- Environments & harnesses ----------
 
@@ -124,6 +130,17 @@ export const AgentSchema = z.object({
   onIdleTimeout: z.enum(['finish', 'hold']).default('finish'),
 });
 
+/**
+ * One-off guidance for a task's next run(s): appended to the agent prompt and
+ * consumed per run whose agent actually received it (a run that ends as an
+ * engine `error` — spawn failure, usage limit — never consumes a charge).
+ */
+export const NoteSchema = z.object({
+  text: z.string().min(1),
+  runsLeft: z.number().int().positive().default(1),
+});
+export type Note = z.infer<typeof NoteSchema>;
+
 export const TaskSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'id: letters, digits, - and _ only'),
   name: z.string().min(1),
@@ -133,12 +150,15 @@ export const TaskSchema = z.object({
   environmentId: z.string().min(1),
   /** Working directory in the environment's native form (/home/... or C:\...). */
   cwd: z.string().min(1),
+  /** Extra environment variables for every step of this task (check, classifier, agent). Override the harness's. */
+  env: z.record(z.string()).default({}),
   check: CheckSchema,
   classifier: ClassifierSchema.optional(),
   agent: AgentSchema,
   backoff: z
     .object({ maxConsecutiveErrors: z.number().int().positive().default(5) })
     .default({}),
+  note: NoteSchema.optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -148,7 +168,7 @@ export type TaskInput = z.input<typeof TaskSchema>;
 
 export const TemplateSchema = TaskSchema.extend({
   name: z.string(),
-  schedule: z.object({ cron: z.string() }).strict(),
+  schedule: ScheduleSchema.extend({ cron: z.string() }),
   environmentId: z.string(),
   cwd: z.string(),
   check: CheckSchema.extend({ command: z.string() }),
@@ -178,6 +198,8 @@ export const SettingsSchema = z.object({
   }).default({}),
   /** Bytes of live terminal output kept per task for late-attaching UIs. */
   outputBufferBytes: z.number().int().positive().default(262144),
+  /** Days a run's records and output are kept before being deleted. */
+  runRetentionDays: z.number().int().positive().default(30),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
   tasksFile: z.string().min(1).optional(),
   /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */
@@ -237,7 +259,10 @@ export interface TaskRuntime {
   held: boolean;
   nextRunAt: number | null;
   lastRunAt: number | null;
-  lastResult: string | null;
+  /** Outcome of the last cycle (success, warning, error, noop, ...). */
+  lastResult: RunResult | null;
+  /** One line about the last cycle: the run's headline, the check summary, or the error. */
+  lastDetail: string | null;
   consecutiveErrors: number;
   currentRunId: string | null;
   pausedReason: string | null;
@@ -252,6 +277,8 @@ export type RunResult =
   | 'skipped'
   | 'started'
   | 'done'
+  | 'success'
+  | 'warning'
   | 'idle-timeout'
   | 'max-runtime'
   | 'exited'

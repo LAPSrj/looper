@@ -1,7 +1,18 @@
 import { Cron } from 'croner';
 import { z } from 'zod';
 import { TaskSchema, TemplateSchema, type Environment, type Task, type TaskInput } from './types';
+import { cronTz } from './cron';
 import { pathFlavor } from './environments';
+
+/** Whether croner accepts the IANA timezone name (it only checks on nextRun). */
+function validTimezone(tz: string): boolean {
+  try {
+    new Cron('* * * * *', cronTz(tz)).nextRun();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type ValidationResult =
   | { ok: true; task: Task }
@@ -36,6 +47,9 @@ export function validateTask(input: unknown, environments?: Environment[], host?
     } catch (e) {
       errors.push(`schedule.cron: ${(e as Error).message}`);
     }
+  }
+  if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
+    errors.push(`schedule.timezone: unknown timezone "${task.schedule.timezone}"`);
   }
   if (environments && task.environmentId) {
     const env = environments.find((e) => e.id === task.environmentId);
@@ -77,12 +91,17 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
   const draft = sanitize(TaskSchema, input) as TaskInput;
   delete draft.createdAt;
   delete draft.updatedAt;
+  // A one-off run note is transient state, never part of an imported definition.
+  delete draft.note;
   if (draft.schedule.cron) {
     try {
       new Cron(draft.schedule.cron);
     } catch {
       draft.schedule.cron = '';
     }
+  }
+  if (draft.schedule.timezone && !validTimezone(draft.schedule.timezone)) {
+    delete draft.schedule.timezone;
   }
   const env = opts.environments.find((e) => e.id === draft.environmentId);
   if (!env) draft.environmentId = opts.defaultEnvironmentId;

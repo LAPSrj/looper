@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { cronToForm, formToCron, timesExpressible, type CronForm } from '../src/shared/cron';
+import { cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '../src/shared/cron';
+
+describe('cronTz', () => {
+  it('passes real zones through, resolves aliases, and folds unset to undefined', () => {
+    expect(cronTz('Asia/Tokyo')).toEqual({ timezone: 'Asia/Tokyo' });
+    expect(cronTz('America/Rio_de_Janeiro')).toEqual({ timezone: 'America/Sao_Paulo' });
+    expect(cronTz(undefined)).toBeUndefined();
+  });
+});
 
 describe('formToCron', () => {
   it('builds each mode', () => {

@@ -5,12 +5,11 @@ import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 
-type SettingsTab = 'general' | 'environments' | 'templates' | 'advanced';
+type SettingsTab = 'general' | 'environments' | 'advanced';
 
 const TABS: [SettingsTab, string][] = [
   ['general', 'General'],
   ['environments', 'Environments'],
-  ['templates', 'Templates'],
   ['advanced', 'Advanced'],
 ];
 
@@ -23,23 +22,24 @@ export function SettingsApp() {
   const [live, setLive] = useState<Settings | null>(null);
   const [dataDir, setDataDir] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [templates, setTemplates] = useState<Task[]>([]);
   const [defaultEnvId, setDefaultEnvId] = useState<string | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
+  const [startWithSystem, setStartWithSystem] = useState<boolean | null>(null);
   const [staggerEnabled, setStaggerEnabled] = useState<boolean | null>(null);
   const [staggerMin, setStaggerMin] = useState<number | null>(null);
   const [staggerMax, setStaggerMax] = useState<number | null>(null);
   const [staggerInterval, setStaggerInterval] = useState<number | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
   const [moveTemplatesOnSave, setMoveTemplatesOnSave] = useState(false);
   const [tab, setTab] = useState<SettingsTab>('general');
   const [selected, setSelected] = useState<string | null>(null);
-  const [selectedTpl, setSelectedTpl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const initTasksFile = useRef<string | undefined>(undefined);
   const initTemplatesFile = useRef<string | undefined>(undefined);
+  const initStartWithSystem = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
     document.title = 'Settings';
@@ -52,6 +52,7 @@ export function SettingsApp() {
       setStaggerMin((v) => v ?? info.settings.staggerFirstRun.minDelaySec);
       setStaggerMax((v) => v ?? info.settings.staggerFirstRun.maxDelaySec);
       setStaggerInterval((v) => v ?? info.settings.staggerFirstRun.minIntervalSec);
+      setRetentionDays((v) => v ?? info.settings.runRetentionDays);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -59,9 +60,9 @@ export function SettingsApp() {
       setSelected((s) => s ?? info.settings.environments[0]?.id ?? null);
     });
     void window.looper.tasks.list().then(setTasks);
-    void window.looper.templates.list().then((t) => {
-      setTemplates(t);
-      setSelectedTpl((s) => s ?? t[0]?.id ?? null);
+    void window.looper.getStartWithSystem().then((v) => {
+      setStartWithSystem((s) => s ?? v);
+      initStartWithSystem.current ??= v;
     });
     return window.looper.onEvent((e) => {
       if (e.type === 'settings') {
@@ -70,9 +71,6 @@ export function SettingsApp() {
         setSelected((s) => (s && e.settings.environments.some((x) => x.id === s) ? s : e.settings.environments[0]?.id ?? null));
       } else if (e.type === 'tasks') {
         setTasks(e.tasks);
-      } else if (e.type === 'templates') {
-        setTemplates(e.templates);
-        setSelectedTpl((s) => (s && e.templates.some((t) => t.id === s) ? s : e.templates[0]?.id ?? null));
       }
     });
   }, []);
@@ -80,7 +78,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: TABS.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || closeToTray === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || closeToTray === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -133,37 +131,6 @@ export function SettingsApp() {
     }
   };
 
-  // ---------- Templates ----------
-
-  const tpl = templates.find((t) => t.id === selectedTpl);
-
-  const duplicateTpl = async () => {
-    if (!tpl) return;
-    const copy = {
-      ...JSON.parse(JSON.stringify(tpl)),
-      id: `${tpl.id}-${rid()}`,
-      name: `${tpl.name} (copy)`,
-    };
-    delete copy.createdAt;
-    delete copy.updatedAt;
-    try {
-      await window.looper.templates.save(copy);
-      setSelectedTpl(copy.id);
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    }
-  };
-
-  const removeTpl = async () => {
-    if (!tpl) return;
-    if (!(await window.looper.confirm(`Remove template "${tpl.name}"?`))) return;
-    try {
-      await window.looper.templates.remove(tpl.id);
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    }
-  };
-
   // ---------- Store files ----------
 
   const defaultFile = (store: 'tasks' | 'templates') => dataDir + `\\${store}.json`;
@@ -202,6 +169,10 @@ export function SettingsApp() {
       if (templatesFileChanged && moveTemplatesOnSave) {
         await window.looper.moveStoreFile('templates', templatesFile ?? defaultFile('templates'));
       }
+      if (startWithSystem !== initStartWithSystem.current) {
+        await window.looper.setStartWithSystem(startWithSystem);
+        initStartWithSystem.current = startWithSystem;
+      }
       await window.looper.updateSettings({
         defaultEnvironmentId: defaultEnvId,
         closeToTray,
@@ -213,6 +184,7 @@ export function SettingsApp() {
         },
         tasksFile,
         templatesFile,
+        runRetentionDays: retentionDays,
       });
       initTasksFile.current = tasksFile;
       initTemplatesFile.current = templatesFile;
@@ -254,9 +226,14 @@ export function SettingsApp() {
               <NumberField label="Maximum delay" suffix="s" min={1} disabled={!staggerEnabled} value={staggerMax} onChange={setStaggerMax} />
               <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
+            <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
             <label className="checkbox-field">
               <input type="checkbox" checked={closeToTray} onChange={(e) => setCloseToTray(e.target.checked)} />
               Close to system tray
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={startWithSystem} onChange={(e) => setStartWithSystem(e.target.checked)} />
+              Start with the computer, in the tray
             </label>
           </div>
         )}
@@ -316,31 +293,6 @@ export function SettingsApp() {
                 {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
               </div>
             </Field>
-          </div>
-        )}
-
-        {tab === 'templates' && (
-          <div className="form env-tab">
-            <SelectList
-              items={templates}
-              label="Templates"
-              idPrefix="tpl"
-              selectedKey={selectedTpl}
-              itemKey={(t) => t.id}
-              itemName={(t) => t.name}
-              empty="No templates"
-              onSelect={(t) => setSelectedTpl(t.id)}
-              onOpen={(t) => void window.looper.openTemplateEditor(t.id)}
-            />
-            <ListActions
-              onAdd={() => void window.looper.openTemplateEditor()}
-              onEdit={() => tpl && void window.looper.openTemplateEditor(tpl.id)}
-              editDisabled={!tpl}
-              onDuplicate={() => void duplicateTpl()}
-              duplicateDisabled={!tpl}
-              onRemove={() => void removeTpl()}
-              removeDisabled={!tpl}
-            />
           </div>
         )}
 

@@ -9,6 +9,7 @@ import type {
   Task,
   TaskRuntime,
 } from '../shared/types';
+import { cronTz } from '../shared/cron';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
@@ -196,7 +197,7 @@ export class Scheduler extends EventEmitter {
   private isOverdue(task: Task, lastRunAt: number | null, now: number): boolean {
     if (lastRunAt === null) return true;
     try {
-      const next = new Cron(task.schedule.cron).nextRun(new Date(lastRunAt));
+      const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(lastRunAt));
       return next !== null && next.getTime() <= now;
     } catch {
       return false;
@@ -211,6 +212,7 @@ export class Scheduler extends EventEmitter {
       nextRunAt: task.enabled ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
       lastResult: prev?.lastResult ?? null,
+      lastDetail: prev?.lastDetail ?? null,
       consecutiveErrors: 0,
       currentRunId: null,
       pausedReason: null,
@@ -290,7 +292,7 @@ export class Scheduler extends EventEmitter {
 
   private computeNext(task: Task, from: number): number | null {
     try {
-      const next = new Cron(task.schedule.cron).nextRun(new Date(from));
+      const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(from));
       return next ? next.getTime() : null;
     } catch (e) {
       this.d.log.error(`[${task.id}] bad schedule: ${errMsg(e)}`);
@@ -344,7 +346,8 @@ export class Scheduler extends EventEmitter {
     this.persist();
 
     let errored = false;
-    let result = 'nothing to do';
+    let outcome: RunResult = 'noop';
+    let detail = 'nothing to do';
     let retryAtMs: number | undefined;
     try {
       const ctx: RunContext = {
@@ -368,9 +371,10 @@ export class Scheduler extends EventEmitter {
       });
       if (check.status === 'error') {
         errored = true;
-        result = `check error: ${check.error}`;
+        outcome = 'error';
+        detail = `check error: ${check.error}`;
       } else if (check.status === 'noop') {
-        result = check.summary ?? 'nothing to do';
+        detail = check.summary ?? 'nothing to do';
       } else {
         ctx.vars.summary = check.summary ?? '';
         ctx.vars.context = check.context;
@@ -389,10 +393,11 @@ export class Scheduler extends EventEmitter {
           if (cls.status === 'error') {
             errored = true;
             go = false;
-            result = `classifier error: ${cls.error}`;
+            outcome = 'error';
+            detail = `classifier error: ${cls.error}`;
           } else if (cls.status === 'noop') {
             go = false;
-            result = `classifier: ${cls.reason ?? 'no'}`;
+            detail = `classifier: ${cls.reason ?? 'no'}`;
           }
         }
         if (go) {
@@ -400,27 +405,49 @@ export class Scheduler extends EventEmitter {
           this.emitRuntime(rt);
           this.record(task.id, runId, 'agent', 'started', { summary: check.summary });
           const end = await this.runAgent(task, rt, ctx);
-          this.record(task.id, runId, 'agent', end.reason, {
+          // A done run's outcome is the status the agent reported via looper-done;
+          // every other end keeps its mechanism (idle-timeout, exited, ...).
+          outcome = end.doneStatus ?? end.reason;
+          this.record(task.id, runId, 'agent', outcome, {
             durationMs: end.durationMs,
             exitCode: end.exitCode,
             detail: { wasHeld: end.wasHeld },
           });
           if (end.headline || end.body) {
-            this.record(task.id, runId, 'result', end.reason, { summary: end.headline, body: end.body });
+            this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
           }
-          result = end.headline ? `${end.reason}: ${end.headline}` : end.reason;
-          if (end.reason === 'error') errored = true;
+          detail = end.headline ?? '';
+          if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
           retryAtMs = end.retryAtMs;
+          if (task.note && end.reason !== 'error') this.consumeNote(task.id, task.note.text);
         }
       }
     } catch (e) {
       errored = true;
-      result = `error: ${errMsg(e)}`;
+      outcome = 'error';
+      detail = errMsg(e);
       this.d.log.error(`[${task.id}] run ${runId} failed: ${errMsg(e)}`);
       this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
     } finally {
       this.agents.delete(task.id);
-      this.finishCycle(task.id, rt, errored, result, retryAtMs);
+      this.finishCycle(task.id, rt, errored, outcome, detail, retryAtMs);
+    }
+  }
+
+  /**
+   * The run's agent had the task's one-off note in its prompt: use up one
+   * charge. An `error` end never consumes (spawn failure, usage limit — the
+   * model never processed the prompt), and neither does a note that was
+   * replaced while the run was going.
+   */
+  private consumeNote(taskId: string, text: string): void {
+    const fresh = this.d.tasks.get(taskId);
+    if (!fresh?.note || fresh.note.text !== text) return;
+    const runsLeft = fresh.note.runsLeft - 1;
+    try {
+      this.d.tasks.patch(taskId, { note: runsLeft > 0 ? { text, runsLeft } : undefined });
+    } catch (e) {
+      this.d.log.error(`[${taskId}] cannot consume the run note: ${errMsg(e)}`);
     }
   }
 
@@ -428,14 +455,16 @@ export class Scheduler extends EventEmitter {
     taskId: string,
     rt: TaskRuntime,
     errored: boolean,
-    result: string,
+    outcome: RunResult,
+    detail: string,
     retryAtMs?: number,
   ): void {
     // A usage-limit wait is an error with a known end: it neither counts toward
     // the auto-pause threshold nor resets the streak of real errors.
     const limitWait = retryAtMs !== undefined && retryAtMs > this.now();
     if (!limitWait) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
-    rt.lastResult = result;
+    rt.lastResult = outcome;
+    rt.lastDetail = detail || null;
     rt.currentRunId = null;
     rt.held = false;
     const fresh = this.d.tasks.get(taskId);

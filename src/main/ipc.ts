@@ -9,6 +9,7 @@ export interface IpcHost {
   getWindow: () => BrowserWindow | null;
   openRunDetail: (taskId: string, runId: string) => void;
   openEditor: (taskId?: string) => void;
+  openNoteEditor: (taskId: string) => void;
 
   openEnvEditor: (envId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
   openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
@@ -17,7 +18,7 @@ export interface IpcHost {
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
   takeImportDraft: (key: string) => unknown;
-  updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string) => void;
+  updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean) => void;
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
@@ -46,6 +47,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const data = { ...task };
     delete data.createdAt;
     delete data.updatedAt;
+    // A one-off run note is transient state, never part of an exported definition.
+    delete data.note;
     try {
       fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
     } catch (err) {
@@ -74,6 +77,23 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
   ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
   ipcMain.handle('runs:openDir', (_e, id: string, runId: string) => shell.openPath(engine.runDir(id, runId)));
+  ipcMain.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
+
+  ipcMain.handle('task:openTerminal', (_e, id: string) => engine.openTaskTerminal(id));
+  ipcMain.handle('task:openWorkFolder', async (_e, id: string) => {
+    const task = engine.getTask(id);
+    if (!task) return;
+    const env = engine.settings.environments.find((x) => x.id === task.environmentId);
+    const distro = env?.kind === 'wsl' ? env.distro : undefined;
+    let p = task.cwd;
+    if (process.platform === 'win32' && p.startsWith('/')) {
+      p = (await convertWslPath(p, 'windows', distro)) ?? p;
+    } else if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) {
+      p = (await convertWslPath(p, 'posix', distro)) ?? p;
+    }
+    const err = await shell.openPath(p);
+    if (err) throw new Error(err);
+  });
 
   ipcMain.handle('agent:buffer', (_e, id: string) => engine.agentBuffer(id));
   ipcMain.on('agent:write', (_e, id: string, data: string) => engine.writeAgent(id, data));
@@ -84,6 +104,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
   ipcMain.handle('runDetail:open', (_e, taskId: string, runId: string) => host.openRunDetail(taskId, runId));
   ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
+  ipcMain.handle('noteEditor:open', (_e, taskId: string) => host.openNoteEditor(taskId));
 
   ipcMain.handle('envEditor:open', (e, envId: string, isNew?: boolean) =>
     host.openEnvEditor(envId, isNew, BrowserWindow.fromWebContents(e.sender)),
@@ -138,6 +159,21 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
   ipcMain.handle('settings:update', (_e, patch: unknown) => engine.updateSettings(patch));
 
+  // Start-with-the-computer registration lives in the OS (login item / Run key),
+  // not in settings.json. The args must match on get and set so Windows finds
+  // the same registry entry; --hidden makes a login start go to the tray.
+  const loginArgs = ['--hidden'];
+  ipcMain.handle('loginItem:get', () => {
+    try {
+      return app.getLoginItemSettings({ args: loginArgs }).openAtLogin;
+    } catch {
+      return false; // not supported on this platform
+    }
+  });
+  ipcMain.handle('loginItem:set', (_e, enabled: boolean) =>
+    app.setLoginItemSettings({ openAtLogin: enabled, args: loginArgs }),
+  );
+
   ipcMain.handle(
     'dialog:pickSaveFile',
     async (e, defaultPath?: string, filters?: { name: string; extensions: string[] }[]): Promise<string | null> => {
@@ -151,7 +187,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       return result.canceled ? null : result.filePath;
     },
   );
-  ipcMain.on('ui:selection', (_e, hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string) => host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState));
+  ipcMain.on('ui:selection', (_e, hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean) => host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote));
 
   ipcMain.handle('dialog:error', async (e, message: string) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
@@ -212,7 +248,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('wsl:distros', () => listWslDistros());
   ipcMain.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; state?: string; held: boolean }) => {
+  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
@@ -221,6 +257,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Stop Agent', enabled: info.state === 'running', click: () => sender.webContents.send('ui:event', { type: 'stop-agent' }) },
       { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled', click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
+      { type: 'separator' },
+      { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
+      { label: 'Clear Guidance', enabled: info.hasNote, click: () => sender.webContents.send('ui:event', { type: 'clear-note' }) },
       { type: 'separator' },
       { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
       { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
@@ -234,6 +273,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const menu = Menu.buildFromTemplate([
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
       { label: 'View Details', click: () => host.openRunDetail(info.taskId, info.runId) },
+      { type: 'separator' },
+      { label: 'Open Run Folder', click: () => void shell.openPath(engine.runDir(info.taskId, info.runId)) },
     ]);
     menu.popup({ window: sender });
   });

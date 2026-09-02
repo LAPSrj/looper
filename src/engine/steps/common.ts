@@ -61,8 +61,8 @@ export interface Launcher {
 
 /**
  * Write the done helper + a launcher script into the run dir and return how to
- * spawn it. `extraEnv` (e.g. a harness's env vars) can never override the
- * LOOPER_* variables.
+ * spawn it. The task's env vars override `extraEnv` (e.g. a harness's env
+ * vars); neither can override the LOOPER_* variables.
  */
 export function writeLauncher(
   ctx: RunContext,
@@ -79,7 +79,7 @@ export function writeLauncher(
       taskId: ctx.task.id,
       runId: ctx.runId,
       cwd: ctx.task.cwd,
-      env: { ...extraEnv, ...baseEnv(ctx) },
+      env: { ...extraEnv, ...ctx.task.env, ...baseEnv(ctx) },
       binDir: targetFile(ctx, 'bin'),
       body,
     }),

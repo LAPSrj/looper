@@ -44,8 +44,13 @@ export class WindowsTarget implements Target {
     lines.push(`$env:PATH = ${this.quote(spec.binDir)} + ';' + $env:PATH`);
     lines.push(
       'function looper-done { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$msg)',
+      "  $status = 'success'",
+      "  if ($msg -and @('success','warning','error') -contains $msg[0]) {",
+      '    $status = $msg[0]',
+      '    $msg = if ($msg.Count -gt 1) { $msg[1..($msg.Count - 1)] } else { @() }',
+      '  }',
       "  $text = if ($msg) { $msg -join ' ' } else { 'done' }",
-      '  Set-Content -LiteralPath $env:LOOPER_DONE_FILE -Value $text',
+      '  Set-Content -LiteralPath $env:LOOPER_DONE_FILE -Value ($status + [Environment]::NewLine + $text)',
       '}',
     );
     lines.push(`Set-Location -LiteralPath ${this.quote(spec.cwd)}`);
@@ -57,10 +62,29 @@ export class WindowsTarget implements Target {
   }
 
   renderDoneHelper(): string {
-    return (
-      '@echo off\r\n' +
-      'if "%~1"=="" (echo done> "%LOOPER_DONE_FILE%") else (echo %*> "%LOOPER_DONE_FILE%")\r\n'
-    );
+    return [
+      '@echo off',
+      'setlocal',
+      'set "status=success"',
+      'set "msg=%*"',
+      'if /i "%~1"=="success" goto strip',
+      'if /i "%~1"=="warning" goto strip',
+      'if /i "%~1"=="error" goto strip',
+      'goto write',
+      ':strip',
+      'set "status=%~1"',
+      'set "msg="',
+      ':collect',
+      'shift',
+      'if "%~1"=="" goto write',
+      'if defined msg (set "msg=%msg% %~1") else (set "msg=%~1")',
+      'goto collect',
+      ':write',
+      'if not defined msg set "msg=done"',
+      'echo %status%> "%LOOPER_DONE_FILE%"',
+      'echo %msg%>> "%LOOPER_DONE_FILE%"',
+      '',
+    ].join('\r\n');
   }
 
   renderStopHook(stopTargetPath: string): string {

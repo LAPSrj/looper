@@ -5,6 +5,7 @@
   "schedule": { "cron": "*/10 * * * *" },
   "environmentId": "local",
   "cwd": "/home/me/repos/project",
+  "env": {},
   "check": {
     "command": "bash scripts/check-github-issues.sh",
     "timeoutSec": 60

@@ -100,7 +100,7 @@ program
       const rt = state[t.id];
       const st = rt?.state ?? (t.enabled ? 'idle' : 'disabled');
       const next = rt?.nextRunAt ? `next in ${formatDuration(Math.max(0, rt.nextRunAt - now))}` : '';
-      const last = rt?.lastResult ? `last: ${rt.lastResult}` : '';
+      const last = rt?.lastResult ? `last: ${rt.lastResult}${rt.lastDetail ? ` (${rt.lastDetail})` : ''}` : '';
       console.log(`${t.id.padEnd(24)} ${st.padEnd(11)} ${next.padEnd(16)} ${last}`);
     }
   });

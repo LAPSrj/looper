@@ -28,7 +28,7 @@ function fakeHarness(dir: string, body: string): string {
   return file;
 }
 
-function makeCtx(harnessCommand: string): RunContext {
+function makeCtx(harnessCommand: string, taskExtra: Record<string, unknown> = {}): RunContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-headless-'));
   dirs.push(root);
   const runDir = path.join(root, 'run');
@@ -48,6 +48,7 @@ function makeCtx(harnessCommand: string): RunContext {
   const task = TaskSchema.parse({
     ...EXAMPLE_TASK,
     cwd: root,
+    ...taskExtra,
     agent: { ...EXAMPLE_TASK.agent, harnessId: 'fake', mode: 'headless', maxRuntimeMin: 1 },
   });
   return {
@@ -134,6 +135,25 @@ describe('headless agent over pipes', () => {
     expect(display).toContain('kept: real warning\r\n');
   });
 
+  it('carries the looper-done status through to the agent end', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `looper-done warning "Deployed with caveats"`,
+        `echo '{"type":"result","result":"Deployed, but the cache config needs a look."}'`,
+      ].join('\n'),
+    );
+    const ctx = makeCtx(harness);
+    const handle = await startAgent(ctx, { onData: () => {} });
+    const end = await handle.finished;
+    expect(end.reason).toBe('done');
+    expect(end.doneStatus).toBe('warning');
+    expect(end.headline).toBe('Deployed with caveats');
+    expect(end.body).toBe('Deployed, but the cache config needs a look.');
+  });
+
   it('ends as an error with a retry time when the usage limit is hit', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);
@@ -170,6 +190,18 @@ describe('headless agent over pipes', () => {
     expect(end.headline).toBe(message);
     expect(end.body).toBe(message);
     expect(end.retryAtMs).toBe(resetsAt * 1000 + 60_000);
+  });
+
+  it('appends the one-off note after everything else in the prompt', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    const ctx = makeCtx(harness, { note: { text: 'Use the staging mirror instead.', runsLeft: 1 } });
+    const handle = await startAgent(ctx, { onData: () => {} });
+    await handle.finished;
+    const prompt = fs.readFileSync(path.join(ctx.runDir, 'prompt.txt'), 'utf8');
+    expect(prompt).toContain('## One-off guidance for this run');
+    expect(prompt.trim().endsWith('Use the staging mirror instead.')).toBe(true);
   });
 
   it('reports a non-zero exit as exited, with whatever result it did print', async () => {

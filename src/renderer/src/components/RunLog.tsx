@@ -22,7 +22,7 @@ interface RunGroup {
 
 
 function bestResult(records: RunRecord[]): string {
-  const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'done', 'started', 'noop', 'skipped', 'act'];
+  const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'started', 'noop', 'skipped', 'act'];
   for (const p of priority) {
     if (records.some((r) => r.phase !== 'result' && r.result === p)) return p;
   }

@@ -7,9 +7,11 @@ import { EditorApp } from './EditorApp';
 import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
 import { ModelEditorApp } from './ModelEditorApp';
+import { NoteEditorApp } from './NoteEditorApp';
 import { RunDetailApp } from './RunDetailApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
+import { TemplatesApp } from './TemplatesApp';
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
@@ -20,9 +22,11 @@ const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
 const runDetailMatch = /^run-detail\/([^/]+)\/([^/]+)$/.exec(hash);
+const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
+  if (hash === 'templates') return <TemplatesApp />;
   if (templateEditorMatch) {
     return (
       <EditorApp
@@ -35,6 +39,7 @@ function pickRoot() {
   if (importMatch) return <EditorApp importKey={decodeURIComponent(importMatch[1])} />;
 
   if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
+  if (noteEditorMatch) return <NoteEditorApp taskId={decodeURIComponent(noteEditorMatch[1])} />;
   if (modelEditorMatch) {
     return (
       <ModelEditorApp

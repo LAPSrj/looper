@@ -20,15 +20,14 @@ process.on('unhandledRejection', (reason) => {
   engine?.log.error(`unhandled rejection: ${String(reason)}`);
 });
 
+/** --hidden: start in the tray, without the main window (used by the login item). */
+const startHidden = process.argv.includes('--hidden');
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win) {
-      if (!win.isVisible()) win.show();
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    showWindow();
   });
 
   app.whenReady().then(() => {
@@ -38,6 +37,7 @@ if (!app.requestSingleInstanceLock()) {
       getWindow: () => win,
       openRunDetail: openRunDetailWindow,
       openEditor: openEditorWindow,
+      openNoteEditor: openNoteEditorWindow,
 
       openEnvEditor: openEnvEditorWindow,
       openHarnessEditor: openHarnessEditorWindow,
@@ -50,8 +50,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     Menu.setApplicationMenu(null);
     createTray();
-    createWindow();
-    buildMenu();
+    if (!startHidden) createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -155,6 +154,9 @@ function createWindow(): void {
     engine?.log.error(`renderer gone (${details.reason}); reloading`);
     if (win && !win.isDestroyed()) win.webContents.reload();
   });
+  // The window may be the first ever (tray start): give it a menu right away;
+  // the renderer's selection report refines it.
+  buildMenu();
   loadRenderer(win);
 }
 
@@ -264,8 +266,23 @@ export function openEditorWindow(taskId?: string): void {
 }
 
 
+function openNoteEditorWindow(taskId: string): void {
+  openChildWindow(
+    `note-editor/${encodeURIComponent(taskId)}`,
+    'Guidance for Next Run — Looper',
+    520,
+    400,
+    undefined,
+    { minWidth: 460, minHeight: 340 },
+  );
+}
+
 function openSettingsWindow(): void {
   openChildWindow('settings', 'Settings — Looper', 720, 620, win);
+}
+
+function openTemplatesWindow(): void {
+  openChildWindow('templates', 'Templates — Looper', 560, 520);
 }
 
 function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: BrowserWindow | null): void {
@@ -397,11 +414,11 @@ function sendUi(type: string): void {
   }
 }
 
-function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string): void {
-  buildMenu(hasTask, taskEnabled, taskPaused, taskState);
+function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void {
+  buildMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote);
 }
 
-function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string): void {
+function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote = false): void {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   const menu = Menu.buildFromTemplate([
     {
@@ -413,6 +430,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { label: '&Import Task…', click: () => void importTask() },
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
         { type: 'separator' },
+        { label: 'Temp&lates…', click: () => openTemplatesWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'quit', label: 'E&xit' },
@@ -426,7 +444,14 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
         { id: 'task-enable-disable', label: taskEnabled === false ? '&Enable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
         { type: 'separator' },
+        { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', enabled: hasTask, click: () => sendUi('edit-note') },
+        { id: 'task-note-clear', label: 'Clear Guidance', enabled: hasTask && hasNote, click: () => sendUi('clear-note') },
+        { type: 'separator' },
+        { id: 'task-terminal', label: 'Open Project in &Terminal', accelerator: 'CmdOrCtrl+T', enabled: hasTask, click: () => sendUi('open-terminal') },
+        { id: 'task-work-folder', label: 'Open &Working Directory', enabled: hasTask, click: () => sendUi('open-work-folder') },
+        { type: 'separator' },
         { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
+        { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
         { id: 'task-delete', label: '&Delete Task', enabled: hasTask, click: () => sendUi('delete-task') },
       ],
     },

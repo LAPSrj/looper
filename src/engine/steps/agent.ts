@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type * as PtyNS from 'node-pty';
+import type { Note } from '../../shared/types';
 import { autoTrustWorkspace, resolveEnvironment, resolveHarness } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { FileSignalWatcher } from '../signals';
@@ -12,9 +13,31 @@ import { buildPrompt, childEnv, stripShellNoise, targetFile, writeLauncher, type
 
 export type AgentEndReason = 'done' | 'idle-timeout' | 'max-runtime' | 'exited' | 'stopped' | 'error';
 
+/** Outcome the agent reports via `looper-done <status>`. */
+export type DoneStatus = 'success' | 'warning' | 'error';
+
+const DONE_STATUSES: ReadonlySet<string> = new Set(['success', 'warning', 'error']);
+
+/**
+ * The done file as the helper writes it: the status on the first line, the
+ * headline on the rest. A file without a status line (e.g. written by hand)
+ * reads as success.
+ */
+export function parseDoneSignal(text: string): { status: DoneStatus; message: string } {
+  const t = text.trim();
+  const nl = t.indexOf('\n');
+  const first = (nl === -1 ? t : t.slice(0, nl)).trim();
+  if (DONE_STATUSES.has(first)) {
+    return { status: first as DoneStatus, message: nl === -1 ? '' : t.slice(nl + 1).trim() };
+  }
+  return { status: 'success', message: t };
+}
+
 export interface AgentEnd {
   reason: AgentEndReason;
   exitCode: number | null;
+  /** Only for reason 'done': the status the agent gave looper-done (success when it gave none). */
+  doneStatus?: DoneStatus;
   /** One short phrase stating the outcome: the `looper-done` argument, or an engine message. */
   headline?: string;
   /** The agent's final message, i.e. the detailed report of the run. Markdown. */
@@ -46,7 +69,8 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
     `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
     'When you are finished, or if there is nothing to do, run the shell command:',
-    '    looper-done "<headline>"',
+    '    looper-done <status> "<headline>"',
+    'The status is success, warning or error. success: everything was fully done. warning: the job was fully done, but the user should read your report. error: you could not complete the job (blocked, failed, gave up) — say why in your report.',
     'The headline is one short phrase stating the outcome, e.g. "Fixed 3 flaky tests" or "Nothing to do". State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
     "Then write your final message: a detailed report of what you did, what you found and what is left open, in Markdown. Looper records it as the run's summary.",
   ];
@@ -54,6 +78,16 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
     lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
   }
   return lines.join('\n');
+}
+
+/** The task's one-off guidance, appended after everything else so it wins. */
+export function noteSection(note: Note | undefined): string {
+  if (!note) return '';
+  return (
+    '\n\n## One-off guidance for this run\n' +
+    'The user attached this note to this specific run. It applies to this run only and overrides any conflicting instruction above.\n\n' +
+    note.text
+  );
 }
 
 /** Longest headline shown in lists; anything past it is cut. */
@@ -84,6 +118,32 @@ export const TRUST_PROMPT_RE = /trust\s+this\s+folder/i;
  * turn has not ended so the Stop hook will not fire; treat it as idle.
  */
 export const WAITING_PROMPT_RE = /Esc\s+to\s+cancel/i;
+/**
+ * The usage-limit banner an interactive claude shows when a request is
+ * rejected, e.g. "You've hit your session limit · resets 5:50am (America/...)".
+ * The "resets <time>" tail is required so ordinary conversation text about
+ * limits cannot end a run.
+ */
+export const USAGE_LIMIT_RE =
+  /(?:hit|reached) (?:your|the) [\w-]*\s?limit\b[^\n]{0,80}?resets(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i;
+/** Fallback wait when the banner shows no parseable reset time. */
+const USAGE_LIMIT_FALLBACK_MS = 3_600_000;
+
+/** Epoch ms of the "resets 5:50am" wall-clock time in `text` (next occurrence, local), or null. */
+export function parseUsageLimitReset(text: string, now: number): number | null {
+  const m = /resets(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
+  if (!m) return null;
+  let hour = Number(m[1]);
+  const minute = m[2] ? Number(m[2]) : 0;
+  const ampm = m[3]?.toLowerCase();
+  if (hour > 23 || minute > 59 || (ampm && hour > 12)) return null;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  const at = new Date(now);
+  at.setHours(hour, minute, 0, 0);
+  if (at.getTime() <= now) at.setDate(at.getDate() + 1);
+  return at.getTime();
+}
 const PTY_COLS = 120;
 const PTY_ROWS = 32;
 
@@ -186,7 +246,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   // Claude Code gets its instructions as a system prompt; other harnesses have
   // no equivalent flag, so the footer is prepended to the prompt itself.
   const footer = systemFooter(task.name, ctx.runId, headless);
-  const promptText = buildPrompt(a.prompt, ctx.vars);
+  const promptText = buildPrompt(a.prompt, ctx.vars) + noteSection(task.note);
   writeText(path.join(ctx.runDir, 'prompt.txt'), claude ? promptText : footer + '\n\n' + promptText);
   if (claude) {
     writeText(path.join(ctx.runDir, 'system.txt'), footer);
@@ -269,8 +329,9 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   let prevEndedNewline = false;
   /** Latest last_assistant_message seen from the Stop hook (interactive). */
   let lastMessage: string | undefined;
-  /** Set once looper-done has been seen: mtime of the done file and its headline. */
+  /** Set once looper-done has been seen: mtime of the done file, its status and headline. */
   let doneMtime: number | null = null;
+  let doneStatus: DoneStatus | undefined;
   let doneHeadline: string | undefined;
   let doneTimer: NodeJS.Timeout | null = null;
   let resolveFinished!: (e: AgentEnd) => void;
@@ -317,6 +378,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
     resolveFinished({
       reason,
       exitCode,
+      doneStatus: reason === 'done' ? doneStatus : undefined,
       headline,
       body,
       retryAtMs,
@@ -335,6 +397,8 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       return;
     }
     const doneText = await fs.promises.readFile(path.join(ctx.runDir, 'done'), 'utf8').catch(() => '');
+    const done = doneText.trim() ? parseDoneSignal(doneText) : null;
+    if (done) doneStatus = done.status;
     const body = headlessResult?.trim() || undefined;
     if (headlessResultIsError && usageLimitResetMs !== null) {
       const headline = headlineOf(body) ?? 'usage limit reached';
@@ -343,7 +407,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       return;
     }
     if (code === 0) {
-      await finish('done', headlineOf(doneText) ?? headlineOf(body), body);
+      await finish('done', (done && headlineOf(done.message)) ?? headlineOf(body), body);
     } else {
       await finish('exited', `${harness.name} exited ${code}`, body);
     }
@@ -451,8 +515,10 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       onDone: (msg, mtime) => {
         if (ended || doneMtime !== null) return;
         doneMtime = mtime;
-        doneHeadline = headlineOf(msg) ?? 'done';
-        ctx.log.info(`[${task.id}] looper-done "${doneHeadline}"; waiting for the final message`);
+        const parsed = parseDoneSignal(msg);
+        doneStatus = parsed.status;
+        doneHeadline = headlineOf(parsed.message) ?? 'done';
+        ctx.log.info(`[${task.id}] looper-done ${doneStatus} "${doneHeadline}"; waiting for the final message`);
         doneTimer = setTimeout(() => void finish('done', doneHeadline), DONE_GRACE_MS);
       },
       onStop: (mtime, payload) => {
@@ -474,6 +540,17 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
           // Options are "No, exit" (preselected) / "Yes, I trust this folder": Down, then Enter.
           setTimeout(() => !ended && proc.write('\x1b[B'), 300);
           setTimeout(() => !ended && proc.write('\r'), 700);
+          return;
+        }
+        // The usage-limit banner: the request was rejected, the model never got
+        // the prompt. End as an error (so a one-off note is not consumed) and
+        // retry after the advertised reset — or in an hour when none is shown.
+        const limit = host.screenMatch(USAGE_LIMIT_RE);
+        if (limit) {
+          const headline = limit[0].replace(/\s+/g, ' ').trim();
+          const resetMs = parseUsageLimitReset(headline, now) ?? now + USAGE_LIMIT_FALLBACK_MS;
+          ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(resetMs).toISOString()}`);
+          void finish('error', headline, undefined, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
           return;
         }
         // A prompt visible on screen = the agent is waiting for a human; treat as idle.

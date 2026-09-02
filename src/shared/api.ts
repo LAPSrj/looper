@@ -34,6 +34,8 @@ export interface LooperApi {
     list(id: string, limit?: number): Promise<RunRecord[]>;
     output(id: string, runId: string, raw?: boolean): Promise<string>;
     openDir(id: string, runId: string): Promise<void>;
+    /** Delete a task's run history. Rejects while the task is mid-cycle. */
+    clear(id: string): Promise<void>;
   };
   agent: {
     buffer(id: string): Promise<{ runId: string; data: string } | null>;
@@ -41,10 +43,16 @@ export interface LooperApi {
     resize(id: string, cols: number, rows: number): void;
   };
   openPath(p: string): Promise<void>;
+  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
+  openTaskTerminal(taskId: string): Promise<void>;
+  /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
+  openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open the run detail window showing all step records for a run. */
   openRunDetail(taskId: string, runId: string): Promise<void>;
   /** Open the task editor in its own window (no id = new task). */
   openEditor(taskId?: string): Promise<void>;
+  /** Open the next-run guidance window for a task. */
+  openNoteEditor(taskId: string): Promise<void>;
 
   /** Open the environment editor in its own window (isNew: discard the environment when closed unsaved). */
   openEnvironmentEditor(envId: string, isNew?: boolean): Promise<void>;
@@ -79,13 +87,17 @@ export interface LooperApi {
   pickSaveFile(opts: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }): Promise<string | null>;
   /** Validate, persist and apply a global settings patch; returns the effective settings. */
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
+  /** Whether looper is registered to start with the computer (OS login item). */
+  getStartWithSystem(): Promise<boolean>;
+  /** Register/unregister looper as an OS login item (starts hidden in the tray). */
+  setStartWithSystem(enabled: boolean): Promise<void>;
   /** Show a native error dialog (OK button only). */
   showError(message: string): Promise<void>;
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
   /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
-  reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string): void;
-  showTaskContextMenu(info: { enabled: boolean; state?: string; held: boolean }): void;
+  reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void;
+  showTaskContextMenu(info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   onEvent(cb: (e: EngineEvent) => void): () => void;
   /** UI commands pushed from the application menu. */
@@ -98,8 +110,13 @@ export interface UiEvent {
     | 'stop-agent'
     | 'pause-resume'
     | 'edit-task'
+    | 'edit-note'
+    | 'clear-note'
     | 'export-task'
     | 'delete-task'
     | 'enable-disable'
+    | 'open-terminal'
+    | 'open-work-folder'
+    | 'clear-runs'
     | 'toggle-raw-output';
 }

@@ -109,6 +109,11 @@ export class TerminalHost {
     return this.screenText !== null && re.test(this.screenText);
   }
 
+  /** First match of `re` in the last screen snapshot; null until one arrives. */
+  screenMatch(re: RegExp): RegExpExecArray | null {
+    return this.screenText === null ? null : re.exec(this.screenText);
+  }
+
   close(): Promise<void> {
     if (!this.closePromise) this.closePromise = this.doClose();
     return this.closePromise;
