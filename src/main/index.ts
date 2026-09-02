@@ -185,6 +185,11 @@ function openChildWindow(
   });
   // Detach the app menu entirely; hiding it would leave Alt able to summon it.
   child.removeMenu();
+  // Links (e.g. in rendered markdown) open in the system browser, never a new app window.
+  child.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   loadRenderer(child, hash);
   return child;
 }
@@ -284,6 +289,14 @@ function openSettingsWindow(): void {
 
 function openTemplatesWindow(): void {
   openChildWindow('templates', 'Templates — Looper', 560, 520);
+}
+
+function openInstructionsWindow(): void {
+  openChildWindow('instructions', 'Instructions', 800, 700);
+}
+
+function openAboutWindow(): void {
+  openChildWindow('about', 'About', 360, 320, win, { minWidth: 360, minHeight: 320, resizable: false });
 }
 
 function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: BrowserWindow | null): void {
@@ -514,6 +527,14 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { type: 'separator' },
         { role: 'reload', label: '&Reload UI' },
         { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
+      ],
+    },
+    {
+      label: '&Help',
+      submenu: [
+        { label: '&Instructions', accelerator: 'F1', click: () => openInstructionsWindow() },
+        { type: 'separator' },
+        { label: '&About Looper', click: () => openAboutWindow() },
       ],
     },
   ]);

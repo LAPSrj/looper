@@ -92,6 +92,41 @@ code,
   min-height: 0;
   border-top: 1px solid var(--border);
 }
+.instructions {
+  height: 100%;
+  overflow-y: auto;
+  padding: 8px 28px 40px;
+  user-select: text;
+}
+
+.instructions .markdown {
+  max-width: 720px;
+  margin: 0 auto;
+  height: auto;
+  overflow: visible;
+  padding: 0;
+}
+
+.about {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 24px;
+}
+
+.about h1 {
+  margin: 10px 0 4px;
+  font-size: 22px;
+}
+
+.about .btn {
+  margin-top: 20px;
+  min-width: 88px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

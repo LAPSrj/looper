@@ -2,8 +2,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
+import { AboutApp } from './AboutApp';
 import { App } from './App';
 import { EditorApp } from './EditorApp';
+import { InstructionsApp } from './InstructionsApp';
 import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
 import { ModelEditorApp } from './ModelEditorApp';
@@ -68,6 +70,8 @@ function pickRoot() {
     );
   }
   if (hash === 'settings') return <SettingsApp />;
+  if (hash === 'instructions') return <InstructionsApp />;
+  if (hash === 'about') return <AboutApp />;
   return <App />;
 }
 
