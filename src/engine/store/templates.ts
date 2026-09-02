@@ -24,7 +24,7 @@ export class TemplateStore extends EventEmitter {
     const data = readJson<TemplatesFile>(this.file, { version: 1, templates: [] });
     this.templates.clear();
     for (const raw of data.templates ?? []) {
-      const v = validateTask(raw);
+      const v = validateTask(raw, undefined, undefined, { template: true });
       if (v.ok) this.templates.set(v.task.id, v.task);
       else this.emit('invalid', raw, v.errors);
     }
@@ -39,7 +39,7 @@ export class TemplateStore extends EventEmitter {
   }
 
   upsert(input: unknown): Task {
-    const v = validateTask(input);
+    const v = validateTask(input, undefined, undefined, { template: true });
     if (!v.ok) throw new Error(v.errors.join('; '));
     const now = new Date().toISOString();
     const existing = this.templates.get(v.task.id);

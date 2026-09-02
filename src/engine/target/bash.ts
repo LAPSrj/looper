@@ -2,8 +2,7 @@ import { execFile } from 'node:child_process';
 import type { LauncherSpec, SpawnSpec, Target, TargetContext } from './index';
 import { translatePath } from './paths';
 import { wslDistroName } from '../host';
-
-const DEFAULT_SHELL = 'bash -lic';
+import { DEFAULT_SHELL } from '../../shared/environments';
 
 /** Kill script: scan /proc for processes whose environment carries the run marker. */
 function killScript(runId: string, signal: string): string {
@@ -75,8 +74,8 @@ export class BashTarget implements Target {
     return `#!/usr/bin/env bash\nprintf '%s\\n' "\${*:-done}" > "$LOOPER_DONE_FILE"\n`;
   }
 
-  renderIdleHook(idleTargetPath: string): string {
-    return `touch ${this.quote(idleTargetPath)}`;
+  renderStopHook(stopTargetPath: string): string {
+    return `cat > ${this.quote(stopTargetPath)}`;
   }
 
   private wslPrefix(): string[] {

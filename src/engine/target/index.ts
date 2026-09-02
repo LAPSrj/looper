@@ -35,8 +35,8 @@ export interface Target {
   envRef(name: string): string;
   renderLauncher(spec: LauncherSpec): string;
   renderDoneHelper(): string;
-  /** Command for the claude Stop hook: touch the idle marker. */
-  renderIdleHook(idleTargetPath: string): string;
+  /** Command for the claude Stop hook: dump the hook's stdin JSON into the stop file. */
+  renderStopHook(stopTargetPath: string): string;
   spawnSpec(launcherHostPath: string): SpawnSpec;
   /** Kill any process on the target still carrying LOOPER_RUN=<runId>. Best effort. */
   killLeftovers(runId: string): Promise<void>;

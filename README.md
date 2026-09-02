@@ -30,15 +30,20 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
    templated in via `{{summary}}` / `{{context}}`, or appended if you don't
    reference them). Interactive by default, in a real pty shown in Looper's
    terminal tab. The run ends on the first of:
-   - the agent runs `looper-done "summary"` (its instructions say to),
+   - the agent runs `looper-done "<headline>"` and then writes its final
+     message (its instructions say to). The headline is the run's result, the
+     message its detailed report; a `Stop` hook Looper injects delivers the
+     message when the turn ends and the session is closed,
    - Claude Code only: it sits idle after a turn longer than `idleGraceMin`
-     without signalling (a `Stop` hook Looper injects reports idleness) — ends
+     without signalling (the same `Stop` hook reports idleness) — ends
      the run, or holds it for a human if `onIdleTimeout: "hold"`,
    - the agent process exits, or
    - `maxRuntimeMin` is exceeded.
 
    `mode: "headless"` runs without a terminal (`claude -p` / `codex exec`):
-   process exit is the signal, nothing to type into.
+   process exit is the signal, nothing to type into. The final response is the
+   report; `looper-done` still names the headline (else the response's first
+   line does).
 
 ## Environments & harnesses
 
@@ -87,7 +92,7 @@ No compiler toolchain needed on any platform: node-pty ships N-API prebuilds
 ```bash
 npm install
 npm run dev            # Electron app with hot reload
-npm run build:all      # out/ (app) + dist/cli.js
+npm run build:all      # out/ (app) + dist/cli.js + dist/terminal-worker.js
 npm run package        # Windows installer/portable in release/
 npm test               # engine unit tests
 ```
@@ -132,7 +137,7 @@ tasks/<id>/runs/<runId>/
   classify.sh   classify-prompt.txt  classify.out.txt
   run.sh|ps1    prompt.txt  system.txt  settings.json
   output.log    # raw terminal capture of the agent session
-  idle  done    # signal files
+  done  stop.json    # signal files: looper-done text, last Stop hook payload
   bin/looper-done
 ```
 
@@ -142,10 +147,18 @@ always see exactly what was executed and re-run it by hand.
 ## Windows host, WSL agents
 
 Looper spawns `wsl.exe -d <distro> -- bash -lic "source /mnt/c/…/run.sh"`.
-The login+interactive shell is what makes an nvm-installed `claude` resolve;
-override it in the environment's Shell field (e.g. `zsh -lc`). The run directory is
+The environment's Shell setting picks the flags. "Same as your terminal"
+(`bash -lic`, the default) reads `~/.bashrc` too, so tools whose installers only
+edit that file (nvm, bun) resolve without changes; bash's two job-control
+warnings, unavoidable without a terminal, are dropped from the captured output.
+"Basic shell, without your terminal setup" (`bash -lc`) reads just `~/.profile`
+and prints no warnings, but anything the harness or a check command needs must
+be on the PATH it sets.
+"Custom" takes any shell and flags (e.g. `zsh -lc`).
+Headless runs read the harness through plain pipes; only interactive runs get a
+pseudo-terminal. The run directory is
 reached from WSL through `/mnt/c` (the environment's mount prefix), which is also
-how the `done` / `idle` signal files cross the boundary — no networking.
+how the `done` / `stop.json` signal files cross the boundary — no networking.
 
 ## Task definition
 
@@ -200,9 +213,10 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
   Windows-environment path are implemented but untested so far; the WSL/Linux
   environment is tested end to end (headless and interactive, including the
   `looper-done` signal).
-- `codex` / `custom` harnesses have no idle detection (the `Stop` hook and the
-  prompt-on-screen check are Claude Code specific): interactive runs end only
-  via `looper-done`, process exit or `maxRuntimeMin`. The `codex exec`
+- `codex` / `custom` harnesses have no idle detection and no detailed report
+  in interactive mode (the `Stop` hook and the prompt-on-screen check are
+  Claude Code specific): interactive runs end only via `looper-done` (headline
+  only), process exit or `maxRuntimeMin`. The `codex exec`
   headless form has not been tested against a real Codex install yet.
 - Remote environments (SSH) would need launcher/signal transport beyond the
   shared filesystem the WSL↔Windows pair relies on; not implemented.

@@ -314,10 +314,33 @@ code,
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 .runlog-table-wrap {
   overflow: auto;
-  flex: 1;
+  flex: none;
+}
+.runlog-divider {
+  height: 5px;
+  flex: none;
+  cursor: row-resize;
+  background: var(--border);
+}
+.runlog-result {
+  overflow: auto;
+  background: var(--bg-2);
+}
+.runlog-result .output {
+  margin: 0;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  height: 100%;
+  overflow: auto;
+}
+.runlog-result-empty {
+  padding: 20px 14px;
 }
 .runlog-table {
   width: 100%;
@@ -409,6 +432,110 @@ code,
 }
 .run-detail-empty {
   padding: 20px 14px;
+}
+
+/* Rendered markdown in the run log and run detail output panels. */
+.markdown {
+  height: 100%;
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown table,
+.markdown blockquote {
+  margin: 0 0 10px;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 16px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown h1 {
+  font-size: 17px;
+}
+.markdown h2 {
+  font-size: 15px;
+}
+.markdown h3 {
+  font-size: 14px;
+}
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 13px;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 22px;
+}
+.markdown li > ul,
+.markdown li > ol,
+.markdown li > p {
+  margin-bottom: 2px;
+}
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-3);
+}
+.markdown pre {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  overflow: auto;
+  white-space: pre;
+}
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+.markdown blockquote {
+  padding: 0 0 0 10px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+.markdown table {
+  border-collapse: collapse;
+}
+.markdown th,
+.markdown td {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.markdown th {
+  background: var(--bg-3);
+  font-weight: 600;
+}
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.markdown a {
+  color: var(--accent);
+}
+.markdown input[type='checkbox'] {
+  margin: 0 6px 0 0;
+  vertical-align: middle;
 }
 
 

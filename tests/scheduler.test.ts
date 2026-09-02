@@ -41,8 +41,8 @@ function check(status: CheckResult['status'], extra: Partial<CheckResult> = {}):
   return { status, exitCode: status === 'error' ? 1 : 0, durationMs: 5, stdoutTail: '', ...extra };
 }
 
-function agentEnd(reason: AgentEnd['reason'], message?: string): AgentEnd {
-  return { reason, exitCode: 0, message, durationMs: 10, wasHeld: false };
+function agentEnd(reason: AgentEnd['reason'], headline?: string, body?: string): AgentEnd {
+  return { reason, exitCode: 0, headline, body, durationMs: 10, wasHeld: false };
 }
 
 async function flush(): Promise<void> {
@@ -94,7 +94,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           held: false,
           write: () => undefined,
           resize: () => undefined,
-          stop: async (reason = 'stopped', message) => resolve(agentEnd(reason, message)),
+          stop: async (reason = 'stopped', headline) => resolve(agentEnd(reason, headline)),
           finished,
         };
         if (scripted) setImmediate(() => resolve(scripted));
@@ -125,7 +125,10 @@ afterEach(async () => {
   fs.rmSync(h.dir, { recursive: true, force: true });
 });
 
-const records = () => h.events.filter((e) => e.type === 'record').map((e) => (e as { record: { phase: string; result: string } }).record);
+const records = () =>
+  h.events
+    .filter((e) => e.type === 'record')
+    .map((e) => (e as { record: { phase: string; result: string; summary?: string; body?: string } }).record);
 
 describe('Scheduler', () => {
   it('starts idle with a next run scheduled', () => {
@@ -147,10 +150,12 @@ describe('Scheduler', () => {
 
   it('act check starts the agent and records its end', async () => {
     h.checks.push(check('act', { summary: '2 items', context: { n: 2 } }));
-    h.agentEnds.push(agentEnd('done', 'fixed both'));
+    h.agentEnds.push(agentEnd('done', 'fixed both', 'Fixed **a** and **b**.\n\nNothing left open.'));
     await h.tickN(1);
     expect(h.agentStarted).toBe(1);
-    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:act', 'agent:started', 'agent:done']);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:act', 'agent:started', 'agent:done', 'result:done']);
+    expect(records().at(-1)!.summary).toBe('fixed both');
+    expect(records().at(-1)!.body).toBe('Fixed **a** and **b**.\n\nNothing left open.');
     expect(h.sched.get('t1')!.lastResult).toBe('done: fixed both');
     expect(h.sched.get('t1')!.state).toBe('idle');
   });
@@ -167,7 +172,7 @@ describe('Scheduler', () => {
     await h.sched.stopAgent('t1', 'test');
     await flush();
     expect(h.sched.get('t1')!.state).toBe('idle');
-    expect(records().at(-1)).toMatchObject({ phase: 'agent', result: 'stopped' });
+    expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:stopped', 'result:stopped']);
   });
 
   it('classifier gate: noop stops the cycle, act proceeds', async () => {
@@ -198,6 +203,23 @@ describe('Scheduler', () => {
     h.sched.resume('t1');
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
+  });
+
+  it('a usage-limited run retries at the reset time instead of the cron slot, without auto-pausing', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 } });
+    h.checks.push(check('act'));
+    const retryAt = h.clock.now + 3 * 3_600_000;
+    h.agentEnds.push({
+      ...agentEnd('error', 'usage limit reached · resets 5:50am'),
+      retryAtMs: retryAt,
+    });
+    await h.tickN(1);
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.nextRunAt).toBe(retryAt);
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(rt.lastResult).toBe('error: usage limit reached · resets 5:50am');
+    expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:error', 'result:error']);
   });
 
   it('pause during a run takes effect after the cycle', async () => {

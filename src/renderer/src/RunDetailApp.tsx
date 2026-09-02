@@ -1,13 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RunRecord } from '@shared/types';
-import { capFirst, fmtTime, formatDuration, stripAnsi } from './format';
+import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from './format';
 import { useListNav, useDragResize } from './components/hooks';
+import { subscribe } from './events';
+import { Markdown } from './components/Markdown';
 
-function formatOutput(text: string): string {
+type AgentMode = 'interactive' | 'headless';
+
+/** Pretty output: JSON is indented and kept verbatim, anything else renders as markdown. */
+interface Output {
+  text: string;
+  kind: 'json' | 'markdown' | 'raw';
+}
+
+function formatOutput(text: string, mode: AgentMode): Output {
+  if (mode !== 'headless') return { text, kind: 'markdown' };
   const trimmed = text.trim();
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
     try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2);
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), kind: 'json' };
     } catch { /* not valid JSON */ }
   }
   const lines = trimmed.split('\n');
@@ -24,68 +35,80 @@ function formatOutput(text: string): string {
       }
       return line;
     });
-    if (anyFormatted) return formatted.join('\n');
+    if (anyFormatted) return { text: formatted.join('\n'), kind: 'json' };
   }
-  return text;
+  return { text, kind: 'markdown' };
 }
 
 export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string }) {
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
-  const [outputText, setOutputText] = useState<string | null>(null);
-  const [, setRaw] = useState(false); // forces a re-render when the raw toggle flips rawRef
+  const [output, setOutput] = useState<Output | null>(null);
+  const [raw, setRaw] = useState(false);
+  const [mode, setMode] = useState<AgentMode>('interactive');
   const [splitPct, setSplitPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
-  const rawRef = useRef(false);
-
-  const loadOutput = useCallback(
-    async (idx: number, recs: RunRecord[], useRaw: boolean) => {
-      setSelected(idx);
-      const r = recs[idx];
-      if (!r) {
-        setOutputText(null);
-        return;
-      }
-      if (r.phase === 'agent' && r.result !== 'started') {
-        const text = await window.looper.runs.output(taskId, runId, useRaw);
-        setOutputText(stripAnsi(text) || '(no output captured)');
-      } else {
-        const text = r.stdoutTail || r.error || r.summary || '(no output)';
-        setOutputText(useRaw ? text : formatOutput(text));
-      }
-    },
-    [taskId, runId],
-  );
+  const recordsLenRef = useRef(0);
+  recordsLenRef.current = records.length;
 
   useEffect(() => {
     window.looper.tasks.list().then((tasks) => {
       const t = tasks.find((x) => x.id === taskId);
       document.title = t ? `${t.name} – ${runId}` : `Run ${runId}`;
+      setMode(t ? t.agent.mode : 'interactive');
     });
     window.looper.runs.list(taskId).then((all) => {
       const filtered = all.filter((r) => r.runId === runId);
       setRecords(filtered);
-      if (filtered.length > 0) {
-        void loadOutput(filtered.length - 1, filtered, rawRef.current);
-      }
+      if (filtered.length > 0) setSelected(filtered.length - 1);
     });
-  }, [taskId, runId, loadOutput]);
+  }, [taskId, runId]);
+
+  useEffect(() => {
+    return subscribe((e) => {
+      if (e.type !== 'record') return;
+      if (e.record.taskId !== taskId || e.record.runId !== runId) return;
+      const prevLen = recordsLenRef.current;
+      setRecords((prev) => [...prev, e.record]);
+      setSelected((prev) => (prev === null || prev === prevLen - 1 ? prevLen : prev));
+    });
+  }, [taskId, runId]);
 
   useEffect(() => {
     return window.looper.onUi((e) => {
-      if (e.type === 'toggle-raw-output') {
-        const next = !rawRef.current;
-        rawRef.current = next;
-        setRaw(next);
-        if (selected !== null) void loadOutput(selected, records, next);
-      }
+      if (e.type === 'toggle-raw-output') setRaw((prev) => !prev);
     });
-  }, [records, selected, loadOutput]);
+  }, []);
+
+  // Records are only ever appended, so the selected record's identity is stable
+  // across updates: this effect runs on a selection change, not on every record.
+  const current = selected === null ? null : (records[selected] ?? null);
+  useEffect(() => {
+    const r = current;
+    if (!r) {
+      setOutput(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      if (r.phase === 'agent' && r.result !== 'started') {
+        const text = stripAnsi(await window.looper.runs.output(taskId, runId, raw)) || '(no output captured)';
+        if (cancelled) return;
+        setOutput(raw ? { text, kind: 'raw' } : formatOutput(text, mode));
+      } else {
+        const text = r.body || r.stdoutTail || r.error || r.summary || '(no output)';
+        setOutput(raw ? { text, kind: 'raw' } : formatOutput(text, mode));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [current, raw, mode, taskId, runId]);
 
   const onKeyDown = useListNav({
     count: records.length,
     index: selected ?? -1,
-    onIndex: (i) => void loadOutput(i, records, rawRef.current),
+    onIndex: (i) => setSelected(i),
     scrollToId: selected !== null ? `step-${selected}` : null,
   });
 
@@ -114,11 +137,11 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
                 key={`${r.ts}-${i}`}
                 id={`step-${i}`}
                 className={`result-${r.result}${selected === i ? ' selected' : ''}`}
-                onClick={() => void loadOutput(i, records, rawRef.current)}
+                onClick={() => setSelected(i)}
               >
                 <td className="nowrap">{fmtTime(r.ts)}</td>
                 <td>{capFirst(r.phase)}</td>
-                <td>{r.result}</td>
+                <td>{resultLabel(r.result)}</td>
                 <td className="nowrap">{r.durationMs !== undefined ? formatDuration(r.durationMs) : ''}</td>
                 <td className="details" title={r.error ?? r.summary ?? ''}>
                   {r.error ?? r.summary ?? ''}
@@ -138,10 +161,12 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
       </div>
       <div className="run-detail-divider" onMouseDown={onDragStart} />
       <div className="run-detail-output" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
-        {outputText !== null ? (
-          <pre className="output">{outputText}</pre>
-        ) : (
+        {output === null ? (
           <div className="run-detail-empty muted">Click a row to see its output</div>
+        ) : output.kind === 'markdown' ? (
+          <Markdown text={output.text} />
+        ) : (
+          <pre className="output">{output.text}</pre>
         )}
       </div>
     </div>

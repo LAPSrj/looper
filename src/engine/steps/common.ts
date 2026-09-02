@@ -50,7 +50,7 @@ export function baseEnv(ctx: RunContext): Record<string, string> {
     LOOPER_RUN: ctx.runId,
     LOOPER_RUN_DIR: runDirTarget(ctx),
     LOOPER_DONE_FILE: targetFile(ctx, 'done'),
-    LOOPER_IDLE_FILE: targetFile(ctx, 'idle'),
+    LOOPER_STOP_FILE: targetFile(ctx, 'stop.json'),
   };
 }
 
@@ -105,7 +105,11 @@ export function buildPrompt(tpl: string, vars: Record<string, unknown>): string 
   return text;
 }
 
-/** Noise an interactive bash prints when it has no controlling terminal (check/classify run without a pty). */
+/**
+ * What an interactive bash (`-i`) prints when it has no controlling terminal.
+ * The default shell is interactive so ~/.bashrc is read; check, classify and
+ * headless agents run without a pty, so every one of them would carry these.
+ */
 const BASH_NOISE = /^bash: (cannot set terminal process group|no job control in this shell).*$\n?/gm;
 
 export function stripShellNoise(stderr: string): string {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
+import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectWslMountPrefix, listWslDistros } from '../engine/host';
 
@@ -15,6 +16,7 @@ export interface IpcHost {
   openTemplateEditor: (templateId?: string, parent?: BrowserWindow | null) => void;
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
+  takeImportDraft: (key: string) => unknown;
   updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string) => void;
 }
 
@@ -30,6 +32,34 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('tasks:list', () => engine.listTasks());
   ipcMain.handle('tasks:save', (_e, input: unknown) => engine.saveTask(input));
   ipcMain.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
+  ipcMain.handle('tasks:export', async (e, id: string) => {
+    const task = engine.getTask(id);
+    if (!task) return;
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export Task',
+      defaultPath: `${task.id}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    };
+    const result = sender ? await dialog.showSaveDialog(sender, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return;
+    const data = { ...task };
+    delete data.createdAt;
+    delete data.updatedAt;
+    try {
+      fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+    } catch (err) {
+      const opts: Electron.MessageBoxOptions = {
+        type: 'error',
+        title: 'Looper',
+        message: 'Could not export task.',
+        detail: (err as Error).message,
+        buttons: ['OK'],
+      };
+      if (sender) await dialog.showMessageBox(sender, opts);
+      else await dialog.showMessageBox(opts);
+    }
+  });
 
   ipcMain.handle('templates:list', () => engine.listTemplates());
   ipcMain.handle('templates:save', (_e, input: unknown) => engine.saveTemplate(input));
@@ -71,6 +101,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('editorFromTemplate:open', (_e, templateId: string) =>
     host.openEditorFromTemplate(templateId),
   );
+  ipcMain.handle('import:draft', (_e, key: string) => host.takeImportDraft(key));
 
   // Fired from `beforeunload` when a freshly created environment/harness is
   // closed without saving, so create-on-add leaves no junk behind. `send`

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
-import { ENVIRONMENT_KINDS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
+import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
 import { Field, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
@@ -28,6 +28,8 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
   const [detectedPrefix, setDetectedPrefix] = useState<string | undefined>(undefined);
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** "Custom" chosen in the Shell dropdown; the free-text field shows regardless of its value. */
+  const [customShell, setCustomShell] = useState(false);
 
   // Create-on-add: a new environment already exists in settings so this window
   // could open; closing without saving removes it again.
@@ -54,6 +56,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
       }
       const { name, kind, distro, shell, mountPrefix } = env;
       setDraft({ name, kind, distro, shell, mountPrefix });
+      setCustomShell(!!shell && !SHELL_PRESETS.some(([cmd]) => cmd === shell));
       setSelected(env.harnesses[0]?.id ?? null);
       if (!isNew) document.title = env.name;
     });
@@ -238,13 +241,34 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
           <div className="form">
             {posixShell && (
               <Field label="Shell">
-                <input
+                <select
                   autoFocus
-                  className="mono"
-                  value={draft.shell ?? ''}
-                  placeholder="bash -lic"
-                  onChange={(e) => patch({ shell: e.target.value || undefined })}
-                />
+                  value={customShell ? 'custom' : (draft.shell ?? DEFAULT_SHELL)}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      setCustomShell(true);
+                    } else {
+                      setCustomShell(false);
+                      patch({ shell: e.target.value === DEFAULT_SHELL ? undefined : e.target.value });
+                    }
+                  }}
+                >
+                  {SHELL_PRESETS.map(([cmd, label]) => (
+                    <option key={cmd} value={cmd}>
+                      {label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom</option>
+                </select>
+                {customShell && (
+                  <input
+                    autoFocus
+                    className="mono"
+                    value={draft.shell ?? ''}
+                    placeholder={DEFAULT_SHELL}
+                    onChange={(e) => patch({ shell: e.target.value || undefined })}
+                  />
+                )}
               </Field>
             )}
             {isBridge && (

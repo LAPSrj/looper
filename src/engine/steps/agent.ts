@@ -1,20 +1,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import type * as PtyNS from 'node-pty';
 import { autoTrustWorkspace, resolveEnvironment, resolveHarness } from '../../shared/environments';
-import { CleanLog } from '../cleanlog';
-import { ScreenModel } from '../screen';
+import { TerminalHost } from '../terminal-host';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
-import { buildPrompt, childEnv, targetFile, writeLauncher, type RunContext } from './common';
+import type { SpawnSpec } from '../target';
+import { buildPrompt, childEnv, stripShellNoise, targetFile, writeLauncher, type RunContext } from './common';
 
 export type AgentEndReason = 'done' | 'idle-timeout' | 'max-runtime' | 'exited' | 'stopped' | 'error';
 
 export interface AgentEnd {
   reason: AgentEndReason;
   exitCode: number | null;
-  message?: string;
+  /** One short phrase stating the outcome: the `looper-done` argument, or an engine message. */
+  headline?: string;
+  /** The agent's final message, i.e. the detailed report of the run. Markdown. */
+  body?: string;
+  /** Set when the run failed because the usage limit was hit: epoch ms of when to try again. */
+  retryAtMs?: number;
   durationMs: number;
   wasHeld: boolean;
 }
@@ -24,7 +30,7 @@ export interface AgentHandle {
   pid: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  stop(reason?: AgentEndReason, message?: string): Promise<void>;
+  stop(reason?: AgentEndReason, headline?: string): Promise<void>;
   finished: Promise<AgentEnd>;
   readonly held: boolean;
 }
@@ -39,19 +45,36 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
   const lines = [
     `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
+    'When you are finished, or if there is nothing to do, run the shell command:',
+    '    looper-done "<headline>"',
+    'The headline is one short phrase stating the outcome, e.g. "Fixed 3 flaky tests" or "Nothing to do". State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
+    "Then write your final message: a detailed report of what you did, what you found and what is left open, in Markdown. Looper records it as the run's summary.",
   ];
-  if (headless) {
-    lines.push('When you are finished, end your response with a one-line summary of what changed — state the outcome, not that you are done.');
-  } else {
-    lines.push(
-      'When you are finished — or if there is nothing to do — your VERY LAST action must be to run the shell command:',
-      '    looper-done "<one line summary of what changed>"',
-      'State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
-      'This signals Looper to close this session. Do not wait for further input after running it.',
-    );
+  if (!headless) {
+    lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
   }
   return lines.join('\n');
 }
+
+/** Longest headline shown in lists; anything past it is cut. */
+export const HEADLINE_MAX = 120;
+
+/** First non-empty line of `text`, without Markdown heading markers, capped at HEADLINE_MAX. */
+export function headlineOf(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const line = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^#+\s*/, '').trim())
+    .find((l) => l.length > 0);
+  if (!line) return undefined;
+  return line.length > HEADLINE_MAX ? line.slice(0, HEADLINE_MAX - 1).trimEnd() + '…' : line;
+}
+
+/** After `looper-done`, how long to wait for the final message (the turn's Stop hook) before ending headline-only. */
+const DONE_GRACE_MS = 120_000;
+
+/** Retry margin past the advertised usage-limit reset, so the retry lands safely after it. */
+const USAGE_LIMIT_RETRY_MARGIN_MS = 60_000;
 
 /** The workspace-trust dialog claude shows on first interactive use of a directory. */
 export const TRUST_PROMPT_RE = /trust\s+this\s+folder/i;
@@ -78,6 +101,80 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([p, new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))]);
 }
 
+/** What the agent step needs from a running process, whether it sits behind a pty or plain pipes. */
+interface AgentProc {
+  /** 0 when the spawn itself failed. */
+  readonly pid: number;
+  onStdout(cb: (data: string) => void): void;
+  onStderr(cb: (data: string) => void): void;
+  /** Fires once, after all output has been delivered. */
+  onExit(cb: (code: number | null) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+}
+
+/** Interactive: a real terminal, so the TUI renders and can be typed into. */
+function spawnPty(spec: SpawnSpec, cwd: string): AgentProc {
+  const pty = loadPty();
+  const proc = pty.spawn(spec.command, spec.args, {
+    name: 'xterm-256color',
+    cols: PTY_COLS,
+    rows: PTY_ROWS,
+    cwd,
+    env: childEnv(),
+  });
+  return {
+    pid: proc.pid,
+    onStdout: (cb) => proc.onData(cb),
+    onStderr: () => {},
+    onExit: (cb) => proc.onExit(({ exitCode }) => cb(exitCode)),
+    write: (d) => proc.write(d),
+    resize: (c, r) => proc.resize(c, r),
+    kill: () => proc.kill(),
+  };
+}
+
+/**
+ * Headless: plain pipes. A pty (ConPTY on Windows) re-renders output as a
+ * screen, hard-wrapping every long stream-json line at the terminal width,
+ * which makes the result object unparseable. Pipes deliver the bytes as written.
+ */
+function spawnPiped(spec: SpawnSpec, cwd: string, onError: (e: Error) => void): AgentProc {
+  const child = spawn(spec.command, spec.args, {
+    cwd,
+    env: childEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  let exitCb: ((code: number | null) => void) | null = null;
+  let exitFired = false;
+  const fireExit = (code: number | null): void => {
+    if (exitFired) return;
+    exitFired = true;
+    exitCb?.(code);
+  };
+  child.on('error', (e) => {
+    onError(e);
+    fireExit(null);
+  });
+  // 'close' rather than 'exit': the stdio streams have been drained by then.
+  child.on('close', (code) => fireExit(code));
+  return {
+    pid: child.pid ?? 0,
+    onStdout: (cb) => child.stdout.on('data', cb),
+    onStderr: (cb) => child.stderr.on('data', cb),
+    onExit: (cb) => {
+      exitCb = cb;
+    },
+    write: () => {},
+    resize: () => {},
+    kill: () => child.kill(),
+  };
+}
+
 export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<AgentHandle> {
   const { task, target, settings } = ctx;
   const a = task.agent;
@@ -97,7 +194,8 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       // The done signal must never be blocked by a permission prompt.
       permissions: { allow: ['Bash(looper-done:*)', 'Bash(looper-done)'] },
       hooks: {
-        Stop: [{ hooks: [{ type: 'command', command: target.renderIdleHook(targetFile(ctx, 'idle')) }] }],
+        // The Stop payload carries last_assistant_message: the run's report. Its mtime doubles as the idle signal.
+        Stop: [{ hooks: [{ type: 'command', command: target.renderStopHook(targetFile(ctx, 'stop.json')) }] }],
       },
     });
   }
@@ -124,16 +222,36 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   out.on('error', () => {
     /* never fatal */
   });
-  const cleanLog = new CleanLog(path.join(ctx.runDir, 'output.txt'), PTY_COLS, PTY_ROWS);
-
-  const pty = loadPty();
-  const proc = pty.spawn(launcher.spec.command, launcher.spec.args, {
-    name: 'xterm-256color',
-    cols: PTY_COLS,
-    rows: PTY_ROWS,
-    cwd: ctx.runDir,
-    env: childEnv(),
+  // Headless output is stream-json: one huge JSON object per line. Running it
+  // through a terminal would wrap it into thousands of rows, so output.txt is
+  // written straight from the stream. Interactive output is a TUI and needs
+  // the terminal emulation, which lives in a worker thread.
+  const cleanOut = headless
+    ? fs.createWriteStream(path.join(ctx.runDir, 'output.txt'), { flags: 'w' })
+    : null;
+  cleanOut?.on('error', () => {
+    /* never fatal */
   });
+  // The trust dialog and the waiting-prompt footer are Claude Code UI; other
+  // harnesses end only via looper-done, process exit or the max runtime.
+  const screenEnabled = !headless && claude;
+  const host = headless
+    ? null
+    : new TerminalHost({
+        file: path.join(ctx.runDir, 'output.txt'),
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
+        screen: screenEnabled,
+        onError: (e) => ctx.log.warn(`[${task.id}] terminal worker failed: ${e.message}`),
+      });
+
+  let spawnError: string | undefined;
+  const proc = headless
+    ? spawnPiped(launcher.spec, ctx.runDir, (e) => {
+        ctx.log.error(`[${task.id}] cannot start ${harness.name}: ${e.message}`);
+        spawnError = e.message;
+      })
+    : spawnPty(launcher.spec, ctx.runDir);
   ctx.log.info(`[${task.id}] agent pid ${proc.pid}: ${launcher.spec.command} ${launcher.spec.args.join(' ')}`);
 
   const started = Date.now();
@@ -144,8 +262,17 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   let lastInputAt = 0;
   let idleSince: number | null = null;
   let headlessResult: string | undefined;
+  let headlessResultIsError = false;
+  /** Epoch ms when a rejected usage limit resets, from the stream's rate_limit_event lines. */
+  let usageLimitResetMs: number | null = null;
   let streamBuf = '';
   let prevEndedNewline = false;
+  /** Latest last_assistant_message seen from the Stop hook (interactive). */
+  let lastMessage: string | undefined;
+  /** Set once looper-done has been seen: mtime of the done file and its headline. */
+  let doneMtime: number | null = null;
+  let doneHeadline: string | undefined;
+  let doneTimer: NodeJS.Timeout | null = null;
   let resolveFinished!: (e: AgentEnd) => void;
   const finished = new Promise<AgentEnd>((r) => (resolveFinished = r));
   let exitResolve: (() => void) | null = null;
@@ -153,14 +280,11 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
 
   const watcher = new FileSignalWatcher(
     path.join(ctx.runDir, 'done'),
-    path.join(ctx.runDir, 'idle'),
+    path.join(ctx.runDir, 'stop.json'),
     settings.signalPollMs,
   );
   const idleGraceMs = a.idleGraceMin * 60_000;
 
-  // The trust dialog and the waiting-prompt footer are Claude Code UI; other
-  // harnesses end only via looper-done, process exit or the max runtime.
-  const screen = headless || !claude ? null : new ScreenModel(PTY_COLS, PTY_ROWS);
   let trustHandled = headless || !autoTrustWorkspace(harness);
   let promptSince: number | null = null;
 
@@ -170,80 +294,153 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
     } catch {
       /* already gone */
     }
-    await killHostTree(proc.pid);
+    if (proc.pid > 0) await killHostTree(proc.pid);
     await withTimeout(target.killLeftovers(ctx.runId), 20_000);
     await withTimeout(exitPromise, 3000);
   };
 
-  const finish = async (reason: AgentEndReason, message?: string): Promise<void> => {
+  const finish = async (
+    reason: AgentEndReason,
+    headline?: string,
+    body?: string,
+    retryAtMs?: number,
+  ): Promise<void> => {
     if (ended) return;
     ended = true;
     watcher.stop();
     clearTimeout(maxTimer);
+    if (doneTimer) clearTimeout(doneTimer);
     if (!exited) await killTree();
     out.end();
-    await cleanLog.close();
-    screen?.dispose();
+    cleanOut?.end();
+    await host?.close();
     resolveFinished({
       reason,
       exitCode,
-      message,
+      headline,
+      body,
+      retryAtMs,
       durationMs: Date.now() - started,
       wasHeld: held,
     });
   };
 
+  /**
+   * Headless: the final response is the report. `looper-done` (if the agent ran
+   * it) names the headline; otherwise the response's first line does.
+   */
+  const finishHeadless = async (code: number | null): Promise<void> => {
+    if (spawnError) {
+      await finish('error', spawnError);
+      return;
+    }
+    const doneText = await fs.promises.readFile(path.join(ctx.runDir, 'done'), 'utf8').catch(() => '');
+    const body = headlessResult?.trim() || undefined;
+    if (headlessResultIsError && usageLimitResetMs !== null) {
+      const headline = headlineOf(body) ?? 'usage limit reached';
+      ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(usageLimitResetMs).toISOString()}`);
+      await finish('error', headline, body, usageLimitResetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+      return;
+    }
+    if (code === 0) {
+      await finish('done', headlineOf(doneText) ?? headlineOf(body), body);
+    } else {
+      await finish('exited', `${harness.name} exited ${code}`, body);
+    }
+  };
+
   const maxTimer = setTimeout(() => void finish('max-runtime', `exceeded ${a.maxRuntimeMin} min`), a.maxRuntimeMin * 60_000);
 
-  proc.onData((d) => {
+  const takeResult = (line: string): void => {
+    try {
+      const obj = JSON.parse(line);
+      if (obj.type === 'rate_limit_event') {
+        const info = obj.rate_limit_info;
+        if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+          usageLimitResetMs = info.resetsAt * 1000;
+        }
+      } else if (obj.type === 'result' && typeof obj.result === 'string') {
+        headlessResult = obj.result;
+        headlessResultIsError = obj.is_error === true;
+      }
+    } catch {
+      /* not JSON: a shell warning or a torn line */
+    }
+  };
+
+  /** Headless stream to the terminal tab: pipes carry bare LF, xterm needs CRLF; blank runs collapse. */
+  const showHeadless = (d: string): void => {
+    let display = d.replace(/(\r?\n)+/g, '\r\n');
+    if (prevEndedNewline) display = display.replace(/^\r\n/, '');
+    prevEndedNewline = /\r?\n$/.test(d);
+    if (display) cb.onData(display);
+  };
+
+  proc.onStdout((d) => {
     out.write(d);
-    cleanLog.write(d);
-    if (screen && !ended) void screen.write(d);
+    if (!ended) host?.write(d);
     if (headless) {
       streamBuf += d;
       let nl: number;
       while ((nl = streamBuf.indexOf('\n')) !== -1) {
         const line = streamBuf.slice(0, nl).trimEnd();
         streamBuf = streamBuf.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const obj = JSON.parse(line);
-          if (obj.type === 'result' && typeof obj.result === 'string') {
-            headlessResult = obj.result;
-          }
-        } catch { /* not JSON */ }
+        if (cleanOut && !cleanOut.writableEnded) cleanOut.write(line + '\n');
+        if (line) takeResult(line);
       }
     }
     try {
-      if (headless) {
-        let display = d.replace(/(\r?\n){2,}/g, '\r\n');
-        if (prevEndedNewline) display = display.replace(/^\r?\n/, '');
-        prevEndedNewline = /\r?\n$/.test(d);
-        cb.onData(display);
-      } else {
-        cb.onData(d);
-      }
+      if (headless) showHeadless(d);
+      else cb.onData(d);
     } catch {
       /* UI listener errors never affect the run */
     }
   });
-  proc.onExit(({ exitCode: code }) => {
+  // Only the piped (headless) process has a separate stderr: shell and harness
+  // diagnostics. They go to the raw log and the terminal tab, never to output.txt.
+  // Whole lines only, so bash's job-control warnings can be dropped even when a
+  // chunk boundary falls inside one.
+  let stderrBuf = '';
+  const passStderr = (text: string): void => {
+    const cleaned = stripShellNoise(text);
+    if (!cleaned) return;
+    out.write(cleaned);
+    try {
+      showHeadless(cleaned);
+    } catch {
+      /* UI listener errors never affect the run */
+    }
+  };
+  proc.onStderr((d) => {
+    stderrBuf += d;
+    const nl = stderrBuf.lastIndexOf('\n');
+    if (nl === -1) return;
+    passStderr(stderrBuf.slice(0, nl + 1));
+    stderrBuf = stderrBuf.slice(nl + 1);
+  });
+  proc.onExit((code) => {
     exited = true;
     exitCode = code;
     exitResolve?.();
-    if (ended) return;
+    if (stderrBuf) {
+      passStderr(stderrBuf);
+      stderrBuf = '';
+    }
     if (headless) {
       // The final result line may still be in streamBuf without a trailing \n.
       const remaining = streamBuf.trimEnd();
-      if (remaining && !headlessResult) {
-        try {
-          const obj = JSON.parse(remaining);
-          if (obj.type === 'result' && typeof obj.result === 'string') {
-            headlessResult = obj.result;
-          }
-        } catch { /* not valid JSON */ }
+      streamBuf = '';
+      if (remaining) {
+        if (cleanOut && !cleanOut.writableEnded) cleanOut.write(remaining + '\n');
+        if (!headlessResult) takeResult(remaining);
       }
-      void finish(code === 0 ? 'done' : 'exited', headlessResult ?? (code === 0 ? undefined : `${harness.name} exited ${code}`));
+    }
+    if (ended) return;
+    if (headless) {
+      void finishHeadless(code);
+    } else if (doneMtime !== null) {
+      // Signalled done, then exited before the turn ended: headline only.
+      void finish('done', doneHeadline);
     } else {
       void finish('exited', `${harness.name} exited ${code}`);
     }
@@ -251,14 +448,27 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
 
   if (!headless) {
     watcher.start({
-      onDone: (msg) => void finish('done', msg),
-      onIdle: (mtime) => {
+      onDone: (msg, mtime) => {
+        if (ended || doneMtime !== null) return;
+        doneMtime = mtime;
+        doneHeadline = headlineOf(msg) ?? 'done';
+        ctx.log.info(`[${task.id}] looper-done "${doneHeadline}"; waiting for the final message`);
+        doneTimer = setTimeout(() => void finish('done', doneHeadline), DONE_GRACE_MS);
+      },
+      onStop: (mtime, payload) => {
+        const msg = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message.trim() : '';
+        if (msg) lastMessage = msg;
+        // The turn that ran looper-done ends after it: that Stop carries the report.
+        if (doneMtime !== null && mtime >= doneMtime) {
+          void finish('done', doneHeadline, msg || undefined);
+          return;
+        }
         if (mtime <= lastInputAt) return;
         if (idleSince === null || mtime > idleSince) idleSince = mtime;
       },
       onTick: (now) => {
-        if (ended || !screen) return;
-        if (!trustHandled && screen.contains(TRUST_PROMPT_RE)) {
+        if (ended || doneMtime !== null || !screenEnabled || !host) return;
+        if (!trustHandled && host.screenContains(TRUST_PROMPT_RE)) {
           trustHandled = true;
           ctx.log.info(`[${task.id}] answering the workspace trust dialog for ${task.cwd}`);
           // Options are "No, exit" (preselected) / "Yes, I trust this folder": Down, then Enter.
@@ -267,7 +477,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
           return;
         }
         // A prompt visible on screen = the agent is waiting for a human; treat as idle.
-        if (screen.contains(WAITING_PROMPT_RE)) {
+        if (host.screenContains(WAITING_PROMPT_RE)) {
           if (promptSince === null) {
             promptSince = now;
             ctx.log.info(`[${task.id}] agent is waiting on a prompt`);
@@ -281,7 +491,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
         if (since === null) return;
         if (now - since < idleGraceMs) return;
         if (a.onIdleTimeout === 'finish') {
-          void finish('idle-timeout', `idle for ${a.idleGraceMin} min without looper-done`);
+          void finish('idle-timeout', `idle for ${a.idleGraceMin} min without looper-done`, lastMessage);
         } else {
           held = true;
           cb.onHold?.();
@@ -311,14 +521,13 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       if (ended) return;
       try {
         proc.resize(Math.max(2, cols), Math.max(2, rows));
-        screen?.resize(cols, rows);
-        cleanLog.resize(cols, rows);
+        host?.resize(cols, rows);
       } catch {
         /* ignore */
       }
     },
-    stop(reason: AgentEndReason = 'stopped', message?: string) {
-      return finish(reason, message);
+    stop(reason: AgentEndReason = 'stopped', headline?: string) {
+      return finish(reason, headline);
     },
     finished,
   };

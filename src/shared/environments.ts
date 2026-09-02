@@ -77,6 +77,20 @@ export function pathFlavor(env: Environment, host?: string): 'posix' | 'windows'
   return host === 'windows' ? 'windows' : 'posix';
 }
 
+/**
+ * Shell + flags that source the launcher on POSIX targets. The default is an
+ * interactive login shell: it reads ~/.bashrc, so tools whose installers only
+ * edit that file (nvm, bun) resolve without any profile changes. Without a
+ * terminal bash warns about job control; the engine drops those two lines.
+ */
+export const DEFAULT_SHELL = 'bash -lic';
+
+/** Shell presets offered in the environment editor: [command, label]. */
+export const SHELL_PRESETS: [string, string][] = [
+  [DEFAULT_SHELL, 'Same as your terminal'],
+  ['bash -lc', 'Basic shell, without your terminal setup'],
+];
+
 /** claude-code only: whether looper answers the workspace-trust dialog for this harness. */
 export function autoTrustWorkspace(harness: Harness): boolean {
   return harness.options?.autoTrustWorkspace ?? true;

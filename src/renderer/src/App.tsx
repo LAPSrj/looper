@@ -82,6 +82,9 @@ export function App() {
         case 'edit-task':
           if (sel) void window.looper.openEditor(sel);
           break;
+        case 'export-task':
+          if (sel) void window.looper.tasks.export(sel);
+          break;
         case 'enable-disable': {
           const t = ts.find((x) => x.id === sel);
           if (t) void window.looper.tasks.save({ ...t, enabled: !t.enabled });

@@ -8,7 +8,7 @@ const api: LooperApi = {
     list: () => ipcRenderer.invoke('tasks:list'),
     save: (input) => ipcRenderer.invoke('tasks:save', input),
     remove: (id) => ipcRenderer.invoke('tasks:remove', id),
-
+    export: (id) => ipcRenderer.invoke('tasks:export', id),
   },
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
@@ -42,6 +42,7 @@ const api: LooperApi = {
   openTemplateEditor: (templateId) => ipcRenderer.invoke('templateEditor:open', templateId),
   openTemplatePicker: () => ipcRenderer.invoke('templatePicker:open'),
   openEditorFromTemplate: (templateId) => ipcRenderer.invoke('editorFromTemplate:open', templateId),
+  importDraft: (key) => ipcRenderer.invoke('import:draft', key),
   discardEnvironment: (envId) => ipcRenderer.send('envEditor:discard', envId),
   discardHarness: (envId, harnessId) => ipcRenderer.send('harnessEditor:discard', envId, harnessId),
   pickDirectory: (opts) => ipcRenderer.invoke('dialog:pickDir', opts.current, opts.flavor, opts.distro),

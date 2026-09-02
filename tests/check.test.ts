@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { parseCheckOutput } from '../src/engine/steps/check';
 import { parseClassifierOutput } from '../src/engine/steps/classify';
+import { stripShellNoise } from '../src/engine/steps/common';
+
+describe('stripShellNoise', () => {
+  it('drops only the job-control warnings of a terminal-less interactive bash', () => {
+    const stderr =
+      'bash: cannot set terminal process group (-1): Inappropriate ioctl for device\n' +
+      'bash: no job control in this shell\n' +
+      'bash: bun: command not found\n' +
+      'warning: something else\n';
+    expect(stripShellNoise(stderr)).toBe('bash: bun: command not found\nwarning: something else\n');
+    expect(stripShellNoise('')).toBe('');
+  });
+});
 
 describe('parseCheckOutput', () => {
   it('reads the last JSON line', () => {

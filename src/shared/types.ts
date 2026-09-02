@@ -18,7 +18,8 @@ export type HarnessModel = z.output<typeof HarnessModelSchema>;
 /**
  * A harness is one installed agent CLI inside an environment. `claude-code`
  * gets full integration (model / permission-mode flags, injected system
- * prompt, idle Stop hook, workspace-trust auto-answer). `codex` and `custom`
+ * prompt, Stop hook for idle detection and the final report, workspace-trust
+ * auto-answer). `codex` and `custom`
  * are invoked as `command [args…] "<prompt>"`; codex additionally gets the
  * `exec` subcommand in headless mode and a `--model` flag when the task sets
  * one. The `looper-done` helper is on PATH for every harness.
@@ -145,6 +146,16 @@ export const TaskSchema = z.object({
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskInput = z.input<typeof TaskSchema>;
 
+export const TemplateSchema = TaskSchema.extend({
+  name: z.string(),
+  schedule: z.object({ cron: z.string() }).strict(),
+  environmentId: z.string(),
+  cwd: z.string(),
+  check: CheckSchema.extend({ command: z.string() }),
+  classifier: ClassifierSchema.extend({ prompt: z.string() }).optional(),
+  agent: AgentSchema.extend({ prompt: z.string() }),
+});
+
 export type Template = Task;
 export type TemplateInput = TaskInput;
 
@@ -232,7 +243,7 @@ export interface TaskRuntime {
   pausedReason: string | null;
 }
 
-export type RunPhase = 'check' | 'classify' | 'agent' | 'skip' | 'system';
+export type RunPhase = 'check' | 'classify' | 'agent' | 'result' | 'skip' | 'system';
 
 export type RunResult =
   | 'act'
@@ -256,7 +267,10 @@ export interface RunRecord {
   result: RunResult;
   durationMs?: number;
   exitCode?: number | null;
+  /** One line: the check summary, the classifier reason, or the run's headline (`result` phase). */
   summary?: string;
+  /** `result` phase only: the agent's final message, the detailed report of the run. Markdown. */
+  body?: string;
   error?: string;
   stdoutTail?: string;
   detail?: Record<string, unknown>;

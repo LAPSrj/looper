@@ -63,9 +63,14 @@ export class WindowsTarget implements Target {
     );
   }
 
-  renderIdleHook(idleTargetPath: string): string {
+  renderStopHook(stopTargetPath: string): string {
     // Works whether claude runs hooks through cmd or a bash-like shell on Windows.
-    return `cmd /c echo idle> "${idleTargetPath.replace(/\\/g, '/')}"`;
+    // .NET writes UTF-8 without BOM; the console input is declared UTF-8 so the payload survives.
+    const p = stopTargetPath.replace(/\\/g, '/');
+    return (
+      'powershell -NoProfile -Command "[Console]::InputEncoding=[Text.Encoding]::UTF8; ' +
+      `[IO.File]::WriteAllText('${p}', [Console]::In.ReadToEnd())"`
+    );
   }
 
   spawnSpec(launcherHostPath: string): SpawnSpec {

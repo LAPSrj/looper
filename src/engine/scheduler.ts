@@ -339,13 +339,13 @@ export class Scheduler extends EventEmitter {
     rt.currentRunId = runId;
     rt.lastRunAt = this.now();
     rt.held = false;
-    // Cron keeps its wall-clock slots while a cycle runs (skipped, never overlapped).
-    rt.nextRunAt = this.computeNext(task, this.now());
+    rt.nextRunAt = task.enabled ? this.computeNext(task, this.now()) : null;
     this.emitRuntime(rt);
     this.persist();
 
     let errored = false;
     let result = 'nothing to do';
+    let retryAtMs: number | undefined;
     try {
       const ctx: RunContext = {
         task,
@@ -403,11 +403,14 @@ export class Scheduler extends EventEmitter {
           this.record(task.id, runId, 'agent', end.reason, {
             durationMs: end.durationMs,
             exitCode: end.exitCode,
-            summary: end.message,
             detail: { wasHeld: end.wasHeld },
           });
-          result = end.message ? `${end.reason}: ${end.message}` : end.reason;
+          if (end.headline || end.body) {
+            this.record(task.id, runId, 'result', end.reason, { summary: end.headline, body: end.body });
+          }
+          result = end.headline ? `${end.reason}: ${end.headline}` : end.reason;
           if (end.reason === 'error') errored = true;
+          retryAtMs = end.retryAtMs;
         }
       }
     } catch (e) {
@@ -417,12 +420,21 @@ export class Scheduler extends EventEmitter {
       this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
     } finally {
       this.agents.delete(task.id);
-      this.finishCycle(task.id, rt, errored, result);
+      this.finishCycle(task.id, rt, errored, result, retryAtMs);
     }
   }
 
-  private finishCycle(taskId: string, rt: TaskRuntime, errored: boolean, result: string): void {
-    rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
+  private finishCycle(
+    taskId: string,
+    rt: TaskRuntime,
+    errored: boolean,
+    result: string,
+    retryAtMs?: number,
+  ): void {
+    // A usage-limit wait is an error with a known end: it neither counts toward
+    // the auto-pause threshold nor resets the streak of real errors.
+    const limitWait = retryAtMs !== undefined && retryAtMs > this.now();
+    if (!limitWait) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
     rt.lastResult = result;
     rt.currentRunId = null;
     rt.held = false;
@@ -439,6 +451,10 @@ export class Scheduler extends EventEmitter {
     } else if (rt.pausedReason) {
       rt.state = 'paused';
       rt.nextRunAt = null;
+    } else if (limitWait) {
+      rt.state = 'idle';
+      rt.nextRunAt = retryAtMs!;
+      this.d.log.warn(`[${taskId}] usage limit reached; next attempt at ${new Date(retryAtMs!).toISOString()}`);
     } else if (errored && rt.consecutiveErrors >= fresh.backoff.maxConsecutiveErrors) {
       rt.state = 'paused';
       rt.pausedReason = `auto-paused after ${rt.consecutiveErrors} consecutive errors`;

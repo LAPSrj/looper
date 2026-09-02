@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RunRecord, Task } from '@shared/types';
-import { fmtTime, formatDuration } from '../format';
-import { useListNav } from './hooks';
+import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
+import { useDragResize, useListNav } from './hooks';
+import { Markdown } from './Markdown';
 
 interface Props {
   task: Task;
@@ -15,36 +16,22 @@ interface RunGroup {
   result: string;
   totalDurationMs: number;
   details: string;
+  resultText: string;
   records: RunRecord[];
 }
 
-const RESULT_LABELS: Record<string, string> = {
-  act: 'Action',
-  done: 'Done',
-  noop: 'No action',
-  skipped: 'Skipped',
-  started: 'Started',
-  error: 'Error',
-  'max-runtime': 'Timed out',
-  interrupted: 'Interrupted',
-  'idle-timeout': 'Idle timeout',
-  held: 'Held',
-  stopped: 'Stopped',
-};
-
-function resultLabel(result: string): string {
-  return RESULT_LABELS[result] ?? result;
-}
 
 function bestResult(records: RunRecord[]): string {
   const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'done', 'started', 'noop', 'skipped', 'act'];
   for (const p of priority) {
-    if (records.some((r) => r.result === p)) return p;
+    if (records.some((r) => r.phase !== 'result' && r.result === p)) return p;
   }
   return records[records.length - 1]?.result ?? '';
 }
 
 function lastDetail(records: RunRecord[]): string {
+  const result = records.findLast((r) => r.phase === 'result');
+  if (result) return result.summary ?? '';
   const last = records[records.length - 1];
   if (!last) return '';
   const text = last.error ?? last.summary ?? '';
@@ -52,8 +39,15 @@ function lastDetail(records: RunRecord[]): string {
   return text + cost;
 }
 
+function resultText(records: RunRecord[]): string {
+  const r = records.findLast((rec) => rec.phase === 'result');
+  return r?.body ?? r?.summary ?? '';
+}
+
 export function RunLog({ task, records }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [splitPct, setSplitPct] = useState(65);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(() => {
     const map = new Map<string, RunRecord[]>();
@@ -77,6 +71,7 @@ export function RunLog({ task, records }: Props) {
         result: bestResult(sorted),
         totalDurationMs: totalMs,
         details: lastDetail(sorted),
+        resultText: resultText(sorted),
         records: sorted,
       });
     }
@@ -91,6 +86,7 @@ export function RunLog({ task, records }: Props) {
   }, [groups, selected]);
 
   const idx = groups.findIndex((g) => g.runId === selected);
+  const selectedGroup = idx >= 0 ? groups[idx] : null;
   const nav = useListNav({
     count: groups.length,
     index: idx,
@@ -99,20 +95,27 @@ export function RunLog({ task, records }: Props) {
     scrollToId: selected ? `run-${selected}` : null,
   });
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 'c' && idx >= 0) {
-      void navigator.clipboard.writeText(groups[idx].details);
+    if (e.ctrlKey && e.key === 'c' && selectedGroup) {
+      void navigator.clipboard.writeText(selectedGroup.resultText || selectedGroup.details);
       e.preventDefault();
       return;
     }
     nav(e);
   };
 
+  const onDragStart = useDragResize({
+    axis: 'y',
+    containerRef,
+    onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
+  });
+
   return (
-    <div className="runlog">
-      <div className="runlog-table-wrap" tabIndex={0} onKeyDown={onKeyDown}>
+    <div className="runlog" ref={containerRef}>
+      <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
           <thead>
             <tr>
+              <th>Date</th>
               <th>Start</th>
               <th>End</th>
               <th>Result</th>
@@ -134,6 +137,7 @@ export function RunLog({ task, records }: Props) {
                   window.looper.showRunContextMenu({ taskId: task.id, runId: g.runId, details: g.details });
                 }}
               >
+                <td className="nowrap">{fmtDate(g.startTs)}</td>
                 <td className="nowrap">{fmtTime(g.startTs)}</td>
                 <td className="nowrap">{fmtTime(g.endTs)}</td>
                 <td className="nowrap">{resultLabel(g.result)}</td>
@@ -145,13 +149,23 @@ export function RunLog({ task, records }: Props) {
             ))}
             {groups.length === 0 && (
               <tr>
-                <td colSpan={5} className="muted">
+                <td colSpan={6} className="muted">
                   No runs yet.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+      <div className="runlog-divider" onMouseDown={onDragStart} />
+      <div className="runlog-result" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
+        {selectedGroup?.resultText ? (
+          <Markdown text={selectedGroup.resultText} />
+        ) : (
+          <div className="runlog-result-empty muted">
+            {selectedGroup ? 'No result' : 'Select a run'}
+          </div>
+        )}
       </div>
     </div>
   );

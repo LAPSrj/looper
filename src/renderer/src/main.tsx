@@ -15,6 +15,7 @@ const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
 const templateEditorMatch = /^template-editor(?:\/(.+))?$/.exec(hash);
 const fromTemplateMatch = /^editor-from-template\/(.+)$/.exec(hash);
+const importMatch = /^editor-import\/(.+)$/.exec(hash);
 const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
@@ -31,6 +32,7 @@ function pickRoot() {
     );
   }
   if (fromTemplateMatch) return <EditorApp fromTemplateId={decodeURIComponent(fromTemplateMatch[1])} />;
+  if (importMatch) return <EditorApp importKey={decodeURIComponent(importMatch[1])} />;
 
   if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
   if (modelEditorMatch) {

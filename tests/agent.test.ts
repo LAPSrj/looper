@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { stripAnsi } from '../src/shared/ansi';
 import { ScreenModel } from '../src/engine/screen';
-import { TRUST_PROMPT_RE, WAITING_PROMPT_RE, systemFooter } from '../src/engine/steps/agent';
+import { HEADLINE_MAX, TRUST_PROMPT_RE, WAITING_PROMPT_RE, headlineOf, systemFooter } from '../src/engine/steps/agent';
 
 // Real fragments captured from a claude pty session (cursor-column moves between words).
 const TRUST_DIALOG =
@@ -52,8 +52,25 @@ describe('stripAnsi', () => {
 });
 
 describe('systemFooter', () => {
-  it('tells interactive agents to call looper-done, headless ones not', () => {
-    expect(systemFooter('T', 'r1', false)).toContain('looper-done');
-    expect(systemFooter('T', 'r1', true)).not.toContain('looper-done');
+  it('asks for a looper-done headline followed by a final report message in both modes', () => {
+    for (const headless of [false, true]) {
+      const footer = systemFooter('T', 'r1', headless);
+      expect(footer).toContain('looper-done "<headline>"');
+      expect(footer).toContain('final message');
+    }
+    // Only the interactive session is closed by Looper.
+    expect(systemFooter('T', 'r1', false)).toContain('closes this session');
+    expect(systemFooter('T', 'r1', true)).not.toContain('closes this session');
+  });
+});
+
+describe('headlineOf', () => {
+  it('is the first non-empty line, without heading markers, capped', () => {
+    expect(headlineOf(undefined)).toBeUndefined();
+    expect(headlineOf('  \n\n')).toBeUndefined();
+    expect(headlineOf('\n## Fixed 3 tests\n\nmore text')).toBe('Fixed 3 tests');
+    const long = headlineOf('x'.repeat(HEADLINE_MAX * 2))!;
+    expect(long.length).toBe(HEADLINE_MAX);
+    expect(long.endsWith('…')).toBe(true);
   });
 });

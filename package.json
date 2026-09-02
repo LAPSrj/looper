@@ -14,9 +14,10 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --external:node-pty --outfile=dist/cli.js",
-    "build:all": "npm run build && npm run build:cli",
+    "build:worker": "esbuild src/engine/terminal-worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/terminal-worker.js",
+    "build:all": "npm run build && npm run build:cli && npm run build:worker",
     "start": "electron-vite preview",
-    "serve": "tsx src/cli/index.ts serve",
+    "serve": "npm run build:cli && npm run build:worker && node dist/cli.js serve",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "package": "npm run build:all && electron-builder --win"
@@ -30,6 +31,9 @@
     "node-pty": "1.2.0-beta.15",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -53,6 +57,9 @@
     "directories": {
       "output": "release"
     },
+    "asarUnpack": [
+      "out/main/terminal-worker.js"
+    ],
     "files": [
       "out/**",
       "dist/**",

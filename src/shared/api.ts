@@ -15,7 +15,8 @@ export interface LooperApi {
     list(): Promise<Task[]>;
     save(input: unknown): Promise<Task>;
     remove(id: string): Promise<boolean>;
-
+    /** Native save dialog, then write the task as JSON (store timestamps stripped). */
+    export(id: string): Promise<void>;
   };
   templates: {
     list(): Promise<Template[]>;
@@ -57,6 +58,8 @@ export interface LooperApi {
   openTemplatePicker(): Promise<void>;
   /** Open the task editor prefilled from a template. */
   openEditorFromTemplate(templateId: string): Promise<void>;
+  /** Take (once) the raw JSON behind an import editor window; null when already consumed. */
+  importDraft(key: string): Promise<unknown>;
   /** Fire-and-forget removal of a freshly created, never-saved environment/harness. */
   discardEnvironment(envId: string): void;
   discardHarness(envId: string, harnessId: string): void;
@@ -95,6 +98,7 @@ export interface UiEvent {
     | 'stop-agent'
     | 'pause-resume'
     | 'edit-task'
+    | 'export-task'
     | 'delete-task'
     | 'enable-disable'
     | 'toggle-raw-output';

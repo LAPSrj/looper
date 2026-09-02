@@ -21,7 +21,7 @@ export const EXAMPLE_TASK: TaskInput = {
     mode: 'interactive',
     permissionMode: 'auto',
     prompt:
-      'Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go, and finish by running `looper-done "<one line summary>"`.',
+      'Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go, and finish by running `looper-done "<headline>"` followed by a closing message that reports what you did.',
     extraArgs: [],
     maxRuntimeMin: 90,
     idleGraceMin: 3,

@@ -1,8 +1,9 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
 import { convertWslPath, defaultDataDir } from '../engine/host';
+import { readJson } from '../engine/store/fsutil';
 import { registerIpc } from './ipc';
 
 let win: BrowserWindow | null = null;
@@ -44,11 +45,13 @@ if (!app.requestSingleInstanceLock()) {
       openTemplateEditor: openTemplateEditorWindow,
       openTemplatePicker: openTemplatePickerWindow,
       openEditorFromTemplate: openEditorFromTemplateWindow,
+      takeImportDraft,
       updateTaskMenu,
     });
-    buildMenu();
+    Menu.setApplicationMenu(null);
     createTray();
     createWindow();
+    buildMenu();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -198,6 +201,11 @@ function openRunDetailWindow(taskId: string, runId: string): void {
     maximizable: true,
     webPreferences: webPreferences(),
   });
+  // Links in rendered output open in the system browser, never a new app window.
+  child.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   const send = (type: string) => {
     if (!child.isDestroyed()) child.webContents.send('ui:event', { type });
   };
@@ -330,6 +338,57 @@ function openEditorFromTemplateWindow(templateId: string): void {
   }
 }
 
+/** Raw JSON of pending imports, keyed by the editor window that will consume it. */
+const importDrafts = new Map<string, unknown>();
+
+function takeImportDraft(key: string): unknown {
+  const draft = importDrafts.get(key);
+  importDrafts.delete(key);
+  return draft ?? null;
+}
+
+/**
+ * Pick a task JSON file and open a New Task editor prefilled from it. The
+ * editor sanitizes field by field, so a bad file yields empty/default fields
+ * to fix rather than an error.
+ */
+async function importTask(): Promise<void> {
+  if (!win || win.isDestroyed()) return;
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Import Task',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  const file = result.canceled ? undefined : result.filePaths[0];
+  if (!file) return;
+  let input: unknown;
+  try {
+    input = readJson<unknown>(file, undefined);
+  } catch (err) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Looper',
+      message: 'Could not read the task file.',
+      detail: (err as Error).message,
+      buttons: ['OK'],
+    });
+    return;
+  }
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Looper',
+      message: 'Could not import task.',
+      detail: 'The file does not contain a task object.',
+      buttons: ['OK'],
+    });
+    return;
+  }
+  const key = Math.random().toString(36).slice(2, 10);
+  importDrafts.set(key, input);
+  openChildWindow(`editor-import/${key}`, 'New Task — Looper', 780, 700);
+}
+
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
 function sendUi(type: string): void {
   if (win && !win.isDestroyed()) {
@@ -350,6 +409,9 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
       submenu: [
         { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
         { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
+        { type: 'separator' },
+        { label: '&Import Task…', click: () => void importTask() },
+        { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
         { type: 'separator' },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
@@ -389,5 +451,5 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
       ],
     },
   ]);
-  Menu.setApplicationMenu(menu);
+  if (win && !win.isDestroyed()) win.setMenu(menu);
 }

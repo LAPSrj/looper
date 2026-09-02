@@ -179,7 +179,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     if (!parsedArgs.ok) throw new Error(`extra arguments: ${parsedArgs.error}`);
     return {
       ...draft,
-      id: draft.id?.trim() || (draft.name ? slugify(draft.name) : ''),
+      id: draft.id?.trim() || slugify(draft.name),
       agent: {
         ...draft.agent,
         extraArgs: parsedArgs.tokens,
@@ -216,7 +216,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       void window.looper.showError(tab === 'json' ? `JSON: ${(e as Error).message}` : (e as Error).message);
       return false;
     }
-    const v = validateTask(obj, environments, host);
+    const v = validateTask(obj, environments, host, mode === 'template' ? { template: true } : undefined);
     if (!v.ok) {
       void window.looper.showError(v.errors.join('\n'));
       return false;
