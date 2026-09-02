@@ -79,6 +79,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runs:openDir', (_e, id: string, runId: string) => shell.openPath(engine.runDir(id, runId)));
   ipcMain.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
 
+  ipcMain.handle('engineLog:read', () => engine.readEngineLog());
+
   ipcMain.handle('task:openTerminal', (_e, id: string) => engine.openTaskTerminal(id));
   ipcMain.handle('task:openWorkFolder', async (_e, id: string) => {
     const task = engine.getTask(id);

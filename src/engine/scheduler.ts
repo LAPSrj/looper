@@ -45,6 +45,8 @@ export class Scheduler extends EventEmitter {
   private readonly runtimes = new Map<string, TaskRuntime>();
   private readonly agents = new Map<string, AgentHandle>();
   private readonly buffers = new Map<string, { runId: string; data: string }>();
+  /** Tasks whose deferral (concurrency limit) has been logged, to log once per wait. */
+  private readonly deferLogged = new Set<string>();
   private readonly steps: SchedulerSteps;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
@@ -137,6 +139,13 @@ export class Scheduler extends EventEmitter {
     if (rt.state !== 'idle') {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
         summary: `manual run ignored: task is ${rt.state}`,
+      });
+      return false;
+    }
+    const block = this.concurrencyBlock(task);
+    if (block) {
+      this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
+        summary: `manual run ignored: ${block}`,
       });
       return false;
     }
@@ -256,6 +265,7 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'tasks', tasks: this.d.tasks.list() });
     if (kind === 'remove') {
       void this.stopAgent(task.id, 'task removed');
+      this.deferLogged.delete(task.id);
       const rt = this.runtimes.get(task.id);
       if (rt && !ACTIVE.has(rt.state)) {
         this.runtimes.delete(task.id);
@@ -310,6 +320,16 @@ export class Scheduler extends EventEmitter {
       if (!rt || rt.nextRunAt === null || rt.nextRunAt > now) continue;
       try {
         if (rt.state === 'idle') {
+          const block = this.concurrencyBlock(task);
+          if (block) {
+            // Stay due; retried every tick until a slot frees up.
+            if (!this.deferLogged.has(task.id)) {
+              this.deferLogged.add(task.id);
+              this.d.log.info(`[${task.id}] run deferred: ${block}`);
+            }
+            continue;
+          }
+          this.deferLogged.delete(task.id);
           void this.runCycle(task, 'timer');
         } else if (ACTIVE.has(rt.state)) {
           // A cron slot passed while a cycle is in progress: skip it, never overlap.
@@ -323,6 +343,37 @@ export class Scheduler extends EventEmitter {
         this.d.log.error(`[${task.id}] tick failed: ${errMsg(e)}`);
       }
     }
+  }
+
+  /**
+   * Environment/harness concurrency limits: the reason a start must wait, or
+   * null when free to start. A task counts against its environment's limit
+   * (and its agent harness's) for its whole cycle: checking, classifying, running.
+   */
+  private concurrencyBlock(task: Task): string | null {
+    const env = this.d.settings.environments.find((e) => e.id === task.environmentId);
+    if (!env) return null;
+    const harnessId = task.agent.harnessId ?? env.harnesses[0]?.id;
+    const harness = env.harnesses.find((h) => h.id === harnessId);
+    const envLimit = env.maxConcurrentTasks;
+    const harnessLimit = harness?.maxConcurrentTasks;
+    if (envLimit === undefined && harnessLimit === undefined) return null;
+    let envActive = 0;
+    let harnessActive = 0;
+    for (const t of this.d.tasks.list()) {
+      if (t.id === task.id || t.environmentId !== env.id) continue;
+      const rt = this.runtimes.get(t.id);
+      if (!rt || !ACTIVE.has(rt.state)) continue;
+      envActive += 1;
+      if ((t.agent.harnessId ?? env.harnesses[0]?.id) === harnessId) harnessActive += 1;
+    }
+    if (envLimit !== undefined && envActive >= envLimit) {
+      return `environment "${env.name}" is at its limit of ${envLimit} concurrent task${envLimit === 1 ? '' : 's'}`;
+    }
+    if (harnessLimit !== undefined && harnessActive >= harnessLimit) {
+      return `harness "${harness!.name}" is at its limit of ${harnessLimit} concurrent task${harnessLimit === 1 ? '' : 's'}`;
+    }
+    return null;
   }
 
   private async runCycle(task: Task, trigger: 'timer' | 'manual'): Promise<void> {

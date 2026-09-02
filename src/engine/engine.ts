@@ -61,6 +61,8 @@ export interface Engine {
   clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
   inboxDir(): string;
+  /** Tail of the engine log file (whole lines only). */
+  readEngineLog(maxBytes?: number): string;
 }
 
 export function createEngine(opts: EngineOptions): Engine {
@@ -123,6 +125,13 @@ export function createEngine(opts: EngineOptions): Engine {
         log.error(`run-log prune of ${taskId} failed: ${errMsg(err)}`);
       }
     }
+    const logCutoffMs = Date.now() - settings.engineLogRetentionDays * 24 * 60 * 60 * 1000;
+    log
+      .pruneOlderThan(logCutoffMs)
+      .then((dropped) => {
+        if (dropped) log.info(`engine log: pruned ${dropped} lines older than ${settings.engineLogRetentionDays} days`);
+      })
+      .catch((err) => log.error(`engine-log prune failed: ${errMsg(err)}`));
   };
 
   const inbox = new Inbox(
@@ -257,5 +266,25 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     runDir: (id, runId) => runs.runDir(id, runId),
     inboxDir: () => path.join(dataDir, 'inbox'),
+    readEngineLog(maxBytes = 1024 * 1024): string {
+      const file = path.join(dataDir, 'engine.log');
+      try {
+        const st = fs.statSync(file);
+        const fd = fs.openSync(file, 'r');
+        try {
+          const start = Math.max(0, st.size - maxBytes);
+          const buf = Buffer.alloc(st.size - start);
+          fs.readSync(fd, buf, 0, buf.length, start);
+          let text = buf.toString('utf8');
+          // A tail read may start mid-line; drop the partial first line.
+          if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+          return text;
+        } finally {
+          fs.closeSync(fd);
+        }
+      } catch {
+        return '';
+      }
+    },
   };
 }

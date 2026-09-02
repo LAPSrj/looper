@@ -115,6 +115,14 @@ export function RunLog({ task, records, hideNoAction }: Props) {
     <div className="runlog" ref={containerRef}>
       <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
+          <colgroup>
+            <col style={{ width: 92 }} />
+            <col style={{ width: 76 }} />
+            <col style={{ width: 76 }} />
+            <col style={{ width: 96 }} />
+            <col style={{ width: 72 }} />
+            <col />
+          </colgroup>
           <thead>
             <tr>
               <th>Date</th>
@@ -139,14 +147,12 @@ export function RunLog({ task, records, hideNoAction }: Props) {
                   window.looper.showRunContextMenu({ taskId: task.id, runId: g.runId, details: g.details });
                 }}
               >
-                <td className="nowrap">{fmtDate(g.startTs)}</td>
-                <td className="nowrap">{fmtTime(g.startTs)}</td>
-                <td className="nowrap">{fmtTime(g.endTs)}</td>
-                <td className="nowrap">{resultLabel(g.result)}</td>
-                <td className="nowrap">{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
-                <td className="details" title={g.details}>
-                  {g.details}
-                </td>
+                <td>{fmtDate(g.startTs)}</td>
+                <td>{fmtTime(g.startTs)}</td>
+                <td>{fmtTime(g.endTs)}</td>
+                <td>{resultLabel(g.result)}</td>
+                <td>{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
+                <td title={g.details}>{g.details}</td>
               </tr>
             ))}
             {groups.length === 0 && (

@@ -7,7 +7,7 @@ import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { StateStore } from '../src/engine/store/state';
 import { TaskStore } from '../src/engine/store/tasks';
-import { SettingsSchema, type EngineEvent, type TaskInput } from '../src/shared/types';
+import { SettingsSchema, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
 import type { AgentEnd, AgentHandle } from '../src/engine/steps/agent';
 import type { CheckResult } from '../src/engine/steps/check';
 import type { ClassifyResult } from '../src/engine/steps/classify';
@@ -26,6 +26,7 @@ interface Harness {
   dir: string;
   tasks: TaskStore;
   runs: RunStore;
+  settings: Settings;
   sched: Scheduler;
   events: EngineEvent[];
   clock: { now: number };
@@ -63,6 +64,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     dir,
     tasks,
     runs,
+    settings,
     events: [],
     clock,
     checks: [],
@@ -178,7 +180,7 @@ describe('Scheduler', () => {
   });
 
   it('classifier gate: noop stops the cycle, act proceeds', async () => {
-    h.tasks.patch('t1', { classifier: { model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.tasks.patch('t1', { classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
     h.checks.push(check('act'), check('act'));
     h.classifies.push({ status: 'noop', reason: 'just noise', durationMs: 1, exitCode: 0 });
     h.classifies.push({ status: 'act', reason: 'real work', durationMs: 1, exitCode: 0 });
@@ -233,7 +235,7 @@ describe('Scheduler', () => {
   });
 
   it('the classifier still gates a task without a check step', async () => {
-    h.tasks.patch('t1', { check: undefined, classifier: { model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.tasks.patch('t1', { check: undefined, classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
     h.classifies.push({ status: 'noop', reason: 'nothing new', durationMs: 1, exitCode: 0 });
     await h.tickN(1);
     expect(h.agentStarted).toBe(0);
@@ -348,12 +350,12 @@ describe('Scheduler', () => {
   it('evaluates the schedule in the task timezone', async () => {
     // Now 10:02 UTC; daily at 09:00 Asia/Tokyo (UTC+9) = 00:00 UTC → next slot is tomorrow 00:00 UTC.
     h.clock.now = new Date('2026-01-15T10:02:00Z').getTime();
-    h.tasks.patch('t1', { schedule: { cron: '0 9 * * *', timezone: 'Asia/Tokyo' } });
+    h.tasks.patch('t1', { schedule: { enabled: true, cron: '0 9 * * *', timezone: 'Asia/Tokyo' } });
     expect(h.sched.get('t1')!.nextRunAt).toBe(new Date('2026-01-16T00:00:00Z').getTime());
   });
 
   it('cron schedules skip slots that pass while busy', async () => {
-    h.tasks.patch('t1', { schedule: { cron: '* * * * *' } });
+    h.tasks.patch('t1', { schedule: { enabled: true, cron: '* * * * *' } });
     h.sched.get('t1')!.nextRunAt = h.clock.now; // force due now
     h.checks.push(check('act'));
     await h.tickN(1);
@@ -363,6 +365,45 @@ describe('Scheduler', () => {
     expect(records().some((r) => r.phase === 'skip' && r.result === 'skipped')).toBe(true);
     h.liveAgent!.end(agentEnd('done'));
     await flush();
+  });
+
+  it('defers a due run while the environment is at its concurrency limit', async () => {
+    h.settings.environments[0].maxConcurrentTasks = 1;
+    h.tasks.upsert({ ...baseTask, id: 't2', name: 'Task two' });
+    await flush();
+    h.sched.get('t2')!.nextRunAt = h.clock.now; // due together with t1
+    h.checks.push(check('act'), check('act'));
+    await h.tickN(1);
+    // t1 took the slot; t2 waits idle and stays due.
+    expect(h.agentStarted).toBe(1);
+    expect(h.sched.get('t1')!.state).toBe('running');
+    expect(h.sched.get('t2')!.state).toBe('idle');
+    expect(h.sched.get('t2')!.nextRunAt).toBeLessThanOrEqual(h.clock.now);
+    // A manual run respects the limit too.
+    expect(h.sched.runNow('t2')).toBe(false);
+    expect(records().at(-1)!.summary).toMatch(/manual run ignored: environment .* limit/);
+    // Capacity frees: t2 starts on the next tick.
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    h.agentEnds.push(agentEnd('done'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+  });
+
+  it('defers a due run while the harness is at its concurrency limit', async () => {
+    h.settings.environments[0].harnesses[0].maxConcurrentTasks = 1;
+    h.tasks.upsert({ ...baseTask, id: 't2', name: 'Task two' });
+    await flush();
+    h.sched.get('t2')!.nextRunAt = h.clock.now;
+    h.checks.push(check('act'), check('act'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(h.sched.get('t2')!.state).toBe('idle');
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    h.agentEnds.push(agentEnd('done'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
   });
 });
 

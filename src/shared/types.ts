@@ -44,6 +44,8 @@ export const HarnessSchema = z.object({
   env: z.record(z.string()).default({}),
   /** Models offered in the task editor's Model dropdown. Unset = the kind's main models. */
   models: z.array(HarnessModelSchema).optional(),
+  /** Max tasks active at once on this harness. Unset = unlimited. */
+  maxConcurrentTasks: z.number().int().positive().optional(),
   /** Kind-specific behavior switches. */
   options: z
     .object({
@@ -80,6 +82,8 @@ export const EnvironmentSchema = z.object({
   shell: z.string().optional(),
   /** wsl/windows bridges: where Windows drives are mounted inside WSL. Default: /mnt. */
   mountPrefix: z.string().optional(),
+  /** Max tasks active at once in this environment. Unset = unlimited. */
+  maxConcurrentTasks: z.number().int().positive().optional(),
   harnesses: z.array(HarnessSchema).min(1),
 });
 export type Environment = z.infer<typeof EnvironmentSchema>;
@@ -207,6 +211,8 @@ export const SettingsSchema = z.object({
   outputBufferBytes: z.number().int().positive().default(262144),
   /** Days a run's records and output are kept before being deleted. */
   runRetentionDays: z.number().int().positive().default(30),
+  /** Days engine.log entries are kept before being pruned. */
+  engineLogRetentionDays: z.number().int().positive().default(10),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
   tasksFile: z.string().min(1).optional(),
   /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */

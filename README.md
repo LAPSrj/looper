@@ -100,6 +100,10 @@ First run creates a "This machine" environment, plus the reachable bridge
 Every run is a fresh session — no context accumulation, no compaction. Put
 anything the agent must remember between runs in the project's `CLAUDE.md`.
 
+Both environments and harnesses can cap how many tasks run in them at once
+("Limit concurrent tasks" in their editors; off by default). A due task over
+the cap simply waits its turn and starts as soon as a slot frees up.
+
 Schedules are cron expressions and keep wall-clock slots, evaluated in the
 task's timezone (default: the computer's); a slot that passes while a cycle is
 busy is logged as skipped, never overlapped. The schedule itself can also be
@@ -151,7 +155,9 @@ Windows: `%APPDATA%\looper` · Linux/WSL: `~/.config/looper` · override with
 settings.json          # environments (each with its harnesses), defaultEnvironmentId, timings
 tasks.json
 state.json             # runtime snapshot (for the CLI and crash recovery)
-engine.log
+engine.log             # engine diagnostics (Advanced ▸ Engine Log); entries older
+                       # than Settings → Engine log retention (default 10 days)
+                       # are pruned automatically
 inbox/                 # + processed/ rejected/
 tasks/<id>/runs.jsonl  # one record per phase per run; records and run folders
                        # older than Settings → Run log retention (default 30

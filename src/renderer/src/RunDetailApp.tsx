@@ -122,6 +122,13 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
     <div className="run-detail-app" ref={containerRef}>
       <div className="run-detail-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
+          <colgroup>
+            <col style={{ width: 76 }} />
+            <col style={{ width: 84 }} />
+            <col style={{ width: 96 }} />
+            <col style={{ width: 72 }} />
+            <col />
+          </colgroup>
           <thead>
             <tr>
               <th>Time</th>
@@ -139,11 +146,11 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
                 className={`result-${r.result}${selected === i ? ' selected' : ''}`}
                 onClick={() => setSelected(i)}
               >
-                <td className="nowrap">{fmtTime(r.ts)}</td>
+                <td>{fmtTime(r.ts)}</td>
                 <td>{capFirst(r.phase)}</td>
                 <td>{resultLabel(r.result)}</td>
-                <td className="nowrap">{r.durationMs !== undefined ? formatDuration(r.durationMs) : ''}</td>
-                <td className="details" title={r.error ?? r.summary ?? ''}>
+                <td>{r.durationMs !== undefined ? formatDuration(r.durationMs) : ''}</td>
+                <td title={r.error ?? r.summary ?? ''}>
                   {r.error ?? r.summary ?? ''}
                   {r.detail?.costUsd !== undefined ? ` ($${Number(r.detail.costUsd).toFixed(3)})` : ''}
                 </td>

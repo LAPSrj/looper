@@ -3,7 +3,7 @@ import type { Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { Field, TabBar, EditorFooter } from './components/ui';
+import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 
@@ -193,6 +193,23 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           <Field label="Shell environment variables">
             <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
           </Field>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={draft.maxConcurrentTasks !== undefined}
+              onChange={(e) => patch({ maxConcurrentTasks: e.target.checked ? 1 : undefined })}
+            />
+            Limit concurrent tasks
+          </label>
+          {draft.maxConcurrentTasks !== undefined && (
+            <NumberField
+              label="Maximum concurrent tasks"
+              suffix="tasks"
+              min={1}
+              value={draft.maxConcurrentTasks}
+              onChange={(n) => patch({ maxConcurrentTasks: n })}
+            />
+          )}
           {draft.kind === 'claude-code' && (
             <Field label="Folder trust dialog">
               <select

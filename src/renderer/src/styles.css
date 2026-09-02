@@ -441,6 +441,8 @@ code,
 .runlog-table {
   width: 100%;
   border-collapse: collapse;
+  /* Fixed column widths (via each table's colgroup); the details column takes the rest. */
+  table-layout: fixed;
 }
 .runlog-table th {
   text-align: left;
@@ -456,12 +458,9 @@ code,
   padding: 5px 10px;
   border-bottom: 1px solid var(--bg-3);
   vertical-align: top;
-}
-.runlog-table td.details {
-  max-width: 600px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .runlog-table tr.result-error td {
   color: var(--red);
@@ -471,6 +470,18 @@ code,
 }
 .runlog-table tr.result-noop td,
 .runlog-table tr.result-skipped td {
+  color: var(--fg-muted);
+}
+
+.runlog-table tr.level-error td {
+  color: var(--red);
+}
+
+.runlog-table tr.level-warn td {
+  color: var(--yellow);
+}
+
+.runlog-table tr.level-debug td {
   color: var(--fg-muted);
 }
 .runlog-table tr.run-row {

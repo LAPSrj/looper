@@ -43,6 +43,8 @@ export interface LooperApi {
     resize(id: string, cols: number, rows: number): void;
   };
   openPath(p: string): Promise<void>;
+  /** Tail of the engine log file (whole lines only). */
+  readEngineLog(): Promise<string>;
   /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
   openTaskTerminal(taskId: string): Promise<void>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */

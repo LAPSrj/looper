@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
-import { Field, TabBar, EditorFooter } from './components/ui';
+import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 
@@ -15,7 +15,7 @@ function newHarness(): Harness {
 }
 
 /** The environment's own fields; harnesses are managed live through their own editor window. */
-type EnvDraft = Pick<Environment, 'name' | 'kind' | 'distro' | 'shell' | 'mountPrefix'>;
+type EnvDraft = Pick<Environment, 'name' | 'kind' | 'distro' | 'shell' | 'mountPrefix' | 'maxConcurrentTasks'>;
 
 /** Standalone environment editor window (Settings → Environments → Add/Edit). */
 export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean }) {
@@ -54,8 +54,8 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
         setMissing(true);
         return;
       }
-      const { name, kind, distro, shell, mountPrefix } = env;
-      setDraft({ name, kind, distro, shell, mountPrefix });
+      const { name, kind, distro, shell, mountPrefix, maxConcurrentTasks } = env;
+      setDraft({ name, kind, distro, shell, mountPrefix, maxConcurrentTasks });
       setCustomShell(!!shell && !SHELL_PRESETS.some(([cmd]) => cmd === shell));
       setSelected(env.harnesses[0]?.id ?? null);
       if (!isNew) document.title = env.name;
@@ -148,6 +148,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
       distro: draft.kind === 'wsl' ? draft.distro?.trim() || undefined : undefined,
       shell: posixShell ? draft.shell?.trim() || undefined : undefined,
       mountPrefix: isBridge ? draft.mountPrefix?.trim() || undefined : undefined,
+      maxConcurrentTasks: draft.maxConcurrentTasks,
     };
     const environments = live.environments.map((e) => (e.id === envId ? folded : e));
     const parsed = SettingsSchema.safeParse({ ...live, environments });
@@ -207,6 +208,23 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
                   <input value={draft.distro ?? ''} onChange={(e) => patch({ distro: e.target.value || undefined })} />
                 )}
               </Field>
+            )}
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={draft.maxConcurrentTasks !== undefined}
+                onChange={(e) => patch({ maxConcurrentTasks: e.target.checked ? 1 : undefined })}
+              />
+              Limit concurrent tasks
+            </label>
+            {draft.maxConcurrentTasks !== undefined && (
+              <NumberField
+                label="Maximum concurrent tasks"
+                suffix="tasks"
+                min={1}
+                value={draft.maxConcurrentTasks}
+                onChange={(n) => patch({ maxConcurrentTasks: n })}
+              />
             )}
           </div>
         )}

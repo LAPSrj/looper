@@ -30,6 +30,7 @@ export function SettingsApp() {
   const [staggerMax, setStaggerMax] = useState<number | null>(null);
   const [staggerInterval, setStaggerInterval] = useState<number | null>(null);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  const [engineLogDays, setEngineLogDays] = useState<number | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -53,6 +54,7 @@ export function SettingsApp() {
       setStaggerMax((v) => v ?? info.settings.staggerFirstRun.maxDelaySec);
       setStaggerInterval((v) => v ?? info.settings.staggerFirstRun.minIntervalSec);
       setRetentionDays((v) => v ?? info.settings.runRetentionDays);
+      setEngineLogDays((v) => v ?? info.settings.engineLogRetentionDays);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -78,7 +80,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: TABS.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || closeToTray === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || closeToTray === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -185,6 +187,7 @@ export function SettingsApp() {
         tasksFile,
         templatesFile,
         runRetentionDays: retentionDays,
+        engineLogRetentionDays: engineLogDays,
       });
       initTasksFile.current = tasksFile;
       initTemplatesFile.current = templatesFile;
@@ -293,6 +296,7 @@ export function SettingsApp() {
                 {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
               </div>
             </Field>
+            <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
           </div>
         )}
 

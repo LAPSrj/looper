@@ -34,6 +34,7 @@ const api: LooperApi = {
     resize: (id, cols, rows) => ipcRenderer.send('agent:resize', id, cols, rows),
   },
   openPath: (p) => ipcRenderer.invoke('openPath', p),
+  readEngineLog: () => ipcRenderer.invoke('engineLog:read'),
   openTaskTerminal: (taskId) => ipcRenderer.invoke('task:openTerminal', taskId),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
   openRunDetail: (taskId, runId) => ipcRenderer.invoke('runDetail:open', taskId, runId),

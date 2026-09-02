@@ -295,6 +295,26 @@ function openInstructionsWindow(): void {
   openChildWindow('instructions', 'Instructions', 800, 700);
 }
 
+function openEngineLogWindow(): void {
+  const child = new BrowserWindow({
+    width: 1000,
+    height: 640,
+    minWidth: 640,
+    minHeight: 420,
+    title: 'Engine Log',
+    icon: appIcon,
+    backgroundColor: windowBackground(),
+    maximizable: true,
+    webPreferences: webPreferences(),
+  });
+  child.removeMenu();
+  child.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  loadRenderer(child, 'engine-log');
+}
+
 function openAboutWindow(): void {
   openChildWindow('about', 'About', 360, 320, win, { minWidth: 360, minHeight: 320, resizable: false });
 }
@@ -512,6 +532,8 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
     {
       label: '&Advanced',
       submenu: [
+        { label: 'Engine &Log', click: () => openEngineLogWindow() },
+        { type: 'separator' },
         {
           label: 'Open &Data Directory',
           click: () => {

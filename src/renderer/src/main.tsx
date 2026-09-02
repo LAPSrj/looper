@@ -5,6 +5,7 @@ import './styles.css';
 import { AboutApp } from './AboutApp';
 import { App } from './App';
 import { EditorApp } from './EditorApp';
+import { EngineLogApp } from './EngineLogApp';
 import { InstructionsApp } from './InstructionsApp';
 import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
@@ -69,6 +70,7 @@ function pickRoot() {
       />
     );
   }
+  if (hash === 'engine-log') return <EngineLogApp />;
   if (hash === 'settings') return <SettingsApp />;
   if (hash === 'instructions') return <InstructionsApp />;
   if (hash === 'about') return <AboutApp />;
