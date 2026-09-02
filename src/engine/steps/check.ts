@@ -38,10 +38,11 @@ export function parseCheckOutput(stdout: string): ParsedCheck {
 }
 
 export async function runCheck(ctx: RunContext): Promise<CheckResult> {
-  const { task } = ctx;
-  const launcher = writeLauncher(ctx, 'check', task.check.command);
+  const check = ctx.task.check;
+  if (!check) throw new Error(`task ${ctx.task.id} has no check step`);
+  const launcher = writeLauncher(ctx, 'check', check.command);
   const res = await runCaptured(launcher.spec, {
-    timeoutMs: task.check.timeoutSec * 1000,
+    timeoutMs: check.timeoutSec * 1000,
     onTimeout: () => ctx.target.killLeftovers(ctx.runId),
   });
   writeText(path.join(ctx.runDir, 'check.out.txt'), res.stdout);

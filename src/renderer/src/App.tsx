@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo } from '@shared/api';
+import type { AppInfo, UiEvent } from '@shared/api';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
+import { TaskToolbar } from './components/TaskToolbar';
 import { useDialogKeys, useDragResize } from './components/hooks';
 
 const MAX_RECORDS = 500;
@@ -17,9 +18,80 @@ export function App() {
   const [tab, setTab] = useState<DetailTab>('status');
   const [now, setNow] = useState(Date.now());
 
-  // Menu commands arrive through a single subscription; the ref keeps them acting on current state.
+  // Menu and toolbar commands act on the selected task; the ref keeps them acting on current state.
   const uiRef = useRef({ selected, tasks, runtimes });
   uiRef.current = { selected, tasks, runtimes };
+
+  const uiAction = useCallback((type: UiEvent['type']) => {
+    const { selected: sel, tasks: ts, runtimes: rts } = uiRef.current;
+    switch (type) {
+      case 'run-now':
+        if (sel) {
+          const rt = rts[sel];
+          if (rt?.state === 'disabled') {
+            const t = ts.find((x) => x.id === sel);
+            void window.looper.confirm(`"${t?.name ?? sel}" is disabled. Run it anyway?`).then((ok) => {
+              if (ok) void window.looper.runtime.runNow(sel).catch(() => undefined);
+            });
+          } else {
+            void window.looper.runtime.runNow(sel).catch(() => undefined);
+          }
+        }
+        break;
+      case 'stop-agent':
+        if (sel) void window.looper.runtime.stopAgent(sel);
+        break;
+      case 'pause-resume':
+        if (sel) {
+          const rt = rts[sel];
+          if (rt?.state === 'paused') void window.looper.runtime.resume(sel);
+          else void window.looper.runtime.pause(sel);
+        }
+        break;
+      case 'edit-task':
+        if (sel) void window.looper.openEditor(sel);
+        break;
+      case 'edit-note':
+        if (sel) void window.looper.openNoteEditor(sel);
+        break;
+      case 'clear-note': {
+        const t = ts.find((x) => x.id === sel);
+        if (t?.note) void window.looper.tasks.save({ ...t, note: undefined });
+        break;
+      }
+      case 'export-task':
+        if (sel) void window.looper.tasks.export(sel);
+        break;
+      case 'enable-disable': {
+        const t = ts.find((x) => x.id === sel);
+        if (t) void window.looper.tasks.save({ ...t, enabled: !t.enabled });
+        break;
+      }
+      case 'delete-task': {
+        const t = ts.find((x) => x.id === sel);
+        if (t) void window.looper.confirm(`Delete task "${t.name}"?`).then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
+        break;
+      }
+      case 'open-terminal':
+        if (sel) void window.looper.openTaskTerminal(sel).catch((e) => void window.looper.showError((e as Error).message));
+        break;
+      case 'open-work-folder':
+        if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
+        break;
+      case 'clear-runs': {
+        const t = ts.find((x) => x.id === sel);
+        if (!t) break;
+        void window.looper.confirm(`Clear the run history of "${t.name}"? All run logs and outputs are deleted.`).then((ok) => {
+          if (!ok) return;
+          void window.looper.runs
+            .clear(t.id)
+            .then(() => setRecords((m) => ({ ...m, [t.id]: [] })))
+            .catch((e) => void window.looper.showError((e as Error).message));
+        });
+        break;
+      }
+    }
+  }, []);
 
   useEffect(() => {
     void window.looper.info().then(setInfo);
@@ -53,76 +125,7 @@ export function App() {
           break;
       }
     });
-    const unsubUi = window.looper.onUi((e) => {
-      const { selected: sel, tasks: ts, runtimes: rts } = uiRef.current;
-      switch (e.type) {
-        case 'run-now':
-          if (sel) {
-            const rt = rts[sel];
-            if (rt?.state === 'disabled') {
-              const t = ts.find((x) => x.id === sel);
-              void window.looper.confirm(`"${t?.name ?? sel}" is disabled. Run it anyway?`).then((ok) => {
-                if (ok) void window.looper.runtime.runNow(sel).catch(() => undefined);
-              });
-            } else {
-              void window.looper.runtime.runNow(sel).catch(() => undefined);
-            }
-          }
-          break;
-        case 'stop-agent':
-          if (sel) void window.looper.runtime.stopAgent(sel);
-          break;
-        case 'pause-resume':
-          if (sel) {
-            const rt = rts[sel];
-            if (rt?.state === 'paused') void window.looper.runtime.resume(sel);
-            else void window.looper.runtime.pause(sel);
-          }
-          break;
-        case 'edit-task':
-          if (sel) void window.looper.openEditor(sel);
-          break;
-        case 'edit-note':
-          if (sel) void window.looper.openNoteEditor(sel);
-          break;
-        case 'clear-note': {
-          const t = ts.find((x) => x.id === sel);
-          if (t?.note) void window.looper.tasks.save({ ...t, note: undefined });
-          break;
-        }
-        case 'export-task':
-          if (sel) void window.looper.tasks.export(sel);
-          break;
-        case 'enable-disable': {
-          const t = ts.find((x) => x.id === sel);
-          if (t) void window.looper.tasks.save({ ...t, enabled: !t.enabled });
-          break;
-        }
-        case 'delete-task': {
-          const t = ts.find((x) => x.id === sel);
-          if (t) void window.looper.confirm(`Delete task "${t.name}"?`).then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
-          break;
-        }
-        case 'open-terminal':
-          if (sel) void window.looper.openTaskTerminal(sel).catch((e) => void window.looper.showError((e as Error).message));
-          break;
-        case 'open-work-folder':
-          if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
-          break;
-        case 'clear-runs': {
-          const t = ts.find((x) => x.id === sel);
-          if (!t) break;
-          void window.looper.confirm(`Clear the run history of "${t.name}"? All run logs and outputs are deleted.`).then((ok) => {
-            if (!ok) return;
-            void window.looper.runs
-              .clear(t.id)
-              .then(() => setRecords((m) => ({ ...m, [t.id]: [] })))
-              .catch((e) => void window.looper.showError((e as Error).message));
-          });
-          break;
-        }
-      }
-    });
+    const unsubUi = window.looper.onUi((e) => uiAction(e.type));
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       unsub();
@@ -156,6 +159,7 @@ export function App() {
   }, []);
 
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
+  const view = info?.settings.view;
 
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const appRef = useRef<HTMLDivElement>(null);
@@ -180,12 +184,25 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {(view?.toolbar ?? true) && (
+        <TaskToolbar task={task} runtime={task ? runtimes[task.id] : undefined} onAction={uiAction} />
+      )}
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
         <aside className="sidebar">
           <div className="sidebar-header">
             <span className="pane-title">Tasks</span>
           </div>
-          <TaskList tasks={tasks} runtimes={runtimes} selected={selected} now={now} onSelect={select} />
+          <TaskList
+            tasks={tasks}
+            runtimes={runtimes}
+            selected={selected}
+            now={now}
+            onSelect={select}
+            compact={view?.taskList === 'compact'}
+            showDisabled={view?.showDisabledTasks ?? true}
+            showScheduled={view?.showScheduledTasks ?? true}
+            showManual={view?.showManualTasks ?? true}
+          />
         </aside>
         <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
         <main className="main">
@@ -199,18 +216,21 @@ export function App() {
               now={now}
               tab={tab}
               onTab={setTab}
+              hideNoActionRuns={view?.hideNoActionRuns ?? false}
             />
           ) : (
             <div className="empty" />
           )}
         </main>
       </div>
-      <div className="statusbar">
-        <span className="spacer" />
-        <span>
-          {counts.enabled} enabled · {counts.disabled} disabled · {counts.paused} paused · {counts.running} running
-        </span>
-      </div>
+      {(view?.statusBar ?? true) && (
+        <div className="statusbar">
+          <span className="spacer" />
+          <span>
+            {counts.enabled} enabled · {counts.disabled} disabled · {counts.paused} paused · {counts.running} running
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -261,7 +261,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
       { label: 'Clear Guidance', enabled: info.hasNote, click: () => sender.webContents.send('ui:event', { type: 'clear-note' }) },
       { type: 'separator' },
+      { label: 'Open Project in Terminal', click: () => sender.webContents.send('ui:event', { type: 'open-terminal' }) },
+      { label: 'Open Working Directory', click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
+      { type: 'separator' },
       { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
+      { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
       { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
     ]);
     menu.popup({ window: sender });

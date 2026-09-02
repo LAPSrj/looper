@@ -22,18 +22,20 @@ interface Props {
   now: number;
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
+  hideNoActionRuns: boolean;
 }
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const hhmm = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
 function fmtDays(days: number[]): string {
   const d = [...days].sort((a, b) => a - b);
   const contiguous = d.length > 1 && d.every((x, i) => i === 0 || x === d[i - 1] + 1);
-  return contiguous ? `${DAY_NAMES[d[0]]}–${DAY_NAMES[d[d.length - 1]]}` : d.map((x) => DAY_NAMES[x]).join(', ');
+  return contiguous ? `${DAY_NAMES[d[0]]} to ${DAY_NAMES[d[d.length - 1]]}` : d.map((x) => DAY_NAMES[x]).join(', ');
 }
 
 function describeSchedule(task: Task): string {
+  if (!task.schedule.enabled) return 'Manual';
   const tz = task.schedule.timezone ? ` (${task.schedule.timezone})` : '';
   return describeCron(task.schedule.cron) + tz;
 }
@@ -50,7 +52,7 @@ function describeCron(cron: string): string {
             : `Every ${f.step} minutes`
           : (f.step === 1 ? 'Hourly' : `Every ${f.step} hours`) +
             (f.minute ? ` at :${String(f.minute).padStart(2, '0')}` : '');
-      const win = f.from !== undefined && f.to !== undefined ? `, ${f.from}–${f.to}h` : '';
+      const win = f.from !== undefined && f.to !== undefined ? `, from ${f.from}h to ${f.to}h` : '';
       return base + win + (f.days ? `, ${fmtDays(f.days)}` : '');
     }
     case 'daily':
@@ -84,7 +86,7 @@ function describeNextRun(runtime: TaskRuntime | undefined, now: number): string 
   return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
 }
 
-export function TaskDetail({ task, environments, runtime, records, now, tab, onTab }: Props) {
+export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
 
@@ -109,7 +111,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
               <dt>Schedule</dt>
               <dd>{describeSchedule(task)}</dd>
               <dt>Next run</dt>
-              <dd>{describeNextRun(runtime, now)}</dd>
+              <dd>{task.schedule.enabled ? describeNextRun(runtime, now) : 'When triggered manually'}</dd>
               {task.note && (
                 <>
                   <dt>Next run guidance</dt>
@@ -125,10 +127,10 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
               <dd>{runtime?.lastResult ? resultLabel(runtime.lastResult) : 'None'}</dd>
               <dt>Last run details</dt>
               <dd>{runtime?.lastDetail ? capFirst(runtime.lastDetail) : 'None'}</dd>
-              <dt>Trigger command</dt>
-              <dd className="mono">{task.check.command}</dd>
+              <dt>Check command</dt>
+              <dd className={task.check?.enabled ? 'mono' : ''}>{task.check?.enabled ? task.check.command : 'None (always runs)'}</dd>
               <dt>Classifier</dt>
-              <dd>{task.classifier ? 'Yes' : 'No'}</dd>
+              <dd>{task.classifier?.enabled ? 'Yes' : 'No'}</dd>
               <dt>Harness</dt>
               <dd>{harness ? `${harness.name} (${harnessKindLabel(harness.kind)})` : 'None'}</dd>
               <dt>Model</dt>
@@ -148,7 +150,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
             </dl>
           </div>
         )}
-        {tab === 'log' && <RunLog task={task} records={records} />}
+        {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} />}
         {tab === 'terminal' && <Terminal taskId={task.id} runtime={runtime} />}
       </section>
     </div>

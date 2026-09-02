@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell, Tray
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
+import type { Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { registerIpc } from './ipc';
@@ -418,8 +419,23 @@ function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: bo
   buildMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote);
 }
 
+/** Persist a View-menu option; the settings event carries it to the renderer. */
+function updateView(patch: Partial<Settings['view']>): void {
+  if (!engine) return;
+  engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
+}
+
 function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote = false): void {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
+  const view: Settings['view'] = engine?.settings.view ?? {
+    toolbar: true,
+    statusBar: true,
+    taskList: 'standard',
+    showDisabledTasks: true,
+    showScheduledTasks: true,
+    showManualTasks: true,
+    hideNoActionRuns: false,
+  };
   const menu = Menu.buildFromTemplate([
     {
       label: '&File',
@@ -453,6 +469,31 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
         { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
         { id: 'task-delete', label: '&Delete Task', enabled: hasTask, click: () => sendUi('delete-task') },
+      ],
+    },
+    {
+      label: '&View',
+      submenu: [
+        {
+          label: 'Task &List',
+          submenu: [
+            { label: '&Standard', type: 'radio', checked: view.taskList !== 'compact', click: () => updateView({ taskList: 'standard' }) },
+            { label: '&Compact', type: 'radio', checked: view.taskList === 'compact', click: () => updateView({ taskList: 'compact' }) },
+            { type: 'separator' },
+            { label: 'Show &Disabled Tasks', type: 'checkbox', checked: view.showDisabledTasks, click: (item) => updateView({ showDisabledTasks: item.checked }) },
+            { label: 'Show S&cheduled Tasks', type: 'checkbox', checked: view.showScheduledTasks, click: (item) => updateView({ showScheduledTasks: item.checked }) },
+            { label: 'Show &Manual Tasks', type: 'checkbox', checked: view.showManualTasks, click: (item) => updateView({ showManualTasks: item.checked }) },
+          ],
+        },
+        {
+          label: 'Task Lo&gs',
+          submenu: [
+            { label: 'Hide Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
+          ],
+        },
+        { type: 'separator' },
+        { label: '&Toolbar', type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
+        { label: 'Status &Bar', type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
       ],
     },
     {

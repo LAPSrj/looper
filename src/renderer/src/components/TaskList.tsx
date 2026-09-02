@@ -8,36 +8,46 @@ interface Props {
   selected: string | null;
   now: number;
   onSelect: (id: string) => void;
+  /** Show only the task name, without the state line. */
+  compact: boolean;
+  showDisabled: boolean;
+  showScheduled: boolean;
+  showManual: boolean;
 }
 
-export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
-  const idx = tasks.findIndex((t) => t.id === selected);
+export function TaskList({ tasks, runtimes, selected, now, onSelect, compact, showDisabled, showScheduled, showManual }: Props) {
+  const visible = tasks.filter(
+    (t) => (t.enabled || showDisabled) && (t.schedule.enabled !== false ? showScheduled : showManual),
+  );
+  const idx = visible.findIndex((t) => t.id === selected);
   const onKeyDown = useListNav({
-    count: tasks.length,
+    count: visible.length,
     index: idx,
     onIndex: (i) => {
-      if (tasks[i].id !== selected) onSelect(tasks[i].id);
+      if (visible[i].id !== selected) onSelect(visible[i].id);
     },
     scrollToId: selected ? `task-${selected}` : null,
   });
 
   return (
     <ul
-      className="task-list"
+      className={`task-list${compact ? ' compact' : ''}`}
       role="listbox"
       aria-label="Tasks"
       tabIndex={0}
       onKeyDown={onKeyDown}
       aria-activedescendant={selected ? `task-${selected}` : undefined}
     >
-      {tasks.map((t) => {
+      {visible.map((t) => {
         const rt = runtimes[t.id];
         const label = stateLabel(rt);
         const countdown = rt?.state === 'idle' ? fmtCountdown(rt.nextRunAt, now) : '';
         const sub =
           rt?.state === 'idle'
             ? countdown === ''
-              ? 'Not scheduled'
+              ? t.schedule.enabled === false
+                ? 'Manual'
+                : 'Not scheduled'
               : countdown === 'now'
                 ? 'Next run now'
                 : `Next run in ${countdown}`
@@ -68,9 +78,11 @@ export function TaskList({ tasks, runtimes, selected, now, onSelect }: Props) {
             <div className="task-item-row">
               <span className="task-name">{t.name}</span>
             </div>
-            <div className="task-item-sub" title={subLine}>
-              {subLine}
-            </div>
+            {!compact && (
+              <div className="task-item-sub" title={subLine}>
+                {subLine}
+              </div>
+            )}
           </li>
         );
       })}

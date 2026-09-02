@@ -29,10 +29,10 @@ describe('importTaskDraft', () => {
     expect(d.id).toBe('');
     expect(d.name).toBe('');
     expect(d.enabled).toBe(true);
-    expect(d.schedule).toEqual({ cron: '' });
+    expect(d.schedule).toEqual({ enabled: true, cron: '' });
     expect(d.environmentId).toBe('local');
     expect(d.cwd).toBe('');
-    expect(d.check).toEqual({ command: '', timeoutSec: 60 });
+    expect(d.check).toBeUndefined();
     expect(d.classifier).toBeUndefined();
     expect(d.agent).toMatchObject({ prompt: '', extraArgs: [], mode: 'interactive', permissionMode: 'auto', maxRuntimeMin: 120 });
     expect(d.backoff).toEqual({ maxConsecutiveErrors: 5 });
@@ -48,6 +48,7 @@ describe('importTaskDraft', () => {
 
   it('fills a partial classifier with defaults but drops a non-object one', () => {
     expect(importTaskDraft({ ...good, classifier: { prompt: 7 } }, opts).classifier).toEqual({
+      enabled: true,
       model: 'haiku',
       prompt: '',
       timeoutSec: 180,

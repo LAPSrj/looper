@@ -27,18 +27,18 @@ interface Props {
 
 type Draft = TaskInput & {
   agent: NonNullable<TaskInput['agent']>;
-  check: NonNullable<TaskInput['check']>;
 };
 
-type EditorTab = 'general' | 'trigger' | 'conditions' | 'action' | 'settings' | 'json';
+type EditorTab = 'general' | 'schedule' | 'check' | 'classifier' | 'agent' | 'settings' | 'json';
 
 const TABS: [EditorTab, string][] = [
   ['general', 'General'],
-  ['trigger', 'Trigger'],
-  ['conditions', 'Conditions'],
-  ['action', 'Action'],
+  ['schedule', 'Schedule'],
+  ['check', 'Check'],
+  ['classifier', 'Classifier'],
+  ['agent', 'Agent'],
   ['settings', 'Settings'],
-  ['json', 'JSON'],
+  ['json', 'Advanced'],
 ];
 
 function blankDraft(environmentId?: string): Draft {
@@ -48,7 +48,7 @@ function blankDraft(environmentId?: string): Draft {
     name: '',
     cwd: '',
     environmentId: environmentId ?? '',
-    check: { command: '', timeoutSec: 60 },
+    check: { enabled: true, command: '', timeoutSec: 60 },
     classifier: undefined,
     agent: { ...EXAMPLE_TASK.agent, prompt: '' },
   } as Draft;
@@ -169,12 +169,15 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const models = harness ? harnessModels(harness) : [];
   // Model presets come from the harness; anything else is edited as "Custom".
   const modelIsCustom = customModel || (!!draft.agent.model && !models.some((m) => m.id === draft.agent.model));
+  const schedOn = draft.schedule.enabled !== false;
+  const checkOn = !!draft.check && draft.check.enabled !== false;
+  const clsOn = !!draft.classifier && draft.classifier.enabled !== false;
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const setAgent = <K extends keyof Draft['agent']>(key: K, value: Draft['agent'][K]) =>
     setDraft((d) => ({ ...d, agent: { ...d.agent, [key]: value } }));
-  const setCheck = <K extends keyof Draft['check']>(key: K, value: Draft['check'][K]) =>
-    setDraft((d) => ({ ...d, check: { ...d.check, [key]: value } }));
+  const setCheck = <K extends keyof NonNullable<Draft['check']>>(key: K, value: NonNullable<Draft['check']>[K]) =>
+    setDraft((d) => ({ ...d, check: { ...d.check!, [key]: value } }));
   const browseCwd = async () => {
     const picked = await window.looper.pickDirectory({
       current: draft.cwd || undefined,
@@ -200,6 +203,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       ...draft,
       id: draft.id?.trim() || slugify(draft.name),
       env: parsedEnv,
+      // A step turned off with nothing configured is dropped rather than saved empty.
+      check: draft.check && (checkOn || (draft.check.command ?? '').trim()) ? draft.check : undefined,
+      classifier: draft.classifier && (clsOn || (draft.classifier.prompt ?? '').trim()) ? draft.classifier : undefined,
       agent: {
         ...draft.agent,
         extraArgs: parsedArgs.tokens,
@@ -304,8 +310,17 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
           </div>
         </div>
 
-        <div className={`editor-panel${tab !== 'trigger' ? ' hidden' : ''}`}>
+        <div className={`editor-panel${tab !== 'schedule' ? ' hidden' : ''}`}>
           <div className="form">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={schedOn}
+                onChange={(e) => set('schedule', { ...draft.schedule, enabled: e.target.checked })}
+              />
+              Run automatically on a schedule
+            </label>
+            <fieldset className={`step-fields${schedOn ? '' : ' disabled'}`} disabled={!schedOn}>
             <Field label="Frequency">
               <select
                 value={schedForm.mode === 'minutes' || schedForm.mode === 'hours' ? 'every' : schedForm.mode}
@@ -385,13 +400,6 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   />
                 </Field>
               )}
-              <NumberField
-                label="Check timeout"
-                suffix="s"
-                min={1}
-                value={draft.check.timeoutSec ?? 60}
-                onChange={(n) => setCheck('timeoutSec', n)}
-              />
             {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
               <>
                 <Field label="Active hours">
@@ -519,7 +527,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               <select
                 value={draft.schedule.timezone ?? ''}
                 onChange={(e) =>
-                  set('schedule', { cron: cronExpr, ...(e.target.value ? { timezone: e.target.value } : {}) })
+                  set('schedule', { ...draft.schedule, timezone: e.target.value || undefined })
                 }
               >
                 <option value="">Use computer timezone</option>
@@ -537,34 +545,67 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 ))}
               </select>
             </Field>
-            <Field label="Check command">
-              <input className="mono" value={draft.check.command} onChange={(e) => setCheck('command', e.target.value)} />
-            </Field>
+            </fieldset>
           </div>
         </div>
 
-        <div className={`editor-panel${tab !== 'conditions' ? ' hidden' : ''}`}>
+        <div className={`editor-panel${tab !== 'check' ? ' hidden' : ''}`}>
           <div className="form">
-            <Field label="Classifier step">
-              <select
-                value={draft.classifier ? 'on' : 'off'}
-                onChange={(e) => set('classifier', e.target.value === 'on' ? { ...EXAMPLE_TASK.classifier! } : undefined)}
-              >
-                <option value="off">Off</option>
-                <option value="on">On</option>
-              </select>
-            </Field>
-            {draft.classifier && (() => {
-              const clsHarness = harnesses.find((h) => h.id === draft.classifier!.harnessId) ?? harnesses[0];
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={checkOn}
+                onChange={(e) =>
+                  set('check', { ...(draft.check ?? { command: '', timeoutSec: 60 }), enabled: e.target.checked })
+                }
+              />
+              Run a command to check whether the agent should run
+            </label>
+            <div className={`step-fields${checkOn ? '' : ' disabled'}`}>
+              <Field label="Command">
+                <input
+                  className="mono"
+                  disabled={!checkOn}
+                  value={draft.check?.command ?? ''}
+                  onChange={(e) => setCheck('command', e.target.value)}
+                />
+              </Field>
+              <NumberField
+                label="Timeout"
+                suffix="s"
+                min={1}
+                disabled={!checkOn}
+                value={draft.check?.timeoutSec ?? 60}
+                onChange={(n) => setCheck('timeoutSec', n)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className={`editor-panel${tab !== 'classifier' ? ' hidden' : ''}`}>
+          <div className="form">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={clsOn}
+                onChange={(e) =>
+                  set('classifier', { ...(draft.classifier ?? EXAMPLE_TASK.classifier!), enabled: e.target.checked })
+                }
+              />
+              Ask a model whether the agent should run
+            </label>
+            {(() => {
+              const cls = draft.classifier;
+              const clsHarness = harnesses.find((h) => h.id === cls?.harnessId) ?? harnesses[0];
               const clsModels = clsHarness ? harnessModels(clsHarness) : [];
-              const clsModelIsCustom = customClsModel || (!!draft.classifier!.model && !clsModels.some((m) => m.id === draft.classifier!.model));
+              const clsModelIsCustom = customClsModel || (!!cls?.model && !clsModels.some((m) => m.id === cls.model));
               return (
-              <>
+              <div className={`step-fields${clsOn ? '' : ' disabled'}`}>
                 <div className="row">
                   <Field label="Harness">
                     <select
                       value={clsHarness?.id ?? ''}
-                      disabled={!harnesses.length}
+                      disabled={!clsOn || !harnesses.length}
                       onChange={(e) => set('classifier', { ...draft.classifier!, harnessId: e.target.value })}
                     >
                       {!harnesses.length && <option value="">No harnesses in this environment</option>}
@@ -577,7 +618,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   </Field>
                   <Field label="Model">
                     <select
-                      value={clsModelIsCustom ? 'custom' : draft.classifier!.model ?? ''}
+                      value={clsModelIsCustom ? 'custom' : cls?.model ?? 'haiku'}
+                      disabled={!clsOn}
                       onChange={(e) => {
                         if (e.target.value === 'custom') {
                           setCustomClsModel(true);
@@ -597,7 +639,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     <Field label="Model id">
                       <input
                         className="mono"
-                        value={draft.classifier!.model ?? ''}
+                        disabled={!clsOn}
+                        value={cls?.model ?? ''}
                         placeholder="model id"
                         onChange={(e) => set('classifier', { ...draft.classifier!, model: e.target.value || undefined })}
                       />
@@ -609,7 +652,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     label="Timeout"
                     suffix="s"
                     min={1}
-                    value={draft.classifier.timeoutSec ?? 180}
+                    disabled={!clsOn}
+                    value={cls?.timeoutSec ?? 180}
                     onChange={(n) => set('classifier', { ...draft.classifier!, timeoutSec: n })}
                   />
                 </div>
@@ -622,15 +666,15 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     </>
                   }
                 >
-                  <textarea rows={5} value={draft.classifier.prompt} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
+                  <textarea rows={5} disabled={!clsOn} value={cls?.prompt ?? ''} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
                 </Field>
-              </>
+              </div>
               );
             })()}
           </div>
         </div>
 
-        <div className={`editor-panel${tab !== 'action' ? ' hidden' : ''}`}>
+        <div className={`editor-panel${tab !== 'agent' ? ' hidden' : ''}`}>
           <div className="form">
             <div className="row">
               <Field label="Harness">

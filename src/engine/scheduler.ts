@@ -163,7 +163,7 @@ export class Scheduler extends EventEmitter {
     if (rt.state === 'paused') {
       if (task?.enabled) {
         rt.state = 'idle';
-        rt.nextRunAt = this.now() + 1000;
+        rt.nextRunAt = task.schedule.enabled ? this.now() + 1000 : null;
       } else {
         rt.state = 'disabled';
       }
@@ -195,6 +195,7 @@ export class Scheduler extends EventEmitter {
   }
 
   private isOverdue(task: Task, lastRunAt: number | null, now: number): boolean {
+    if (!task.schedule.enabled) return false;
     if (lastRunAt === null) return true;
     try {
       const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(lastRunAt));
@@ -291,6 +292,7 @@ export class Scheduler extends EventEmitter {
   }
 
   private computeNext(task: Task, from: number): number | null {
+    if (!task.schedule.enabled) return null;
     try {
       const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(from));
       return next ? next.getTime() : null;
@@ -361,66 +363,73 @@ export class Scheduler extends EventEmitter {
         vars: { task: task.name, taskId: task.id, runId, trigger },
       };
 
-      const check = await this.steps.runCheck(ctx);
-      this.record(task.id, runId, 'check', check.status, {
-        durationMs: check.durationMs,
-        exitCode: check.exitCode,
-        summary: check.summary,
-        error: check.error,
-        stdoutTail: check.stdoutTail,
-      });
-      if (check.status === 'error') {
-        errored = true;
-        outcome = 'error';
-        detail = `check error: ${check.error}`;
-      } else if (check.status === 'noop') {
-        detail = check.summary ?? 'nothing to do';
-      } else {
-        ctx.vars.summary = check.summary ?? '';
-        ctx.vars.context = check.context;
-        let go = true;
-        if (task.classifier) {
-          rt.state = 'classifying';
-          this.emitRuntime(rt);
-          const cls = await this.steps.runClassify(ctx);
-          this.record(task.id, runId, 'classify', cls.status, {
-            durationMs: cls.durationMs,
-            exitCode: cls.exitCode,
-            summary: cls.reason,
-            error: cls.error,
-            detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
-          });
-          if (cls.status === 'error') {
-            errored = true;
-            go = false;
-            outcome = 'error';
-            detail = `classifier error: ${cls.error}`;
-          } else if (cls.status === 'noop') {
-            go = false;
-            detail = `classifier: ${cls.reason ?? 'no'}`;
-          }
+      // No check step configured (or disabled): every slot goes straight to classifier/agent.
+      let go = true;
+      let checkSummary: string | undefined;
+      if (task.check?.enabled) {
+        const check = await this.steps.runCheck(ctx);
+        this.record(task.id, runId, 'check', check.status, {
+          durationMs: check.durationMs,
+          exitCode: check.exitCode,
+          summary: check.summary,
+          error: check.error,
+          stdoutTail: check.stdoutTail,
+        });
+        if (check.status === 'error') {
+          errored = true;
+          go = false;
+          outcome = 'error';
+          detail = `check error: ${check.error}`;
+        } else if (check.status === 'noop') {
+          go = false;
+          detail = check.summary ?? 'nothing to do';
+        } else {
+          ctx.vars.summary = check.summary ?? '';
+          ctx.vars.context = check.context;
+          checkSummary = check.summary;
         }
-        if (go) {
-          rt.state = 'running';
-          this.emitRuntime(rt);
-          this.record(task.id, runId, 'agent', 'started', { summary: check.summary });
-          const end = await this.runAgent(task, rt, ctx);
-          // A done run's outcome is the status the agent reported via looper-done;
-          // every other end keeps its mechanism (idle-timeout, exited, ...).
-          outcome = end.doneStatus ?? end.reason;
-          this.record(task.id, runId, 'agent', outcome, {
-            durationMs: end.durationMs,
-            exitCode: end.exitCode,
-            detail: { wasHeld: end.wasHeld },
-          });
-          if (end.headline || end.body) {
-            this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
-          }
-          detail = end.headline ?? '';
-          if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
-          retryAtMs = end.retryAtMs;
-          if (task.note && end.reason !== 'error') this.consumeNote(task.id, task.note.text);
+      }
+      if (go && task.classifier?.enabled) {
+        rt.state = 'classifying';
+        this.emitRuntime(rt);
+        const cls = await this.steps.runClassify(ctx);
+        this.record(task.id, runId, 'classify', cls.status, {
+          durationMs: cls.durationMs,
+          exitCode: cls.exitCode,
+          summary: cls.reason,
+          error: cls.error,
+          detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
+        });
+        if (cls.status === 'error') {
+          errored = true;
+          go = false;
+          outcome = 'error';
+          detail = `classifier error: ${cls.error}`;
+        } else if (cls.status === 'noop') {
+          go = false;
+          detail = `classifier: ${cls.reason ?? 'no'}`;
         }
+      }
+      if (go) {
+        rt.state = 'running';
+        this.emitRuntime(rt);
+        this.record(task.id, runId, 'agent', 'started', { summary: checkSummary });
+        const end = await this.runAgent(task, rt, ctx);
+        // A done run's outcome is the status the agent reported via looper-done;
+        // every other end keeps its mechanism (idle-timeout, exited, ...).
+        outcome = end.doneStatus ?? end.reason;
+        this.record(task.id, runId, 'agent', outcome, {
+          durationMs: end.durationMs,
+          exitCode: end.exitCode,
+          detail: { wasHeld: end.wasHeld },
+        });
+        if (end.headline || end.body) {
+          this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
+        }
+        detail = end.headline ?? '';
+        if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
+        retryAtMs = end.retryAtMs;
+        if (task.note && end.reason !== 'error') this.consumeNote(task.id, task.note.text);
       }
     } catch (e) {
       errored = true;

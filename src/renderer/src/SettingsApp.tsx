@@ -233,7 +233,7 @@ export function SettingsApp() {
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={startWithSystem} onChange={(e) => setStartWithSystem(e.target.checked)} />
-              Start with the computer, in the tray
+              Start with the computer
             </label>
           </div>
         )}

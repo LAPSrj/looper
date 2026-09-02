@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 export const ScheduleSchema = z
   .object({
+    /** Off keeps the configuration but never fires: the task only runs when triggered manually. */
+    enabled: z.boolean().default(true),
     cron: z.string().min(1),
     /** IANA timezone the cron slots are evaluated in. Unset = the computer's timezone. */
     timezone: z.string().min(1).optional(),
@@ -103,11 +105,15 @@ export function defaultEnvironments(host?: string): Environment[] {
 }
 
 export const CheckSchema = z.object({
+  /** Off keeps the configuration but skips the step (the agent always runs). */
+  enabled: z.boolean().default(true),
   command: z.string().min(1),
   timeoutSec: z.number().positive().default(60),
 });
 
 export const ClassifierSchema = z.object({
+  /** Off keeps the configuration but skips the step. */
+  enabled: z.boolean().default(true),
   harnessId: z.string().min(1).optional(),
   model: z.string().min(1).default('haiku'),
   prompt: z.string().min(1),
@@ -152,7 +158,8 @@ export const TaskSchema = z.object({
   cwd: z.string().min(1),
   /** Extra environment variables for every step of this task (check, classifier, agent). Override the harness's. */
   env: z.record(z.string()).default({}),
-  check: CheckSchema,
+  /** Unset or disabled = no check step: every scheduled slot goes straight to the agent. */
+  check: CheckSchema.optional(),
   classifier: ClassifierSchema.optional(),
   agent: AgentSchema,
   backoff: z
@@ -171,7 +178,7 @@ export const TemplateSchema = TaskSchema.extend({
   schedule: ScheduleSchema.extend({ cron: z.string() }),
   environmentId: z.string(),
   cwd: z.string(),
-  check: CheckSchema.extend({ command: z.string() }),
+  check: CheckSchema.extend({ command: z.string() }).optional(),
   classifier: ClassifierSchema.extend({ prompt: z.string() }).optional(),
   agent: AgentSchema.extend({ prompt: z.string() }),
 });
@@ -206,6 +213,16 @@ export const SettingsSchema = z.object({
   templatesFile: z.string().min(1).optional(),
   /** Hide to the system tray instead of quitting when the window is closed. */
   closeToTray: z.boolean().default(false),
+  /** Main-window view options (View menu). */
+  view: z.object({
+    toolbar: z.boolean().default(true),
+    statusBar: z.boolean().default(true),
+    taskList: z.enum(['standard', 'compact']).default('standard'),
+    showDisabledTasks: z.boolean().default(true),
+    showScheduledTasks: z.boolean().default(true),
+    showManualTasks: z.boolean().default(true),
+    hideNoActionRuns: z.boolean().default(false),
+  }).default({}),
 }).superRefine((s, ctx) => {
   const envIds = new Set<string>();
   for (const env of s.environments) {

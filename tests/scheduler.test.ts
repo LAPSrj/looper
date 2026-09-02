@@ -192,6 +192,54 @@ describe('Scheduler', () => {
     expect(h.agentStarted).toBe(1);
   });
 
+  it('a task without a check step goes straight to the agent', async () => {
+    h.tasks.patch('t1', { check: undefined });
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:started', 'agent:done', 'result:done']);
+  });
+
+  it('a manual task (schedule off) never self-schedules but runs on demand', async () => {
+    h.tasks.patch('t1', { schedule: { enabled: false, cron: '*/1 * * * *' } });
+    expect(h.sched.get('t1')!.nextRunAt).toBeNull();
+    h.clock.now += 120_000;
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(0);
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    expect(h.sched.runNow('t1')).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(h.sched.get('t1')!.nextRunAt).toBeNull();
+  });
+
+  it('a disabled check keeps its config but is skipped', async () => {
+    h.tasks.patch('t1', { check: { enabled: false, command: 'true', timeoutSec: 60 } });
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:started', 'agent:done', 'result:done']);
+    expect(h.tasks.get('t1')!.check).toMatchObject({ enabled: false, command: 'true' });
+  });
+
+  it('a disabled classifier keeps its config but is skipped', async () => {
+    h.tasks.patch('t1', { classifier: { enabled: false, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:act', 'agent:started', 'agent:done', 'result:done']);
+  });
+
+  it('the classifier still gates a task without a check step', async () => {
+    h.tasks.patch('t1', { check: undefined, classifier: { model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.classifies.push({ status: 'noop', reason: 'nothing new', durationMs: 1, exitCode: 0 });
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(0);
+    expect(h.sched.get('t1')!.lastDetail).toBe('classifier: nothing new');
+  });
+
   it('auto-pauses after consecutive errors', async () => {
     h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 2 } });
     h.checks.push(check('error', { error: 'boom' }), check('error', { error: 'boom' }));

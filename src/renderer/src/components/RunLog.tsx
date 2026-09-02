@@ -7,6 +7,7 @@ import { Markdown } from './Markdown';
 interface Props {
   task: Task;
   records: RunRecord[];
+  hideNoAction: boolean;
 }
 
 interface RunGroup {
@@ -44,7 +45,7 @@ function resultText(records: RunRecord[]): string {
   return r?.body ?? r?.summary ?? '';
 }
 
-export function RunLog({ task, records }: Props) {
+export function RunLog({ task, records, hideNoAction }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [splitPct, setSplitPct] = useState(65);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,8 +77,9 @@ export function RunLog({ task, records }: Props) {
       });
     }
     result.sort((a, b) => b.startTs.localeCompare(a.startTs));
-    return result;
-  }, [records]);
+    // "No action" to the user covers both no-action check runs and scheduler skips.
+    return hideNoAction ? result.filter((g) => g.result !== 'skipped' && g.result !== 'noop') : result;
+  }, [records, hideNoAction]);
 
   useEffect(() => {
     if (selected && !groups.some((g) => g.runId === selected)) {
