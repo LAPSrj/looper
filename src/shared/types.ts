@@ -167,7 +167,8 @@ export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
 /**
  * One-off guidance for a task's next run(s): appended to the agent prompt and
  * consumed per run whose agent actually received it (a run that ends as an
- * engine `error` — spawn failure, usage limit — never consumes a charge).
+ * engine `error` — spawn failure, usage limit — or is stopped by the user
+ * never consumes a charge).
  */
 export const NoteSchema = z.object({
   text: z.string().min(1),
@@ -346,7 +347,7 @@ export interface RunRecord {
   exitCode?: number | null;
   /** One line: the check summary, the classifier reason, or the run's headline (`result` phase). */
   summary?: string;
-  /** `result` phase only: the agent's final message, the detailed report of the run. Markdown. */
+  /** The agent's final message (`result` phase) or the full prompt it was given (`agent` `started`). Markdown. */
   body?: string;
   error?: string;
   stdoutTail?: string;

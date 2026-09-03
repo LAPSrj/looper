@@ -80,6 +80,11 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
   return lines.join('\n');
 }
 
+/** The full prompt the agent gets: the rendered template plus the run's one-off note. */
+export function agentPrompt(ctx: RunContext): string {
+  return buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.task.note);
+}
+
 /** The task's one-off guidance, appended after everything else so it wins. */
 export function noteSection(note: Note | undefined): string {
   if (!note) return '';
@@ -246,7 +251,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   // Claude Code gets its instructions as a system prompt; other harnesses have
   // no equivalent flag, so the footer is prepended to the prompt itself.
   const footer = systemFooter(task.name, ctx.runId, headless);
-  const promptText = buildPrompt(a.prompt, ctx.vars) + noteSection(task.note);
+  const promptText = agentPrompt(ctx);
   writeText(path.join(ctx.runDir, 'prompt.txt'), claude ? promptText : footer + '\n\n' + promptText);
   if (claude) {
     writeText(path.join(ctx.runDir, 'system.txt'), footer);

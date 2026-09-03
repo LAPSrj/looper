@@ -20,7 +20,7 @@ const api: LooperApi = {
     runNow: (id) => ipcRenderer.invoke('runtime:runNow', id),
     pause: (id) => ipcRenderer.invoke('runtime:pause', id),
     resume: (id) => ipcRenderer.invoke('runtime:resume', id),
-    stopAgent: (id) => ipcRenderer.invoke('runtime:stopAgent', id),
+    stopTask: (id) => ipcRenderer.invoke('runtime:stopTask', id),
   },
   runs: {
     list: (id, limit) => ipcRenderer.invoke('runs:list', id, limit),

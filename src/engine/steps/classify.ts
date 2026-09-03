@@ -84,7 +84,8 @@ export async function runClassify(ctx: RunContext): Promise<ClassifyResult> {
   const launcher = writeLauncher(ctx, 'classify', parts.join(' '), harness.env);
   const res = await runCaptured(launcher.spec, {
     timeoutMs: cls.timeoutSec * 1000,
-    onTimeout: () => target.killLeftovers(ctx.runId),
+    signal: ctx.signal,
+    onKill: () => target.killLeftovers(ctx.runId),
   });
   writeText(path.join(ctx.runDir, 'classify.out.txt'), res.stdout);
   if (res.stderr) writeText(path.join(ctx.runDir, 'classify.err.txt'), res.stderr);

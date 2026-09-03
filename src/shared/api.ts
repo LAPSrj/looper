@@ -28,7 +28,7 @@ export interface LooperApi {
     runNow(id: string): Promise<boolean>;
     pause(id: string): Promise<void>;
     resume(id: string): Promise<void>;
-    stopAgent(id: string): Promise<boolean>;
+    stopTask(id: string): Promise<boolean>;
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
@@ -110,7 +110,7 @@ export type UiEvent =
   | {
       type:
         | 'run-now'
-        | 'stop-agent'
+        | 'stop-task'
         | 'pause-resume'
         | 'edit-task'
         | 'edit-note'

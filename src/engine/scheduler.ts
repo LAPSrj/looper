@@ -17,7 +17,7 @@ import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { runClassify as defaultRunClassify } from './steps/classify';
-import { startAgent as defaultStartAgent, type AgentEnd, type AgentHandle } from './steps/agent';
+import { agentPrompt, startAgent as defaultStartAgent, type AgentEnd, type AgentHandle } from './steps/agent';
 import type { RunContext } from './steps/common';
 import { newRunId, type RunStore } from './store/runs';
 import type { StateStore } from './store/state';
@@ -46,6 +46,8 @@ const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classify
 export class Scheduler extends EventEmitter {
   private readonly runtimes = new Map<string, TaskRuntime>();
   private readonly agents = new Map<string, AgentHandle>();
+  /** Per active cycle: aborting kills whatever step is running (check, classifier). */
+  private readonly cycleStops = new Map<string, { controller: AbortController; reason: string }>();
   private readonly buffers = new Map<string, { runId: string; data: string }>();
   /** Tasks whose deferral (concurrency limit) has been logged, to log once per wait. */
   private readonly deferLogged = new Set<string>();
@@ -106,6 +108,10 @@ export class Scheduler extends EventEmitter {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const cycle of this.cycleStops.values()) {
+      cycle.reason = 'looper shutting down';
+      cycle.controller.abort();
+    }
     const stops = [...this.agents.values()].map((h) =>
       h.stop('stopped', 'looper shutting down').catch(() => undefined),
     );
@@ -182,11 +188,20 @@ export class Scheduler extends EventEmitter {
     this.emitRuntime(rt);
   }
 
-  async stopAgent(taskId: string, reason = 'stopped by user'): Promise<boolean> {
+  /** Stop the task's current cycle wherever it is: a running check or classifier is killed, an agent is ended. */
+  async stopTask(taskId: string, reason = 'stopped by user'): Promise<boolean> {
     const h = this.agents.get(taskId);
-    if (!h) return false;
-    await h.stop('stopped', reason);
-    return true;
+    if (h) {
+      await h.stop('stopped', reason);
+      return true;
+    }
+    const cycle = this.cycleStops.get(taskId);
+    if (cycle && !cycle.controller.signal.aborted) {
+      cycle.reason = reason;
+      cycle.controller.abort();
+      return true;
+    }
+    return false;
   }
 
   writeAgent(taskId: string, data: string): void {
@@ -266,7 +281,7 @@ export class Scheduler extends EventEmitter {
   private onTaskChange(task: Task, kind: 'create' | 'update' | 'remove', previous?: Task): void {
     this.emitEvent({ type: 'tasks', tasks: this.d.tasks.list() });
     if (kind === 'remove') {
-      void this.stopAgent(task.id, 'task removed');
+      void this.stopTask(task.id, 'task removed');
       this.deferLogged.delete(task.id);
       const rt = this.runtimes.get(task.id);
       if (rt && !ACTIVE.has(rt.state)) {
@@ -410,6 +425,9 @@ export class Scheduler extends EventEmitter {
     let outcome: RunResult = 'noop';
     let detail = 'nothing to do';
     let retryAtMs: number | undefined;
+    const stopper = { controller: new AbortController(), reason: 'stopped by user' };
+    this.cycleStops.set(task.id, stopper);
+    const stopped = (): boolean => stopper.controller.signal.aborted;
     try {
       const ctx: RunContext = {
         task,
@@ -419,6 +437,7 @@ export class Scheduler extends EventEmitter {
         settings: this.d.settings,
         host: this.d.host,
         log: this.d.log,
+        signal: stopper.controller.signal,
         vars: { task: task.name, taskId: task.id, runId, trigger },
       };
 
@@ -427,52 +446,72 @@ export class Scheduler extends EventEmitter {
       let checkSummary: string | undefined;
       if (task.check?.enabled) {
         const check = await this.steps.runCheck(ctx);
-        this.record(task.id, runId, 'check', check.status, {
-          durationMs: check.durationMs,
-          exitCode: check.exitCode,
-          summary: check.summary,
-          error: check.error,
-          stdoutTail: check.stdoutTail,
-        });
-        if (check.status === 'error') {
-          errored = true;
+        if (stopped()) {
           go = false;
-          outcome = 'error';
-          detail = `check error: ${check.error}`;
-        } else if (check.status === 'noop') {
-          go = false;
-          detail = check.summary ?? 'nothing to do';
+          outcome = 'stopped';
+          detail = stopper.reason;
+          this.record(task.id, runId, 'check', 'stopped', { durationMs: check.durationMs, summary: stopper.reason });
         } else {
-          ctx.vars.summary = check.summary ?? '';
-          ctx.vars.context = check.context;
-          checkSummary = check.summary;
+          this.record(task.id, runId, 'check', check.status, {
+            durationMs: check.durationMs,
+            exitCode: check.exitCode,
+            summary: check.summary,
+            error: check.error,
+            stdoutTail: check.stdoutTail,
+          });
+          if (check.status === 'error') {
+            errored = true;
+            go = false;
+            outcome = 'error';
+            detail = `check error: ${check.error}`;
+          } else if (check.status === 'noop') {
+            go = false;
+            detail = check.summary ?? 'nothing to do';
+          } else {
+            ctx.vars.summary = check.summary ?? '';
+            ctx.vars.context = check.context;
+            checkSummary = check.summary;
+          }
         }
       }
       if (go && task.classifier?.enabled) {
         rt.state = 'classifying';
         this.emitRuntime(rt);
         const cls = await this.steps.runClassify(ctx);
-        this.record(task.id, runId, 'classify', cls.status, {
-          durationMs: cls.durationMs,
-          exitCode: cls.exitCode,
-          summary: cls.reason,
-          error: cls.error,
-          detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
-        });
-        if (cls.status === 'error') {
-          errored = true;
+        if (stopped()) {
           go = false;
-          outcome = 'error';
-          detail = `classifier error: ${cls.error}`;
-        } else if (cls.status === 'noop') {
-          go = false;
-          detail = `classifier: ${cls.reason ?? 'no'}`;
+          outcome = 'stopped';
+          detail = stopper.reason;
+          this.record(task.id, runId, 'classify', 'stopped', { durationMs: cls.durationMs, summary: stopper.reason });
+        } else {
+          this.record(task.id, runId, 'classify', cls.status, {
+            durationMs: cls.durationMs,
+            exitCode: cls.exitCode,
+            summary: cls.reason,
+            error: cls.error,
+            detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
+          });
+          if (cls.status === 'error') {
+            errored = true;
+            go = false;
+            outcome = 'error';
+            detail = `classifier error: ${cls.error}`;
+          } else if (cls.status === 'noop') {
+            go = false;
+            detail = `classifier: ${cls.reason ?? 'no'}`;
+          }
         }
+      }
+      // A stop between steps (or during a step that still returned cleanly).
+      if (go && stopped()) {
+        go = false;
+        outcome = 'stopped';
+        detail = stopper.reason;
       }
       if (go) {
         rt.state = 'running';
         this.emitRuntime(rt);
-        this.record(task.id, runId, 'agent', 'started', { summary: checkSummary });
+        this.record(task.id, runId, 'agent', 'started', { summary: checkSummary, body: agentPrompt(ctx) });
         if (task.notifications.agentStart) {
           this.notify(task, runId, 'agent-start', checkSummary ? `Agent started: ${checkSummary}` : 'Agent started');
         }
@@ -491,7 +530,9 @@ export class Scheduler extends EventEmitter {
         detail = end.headline ?? '';
         if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
         retryAtMs = end.retryAtMs;
-        if (task.note && end.reason !== 'error') this.consumeNote(task.id, task.note.text);
+        if (task.note && end.reason !== 'error' && end.reason !== 'stopped') {
+          this.consumeNote(task.id, task.note.text);
+        }
       }
     } catch (e) {
       errored = true;
@@ -501,6 +542,7 @@ export class Scheduler extends EventEmitter {
       this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
     } finally {
       this.agents.delete(task.id);
+      this.cycleStops.delete(task.id);
       this.finishCycle(task.id, rt, errored, outcome, detail, retryAtMs);
     }
   }
@@ -508,8 +550,9 @@ export class Scheduler extends EventEmitter {
   /**
    * The run's agent had the task's one-off note in its prompt: use up one
    * charge. An `error` end never consumes (spawn failure, usage limit — the
-   * model never processed the prompt), and neither does a note that was
-   * replaced while the run was going.
+   * model never processed the prompt), a `stopped` end never consumes (the
+   * user killed the run before it could finish acting on the note), and
+   * neither does a note that was replaced while the run was going.
    */
   private consumeNote(taskId: string, text: string): void {
     const fresh = this.d.tasks.get(taskId);
@@ -631,6 +674,11 @@ export class Scheduler extends EventEmitter {
       },
     });
     this.agents.set(task.id, handle);
+    // A stopTask that landed while the agent was still starting has no handle
+    // to end and aborts the cycle signal instead: honor it now.
+    if (ctx.signal?.aborted) {
+      void handle.stop('stopped', this.cycleStops.get(task.id)?.reason ?? 'stopped by user');
+    }
     const end = await handle.finished;
     this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
     return end;

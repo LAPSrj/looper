@@ -67,7 +67,7 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
   return (
     <div className="toolbar">
       {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && !active)}
-      {button(ICONS.stop, 'Stop Agent (Shift+F5)', 'stop-agent', state === 'running')}
+      {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}
       {button(
         paused ? ICONS.resume : ICONS.pause,
         paused ? 'Resume (Ctrl+P)' : 'Pause (Ctrl+P)',

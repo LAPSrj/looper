@@ -35,6 +35,8 @@ interface Harness {
   agentEnds: AgentEnd[];
   agentStarted: number;
   liveAgent: { end: (e: AgentEnd) => void; hold: () => void } | null;
+  /** When true, runCheck blocks until the cycle's stop signal aborts. */
+  hangChecks: boolean;
   tickN(n: number): Promise<void>;
 }
 
@@ -72,6 +74,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     agentEnds: [],
     agentStarted: 0,
     liveAgent: null,
+    hangChecks: false,
   };
   const sched = new Scheduler({
     dataDir: dir,
@@ -83,7 +86,15 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     log,
     now: () => clock.now,
     steps: {
-      runCheck: async () => h.checks!.shift() ?? check('noop'),
+      runCheck: async (ctx) => {
+        if (h.hangChecks) {
+          await new Promise<void>((r) => {
+            if (ctx.signal?.aborted) return r();
+            ctx.signal?.addEventListener('abort', () => r(), { once: true });
+          });
+        }
+        return h.checks!.shift() ?? check('noop');
+      },
       runClassify: async () => h.classifies!.shift() ?? { status: 'noop', durationMs: 1, exitCode: 0 },
       startAgent: async (ctx, cb) => {
         h.agentStarted!++;
@@ -164,7 +175,7 @@ describe('Scheduler', () => {
     expect(h.sched.get('t1')!.state).toBe('idle');
   });
 
-  it('never overlaps: a tick while running is ignored, stopAgent ends the run', async () => {
+  it('never overlaps: a tick while running is ignored, stopTask ends the run', async () => {
     h.checks.push(check('act'));
     await h.tickN(1);
     expect(h.sched.get('t1')!.state).toBe('running');
@@ -173,10 +184,30 @@ describe('Scheduler', () => {
     await h.tickN(3);
     expect(h.agentStarted).toBe(1);
     expect(h.sched.runNow('t1')).toBe(false);
-    await h.sched.stopAgent('t1', 'test');
+    await h.sched.stopTask('t1', 'test');
     await flush();
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:stopped', 'result:stopped']);
+  });
+
+  it('stopTask mid-check ends the cycle as stopped without starting the agent', async () => {
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.state).toBe('checking');
+    expect(await h.sched.stopTask('t1', 'test')).toBe(true);
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.lastResult).toBe('stopped');
+    expect(rt.lastDetail).toBe('test');
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(h.agentStarted).toBe(0);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:stopped']);
+  });
+
+  it('stopTask on an idle task is a no-op', async () => {
+    expect(await h.sched.stopTask('t1')).toBe(false);
   });
 
   it('classifier gate: noop stops the cycle, act proceeds', async () => {
@@ -309,6 +340,27 @@ describe('Scheduler', () => {
     h.checks.push(check('act'));
     h.agentEnds.push(agentEnd('error', 'cannot start Fake'));
     await h.tickN(1);
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
+  });
+
+  it('a run stopped by the user does not consume the note', async () => {
+    h.tasks.patch('t1', { note: { text: 'hint', runsLeft: 1 } });
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.state).toBe('running');
+    await h.sched.stopTask('t1', 'test');
+    await flush();
+    expect(h.sched.get('t1')!.state).toBe('idle');
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
+  });
+
+  it('a stop during the check step does not consume the note', async () => {
+    h.tasks.patch('t1', { note: { text: 'hint', runsLeft: 1 } });
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    await h.sched.stopTask('t1', 'test');
+    await flush();
     expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
   });
 

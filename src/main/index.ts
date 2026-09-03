@@ -539,7 +539,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
       label: '&Task',
       submenu: [
         { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && !active, click: () => sendUi('run-now') },
-        { id: 'task-stop-agent', label: '&Stop Agent', accelerator: 'Shift+F5', enabled: hasTask && taskState === 'running', click: () => sendUi('stop-agent') },
+        { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
         { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
         { id: 'task-enable-disable', label: taskEnabled === false ? '&Enable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
         { type: 'separator' },

@@ -43,7 +43,8 @@ export async function runCheck(ctx: RunContext): Promise<CheckResult> {
   const launcher = writeLauncher(ctx, 'check', check.command);
   const res = await runCaptured(launcher.spec, {
     timeoutMs: check.timeoutSec * 1000,
-    onTimeout: () => ctx.target.killLeftovers(ctx.runId),
+    signal: ctx.signal,
+    onKill: () => ctx.target.killLeftovers(ctx.runId),
   });
   writeText(path.join(ctx.runDir, 'check.out.txt'), res.stdout);
   if (res.stderr) writeText(path.join(ctx.runDir, 'check.err.txt'), res.stderr);

@@ -48,7 +48,8 @@ export interface Engine {
   runNow(id: string): boolean;
   pause(id: string, reason?: string): void;
   resume(id: string): void;
-  stopAgent(id: string, reason?: string): Promise<boolean>;
+  /** Stop the task's current cycle wherever it is (check, classifier or agent). */
+  stopTask(id: string, reason?: string): Promise<boolean>;
   writeAgent(id: string, data: string): void;
   resizeAgent(id: string, cols: number, rows: number): void;
   agentBuffer(id: string): { runId: string; data: string } | null;
@@ -151,7 +152,7 @@ export function createEngine(opts: EngineOptions): Engine {
             scheduler.resume(cmd.taskId);
             break;
           case 'stop':
-            await scheduler.stopAgent(cmd.taskId, cmd.reason);
+            await scheduler.stopTask(cmd.taskId, cmd.reason);
             break;
           case 'remove':
             tasks.remove(cmd.taskId);
@@ -245,7 +246,7 @@ export function createEngine(opts: EngineOptions): Engine {
     runNow: (id) => scheduler.runNow(id),
     pause: (id, reason) => scheduler.pause(id, reason),
     resume: (id) => scheduler.resume(id),
-    stopAgent: (id, reason) => scheduler.stopAgent(id, reason),
+    stopTask: (id, reason) => scheduler.stopTask(id, reason),
     writeAgent: (id, data) => scheduler.writeAgent(id, data),
     resizeAgent: (id, c, r) => scheduler.resizeAgent(id, c, r),
     agentBuffer: (id) => scheduler.getBuffer(id),
@@ -259,7 +260,7 @@ export function createEngine(opts: EngineOptions): Engine {
     clearRuns(id: string): void {
       const state = scheduler.get(id)?.state;
       if (state === 'checking' || state === 'classifying' || state === 'running') {
-        throw new Error(`The task is ${state}; wait for the run to end or stop the agent first.`);
+        throw new Error(`The task is ${state}; wait for the run to end or stop the task first.`);
       }
       runs.clear(id);
       log.info(`cleared run history of ${id}`);

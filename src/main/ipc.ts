@@ -72,7 +72,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
   ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));
   ipcMain.handle('runtime:resume', (_e, id: string) => engine.resume(id));
-  ipcMain.handle('runtime:stopAgent', (_e, id: string) => engine.stopAgent(id));
+  ipcMain.handle('runtime:stopTask', (_e, id: string) => engine.stopTask(id));
 
   ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
   ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
@@ -256,7 +256,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
     const menu = Menu.buildFromTemplate([
       { label: 'Run Now', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
-      { label: 'Stop Agent', enabled: info.state === 'running', click: () => sender.webContents.send('ui:event', { type: 'stop-agent' }) },
+      { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
       { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled', click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
       { type: 'separator' },

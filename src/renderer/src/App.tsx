@@ -46,8 +46,8 @@ export function App() {
           }
         }
         break;
-      case 'stop-agent':
-        if (sel) void window.looper.runtime.stopAgent(sel);
+      case 'stop-task':
+        if (sel) void window.looper.runtime.stopTask(sel);
         break;
       case 'pause-resume':
         if (sel) {

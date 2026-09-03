@@ -18,6 +18,8 @@ export interface RunContext {
   settings: Settings;
   host: HostKind;
   log: Logger;
+  /** Aborts when the user stops the task mid-cycle. */
+  signal?: AbortSignal;
   /** Template variables accumulated across steps (task, summary, context…). */
   vars: Record<string, unknown>;
 }
@@ -129,8 +131,10 @@ export interface CapturedResult {
 export interface CaptureOpts {
   timeoutMs: number;
   maxBytes?: number;
-  /** Called after the host tree was killed on timeout (e.g. kill leftovers on the target). */
-  onTimeout?: () => Promise<void>;
+  /** Aborting kills the process tree (the user stopped the task). */
+  signal?: AbortSignal;
+  /** Called after the host tree was killed on timeout or abort (e.g. kill leftovers on the target). */
+  onKill?: () => Promise<void>;
 }
 
 /** Spawn without a pty, capture stdout/stderr, enforce a timeout. Never throws. */
@@ -143,22 +147,35 @@ export function runCaptured(spec: SpawnSpec, opts: CaptureOpts): Promise<Capture
     let timedOut = false;
     let settled = false;
     let child: ReturnType<typeof spawn>;
+    let onAbort: (() => void) | null = null;
     const finish = (r: Omit<CapturedResult, 'stdout' | 'stderr' | 'timedOut' | 'durationMs'>) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (onAbort) opts.signal?.removeEventListener('abort', onAbort);
       resolve({ ...r, stdout, stderr: stripShellNoise(stderr), timedOut, durationMs: Date.now() - started });
     };
-    const timer = setTimeout(async () => {
-      timedOut = true;
+    /** Kill the tree, run the caller's cleanup, and force an end if 'close' never comes. */
+    const killTree = async (endSignal: string, error: string) => {
+      if (settled) return;
       if (child?.pid) await killHostTree(child.pid);
       try {
-        await opts.onTimeout?.();
+        await opts.onKill?.();
       } catch {
         /* best effort */
       }
-      setTimeout(() => finish({ code: null, signal: 'TIMEOUT', error: 'timed out' }), 2000);
+      setTimeout(() => finish({ code: null, signal: endSignal, error }), 2000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void killTree('TIMEOUT', 'timed out');
     }, opts.timeoutMs);
+    if (opts.signal?.aborted) {
+      finish({ code: null, signal: 'ABORTED', error: 'stopped' });
+      return;
+    }
+    onAbort = () => void killTree('ABORTED', 'stopped');
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       child = spawn(spec.command, spec.args, {
         stdio: ['ignore', 'pipe', 'pipe'],

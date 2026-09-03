@@ -221,7 +221,7 @@ See `examples/task.example.json`. Fields:
 | `agent.maxRuntimeMin` / `idleGraceMin` / `onIdleTimeout` | run limits (see above) |
 | `backoff.maxConsecutiveErrors` | auto-pause the task after N failed cycles in a row |
 | `notifications` | which system notifications the task sends (Notifications tab): `runStart`, `agentStart`, `held`, `autoPaused`, `usageLimit` (booleans, default off) and `end` (`off` \| `error` \| `warning` = errors+warnings, the default \| `end` = all but no-action \| `all`). A cycle's end sends at most one toast — usage limit and auto-pause replace the plain end when on. The global switch is in Settings → General and the tray menu |
-| `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the Task menu, toolbar or context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) does not |
+| `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the Task menu, toolbar or context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) or is stopped by the user does not |
 
 Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 `{{runId}}`, `{{trigger}}`.
