@@ -1,0 +1,193 @@
+# The Task Editor
+
+Every task — new, from a template, or an existing one you're editing — opens
+in the same editor window, organized into tabs. Save writes the task and
+closes the window; Apply saves without closing; Cancel discards unsaved
+changes.
+
+## General
+
+- **Task name**
+- **Status** — Enabled or Disabled. A disabled task never runs on its own;
+  Run Now still asks for confirmation before running it anyway.
+- **Environment** — which configured environment (Settings → Environments)
+  the task's check, classifier, and agent run in.
+- **Working directory** — the folder the check command and the agent both
+  run in, in the path style the environment expects. Browse… opens a picker
+  scoped to that environment.
+
+## Schedule
+
+A checkbox, "Run automatically on a schedule", turns the schedule on or off.
+Off keeps the configuration but the task never fires by itself — it's a
+**manual task**, run only from Run Now, the toolbar, the context menu, or
+the CLI/inbox `run` command.
+
+When on, **Frequency** selects how the schedule is expressed:
+
+| Frequency | Fields |
+|---|---|
+| Every… | An hour/minute step, an optional "Active hours" window (all day, or between two hours), and which days of the week it applies on |
+| Daily | One or more times of day (Add time); each must share either the hour or the minute with the others |
+| Weekly | A time of day and which days of the week |
+| Monthly | A time of day and which days of the month |
+| Custom | A raw cron expression |
+
+A live preview shows the next run time, or a warning if the expression is
+invalid.
+
+**Timezone** picks the IANA zone the schedule's slots are evaluated in;
+"Use computer timezone" (the default) follows the machine's own timezone.
+
+## Check
+
+The checkbox "Run a command to check whether the agent should run" turns the
+check step on or off. Off means every scheduled slot goes straight to the
+classifier/agent.
+
+- **Command** — a shell command, run in the task's working directory. The
+  **last non-empty line of its stdout must be JSON**, e.g.
+  `{"act": true, "summary": "3 new issues", "context": {"...": "..."}}`.
+  `act` is required and boolean; `summary` and `context` are optional and
+  are what the classifier and agent prompts see. If `act` is `false`, the
+  cycle ends there — no classifier, no agent. A non-zero exit code, a
+  timeout, or a last line that isn't valid JSON with a boolean `act` is
+  always an **error** — never a trigger, and never "nothing to do".
+- **Timeout** — seconds before the command is killed and the cycle recorded
+  as an error. Default 60s.
+
+## Classifier
+
+The checkbox "Ask a model whether the agent should run" turns the
+classifier step on or off. When on, it runs after a check that returned
+`act: true` (or on every slot if there's no check).
+
+- **Harness** — which Claude Code harness in the task's environment runs the
+  classifier. (The classifier always runs as `claude -p`: the task's own
+  harness if it's Claude Code, otherwise the environment's first Claude Code
+  harness.)
+- **Model** — a preset from the harness's model list, or Custom… to type a
+  model id. Defaults to `haiku`.
+- **Timeout** — seconds before the classifier call is killed and treated as
+  an error. Default 180s.
+- **Classifier prompt** — your yes/no question about the check output.
+  `{{summary}}` and `{{context}}` insert the check's output where you place
+  them; if the prompt doesn't reference either, they're appended
+  automatically. The model must answer under a strict `{act, reason}` schema
+  — `reason` is a one-sentence explanation, shown in the run log.
+
+## Agent
+
+- **Harness** — which harness in the task's environment runs the agent.
+- **Session type** — Interactive terminal (default): a real pty shown in the
+  task's Terminal tab, which you can type into. Headless: no terminal; the
+  harness runs non-interactively (`claude -p` / `codex exec`) and its exit
+  is the only signal.
+- **Model** — shown for Claude Code and Codex harnesses: a preset from the
+  harness's model list, Default (the CLI's own default), or Custom… to type
+  a model id.
+- **Permission mode** — Claude Code only, passed as `--permission-mode`:
+  Auto, Accept edits, Manual, Don't ask, Plan mode, Bypass, or None (omits
+  the flag entirely).
+- **Agent prompt** — the instructions the agent starts with. `{{summary}}`
+  and `{{context}}` insert the check's output where you place them; if the
+  prompt doesn't reference either, they're appended under a "## Check
+  output" heading automatically. See [prompt template
+  variables](#prompt-template-variables) below for the full set.
+- **Extra command-line arguments** — appended verbatim to the harness
+  command line.
+- **Extra environment variables** — set for every step of this task (check,
+  classifier, agent); these override the same variable on the harness.
+
+## Settings
+
+- **Max runtime** — minutes before a run is force-ended regardless of
+  activity. Default 120.
+- **Auto-pause after** — consecutive failed cycles before the task pauses
+  itself with a visible reason. Default 5.
+- **Idle grace** — minutes the agent may sit idle (a turn finished, no
+  `looper-done` signal) before the run ends or is held. Default 3. Idle
+  detection is Claude Code only; other harnesses end a run only via
+  `looper-done`, process exit, or Max runtime.
+- **When idle too long** — End the run, or Hold and wait for me (the run
+  pauses for you to continue it by hand in the terminal).
+
+## Notifications
+
+Each toggle sends a separate system notification (subject to the master
+switch in Settings → General and the tray menu, and to nothing firing while
+a Looper window is focused):
+
+| Toggle | Fires when |
+|---|---|
+| Notify when a run starts | A cycle starts (the check step included) |
+| Notify when the agent starts | The agent step starts |
+| Notify when the task ends | The cycle ends — see levels below |
+| Notify when the agent holds and waits for input | The agent went idle and is holding for you |
+| Notify when the task auto-pauses | The task auto-pauses after consecutive errors |
+| Notify when the usage limit is reached | A run hits a Claude Code usage limit and waits for the reset |
+
+"Notify when the task ends" has four levels, from narrowest to broadest:
+
+- **With an error** — only cycles that ended in an error.
+- **With an error or warning** — errors and warnings (the default).
+- **With any result except no action** — everything except a cycle that
+  found nothing to do.
+- **With any result** — every ending, including no-action.
+
+A cycle sends at most one end notification: if usage-limit or auto-paused
+fires, it replaces the plain end notification.
+
+## Advanced
+
+A raw JSON view of the whole task definition — the same shape as
+`examples/task.example.json` and what the CLI's `looper add` accepts.
+Switching to this tab serializes your current edits; switching away parses
+your JSON back into the other tabs. Useful for copying a task definition
+out, or pasting one in, in one shot.
+
+## Task templates
+
+A template is a task definition you can create new tasks from; it's stored
+separately from your tasks and can be left incomplete (no working directory,
+check command, or agent prompt required).
+
+- **File → New Task from Template…** (Ctrl+Shift+N) opens a picker listing
+  your templates by name. Select one and click Create (or double-click it)
+  to open a new task editor prefilled from the template; nothing is saved
+  until you save that new task.
+- **File → Templates…** opens the template manager: a list of templates
+  with Add…, Edit…, Duplicate, and Remove underneath. Add… and Edit… open
+  the same task editor in template mode, titled "New Template" or "Edit
+  Template". Duplicate copies the selected template immediately under a
+  "(copy)" name. Remove asks for confirmation first.
+
+## Import and export
+
+- **File → Import Task…** picks a JSON file and opens a new task editor
+  prefilled from it. Any field that fails validation — an unknown
+  environment or harness, a bad cron expression, a path in the wrong style
+  for the environment — resets to its default instead of blocking the
+  import, so you fix it in the editor rather than getting a raw error.
+- **File → Export Task…** (with a task selected) writes the task's full
+  definition to a JSON file you choose, defaulting to `<task id>.json`. Any
+  pending one-off guidance note is left out, since it's run-specific, not
+  part of the task's definition.
+
+## Prompt template variables
+
+The classifier prompt and the agent prompt both support these placeholders:
+
+| Variable | Value |
+|---|---|
+| `{{summary}}` | The check's `summary` field |
+| `{{context}}` | The check's `context` field (pretty-printed if it isn't a string) |
+| `{{task}}` | The task's name |
+| `{{taskId}}` | The task's id |
+| `{{runId}}` | The current run's id |
+| `{{trigger}}` | `timer` or `manual`, depending on how the cycle started |
+
+Unknown or unset variables render as an empty string. As noted above, if a
+prompt uses neither `{{summary}}` nor `{{context}}`, both are appended
+automatically under a "## Check output" heading — so you always see the
+check's findings, even from a prompt that never mentions them.

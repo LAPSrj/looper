@@ -45,7 +45,8 @@ slot goes straight to the classifier/agent.
    stdout must be JSON: `{"act": true, "summary": "3 new issues", "context": {…}}`.
    Non-zero exit, timeout or non-JSON output is an **error**, never a trigger.
 2. **Classify** (optional) — `claude -p --model haiku` gets the summary/context
-   and answers `{act, reason}` under a strict schema and a dollar budget.
+   and answers `{act, reason}` under a strict schema; its cost in dollars is
+   recorded in the run log.
 3. **Agent** — the task's harness (Claude Code, Codex, or any custom agent
    CLI) starts in the task's directory with your prompt (the check output is
    templated in via `{{summary}}` / `{{context}}`, or appended if you don't
@@ -96,10 +97,11 @@ slot goes straight to the classifier/agent.
   Claude Code, the `gpt-…` line for Codex).
 
 A task picks an environment (General tab) and one of its harnesses (Agent
-tab). The optional classifier always runs Claude Code: the task's harness if
-it is one, otherwise the environment's first `claude-code` harness.
+tab). The optional classifier runs on the harness picked on the Classifier
+tab; left blank, it resolves to the task's harness if that is `claude-code`,
+otherwise the environment's first `claude-code` harness.
 
-First run creates a "This machine" environment, plus the reachable bridge
+First run creates a "Local Shell" environment, plus the reachable bridge
 (WSL on a Windows host, Windows inside WSL).
 
 Every run is a fresh session — no context accumulation, no compaction. Put
@@ -259,10 +261,6 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
   `--permission-mode auto` still prompted before creating a file, so for fully
   unattended tasks use `acceptEdits` / `--allowedTools …` in `extraArgs`, or
   set `hold` and answer prompts in the terminal tab.
-- The Windows-native (`powershell`) environment and the WSL-host →
-  Windows-environment path are implemented but untested so far; the WSL/Linux
-  environment is tested end to end (headless and interactive, including the
-  `looper-done` signal).
 - `codex` / `custom` harnesses have no idle detection and no detailed report
   in interactive mode (the `Stop` hook and the prompt-on-screen check are
   Claude Code specific): interactive runs end only via `looper-done` (headline

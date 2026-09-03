@@ -56,7 +56,7 @@ program
   .action((opts: { script?: boolean }) => {
     if (opts.script) process.stdout.write(EXAMPLE_CHECK_SCRIPT);
     else console.log(JSON.stringify(EXAMPLE_TASK, null, 2));
-    console.error('\nSee docs/task-authoring.md for a full field reference and guide.');
+    console.error('\nSee docs/tasks.md for a full field reference and guide.');
   });
 
 program

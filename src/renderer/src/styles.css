@@ -92,11 +92,28 @@ code,
   min-height: 0;
   border-top: 1px solid var(--border);
 }
+.instructions-app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.instructions-app .instructions {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
 .instructions {
   height: 100%;
   overflow-y: auto;
   padding: 8px 28px 40px;
   user-select: text;
+}
+
+/* Guide links read as text (black in the light theme), not accent blue. */
+.instructions .markdown a {
+  color: var(--fg);
 }
 
 .instructions .markdown {
