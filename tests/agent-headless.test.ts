@@ -192,6 +192,21 @@ describe('headless agent over pipes', () => {
     expect(end.retryAtMs).toBe(resetsAt * 1000 + 60_000);
   });
 
+  it('writes claude settings with the stop-hook gate and an unsandboxed looper-done', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    const ctx = makeCtx(harness);
+    const handle = await startAgent(ctx, { onData: () => {} });
+    await handle.finished;
+    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
+    expect(settings.permissions.allow).toContain('Bash(looper-done:*)');
+    expect(settings.sandbox).toEqual({ excludedCommands: ['looper-done'] });
+    const gate = path.join(ctx.runDir, 'bin', 'looper-stop-hook');
+    expect(settings.hooks.Stop[0].hooks[0].command).toBe(`bash '${gate}'`);
+    expect(fs.existsSync(gate)).toBe(true);
+  });
+
   it('appends the one-off note after everything else in the prompt', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

@@ -91,6 +91,15 @@ A run ends on the first of these:
   report body).
 - **`maxRuntimeMin` is exceeded**, regardless of what the agent is doing.
 
+For Claude Code, the injected `Stop` hook also gates the end of a turn.
+A turn ending with background tasks still running is blocked — the session
+would close and kill them with no notification able to wake the agent — and
+the agent is told to wait for their results or stop them first. A turn ending
+without `looper-done` having been called gets one reminder to run it; if the
+agent ends its turn again without it, the stop goes through (in interactive
+mode, that's when the idle clock starts). Once `looper-done` has run, every
+stop is allowed.
+
 In `headless` mode there's no terminal to watch: process exit is the only
 signal. The agent's final response becomes the report; `looper-done` still
 names the headline if the agent ran it, otherwise the response's first line

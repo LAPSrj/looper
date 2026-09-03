@@ -255,12 +255,30 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   writeText(path.join(ctx.runDir, 'prompt.txt'), claude ? promptText : footer + '\n\n' + promptText);
   if (claude) {
     writeText(path.join(ctx.runDir, 'system.txt'), footer);
+    // The Stop-hook gate: blocks the turn from ending while background tasks
+    // run (ending the session would kill them), reminds once when looper-done
+    // was never called, and records allowed stops in stop.json — whose payload
+    // carries last_assistant_message (the run's report) and whose mtime
+    // doubles as the idle signal.
+    writeText(
+      path.join(ctx.runDir, 'bin', target.stopHookFile),
+      target.renderStopHook({
+        stopJson: targetFile(ctx, 'stop.json'),
+        doneFile: targetFile(ctx, 'done'),
+        reminderFile: targetFile(ctx, 'stop-reminded'),
+      }),
+      0o755,
+    );
     writeJsonAtomic(path.join(ctx.runDir, 'settings.json'), {
-      // The done signal must never be blocked by a permission prompt.
+      // The done signal must never be blocked by a permission prompt, and the
+      // Bash sandbox must never confine it: the run dir sits outside the
+      // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
       permissions: { allow: ['Bash(looper-done:*)', 'Bash(looper-done)'] },
+      sandbox: { excludedCommands: ['looper-done'] },
       hooks: {
-        // The Stop payload carries last_assistant_message: the run's report. Its mtime doubles as the idle signal.
-        Stop: [{ hooks: [{ type: 'command', command: target.renderStopHook(targetFile(ctx, 'stop.json')) }] }],
+        // The SessionStart payload names the session's transcript file: the Messages view reads it live.
+        SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, 'session.json')) }] }],
+        Stop: [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', target.stopHookFile)) }] }],
       },
     });
   }

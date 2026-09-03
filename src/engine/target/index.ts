@@ -1,5 +1,6 @@
 import type { HostKind } from '../host';
 import type { Settings, Task } from '../../shared/types';
+import type { StopHookSpec } from './stop-hook';
 import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
 import { WindowsTarget } from './windows';
@@ -35,8 +36,17 @@ export interface Target {
   envRef(name: string): string;
   renderLauncher(spec: LauncherSpec): string;
   renderDoneHelper(): string;
-  /** Command for the claude Stop hook: dump the hook's stdin JSON into the stop file. */
-  renderStopHook(stopTargetPath: string): string;
+  /** Command for a claude hook: dump the hook's stdin JSON into the given file. */
+  renderPipeHook(targetPath: string): string;
+  /** File name of the Stop-hook gate script in the run's bin/ dir. */
+  readonly stopHookFile: string;
+  /**
+   * Script for the claude Stop hook: block while background tasks are running,
+   * remind once when looper-done was never called, otherwise record the payload.
+   */
+  renderStopHook(spec: StopHookSpec): string;
+  /** Command for the claude Stop hook: run the gate script written at `targetPath`. */
+  stopHookCommand(targetPath: string): string;
   spawnSpec(launcherHostPath: string): SpawnSpec;
   /** Kill any process on the target still carrying LOOPER_RUN=<runId>. Best effort. */
   killLeftovers(runId: string): Promise<void>;
@@ -74,3 +84,4 @@ export function createTarget(task: Task, opts: { host: HostKind; settings: Setti
 }
 
 export { BashTarget, WindowsTarget };
+export type { StopHookSpec };

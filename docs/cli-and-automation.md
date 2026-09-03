@@ -182,7 +182,10 @@ tasks/<id>/runs/<runId>/
   output.log              raw terminal capture of the agent session
   done                    signal file: the looper-done status + headline
   stop.json               signal file: the last Stop-hook payload
+  stop-reminded           marker: the one-time looper-done reminder was issued
+  session.json            the SessionStart-hook payload (names the transcript)
   bin/looper-done         the helper script the agent's PATH exposes
+  bin/looper-stop-hook    the Stop-hook gate script (.ps1 on Windows)
 ```
 
 Every step Looper runs — check, classifier, agent — goes through one of
