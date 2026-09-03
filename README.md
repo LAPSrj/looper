@@ -150,7 +150,7 @@ The CLI talks to the running app through the **inbox directory** (JSON drop
 folder), so it works from inside WSL against a Looper running on Windows:
 
 ```bash
-export LOOPER_HOME=/mnt/c/Users/<you>/AppData/Roaming/looper
+export LOOPER_HOME=/mnt/c/Users/<you>/looper
 looper add my-task.json
 ```
 
@@ -159,7 +159,7 @@ Agents can register tasks the same way — write a task JSON into
 
 ## Data directory
 
-Windows: `%APPDATA%\looper` · Linux/WSL: `~/.config/looper` · override with
+`~/looper` in your user folder on every platform · override with
 `LOOPER_HOME`.
 
 ```

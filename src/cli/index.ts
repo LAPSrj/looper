@@ -11,7 +11,7 @@ const program = new Command();
 program
   .name('looper')
   .description('Cron-style manager for AI agent loops')
-  .option('--data-dir <dir>', 'looper data directory (default: LOOPER_HOME or the platform config dir)');
+  .option('--data-dir <dir>', 'looper data directory (default: LOOPER_HOME or ~/looper)');
 
 function dataDir(): string {
   const opt = program.opts<{ dataDir?: string }>().dataDir;

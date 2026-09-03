@@ -17,14 +17,10 @@ export function detectHost(): HostKind {
   return 'linux';
 }
 
-/** %APPDATA%\looper on Windows, ~/.config/looper elsewhere. LOOPER_HOME overrides. */
+/** ~/looper — the user's data travels with the user folder, not the app. LOOPER_HOME overrides. */
 export function defaultDataDir(): string {
   if (process.env.LOOPER_HOME) return process.env.LOOPER_HOME;
-  if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA ?? os.homedir(), 'looper');
-  }
-  const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
-  return path.join(base, 'looper');
+  return path.join(os.homedir(), 'looper');
 }
 
 export function wslDistroName(): string | undefined {
