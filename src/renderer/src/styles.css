@@ -800,11 +800,22 @@ fieldset.step-fields {
 .step-fields.disabled {
   opacity: 0.4;
 }
-.checkbox-field input[type="checkbox"] {
+.checkbox-field input[type="checkbox"],
+.checkbox-field input[type="radio"] {
   width: auto;
   margin: 0;
   position: relative;
   top: 1px;
+}
+
+/* Radio options sit tight under their parent checkbox (which has 14px bottom margin). */
+.radio-list {
+  margin-top: -10px;
+}
+
+.radio-list .checkbox-field {
+  margin: 4px 0;
+  font-weight: 400;
 }
 .help {
   margin: 0;

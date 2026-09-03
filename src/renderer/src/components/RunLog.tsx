@@ -8,6 +8,8 @@ interface Props {
   task: Task;
   records: RunRecord[];
   hideNoAction: boolean;
+  /** Run to select (notification click); a fresh object per click re-triggers. */
+  focusRun?: { runId: string } | null;
 }
 
 interface RunGroup {
@@ -45,8 +47,12 @@ function resultText(records: RunRecord[]): string {
   return r?.body ?? r?.summary ?? '';
 }
 
-export function RunLog({ task, records, hideNoAction }: Props) {
+export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusRun) setSelected(focusRun.runId);
+  }, [focusRun]);
   const [splitPct, setSplitPct] = useState(65);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -82,8 +88,10 @@ export function RunLog({ task, records, hideNoAction }: Props) {
   }, [records, hideNoAction]);
 
   useEffect(() => {
-    if (selected && !groups.some((g) => g.runId === selected)) {
-      setSelected(groups[0]?.runId ?? null);
+    // While records are still loading (groups empty) keep the selection: a
+    // notification click may have selected a run before its records arrived.
+    if (selected && groups.length > 0 && !groups.some((g) => g.runId === selected)) {
+      setSelected(groups[0].runId);
     }
   }, [groups, selected]);
 

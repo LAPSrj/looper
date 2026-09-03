@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { validateTask } from '../../shared/validate';
-import type { Environment, Task } from '../../shared/types';
+import type { Environment, Task, TaskInput } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
 
 interface TasksFile {
@@ -60,7 +60,7 @@ export class TaskStore extends EventEmitter {
     return task;
   }
 
-  patch(id: string, patch: Partial<Task>): Task {
+  patch(id: string, patch: Partial<TaskInput>): Task {
     const existing = this.tasks.get(id);
     if (!existing) throw new Error(`unknown task ${id}`);
     return this.upsert({ ...existing, ...patch, id });

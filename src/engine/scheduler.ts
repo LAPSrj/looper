@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Cron } from 'croner';
 import type {
   EngineEvent,
+  NotifyKind,
   RunPhase,
   RunRecord,
   RunResult,
@@ -10,6 +11,7 @@ import type {
   TaskRuntime,
 } from '../shared/types';
 import { cronTz } from '../shared/cron';
+import { capFirst, resultLabel } from '../shared/format';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
@@ -398,6 +400,12 @@ export class Scheduler extends EventEmitter {
     this.emitRuntime(rt);
     this.persist();
 
+    // Without a gate step the run goes straight to the agent: one toast, not two.
+    const gated = !!task.check?.enabled || !!task.classifier?.enabled;
+    if (task.notifications.runStart && (gated || !task.notifications.agentStart)) {
+      this.notify(task, runId, 'run-start', 'Run started');
+    }
+
     let errored = false;
     let outcome: RunResult = 'noop';
     let detail = 'nothing to do';
@@ -465,6 +473,9 @@ export class Scheduler extends EventEmitter {
         rt.state = 'running';
         this.emitRuntime(rt);
         this.record(task.id, runId, 'agent', 'started', { summary: checkSummary });
+        if (task.notifications.agentStart) {
+          this.notify(task, runId, 'agent-start', checkSummary ? `Agent started: ${checkSummary}` : 'Agent started');
+        }
         const end = await this.runAgent(task, rt, ctx);
         // A done run's outcome is the status the agent reported via looper-done;
         // every other end keeps its mechanism (idle-timeout, exited, ...).
@@ -525,6 +536,7 @@ export class Scheduler extends EventEmitter {
     if (!limitWait) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
+    const runId = rt.currentRunId ?? '-';
     rt.currentRunId = null;
     rt.held = false;
     const fresh = this.d.tasks.get(taskId);
@@ -534,6 +546,7 @@ export class Scheduler extends EventEmitter {
       this.persist();
       return;
     }
+    let autoPausedReason: string | undefined;
     if (!fresh.enabled) {
       rt.state = 'disabled';
       rt.nextRunAt = null;
@@ -547,14 +560,49 @@ export class Scheduler extends EventEmitter {
     } else if (errored && rt.consecutiveErrors >= fresh.backoff.maxConsecutiveErrors) {
       rt.state = 'paused';
       rt.pausedReason = `auto-paused after ${rt.consecutiveErrors} consecutive errors`;
+      autoPausedReason = rt.pausedReason;
       rt.nextRunAt = null;
       this.d.log.warn(`[${taskId}] ${rt.pausedReason}`);
     } else {
       rt.state = 'idle';
       rt.nextRunAt = this.computeNext(fresh, this.now());
     }
+    this.notifyCycleEnd(fresh, runId, { outcome, detail, errored, limitWait, autoPausedReason });
     this.emitRuntime(rt);
     this.persist();
+  }
+
+  /**
+   * At most one toast per cycle, the most specific applicable event first:
+   * usage-limit wait, then auto-pause, then the plain end at the task's chosen
+   * level. A kind that is switched off falls through to the next.
+   */
+  private notifyCycleEnd(
+    task: Task,
+    runId: string,
+    end: { outcome: RunResult; detail: string; errored: boolean; limitWait: boolean; autoPausedReason?: string },
+  ): void {
+    const n = task.notifications;
+    if (end.limitWait && n.usageLimit) {
+      this.notify(task, runId, 'usage-limit', capFirst(end.detail) || 'Usage limit reached');
+      return;
+    }
+    if (end.autoPausedReason && n.autoPaused) {
+      this.notify(task, runId, 'auto-paused', capFirst(end.autoPausedReason));
+      return;
+    }
+    const matches =
+      n.end === 'all' ||
+      (n.end === 'end' && end.outcome !== 'noop') ||
+      (n.end === 'warning' && (end.errored || end.outcome === 'warning')) ||
+      (n.end === 'error' && end.errored);
+    if (!matches) return;
+    const label = resultLabel(end.outcome);
+    this.notify(task, runId, 'end', end.detail ? `${label}: ${capFirst(end.detail)}` : label);
+  }
+
+  private notify(task: Task, runId: string, kind: NotifyKind, body: string): void {
+    this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body });
   }
 
   private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd> {
@@ -574,6 +622,7 @@ export class Scheduler extends EventEmitter {
         this.record(task.id, ctx.runId, 'agent', 'held', {
           summary: `idle for ${task.agent.idleGraceMin} min without looper-done; holding for a human`,
         });
+        if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
         this.emitRuntime(rt);
       },
       onResume: () => {

@@ -34,7 +34,7 @@ interface Harness {
   classifies: ClassifyResult[];
   agentEnds: AgentEnd[];
   agentStarted: number;
-  liveAgent: { end: (e: AgentEnd) => void } | null;
+  liveAgent: { end: (e: AgentEnd) => void; hold: () => void } | null;
   tickN(n: number): Promise<void>;
 }
 
@@ -85,7 +85,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     steps: {
       runCheck: async () => h.checks!.shift() ?? check('noop'),
       runClassify: async () => h.classifies!.shift() ?? { status: 'noop', durationMs: 1, exitCode: 0 },
-      startAgent: async (ctx) => {
+      startAgent: async (ctx, cb) => {
         h.agentStarted!++;
         const scripted = h.agentEnds!.shift();
         let resolve!: (e: AgentEnd) => void;
@@ -100,7 +100,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           finished,
         };
         if (scripted) setImmediate(() => resolve(scripted));
-        else h.liveAgent = { end: resolve };
+        else h.liveAgent = { end: resolve, hold: () => cb.onHold?.() };
         return handle;
       },
     },
@@ -404,6 +404,98 @@ describe('Scheduler', () => {
     h.agentEnds.push(agentEnd('done'));
     await h.tickN(1);
     expect(h.agentStarted).toBe(2);
+  });
+});
+
+describe('notifications', () => {
+  const notifies = () =>
+    h.events.filter((e): e is Extract<EngineEvent, { type: 'notify' }> => e.type === 'notify');
+
+  it('default level (error or warning): errors and warnings notify, success does not', async () => {
+    h.checks.push(check('act'), check('act'), check('act'));
+    h.agentEnds.push({ ...agentEnd('done', 'blocked'), doneStatus: 'error' });
+    h.agentEnds.push({ ...agentEnd('done', 'read the report'), doneStatus: 'warning' });
+    h.agentEnds.push({ ...agentEnd('done', 'all good'), doneStatus: 'success' });
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual(['end:Error: Blocked']);
+    expect(notifies()[0].title).toBe('Task one');
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies().at(-1)!.body).toBe('Warning: Read the report');
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(2);
+  });
+
+  it("level 'all' includes no-action ends; level 'end' excludes them", async () => {
+    h.tasks.patch('t1', { notifications: { end: 'all' } });
+    h.checks.push(check('noop', { summary: 'quiet' }));
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual(['end:No action: Quiet']);
+    h.tasks.patch('t1', { notifications: { end: 'end' } });
+    h.checks.push(check('noop', { summary: 'quiet' }));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(1);
+  });
+
+  it('run-start and agent-start both fire on a gated task; an ungated task sends only agent-start', async () => {
+    h.tasks.patch('t1', { notifications: { runStart: true, agentStart: true, end: 'off' } });
+    h.checks.push(check('act', { summary: '2 items' }));
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual([
+      'run-start:Run started',
+      'agent-start:Agent started: 2 items',
+    ]);
+    h.tasks.patch('t1', { check: undefined });
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies().slice(2).map((n) => n.kind)).toEqual(['agent-start']);
+  });
+
+  it('an auto-pause replaces the end notification when on, and falls through to it when off', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 }, notifications: { end: 'error', autoPaused: true } });
+    h.checks.push(check('error', { error: 'boom' }));
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual([
+      'auto-paused:Auto-paused after 1 consecutive errors',
+    ]);
+    h.sched.resume('t1');
+    h.tasks.patch('t1', { notifications: { end: 'error', autoPaused: false } });
+    h.checks.push(check('error', { error: 'boom' }));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies().at(-1)!.kind).toBe('end');
+    expect(notifies().at(-1)!.body).toBe('Error: Check error: boom');
+  });
+
+  it('a usage-limit wait replaces the end notification when on, and falls through to it when off', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'error', usageLimit: true } });
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push({ ...agentEnd('error', 'usage limit reached · resets 5:50am'), retryAtMs: h.clock.now + 3_600_000 });
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual([
+      'usage-limit:Usage limit reached · resets 5:50am',
+    ]);
+    h.tasks.patch('t1', { notifications: { end: 'error', usageLimit: false } });
+    h.agentEnds.push({ ...agentEnd('error', 'usage limit reached · resets 5:50am'), retryAtMs: h.clock.now + 7_200_000 });
+    h.sched.get('t1')!.nextRunAt = h.clock.now; // skip the limit wait
+    await h.tickN(1);
+    expect(notifies().at(-1)!.kind).toBe('end');
+  });
+
+  it('a hold notifies when on', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'off', held: true } });
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    h.liveAgent!.hold();
+    await flush();
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual(['held:The agent is waiting for your input']);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    expect(notifies()).toHaveLength(1);
   });
 });
 

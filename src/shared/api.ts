@@ -106,19 +106,22 @@ export interface LooperApi {
   onUi(cb: (e: UiEvent) => void): () => void;
 }
 
-export interface UiEvent {
-  type:
-    | 'run-now'
-    | 'stop-agent'
-    | 'pause-resume'
-    | 'edit-task'
-    | 'edit-note'
-    | 'clear-note'
-    | 'export-task'
-    | 'delete-task'
-    | 'enable-disable'
-    | 'open-terminal'
-    | 'open-work-folder'
-    | 'clear-runs'
-    | 'toggle-raw-output';
-}
+export type UiEvent =
+  | {
+      type:
+        | 'run-now'
+        | 'stop-agent'
+        | 'pause-resume'
+        | 'edit-task'
+        | 'edit-note'
+        | 'clear-note'
+        | 'export-task'
+        | 'delete-task'
+        | 'enable-disable'
+        | 'open-terminal'
+        | 'open-work-folder'
+        | 'clear-runs'
+        | 'toggle-raw-output';
+    }
+  /** A notification was clicked: select the task and show the right view. */
+  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'log' };

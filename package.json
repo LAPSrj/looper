@@ -13,14 +13,15 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --external:node-pty --outfile=dist/cli.js",
-    "build:worker": "esbuild src/engine/terminal-worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/terminal-worker.js",
+    "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --external:node-pty --outfile=out/cli/cli.js",
+    "build:worker": "esbuild src/engine/terminal-worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=out/cli/terminal-worker.js",
     "build:all": "npm run build && npm run build:cli && npm run build:worker",
     "start": "electron-vite preview",
-    "serve": "npm run build:cli && npm run build:worker && node dist/cli.js serve",
+    "serve": "npm run build:cli && npm run build:worker && node out/cli/cli.js serve",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "package": "npm run build:all && electron-builder --win"
+    "package": "npm run build:all && electron-builder --win",
+    "register:notifications": "electron scripts/register-notifications.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -55,23 +56,23 @@
     "npmRebuild": false,
     "productName": "Looper",
     "directories": {
-      "output": "release"
+      "buildResources": "assets",
+      "output": "release/${os}-${arch}"
     },
     "asarUnpack": [
       "out/main/terminal-worker.js"
     ],
     "files": [
       "out/**",
-      "dist/**",
       "bin/**",
-      "build/icon.png",
+      "assets/icon.png",
+      "assets/icon.ico",
       "package.json"
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "assets/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     }
   }

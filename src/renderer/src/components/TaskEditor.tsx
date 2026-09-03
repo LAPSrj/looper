@@ -29,7 +29,9 @@ type Draft = TaskInput & {
   agent: NonNullable<TaskInput['agent']>;
 };
 
-type EditorTab = 'general' | 'schedule' | 'check' | 'classifier' | 'agent' | 'settings' | 'json';
+type NotifEndLevel = Exclude<NonNullable<NonNullable<TaskInput['notifications']>['end']>, 'off'>;
+
+type EditorTab = 'general' | 'schedule' | 'check' | 'classifier' | 'agent' | 'settings' | 'notifications' | 'json';
 
 const TABS: [EditorTab, string][] = [
   ['general', 'General'],
@@ -38,6 +40,7 @@ const TABS: [EditorTab, string][] = [
   ['classifier', 'Classifier'],
   ['agent', 'Agent'],
   ['settings', 'Settings'],
+  ['notifications', 'Notifications'],
   ['json', 'Advanced'],
 ];
 
@@ -96,6 +99,11 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   // Pins the Model dropdown on "Custom" even while the typed value matches a preset.
   const [customModel, setCustomModel] = useState(false);
   const [customClsModel, setCustomClsModel] = useState(false);
+  // Remembers the end-notification level while "Notify when the task ends" is off.
+  const [rememberedEnd, setRememberedEnd] = useState<NotifEndLevel>(() => {
+    const e = (task ?? initial)?.notifications?.end;
+    return e && e !== 'off' ? e : 'warning';
+  });
 
   // Trigger UI: draft.schedule.cron is the single source of truth; the
   // structured controls are a parsed view of it. `customCron` pins the raw
@@ -176,6 +184,12 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const setAgent = <K extends keyof Draft['agent']>(key: K, value: Draft['agent'][K]) =>
     setDraft((d) => ({ ...d, agent: { ...d.agent, [key]: value } }));
+  const notif = draft.notifications ?? {};
+  const setNotif = <K extends keyof NonNullable<Draft['notifications']>>(key: K, value: NonNullable<Draft['notifications']>[K]) =>
+    setDraft((d) => ({ ...d, notifications: { ...(d.notifications ?? {}), [key]: value } }));
+  // The draft's end level is the source of truth while on; the remembered one shows while off.
+  const endLevel: NotifEndLevel = notif.end && notif.end !== 'off' ? notif.end : rememberedEnd;
+  const endOn = (notif.end ?? 'warning') !== 'off';
   const setCheck = <K extends keyof NonNullable<Draft['check']>>(key: K, value: NonNullable<Draft['check']>[K]) =>
     setDraft((d) => ({ ...d, check: { ...d.check!, [key]: value } }));
   const browseCwd = async () => {
@@ -797,6 +811,65 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 </select>
               </Field>
             </div>
+          </div>
+        </div>
+
+        <div className={`editor-panel${tab !== 'notifications' ? ' hidden' : ''}`}>
+          <div className="form">
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.runStart ?? false} onChange={(e) => setNotif('runStart', e.target.checked)} />
+              Notify when a run starts
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.agentStart ?? false} onChange={(e) => setNotif('agentStart', e.target.checked)} />
+              Notify when the agent starts
+            </label>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={endOn}
+                onChange={(e) => {
+                  if (!e.target.checked) setRememberedEnd(endLevel);
+                  setNotif('end', e.target.checked ? endLevel : 'off');
+                }}
+              />
+              Notify when the task ends
+            </label>
+            <fieldset className={`step-fields radio-list${endOn ? '' : ' disabled'}`} disabled={!endOn}>
+              {(
+                [
+                  ['error', 'With an error'],
+                  ['warning', 'With an error or warning'],
+                  ['end', 'With any result except no action'],
+                  ['all', 'With any result'],
+                ] as [NotifEndLevel, string][]
+              ).map(([value, label]) => (
+                <label key={value} className="checkbox-field">
+                  <input
+                    type="radio"
+                    name="notif-end"
+                    checked={endLevel === value}
+                    onChange={() => {
+                      setRememberedEnd(value);
+                      setNotif('end', value);
+                    }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.held ?? false} onChange={(e) => setNotif('held', e.target.checked)} />
+              Notify when the agent holds and waits for input
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.autoPaused ?? false} onChange={(e) => setNotif('autoPaused', e.target.checked)} />
+              Notify when the task auto-pauses
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.usageLimit ?? false} onChange={(e) => setNotif('usageLimit', e.target.checked)} />
+              Notify when the usage limit is reached
+            </label>
           </div>
         </div>
 

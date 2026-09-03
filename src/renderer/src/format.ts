@@ -36,29 +36,7 @@ export function stateLabel(rt: TaskRuntime | undefined): string {
   return STATE_LABELS[rt.state] ?? rt.state;
 }
 
-const RESULT_LABELS: Record<string, string> = {
-  act: 'Action',
-  done: 'Done',
-  success: 'Success',
-  warning: 'Warning',
-  noop: 'No action',
-  skipped: 'Skipped',
-  started: 'Started',
-  error: 'Error',
-  'max-runtime': 'Timed out',
-  interrupted: 'Interrupted',
-  'idle-timeout': 'Idle timeout',
-  held: 'Held',
-  stopped: 'Stopped',
-};
-
-export function resultLabel(result: string): string {
-  return RESULT_LABELS[result] ?? result;
-}
-
-export function capFirst(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
+export { resultLabel, capFirst } from '@shared/format';
 
 export function stripAnsi(s: string): string {
   return stripAnsiShared(s).replace(/\r(?!\n)/g, '\n');

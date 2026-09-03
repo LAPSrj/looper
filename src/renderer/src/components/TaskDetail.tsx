@@ -23,6 +23,8 @@ interface Props {
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
   hideNoActionRuns: boolean;
+  /** Run to select in the run log (notification click). */
+  focusRun?: { runId: string } | null;
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -86,7 +88,7 @@ function describeNextRun(runtime: TaskRuntime | undefined, now: number): string 
   return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
 }
 
-export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns }: Props) {
+export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
 
@@ -150,7 +152,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
             </dl>
           </div>
         )}
-        {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} />}
+        {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
         {tab === 'terminal' && <Terminal taskId={task.id} runtime={runtime} />}
       </section>
     </div>

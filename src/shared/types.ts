@@ -141,6 +141,30 @@ export const AgentSchema = z.object({
 });
 
 /**
+ * Which system notifications (toasts) a task sends. The `end` levels nest so a
+ * cycle's end sends at most one notification: `error` = errors only; `warning`
+ * = errors and warnings; `end` = any end except no-action; `all` = every end.
+ * A more specific end event (usage limit, auto-pause) replaces the plain end
+ * notification when its own switch is on, and falls through to `end` when off.
+ */
+export const TaskNotificationsSchema = z
+  .object({
+    /** A cycle started (the check step included). */
+    runStart: z.boolean().default(false),
+    /** The agent step started. */
+    agentStart: z.boolean().default(false),
+    end: z.enum(['off', 'error', 'warning', 'end', 'all']).default('warning'),
+    /** The agent went idle and is holding for a human. */
+    held: z.boolean().default(false),
+    /** The task auto-paused after consecutive errors. */
+    autoPaused: z.boolean().default(false),
+    /** A run hit the usage limit and waits for the reset. */
+    usageLimit: z.boolean().default(false),
+  })
+  .default({});
+export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
+
+/**
  * One-off guidance for a task's next run(s): appended to the agent prompt and
  * consumed per run whose agent actually received it (a run that ends as an
  * engine `error` — spawn failure, usage limit — never consumes a charge).
@@ -169,6 +193,7 @@ export const TaskSchema = z.object({
   backoff: z
     .object({ maxConsecutiveErrors: z.number().int().positive().default(5) })
     .default({}),
+  notifications: TaskNotificationsSchema,
   note: NoteSchema.optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
@@ -219,6 +244,8 @@ export const SettingsSchema = z.object({
   templatesFile: z.string().min(1).optional(),
   /** Hide to the system tray instead of quitting when the window is closed. */
   closeToTray: z.boolean().default(false),
+  /** Master switch for system notifications; per-task selection is on the task. */
+  notificationsEnabled: z.boolean().default(true),
   /** Main-window view options (View menu). */
   view: z.object({
     toolbar: z.boolean().default(true),
@@ -340,11 +367,15 @@ export interface InboxCommand {
 
 // ---------- Engine events (also the IPC contract) ----------
 
+/** What a `notify` event is about; it decides where a click on the toast lands. */
+export type NotifyKind = 'run-start' | 'agent-start' | 'held' | 'end' | 'auto-paused' | 'usage-limit';
+
 export type EngineEvent =
   | { type: 'runtime'; runtime: TaskRuntime }
   | { type: 'record'; record: RunRecord }
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
   | { type: 'agent:end'; taskId: string; runId: string }
+  | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string }
   | { type: 'tasks'; tasks: Task[] }
   | { type: 'templates'; templates: Template[] }
   | { type: 'settings'; settings: Settings };

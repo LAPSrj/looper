@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
-import type { Settings } from '../shared/types';
+import type { EngineEvent, Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { registerIpc } from './ipc';
@@ -32,8 +32,19 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    // Windows routes toasts by AppUserModelID; without it dev runs show nothing.
+    // Dev runs get their own id so the dev Start Menu shortcut (see
+    // scripts/register-notifications.js) can never hijack the packaged app's
+    // taskbar identity.
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(app.isPackaged ? 'com.lemorim.looper' : 'com.lemorim.looper.dev');
+    }
     engine = createEngine({ dataDir: defaultDataDir() });
     engine.start();
+    engine.on((event) => {
+      if (event.type === 'notify') showTaskNotification(event);
+      else if (event.type === 'settings') tray?.setContextMenu(trayMenu());
+    });
     registerIpc(engine, {
       getWindow: () => win,
       openRunDetail: openRunDetailWindow,
@@ -72,9 +83,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-const appIcon = path.join(__dirname, '../../build/icon.png');
+const appIcon = path.join(__dirname, '../../assets/icon.png');
 const trayIcon = process.platform === 'win32'
-  ? path.join(__dirname, '../../build/icon.ico')
+  ? path.join(__dirname, '../../assets/icon.ico')
   : appIcon;
 
 function showWindow(): void {
@@ -87,16 +98,55 @@ function showWindow(): void {
   }
 }
 
+function trayMenu(): Menu {
+  const notifOn = engine?.settings.notificationsEnabled ?? true;
+  return Menu.buildFromTemplate([
+    { label: 'Show Looper', click: showWindow },
+    { type: 'separator' },
+    {
+      label: notifOn ? 'Disable Notifications' : 'Enable Notifications',
+      click: () => {
+        if (engine) engine.updateSettings({ notificationsEnabled: !engine.settings.notificationsEnabled });
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+}
+
 function createTray(): void {
   tray = new Tray(nativeImage.createFromPath(trayIcon));
   tray.setToolTip('Looper');
   tray.on('double-click', showWindow);
-  const menu = Menu.buildFromTemplate([
-    { label: 'Show Looper', click: showWindow },
-    { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
-  ]);
-  tray.setContextMenu(menu);
+  tray.setContextMenu(trayMenu());
+}
+
+function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void {
+  if (!engine?.settings.notificationsEnabled || !Notification.isSupported()) return;
+  // The user is already looking at the app: no toast.
+  if (BrowserWindow.getFocusedWindow()) return;
+  const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
+  // A live run lands on the terminal; a finished one on the run log, the run
+  // selected so its report is on screen.
+  const view = e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' ? 'log' : 'terminal';
+  toast.on('click', () => openTaskView(e.taskId, e.runId, view));
+  toast.show();
+}
+
+function openTaskView(taskId: string, runId: string, view: 'terminal' | 'log'): void {
+  const payload = { type: 'open-task', taskId, runId, view };
+  if (!win || win.isDestroyed()) {
+    createWindow();
+    // The renderer subscribes to ui:event after mount; give it a beat.
+    win?.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) win.webContents.send('ui:event', payload);
+      }, 300);
+    });
+    return;
+  }
+  showWindow();
+  win.webContents.send('ui:event', payload);
 }
 
 /** Pre-paint window background; must match the CSS --bg for the active theme. */

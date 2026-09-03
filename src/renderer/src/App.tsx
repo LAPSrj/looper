@@ -16,11 +16,19 @@ export function App() {
   const [records, setRecords] = useState<Record<string, RunRecord[]>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<DetailTab>('status');
+  // Run to select in the run log (notification click); a fresh object per click re-triggers.
+  const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
   const [now, setNow] = useState(Date.now());
 
   // Menu and toolbar commands act on the selected task; the ref keeps them acting on current state.
   const uiRef = useRef({ selected, tasks, runtimes });
   uiRef.current = { selected, tasks, runtimes };
+
+  const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'log' }) => {
+    setSelected(e.taskId);
+    setTab(e.view);
+    setFocusRun(e.view === 'log' ? { runId: e.runId } : null);
+  }, []);
 
   const uiAction = useCallback((type: UiEvent['type']) => {
     const { selected: sel, tasks: ts, runtimes: rts } = uiRef.current;
@@ -125,7 +133,10 @@ export function App() {
           break;
       }
     });
-    const unsubUi = window.looper.onUi((e) => uiAction(e.type));
+    const unsubUi = window.looper.onUi((e) => {
+      if (e.type === 'open-task') openTask(e);
+      else uiAction(e.type);
+    });
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       unsub();
@@ -217,6 +228,7 @@ export function App() {
               tab={tab}
               onTab={setTab}
               hideNoActionRuns={view?.hideNoActionRuns ?? false}
+              focusRun={focusRun}
             />
           ) : (
             <div className="empty" />

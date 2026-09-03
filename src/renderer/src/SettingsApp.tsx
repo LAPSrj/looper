@@ -24,6 +24,7 @@ export function SettingsApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [defaultEnvId, setDefaultEnvId] = useState<string | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
   const [startWithSystem, setStartWithSystem] = useState<boolean | null>(null);
   const [staggerEnabled, setStaggerEnabled] = useState<boolean | null>(null);
   const [staggerMin, setStaggerMin] = useState<number | null>(null);
@@ -49,6 +50,7 @@ export function SettingsApp() {
       setDataDir(info.dataDir);
       setDefaultEnvId((v) => v ?? info.settings.defaultEnvironmentId);
       setCloseToTray((v) => v ?? info.settings.closeToTray);
+      setNotificationsEnabled((v) => v ?? info.settings.notificationsEnabled);
       setStaggerEnabled((v) => v ?? info.settings.staggerFirstRun.enabled);
       setStaggerMin((v) => v ?? info.settings.staggerFirstRun.minDelaySec);
       setStaggerMax((v) => v ?? info.settings.staggerFirstRun.maxDelaySec);
@@ -80,7 +82,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: TABS.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || closeToTray === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -178,6 +180,7 @@ export function SettingsApp() {
       await window.looper.updateSettings({
         defaultEnvironmentId: defaultEnvId,
         closeToTray,
+        notificationsEnabled,
         staggerFirstRun: {
           enabled: staggerEnabled,
           minDelaySec: staggerMin,
@@ -230,6 +233,10 @@ export function SettingsApp() {
               <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
             <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notificationsEnabled} onChange={(e) => setNotificationsEnabled(e.target.checked)} />
+              Show notifications
+            </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={closeToTray} onChange={(e) => setCloseToTray(e.target.checked)} />
               Close to system tray

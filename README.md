@@ -16,6 +16,11 @@ started. No idle burn, no context rot, at most one agent per task, ever.
   dropping a JSON file in the inbox.
 - **Monitoring built in** — per-task run log with results and reports, live
   status, and a real terminal tab you can watch *and type into* mid-run.
+- **System notifications** — each task picks what it toasts (run/agent start,
+  ends by severity, holds, auto-pauses, usage limits; default: errors and
+  warnings). Clicking one opens the task's terminal for a live run, or the run
+  log with the run selected for a finished one. Nothing fires while a Looper
+  window is focused. A master switch lives in Settings and in the tray menu.
 - **Token savings by design** — a shell check and an optional haiku-class
   classifier gate every run, so the expensive model only starts when there is
   real work to do.
@@ -118,10 +123,16 @@ No compiler toolchain needed on any platform: node-pty ships N-API prebuilds
 ```bash
 npm install
 npm run dev            # Electron app with hot reload
-npm run build:all      # out/ (app) + dist/cli.js + dist/terminal-worker.js
-npm run package        # Windows installer/portable in release/
+npm run build:all      # out/ (app) + out/cli/ (CLI + terminal worker)
+npm run package        # Windows installer in release/win-x64/
 npm test               # engine unit tests
 ```
+
+Unpackaged runs on Windows are attributed to electron.exe (Electron name and
+icon on toasts and the taskbar). Run `npm run register:notifications` once per
+machine to register the app id — it creates a Start Menu shortcut carrying the
+AppUserModelID plus the toast registry entries; the packaged installer's own
+shortcut makes this unnecessary.
 
 CLI (after `npm run build:cli`; `npm link` to get `looper` on PATH):
 
@@ -209,6 +220,7 @@ See `examples/task.example.json`. Fields:
 | `agent.extraArgs` | appended verbatim to the harness command line |
 | `agent.maxRuntimeMin` / `idleGraceMin` / `onIdleTimeout` | run limits (see above) |
 | `backoff.maxConsecutiveErrors` | auto-pause the task after N failed cycles in a row |
+| `notifications` | which system notifications the task sends (Notifications tab): `runStart`, `agentStart`, `held`, `autoPaused`, `usageLimit` (booleans, default off) and `end` (`off` \| `error` \| `warning` = errors+warnings, the default \| `end` = all but no-action \| `all`). A cycle's end sends at most one toast — usage limit and auto-pause replace the plain end when on. The global switch is in Settings → General and the tray menu |
 | `note` | one-off guidance (`{"text": "…", "runsLeft": 1}`) appended to the agent prompt, set from the Task menu, toolbar or context menu; each run whose agent received it uses up one charge, but a run that ends as an engine error (spawn failure, usage limit) does not |
 
 Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,

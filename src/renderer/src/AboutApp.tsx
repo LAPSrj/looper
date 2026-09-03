@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import icon from '../../../build/icon.png';
+import icon from '../../../assets/icon.png';
 import { useDialogKeys } from './components/hooks';
 
 /** Standalone About window (Help → About Looper). */
