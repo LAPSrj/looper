@@ -8,6 +8,8 @@ import type { AppInfo } from '../shared/api';
 export interface IpcHost {
   getWindow: () => BrowserWindow | null;
   openRunDetail: (taskId: string, runId: string) => void;
+  openMessages: (taskId: string, runId: string, agentId?: string, label?: string) => void;
+  openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
   openEditor: (taskId?: string) => void;
   openNoteEditor: (taskId: string) => void;
 
@@ -78,23 +80,42 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
   ipcMain.handle('runs:openDir', (_e, id: string, runId: string) => shell.openPath(engine.runDir(id, runId)));
   ipcMain.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
+  ipcMain.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) =>
+    engine.readMessages(id, runId, agentId, raw),
+  );
+  ipcMain.handle('runs:messageImage', (_e, id: string, runId: string, rowId: string, agentId?: string) =>
+    engine.readMessageImage(id, runId, rowId, agentId),
+  );
+  ipcMain.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
+    host.openMessages(taskId, runId, agentId, label),
+  );
+  ipcMain.handle('messages:openImage', (_e, taskId: string, runId: string, rowId: string, agentId?: string, label?: string) =>
+    host.openMessageImage(taskId, runId, rowId, agentId, label),
+  );
 
   ipcMain.handle('engineLog:read', () => engine.readEngineLog());
 
   ipcMain.handle('task:openTerminal', (_e, id: string) => engine.openTaskTerminal(id));
+
+  /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
+  const openTargetPath = async (taskId: string, p: string): Promise<void> => {
+    const task = engine.getTask(taskId);
+    const env = task ? engine.settings.environments.find((x) => x.id === task.environmentId) : undefined;
+    const distro = env?.kind === 'wsl' ? env.distro : undefined;
+    let hostPath = p;
+    if (process.platform === 'win32' && p.startsWith('/')) {
+      hostPath = (await convertWslPath(p, 'windows', distro)) ?? p;
+    } else if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) {
+      hostPath = (await convertWslPath(p, 'posix', distro)) ?? p;
+    }
+    const err = await shell.openPath(hostPath);
+    if (err) throw new Error(err);
+  };
+
   ipcMain.handle('task:openWorkFolder', async (_e, id: string) => {
     const task = engine.getTask(id);
     if (!task) return;
-    const env = engine.settings.environments.find((x) => x.id === task.environmentId);
-    const distro = env?.kind === 'wsl' ? env.distro : undefined;
-    let p = task.cwd;
-    if (process.platform === 'win32' && p.startsWith('/')) {
-      p = (await convertWslPath(p, 'windows', distro)) ?? p;
-    } else if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) {
-      p = (await convertWslPath(p, 'posix', distro)) ?? p;
-    }
-    const err = await shell.openPath(p);
-    if (err) throw new Error(err);
+    await openTargetPath(id, task.cwd);
   });
 
   ipcMain.handle('agent:buffer', (_e, id: string) => engine.agentBuffer(id));
@@ -273,12 +294,62 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     menu.popup({ window: sender });
   });
 
+  ipcMain.on(
+    'context-menu:message',
+    (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }) => {
+      const sender = BrowserWindow.fromWebContents(e.sender);
+      if (!sender) return;
+      const items: Electron.MenuItemConstructorOptions[] = [];
+      if (info.file) {
+        const file = info.file;
+        items.push({
+          label: 'Open File',
+          click: () =>
+            void openTargetPath(info.taskId, file).catch((err: unknown) => {
+              void dialog.showMessageBox(sender, {
+                type: 'error',
+                title: 'Looper',
+                message: `Could not open ${file}.`,
+                detail: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }),
+        });
+        items.push({ label: 'Copy Path', click: () => clipboard.writeText(file) });
+      }
+      if (info.agentId) {
+        if (items.length) items.push({ type: 'separator' });
+        items.push({
+          label: 'Open Subagent Conversation',
+          click: () => host.openMessages(info.taskId, info.runId, info.agentId, info.label),
+        });
+      }
+      if (info.text) {
+        const text = info.text;
+        if (items.length) items.push({ type: 'separator' });
+        items.push({ label: 'Copy Content', click: () => clipboard.writeText(text) });
+      }
+      if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: sender });
+    },
+  );
+
+  // The filter window hands its value to the parent conversation window and closes.
+  ipcMain.on('messages:filter-apply', (e, value: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const parent = win?.getParentWindow();
+    if (parent && !parent.isDestroyed()) {
+      parent.webContents.send('ui:event', { type: 'messages-filter', value: String(value ?? '') });
+    }
+    win?.close();
+  });
+
   ipcMain.on('context-menu:run', (e, info: { taskId: string; runId: string; details: string }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const menu = Menu.buildFromTemplate([
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
       { label: 'View Details', click: () => host.openRunDetail(info.taskId, info.runId) },
+      { label: 'View Messages', click: () => host.openMessages(info.taskId, info.runId) },
       { type: 'separator' },
       { label: 'Open Run Folder', click: () => void shell.openPath(engine.runDir(info.taskId, info.runId)) },
     ]);

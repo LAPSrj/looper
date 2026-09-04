@@ -2,15 +2,17 @@ import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
 import { cronToForm } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtTime, resultLabel, stateLabel } from '../format';
+import { Messages } from './Messages';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
 import { TabBar } from './ui';
 
-export type DetailTab = 'status' | 'log' | 'terminal';
+export type DetailTab = 'status' | 'log' | 'messages' | 'terminal';
 
 const TABS: [DetailTab, string][] = [
   ['status', 'Status'],
   ['log', 'Run log'],
+  ['messages', 'Messages'],
   ['terminal', 'Terminal'],
 ];
 
@@ -153,6 +155,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
           </div>
         )}
         {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
+        {tab === 'messages' && <Messages task={task} records={records} runtime={runtime} />}
         {tab === 'terminal' && <Terminal taskId={task.id} runtime={runtime} />}
       </section>
     </div>

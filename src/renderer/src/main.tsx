@@ -10,6 +10,9 @@ import { InstructionsApp } from './InstructionsApp';
 import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
 import { ModelEditorApp } from './ModelEditorApp';
+import { FilterApp } from './FilterApp';
+import { ImageApp } from './ImageApp';
+import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
 import { RunDetailApp } from './RunDetailApp';
 import { SettingsApp } from './SettingsApp';
@@ -25,6 +28,9 @@ const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
 const runDetailMatch = /^run-detail\/([^/]+)\/([^/]+)$/.exec(hash);
+const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
+const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
+const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
@@ -67,6 +73,28 @@ function pickRoot() {
       <RunDetailApp
         taskId={decodeURIComponent(runDetailMatch[1])}
         runId={decodeURIComponent(runDetailMatch[2])}
+      />
+    );
+  }
+  if (messagesMatch) {
+    return (
+      <MessagesApp
+        taskId={decodeURIComponent(messagesMatch[1])}
+        runId={decodeURIComponent(messagesMatch[2])}
+        agentId={messagesMatch[3] === '-' ? undefined : decodeURIComponent(messagesMatch[3])}
+        title={decodeURIComponent(messagesMatch[4])}
+      />
+    );
+  }
+  if (filterMatch) return <FilterApp current={decodeURIComponent(filterMatch[1] ?? '')} />;
+  if (imageMatch) {
+    return (
+      <ImageApp
+        taskId={decodeURIComponent(imageMatch[1])}
+        runId={decodeURIComponent(imageMatch[2])}
+        agentId={imageMatch[3] === '-' ? undefined : decodeURIComponent(imageMatch[3])}
+        rowId={decodeURIComponent(imageMatch[4])}
+        title={decodeURIComponent(imageMatch[5])}
       />
     );
   }

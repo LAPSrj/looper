@@ -27,6 +27,8 @@ const api: LooperApi = {
     output: (id, runId, raw) => ipcRenderer.invoke('runs:output', id, runId, raw),
     openDir: (id, runId) => ipcRenderer.invoke('runs:openDir', id, runId),
     clear: (id) => ipcRenderer.invoke('runs:clear', id),
+    messages: (id, runId, agentId, raw) => ipcRenderer.invoke('runs:messages', id, runId, agentId, raw),
+    messageImage: (id, runId, rowId, agentId) => ipcRenderer.invoke('runs:messageImage', id, runId, rowId, agentId),
   },
   agent: {
     buffer: (id) => ipcRenderer.invoke('agent:buffer', id),
@@ -38,6 +40,10 @@ const api: LooperApi = {
   openTaskTerminal: (taskId) => ipcRenderer.invoke('task:openTerminal', taskId),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
   openRunDetail: (taskId, runId) => ipcRenderer.invoke('runDetail:open', taskId, runId),
+  openMessages: (taskId, runId, agentId, label) =>
+    ipcRenderer.invoke('messages:open', taskId, runId, agentId, label),
+  openMessageImage: (taskId, runId, rowId, agentId, label) =>
+    ipcRenderer.invoke('messages:openImage', taskId, runId, rowId, agentId, label),
   openEditor: (taskId) => ipcRenderer.invoke('editor:open', taskId),
   openNoteEditor: (taskId) => ipcRenderer.invoke('noteEditor:open', taskId),
 
@@ -63,6 +69,9 @@ const api: LooperApi = {
   reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote) => ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showRunContextMenu: (info) => ipcRenderer.send('context-menu:run', info),
+  showMessageContextMenu: (info) => ipcRenderer.send('context-menu:message', info),
+  reportMessagesFilter: (filter) => ipcRenderer.send('messages:filter-state', filter),
+  applyMessagesFilter: (value) => ipcRenderer.send('messages:filter-apply', value),
   onEvent: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: EngineEvent) => cb(ev);
     ipcRenderer.on('engine:event', listener);

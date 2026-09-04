@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { MessageImage, MessagesResult } from '../shared/messages';
 import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
 import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
+import { MessagesService } from './messages';
 import { openTaskTerminal } from './open-terminal';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir } from './store/fsutil';
@@ -58,6 +60,10 @@ export interface Engine {
   // history
   listRuns(id: string, limit?: number): RunRecord[];
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
+  /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
+  readMessages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
+  /** The image payload behind a message row's image marker. */
+  readMessageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   /** Delete a task's run history. Refused while the task is mid-cycle. */
   clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
@@ -106,6 +112,14 @@ export function createEngine(opts: EngineOptions): Engine {
       });
     }
   };
+
+  const messages = new MessagesService({
+    getTask: (id) => tasks.get(id),
+    runDir: (taskId, runId) => runs.runDir(taskId, runId),
+    host,
+    settings,
+    log,
+  });
 
   const scheduler = new Scheduler({ dataDir, host, settings, tasks, runs, state, log, steps: opts.steps });
   scheduler.on('event', emit);
@@ -257,6 +271,8 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     listRuns: (id, limit) => runs.list(id, limit),
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
+    readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),
+    readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
     clearRuns(id: string): void {
       const state = scheduler.get(id)?.state;
       if (state === 'checking' || state === 'classifying' || state === 'running') {

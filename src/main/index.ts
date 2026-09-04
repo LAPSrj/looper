@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
@@ -38,6 +38,7 @@ if (!app.requestSingleInstanceLock()) {
     // taskbar identity.
     if (process.platform === 'win32') {
       app.setAppUserModelId(app.isPackaged ? 'com.lemorim.looper' : 'com.lemorim.looper.dev');
+      if (!app.isPackaged) removeDevAumidHijackers();
     }
     engine = createEngine({ dataDir: defaultDataDir() });
     engine.start();
@@ -48,6 +49,8 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc(engine, {
       getWindow: () => win,
       openRunDetail: openRunDetailWindow,
+      openMessages: openMessagesWindow,
+      openMessageImage: openImageWindow,
       openEditor: openEditorWindow,
       openNoteEditor: openNoteEditorWindow,
 
@@ -81,6 +84,32 @@ if (!app.requestSingleInstanceLock()) {
       .catch(() => undefined)
       .finally(() => app.quit());
   });
+}
+
+/**
+ * Windows occasionally grows a stray Start Menu shortcut (seen as
+ * "Electron.lnk") carrying the dev AUMID; with two shortcuts claiming the id,
+ * the app resolver can pick the wrong one and the taskbar falls back to
+ * electron.exe's icon. Delete any shortcut with our dev AUMID other than the
+ * one scripts/register-notifications.js writes.
+ */
+function removeDevAumidHijackers(): void {
+  const dir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.lnk') || name === 'Looper (dev).lnk') continue;
+    const file = path.join(dir, name);
+    try {
+      if (shell.readShortcutLink(file).appUserModelId === 'com.lemorim.looper.dev') fs.rmSync(file);
+    } catch {
+      /* not a readable shortcut */
+    }
+  }
 }
 
 const appIcon = path.join(__dirname, '../../assets/icon.png');
@@ -309,6 +338,143 @@ function openRunDetailWindow(taskId: string, runId: string): void {
     },
   ]);
   child.setMenu(menu);
+  loadRenderer(child, hash);
+}
+
+function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string): void {
+  const task = engine?.getTask(taskId);
+  const title = agentId
+    ? label?.trim()
+      ? `Subagent: ${label.trim().slice(0, 80)}`
+      : `Subagent ${agentId}`
+    : `Messages – ${task ? task.name : taskId} – ${runId}`;
+  const child = new BrowserWindow({
+    width: 960,
+    height: 640,
+    minWidth: 560,
+    minHeight: 420,
+    title,
+    icon: appIcon,
+    backgroundColor: windowBackground(),
+    maximizable: true,
+    webPreferences: webPreferences(),
+  });
+  const send = (payload: unknown) => {
+    if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
+  };
+  // The Show toggles filter row categories; Filter… opens the filter window,
+  // and its checkmark mirrors whether a filter is active (reported by the
+  // renderer), not the click itself.
+  let filterValue = '';
+  const showItem = (id: string, label: string, key: string): Electron.MenuItemConstructorOptions => ({
+    id,
+    label,
+    type: 'checkbox',
+    checked: true,
+    click: (item) => send({ type: 'messages-show', key, checked: item.checked }),
+  });
+  const openHostPath = async (p: string) => {
+    if (process.platform === 'win32' && p.startsWith('/')) {
+      const winPath = await convertWslPath(p, 'windows');
+      if (winPath) {
+        void shell.openPath(winPath);
+        return;
+      }
+    }
+    void shell.openPath(p);
+  };
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '&File',
+      submenu: [
+        {
+          label: 'Open &Run Folder',
+          click: () => {
+            if (engine) void shell.openPath(engine.runDir(taskId, runId));
+          },
+        },
+        {
+          label: 'Open &Working Directory',
+          enabled: !!task?.cwd,
+          click: () => {
+            if (task?.cwd) void openHostPath(task.cwd);
+          },
+        },
+      ],
+    },
+    {
+      label: '&View',
+      submenu: [
+        {
+          label: '&Raw Messages',
+          type: 'checkbox',
+          checked: false,
+          click: (item) => send({ type: 'messages-raw', checked: item.checked }),
+        },
+        { type: 'separator' },
+        showItem('show-messages', 'Show &Messages', 'messages'),
+        showItem('show-thinking', 'Show &Thinking', 'thinking'),
+        showItem('show-tools', 'Show Tool &Usage', 'tools'),
+        showItem('show-subagents', 'Show &Subagents', 'subagents'),
+        { type: 'separator' },
+        {
+          id: 'filter',
+          label: '&Filter…',
+          type: 'checkbox',
+          checked: false,
+          accelerator: 'CmdOrCtrl+F',
+          click: (item) => {
+            item.checked = filterValue.trim() !== '';
+            openChildWindow(`messages-filter/${encodeURIComponent(filterValue)}`, 'Filter', 420, 240, child, {
+              minWidth: 360,
+              minHeight: 220,
+              resizable: false,
+            });
+          },
+        },
+      ],
+    },
+  ]);
+  child.setMenu(menu);
+  const onFilterState = (e: Electron.IpcMainEvent, filter: string) => {
+    if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+    filterValue = String(filter ?? '');
+    const item = menu.getMenuItemById('filter');
+    if (item) item.checked = filterValue.trim() !== '';
+  };
+  ipcMain.on('messages:filter-state', onFilterState);
+  child.on('closed', () => ipcMain.removeListener('messages:filter-state', onFilterState));
+  child.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const hash =
+    `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
+    `/${encodeURIComponent(title)}`;
+  loadRenderer(child, hash);
+}
+
+function openImageWindow(taskId: string, runId: string, rowId: string, agentId?: string, label?: string): void {
+  const name = label?.trim() ? label.trim().slice(0, 80) : `${runId} row ${rowId}`;
+  const child = new BrowserWindow({
+    width: 900,
+    height: 700,
+    minWidth: 420,
+    minHeight: 320,
+    title: `Image – ${name}`,
+    icon: appIcon,
+    backgroundColor: windowBackground(),
+    maximizable: true,
+    webPreferences: webPreferences(),
+  });
+  child.removeMenu();
+  child.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const hash =
+    `image/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
+    `/${encodeURIComponent(rowId)}/${encodeURIComponent(`Image – ${name}`)}`;
   loadRenderer(child, hash);
 }
 

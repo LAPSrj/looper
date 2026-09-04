@@ -1,3 +1,4 @@
+import type { MessageImage, MessagesResult } from './messages';
 import type { EngineEvent, RunRecord, Settings, Task, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -36,6 +37,10 @@ export interface LooperApi {
     openDir(id: string, runId: string): Promise<void>;
     /** Delete a task's run history. Rejects while the task is mid-cycle. */
     clear(id: string): Promise<void>;
+    /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
+    messages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
+    /** The image payload behind a message row's image marker. */
+    messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   };
   agent: {
     buffer(id: string): Promise<{ runId: string; data: string } | null>;
@@ -51,6 +56,10 @@ export interface LooperApi {
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open the run detail window showing all step records for a run. */
   openRunDetail(taskId: string, runId: string): Promise<void>;
+  /** Open a conversation window: a run's messages, or a subagent's when agentId is set. */
+  openMessages(taskId: string, runId: string, agentId?: string, label?: string): Promise<void>;
+  /** Open a message row's image in a zoomable window. */
+  openMessageImage(taskId: string, runId: string, rowId: string, agentId?: string, label?: string): Promise<void>;
   /** Open the task editor in its own window (no id = new task). */
   openEditor(taskId?: string): Promise<void>;
   /** Open the next-run guidance window for a task. */
@@ -101,6 +110,11 @@ export interface LooperApi {
   reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void;
   showTaskContextMenu(info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
+  showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }): void;
+  /** Report the conversation window's current filter text (drives the Filter… checkmark and the filter window's initial value). */
+  reportMessagesFilter(filter: string): void;
+  /** Filter window only: apply this filter to the parent conversation window and close. */
+  applyMessagesFilter(value: string): void;
   onEvent(cb: (e: EngineEvent) => void): () => void;
   /** UI commands pushed from the application menu. */
   onUi(cb: (e: UiEvent) => void): () => void;
@@ -124,4 +138,12 @@ export type UiEvent =
         | 'toggle-raw-output';
     }
   /** A notification was clicked: select the task and show the right view. */
-  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'log' };
+  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'log' }
+  /** Conversation window View menu: a Show toggle changed. */
+  | { type: 'messages-show'; key: MessagesShowKey; checked: boolean }
+  /** Conversation window View menu: the Raw Messages toggle changed. */
+  | { type: 'messages-raw'; checked: boolean }
+  /** The filter window applied a filter (empty = cleared). */
+  | { type: 'messages-filter'; value: string };
+
+export type MessagesShowKey = 'messages' | 'thinking' | 'tools' | 'subagents';

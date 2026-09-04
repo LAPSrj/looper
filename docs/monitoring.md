@@ -5,9 +5,9 @@
 The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active, otherwise a next-run countdown, "Not
 scheduled", "Manual", its paused reason, or "Disabled". Selecting a task
-opens its detail pane with three tabs — Status, Run log, Terminal — plus a
-status bar at the bottom counting enabled, disabled, paused, and running
-tasks.
+opens its detail pane with four tabs — Status, Run log, Messages, Terminal —
+plus a status bar at the bottom counting enabled, disabled, paused, and
+running tasks.
 
 The Status tab lists the task's current state as plain fields: Status,
 Schedule, Next run, Next run guidance (when a one-off note is set), Last
@@ -75,8 +75,63 @@ and agent steps collapsed together, showing the most significant result).
 Selecting a row shows that run's final report below in a resizable split
 pane. Double-clicking a row, or right-clicking it and choosing "View
 Details", opens the run detail window described below. The
-context menu also offers "Copy Details" and "Open Run Folder"; Ctrl+C
-copies the selected row's details text.
+context menu also offers "Copy Details", "View Messages" (the run's
+conversation window), and "Open Run Folder"; Ctrl+C copies the selected
+row's details text.
+
+## The messages tab
+
+The Messages tab lists the task's runs that reached the agent step — Date,
+Start, Result, Details, newest first. Double-clicking a run (or pressing
+Enter on it) opens that run's conversation in its own window, read straight
+from the harness's own session transcript (Claude Code harnesses only —
+other harnesses record no transcript).
+
+In the conversation window each row is one message or tool call — Time,
+Type, Details — where Type is Prompt, Agent, Thinking, or the tool's name;
+the Type column can be resized by dragging its header edge (the width is
+remembered; double-click the edge to reset it). Clicking a row
+shows its full content in the split pane below: prompts and agent replies
+render as Markdown, thinking as plain text, and tool calls as Input and
+Result tabs (opening on Result once the tool has finished). Several tools
+get tailored renders: Edit shows the change as a red/green diff, Bash
+shows the command as a terminal block and its output with escape codes
+stripped, Read results get a line-number gutter, TodoWrite renders as a
+checklist, Task shows its prompt and the subagent's report as Markdown,
+web tools link their URL, file searches list one file per line
+(right-clickable to open), and JSON results render as a collapsible tree. While the run
+is live the table refreshes every two seconds and follows the newest
+message unless you've scrolled up.
+
+Right-clicking a row offers Copy Content, and on rows for file tools
+(Read, Edit, Write) also Open File and Copy Path; on Task rows, Open
+Subagent Conversation.
+
+The window's menu bar has a File menu (Open Run Folder, Open Working
+Directory) and a View menu. View starts with Raw Messages — every
+transcript record shown verbatim as pretty-printed JSON, nothing skipped —
+then filters what the table lists: Show Messages, Show Thinking, Show Tool
+Usage, and Show Subagents (all on by default), plus Filter… (Ctrl+F),
+which opens a small modal Filter window — only rows whose content matches
+stay visible, the menu item shows a checkmark while a filter is active,
+and the window's Clear Filter button removes it. Ctrl+Up and Ctrl+Down
+jump between prompt rows.
+
+When a tool result is an image (a Read of a screenshot, for example), the
+Result tab shows the image itself, fitted to the pane. Double-clicking the
+image or its row opens it in an image window with zoom controls (−, +, and
+an editable percentage; it opens fitted to the window).
+
+When the agent delegates work with the Task tool, that row can be opened as
+its own conversation: double-click it, or use the "Open Subagent
+Conversation" button in its detail pane. The subagent window is the same
+rows-plus-panel view and also updates live. The link becomes available once
+the subagent has reported back to the parent.
+
+Messages come from the transcript files under the harness's own data
+directory, so they live and die with it: transcripts cleaned up by Claude
+Code (30 days by default) show "The session transcript is no longer
+available."
 
 ## The run detail window
 

@@ -145,7 +145,7 @@ export function App() {
     };
   }, []);
 
-  useDialogKeys<DetailTab>({ tabs: ['status', 'log', 'terminal'], tab, onTab: setTab });
+  useDialogKeys<DetailTab>({ tabs: ['status', 'log', 'messages', 'terminal'], tab, onTab: setTab });
 
   useEffect(() => {
     if (!selected || records[selected]) return;

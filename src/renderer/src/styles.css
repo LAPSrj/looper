@@ -1125,3 +1125,373 @@ button:focus-visible,
   outline-offset: -2px;
   border-radius: 4px;
 }
+
+/* ---------- Messages ---------- */
+
+.messages-runs {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.messages-runs:focus-visible {
+  outline: none;
+}
+
+.messages-runs .runlog-table tr.msg-run-row {
+  cursor: default;
+}
+
+.messages-runs .runlog-table tr.msg-run-row:hover td {
+  background: var(--bg-3);
+}
+
+.messages-runs .runlog-table tr.msg-run-row.selected td,
+.messages-runs .runlog-table tr.msg-run-row.selected:hover td {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+  user-select: none;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messages-app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages-table-wrap {
+  overflow: auto;
+  flex: none;
+}
+
+.messages-table-wrap:focus-visible {
+  outline: none;
+}
+
+.messages .runlog-table tr.msg-row {
+  cursor: default;
+}
+
+.messages .runlog-table tr.msg-row:hover td {
+  background: var(--bg-3);
+}
+
+.messages .runlog-table tr.msg-row.selected td,
+.messages .runlog-table tr.msg-row.selected:hover td {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.messages .runlog-table tr.msg-thinking td {
+  color: var(--fg-muted);
+}
+
+.messages .runlog-table tr.msg-error td {
+  color: var(--red);
+}
+
+.messages .runlog-table tr.msg-thinking.selected td,
+.messages .runlog-table tr.msg-error.selected td {
+  color: var(--accent-fg);
+}
+
+.messages-detail {
+  overflow: auto;
+  background: var(--bg-2);
+}
+
+.messages-detail > .output {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.messages-detail .output {
+  margin: 0;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.messages-detail-empty {
+  padding: 20px 14px;
+}
+
+/* A fully tag-wrapped message as label/content rows, dl-style. */
+.msg-sections {
+  display: grid;
+  grid-template-columns: fit-content(160px) 1fr;
+  gap: 10px 16px;
+  align-items: start;
+  padding: 12px 14px;
+  line-height: 1.45;
+}
+
+.msg-section-label {
+  color: var(--fg-muted);
+}
+
+.msg-sections .markdown {
+  height: auto;
+  overflow: visible;
+  padding: 0;
+}
+
+.msg-sections .markdown > :first-child {
+  margin-top: 0;
+}
+
+.msg-sections .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-tool-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.msg-tool-detail .tabs {
+  padding: 0 14px;
+  flex: none;
+}
+
+.msg-tool-actions {
+  padding: 10px 14px 0;
+  flex: none;
+}
+
+.msg-tool-pending {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.msg-tool-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.msg-image-wrap {
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+}
+
+.msg-image-wrap img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: left top;
+  display: block;
+}
+
+/* ---------- Tool content renders ---------- */
+
+.tc-file {
+  padding: 10px 14px 0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.tc-caption {
+  padding: 8px 14px 0;
+}
+
+.tc-heading {
+  padding: 10px 14px 0;
+  font-weight: 600;
+}
+
+.tc-fields {
+  padding: 6px 14px 0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.term-block {
+  margin: 8px 14px;
+  background: var(--bg-3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.diff {
+  padding: 8px 14px 12px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.diff-hunk-header {
+  color: var(--fg-muted);
+  padding: 6px 0 2px;
+}
+
+.diff-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-add {
+  background: rgba(46, 160, 67, 0.18);
+}
+
+.diff-del {
+  background: rgba(248, 81, 73, 0.18);
+}
+
+.code-view {
+  padding: 12px 14px 12px 0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.code-line {
+  display: flex;
+}
+
+.code-gutter {
+  flex: none;
+  width: 52px;
+  text-align: right;
+  padding-right: 12px;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.code-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.todo-list {
+  padding: 12px 14px;
+}
+
+.todo-item {
+  padding: 2px 0;
+}
+
+.todo-item.done {
+  color: var(--fg-muted);
+}
+
+.todo-mark {
+  display: inline-block;
+  width: 22px;
+}
+
+.json-tree {
+  padding: 12px 14px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.json-node > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.json-children {
+  margin-left: 18px;
+}
+
+.json-leaf {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-list {
+  padding: 8px 14px 12px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.file-list-item {
+  padding: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+.file-list-item:hover {
+  background: var(--bg-3);
+}
+
+/* ---------- Image window ---------- */
+
+.image-app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.image-app .toolbar {
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.image-zoom {
+  width: 90px;
+  flex: none;
+  margin: 0 2px;
+}
+
+.image-zoom input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  height: 28px;
+  padding: 0 28px 0 8px;
+}
+
+.image-zoom input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.image-zoom input:disabled {
+  opacity: 0.55;
+}
+
+.image-viewport {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-2);
+  padding: 12px;
+}
+
+.image-viewport img {
+  display: block;
+}
+
+.image-missing {
+  padding: 20px 14px;
+}
