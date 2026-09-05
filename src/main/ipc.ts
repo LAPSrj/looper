@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'ele
 import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
 
 import type { AppInfo } from '../shared/api';
@@ -26,6 +27,7 @@ export interface IpcHost {
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
   takeImportDraft: (key: string) => unknown;
+  openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean) => void;
 }
 
@@ -41,36 +43,39 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('tasks:list', () => engine.listTasks());
   ipcMain.handle('tasks:save', (_e, input: unknown) => engine.saveTask(input));
   ipcMain.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
-  ipcMain.handle('tasks:export', async (e, id: string) => {
-    const task = engine.getTask(id);
-    if (!task) return;
+  /** Save dialog, then write the definition as a Looper document of the given kind. */
+  const exportDocument = async (e: Electron.IpcMainInvokeEvent, kind: LooperFileKind, item?: Task): Promise<void> => {
+    if (!item) return;
     const sender = BrowserWindow.fromWebContents(e.sender);
+    const { ext, filterName } = FILE_KINDS[kind];
     const options: Electron.SaveDialogOptions = {
-      title: 'Export Task',
-      defaultPath: `${task.id}.json`,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      title: kind === 'task' ? 'Export Task' : 'Export Template',
+      defaultPath: `${item.id}.${ext}`,
+      filters: [{ name: filterName, extensions: [ext] }],
     };
     const result = sender ? await dialog.showSaveDialog(sender, options) : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return;
-    const data = { ...task };
+    const data = { ...item };
     delete data.createdAt;
     delete data.updatedAt;
     // A one-off run note is transient state, never part of an exported definition.
     delete data.note;
     try {
-      fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+      const doc = wrapLooperFile(kind, app.getVersion(), data);
+      fs.writeFileSync(result.filePath, JSON.stringify(doc, null, 2) + '\n', 'utf8');
     } catch (err) {
       const opts: Electron.MessageBoxOptions = {
         type: 'error',
         title: 'Looper',
-        message: 'Could not export task.',
+        message: kind === 'task' ? 'Could not export task.' : 'Could not export template.',
         detail: (err as Error).message,
         buttons: ['OK'],
       };
       if (sender) await dialog.showMessageBox(sender, opts);
       else await dialog.showMessageBox(opts);
     }
-  });
+  };
+  ipcMain.handle('tasks:export', (e, id: string) => exportDocument(e, 'task', engine.getTask(id)));
 
   ipcMain.handle(
     'tasks:reorder',
@@ -92,6 +97,22 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('templates:save', (_e, input: unknown) => engine.saveTemplate(input));
   ipcMain.handle('templates:remove', (_e, id: string) => engine.removeTemplate(id));
   ipcMain.handle('templates:reorder', (_e, ids: string[]) => engine.reorderTemplates(ids));
+  ipcMain.handle('templates:export', (e, id: string) =>
+    exportDocument(e, 'template', engine.listTemplates().find((t) => t.id === id)),
+  );
+  ipcMain.handle('templates:import', async (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import Template',
+      filters: [{ name: FILE_KINDS.template.filterName, extensions: [FILE_KINDS.template.ext] }],
+      properties: ['openFile'],
+    };
+    const result = sender ? await dialog.showOpenDialog(sender, options) : await dialog.showOpenDialog(options);
+    const file = result.canceled ? undefined : result.filePaths[0];
+    if (file) await host.openLooperFile(file);
+  });
+  /** A Looper document dropped onto a window; behaves exactly like double-clicking it. */
+  ipcMain.handle('file:openLooper', (_e, file: string) => host.openLooperFile(file));
 
   ipcMain.handle('runtime:list', () => engine.listRuntimes());
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));

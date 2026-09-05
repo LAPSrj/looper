@@ -80,6 +80,14 @@ export function TemplatesApp() {
             onRemove={() => void remove()}
             removeDisabled={!tpl}
           />
+          <div className="env-actions">
+            <button className="btn" onClick={() => void window.looper.templates.import()}>
+              Import…
+            </button>
+            <button className="btn" disabled={!tpl} onClick={() => tpl && void window.looper.templates.export(tpl.id)}>
+              Export…
+            </button>
+          </div>
         </div>
       </div>
       <div className="editor-footer">

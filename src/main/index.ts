@@ -5,6 +5,7 @@ import { createEngine, type Engine } from '../engine/engine';
 import type { EngineEvent, Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
+import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
 import { registerIpc } from './ipc';
 
 let win: BrowserWindow | null = null;
@@ -27,8 +28,12 @@ const startHidden = process.argv.includes('--hidden');
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_e, argv) => {
     showWindow();
+    // A double-clicked/“Open with” Looper document lands in the second
+    // instance's argv while this instance holds the single-instance lock.
+    const file = looperFileFromArgv(argv);
+    if (file) void openLooperFile(file);
   });
 
   app.whenReady().then(() => {
@@ -65,11 +70,18 @@ if (!app.requestSingleInstanceLock()) {
       openTemplatePicker: openTemplatePickerWindow,
       openEditorFromTemplate: openEditorFromTemplateWindow,
       takeImportDraft,
+      openLooperFile,
       updateTaskMenu,
     });
     Menu.setApplicationMenu(null);
     createTray();
     if (!startHidden) createWindow();
+    // Launched by double-clicking a Looper document (file association).
+    const fileArg = looperFileFromArgv(process.argv);
+    if (fileArg) {
+      if (!win) createWindow();
+      void openLooperFile(fileArg);
+    }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -650,46 +662,69 @@ function takeImportDraft(key: string): unknown {
   return draft ?? null;
 }
 
-/**
- * Pick a task JSON file and open a New Task editor prefilled from it. The
- * editor sanitizes field by field, so a bad file yields empty/default fields
- * to fix rather than an error.
- */
+/** Pick a .loopertask file and open a New Task editor prefilled from it. */
 async function importTask(): Promise<void> {
   if (!win || win.isDestroyed()) return;
   const result = await dialog.showOpenDialog(win, {
     title: 'Import Task',
-    filters: [{ name: 'JSON', extensions: ['json'] }],
+    filters: [{ name: FILE_KINDS.task.filterName, extensions: [FILE_KINDS.task.ext] }],
     properties: ['openFile'],
   });
   const file = result.canceled ? undefined : result.filePaths[0];
-  if (!file) return;
+  if (file) await openLooperFile(file);
+}
+
+async function fileErrorBox(message: string, detail: string): Promise<void> {
+  const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, detail, buttons: ['OK'] };
+  if (win && !win.isDestroyed()) await dialog.showMessageBox(win, opts);
+  else await dialog.showMessageBox(opts);
+}
+
+/** The last argument naming an existing Looper document (double-click / “Open with” / drop). */
+function looperFileFromArgv(argv: string[]): string | undefined {
+  for (let i = argv.length - 1; i > 0; i--) {
+    const arg = argv[i];
+    if (arg.startsWith('-') || !isLooperFileName(arg)) continue;
+    if (fs.existsSync(arg)) return arg;
+  }
+  return undefined;
+}
+
+/**
+ * Open a Looper document as if double-clicked: check the envelope, route by
+ * its $type, and open the matching import editor prefilled from the payload.
+ * The editor sanitizes field by field, so a bad payload yields empty/default
+ * fields to fix rather than an error.
+ */
+async function openLooperFile(file: string): Promise<void> {
+  if (!isLooperFileName(file)) return;
   let input: unknown;
   try {
     input = readJson<unknown>(file, undefined);
   } catch (err) {
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: 'Looper',
-      message: 'Could not read the task file.',
-      detail: (err as Error).message,
-      buttons: ['OK'],
-    });
+    await fileErrorBox('Could not read the file.', (err as Error).message);
     return;
   }
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: 'Looper',
-      message: 'Could not import task.',
-      detail: 'The file does not contain a task object.',
-      buttons: ['OK'],
-    });
+  if (input === undefined) {
+    await fileErrorBox('Could not read the file.', `File not found: ${file}`);
+    return;
+  }
+  const doc = readLooperFile(input);
+  if (!doc.ok) {
+    if (doc.reason === 'newer') {
+      await fileErrorBox(
+        'This file was created by a newer version of Looper.',
+        doc.app ? `Update Looper to version ${doc.app} or later to import it.` : 'Update Looper to import it.',
+      );
+    } else {
+      await fileErrorBox('Could not import the file.', 'The file does not contain a Looper task or template.');
+    }
     return;
   }
   const key = Math.random().toString(36).slice(2, 10);
-  importDrafts.set(key, input);
-  openChildWindow(`editor-import/${key}`, 'New Task — Looper', 780, 700);
+  importDrafts.set(key, doc.payload);
+  if (doc.kind === 'task') openChildWindow(`editor-import/${key}`, 'New Task — Looper', 780, 700);
+  else openChildWindow(`template-import/${key}`, 'New Template — Looper', 780, 700);
 }
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */

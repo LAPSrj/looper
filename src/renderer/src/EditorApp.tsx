@@ -51,21 +51,20 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, mode 
         setInitialReady(true);
       });
     } else if (importKey) {
-      void Promise.all([info, window.looper.importDraft(importKey), window.looper.tasks.list()]).then(
-        ([i, raw, tasks]) => {
-          if (raw !== null && raw !== undefined) {
-            setInitial(
-              importTaskDraft(raw, {
-                environments: i.settings.environments,
-                host: i.host,
-                defaultEnvironmentId: i.settings.defaultEnvironmentId,
-                existingIds: tasks.map((t) => t.id),
-              }),
-            );
-          }
-          setInitialReady(true);
-        },
-      );
+      const existing = mode === 'template' ? window.looper.templates.list() : window.looper.tasks.list();
+      void Promise.all([info, window.looper.importDraft(importKey), existing]).then(([i, raw, items]) => {
+        if (raw !== null && raw !== undefined) {
+          setInitial(
+            importTaskDraft(raw, {
+              environments: i.settings.environments,
+              host: i.host,
+              defaultEnvironmentId: i.settings.defaultEnvironmentId,
+              existingIds: items.map((t) => t.id),
+            }),
+          );
+        }
+        setInitialReady(true);
+      });
     } else if (taskId) {
       void window.looper.tasks.list().then((tasks) => {
         const found = tasks.find((t) => t.id === taskId) ?? null;

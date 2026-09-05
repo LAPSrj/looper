@@ -171,15 +171,25 @@ check command, or agent prompt required).
 
 ## Import and export
 
-- **File → Import Task…** picks a JSON file and opens a new task editor
-  prefilled from it. Any field that fails validation — an unknown
+Tasks and templates travel as Looper's own document types: `.loopertask`
+(a task) and `.loopertpl` (a template). Both are plain JSON — the
+definition's fields plus a small header (`$type`, `$version`, and `$app`,
+the Looper version that wrote the file). Double-clicking one of these files
+in Explorer, or dragging it onto any Looper window, opens the matching
+import editor. A file written by a newer Looper than the one reading it is
+refused with the version to update to.
+
+- **File → Import Task…** picks a `.loopertask` file and opens a new task
+  editor prefilled from it. Any field that fails validation — an unknown
   environment or harness, a bad cron expression, a path in the wrong style
   for the environment — resets to its default instead of blocking the
   import, so you fix it in the editor rather than getting a raw error.
 - **File → Export Task…** (with a task selected) writes the task's full
-  definition to a JSON file you choose, defaulting to `<task id>.json`. Any
-  pending one-off guidance note is left out, since it's run-specific, not
-  part of the task's definition.
+  definition to a `.loopertask` file you choose, defaulting to
+  `<task id>.loopertask`. Any pending one-off guidance note is left out,
+  since it's run-specific, not part of the task's definition.
+- **Templates** import and export the same way from the Templates window
+  (File → Templates… → Import…/Export…), as `.loopertpl` files.
 
 ## Prompt template variables
 

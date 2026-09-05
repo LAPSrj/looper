@@ -69,6 +69,22 @@
       "assets/icon.ico",
       "package.json"
     ],
+    "fileAssociations": [
+      {
+        "ext": "loopertask",
+        "name": "Looper Task",
+        "description": "Looper Task",
+        "icon": "assets/loopertask.ico",
+        "role": "Editor"
+      },
+      {
+        "ext": "loopertpl",
+        "name": "Looper Template",
+        "description": "Looper Template",
+        "icon": "assets/loopertpl.ico",
+        "role": "Editor"
+      }
+    ],
     "win": {
       "icon": "assets/icon.ico",
       "target": [

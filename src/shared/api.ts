@@ -16,7 +16,7 @@ export interface LooperApi {
     list(): Promise<Task[]>;
     save(input: unknown): Promise<Task>;
     remove(id: string): Promise<boolean>;
-    /** Native save dialog, then write the task as JSON (store timestamps stripped). */
+    /** Native save dialog, then write the task as a .loopertask document (store timestamps stripped). */
     export(id: string): Promise<void>;
     /**
      * Persist a new task order; `folders` reassigns tasks to folders,
@@ -44,6 +44,10 @@ export interface LooperApi {
     save(input: unknown): Promise<Template>;
     remove(id: string): Promise<boolean>;
     reorder(ids: string[]): Promise<void>;
+    /** Native save dialog, then write the template as a .loopertpl document (store timestamps stripped). */
+    export(id: string): Promise<void>;
+    /** Native open dialog, then a New Template editor prefilled from the picked .loopertpl file. */
+    import(): Promise<void>;
   };
   runtime: {
     list(): Promise<TaskRuntime[]>;
@@ -69,6 +73,8 @@ export interface LooperApi {
     resize(id: string, cols: number, rows: number): void;
   };
   openPath(p: string): Promise<void>;
+  /** Open a dropped Looper document (.loopertask/.loopertpl) as if it were double-clicked. */
+  openLooperFile(file: File): Promise<void>;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(): Promise<string>;
   /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */

@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { isLooperFileName } from '@shared/files';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
@@ -27,6 +28,7 @@ const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
 const templateEditorMatch = /^template-editor(?:\/(.+))?$/.exec(hash);
 const fromTemplateMatch = /^editor-from-template\/(.+)$/.exec(hash);
 const importMatch = /^editor-import\/(.+)$/.exec(hash);
+const templateImportMatch = /^template-import\/(.+)$/.exec(hash);
 const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
@@ -53,6 +55,7 @@ function pickRoot() {
   }
   if (fromTemplateMatch) return <EditorApp fromTemplateId={decodeURIComponent(fromTemplateMatch[1])} />;
   if (importMatch) return <EditorApp importKey={decodeURIComponent(importMatch[1])} />;
+  if (templateImportMatch) return <EditorApp mode="template" importKey={decodeURIComponent(templateImportMatch[1])} />;
 
   if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
   if (noteEditorMatch) return <NoteEditorApp taskId={decodeURIComponent(noteEditorMatch[1])} />;
@@ -115,5 +118,15 @@ function pickRoot() {
   if (hash === 'about') return <AboutApp />;
   return <App />;
 }
+
+// A file dropped on any window must never navigate it; a Looper document
+// (.loopertask/.loopertpl) imports instead, as if it had been double-clicked.
+// In-app drags (list reordering) carry no files and fall through untouched.
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (file && isLooperFileName(file.name)) void window.looper.openLooperFile(file);
+});
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode>{pickRoot()}</React.StrictMode>);

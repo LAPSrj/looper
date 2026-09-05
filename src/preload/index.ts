@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { LooperApi, UiEvent } from '../shared/api';
 import type { EngineEvent } from '../shared/types';
 
@@ -23,6 +23,8 @@ const api: LooperApi = {
     save: (input) => ipcRenderer.invoke('templates:save', input),
     remove: (id) => ipcRenderer.invoke('templates:remove', id),
     reorder: (ids) => ipcRenderer.invoke('templates:reorder', ids),
+    export: (id) => ipcRenderer.invoke('templates:export', id),
+    import: () => ipcRenderer.invoke('templates:import'),
   },
   runtime: {
     list: () => ipcRenderer.invoke('runtime:list'),
@@ -45,6 +47,8 @@ const api: LooperApi = {
     resize: (id, cols, rows) => ipcRenderer.send('agent:resize', id, cols, rows),
   },
   openPath: (p) => ipcRenderer.invoke('openPath', p),
+  // webUtils resolves the dropped File to its on-disk path (File.path is gone).
+  openLooperFile: (file) => ipcRenderer.invoke('file:openLooper', webUtils.getPathForFile(file)),
   readEngineLog: () => ipcRenderer.invoke('engineLog:read'),
   openTaskTerminal: (taskId) => ipcRenderer.invoke('task:openTerminal', taskId),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
