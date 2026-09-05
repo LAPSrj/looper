@@ -34,13 +34,22 @@ boolean `act` field, e.g.:
 ## Classifying
 
 If a classifier is configured, it runs after a check that returned
-`act: true` (or on every slot if there's no check). It's always a headless
-Claude Code call at the configured model (`haiku` by default) with the check's
-`summary`/`context` folded into your prompt, and it must answer
-`{"act": boolean, "reason": string}` under a strict schema and its own
-timeout. `act: false` ends the cycle as **No action** with the classifier's
-`reason` as the detail; a malformed or failed response is an **error**, same
-as the check.
+`act: true` (or on every slot if there's no check). It's a Claude Code
+session at the configured model (`haiku` by default) with the check's
+`summary`/`context` folded into your prompt, under its own timeout — run the
+same two ways as the agent. Headless (the default) is a `claude -p` call
+that must answer `{"act": boolean, "reason": string}` under a strict schema.
+Interactive runs in a real pty shown in the task's terminal tab — you can
+watch it and type into it — and gives its verdict by running
+`looper-classify act "<reason>"` or `looper-classify noop "<reason>"`,
+followed by a short closing message. In both modes the classifier's output
+streams to the terminal tab, its conversation shows in the run's Messages
+window (replies typed as **Classifier**), and its files live under
+`classify-*` in the run folder, fully separate from the agent's.
+
+`act: false` ends the cycle as **No action** with the classifier's `reason`
+as the detail; a malformed or failed response is an **error**, same as the
+check.
 
 Skipping the classifier's fee on obvious no-ops is its whole purpose: it's a
 cheap model call standing between a noisy check and an expensive agent

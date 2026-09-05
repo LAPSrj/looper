@@ -4,7 +4,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
-import { STOP_BLOCK_BACKGROUND, STOP_BLOCK_NO_DONE } from '../src/engine/target/stop-hook';
+import { stopHookMessages } from '../src/engine/target/stop-hook';
+
+const MSGS = stopHookMessages('agent');
+const STOP_BLOCK_BACKGROUND = MSGS.blockBackground;
+const STOP_BLOCK_NO_DONE = MSGS.blockNoDone;
 
 // The Stop-hook gate, run for real (bash): block while background tasks run,
 // remind once about looper-done, otherwise record the payload in stop.json.
@@ -30,7 +34,7 @@ function makeGate(): Gate {
   const reminderFile = path.join(dir, 'stop-reminded');
   const script = path.join(dir, 'looper-stop-hook');
   const t = new BashTarget({ host: 'wsl' }, undefined);
-  fs.writeFileSync(script, t.renderStopHook({ stopJson, doneFile, reminderFile }), { mode: 0o755 });
+  fs.writeFileSync(script, t.renderStopHook({ stopJson, doneFile, reminderFile, ...MSGS }), { mode: 0o755 });
   return {
     dir,
     stopJson,
@@ -141,6 +145,7 @@ describe('windows Stop-hook gate', () => {
       stopJson: 'C:\\data\\r1\\stop.json',
       doneFile: 'C:\\data\\r1\\done',
       reminderFile: 'C:\\data\\r1\\stop-reminded',
+      ...MSGS,
     });
     expect(script).toContain("Test-Path -LiteralPath 'C:\\data\\r1\\done'");
     expect(script).toContain('ConvertFrom-Json');

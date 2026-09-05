@@ -210,9 +210,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   /** Throws when the extra-arguments or env line is malformed. */
   function assemble(): Record<string, unknown> {
     const parsedArgs = tokenize(extraArgsText);
-    if (!parsedArgs.ok) throw new Error(`extra arguments: ${parsedArgs.error}`);
+    if (!parsedArgs.ok) throw new Error(`Extra command-line arguments: ${parsedArgs.error}`);
     const parsedEnv = lineToEnv(envText);
-    if (typeof parsedEnv === 'string') throw new Error(`environment variables: ${parsedEnv}`);
+    if (typeof parsedEnv === 'string') throw new Error(`Extra environment variables: ${parsedEnv}`);
     return {
       ...draft,
       id: draft.id?.trim() || slugify(draft.name),
@@ -630,6 +630,18 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                       ))}
                     </select>
                   </Field>
+                  <Field label="Session type">
+                    <select
+                      value={cls?.mode ?? 'headless'}
+                      disabled={!clsOn}
+                      onChange={(e) => set('classifier', { ...draft.classifier!, mode: e.target.value as 'interactive' | 'headless' })}
+                    >
+                      <option value="headless">Headless (default)</option>
+                      <option value="interactive">Interactive terminal</option>
+                    </select>
+                  </Field>
+                </div>
+                <div className="row">
                   <Field label="Model">
                     <select
                       value={clsModelIsCustom ? 'custom' : cls?.model ?? 'haiku'}

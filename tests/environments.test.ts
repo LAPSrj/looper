@@ -192,7 +192,7 @@ describe('validateTask with environments', () => {
     expect(validateTask(task({ schedule: { enabled: true, cron: '0 9 * * *', timezone: 'America/Rio_de_Janeiro' } }), environments).ok).toBe(true);
     const bad = validateTask(task({ schedule: { enabled: true, cron: '0 9 * * *', timezone: 'Not/AZone' } }), environments);
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.errors[0]).toMatch(/schedule\.timezone/);
+    if (!bad.ok) expect(bad.errors[0]).toMatch(/Timezone: unknown timezone/);
   });
 
   it('requires environmentId', () => {

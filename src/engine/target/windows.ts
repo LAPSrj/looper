@@ -1,12 +1,15 @@
 import type { LauncherSpec, SpawnSpec, Target, TargetContext } from './index';
-import { STOP_BLOCK_BACKGROUND, STOP_BLOCK_NO_DONE, type StopHookSpec } from './stop-hook';
+import type { StopHookSpec } from './stop-hook';
 import { translatePath } from './paths';
 import { wslDistroName } from '../host';
 
 export class WindowsTarget implements Target {
   readonly kind = 'windows' as const;
   readonly launcherExt = '.ps1';
-  readonly doneHelperFile = 'looper-done.cmd';
+
+  doneHelperFile(command: string): string {
+    return command + '.cmd';
+  }
   private readonly mountPrefix: string;
 
   constructor(
@@ -43,10 +46,11 @@ export class WindowsTarget implements Target {
       lines.push(`$env:${k} = ${this.quote(v)}`);
     }
     lines.push(`$env:PATH = ${this.quote(spec.binDir)} + ';' + $env:PATH`);
+    const statuses = spec.doneStatuses.map((s) => `'${s}'`).join(',');
     lines.push(
-      'function looper-done { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$msg)',
-      "  $status = 'success'",
-      "  if ($msg -and @('success','warning','error') -contains $msg[0]) {",
+      `function ${spec.doneCommand} { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$msg)`,
+      "  $status = ''",
+      `  if ($msg -and @(${statuses}) -contains $msg[0]) {`,
       '    $status = $msg[0]',
       '    $msg = if ($msg.Count -gt 1) { $msg[1..($msg.Count - 1)] } else { @() }',
       '  }',
@@ -62,15 +66,13 @@ export class WindowsTarget implements Target {
     return lines.join('\r\n');
   }
 
-  renderDoneHelper(): string {
+  renderDoneHelper(statuses: readonly string[]): string {
     return [
       '@echo off',
       'setlocal',
-      'set "status=success"',
+      'set "status="',
       'set "msg=%*"',
-      'if /i "%~1"=="success" goto strip',
-      'if /i "%~1"=="warning" goto strip',
-      'if /i "%~1"=="error" goto strip',
+      ...statuses.map((s) => `if /i "%~1"=="${s}" goto strip`),
       'goto write',
       ':strip',
       'set "status=%~1"',
@@ -82,8 +84,8 @@ export class WindowsTarget implements Target {
       'goto collect',
       ':write',
       'if not defined msg set "msg=done"',
-      'echo %status%> "%LOOPER_DONE_FILE%"',
-      'echo %msg%>> "%LOOPER_DONE_FILE%"',
+      'echo.%status%> "%LOOPER_DONE_FILE%"',
+      'echo.%msg%>> "%LOOPER_DONE_FILE%"',
       '',
     ].join('\r\n');
   }
@@ -109,10 +111,10 @@ export class WindowsTarget implements Target {
       `if (Test-Path -LiteralPath ${q(spec.doneFile)}) { [IO.File]::WriteAllText(${q(spec.stopJson)}, $payload); exit 0 }`,
       '$running = @()',
       "try { $running = @(($payload | ConvertFrom-Json).background_tasks | Where-Object { $_.status -eq 'running' }) } catch {}",
-      `if ($running.Count -gt 0) { Write-Output ${q(STOP_BLOCK_BACKGROUND)}; exit 0 }`,
+      `if ($running.Count -gt 0) { Write-Output ${q(spec.blockBackground)}; exit 0 }`,
       `if (-not (Test-Path -LiteralPath ${q(spec.reminderFile)})) {`,
       `  New-Item -ItemType File -Path ${q(spec.reminderFile)} -Force | Out-Null`,
-      `  Write-Output ${q(STOP_BLOCK_NO_DONE)}`,
+      `  Write-Output ${q(spec.blockNoDone)}`,
       '  exit 0',
       '}',
       `[IO.File]::WriteAllText(${q(spec.stopJson)}, $payload)`,

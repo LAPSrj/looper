@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { LauncherSpec, SpawnSpec, Target, TargetContext } from './index';
-import { STOP_BLOCK_BACKGROUND, STOP_BLOCK_NO_DONE, type StopHookSpec } from './stop-hook';
+import type { StopHookSpec } from './stop-hook';
 import { translatePath } from './paths';
 import { wslDistroName } from '../host';
 import { DEFAULT_SHELL } from '../../shared/environments';
@@ -17,7 +17,10 @@ function killScript(runId: string, signal: string): string {
 export class BashTarget implements Target {
   readonly kind = 'wsl' as const;
   readonly launcherExt = '.sh';
-  readonly doneHelperFile = 'looper-done';
+
+  doneHelperFile(command: string): string {
+    return command;
+  }
   private readonly shellParts: string[];
   private readonly mountPrefix: string;
 
@@ -61,10 +64,11 @@ export class BashTarget implements Target {
       lines.push(`export ${k}=${this.quote(v)}`);
     }
     lines.push(`export PATH=${this.quote(spec.binDir)}":$PATH"`);
+    const statuses = spec.doneStatuses.join('|');
     lines.push(
-      `looper-done() { local s=success; case "$1" in success|warning|error) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
+      `${spec.doneCommand}() { local s=; case "$1" in ${statuses}) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
     );
-    lines.push('export -f looper-done 2>/dev/null');
+    lines.push(`export -f ${spec.doneCommand} 2>/dev/null`);
     lines.push(
       `cd ${this.quote(spec.cwd)} || { echo "looper: cannot cd to ${spec.cwd}" >&2; exit 97; }`,
     );
@@ -73,11 +77,11 @@ export class BashTarget implements Target {
     return lines.join('\n');
   }
 
-  renderDoneHelper(): string {
+  renderDoneHelper(statuses: readonly string[]): string {
     return [
       '#!/usr/bin/env bash',
-      's=success',
-      'case "$1" in success|warning|error) s="$1"; shift;; esac',
+      's=',
+      `case "$1" in ${statuses.join('|')}) s="$1"; shift;; esac`,
       `printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"`,
       '',
     ].join('\n');
@@ -137,14 +141,14 @@ export class BashTarget implements Target {
       "  '['*)",
       '    tasks=$(scan_tasks "${rest#?}")',
       '    case $tasks in',
-      `    *'"status":"running"'*) printf '%s\\n' ${q(STOP_BLOCK_BACKGROUND)}; exit 0 ;;`,
+      `    *'"status":"running"'*) printf '%s\\n' ${q(spec.blockBackground)}; exit 0 ;;`,
       '    esac',
       '    ;;',
       '  esac',
       'fi',
       `if [ ! -e ${q(spec.reminderFile)} ]; then`,
       `  : > ${q(spec.reminderFile)}`,
-      `  printf '%s\\n' ${q(STOP_BLOCK_NO_DONE)}`,
+      `  printf '%s\\n' ${q(spec.blockNoDone)}`,
       '  exit 0',
       'fi',
       `printf '%s' "$payload" > ${q(spec.stopJson)}`,

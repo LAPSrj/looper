@@ -1,5 +1,5 @@
 import type { MessageImage, MessagesResult } from './messages';
-import type { EngineEvent, RunRecord, Settings, Task, TaskRuntime, Template } from './types';
+import type { EngineEvent, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -18,11 +18,32 @@ export interface LooperApi {
     remove(id: string): Promise<boolean>;
     /** Native save dialog, then write the task as JSON (store timestamps stripped). */
     export(id: string): Promise<void>;
+    /**
+     * Persist a new task order; `folders` reassigns tasks to folders,
+     * `layout` sets the sibling display order per container and `parents`
+     * re-nests folders, all in the same write.
+     */
+    reorder(
+      ids: string[],
+      folders?: Record<string, string | null>,
+      layout?: Record<string, string[]>,
+      parents?: Record<string, string | null>,
+    ): Promise<void>;
+  };
+  folders: {
+    list(): Promise<TaskFolder[]>;
+    /** Sibling display order per container ('' = top level): `folder:<id>` entries mixed with task ids. */
+    layout(): Promise<Record<string, string[]>>;
+    add(name: string, parentId?: string): Promise<TaskFolder>;
+    rename(id: string, name: string): Promise<TaskFolder>;
+    /** Delete a folder; its tasks move to the top level. */
+    remove(id: string): Promise<boolean>;
   };
   templates: {
     list(): Promise<Template[]>;
     save(input: unknown): Promise<Template>;
     remove(id: string): Promise<boolean>;
+    reorder(ids: string[]): Promise<void>;
   };
   runtime: {
     list(): Promise<TaskRuntime[]>;
@@ -64,6 +85,8 @@ export interface LooperApi {
   openEditor(taskId?: string): Promise<void>;
   /** Open the next-run guidance window for a task. */
   openNoteEditor(taskId: string): Promise<void>;
+  /** Open the move-to-folder window for a task. */
+  openMoveToFolder(taskId: string): Promise<void>;
 
   /** Open the environment editor in its own window (isNew: discard the environment when closed unsaved). */
   openEnvironmentEditor(envId: string, isNew?: boolean): Promise<void>;
@@ -109,6 +132,10 @@ export interface LooperApi {
   /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
   reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void;
   showTaskContextMenu(info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }): void;
+  /** Context menu of a task-list folder header. */
+  showFolderContextMenu(info: { folderId: string }): void;
+  /** Context menu of the task list's empty space / "Tasks" title (New Folder…). */
+  showTasksEmptyContextMenu(): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }): void;
   /** Report the conversation window's current filter text (drives the Filter… checkmark and the filter window's initial value). */
@@ -129,6 +156,7 @@ export type UiEvent =
         | 'edit-task'
         | 'edit-note'
         | 'clear-note'
+        | 'move-to-folder'
         | 'export-task'
         | 'delete-task'
         | 'enable-disable'

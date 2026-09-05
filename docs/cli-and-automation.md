@@ -173,19 +173,24 @@ tasks/<id>/runs.jsonl  one record per phase (check/classify/agent) per run;
 tasks/<id>/runs/<runId>/
   check.sh (or .ps1)      the check step's launcher script
   check.out.txt, check.err.txt
-  classify.sh (or .ps1)   the classifier's launcher script
-  classify-prompt.txt, classify.out.txt
   run.sh (or .ps1)        the agent's launcher script
   prompt.txt              the rendered agent prompt
   system.txt, settings.json  Claude Code only: injected instructions and
-                       the Stop-hook settings file
-  output.log              raw terminal capture of the agent session
+                       the hooks settings file
+  output.log              raw capture of the agent session
+  output.txt              rendered terminal (interactive) / stream lines (headless)
   done                    signal file: the looper-done status + headline
   stop.json               signal file: the last Stop-hook payload
   stop-reminded           marker: the one-time looper-done reminder was issued
   session.json            the SessionStart-hook payload (names the transcript)
   bin/looper-done         the helper script the agent's PATH exposes
   bin/looper-stop-hook    the Stop-hook gate script (.ps1 on Windows)
+  classify.sh (or .ps1)   the classifier's launcher script
+  classify-*              the classifier session's own set of the same files
+                       (classify-prompt.txt, classify-output.log/.txt,
+                       classify-settings.json, classify-session.json,
+                       classify-schema.json, classify-done, …) plus
+                       bin/looper-classify — the verdict helper
 ```
 
 Every step Looper runs — check, classifier, agent — goes through one of

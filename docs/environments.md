@@ -105,10 +105,12 @@ environment's first harness). The Agent tab is also where you set the
 model, session type (interactive or headless), and — for Claude Code — the
 permission mode; see [the task editor](tasks.md) for the full field list.
 
-The optional classifier step runs as `claude -p`. Left blank, its Harness
-field on the Classifier tab resolves to the task's own harness if that's
-Claude Code, otherwise the environment's first Claude Code harness; you can
-also pick a specific harness (and model) there explicitly.
+The optional classifier step always runs on a Claude Code harness (headless
+`claude -p` by default, or an interactive session — its own Session type
+field). Left blank, its Harness field on the Classifier tab resolves to the
+task's own harness if that's Claude Code, otherwise the environment's first
+Claude Code harness; you can also pick a specific harness (and model) there
+explicitly.
 
 ## Default environments
 

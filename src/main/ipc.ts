@@ -2,8 +2,10 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'ele
 import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { folderSubtree } from '../shared/folders';
 
 import type { AppInfo } from '../shared/api';
+import type { Task } from '../shared/types';
 
 export interface IpcHost {
   getWindow: () => BrowserWindow | null;
@@ -12,6 +14,10 @@ export interface IpcHost {
   openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
   openEditor: (taskId?: string) => void;
   openNoteEditor: (taskId: string) => void;
+  openFolderNoteEditor: (folderId: string) => void;
+  openMoveToFolder: (taskId: string) => void;
+  openNewFolder: (parentId?: string) => void;
+  openRenameFolder: (folderId: string) => void;
 
   openEnvEditor: (envId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
   openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
@@ -66,9 +72,26 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     }
   });
 
+  ipcMain.handle(
+    'tasks:reorder',
+    (
+      _e,
+      ids: string[],
+      folders?: Record<string, string | null>,
+      layout?: Record<string, string[]>,
+      parents?: Record<string, string | null>,
+    ) => engine.reorderTasks(ids, folders, layout, parents),
+  );
+  ipcMain.handle('folders:list', () => engine.listFolders());
+  ipcMain.handle('folders:layout', () => engine.listLayout());
+  ipcMain.handle('folders:add', (_e, name: string, parentId?: string) => engine.addFolder(name, parentId));
+  ipcMain.handle('folders:rename', (_e, id: string, name: string) => engine.renameFolder(id, name));
+  ipcMain.handle('folders:remove', (_e, id: string) => engine.removeFolder(id));
+
   ipcMain.handle('templates:list', () => engine.listTemplates());
   ipcMain.handle('templates:save', (_e, input: unknown) => engine.saveTemplate(input));
   ipcMain.handle('templates:remove', (_e, id: string) => engine.removeTemplate(id));
+  ipcMain.handle('templates:reorder', (_e, ids: string[]) => engine.reorderTemplates(ids));
 
   ipcMain.handle('runtime:list', () => engine.listRuntimes());
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
@@ -128,6 +151,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runDetail:open', (_e, taskId: string, runId: string) => host.openRunDetail(taskId, runId));
   ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
   ipcMain.handle('noteEditor:open', (_e, taskId: string) => host.openNoteEditor(taskId));
+  ipcMain.handle('moveToFolder:open', (_e, taskId: string) => host.openMoveToFolder(taskId));
 
   ipcMain.handle('envEditor:open', (e, envId: string, isNew?: boolean) =>
     host.openEnvEditor(envId, isNew, BrowserWindow.fromWebContents(e.sender)),
@@ -280,18 +304,128 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
       { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled', click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
+      { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
+      { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
       { type: 'separator' },
       { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
       { label: 'Clear Guidance', enabled: info.hasNote, click: () => sender.webContents.send('ui:event', { type: 'clear-note' }) },
       { type: 'separator' },
+      { label: 'Move to Folder…', click: () => sender.webContents.send('ui:event', { type: 'move-to-folder' }) },
+      { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
+      { type: 'separator' },
       { label: 'Open Project in Terminal', click: () => sender.webContents.send('ui:event', { type: 'open-terminal' }) },
       { label: 'Open Working Directory', click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
-      { type: 'separator' },
-      { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
-      { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
-      { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
     ]);
     menu.popup({ window: sender });
+  });
+
+  // Folder header context menu. Bulk actions run directly against the engine;
+  // Run All skips disabled tasks and tasks already mid-cycle.
+  ipcMain.on('context-menu:folder', (e, info: { folderId: string }) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    // Folder actions apply to the whole subtree: nested folders included.
+    const subtree = () => folderSubtree(engine.listFolders(), info.folderId);
+    const members = () => {
+      const ids = subtree();
+      return engine.listTasks().filter((t) => t.folderId && ids.has(t.folderId));
+    };
+    const folderName = () => engine.listFolders().find((f) => f.id === info.folderId)?.name ?? '?';
+    const stateOf = (taskId: string) => engine.listRuntimes().find((rt) => rt.taskId === taskId)?.state;
+    const hasMembers = members().length > 0;
+    const forEachMember = (fn: (t: Task) => void) => {
+      for (const t of members()) {
+        try {
+          fn(t);
+        } catch (err) {
+          engine.log.error(`folder action on ${t.id} failed: ${String(err)}`);
+        }
+      }
+    };
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'Run All Now',
+        enabled: hasMembers,
+        click: () =>
+          forEachMember((t) => {
+            const state = stateOf(t.id);
+            const active = state === 'running' || state === 'checking' || state === 'classifying';
+            if (t.enabled && !active) engine.runNow(t.id);
+          }),
+      },
+      {
+        label: 'Pause All',
+        enabled: hasMembers,
+        click: () => forEachMember((t) => { if (stateOf(t.id) !== 'disabled') engine.pause(t.id); }),
+      },
+      {
+        label: 'Resume All',
+        enabled: hasMembers,
+        click: () => forEachMember((t) => { if (stateOf(t.id) === 'paused') engine.resume(t.id); }),
+      },
+      {
+        label: 'Enable All',
+        enabled: hasMembers,
+        click: () => forEachMember((t) => { if (!t.enabled) engine.saveTask({ ...t, enabled: true }); }),
+      },
+      {
+        label: 'Disable All',
+        enabled: hasMembers,
+        click: () => forEachMember((t) => { if (t.enabled) engine.saveTask({ ...t, enabled: false }); }),
+      },
+      { type: 'separator' },
+      {
+        label: 'Add Guidance for Next Runs…',
+        enabled: hasMembers,
+        click: () => host.openFolderNoteEditor(info.folderId),
+      },
+      { type: 'separator' },
+      {
+        label: 'New Subfolder…',
+        click: () => host.openNewFolder(info.folderId),
+      },
+      {
+        label: 'Rename Folder…',
+        click: () => host.openRenameFolder(info.folderId),
+      },
+      {
+        label: 'Delete Folder',
+        click: () => {
+          const count = members().length;
+          const opts: Electron.MessageBoxOptions = {
+            type: 'question',
+            title: 'Looper',
+            message: `Delete folder "${folderName()}"?`,
+            // Unchecked, the folder's contents just move up to its parent.
+            ...(count > 0
+              ? {
+                  checkboxLabel: 'Also delete tasks inside',
+                  checkboxChecked: false,
+                }
+              : {}),
+            buttons: ['Yes', 'No'],
+            defaultId: 0,
+            cancelId: 1,
+          };
+          void dialog.showMessageBox(sender, opts).then((r) => {
+            if (r.response !== 0) return;
+            if (r.checkboxChecked) {
+              // Delete the whole subtree: every task in it, then every nested folder.
+              for (const t of members()) engine.removeTask(t.id);
+              for (const id of subtree()) if (id !== info.folderId) engine.removeFolder(id);
+            }
+            engine.removeFolder(info.folderId);
+          });
+        },
+      },
+    ]);
+    menu.popup({ window: sender });
+  });
+
+  ipcMain.on('context-menu:tasks-empty', (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    Menu.buildFromTemplate([{ label: 'New Folder…', click: () => host.openNewFolder() }]).popup({ window: sender });
   });
 
   ipcMain.on(

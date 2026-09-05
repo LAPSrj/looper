@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCheckOutput } from '../src/engine/steps/check';
-import { parseClassifierOutput } from '../src/engine/steps/classify';
+import { toClassifyResult } from '../src/engine/steps/classify';
+import type { SessionEnd } from '../src/engine/steps/session';
 import { stripShellNoise } from '../src/engine/steps/common';
 
 describe('stripShellNoise', () => {
@@ -30,23 +31,37 @@ describe('parseCheckOutput', () => {
   });
 });
 
-describe('parseClassifierOutput', () => {
-  it('prefers structured_output', () => {
-    const env = JSON.stringify({
-      type: 'result',
-      is_error: false,
-      total_cost_usd: 0.01,
-      result: '{"act":false,"reason":"nope"}',
-      structured_output: { act: true, reason: 'yes' },
-    });
-    expect(parseClassifierOutput('warning line\n' + env)).toEqual({ ok: true, act: true, reason: 'yes', costUsd: 0.01 });
+describe('toClassifyResult', () => {
+  const end = (extra: Partial<SessionEnd>): SessionEnd => ({
+    reason: 'done',
+    exitCode: 0,
+    durationMs: 5,
+    wasHeld: false,
+    ...extra,
   });
-  it('falls back to result JSON', () => {
-    const env = JSON.stringify({ type: 'result', is_error: false, result: '{"act":false,"reason":"noise"}' });
-    expect(parseClassifierOutput(env)).toEqual({ ok: true, act: false, reason: 'noise', costUsd: undefined });
+
+  it('headless: reads the verdict from the structured output', () => {
+    const r = toClassifyResult(end({ structured: { act: true, reason: 'yes' }, costUsd: 0.01, body: '{"act":true}' }), true, 180);
+    expect(r).toMatchObject({ status: 'act', reason: 'yes', costUsd: 0.01 });
   });
-  it('surfaces errors', () => {
-    expect(parseClassifierOutput(JSON.stringify({ is_error: true, result: 'boom' })).ok).toBe(false);
-    expect(parseClassifierOutput('not json').ok).toBe(false);
+  it('headless: no structured output is an error', () => {
+    const r = toClassifyResult(end({ body: 'free text' }), true, 180);
+    expect(r.status).toBe('error');
+    expect(r.error).toContain('no verdict');
+  });
+  it('interactive: reads the verdict from looper-classify', () => {
+    const r = toClassifyResult(end({ doneStatus: 'noop', headline: 'nothing new', body: 'All quiet.' }), false, 180);
+    expect(r).toMatchObject({ status: 'noop', reason: 'nothing new', body: 'All quiet.' });
+  });
+  it('interactive: looper-classify without act/noop is an error', () => {
+    const r = toClassifyResult(end({ headline: 'done' }), false, 180);
+    expect(r.status).toBe('error');
+  });
+  it('maps timeouts, exits and stops', () => {
+    expect(toClassifyResult(end({ reason: 'max-runtime' }), true, 42).error).toContain('42 s');
+    expect(toClassifyResult(end({ reason: 'exited', exitCode: 3, headline: 'Claude exited 3' }), true, 180).status).toBe('error');
+    expect(toClassifyResult(end({ reason: 'stopped' }), false, 180).status).toBe('stopped');
+    const limited = toClassifyResult(end({ reason: 'error', headline: 'usage limit', retryAtMs: 123 }), true, 180);
+    expect(limited).toMatchObject({ status: 'error', retryAtMs: 123 });
   });
 });

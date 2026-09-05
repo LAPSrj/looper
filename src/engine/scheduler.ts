@@ -16,8 +16,9 @@ import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
-import { runClassify as defaultRunClassify } from './steps/classify';
-import { agentPrompt, startAgent as defaultStartAgent, type AgentEnd, type AgentHandle } from './steps/agent';
+import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
+import { agentPrompt, startAgent as defaultStartAgent, type AgentEnd } from './steps/agent';
+import type { SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
 import { newRunId, type RunStore } from './store/runs';
 import type { StateStore } from './store/state';
@@ -45,7 +46,8 @@ const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classify
 
 export class Scheduler extends EventEmitter {
   private readonly runtimes = new Map<string, TaskRuntime>();
-  private readonly agents = new Map<string, AgentHandle>();
+  /** The live harness session of each active task: the agent, or the interactive classifier. */
+  private readonly agents = new Map<string, SessionHandle>();
   /** Per active cycle: aborting kills whatever step is running (check, classifier). */
   private readonly cycleStops = new Map<string, { controller: AbortController; reason: string }>();
   private readonly buffers = new Map<string, { runId: string; data: string }>();
@@ -477,8 +479,9 @@ export class Scheduler extends EventEmitter {
       if (go && task.classifier?.enabled) {
         rt.state = 'classifying';
         this.emitRuntime(rt);
-        const cls = await this.steps.runClassify(ctx);
-        if (stopped()) {
+        this.record(task.id, runId, 'classify', 'started', { summary: checkSummary, body: classifyPrompt(ctx) });
+        const cls = await this.runClassifier(task, ctx);
+        if (stopped() || cls.status === 'stopped') {
           go = false;
           outcome = 'stopped';
           detail = stopper.reason;
@@ -488,6 +491,7 @@ export class Scheduler extends EventEmitter {
             durationMs: cls.durationMs,
             exitCode: cls.exitCode,
             summary: cls.reason,
+            body: cls.body,
             error: cls.error,
             detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
           });
@@ -496,6 +500,7 @@ export class Scheduler extends EventEmitter {
             go = false;
             outcome = 'error';
             detail = `classifier error: ${cls.error}`;
+            retryAtMs = cls.retryAtMs;
           } else if (cls.status === 'noop') {
             go = false;
             detail = `classifier: ${cls.reason ?? 'no'}`;
@@ -648,18 +653,43 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body });
   }
 
-  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd> {
+  /** Feed a session's output into the task's terminal buffer and the live event stream. */
+  private bufferSink(taskId: string, runId: string): (data: string) => void {
     const max = this.d.settings.outputBufferBytes;
-    this.buffers.set(task.id, { runId: ctx.runId, data: '' });
+    // Keep the buffer across the steps of one run, so the terminal tab shows
+    // the classifier's output followed by the agent's.
+    const existing = this.buffers.get(taskId);
+    if (!existing || existing.runId !== runId) this.buffers.set(taskId, { runId, data: '' });
+    return (data) => {
+      const buf = this.buffers.get(taskId);
+      if (buf && buf.runId === runId) {
+        buf.data += data;
+        if (buf.data.length > max) buf.data = buf.data.slice(buf.data.length - max);
+      }
+      this.emitEvent({ type: 'agent:data', taskId, runId, data });
+    };
+  }
+
+  /**
+   * The classify step as a session, mirroring runAgent: output streams to the
+   * terminal tab and the handle is registered so Stop / typing reach it.
+   */
+  private async runClassifier(task: Task, ctx: RunContext): Promise<ClassifyResult> {
+    try {
+      const cls = await this.steps.runClassify(ctx, {
+        onData: this.bufferSink(task.id, ctx.runId),
+        onHandle: (handle) => this.agents.set(task.id, handle),
+      });
+      this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
+      return cls;
+    } finally {
+      this.agents.delete(task.id);
+    }
+  }
+
+  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd> {
     const handle = await this.steps.startAgent(ctx, {
-      onData: (data) => {
-        const buf = this.buffers.get(task.id);
-        if (buf && buf.runId === ctx.runId) {
-          buf.data += data;
-          if (buf.data.length > max) buf.data = buf.data.slice(buf.data.length - max);
-        }
-        this.emitEvent({ type: 'agent:data', taskId: task.id, runId: ctx.runId, data });
-      },
+      onData: this.bufferSink(task.id, ctx.runId),
       onHold: () => {
         rt.held = true;
         this.record(task.id, ctx.runId, 'agent', 'held', {

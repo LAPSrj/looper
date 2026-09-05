@@ -18,6 +18,60 @@ export type ValidationResult =
   | { ok: true; task: Task }
   | { ok: false; errors: string[] };
 
+/** Editor field labels by schema path; error messages show these, not raw paths. */
+const FIELD_LABELS: Record<string, string> = {
+  id: 'Task id',
+  name: 'Task name',
+  enabled: 'Status',
+  folderId: 'Folder',
+  schedule: 'Schedule',
+  'schedule.cron': 'Cron expression',
+  'schedule.timezone': 'Timezone',
+  environmentId: 'Environment',
+  cwd: 'Working directory',
+  env: 'Extra environment variables',
+  check: 'Check',
+  'check.command': 'Check command',
+  'check.timeoutSec': 'Check timeout',
+  classifier: 'Classifier',
+  'classifier.harnessId': 'Classifier harness',
+  'classifier.model': 'Classifier model',
+  'classifier.prompt': 'Classifier prompt',
+  'classifier.mode': 'Classifier session type',
+  'classifier.timeoutSec': 'Classifier timeout',
+  agent: 'Agent',
+  'agent.harnessId': 'Harness',
+  'agent.model': 'Model',
+  'agent.prompt': 'Agent prompt',
+  'agent.extraArgs': 'Extra command-line arguments',
+  'agent.mode': 'Session type',
+  'agent.permissionMode': 'Permission mode',
+  'agent.maxRuntimeMin': 'Max runtime',
+  'agent.idleGraceMin': 'Idle grace',
+  'agent.onIdleTimeout': 'When idle too long',
+  backoff: 'Auto-pause after',
+  'backoff.maxConsecutiveErrors': 'Auto-pause after',
+  notifications: 'Notifications',
+  note: 'Note',
+};
+
+/** Longest known prefix wins, so nested/indexed paths fall back to their section label. */
+function fieldLabel(path: (string | number)[]): string {
+  const parts = path.filter((p): p is string => typeof p === 'string');
+  for (let i = parts.length; i > 0; i--) {
+    const label = FIELD_LABELS[parts.slice(0, i).join('.')];
+    if (label) return label;
+  }
+  return path.join('.') || 'Task';
+}
+
+/** Zod's wording for the common cases, translated for the editor's error dialog. */
+function issueMessage(issue: z.ZodIssue): string {
+  if (issue.code === z.ZodIssueCode.too_small && issue.type === 'string') return 'must not be empty';
+  if (issue.code === z.ZodIssueCode.invalid_type && issue.received === 'undefined') return 'is required';
+  return issue.message;
+}
+
 interface ValidateOpts {
   template?: boolean;
 }
@@ -36,7 +90,7 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   if (!parsed.success) {
     return {
       ok: false,
-      errors: parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+      errors: parsed.error.issues.map((i) => `${fieldLabel(i.path)}: ${issueMessage(i)}`),
     };
   }
   const task = parsed.data;
@@ -45,27 +99,27 @@ export function validateTask(input: unknown, environments?: Environment[], host?
     try {
       new Cron(task.schedule.cron);
     } catch (e) {
-      errors.push(`schedule.cron: ${(e as Error).message}`);
+      errors.push(`Cron expression: ${(e as Error).message}`);
     }
   }
   if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
-    errors.push(`schedule.timezone: unknown timezone "${task.schedule.timezone}"`);
+    errors.push(`Timezone: unknown timezone "${task.schedule.timezone}"`);
   }
   if (environments && task.environmentId) {
     const env = environments.find((e) => e.id === task.environmentId);
     if (!env) {
-      errors.push(`environmentId: unknown environment "${task.environmentId}"`);
+      errors.push(`Environment: unknown environment "${task.environmentId}"`);
     } else {
       if (task.agent.harnessId && !env.harnesses.some((h) => h.id === task.agent.harnessId)) {
-        errors.push(`agent.harnessId: environment "${env.name}" has no harness "${task.agent.harnessId}"`);
+        errors.push(`Harness: environment "${env.name}" has no harness "${task.agent.harnessId}"`);
       }
       if (task.cwd) {
         const flavor = pathFlavor(env, host);
         if (flavor === 'windows' && /^\//.test(task.cwd)) {
-          errors.push(`cwd: environment "${env.name}" expects a Windows path (C:\\...)`);
+          errors.push(`Working directory: environment "${env.name}" expects a Windows path (C:\\...)`);
         }
         if (flavor === 'posix' && /^[A-Za-z]:[\\/]/.test(task.cwd)) {
-          errors.push(`cwd: environment "${env.name}" expects a POSIX path (/home/...)`);
+          errors.push(`Working directory: environment "${env.name}" expects a POSIX path (/home/...)`);
         }
       }
     }

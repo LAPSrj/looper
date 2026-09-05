@@ -1,10 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MessagesShowKey } from '@shared/api';
 import type { MessageRow, MessagesResult } from '@shared/messages';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
-import { Markdown } from './Markdown';
+import { MessageBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 
@@ -15,7 +15,7 @@ function typeLabel(row: MessageRow): string {
     case 'prompt':
       return 'Prompt';
     case 'agent':
-      return 'Agent';
+      return row.source === 'classifier' ? 'Classifier' : 'Agent';
     case 'thinking':
       return 'Thinking';
     default:
@@ -68,49 +68,6 @@ function matchesFilter(r: MessageRow, f: string): boolean {
 }
 
 type DetailTab = 'input' | 'result';
-
-/**
- * Best-effort parse of a message that consists entirely of top-level
- * `<tag>…</tag>` blocks. Anything else — mixed text, unpaired or nested
- * same-name tags — returns null and the message renders as plain markdown.
- */
-function parseTagSections(text: string): { name: string; content: string }[] | null {
-  const re = /^<([A-Za-z][\w-]*)(?:\s[^>]*)?>\s*([\s\S]*?)\s*<\/\1>\s*/;
-  const sections: { name: string; content: string }[] = [];
-  let rest = text.replace(/^\s+/, '');
-  while (rest.length > 0) {
-    const m = re.exec(rest);
-    if (!m) return null;
-    sections.push({ name: m[1], content: m[2] });
-    rest = rest.slice(m[0].length);
-  }
-  return sections.length > 0 ? sections : null;
-}
-
-const tagLabel = (name: string) =>
-  name
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(' ');
-
-/** Message text; a fully tag-wrapped one becomes labeled sections, dl-style. */
-function MessageBody({ text }: { text: string }) {
-  const sections = useMemo(() => parseTagSections(text), [text]);
-  if (!sections) return <Markdown text={text} />;
-  return (
-    <div className="msg-sections">
-      {sections.map((s, i) => (
-        <Fragment key={i}>
-          <div className="msg-section-label">{tagLabel(s.name)}</div>
-          <div>
-            <Markdown text={s.content} />
-          </div>
-        </Fragment>
-      ))}
-    </div>
-  );
-}
 
 interface ViewProps {
   taskId: string;
@@ -268,7 +225,7 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
   const emptyText = (): string => {
     if (result === null) return '';
     if (result.status === 'no-session') {
-      return running ? 'Waiting for the agent session to start…' : 'No conversation was recorded for this run.';
+      return running ? 'Waiting for the session to start…' : 'No conversation was recorded for this run.';
     }
     if (result.status === 'no-transcript') {
       return running ? 'Waiting for the transcript…' : 'The session transcript is no longer available.';
@@ -417,13 +374,14 @@ export function Messages({ task, records, runtime }: Props) {
     }
     const out: RunEntry[] = [];
     for (const [runId, recs] of byRun) {
-      const agent = recs.find((r) => r.phase === 'agent');
-      if (!agent) continue; // only runs that reached the agent step have a conversation
+      // Only runs that reached the classifier or the agent have a conversation.
+      const step = recs.find((r) => r.phase === 'agent') ?? recs.find((r) => r.phase === 'classify');
+      if (!step) continue;
       const final = recs.findLast((r) => r.phase === 'result');
       const last = recs[recs.length - 1];
       out.push({
         runId,
-        ts: agent.ts,
+        ts: step.ts,
         result: final?.result ?? last.result,
         details: final?.summary ?? last.error ?? last.summary ?? '',
       });
@@ -443,7 +401,8 @@ export function Messages({ task, records, runtime }: Props) {
     scrollToId: selected !== null ? `msgrun-${selected}` : null,
   });
 
-  const isRunning = (runId: string) => runtime?.state === 'running' && runtime.currentRunId === runId;
+  const isRunning = (runId: string) =>
+    (runtime?.state === 'running' || runtime?.state === 'classifying') && runtime.currentRunId === runId;
 
   return (
     <div className="messages-runs" tabIndex={0} onKeyDown={nav}>

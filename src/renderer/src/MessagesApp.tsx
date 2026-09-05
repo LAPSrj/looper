@@ -18,7 +18,8 @@ export function MessagesApp({ taskId, runId, agentId, title }: { taskId: string;
     });
   }, [taskId]);
 
-  const running = runtime?.state === 'running' && runtime.currentRunId === runId;
+  const running =
+    (runtime?.state === 'running' || runtime?.state === 'classifying') && runtime.currentRunId === runId;
   return (
     <div className="messages-app">
       <MessagesView taskId={taskId} runId={runId} agentId={agentId} running={running} />

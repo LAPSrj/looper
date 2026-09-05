@@ -56,12 +56,15 @@ describe('BashTarget', () => {
       cwd: "/home/me/it's here",
       env: { LOOPER_RUN: 'r', LOOPER_DONE_FILE: '/x/done' },
       binDir: '/x/bin',
+      doneCommand: 'looper-done',
+      doneStatuses: ['success', 'warning', 'error'],
       body: 'exec claude "$(cat \'/x/prompt.txt\')"',
     });
     expect(script).toContain("export LOOPER_RUN='r'");
     expect(script).toContain(`export PATH='/x/bin'":$PATH"`);
     expect(script).toContain("cd '/home/me/it'\\''s here' ||");
     expect(script).toContain('looper-done()');
+    expect(script).toContain('success|warning|error');
     expect(script.trim().endsWith('exec claude "$(cat \'/x/prompt.txt\')"')).toBe(true);
   });
   it('quotes', () => {
@@ -86,11 +89,14 @@ describe('WindowsTarget', () => {
       cwd: 'C:\\repo',
       env: { LOOPER_RUN: 'r' },
       binDir: 'C:\\data\\bin',
+      doneCommand: 'looper-done',
+      doneStatuses: ['success', 'warning', 'error'],
       body: 'claude -p (Get-Content -Raw -LiteralPath \'C:\\p.txt\')',
     });
     expect(script).toContain("$env:LOOPER_RUN = 'r'");
     expect(script).toContain("Set-Location -LiteralPath 'C:\\repo'");
     expect(script).toContain('function looper-done');
+    expect(script).toContain("@('success','warning','error')");
     expect(script).toContain('exit $LASTEXITCODE');
     expect(t.quote("it's")).toBe("'it''s'");
   });

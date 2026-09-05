@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { MessageImage, MessagesResult } from '../shared/messages';
-import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskRuntime } from '../shared/types';
+import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
 import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
@@ -41,10 +41,26 @@ export interface Engine {
   getTask(id: string): Task | undefined;
   saveTask(input: unknown): Task;
   removeTask(id: string): boolean;
+  /** Persist a new task order; `folders` reassigns tasks to folders in the same write. */
+  reorderTasks(
+    ids: string[],
+    folders?: Record<string, string | null>,
+    layout?: Record<string, string[]>,
+    parents?: Record<string, string | null>,
+  ): void;
+  // folders
+  listFolders(): TaskFolder[];
+  /** Sibling display order per container ('' = top level): `folder:<id>` entries mixed with task ids. */
+  listLayout(): Record<string, string[]>;
+  addFolder(name: string, parentId?: string): TaskFolder;
+  renameFolder(id: string, name: string): TaskFolder;
+  /** Delete a folder; its tasks move to the top level. */
+  removeFolder(id: string): boolean;
   // templates
   listTemplates(): Task[];
   saveTemplate(input: unknown): Task;
   removeTemplate(id: string): boolean;
+  reorderTemplates(ids: string[]): void;
   // runtime
   listRuntimes(): TaskRuntime[];
   runNow(id: string): boolean;
@@ -196,6 +212,8 @@ export function createEngine(opts: EngineOptions): Engine {
       warmMountPrefixes();
       tasks.load();
       templates.load();
+      tasks.on('reorder', () => emit({ type: 'tasks', tasks: tasks.list() }));
+      tasks.on('folders', () => emit({ type: 'folders', folders: tasks.listFolders(), layout: tasks.listLayout() }));
       templates.on('change', () => emit({ type: 'templates', templates: templates.list() }));
       scheduler.start();
       inbox.start();
@@ -245,7 +263,10 @@ export function createEngine(opts: EngineOptions): Engine {
       log.info('settings updated');
       warmMountPrefixes();
       emit({ type: 'settings', settings: { ...settings } });
-      if (parsed.tasksFile !== oldTasksFile) emit({ type: 'tasks', tasks: tasks.list() });
+      if (parsed.tasksFile !== oldTasksFile) {
+        emit({ type: 'tasks', tasks: tasks.list() });
+        emit({ type: 'folders', folders: tasks.listFolders(), layout: tasks.listLayout() });
+      }
       if (parsed.templatesFile !== oldTemplatesFile) emit({ type: 'templates', templates: templates.list() });
       return { ...settings };
     },
@@ -253,9 +274,16 @@ export function createEngine(opts: EngineOptions): Engine {
     getTask: (id) => tasks.get(id),
     saveTask: (input) => tasks.upsert(input),
     removeTask: (id) => tasks.remove(id),
+    reorderTasks: (ids, folders, layout, parents) => tasks.reorder(ids, folders, layout, parents),
+    listFolders: () => tasks.listFolders(),
+    listLayout: () => tasks.listLayout(),
+    addFolder: (name, parentId) => tasks.addFolder(name, parentId),
+    renameFolder: (id, name) => tasks.renameFolder(id, name),
+    removeFolder: (id) => tasks.removeFolder(id),
     listTemplates: () => templates.list(),
     saveTemplate: (input) => templates.upsert(input),
     removeTemplate: (id) => templates.remove(id),
+    reorderTemplates: (ids) => templates.reorder(ids),
     listRuntimes: () => scheduler.list(),
     runNow: (id) => scheduler.runNow(id),
     pause: (id, reason) => scheduler.pause(id, reason),

@@ -69,6 +69,7 @@ export function TemplatesApp() {
             empty="No templates"
             onSelect={(t) => setSelected(t.id)}
             onOpen={(t) => void window.looper.openTemplateEditor(t.id)}
+            onReorder={(ids) => void window.looper.templates.reorder(ids)}
           />
           <ListActions
             onAdd={() => void window.looper.openTemplateEditor()}

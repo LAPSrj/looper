@@ -51,6 +51,7 @@ describe('importTaskDraft', () => {
       enabled: true,
       model: 'haiku',
       prompt: '',
+      mode: 'headless',
       timeoutSec: 180,
     });
     expect(importTaskDraft({ ...good, classifier: 'yes' }, opts).classifier).toBeUndefined();

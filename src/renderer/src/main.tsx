@@ -11,6 +11,9 @@ import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
 import { ModelEditorApp } from './ModelEditorApp';
 import { FilterApp } from './FilterApp';
+import { FolderNameApp } from './FolderNameApp';
+import { FolderNoteApp } from './FolderNoteApp';
+import { MoveToFolderApp } from './MoveToFolderApp';
 import { ImageApp } from './ImageApp';
 import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
@@ -32,6 +35,10 @@ const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
+const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
+const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
+const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
+const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
@@ -49,6 +56,10 @@ function pickRoot() {
 
   if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
   if (noteEditorMatch) return <NoteEditorApp taskId={decodeURIComponent(noteEditorMatch[1])} />;
+  if (folderNoteMatch) return <FolderNoteApp folderId={decodeURIComponent(folderNoteMatch[1])} />;
+  if (moveToFolderMatch) return <MoveToFolderApp taskId={decodeURIComponent(moveToFolderMatch[1])} />;
+  if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;
+  if (folderRenameMatch) return <FolderNameApp folderId={decodeURIComponent(folderRenameMatch[1])} />;
   if (modelEditorMatch) {
     return (
       <ModelEditorApp

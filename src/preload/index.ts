@@ -9,11 +9,20 @@ const api: LooperApi = {
     save: (input) => ipcRenderer.invoke('tasks:save', input),
     remove: (id) => ipcRenderer.invoke('tasks:remove', id),
     export: (id) => ipcRenderer.invoke('tasks:export', id),
+    reorder: (ids, folders, layout, parents) => ipcRenderer.invoke('tasks:reorder', ids, folders, layout, parents),
+  },
+  folders: {
+    list: () => ipcRenderer.invoke('folders:list'),
+    layout: () => ipcRenderer.invoke('folders:layout'),
+    add: (name, parentId) => ipcRenderer.invoke('folders:add', name, parentId),
+    rename: (id, name) => ipcRenderer.invoke('folders:rename', id, name),
+    remove: (id) => ipcRenderer.invoke('folders:remove', id),
   },
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
     save: (input) => ipcRenderer.invoke('templates:save', input),
     remove: (id) => ipcRenderer.invoke('templates:remove', id),
+    reorder: (ids) => ipcRenderer.invoke('templates:reorder', ids),
   },
   runtime: {
     list: () => ipcRenderer.invoke('runtime:list'),
@@ -46,6 +55,7 @@ const api: LooperApi = {
     ipcRenderer.invoke('messages:openImage', taskId, runId, rowId, agentId, label),
   openEditor: (taskId) => ipcRenderer.invoke('editor:open', taskId),
   openNoteEditor: (taskId) => ipcRenderer.invoke('noteEditor:open', taskId),
+  openMoveToFolder: (taskId) => ipcRenderer.invoke('moveToFolder:open', taskId),
 
   openEnvironmentEditor: (envId, isNew) => ipcRenderer.invoke('envEditor:open', envId, isNew),
   openHarnessEditor: (envId, harnessId, isNew) => ipcRenderer.invoke('harnessEditor:open', envId, harnessId, isNew),
@@ -68,6 +78,8 @@ const api: LooperApi = {
   confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
   reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote) => ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
+  showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
+  showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),
   showRunContextMenu: (info) => ipcRenderer.send('context-menu:run', info),
   showMessageContextMenu: (info) => ipcRenderer.send('context-menu:message', info),
   reportMessagesFilter: (filter) => ipcRenderer.send('messages:filter-state', filter),

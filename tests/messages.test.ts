@@ -70,6 +70,22 @@ describe('TranscriptAccumulator', () => {
     expect(acc.rows.map((r) => r.kind)).toEqual(['prompt', 'agent']);
   });
 
+  it('falls back to JSON for tool results whose blocks carry no text', () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu1', name: 'ToolSearch', input: { query: 'select:Read' } }));
+    acc.addLine(
+      rec({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'tool_reference', tool_name: 'Read' }] }],
+        },
+      }),
+    );
+    expect(acc.rows[0].result).toContain('tool_reference');
+    expect(acc.rows[0].result).toContain('Read');
+  });
+
   it('strips tag blocks from previews but keeps the full text', () => {
     const acc = new TranscriptAccumulator();
     acc.addLine(userPrompt('<system-reminder>noise</system-reminder>Real ask'));
@@ -136,6 +152,14 @@ describe('TranscriptAccumulator', () => {
     expect(acc.rows[2].text).toBe('not json at all');
   });
 
+  it('marks classifier rows and prefixes their ids so a merged list cannot collide', () => {
+    const acc = new TranscriptAccumulator({ source: 'classifier' });
+    acc.addLine(userPrompt('should we act?'));
+    acc.addLine(assistantBlock({ type: 'text', text: 'act: yes' }));
+    expect(acc.rows.map((r) => r.id)).toEqual(['c0', 'c1']);
+    expect(acc.rows.every((r) => r.source === 'classifier')).toBe(true);
+  });
+
   it('drops oldest rows past the cap and keeps ids stable', () => {
     const acc = new TranscriptAccumulator();
     for (let i = 0; i < 1005; i++) acc.addLine(userPrompt(`msg ${i}`));
@@ -175,6 +199,20 @@ describe('TranscriptReader', () => {
     const r = new TranscriptReader(path.join(dir, 'missing.jsonl'));
     await expect(r.read()).rejects.toThrow();
   });
+
+  it('given candidates, reads whichever appears first and sticks to it', async () => {
+    const a = path.join(dir, 'a.jsonl');
+    const b = path.join(dir, 'b.jsonl');
+    const r = new TranscriptReader([a, b]);
+    await expect(r.read()).rejects.toThrow(); // neither exists yet
+    fs.writeFileSync(b, userPrompt('from b') + '\n');
+    await r.read();
+    expect(r.acc.rows[0].preview).toBe('from b');
+    // A later-appearing first candidate must not switch the reader mid-stream.
+    fs.writeFileSync(a, userPrompt('from a') + '\n');
+    await r.read();
+    expect(r.acc.rows).toHaveLength(1);
+  });
 });
 
 describe('readTranscriptRef', () => {
@@ -198,5 +236,13 @@ describe('readTranscriptRef', () => {
     fs.writeFileSync(path.join(dir, 'session.json'), '{"transcript_pa');
     fs.writeFileSync(path.join(dir, 'stop.json'), JSON.stringify({ transcript_path: '/x/s.jsonl' }));
     expect(readTranscriptRef(dir)).toBe('/x/s.jsonl');
+  });
+
+  it('the classify- prefix reads the classifier session, never the agent one', () => {
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ transcript_path: '/x/agent.jsonl' }));
+    expect(readTranscriptRef(dir, 'classify-')).toBeNull();
+    fs.writeFileSync(path.join(dir, 'classify-session.json'), JSON.stringify({ transcript_path: '/x/cls.jsonl' }));
+    expect(readTranscriptRef(dir, 'classify-')).toBe('/x/cls.jsonl');
+    expect(readTranscriptRef(dir)).toBe('/x/agent.jsonl');
   });
 });

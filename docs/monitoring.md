@@ -4,10 +4,20 @@
 
 The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active, otherwise a next-run countdown, "Not
-scheduled", "Manual", its paused reason, or "Disabled". Selecting a task
-opens its detail pane with four tabs — Status, Run log, Messages, Terminal —
-plus a status bar at the bottom counting enabled, disabled, paused, and
-running tasks.
+scheduled", "Manual", its paused reason, or "Disabled". Disabled tasks are
+shown faded. Selecting a task opens its detail pane with four tabs — Status,
+Run log, Messages, Terminal — plus a status bar at the bottom counting
+enabled, disabled, paused, and running tasks.
+
+Tasks and folders can be reordered by dragging them; the order is saved.
+Dropping a task on another task inserts it there (joining that task's
+folder, if any); dropping it on the middle of a folder header moves it into
+that folder; dropping it on the empty space below the list moves it to the
+end of the top level. Tasks and folders mix freely at the top level: the
+top edge of a folder header drops before the folder, and the bottom edge of
+a folder's last row (a full-width line, instead of the indented in-folder
+one) drops after the folder. Dragging a folder header moves the whole
+folder.
 
 The Status tab lists the task's current state as plain fields: Status,
 Schedule, Next run, Next run guidance (when a one-off note is set), Last
@@ -16,8 +26,10 @@ Harness, Model, Session type, Environment, and Working directory.
 
 The View menu controls what the window shows: a Standard or Compact task
 list, whether disabled/scheduled/manual tasks are listed at all, whether
-runs with no action are hidden in every task's run log, and whether the
-toolbar and status bar themselves are shown.
+folders open automatically (folders start open, and opening one opens its
+whole subtree; unchecked, folders start closed), whether runs with no
+action are hidden in every task's run log, and whether the toolbar and
+status bar themselves are shown.
 
 ## The toolbar
 
@@ -46,21 +58,53 @@ different thing from the in-app Terminal tab described below.
 
 Right-clicking a task in the sidebar selects it and opens a context menu
 with the same actions as the toolbar, plus a few more: Run Now, Stop Task,
-Pause/Resume, Enable/Disable, Edit/Add Guidance for Next Run…, Clear
-Guidance, Open Project in Terminal, Open Working Directory, Edit Task…,
-Clear Run History…, and Delete Task.
+Pause/Resume, Enable/Disable, Edit Task…, Delete Task, Edit/Add Guidance
+for Next Run…, Clear Guidance, Move to Folder…, Clear Run History…, Open
+Project in Terminal, and Open Working Directory.
+
+## Folders
+
+Tasks can be organized into folders, and folders nest without a depth
+limit. **File → New Folder…** creates one, as does right-clicking the empty
+space below the task list (or the "Tasks" title above it); the window has a
+Parent folder field (blank = top level). Folders show as
+headers in the sidebar; clicking a header collapses or expands the folder
+(a collapsed header shows the task count of its whole subtree).
+
+A task moves into a folder by dragging it there, or with **Move to
+Folder…** — on the task's context menu and the Task menu — which opens a
+window listing the folder tree (with a blank top row to move it back
+out) and a field to create a new folder on the spot. Dragging one folder
+onto the middle of another nests it there.
+
+Right-clicking a folder header opens the folder's own menu, acting on every
+task in it — nested folders included:
+
+- **Run All Now** — runs each enabled task that isn't already mid-cycle.
+- **Pause All / Resume All** — pauses every non-disabled task / resumes
+  every paused one.
+- **Enable All / Disable All**
+- **Add Guidance for Next Runs…** — opens a guidance window applied to all
+  tasks in the folder's subtree (saving empty text clears their notes).
+- **New Subfolder…** — opens the New Folder window with this folder
+  preselected as the parent.
+- **Rename Folder…**
+- **Delete Folder** — asks for confirmation; a checkbox on the dialog also
+  deletes everything inside (tasks and nested folders). Left unchecked, the
+  folder's contents move up to its parent.
 
 ## The terminal tab
 
-The Terminal tab is a live view of the task's agent session — a real
+The Terminal tab is a live view of the task's harness sessions — a real
 terminal (xterm) you can watch and type into while a run is in progress.
 Before any run it shows "No agent session for this task yet. Output appears
 here when one starts." Each new run resets the view with a `── run <id> ──`
-marker and closes with `── session ended ──`.
+marker; within one run the classifier session (when configured) shows first,
+closes with `── session ended ──`, and the agent session continues below.
 
-For a **headless** run (`agent.mode: headless`) the same tab still shows the
-streamed output, but there's nothing to type into — the process reads no
-input, so keystrokes go nowhere.
+For a **headless** session the same tab still shows the streamed output, but
+there's nothing to type into — the process reads no input, so keystrokes go
+nowhere. An interactive classifier, like an interactive agent, accepts input.
 
 If the agent finishes a turn without signaling and the task is set to hold,
 a banner appears: "The agent finished a turn without calling `looper-done`
@@ -81,14 +125,17 @@ row's details text.
 
 ## The messages tab
 
-The Messages tab lists the task's runs that reached the agent step — Date,
-Start, Result, Details, newest first. Double-clicking a run (or pressing
-Enter on it) opens that run's conversation in its own window, read straight
-from the harness's own session transcript (Claude Code harnesses only —
-other harnesses record no transcript).
+The Messages tab lists the task's runs that reached the classifier or the
+agent step — Date, Start, Result, Details, newest first. Double-clicking a
+run (or pressing Enter on it) opens that run's conversation in its own
+window, read straight from the harness's own session transcripts (Claude
+Code harnesses only — other harnesses record no transcript). When the run
+had a classifier, its conversation appears first in the same list, with its
+replies typed as **Classifier**.
 
 In the conversation window each row is one message or tool call — Time,
-Type, Details — where Type is Prompt, Agent, Thinking, or the tool's name;
+Type, Details — where Type is Prompt, Agent, Classifier, Thinking, or the
+tool's name;
 the Type column can be resized by dragging its header edge (the width is
 remembered; double-click the edge to reset it). Clicking a row
 shows its full content in the split pane below: prompts and agent replies

@@ -45,20 +45,36 @@ export function targetFile(ctx: RunContext, ...parts: string[]): string {
   return joinTarget(ctx.target.kind, runDirTarget(ctx), ...parts);
 }
 
-export function baseEnv(ctx: RunContext): Record<string, string> {
+/**
+ * Per-step file prefix inside the run dir: the agent step owns the bare names
+ * (done, stop.json, output.txt…), the classifier prefixes everything with
+ * `classify-` so the two steps of one run can never collide.
+ */
+export function baseEnv(ctx: RunContext, prefix = ''): Record<string, string> {
   return {
     LOOPER_TASK: ctx.task.id,
     LOOPER_TASK_NAME: ctx.task.name,
     LOOPER_RUN: ctx.runId,
     LOOPER_RUN_DIR: runDirTarget(ctx),
-    LOOPER_DONE_FILE: targetFile(ctx, 'done'),
-    LOOPER_STOP_FILE: targetFile(ctx, 'stop.json'),
+    LOOPER_DONE_FILE: targetFile(ctx, prefix + 'done'),
+    LOOPER_STOP_FILE: targetFile(ctx, prefix + 'stop.json'),
   };
 }
 
 export interface Launcher {
   hostPath: string;
   spec: SpawnSpec;
+}
+
+/** The done command of the agent step (and of plain check launchers). */
+export const AGENT_DONE = { command: 'looper-done', statuses: ['success', 'warning', 'error'] as const };
+
+export interface LauncherOpts {
+  /** Step file prefix ('' = agent, 'classify-' = classifier). */
+  prefix?: string;
+  /** Done command defined by the launcher and written to bin/. */
+  doneCommand?: string;
+  doneStatuses?: readonly string[];
 }
 
 /**
@@ -71,9 +87,13 @@ export function writeLauncher(
   name: string,
   body: string,
   extraEnv: Record<string, string> = {},
+  opts: LauncherOpts = {},
 ): Launcher {
-  const helper = path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile);
-  writeText(helper, ctx.target.renderDoneHelper(), 0o755);
+  const prefix = opts.prefix ?? '';
+  const doneCommand = opts.doneCommand ?? AGENT_DONE.command;
+  const doneStatuses = opts.doneStatuses ?? AGENT_DONE.statuses;
+  const helper = path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(doneCommand));
+  writeText(helper, ctx.target.renderDoneHelper(doneStatuses), 0o755);
   const hostPath = path.join(ctx.runDir, name + ctx.target.launcherExt);
   writeText(
     hostPath,
@@ -81,8 +101,10 @@ export function writeLauncher(
       taskId: ctx.task.id,
       runId: ctx.runId,
       cwd: ctx.task.cwd,
-      env: { ...extraEnv, ...ctx.task.env, ...baseEnv(ctx) },
+      env: { ...extraEnv, ...ctx.task.env, ...baseEnv(ctx, prefix) },
       binDir: targetFile(ctx, 'bin'),
+      doneCommand,
+      doneStatuses,
       body,
     }),
     0o755,

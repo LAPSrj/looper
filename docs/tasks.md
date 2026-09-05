@@ -63,18 +63,23 @@ classifier step on or off. When on, it runs after a check that returned
 `act: true` (or on every slot if there's no check).
 
 - **Harness** — which Claude Code harness in the task's environment runs the
-  classifier. (The classifier always runs as `claude -p`: the task's own
-  harness if it's Claude Code, otherwise the environment's first Claude Code
-  harness.)
+  classifier: the task's own harness if it's Claude Code, otherwise the
+  environment's first Claude Code harness.
+- **Session type** — Headless (default): `claude -p` over pipes, answering
+  under a strict `{act, reason}` schema. Interactive terminal: a real pty
+  shown in the task's Terminal tab (you can watch it and type into it); the
+  session gives its verdict by running `looper-classify act "<reason>"` or
+  `looper-classify noop "<reason>"`, then writes a short closing message.
 - **Model** — a preset from the harness's model list, or Custom… to type a
   model id. Defaults to `haiku`.
-- **Timeout** — seconds before the classifier call is killed and treated as
-  an error. Default 180s.
+- **Timeout** — seconds before the classifier session is killed and treated
+  as an error. Default 180s.
 - **Classifier prompt** — your yes/no question about the check output.
   `{{summary}}` and `{{context}}` insert the check's output where you place
   them; if the prompt doesn't reference either, they're appended
-  automatically. The model must answer under a strict `{act, reason}` schema
-  — `reason` is a one-sentence explanation, shown in the run log.
+  automatically. The `reason` (one sentence) is shown in the run log; the
+  classifier's full conversation appears in the run's Messages window with
+  its replies typed as **Classifier**.
 
 ## Agent
 
@@ -160,7 +165,9 @@ check command, or agent prompt required).
   with Add…, Edit…, Duplicate, and Remove underneath. Add… and Edit… open
   the same task editor in template mode, titled "New Template" or "Edit
   Template". Duplicate copies the selected template immediately under a
-  "(copy)" name. Remove asks for confirmation first.
+  "(copy)" name. Remove asks for confirmation first. Templates can be
+  reordered by dragging them in the list; the order is saved and is what
+  the template picker shows.
 
 ## Import and export
 

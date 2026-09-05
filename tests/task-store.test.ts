@@ -1,0 +1,135 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { TaskStore } from '../src/engine/store/tasks';
+
+function taskInput(id: string, folderId?: string) {
+  return {
+    id,
+    name: id,
+    schedule: { cron: '*/10 * * * *' },
+    environmentId: 'local',
+    cwd: '/tmp',
+    agent: { prompt: 'go' },
+    ...(folderId ? { folderId } : {}),
+  };
+}
+
+function newStore() {
+  const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+  const store = new TaskStore(file);
+  store.load();
+  return { store, file };
+}
+
+describe('TaskStore layout', () => {
+  it('appends new folders and root tasks in creation order', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const f = store.addFolder('F');
+    store.upsert(taskInput('b'));
+    expect(store.listLayout()['']).toEqual(['a', `folder:${f.id}`, 'b']);
+  });
+
+  it('persists an explicit layout across reload', () => {
+    const { store, file } = newStore();
+    store.upsert(taskInput('a'));
+    store.upsert(taskInput('b'));
+    const f = store.addFolder('F');
+    store.reorder(['a', 'b'], undefined, { '': ['b', `folder:${f.id}`, 'a'] });
+    const again = new TaskStore(file);
+    again.load();
+    expect(again.listLayout()['']).toEqual(['b', `folder:${f.id}`, 'a']);
+  });
+
+  it('drops stale and foreign layout entries and keeps every real one', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const f = store.addFolder('F');
+    store.reorder(['a'], undefined, { '': ['ghost', 'folder:nope', 'a', 'a'], gone: ['x'] });
+    const layout = store.listLayout();
+    expect(layout['']).toEqual(['a', `folder:${f.id}`]);
+    expect(layout.gone).toBeUndefined();
+  });
+
+  it('moving a task into a folder moves its entry to that container, and back out re-adds it', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const f = store.addFolder('F');
+    store.patch('a', { folderId: f.id });
+    expect(store.listLayout()['']).toEqual([`folder:${f.id}`]);
+    expect(store.listLayout()[f.id]).toEqual(['a']);
+    store.patch('a', { folderId: undefined });
+    expect(store.listLayout()['']).toEqual([`folder:${f.id}`, 'a']);
+    expect(store.listLayout()[f.id]).toEqual([]);
+  });
+
+  it('removing a task removes its layout entry', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    store.upsert(taskInput('b'));
+    store.remove('a');
+    expect(store.listLayout()['']).toEqual(['b']);
+  });
+});
+
+describe('TaskStore nested folders', () => {
+  it('creates a subfolder and lists it under its parent', () => {
+    const { store } = newStore();
+    const f = store.addFolder('F');
+    const g = store.addFolder('G', f.id);
+    const layout = store.listLayout();
+    expect(layout['']).toEqual([`folder:${f.id}`]);
+    expect(layout[f.id]).toEqual([`folder:${g.id}`]);
+    expect(store.listFolders().find((x) => x.id === g.id)?.parentId).toBe(f.id);
+  });
+
+  it('rejects a subfolder under an unknown parent', () => {
+    const { store } = newStore();
+    expect(() => store.addFolder('G', 'nope')).toThrow(/unknown folder/);
+  });
+
+  it('re-nests a folder via reorder parents and rejects cycles', () => {
+    const { store } = newStore();
+    const f = store.addFolder('F');
+    const g = store.addFolder('G', f.id);
+    // Nesting F under its own child G would close a cycle: ignored.
+    store.reorder([], undefined, undefined, { [f.id]: g.id });
+    expect(store.listFolders().find((x) => x.id === f.id)?.parentId).toBeUndefined();
+    // Moving G to the top level works.
+    store.reorder([], undefined, undefined, { [g.id]: null });
+    expect(store.listLayout()['']).toEqual([`folder:${f.id}`, `folder:${g.id}`]);
+  });
+
+  it('deleting a folder moves its tasks and subfolders up to its parent', () => {
+    const { store } = newStore();
+    const f = store.addFolder('F');
+    const g = store.addFolder('G', f.id);
+    const h = store.addFolder('H', g.id);
+    store.upsert(taskInput('a', g.id));
+    store.removeFolder(g.id);
+    expect(store.listFolders().find((x) => x.id === h.id)?.parentId).toBe(f.id);
+    expect(store.get('a')?.folderId).toBe(f.id);
+    expect(store.listLayout()[f.id]).toEqual([`folder:${h.id}`, 'a']);
+  });
+
+  it('cyclic or unknown parents in a hand-edited file land at the top level', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        folders: [
+          { id: 'a', name: 'A', parentId: 'b' },
+          { id: 'b', name: 'B', parentId: 'a' },
+          { id: 'c', name: 'C', parentId: 'ghost' },
+        ],
+        tasks: [],
+      }),
+    );
+    const store = new TaskStore(file);
+    store.load();
+    expect(store.listLayout()['']).toEqual(['folder:a', 'folder:b', 'folder:c']);
+  });
+});

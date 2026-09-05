@@ -67,14 +67,23 @@ function formatToolInput(input: unknown): string {
   return parts.join('\n');
 }
 
-/** Text of a tool_result content field: a string, or an array of text blocks. */
+/** Text of a tool_result content field: a string, or an array of text blocks.
+ * Blocks without text (e.g. ToolSearch's tool_reference) fall back to JSON so
+ * the result never renders empty. */
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content
+    const text = content
       .map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : ''))
       .filter(Boolean)
       .join('\n');
+    if (text) return text;
+    if (content.length === 0) return '';
+    try {
+      return JSON.stringify(content, null, 2);
+    } catch {
+      return '';
+    }
   }
   if (content === undefined || content === null) return '';
   try {
@@ -116,7 +125,12 @@ export interface AccumulatorOpts {
   sidechain?: boolean;
   /** Every record becomes a row of pretty-printed JSON, nothing skipped. */
   raw?: boolean;
+  /** Rows come from the classifier's conversation (marks them and prefixes their ids). */
+  source?: 'classifier';
 }
+
+/** Row-id prefix of classifier rows, so a run's merged list never collides. */
+export const CLASSIFIER_ROW_PREFIX = 'c';
 
 /**
  * Folds transcript records into display rows. Only `user`/`assistant` records
@@ -263,9 +277,10 @@ export class TranscriptAccumulator {
 
   private push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
     const row: MessageRow = {
-      id: String(this.nextId++),
+      id: (this.opts.source === 'classifier' ? CLASSIFIER_ROW_PREFIX : '') + String(this.nextId++),
       ts: r.ts,
       kind: r.kind,
+      source: this.opts.source,
       tool: r.tool,
       preview: r.preview ?? previewOf(r.text),
       text: cap(r.text, MAX_TEXT),
@@ -287,18 +302,36 @@ export class TranscriptAccumulator {
  */
 export class TranscriptReader {
   readonly acc: TranscriptAccumulator;
+  private readonly candidates: string[];
+  private file: string | null = null;
   private offset = 0;
   private remainder: Buffer = Buffer.alloc(0);
 
-  constructor(
-    readonly file: string,
-    opts: AccumulatorOpts = {},
-  ) {
+  /** Several candidate paths may be given (e.g. a subagent under either parent transcript): the first that exists wins. */
+  constructor(file: string | string[], opts: AccumulatorOpts = {}) {
+    this.candidates = Array.isArray(file) ? file : [file];
     this.acc = new TranscriptAccumulator(opts);
   }
 
+  /** The candidate that exists, kept once found. Throws (like stat) when none does yet. */
+  private async resolve(): Promise<string> {
+    if (this.file) return this.file;
+    let lastErr: unknown;
+    for (const c of this.candidates) {
+      try {
+        await fs.promises.stat(c);
+        this.file = c;
+        return c;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr ?? new Error('no transcript');
+  }
+
   async read(): Promise<void> {
-    const st = await fs.promises.stat(this.file);
+    const file = await this.resolve();
+    const st = await fs.promises.stat(file);
     if (st.size < this.offset) {
       // The file shrank (should not happen to a transcript): start over.
       this.offset = 0;
@@ -306,7 +339,7 @@ export class TranscriptReader {
       this.acc.reset();
     }
     if (st.size === this.offset) return;
-    const fh = await fs.promises.open(this.file, 'r');
+    const fh = await fs.promises.open(file, 'r');
     try {
       const buf = Buffer.alloc(st.size - this.offset);
       const { bytesRead } = await fh.read(buf, 0, buf.length, this.offset);
@@ -325,9 +358,13 @@ export class TranscriptReader {
   }
 }
 
-/** The SessionStart/Stop hook payloads both name the transcript file. */
-export function readTranscriptRef(runDir: string): string | null {
-  for (const name of ['session.json', 'stop.json']) {
+/**
+ * The SessionStart/Stop hook payloads both name the transcript file. The
+ * prefix selects the step: '' = the agent's session, 'classify-' = the
+ * classifier's.
+ */
+export function readTranscriptRef(runDir: string, prefix = ''): string | null {
+  for (const name of [prefix + 'session.json', prefix + 'stop.json']) {
     try {
       const raw: unknown = JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8').replace(/^﻿/, ''));
       const t = (raw as Rec | null)?.transcript_path;
@@ -348,10 +385,13 @@ export interface MessagesDeps {
 }
 
 /**
- * Serves the Messages view from the harness's own transcript (the JSONL under
- * the Claude config dir), located via the hook payloads in the run dir. The
- * transcript path is target-native; it is translated to a host path once and
- * the reader is cached per run for cheap incremental polling.
+ * Serves the Messages view from the harness's own transcripts (the JSONL files
+ * under the Claude config dir), located via the hook payloads in the run dir.
+ * A run's view merges the classifier's conversation (when the run had one)
+ * ahead of the agent's — the classifier always finishes before the agent
+ * starts, so plain concatenation keeps the order. Transcript paths are
+ * target-native; they are translated to host paths once and the readers are
+ * cached per run for cheap incremental polling.
  */
 export class MessagesService {
   private readers = new Map<string, TranscriptReader>();
@@ -360,19 +400,44 @@ export class MessagesService {
 
   async read(taskId: string, runId: string, agentId?: string, raw = false): Promise<MessagesResult> {
     const none = (status: 'no-session' | 'no-transcript'): MessagesResult => ({ status, rows: [], dropped: 0 });
-    const reader = await this.getReader(taskId, runId, agentId, raw);
-    if (typeof reader === 'string') return none(reader);
-    try {
-      await reader.read();
-    } catch {
-      return none('no-transcript'); // not written yet, or cleaned up by the harness
+    if (agentId !== undefined) {
+      const reader = await this.subagentReader(taskId, runId, agentId, raw);
+      if (typeof reader === 'string') return none(reader);
+      try {
+        await reader.read();
+      } catch {
+        return none('no-transcript'); // not written yet, or cleaned up by the harness
+      }
+      return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
     }
-    return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
+    const rows: MessageRow[] = [];
+    let dropped = 0;
+    let refs = 0;
+    let readable = 0;
+    for (const source of ['classifier', 'agent'] as const) {
+      const reader = await this.mainReader(taskId, runId, source, raw);
+      if (typeof reader === 'string') continue;
+      refs += 1;
+      try {
+        await reader.read();
+        readable += 1;
+      } catch {
+        continue; // this step's transcript is not written yet (or was cleaned up)
+      }
+      rows.push(...reader.acc.rows);
+      dropped += reader.acc.dropped;
+    }
+    if (refs === 0) return none('no-session');
+    if (readable === 0) return none('no-transcript');
+    return { status: 'ok', rows, dropped };
   }
 
   /** The image payload behind a row's marker, or null when unavailable. */
   async readImage(taskId: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null> {
-    const reader = await this.getReader(taskId, runId, agentId, false);
+    const reader =
+      agentId !== undefined
+        ? await this.subagentReader(taskId, runId, agentId, false)
+        : await this.mainReader(taskId, runId, rowId.startsWith(CLASSIFIER_ROW_PREFIX) ? 'classifier' : 'agent', false);
     if (typeof reader === 'string') return null;
     try {
       await reader.read();
@@ -382,25 +447,59 @@ export class MessagesService {
     return reader.acc.images.get(rowId) ?? null;
   }
 
-  private async getReader(
+  /** One step's main conversation reader, from that step's transcript ref. */
+  private async mainReader(
     taskId: string,
     runId: string,
-    agentId: string | undefined,
+    source: 'agent' | 'classifier',
     raw: boolean,
   ): Promise<TranscriptReader | 'no-session' | 'no-transcript'> {
-    if (agentId !== undefined && !/^[\w.-]+$/.test(agentId)) return 'no-transcript';
-    const targetPath = readTranscriptRef(this.deps.runDir(taskId, runId));
+    const targetPath = readTranscriptRef(this.deps.runDir(taskId, runId), source === 'classifier' ? 'classify-' : '');
     if (!targetPath) return 'no-session';
+    return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
+      const hostPath = await this.toHostPath(targetPath, taskId);
+      if (!hostPath) return null;
+      return new TranscriptReader(hostPath, { raw, source: source === 'classifier' ? 'classifier' : undefined });
+    });
+  }
 
-    const key = `${taskId} ${runId} ${agentId ?? ''}`;
+  /**
+   * A subagent's reader. The parent may be either step's session, so both
+   * transcript dirs are candidates; the one whose file exists wins.
+   */
+  private async subagentReader(
+    taskId: string,
+    runId: string,
+    agentId: string,
+    raw: boolean,
+  ): Promise<TranscriptReader | 'no-session' | 'no-transcript'> {
+    if (!/^[\w.-]+$/.test(agentId)) return 'no-transcript';
+    const runDir = this.deps.runDir(taskId, runId);
+    const refs = [readTranscriptRef(runDir), readTranscriptRef(runDir, 'classify-')].filter(
+      (r): r is string => r !== null,
+    );
+    if (refs.length === 0) return 'no-session';
+    return this.cached(`${taskId} ${runId} sub:${agentId} ${raw}`, async () => {
+      const candidates: string[] = [];
+      for (const ref of refs) {
+        const hostPath = await this.toHostPath(ref, taskId);
+        if (hostPath) candidates.push(path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`));
+      }
+      if (candidates.length === 0) return null;
+      return new TranscriptReader(candidates, { sidechain: true, raw });
+    });
+  }
+
+  /** Reader cache with LRU eviction; `make` runs only on a miss. */
+  private async cached(
+    key: string,
+    make: () => Promise<TranscriptReader | null>,
+  ): Promise<TranscriptReader | 'no-transcript'> {
     let reader = this.readers.get(key);
     if (!reader) {
-      const hostPath = await this.toHostPath(targetPath, taskId);
-      if (!hostPath) return 'no-transcript';
-      const file = agentId
-        ? path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`)
-        : hostPath;
-      reader = new TranscriptReader(file, { sidechain: agentId !== undefined, raw });
+      const made = await make();
+      if (!made) return 'no-transcript';
+      reader = made;
     }
     // Refresh LRU order; evict the oldest beyond the cap.
     this.readers.delete(key);

@@ -121,6 +121,8 @@ export const ClassifierSchema = z.object({
   harnessId: z.string().min(1).optional(),
   model: z.string().min(1).default('haiku'),
   prompt: z.string().min(1),
+  /** Headless answers via structured output; interactive runs in the terminal tab and answers via `looper-classify`. */
+  mode: z.enum(['interactive', 'headless']).default('headless'),
   timeoutSec: z.number().positive().default(180),
 });
 
@@ -176,10 +178,21 @@ export const NoteSchema = z.object({
 });
 export type Note = z.infer<typeof NoteSchema>;
 
+/** A sidebar folder grouping tasks. Tasks reference it via `folderId`; folders nest via `parentId`. */
+export const TaskFolderSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  /** Parent folder. Unset = top level. */
+  parentId: z.string().min(1).optional(),
+});
+export type TaskFolder = z.infer<typeof TaskFolderSchema>;
+
 export const TaskSchema = z.object({
-  id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'id: letters, digits, - and _ only'),
+  id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'letters, digits, - and _ only'),
   name: z.string().min(1),
   enabled: z.boolean().default(true),
+  /** Sidebar folder the task is filed under. Unset = top level. */
+  folderId: z.string().min(1).optional(),
   schedule: ScheduleSchema,
   /** Environment (from Settings) the task runs in. */
   environmentId: z.string().min(1),
@@ -255,6 +268,8 @@ export const SettingsSchema = z.object({
     showDisabledTasks: z.boolean().default(true),
     showScheduledTasks: z.boolean().default(true),
     showManualTasks: z.boolean().default(true),
+    /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
+    autoOpenFolders: z.boolean().default(false),
     hideNoActionRuns: z.boolean().default(false),
   }).default({}),
 }).superRefine((s, ctx) => {
@@ -378,5 +393,6 @@ export type EngineEvent =
   | { type: 'agent:end'; taskId: string; runId: string }
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string }
   | { type: 'tasks'; tasks: Task[] }
+  | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }
   | { type: 'settings'; settings: Settings };

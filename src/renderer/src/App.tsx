@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
-import type { RunRecord, Task, TaskRuntime } from '@shared/types';
+import type { RunRecord, Task, TaskFolder, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
@@ -12,6 +12,8 @@ const MAX_RECORDS = 500;
 export function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [folders, setFolders] = useState<TaskFolder[]>([]);
+  const [layout, setLayout] = useState<Record<string, string[]>>({});
   const [runtimes, setRuntimes] = useState<Record<string, TaskRuntime>>({});
   const [records, setRecords] = useState<Record<string, RunRecord[]>>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -62,6 +64,9 @@ export function App() {
       case 'edit-note':
         if (sel) void window.looper.openNoteEditor(sel);
         break;
+      case 'move-to-folder':
+        if (sel) void window.looper.openMoveToFolder(sel);
+        break;
       case 'clear-note': {
         const t = ts.find((x) => x.id === sel);
         if (t?.note) void window.looper.tasks.save({ ...t, note: undefined });
@@ -107,6 +112,8 @@ export function App() {
       setTasks(t);
       setSelected((s) => s ?? t[0]?.id ?? null);
     });
+    void window.looper.folders.list().then(setFolders);
+    void window.looper.folders.layout().then(setLayout);
     void window.looper.runtime.list().then((list) => {
       const map: Record<string, TaskRuntime> = {};
       for (const rt of list) map[rt.taskId] = rt;
@@ -116,6 +123,10 @@ export function App() {
       switch (e.type) {
         case 'tasks':
           setTasks(e.tasks);
+          break;
+        case 'folders':
+          setFolders(e.folders);
+          setLayout(e.layout);
           break;
         case 'runtime':
           setRuntimes((m) => ({ ...m, [e.runtime.taskId]: e.runtime }));
@@ -200,11 +211,19 @@ export function App() {
       )}
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
         <aside className="sidebar">
-          <div className="sidebar-header">
+          <div
+            className="sidebar-header"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              window.looper.showTasksEmptyContextMenu();
+            }}
+          >
             <span className="pane-title">Tasks</span>
           </div>
           <TaskList
             tasks={tasks}
+            folders={folders}
+            layout={layout}
             runtimes={runtimes}
             selected={selected}
             now={now}
@@ -213,6 +232,7 @@ export function App() {
             showDisabled={view?.showDisabledTasks ?? true}
             showScheduled={view?.showScheduledTasks ?? true}
             showManual={view?.showManualTasks ?? true}
+            autoOpenFolders={view?.autoOpenFolders ?? false}
           />
         </aside>
         <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />

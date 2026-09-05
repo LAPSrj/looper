@@ -16,8 +16,12 @@ export interface LauncherSpec {
   /** Target-native working directory. */
   cwd: string;
   env: Record<string, string>;
-  /** Target-native path to the run's bin/ dir (holds the looper-done helper). */
+  /** Target-native path to the run's bin/ dir (holds the done helper). */
   binDir: string;
+  /** Name of the done command defined for this step (looper-done / looper-classify). */
+  doneCommand: string;
+  /** Statuses the done command accepts as its first argument. */
+  doneStatuses: readonly string[];
   /** Command line(s), already in the target's shell syntax. */
   body: string;
 }
@@ -25,7 +29,8 @@ export interface LauncherSpec {
 export interface Target {
   readonly kind: 'wsl' | 'windows';
   readonly launcherExt: string;
-  readonly doneHelperFile: string;
+  /** File name of a step's done helper in the run's bin/ dir. */
+  doneHelperFile(command: string): string;
   /** Host path -> path as the target sees it. */
   toTargetPath(hostPath: string): string;
   /** Quote a literal for the target shell. */
@@ -35,7 +40,7 @@ export interface Target {
   /** Shell expression referencing an environment variable. */
   envRef(name: string): string;
   renderLauncher(spec: LauncherSpec): string;
-  renderDoneHelper(): string;
+  renderDoneHelper(statuses: readonly string[]): string;
   /** Command for a claude hook: dump the hook's stdin JSON into the given file. */
   renderPipeHook(targetPath: string): string;
   /** File name of the Stop-hook gate script in the run's bin/ dir. */

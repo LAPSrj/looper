@@ -54,6 +54,19 @@ export class TemplateStore extends EventEmitter {
     return template;
   }
 
+  /** Persist a new template order. Unknown ids are ignored; missing known ids keep their relative order at the end. */
+  reorder(ids: string[]): void {
+    const next = new Map<string, Task>();
+    for (const id of ids) {
+      const t = this.templates.get(id);
+      if (t) next.set(id, t);
+    }
+    for (const [id, t] of this.templates) if (!next.has(id)) next.set(id, t);
+    this.templates = next;
+    this.save();
+    this.emit('change');
+  }
+
   remove(id: string): boolean {
     if (!this.templates.has(id)) return false;
     this.templates.delete(id);

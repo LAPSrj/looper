@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { MessageRow, PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
-import { Markdown } from './Markdown';
+import { MessageBody, parseTagSections, TagSections } from './Markdown';
 
 type Rec = Record<string, unknown>;
 
@@ -133,6 +133,12 @@ function JsonNode({ k, value, depth }: { k?: string; value: unknown; depth: numb
   );
 }
 
+const jsonTree = (value: unknown) => (
+  <div className="json-tree">
+    <JsonNode value={value} depth={0} />
+  </div>
+);
+
 function parseJson(text: string): unknown {
   const t = text.trim();
   if (!(t.startsWith('{') && t.endsWith('}')) && !(t.startsWith('[') && t.endsWith(']'))) return undefined;
@@ -227,7 +233,7 @@ function taskInput(input: Rec): ReactNode {
     <>
       {description && <div className="tc-heading">{description}</div>}
       {restFields(input, ['description', 'prompt'])}
-      <Markdown text={str(input.prompt) ?? ''} />
+      <MessageBody text={str(input.prompt) ?? ''} />
     </>
   );
 }
@@ -267,7 +273,7 @@ function webInput(input: Rec): ReactNode {
         </div>
       )}
       {str(input.query) && <div className="tc-fields">query: {str(input.query)}</div>}
-      {str(input.prompt) && <Markdown text={input.prompt as string} />}
+      {str(input.prompt) && <MessageBody text={input.prompt as string} />}
       {restFields(input, ['url', 'query', 'prompt'])}
     </div>
   );
@@ -303,9 +309,12 @@ export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) 
   switch (row.tool) {
     case 'Task':
     case 'Agent':
-      return <Markdown text={result} />;
-    case 'Bash':
-      return plain(stripAnsi(result));
+      return <MessageBody text={result} />;
+    case 'Bash': {
+      const text = stripAnsi(result);
+      const parsed = parseJson(text);
+      return parsed !== undefined ? jsonTree(parsed) : plain(text);
+    }
     case 'Read': {
       const lines = gutterLines(result);
       return lines ? <CodeView lines={lines} /> : plain(result);
@@ -317,19 +326,19 @@ export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) 
     }
     case 'WebFetch':
     case 'WebSearch':
-      return <Markdown text={result} />;
+      return <MessageBody text={result} />;
     default: {
+      // TaskOutput-style results arrive fully tag-wrapped; their content is
+      // plain terminal text, so section bodies stay monospace.
+      const sections = parseTagSections(result);
+      if (sections) return <TagSections sections={sections} mono />;
       const parsed = parseJson(result);
       if (parsed !== undefined) {
         const files = (parsed as Rec | null)?.files;
         if (Array.isArray(files) && files.length > 0 && files.every((f) => typeof f === 'string')) {
           return <FileList files={files as string[]} ctx={ctx} />;
         }
-        return (
-          <div className="json-tree">
-            <JsonNode value={parsed} depth={0} />
-          </div>
-        );
+        return jsonTree(parsed);
       }
       return plain(result);
     }

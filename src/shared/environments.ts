@@ -20,7 +20,7 @@ export function resolveHarness(task: Task, env: Environment): Harness {
   return first;
 }
 
-/** The classifier always runs `claude -p`: the task's harness if it is Claude Code, else the environment's first one. */
+/** The classifier always runs on Claude Code: the task's harness if it is Claude Code, else the environment's first one. */
 export function resolveClassifierHarness(task: Task, env: Environment): Harness {
   const cls = task.classifier;
   if (cls?.harnessId) {

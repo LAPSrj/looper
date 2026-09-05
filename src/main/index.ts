@@ -53,6 +53,10 @@ if (!app.requestSingleInstanceLock()) {
       openMessageImage: openImageWindow,
       openEditor: openEditorWindow,
       openNoteEditor: openNoteEditorWindow,
+      openFolderNoteEditor: openFolderNoteEditorWindow,
+      openMoveToFolder: openMoveToFolderWindow,
+      openNewFolder: openNewFolderWindow,
+      openRenameFolder: openRenameFolderWindow,
 
       openEnvEditor: openEnvEditorWindow,
       openHarnessEditor: openHarnessEditorWindow,
@@ -499,6 +503,38 @@ function openNoteEditorWindow(taskId: string): void {
   );
 }
 
+function openFolderNoteEditorWindow(folderId: string): void {
+  openChildWindow(
+    `note-editor-folder/${encodeURIComponent(folderId)}`,
+    'Guidance for Next Runs — Looper',
+    520,
+    400,
+    undefined,
+    { minWidth: 460, minHeight: 340 },
+  );
+}
+
+function openMoveToFolderWindow(taskId: string): void {
+  openChildWindow(`move-to-folder/${encodeURIComponent(taskId)}`, 'Move to Folder — Looper', 460, 440, win);
+}
+
+function openNewFolderWindow(parentId?: string): void {
+  const hash = parentId ? `folder-new/${encodeURIComponent(parentId)}` : 'folder-new';
+  openChildWindow(hash, 'New Folder — Looper', 420, 300, win, {
+    minWidth: 420,
+    minHeight: 300,
+    resizable: false,
+  });
+}
+
+function openRenameFolderWindow(folderId: string): void {
+  openChildWindow(`folder-rename/${encodeURIComponent(folderId)}`, 'Rename Folder — Looper', 420, 240, win, {
+    minWidth: 420,
+    minHeight: 240,
+    resizable: false,
+  });
+}
+
 function openSettingsWindow(): void {
   openChildWindow('settings', 'Settings — Looper', 720, 620, win);
 }
@@ -683,6 +719,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
     showDisabledTasks: true,
     showScheduledTasks: true,
     showManualTasks: true,
+    autoOpenFolders: false,
     hideNoActionRuns: false,
   };
   const menu = Menu.buildFromTemplate([
@@ -691,6 +728,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
       submenu: [
         { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
         { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
+        { label: 'New &Folder…', click: () => openNewFolderWindow() },
         { type: 'separator' },
         { label: '&Import Task…', click: () => void importTask() },
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
@@ -707,17 +745,18 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && !active, click: () => sendUi('run-now') },
         { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
         { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
-        { id: 'task-enable-disable', label: taskEnabled === false ? '&Enable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
+        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
+        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
+        { id: 'task-delete', label: 'De&lete Task', enabled: hasTask, click: () => sendUi('delete-task') },
         { type: 'separator' },
         { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', enabled: hasTask, click: () => sendUi('edit-note') },
         { id: 'task-note-clear', label: 'Clear Guidance', enabled: hasTask && hasNote, click: () => sendUi('clear-note') },
         { type: 'separator' },
+        { id: 'task-move-folder', label: 'Move to &Folder…', enabled: hasTask, click: () => sendUi('move-to-folder') },
+        { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
+        { type: 'separator' },
         { id: 'task-terminal', label: 'Open Project in &Terminal', accelerator: 'CmdOrCtrl+T', enabled: hasTask, click: () => sendUi('open-terminal') },
         { id: 'task-work-folder', label: 'Open &Working Directory', enabled: hasTask, click: () => sendUi('open-work-folder') },
-        { type: 'separator' },
-        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
-        { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
-        { id: 'task-delete', label: '&Delete Task', enabled: hasTask, click: () => sendUi('delete-task') },
       ],
     },
     {
@@ -732,6 +771,8 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
             { label: 'Show &Disabled Tasks', type: 'checkbox', checked: view.showDisabledTasks, click: (item) => updateView({ showDisabledTasks: item.checked }) },
             { label: 'Show S&cheduled Tasks', type: 'checkbox', checked: view.showScheduledTasks, click: (item) => updateView({ showScheduledTasks: item.checked }) },
             { label: 'Show &Manual Tasks', type: 'checkbox', checked: view.showManualTasks, click: (item) => updateView({ showManualTasks: item.checked }) },
+            { type: 'separator' },
+            { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => updateView({ autoOpenFolders: item.checked }) },
           ],
         },
         {

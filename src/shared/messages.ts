@@ -5,6 +5,8 @@ export interface MessageRow {
   /** ISO timestamp of the transcript record, when it carries one. */
   ts?: string;
   kind: 'prompt' | 'agent' | 'thinking' | 'tool' | 'raw';
+  /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
+  source?: 'classifier';
   /** Tool rows: the tool name (Bash, Read, Task…). Raw rows: the record's type. */
   tool?: string;
   /** One line for the table. */

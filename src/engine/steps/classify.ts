@@ -1,14 +1,19 @@
-import path from 'node:path';
 import type { Harness } from '../../shared/types';
 import { resolveClassifierHarness, resolveEnvironment } from '../../shared/environments';
-import { tail, writeJsonAtomic, writeText } from '../store/fsutil';
-import { buildPrompt, runCaptured, targetFile, writeLauncher, type RunContext } from './common';
+import { tail } from '../store/fsutil';
+import { buildPrompt, type RunContext } from './common';
+import { headlineOf, startSession, type SessionCallbacks, type SessionEnd, type SessionHandle } from './session';
 
 export interface ClassifyResult {
-  status: 'act' | 'noop' | 'error';
+  status: 'act' | 'noop' | 'error' | 'stopped';
+  /** The classifier's one-line justification. */
   reason?: string;
+  /** The classifier's final message (its full report), Markdown. */
+  body?: string;
   error?: string;
   costUsd?: number;
+  /** Set when a usage limit ended the session: epoch ms of when to try again. */
+  retryAtMs?: number;
   durationMs: number;
   exitCode: number | null;
 }
@@ -23,40 +28,68 @@ export const CLASSIFIER_SCHEMA = {
   additionalProperties: false,
 };
 
-export type ParsedClassifier =
-  | { ok: true; act: boolean; reason: string; costUsd?: number }
-  | { ok: false; error: string };
+const CLASSIFY_DONE = { command: 'looper-classify', statuses: ['act', 'noop'] as const };
 
-/** Parse the `claude -p --output-format json --json-schema` envelope. */
-export function parseClassifierOutput(stdout: string): ParsedClassifier {
-  const text = stdout.trim();
-  if (!text) return { ok: false, error: 'classifier produced no output' };
-  let env: Record<string, unknown>;
-  try {
-    // The envelope is the last JSON object in stdout (claude may print warnings first).
-    const start = text.indexOf('{');
-    env = JSON.parse(text.slice(start)) as Record<string, unknown>;
-  } catch {
-    return { ok: false, error: `classifier output is not JSON: ${tail(text, 300)}` };
-  }
-  if (env.is_error) return { ok: false, error: `classifier error: ${String(env.result ?? '')}` };
-  const cost = typeof env.total_cost_usd === 'number' ? env.total_cost_usd : undefined;
-  let so = env.structured_output as Record<string, unknown> | undefined;
-  if (!so && typeof env.result === 'string') {
-    try {
-      so = JSON.parse(env.result) as Record<string, unknown>;
-    } catch {
-      /* fallthrough */
-    }
-  }
-  if (so && typeof so.act === 'boolean') {
-    return { ok: true, act: so.act, reason: String(so.reason ?? ''), costUsd: cost };
-  }
-  return { ok: false, error: `classifier returned no {act} object: ${tail(text, 300)}` };
+/** How long an interactive classifier may sit after its turn ended without looper-classify. */
+const CLASSIFY_IDLE_GRACE_MS = 2 * 60_000;
+
+/**
+ * The classifier's system footer. Headless sessions answer through the
+ * --json-schema structured output, so only the interactive session needs the
+ * looper-classify contract spelled out.
+ */
+export function classifierFooter(taskName: string, runId: string): string {
+  return [
+    `You were started by Looper as the classifier for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end.`,
+    'Your only job is to decide whether the task\'s agent should be started now. Do not do the agent\'s work yourself.',
+    'When you have decided, run the shell command:',
+    '    looper-classify act "<reason>"     — the agent should be started',
+    '    looper-classify noop "<reason>"    — no action is needed',
+    'The reason is one sentence explaining the decision.',
+    'Then write a short closing message explaining your decision. Looper closes this session when that message ends.',
+  ].join('\n');
 }
 
-export async function runClassify(ctx: RunContext): Promise<ClassifyResult> {
-  const { task, target, settings } = ctx;
+/** The rendered classifier prompt (also recorded on the classify `started` record). */
+export function classifyPrompt(ctx: RunContext): string {
+  return buildPrompt(ctx.task.classifier!.prompt, ctx.vars);
+}
+
+export interface ClassifyCallbacks extends SessionCallbacks {
+  /** Reports the live session so the scheduler can route stop/input/resize to it. */
+  onHandle?: (handle: SessionHandle) => void;
+}
+
+/** Maps how the session ended to the classifier verdict. */
+export function toClassifyResult(end: SessionEnd, headless: boolean, timeoutSec: number): ClassifyResult {
+  const base = { durationMs: end.durationMs, exitCode: end.exitCode, costUsd: end.costUsd, body: end.body };
+  switch (end.reason) {
+    case 'stopped':
+      return { status: 'stopped', reason: end.headline, ...base };
+    case 'done': {
+      const s = end.structured as Record<string, unknown> | undefined;
+      if (s && typeof s.act === 'boolean') {
+        return { status: s.act ? 'act' : 'noop', reason: String(s.reason ?? ''), ...base };
+      }
+      if (end.doneStatus === 'act' || end.doneStatus === 'noop') {
+        return { status: end.doneStatus, reason: end.headline !== 'done' ? end.headline : headlineOf(end.body), ...base };
+      }
+      const where = headless ? 'no {act} structured output' : 'looper-classify was run without act/noop';
+      return { status: 'error', error: `classifier gave no verdict: ${where}`, ...base };
+    }
+    case 'max-runtime':
+      return { status: 'error', error: `classifier timed out after ${timeoutSec} s`, ...base };
+    case 'idle-timeout':
+      return { status: 'error', error: 'classifier session went idle without looper-classify', ...base };
+    case 'exited':
+      return { status: 'error', error: tail(`${end.headline ?? 'classifier exited'}${end.body ? ': ' + end.body.trim() : ''}`, 600), ...base };
+    case 'error':
+      return { status: 'error', error: end.headline ?? 'classifier failed', retryAtMs: end.retryAtMs, ...base };
+  }
+}
+
+export async function runClassify(ctx: RunContext, cb: ClassifyCallbacks = { onData: () => {} }): Promise<ClassifyResult> {
+  const { task, settings } = ctx;
   const cls = task.classifier!;
   let harness: Harness;
   try {
@@ -64,38 +97,42 @@ export async function runClassify(ctx: RunContext): Promise<ClassifyResult> {
   } catch (e) {
     return { status: 'error', error: (e as Error).message, durationMs: 0, exitCode: null };
   }
-  const promptText = buildPrompt(cls.prompt, ctx.vars);
-  writeText(path.join(ctx.runDir, 'classify-prompt.txt'), promptText);
-  writeJsonAtomic(path.join(ctx.runDir, 'classify-schema.json'), CLASSIFIER_SCHEMA);
-
-  const q = (s: string) => target.quote(s);
-  const parts = [
-    harness.command,
-    ...harness.args.map(q),
-    '-p',
-    '--model',
-    q(cls.model),
-    '--output-format',
-    'json',
-    '--json-schema',
-    target.catFile(targetFile(ctx, 'classify-schema.json')),
-    target.catFile(targetFile(ctx, 'classify-prompt.txt')),
-  ];
-  const launcher = writeLauncher(ctx, 'classify', parts.join(' '), harness.env);
-  const res = await runCaptured(launcher.spec, {
-    timeoutMs: cls.timeoutSec * 1000,
-    signal: ctx.signal,
-    onKill: () => target.killLeftovers(ctx.runId),
-  });
-  writeText(path.join(ctx.runDir, 'classify.out.txt'), res.stdout);
-  if (res.stderr) writeText(path.join(ctx.runDir, 'classify.err.txt'), res.stderr);
-
-  const base = { durationMs: res.durationMs, exitCode: res.code };
-  if (res.error && res.code === null) return { status: 'error', error: res.error, ...base };
-  const parsed = parseClassifierOutput(res.stdout);
-  if (!parsed.ok) {
-    const err = res.code !== 0 ? `classifier exited ${res.code}: ${parsed.error}` : parsed.error;
-    return { status: 'error', error: tail(err + (res.stderr ? ' | ' + res.stderr.trim() : ''), 600), ...base };
+  const headless = cls.mode === 'headless';
+  const handle = await startSession(
+    ctx,
+    {
+      step: 'classify',
+      prefix: 'classify-',
+      launcherName: 'classify',
+      harness,
+      headless,
+      model: cls.model,
+      extraArgs: [],
+      // Headless answers via structured output; a footer would only add a turn.
+      footer: headless ? '' : classifierFooter(task.name, ctx.runId),
+      prompt: classifyPrompt(ctx),
+      jsonSchema: headless ? CLASSIFIER_SCHEMA : undefined,
+      doneCommand: CLASSIFY_DONE.command,
+      doneStatuses: CLASSIFY_DONE.statuses,
+      // Headless without the gate: the structured output already carries the
+      // verdict, and a stop-hook reminder would force an extra turn per run.
+      stopGate: !headless,
+      maxRuntimeMs: cls.timeoutSec * 1000,
+      maxRuntimeText: `exceeded the ${cls.timeoutSec} s timeout`,
+      idleGraceMs: CLASSIFY_IDLE_GRACE_MS,
+      idleText: 'turn ended without looper-classify',
+      onIdleTimeout: 'finish',
+    },
+    cb,
+  );
+  cb.onHandle?.(handle);
+  const stopReason = () => void handle.stop('stopped');
+  if (ctx.signal?.aborted) stopReason();
+  else ctx.signal?.addEventListener('abort', stopReason, { once: true });
+  try {
+    const end = await handle.finished;
+    return toClassifyResult(end, headless, cls.timeoutSec);
+  } finally {
+    ctx.signal?.removeEventListener('abort', stopReason);
   }
-  return { status: parsed.act ? 'act' : 'noop', reason: parsed.reason, costUsd: parsed.costUsd, ...base };
 }
