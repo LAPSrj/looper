@@ -21,7 +21,7 @@ polling inside the agent, no context buildup, at most one agent per task.
   their models, and concurrency caps.
 - **[Monitoring](monitoring.md)**: the task list, toolbar and context-menu
   actions, the live terminal tab, the run log and run detail windows, the
-  engine log, notifications, and the tray.
+  engine log, notifications, Rest Mode, and the tray.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a
   tour of the `~/looper` data directory.

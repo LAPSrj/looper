@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
+import { readWakeTimerPolicy } from '../engine/power-win';
+import type { PowerAdapter } from '../engine/rest';
 import type { EngineEvent, Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
@@ -45,11 +47,19 @@ if (!app.requestSingleInstanceLock()) {
       app.setAppUserModelId(app.isPackaged ? 'com.lemorim.looper' : 'com.lemorim.looper.dev');
       if (!app.isPackaged) removeDevAumidHijackers();
     }
-    engine = createEngine({ dataDir: defaultDataDir() });
+    engine = createEngine({
+      dataDir: defaultDataDir(),
+      ...(process.platform === 'win32' ? { power: createPowerAdapter() } : {}),
+    });
     engine.start();
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
       else if (event.type === 'settings') tray?.setContextMenu(trayMenu());
+      else if (event.type === 'rest') {
+        if (event.disarmReason === 'user-wake') showRestDisarmNotification();
+        tray?.setContextMenu(trayMenu());
+        rebuildMenu();
+      }
     });
     registerIpc(engine, {
       getWindow: () => win,
@@ -128,6 +138,73 @@ function removeDevAumidHijackers(): void {
   }
 }
 
+/** Electron power hooks handed to the engine's Rest Mode controller. */
+function createPowerAdapter(): PowerAdapter {
+  let blockerId: number | null = null;
+  return {
+    startBlocker() {
+      if (blockerId === null || !powerSaveBlocker.isStarted(blockerId)) {
+        blockerId = powerSaveBlocker.start('prevent-app-suspension');
+      }
+    },
+    stopBlocker() {
+      if (blockerId !== null && powerSaveBlocker.isStarted(blockerId)) powerSaveBlocker.stop(blockerId);
+      blockerId = null;
+    },
+    onSuspend: (cb) => void powerMonitor.on('suspend', cb),
+    onResume: (cb) => void powerMonitor.on('resume', cb),
+    isOnBattery: () => powerMonitor.isOnBatteryPower(),
+  };
+}
+
+/** Arm (with a wake-timer preflight) or disarm Rest Mode from a menu. */
+async function toggleRestMode(): Promise<void> {
+  if (!engine) return;
+  if (engine.restState().armed) {
+    engine.disarmRest();
+    return;
+  }
+  // Wake timers disabled for the current power source mean the machine would
+  // sleep and never wake for the schedule: warn before arming.
+  const policy = await readWakeTimerPolicy();
+  if (policy) {
+    const onBattery = powerMonitor.isOnBatteryPower();
+    if (onBattery ? !policy.dc : !policy.ac) {
+      const r = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Looper',
+        message: 'The computer will not wake on its own.',
+        detail: `Windows wake timers are disabled while ${onBattery ? 'on battery' : 'plugged in'} (Power Options → Sleep → Allow wake timers). Rest Mode can put the computer to sleep, but scheduled tasks will not wake it.`,
+        buttons: ['Start Anyway', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (r.response !== 0) return;
+    }
+  }
+  try {
+    engine.armRest();
+  } catch (err) {
+    await dialog.showMessageBox({ type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+  }
+}
+
+function restMenuItems(): Electron.MenuItemConstructorOptions[] {
+  if (engine?.host !== 'windows') return [];
+  const armed = engine.restState().armed;
+  return [{ label: armed ? 'Stop &Rest Mode' : 'Start &Rest Mode', click: () => void toggleRestMode() }];
+}
+
+function showRestDisarmNotification(): void {
+  if (!engine?.settings.notificationsEnabled || !Notification.isSupported()) return;
+  if (BrowserWindow.getFocusedWindow()) return;
+  new Notification({
+    title: 'Looper',
+    body: 'Rest Mode turned off — the computer was woken manually.',
+    icon: appIcon,
+  }).show();
+}
+
 const appIcon = path.join(__dirname, '../../assets/icon.png');
 const trayIcon = process.platform === 'win32'
   ? path.join(__dirname, '../../assets/icon.ico')
@@ -154,6 +231,7 @@ function trayMenu(): Menu {
         if (engine) engine.updateSettings({ notificationsEnabled: !engine.settings.notificationsEnabled });
       },
     },
+    ...restMenuItems().map((item) => ({ ...item, label: String(item.label).replace('&', '') })),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ]);
@@ -735,8 +813,16 @@ function sendUi(type: string): void {
   }
 }
 
+/** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
+let menuSelection: [boolean, boolean | undefined, boolean | undefined, string | undefined, boolean] = [false, undefined, undefined, undefined, false];
+
 function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void {
-  buildMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote);
+  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false];
+  buildMenu(...menuSelection);
+}
+
+function rebuildMenu(): void {
+  buildMenu(...menuSelection);
 }
 
 /** Persist a View-menu option; the settings event carries it to the renderer. */
@@ -771,6 +857,8 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
+        ...restMenuItems(),
+        ...(engine?.host === 'windows' ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
         { role: 'quit', label: 'E&xit' },
       ],
     },

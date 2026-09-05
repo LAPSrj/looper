@@ -1,5 +1,5 @@
 import type { MessageImage, MessagesResult } from './messages';
-import type { EngineEvent, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
+import type { EngineEvent, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -72,6 +72,8 @@ export interface LooperApi {
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
   };
+  /** Current Rest Mode state; live updates arrive as `rest` engine events. */
+  restState(): Promise<RestState>;
   openPath(p: string): Promise<void>;
   /** Open a dropped Looper document (.loopertask/.loopertpl) as if it were double-clicked. */
   openLooperFile(file: File): Promise<void>;

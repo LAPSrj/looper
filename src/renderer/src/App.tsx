@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
-import type { RunRecord, Task, TaskFolder, TaskRuntime } from '@shared/types';
+import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
@@ -8,6 +8,19 @@ import { TaskToolbar } from './components/TaskToolbar';
 import { useDialogKeys, useDragResize } from './components/hooks';
 
 const MAX_RECORDS = 500;
+
+function restStatus(rest: RestState, now: number): string {
+  if (rest.phase === 'countdown' && rest.sleepAt !== null) {
+    return `Rest Mode — sleeping in ${Math.max(0, Math.ceil((rest.sleepAt - now) / 1000))} s`;
+  }
+  if (rest.phase === 'sleeping') {
+    const wake = rest.wakeAt !== null
+      ? ` until ${new Date(rest.wakeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : '';
+    return `Rest Mode — sleeping${wake}`;
+  }
+  return 'Rest Mode — waiting for tasks to finish';
+}
 
 export function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -21,6 +34,7 @@ export function App() {
   // Run to select in the run log (notification click); a fresh object per click re-triggers.
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [rest, setRest] = useState<RestState | null>(null);
 
   // Menu and toolbar commands act on the selected task; the ref keeps them acting on current state.
   const uiRef = useRef({ selected, tasks, runtimes });
@@ -119,6 +133,7 @@ export function App() {
       for (const rt of list) map[rt.taskId] = rt;
       setRuntimes(map);
     });
+    void window.looper.restState().then(setRest);
     const unsub = subscribe((e) => {
       switch (e.type) {
         case 'tasks':
@@ -133,6 +148,9 @@ export function App() {
           break;
         case 'settings':
           setInfo((i) => (i ? { ...i, settings: e.settings } : i));
+          break;
+        case 'rest':
+          setRest(e.rest);
           break;
         case 'record':
           setRecords((m) => {
@@ -257,6 +275,7 @@ export function App() {
       </div>
       {(view?.statusBar ?? true) && (
         <div className="statusbar">
+          {rest?.armed && <span>{restStatus(rest, now)}</span>}
           <span className="spacer" />
           <span>
             {counts.enabled} enabled · {counts.disabled} disabled · {counts.paused} paused · {counts.running} running

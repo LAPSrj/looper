@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { MessageImage, MessagesResult } from '../shared/messages';
-import type { EngineEvent, InboxCommand, RunRecord, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, InboxCommand, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
 import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
@@ -9,6 +9,8 @@ import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { MessagesService } from './messages';
 import { openTaskTerminal } from './open-terminal';
+import { createWindowsPowerOps } from './power-win';
+import { RestController, type PowerAdapter, type PowerOps } from './rest';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir } from './store/fsutil';
 import { RunStore } from './store/runs';
@@ -22,6 +24,10 @@ export interface EngineOptions {
   /** Echo log lines to stdout/stderr (CLI serve mode). */
   echoLog?: boolean;
   steps?: Partial<SchedulerSteps>;
+  /** Electron power hooks; without them Rest Mode is unavailable (CLI serve). */
+  power?: PowerAdapter;
+  /** OS power command override (tests). */
+  powerOps?: PowerOps;
 }
 
 export interface Engine {
@@ -73,6 +79,11 @@ export interface Engine {
   agentBuffer(id: string): { runId: string; data: string } | null;
   /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
   openTaskTerminal(id: string): Promise<void>;
+  // rest mode
+  /** Throws when Rest Mode is unavailable (non-Windows host, or no power adapter). */
+  armRest(): void;
+  disarmRest(): void;
+  restState(): RestState;
   // history
   listRuns(id: string, limit?: number): RunRecord[];
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
@@ -138,7 +149,23 @@ export function createEngine(opts: EngineOptions): Engine {
   });
 
   const scheduler = new Scheduler({ dataDir, host, settings, tasks, runs, state, log, steps: opts.steps });
-  scheduler.on('event', emit);
+
+  const rest =
+    host === 'windows' && opts.power
+      ? new RestController({
+          settings,
+          runtimes: () => scheduler.list(),
+          adapter: opts.power,
+          ops: opts.powerOps ?? createWindowsPowerOps(),
+          log,
+          emit: (restState, disarmReason) => emit({ type: 'rest', rest: restState, ...(disarmReason ? { disarmReason } : {}) }),
+        })
+      : null;
+
+  scheduler.on('event', (e: EngineEvent) => {
+    emit(e);
+    if (e.type === 'runtime') rest?.poke();
+  });
 
   // Run-log retention: delete records and run folders past their age limit,
   // sparing whatever run is currently in progress.
@@ -217,6 +244,7 @@ export function createEngine(opts: EngineOptions): Engine {
       templates.on('change', () => emit({ type: 'templates', templates: templates.list() }));
       scheduler.start();
       inbox.start();
+      rest?.init();
       sweepRunLogs();
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
     },
@@ -226,6 +254,7 @@ export function createEngine(opts: EngineOptions): Engine {
       if (retentionTimer) clearInterval(retentionTimer);
       retentionTimer = null;
       inbox.stop();
+      rest?.dispose();
       await scheduler.stop();
       log.info('looper engine stopped');
       log.close();
@@ -297,6 +326,12 @@ export function createEngine(opts: EngineOptions): Engine {
       if (!task) throw new Error(`unknown task ${id}`);
       return openTaskTerminal(task, { host, settings, taskDir: runs.taskDir(id), log });
     },
+    armRest(): void {
+      if (!rest) throw new Error('Rest Mode is only available in the Looper app on Windows.');
+      rest.arm();
+    },
+    disarmRest: () => rest?.disarm(),
+    restState: () => rest?.state() ?? { armed: false, phase: 'off', sleepAt: null, wakeAt: null },
     listRuns: (id, limit) => runs.list(id, limit),
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
     readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),

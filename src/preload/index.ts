@@ -46,6 +46,7 @@ const api: LooperApi = {
     write: (id, data) => ipcRenderer.send('agent:write', id, data),
     resize: (id, cols, rows) => ipcRenderer.send('agent:resize', id, cols, rows),
   },
+  restState: () => ipcRenderer.invoke('rest:state'),
   openPath: (p) => ipcRenderer.invoke('openPath', p),
   // webUtils resolves the dropped File to its on-disk path (File.path is gone).
   openLooperFile: (file) => ipcRenderer.invoke('file:openLooper', webUtils.getPathForFile(file)),

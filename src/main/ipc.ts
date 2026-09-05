@@ -114,6 +114,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   /** A Looper document dropped onto a window; behaves exactly like double-clicking it. */
   ipcMain.handle('file:openLooper', (_e, file: string) => host.openLooperFile(file));
 
+  ipcMain.handle('rest:state', () => engine.restState());
+
   ipcMain.handle('runtime:list', () => engine.listRuntimes());
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
   ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));

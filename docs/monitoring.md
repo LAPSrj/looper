@@ -219,6 +219,38 @@ the same toggle is available from the tray menu as "Enable Notifications" /
 finished cycle (end, auto-paused, usage limit) it opens the Run log tab
 with that run selected. No toast fires while any Looper window is focused.
 
+## Rest Mode
+
+Rest Mode (Windows only) puts the computer to sleep between runs and wakes
+it for the next one, so an overnight schedule doesn't keep the machine on.
+**File → Start Rest Mode** (also on the tray menu) turns it on; the same
+item becomes **Stop Rest Mode** while it's on, and the status bar shows what
+it's doing.
+
+While on, Looper owns the sleep policy: it keeps the computer awake while
+any task is checking, classifying, or running, and once every task has been
+quiet for the **Wait before sleeping** grace period it registers a wake
+timer for the next scheduled run and suspends the computer. The wake is
+never earlier than **Minimum sleep**, counted from the moment the computer
+goes to sleep — a task on a 5-minute schedule under a 30-minute minimum
+effectively runs about every 30 minutes, since slots that pass while asleep
+are skipped and the task simply runs once on wake. With nothing scheduled
+at all, the computer sleeps without a wake timer.
+
+A held run does not keep the computer awake: it's a parked session waiting
+for you, and it is still there after the next wake.
+
+Waking the computer yourself (keyboard, power button, lid) turns Rest Mode
+off, so it won't put the machine back to sleep under you — a toast says so.
+Uncheck **Turn off when the computer is woken manually** in Settings to
+keep it on across manual wakes instead. Turning Rest Mode on while wake
+timers are disabled in Windows' power options (common on battery) shows a
+warning first: the computer would sleep but never wake for the schedule.
+
+The three settings live in **Settings → General → Rest Mode**. Whether Rest
+Mode is on is not remembered across restarts — a fresh Looper always starts
+with it off.
+
 ## The tray icon and close-to-tray
 
 Looper keeps a tray icon running whenever the app is open. Double-clicking

@@ -5,10 +5,11 @@ import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 
-type SettingsTab = 'general' | 'environments' | 'advanced';
+type SettingsTab = 'general' | 'rest' | 'environments' | 'advanced';
 
 const TABS: [SettingsTab, string][] = [
   ['general', 'General'],
+  ['rest', 'Rest Mode'],
   ['environments', 'Environments'],
   ['advanced', 'Advanced'],
 ];
@@ -31,6 +32,10 @@ export function SettingsApp() {
   const [staggerMax, setStaggerMax] = useState<number | null>(null);
   const [staggerInterval, setStaggerInterval] = useState<number | null>(null);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  const [host, setHost] = useState('');
+  const [restMinSleep, setRestMinSleep] = useState<number | null>(null);
+  const [restGrace, setRestGrace] = useState<number | null>(null);
+  const [restDisarmOnWake, setRestDisarmOnWake] = useState<boolean | null>(null);
   const [engineLogDays, setEngineLogDays] = useState<number | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
@@ -56,6 +61,10 @@ export function SettingsApp() {
       setStaggerMax((v) => v ?? info.settings.staggerFirstRun.maxDelaySec);
       setStaggerInterval((v) => v ?? info.settings.staggerFirstRun.minIntervalSec);
       setRetentionDays((v) => v ?? info.settings.runRetentionDays);
+      setHost(info.host);
+      setRestMinSleep((v) => v ?? info.settings.rest.minSleepMin);
+      setRestGrace((v) => v ?? info.settings.rest.graceSec);
+      setRestDisarmOnWake((v) => v ?? info.settings.rest.disarmOnUserWake);
       setEngineLogDays((v) => v ?? info.settings.engineLogRetentionDays);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
@@ -79,10 +88,12 @@ export function SettingsApp() {
     });
   }, []);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: TABS.map(([id]) => id), tab, onTab: setTab });
+  const visibleTabs = host === 'windows' ? TABS : TABS.filter(([id]) => id !== 'rest');
 
-  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null) return <div className="empty">Loading…</div>;
+  const saveRef = useRef<() => Promise<void>>(async () => {});
+  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
+
+  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -191,6 +202,11 @@ export function SettingsApp() {
         templatesFile,
         runRetentionDays: retentionDays,
         engineLogRetentionDays: engineLogDays,
+        rest: {
+          minSleepMin: restMinSleep,
+          graceSec: restGrace,
+          disarmOnUserWake: restDisarmOnWake,
+        },
       });
       initTasksFile.current = tasksFile;
       initTemplatesFile.current = templatesFile;
@@ -210,7 +226,7 @@ export function SettingsApp() {
 
   return (
     <div className="editor">
-      <TabBar tabs={TABS} active={tab} onSelect={setTab} className="editor-tabs" />
+      <TabBar tabs={visibleTabs} active={tab} onSelect={setTab} className="editor-tabs" />
       <div className="editor-body">
         {tab === 'general' && (
           <div className="form">
@@ -244,6 +260,17 @@ export function SettingsApp() {
             <label className="checkbox-field">
               <input type="checkbox" checked={startWithSystem} onChange={(e) => setStartWithSystem(e.target.checked)} />
               Start with the computer
+            </label>
+          </div>
+        )}
+
+        {tab === 'rest' && (
+          <div className="form">
+            <NumberField label="Minimum sleep" suffix="min" min={1} value={restMinSleep} onChange={setRestMinSleep} />
+            <NumberField label="Wait before sleeping" suffix="s" min={1} value={restGrace} onChange={setRestGrace} />
+            <label className="checkbox-field">
+              <input type="checkbox" checked={restDisarmOnWake} onChange={(e) => setRestDisarmOnWake(e.target.checked)} />
+              Turn off when the computer is woken manually
             </label>
           </div>
         )}

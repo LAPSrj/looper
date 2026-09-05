@@ -260,6 +260,15 @@ export const SettingsSchema = z.object({
   closeToTray: z.boolean().default(false),
   /** Master switch for system notifications; per-task selection is on the task. */
   notificationsEnabled: z.boolean().default(true),
+  /** Rest Mode: sleep the computer between runs and wake it for the next one (Windows only). */
+  rest: z.object({
+    /** Earliest the wake timer may fire, counted from the moment the computer goes to sleep. */
+    minSleepMin: z.number().positive().default(30),
+    /** How long every task must have been quiet before the computer is put to sleep. */
+    graceSec: z.number().positive().default(60),
+    /** Turn Rest Mode off when something other than the wake timer wakes the computer. */
+    disarmOnUserWake: z.boolean().default(true),
+  }).default({}),
   /** Main-window view options (View menu). */
   view: z.object({
     toolbar: z.boolean().default(true),
@@ -334,6 +343,18 @@ export interface TaskRuntime {
   pausedReason: string | null;
 }
 
+export type RestPhase = 'off' | 'waiting' | 'countdown' | 'sleeping';
+
+export interface RestState {
+  armed: boolean;
+  /** off | waiting (tasks active) | countdown (quiet, sleep pending) | sleeping. */
+  phase: RestPhase;
+  /** Epoch ms when the computer will be put to sleep (countdown phase only). */
+  sleepAt: number | null;
+  /** Epoch ms the wake timer is set for; null = nothing scheduled, sleep without a wake. */
+  wakeAt: number | null;
+}
+
 export type RunPhase = 'check' | 'classify' | 'agent' | 'result' | 'skip' | 'system';
 
 export type RunResult =
@@ -395,4 +416,5 @@ export type EngineEvent =
   | { type: 'tasks'; tasks: Task[] }
   | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }
-  | { type: 'settings'; settings: Settings };
+  | { type: 'settings'; settings: Settings }
+  | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' };
