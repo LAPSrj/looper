@@ -232,7 +232,7 @@ export function App() {
             showDisabled={view?.showDisabledTasks ?? true}
             showScheduled={view?.showScheduledTasks ?? true}
             showManual={view?.showManualTasks ?? true}
-            autoOpenFolders={view?.autoOpenFolders ?? false}
+            autoOpenFolders={view?.autoOpenFolders ?? true}
           />
         </aside>
         <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />

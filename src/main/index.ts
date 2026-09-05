@@ -719,7 +719,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
     showDisabledTasks: true,
     showScheduledTasks: true,
     showManualTasks: true,
-    autoOpenFolders: false,
+    autoOpenFolders: true,
     hideNoActionRuns: false,
   };
   const menu = Menu.buildFromTemplate([

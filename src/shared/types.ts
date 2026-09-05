@@ -269,7 +269,7 @@ export const SettingsSchema = z.object({
     showScheduledTasks: z.boolean().default(true),
     showManualTasks: z.boolean().default(true),
     /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
-    autoOpenFolders: z.boolean().default(false),
+    autoOpenFolders: z.boolean().default(true),
     hideNoActionRuns: z.boolean().default(false),
   }).default({}),
 }).superRefine((s, ctx) => {
