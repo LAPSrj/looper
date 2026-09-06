@@ -94,6 +94,16 @@ classifier step on or off. When on, it runs after a check that returned
 - **Permission mode** — Claude Code only, passed as `--permission-mode`:
   Auto, Accept edits, Manual, Don't ask, Plan mode, Bypass, or None (omits
   the flag entirely).
+- **Conversation** — Claude Code only. New each run (the default) starts
+  every run as a fresh session. Continue across runs keeps one rolling
+  conversation: the first run starts it (`--session-id`), later runs resume
+  it (`--resume`), so the agent remembers what it already saw and reported.
+  **New conversation after** caps the roll — after that many runs the next
+  run starts a new conversation (a cap of 1 behaves like New each run).
+  If the conversation to resume no longer exists (e.g. its transcript was
+  cleaned up), that run ends as an error saying so and the next run starts a
+  new one. Editing the task's working directory, environment, or harness
+  also starts a new one, since a conversation can't move.
 - **Agent prompt** — the instructions the agent starts with. `{{summary}}`
   and `{{context}}` insert the check's output where you place them; if the
   prompt doesn't reference either, they're appended under a "## Check

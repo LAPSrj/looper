@@ -17,6 +17,7 @@ function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
     consecutiveErrors: 0,
     currentRunId: null,
     pausedReason: null,
+    session: null,
     ...partial,
   };
 }

@@ -20,6 +20,8 @@ export interface RunContext {
   log: Logger;
   /** Aborts when the user stops the task mid-cycle. */
   signal?: AbortSignal;
+  /** Agent step, claude-code only: resume this conversation, or start a new one under this id. */
+  agentSession?: { id: string; resume: boolean };
   /** Template variables accumulated across steps (task, summary, context…). */
   vars: Record<string, unknown>;
 }

@@ -770,6 +770,28 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 )}
               </div>
             )}
+            {isClaude && (
+              <div className="row">
+                <Field label="Conversation">
+                  <select
+                    value={draft.agent.session ?? 'fresh'}
+                    onChange={(e) => setAgent('session', e.target.value as 'fresh' | 'continue')}
+                  >
+                    <option value="fresh">New each run (default)</option>
+                    <option value="continue">Continue across runs</option>
+                  </select>
+                </Field>
+                {(draft.agent.session ?? 'fresh') === 'continue' && (
+                  <NumberField
+                    label="New conversation after"
+                    suffix="runs"
+                    min={1}
+                    value={draft.agent.sessionMaxRuns ?? 10}
+                    onChange={(n) => setAgent('sessionMaxRuns', n)}
+                  />
+                )}
+              </div>
+            )}
             <Field
               label="Agent prompt"
               help={

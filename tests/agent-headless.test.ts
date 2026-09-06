@@ -219,6 +219,57 @@ describe('headless agent over pipes', () => {
     expect(prompt.trim().endsWith('Use the staging mirror instead.')).toBe(true);
   });
 
+  it('adds --session-id for a new rolling conversation and --resume for a continued one', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+
+    const fresh = makeCtx(harness);
+    fresh.agentSession = { id: '11111111-1111-4111-8111-111111111111', resume: false };
+    await (await startAgent(fresh, { onData: () => {} })).finished;
+    const freshLauncher = fs.readFileSync(path.join(fresh.runDir, 'run.sh'), 'utf8');
+    expect(freshLauncher).toContain(`--session-id '11111111-1111-4111-8111-111111111111'`);
+    expect(freshLauncher).not.toContain('--resume');
+
+    const continued = makeCtx(harness);
+    continued.agentSession = { id: '11111111-1111-4111-8111-111111111111', resume: true };
+    await (await startAgent(continued, { onData: () => {} })).finished;
+    const contLauncher = fs.readFileSync(path.join(continued.runDir, 'run.sh'), 'utf8');
+    expect(contLauncher).toContain(`--resume '11111111-1111-4111-8111-111111111111'`);
+    expect(contLauncher).not.toContain('--session-id');
+  });
+
+  it('ends as an error with sessionLost when the conversation to resume is gone', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    // What claude prints (stderr, exit 1) when a --resume id has no conversation.
+    const harness = fakeHarness(
+      root,
+      [`echo 'No conversation found with session ID: 11111111-1111-4111-8111-111111111111' >&2`, `exit 1`].join('\n'),
+    );
+    const ctx = makeCtx(harness);
+    ctx.agentSession = { id: '11111111-1111-4111-8111-111111111111', resume: true };
+    const handle = await startAgent(ctx, { onData: () => {} });
+    const end = await handle.finished;
+    expect(end.reason).toBe('error');
+    expect(end.sessionLost).toBe(true);
+    expect(end.headline).toContain('no longer exists');
+  });
+
+  it('never flags sessionLost when the error text appears without a resume', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [`echo 'No conversation found with session ID: x' >&2`, `echo '{"type":"result","result":"ok"}'`].join('\n'),
+    );
+    const ctx = makeCtx(harness);
+    const handle = await startAgent(ctx, { onData: () => {} });
+    const end = await handle.finished;
+    expect(end.reason).toBe('done');
+    expect(end.sessionLost).toBeUndefined();
+  });
+
   it('reports a non-zero exit as exited, with whatever result it did print', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

@@ -45,6 +45,8 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.prompt': 'Agent prompt',
   'agent.extraArgs': 'Extra command-line arguments',
   'agent.mode': 'Session type',
+  'agent.session': 'Conversation',
+  'agent.sessionMaxRuns': 'New conversation after',
   'agent.permissionMode': 'Permission mode',
   'agent.maxRuntimeMin': 'Max runtime',
   'agent.idleGraceMin': 'Idle grace',

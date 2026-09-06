@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Cron } from 'croner';
 import type {
@@ -11,6 +12,7 @@ import type {
   TaskRuntime,
 } from '../shared/types';
 import { cronTz } from '../shared/cron';
+import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, resultLabel } from '../shared/format';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
@@ -245,6 +247,7 @@ export class Scheduler extends EventEmitter {
       consecutiveErrors: 0,
       currentRunId: null,
       pausedReason: null,
+      session: prev?.session ?? null,
     };
     this.runtimes.set(task.id, rt);
     this.emitRuntime(rt);
@@ -302,6 +305,17 @@ export class Scheduler extends EventEmitter {
       }
       this.persist();
       return;
+    }
+    // A rolling conversation lives in one place: a different cwd, environment or
+    // harness cannot continue it, so such an edit drops it and the next run starts fresh.
+    if (
+      rt.session &&
+      previous &&
+      (previous.cwd !== task.cwd ||
+        previous.environmentId !== task.environmentId ||
+        previous.agent.harnessId !== task.agent.harnessId)
+    ) {
+      rt.session = null;
     }
     if (ACTIVE.has(rt.state)) return; // applied when the cycle finishes
     if (!task.enabled) {
@@ -516,6 +530,16 @@ export class Scheduler extends EventEmitter {
       if (go) {
         rt.state = 'running';
         this.emitRuntime(rt);
+        ctx.agentSession = this.rollingSession(task, rt);
+        if (ctx.agentSession) {
+          this.d.log.info(
+            `[${task.id}] agent ${
+              ctx.agentSession.resume
+                ? `resumes conversation ${ctx.agentSession.id} (run ${(rt.session?.runs ?? 0) + 1} of ${task.agent.sessionMaxRuns})`
+                : `starts conversation ${ctx.agentSession.id}`
+            }`,
+          );
+        }
         this.record(task.id, runId, 'agent', 'started', { summary: checkSummary, body: agentPrompt(ctx) });
         if (task.notifications.agentStart) {
           this.notify(task, runId, 'agent-start', checkSummary ? `Agent started: ${checkSummary}` : 'Agent started');
@@ -535,6 +559,7 @@ export class Scheduler extends EventEmitter {
         detail = end.headline ?? '';
         if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
         retryAtMs = end.retryAtMs;
+        if (ctx.agentSession) this.rollSession(task, rt, ctx.agentSession, end);
         if (task.note && end.reason !== 'error' && end.reason !== 'stopped') {
           this.consumeNote(task.id, task.note.text);
         }
@@ -550,6 +575,48 @@ export class Scheduler extends EventEmitter {
       this.cycleStops.delete(task.id);
       this.finishCycle(task.id, rt, errored, outcome, detail, retryAtMs);
     }
+  }
+
+  /**
+   * The conversation this run's agent gets (agent.session 'continue', Claude
+   * Code only): resume the stored one while it has runs left on it, otherwise
+   * start a new one under a fresh id. sessionMaxRuns of 1 therefore behaves
+   * exactly like 'fresh'. Any other configuration clears leftover state.
+   */
+  private rollingSession(task: Task, rt: TaskRuntime): { id: string; resume: boolean } | undefined {
+    if (task.agent.session !== 'continue') {
+      rt.session = null;
+      return undefined;
+    }
+    try {
+      if (resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind !== 'claude-code') return undefined;
+    } catch {
+      return undefined;
+    }
+    if (rt.session && rt.session.runs < task.agent.sessionMaxRuns) {
+      return { id: rt.session.id, resume: true };
+    }
+    return { id: randomUUID(), resume: false };
+  }
+
+  /**
+   * Book the run against the rolling conversation. A lost resume clears the id
+   * so the next run starts fresh (recorded in the run log via the error
+   * headline). An `error` end books nothing: the model never got the prompt
+   * (spawn failure, usage limit), and a resumed conversation is still there to
+   * try again.
+   */
+  private rollSession(task: Task, rt: TaskRuntime, s: { id: string; resume: boolean }, end: AgentEnd): void {
+    if (end.sessionLost) {
+      rt.session = null;
+      this.d.log.warn(`[${task.id}] conversation ${s.id} no longer exists; the next run starts a new one`);
+      return;
+    }
+    if (end.reason === 'error') return;
+    rt.session =
+      s.resume && rt.session?.id === s.id
+        ? { id: s.id, runs: rt.session.runs + 1 }
+        : { id: s.id, runs: 1 };
   }
 
   /**

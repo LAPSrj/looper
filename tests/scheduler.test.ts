@@ -34,6 +34,8 @@ interface Harness {
   classifies: ClassifyResult[];
   agentEnds: AgentEnd[];
   agentStarted: number;
+  /** ctx.agentSession of each agent start, in order. */
+  agentSessions: ({ id: string; resume: boolean } | undefined)[];
   liveAgent: { end: (e: AgentEnd) => void; hold: () => void } | null;
   /** When true, runCheck blocks until the cycle's stop signal aborts. */
   hangChecks: boolean;
@@ -73,6 +75,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     classifies: [],
     agentEnds: [],
     agentStarted: 0,
+    agentSessions: [],
     liveAgent: null,
     hangChecks: false,
   };
@@ -98,6 +101,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
       runClassify: async () => h.classifies!.shift() ?? { status: 'noop', durationMs: 1, exitCode: 0 },
       startAgent: async (ctx, cb) => {
         h.agentStarted!++;
+        h.agentSessions!.push(ctx.agentSession);
         const scripted = h.agentEnds!.shift();
         let resolve!: (e: AgentEnd) => void;
         const finished = new Promise<AgentEnd>((r) => (resolve = r));
@@ -459,6 +463,112 @@ describe('Scheduler', () => {
   });
 });
 
+describe('rolling sessions', () => {
+  const continueSessions = (maxRuns: number) =>
+    h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, session: 'continue', sessionMaxRuns: maxRuns } });
+
+  it('a fresh-session task (the default) passes no conversation to the agent', async () => {
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done'));
+    await h.tickN(1);
+    expect(h.agentSessions).toEqual([undefined]);
+    expect(h.sched.get('t1')!.session).toBeNull();
+  });
+
+  it('starts a conversation, resumes it, and rolls to a new one after the cap', async () => {
+    continueSessions(2);
+    h.checks.push(check('act'), check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'), agentEnd('done'), agentEnd('done'));
+    await h.tickN(1);
+    const first = h.sched.get('t1')!.session;
+    expect(first).not.toBeNull();
+    expect(first!.runs).toBe(1);
+    expect(h.agentSessions[0]).toEqual({ id: first!.id, resume: false });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[1]).toEqual({ id: first!.id, resume: true });
+    expect(h.sched.get('t1')!.session).toEqual({ id: first!.id, runs: 2 });
+    // The cap is used up: the third run starts a new conversation.
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[2]!.resume).toBe(false);
+    expect(h.agentSessions[2]!.id).not.toBe(first!.id);
+    expect(h.sched.get('t1')!.session).toEqual({ id: h.agentSessions[2]!.id, runs: 1 });
+  });
+
+  it('a cap of 1 behaves like fresh: every run starts a new conversation', async () => {
+    continueSessions(1);
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'), agentEnd('done'));
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[0]!.resume).toBe(false);
+    expect(h.agentSessions[1]!.resume).toBe(false);
+    expect(h.agentSessions[1]!.id).not.toBe(h.agentSessions[0]!.id);
+  });
+
+  it('an error end books nothing: a failed start stores no id, a failed resume keeps the count', async () => {
+    continueSessions(5);
+    h.checks.push(check('act'), check('act'), check('act'));
+    h.agentEnds.push(agentEnd('error', 'cannot start Fake'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.session).toBeNull();
+    h.agentEnds.push(agentEnd('done'), agentEnd('error', 'usage limit'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    const booked = h.sched.get('t1')!.session!;
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[2]).toEqual({ id: booked.id, resume: true });
+    expect(h.sched.get('t1')!.session).toEqual(booked);
+  });
+
+  it('a lost conversation clears the stored id so the next run starts a new one', async () => {
+    continueSessions(5);
+    h.checks.push(check('act'), check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'));
+    await h.tickN(1);
+    const first = h.sched.get('t1')!.session!;
+    h.agentEnds.push({ ...agentEnd('error', 'the conversation to continue no longer exists'), sessionLost: true });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[1]).toEqual({ id: first.id, resume: true });
+    expect(h.sched.get('t1')!.session).toBeNull();
+    h.agentEnds.push(agentEnd('done'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[2]!.resume).toBe(false);
+    expect(h.agentSessions[2]!.id).not.toBe(first.id);
+  });
+
+  it('turning the setting off clears the stored conversation', async () => {
+    continueSessions(5);
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'), agentEnd('done'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.session).not.toBeNull();
+    h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, session: 'fresh' } });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[1]).toBeUndefined();
+    expect(h.sched.get('t1')!.session).toBeNull();
+  });
+
+  it('editing the working directory drops the conversation: it cannot move', async () => {
+    continueSessions(5);
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push(agentEnd('done'), agentEnd('done'));
+    await h.tickN(1);
+    const first = h.sched.get('t1')!.session!;
+    h.tasks.patch('t1', { cwd: '/tmp/elsewhere' });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentSessions[1]!.resume).toBe(false);
+    expect(h.agentSessions[1]!.id).not.toBe(first.id);
+  });
+});
+
 describe('notifications', () => {
   const notifies = () =>
     h.events.filter((e): e is Extract<EngineEvent, { type: 'notify' }> => e.type === 'notify');
@@ -573,6 +683,7 @@ describe('startup overdue filtering', () => {
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
+        session: null,
       },
     });
     state.flush();
@@ -616,6 +727,7 @@ describe('startup overdue filtering', () => {
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
+        session: null,
       },
     });
     state.flush();
@@ -658,6 +770,7 @@ describe('interrupted runs', () => {
         consecutiveErrors: 0,
         currentRunId: 'old-run',
         pausedReason: null,
+        session: null,
       },
     });
     state.flush();

@@ -32,6 +32,8 @@ export interface SessionEnd {
   headline?: string;
   /** The session's final message, i.e. the detailed report of the run. Markdown. */
   body?: string;
+  /** A resume attempt failed: the conversation to continue no longer exists. */
+  sessionLost?: boolean;
   /** Headless: the result event's structured_output (from --json-schema). */
   structured?: unknown;
   /** Headless: the result event's total_cost_usd. */
@@ -70,6 +72,8 @@ export interface SessionOpts {
   model?: string;
   /** claude only; empty/undefined omits the flag. */
   permissionMode?: string;
+  /** claude only: rolling conversation — resume the id, or start the conversation under it. */
+  session?: { id: string; resume: boolean };
   extraArgs: readonly string[];
   /** System footer (claude: --append-system-prompt; others: prepended). Empty = none. */
   footer: string;
@@ -144,6 +148,11 @@ export const USAGE_LIMIT_RE =
   /(?:hit|reached) (?:your|the) [\w-]*\s?limit\b[^\n]{0,80}?resets(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i;
 /** Fallback wait when the banner shows no parseable reset time. */
 const USAGE_LIMIT_FALLBACK_MS = 3_600_000;
+
+/** What claude prints (and exits 1) when a --resume id has no conversation behind it. */
+export const RESUME_LOST_RE = /No conversation found with session ID/i;
+/** Headline of a run that ended because its rolling conversation was gone. */
+export const RESUME_LOST_TEXT = 'the conversation to continue no longer exists; the next run starts a new one';
 
 /** Epoch ms of the "resets 5:50am" wall-clock time in `text` (next occurrence, local), or null. */
 export function parseUsageLimitReset(text: string, now: number): number | null {
@@ -307,6 +316,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   if (claude) {
     if (opts.model) parts.push('--model', q(opts.model));
     if (opts.permissionMode) parts.push('--permission-mode', q(opts.permissionMode));
+    if (opts.session) parts.push(opts.session.resume ? '--resume' : '--session-id', q(opts.session.id));
     if (opts.footer) parts.push('--append-system-prompt', target.catFile(targetFile(ctx, f('system.txt'))));
     parts.push('--settings', q(targetFile(ctx, f('settings.json'))));
     if (headless) {
@@ -380,6 +390,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let prevEndedNewline = false;
   /** Latest last_assistant_message seen from the Stop hook (interactive). */
   let lastMessage: string | undefined;
+  // A --resume of a pruned/foreign conversation errors in the first output;
+  // watching only the head keeps conversation text from ever matching.
+  let earlyOutput = '';
+  const watchResume = opts.session?.resume === true;
+  const noteEarly = (d: string): void => {
+    if (watchResume && earlyOutput.length < 16384) earlyOutput += d;
+  };
+  const sessionLost = (): boolean => watchResume && RESUME_LOST_RE.test(earlyOutput);
   /** Set once the done command has been seen: mtime of the done file, its status and headline. */
   let doneMtime: number | null = null;
   let doneStatus: string | undefined;
@@ -431,6 +449,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       doneStatus: reason === 'done' ? doneStatus : undefined,
       headline,
       body,
+      sessionLost: sessionLost() || undefined,
       structured,
       costUsd,
       retryAtMs,
@@ -446,6 +465,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const finishHeadless = async (code: number | null): Promise<void> => {
     if (spawnError) {
       await finish('error', spawnError);
+      return;
+    }
+    if (sessionLost()) {
+      await finish('error', RESUME_LOST_TEXT);
       return;
     }
     const doneText = await fs.promises.readFile(path.join(ctx.runDir, f('done')), 'utf8').catch(() => '');
@@ -496,6 +519,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   proc.onStdout((d) => {
     out.write(d);
+    noteEarly(d);
     if (!ended) host?.write(d);
     if (headless) {
       streamBuf += d;
@@ -523,6 +547,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     const cleaned = stripShellNoise(text);
     if (!cleaned) return;
     out.write(cleaned);
+    noteEarly(cleaned);
     try {
       showHeadless(cleaned);
     } catch {
@@ -559,6 +584,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     } else if (doneMtime !== null) {
       // Signalled done, then exited before the turn ended: headline only.
       void finish('done', doneHeadline);
+    } else if (sessionLost()) {
+      void finish('error', RESUME_LOST_TEXT);
     } else {
       void finish('exited', `${harness.name} exited ${code}`);
     }

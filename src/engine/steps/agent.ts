@@ -92,6 +92,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       headless,
       model: a.model,
       permissionMode: a.permissionMode,
+      session: ctx.agentSession,
       extraArgs: a.extraArgs,
       footer: systemFooter(task.name, ctx.runId, headless),
       prompt: agentPrompt(ctx),

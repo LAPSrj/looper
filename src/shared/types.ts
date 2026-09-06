@@ -134,6 +134,10 @@ export const AgentSchema = z.object({
   /** Appended verbatim to the harness command line. */
   extraArgs: z.array(z.string()).default([]),
   mode: z.enum(['interactive', 'headless']).default('interactive'),
+  /** claude-code only: continue one conversation across runs instead of starting fresh each run. */
+  session: z.enum(['fresh', 'continue']).default('fresh'),
+  /** session 'continue': start a new conversation after this many runs on the same one. */
+  sessionMaxRuns: z.number().int().positive().default(10),
   /** Passed as --permission-mode. Empty string omits the flag. */
   permissionMode: z.string().default('auto'),
   maxRuntimeMin: z.number().positive().default(120),
@@ -341,6 +345,8 @@ export interface TaskRuntime {
   consecutiveErrors: number;
   currentRunId: string | null;
   pausedReason: string | null;
+  /** Rolling conversation (agent.session 'continue'): the id runs resume, and how many runs used it. */
+  session: { id: string; runs: number } | null;
 }
 
 export type RestPhase = 'off' | 'waiting' | 'countdown' | 'sleeping';
