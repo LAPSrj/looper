@@ -64,7 +64,6 @@
     ],
     "files": [
       "out/**",
-      "bin/**",
       "assets/icon.png",
       "assets/icon.ico",
       "package.json"
