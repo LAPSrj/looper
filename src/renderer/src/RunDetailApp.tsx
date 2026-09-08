@@ -4,6 +4,15 @@ import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from './for
 import { useListNav, useDragResize } from './components/hooks';
 import { subscribe } from './events';
 import { Markdown } from './components/Markdown';
+import { ResizableColumns, type TableCol } from './components/ui';
+
+const STEP_COLS: readonly TableCol[] = [
+  { label: 'Time', width: 76 },
+  { label: 'Phase', width: 84 },
+  { label: 'Result', width: 96 },
+  { label: 'Duration', width: 72 },
+  { label: 'Details' },
+];
 
 type AgentMode = 'interactive' | 'headless';
 
@@ -122,22 +131,7 @@ export function RunDetailApp({ taskId, runId }: { taskId: string; runId: string 
     <div className="run-detail-app" ref={containerRef}>
       <div className="run-detail-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
-          <colgroup>
-            <col style={{ width: 76 }} />
-            <col style={{ width: 84 }} />
-            <col style={{ width: 96 }} />
-            <col style={{ width: 72 }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Phase</th>
-              <th>Result</th>
-              <th>Duration</th>
-              <th>Details</th>
-            </tr>
-          </thead>
+          <ResizableColumns cols={STEP_COLS} storageKey="run-detail" />
           <tbody>
             {records.map((r, i) => (
               <tr

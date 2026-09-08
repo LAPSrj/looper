@@ -39,7 +39,7 @@ function openRow(taskId: string, runId: string, agentId: string | undefined, row
 
 const MESSAGE_COLS: readonly TableCol[] = [
   { label: 'Time', width: 76 },
-  { label: 'Type', width: 110, min: 60, resizable: true },
+  { label: 'Type', width: 110, min: 60 },
   { label: 'Details' },
 ];
 
@@ -346,7 +346,7 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
 const RUN_COLS: readonly TableCol[] = [
   { label: 'Date', width: 92 },
   { label: 'Start', width: 76 },
-  { label: 'Result', width: 96, min: 60, resizable: true },
+  { label: 'Result', width: 96, min: 60 },
   { label: 'Details' },
 ];
 

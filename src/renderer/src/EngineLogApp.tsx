@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { capFirst, fmtDate, fmtTime } from './format';
 import { useDragResize, useListNav } from './components/hooks';
+import { ResizableColumns, type TableCol } from './components/ui';
+
+const LOG_COLS: readonly TableCol[] = [
+  { label: 'Date', width: 92 },
+  { label: 'Time', width: 76 },
+  { label: 'Level', width: 64 },
+  { label: 'Message' },
+];
 
 interface LogEntry {
   ts: string;
@@ -80,20 +88,7 @@ export function EngineLogApp() {
     <div className="run-detail-app" ref={containerRef}>
       <div className="run-detail-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
-          <colgroup>
-            <col style={{ width: 92 }} />
-            <col style={{ width: 76 }} />
-            <col style={{ width: 64 }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Time</th>
-              <th>Level</th>
-              <th>Message</th>
-            </tr>
-          </thead>
+          <ResizableColumns cols={LOG_COLS} storageKey="engine-log" />
           <tbody>
             {entries.map((en, i) => (
               <tr

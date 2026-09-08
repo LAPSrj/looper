@@ -71,8 +71,6 @@ export interface TableCol {
   /** Starting width in px; omit for the flex column that takes the remaining space. */
   width?: number;
   min?: number;
-  /** Show a drag handle on the column's right edge. Only fixed-width columns can resize. */
-  resizable?: boolean;
 }
 
 /** Stored widths keyed by column label, so entries survive column reorder/insertion. */
@@ -85,7 +83,7 @@ function loadStoredWidths(storageKey: string | undefined, cols: readonly TableCo
     const stored: unknown = JSON.parse(raw);
     if (stored === null || typeof stored !== 'object') return defaults;
     return cols.map((c, i) => {
-      if (!c.resizable) return defaults[i];
+      if (c.width === undefined) return undefined;
       const w = (stored as Record<string, unknown>)[c.label];
       return typeof w === 'number' && Number.isFinite(w) ? Math.max(c.min ?? 40, Math.round(w)) : defaults[i];
     });
@@ -110,7 +108,7 @@ export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol
     try {
       const stored: Record<string, number> = {};
       cols.forEach((c, i) => {
-        if (c.resizable && typeof w[i] === 'number' && w[i] !== c.width) stored[c.label] = w[i]!;
+        if (c.width !== undefined && typeof w[i] === 'number' && w[i] !== c.width) stored[c.label] = w[i]!;
       });
       localStorage.setItem(`col-widths:${storageKey}`, JSON.stringify(stored));
     } catch {
@@ -160,7 +158,7 @@ export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol
           {cols.map((c, i) => (
             <th key={i}>
               {c.label}
-              {c.resizable && widths[i] !== undefined && (
+              {widths[i] !== undefined && (
                 <span className="col-resize" onMouseDown={(e) => startDrag(i, e)} onDoubleClick={() => reset(i)} />
               )}
             </th>

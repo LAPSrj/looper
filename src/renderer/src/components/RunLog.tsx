@@ -3,6 +3,16 @@ import type { RunRecord, Task } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
+import { ResizableColumns, type TableCol } from './ui';
+
+const RUN_COLS: readonly TableCol[] = [
+  { label: 'Date', width: 92 },
+  { label: 'Start', width: 76 },
+  { label: 'End', width: 76 },
+  { label: 'Result', width: 96 },
+  { label: 'Duration', width: 72 },
+  { label: 'Details' },
+];
 
 interface Props {
   task: Task;
@@ -123,24 +133,7 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
     <div className="runlog" ref={containerRef}>
       <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
-          <colgroup>
-            <col style={{ width: 92 }} />
-            <col style={{ width: 76 }} />
-            <col style={{ width: 76 }} />
-            <col style={{ width: 96 }} />
-            <col style={{ width: 72 }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Result</th>
-              <th>Duration</th>
-              <th>Details</th>
-            </tr>
-          </thead>
+          <ResizableColumns cols={RUN_COLS} storageKey="runlog" />
           <tbody>
             {groups.map((g) => (
               <tr
