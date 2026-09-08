@@ -8,6 +8,7 @@ import type { EngineEvent, Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
+import { messagesToMarkdown } from '../shared/messages-md';
 import { registerIpc } from './ipc';
 
 let win: BrowserWindow | null = null;
@@ -477,10 +478,43 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     }
     void shell.openPath(p);
   };
+  // Export options live in the menu; the checkboxes hold their own state.
+  let mdThinking = true;
+  let mdTools = true;
+  const saveMarkdown = async () => {
+    if (!engine) return;
+    try {
+      const result = await engine.readMessages(taskId, runId, agentId, false);
+      if (result.status !== 'ok' || result.rows.length === 0) {
+        await dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
+        return;
+      }
+      const picked = await dialog.showSaveDialog(child, {
+        title: 'Save as Markdown',
+        defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '-')}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
+      if (picked.canceled || !picked.filePath) return;
+      const md = messagesToMarkdown(result.rows, { title, includeThinking: mdThinking, includeTools: mdTools });
+      fs.writeFileSync(picked.filePath, md, 'utf8');
+    } catch (err) {
+      await dialog.showMessageBox(child, {
+        type: 'error',
+        title: 'Looper',
+        message: 'Could not save the messages.',
+        detail: (err as Error).message,
+        buttons: ['OK'],
+      });
+    }
+  };
   const menu = Menu.buildFromTemplate([
     {
       label: '&File',
       submenu: [
+        { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown() },
+        { label: 'Include &Thinking', type: 'checkbox', checked: mdThinking, click: (item) => { mdThinking = item.checked; } },
+        { label: 'Include Tool &Usage', type: 'checkbox', checked: mdTools, click: (item) => { mdTools = item.checked; } },
+        { type: 'separator' },
         {
           label: 'Open &Run Folder',
           click: () => {
