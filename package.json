@@ -1,7 +1,7 @@
 {
   "name": "looper",
   "productName": "Looper",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cron-style manager for AI agent loops: cheap checks, fresh claude sessions only when there is work, one agent per task.",
   "main": "./out/main/index.js",
   "author": "Leandro Amorim",
