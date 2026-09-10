@@ -848,10 +848,10 @@ function sendUi(type: string): void {
 }
 
 /** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
-let menuSelection: [boolean, boolean | undefined, boolean | undefined, string | undefined, boolean] = [false, undefined, undefined, undefined, false];
+let menuSelection: [boolean, boolean | undefined, boolean | undefined, string | undefined, boolean, boolean | undefined] = [false, undefined, undefined, undefined, false, undefined];
 
-function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void {
-  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false];
+function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean): void {
+  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false, canRunNow];
   buildMenu(...menuSelection);
 }
 
@@ -865,8 +865,10 @@ function updateView(patch: Partial<Settings['view']>): void {
   engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
 }
 
-function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote = false): void {
+function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote = false, canRunNow?: boolean): void {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
+  // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
+  const runNow = canRunNow ?? !active;
   const view: Settings['view'] = engine?.settings.view ?? {
     toolbar: true,
     statusBar: true,
@@ -899,7 +901,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
     {
       label: '&Task',
       submenu: [
-        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && !active, click: () => sendUi('run-now') },
+        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && runNow, click: () => sendUi('run-now') },
         { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
         { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
         { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },

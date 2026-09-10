@@ -31,7 +31,7 @@ const api: LooperApi = {
     runNow: (id) => ipcRenderer.invoke('runtime:runNow', id),
     pause: (id) => ipcRenderer.invoke('runtime:pause', id),
     resume: (id) => ipcRenderer.invoke('runtime:resume', id),
-    stopTask: (id) => ipcRenderer.invoke('runtime:stopTask', id),
+    stopTask: (id, runId) => ipcRenderer.invoke('runtime:stopTask', id, runId),
   },
   runs: {
     list: (id, limit) => ipcRenderer.invoke('runs:list', id, limit),
@@ -42,9 +42,9 @@ const api: LooperApi = {
     messageImage: (id, runId, rowId, agentId) => ipcRenderer.invoke('runs:messageImage', id, runId, rowId, agentId),
   },
   agent: {
-    buffer: (id) => ipcRenderer.invoke('agent:buffer', id),
-    write: (id, data) => ipcRenderer.send('agent:write', id, data),
-    resize: (id, cols, rows) => ipcRenderer.send('agent:resize', id, cols, rows),
+    buffer: (id, runId) => ipcRenderer.invoke('agent:buffer', id, runId),
+    write: (id, data, runId) => ipcRenderer.send('agent:write', id, data, runId),
+    resize: (id, cols, rows, runId) => ipcRenderer.send('agent:resize', id, cols, rows, runId),
   },
   restState: () => ipcRenderer.invoke('rest:state'),
   openPath: (p) => ipcRenderer.invoke('openPath', p),
@@ -81,7 +81,8 @@ const api: LooperApi = {
   setStartWithSystem: (enabled) => ipcRenderer.invoke('loginItem:set', enabled),
   showError: (message) => ipcRenderer.invoke('dialog:error', message),
   confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
-  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote) => ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote),
+  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow) =>
+    ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
   showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),

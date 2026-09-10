@@ -54,7 +54,8 @@ export interface LooperApi {
     runNow(id: string): Promise<boolean>;
     pause(id: string): Promise<void>;
     resume(id: string): Promise<void>;
-    stopTask(id: string): Promise<boolean>;
+    /** No run id = the task's newest run in flight. */
+    stopTask(id: string, runId?: string): Promise<boolean>;
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
@@ -67,10 +68,11 @@ export interface LooperApi {
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   };
+  /** Terminal of one run; without a run id, of the task's newest run in flight. */
   agent: {
-    buffer(id: string): Promise<{ runId: string; data: string } | null>;
-    write(id: string, data: string): void;
-    resize(id: string, cols: number, rows: number): void;
+    buffer(id: string, runId?: string): Promise<{ runId: string; data: string } | null>;
+    write(id: string, data: string, runId?: string): void;
+    resize(id: string, cols: number, rows: number, runId?: string): void;
   };
   /** Current Rest Mode state; live updates arrive as `rest` engine events. */
   restState(): Promise<RestState>;
@@ -138,8 +140,16 @@ export interface LooperApi {
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
   /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
-  reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean): void;
-  showTaskContextMenu(info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }): void;
+  reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean): void;
+  showTaskContextMenu(info: {
+    enabled: boolean;
+    state?: string;
+    held: boolean;
+    hasNote: boolean;
+    /** Runs in flight and the task's cap: Run Now stays enabled below it. */
+    activeRuns?: number;
+    maxRuns?: number;
+  }): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
   /** Context menu of the task list's empty space / "Tasks" title (New Folder…). */

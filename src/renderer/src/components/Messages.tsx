@@ -402,7 +402,7 @@ export function Messages({ task, records, runtime }: Props) {
   });
 
   const isRunning = (runId: string) =>
-    (runtime?.state === 'running' || runtime?.state === 'classifying') && runtime.currentRunId === runId;
+    runtime?.runs.some((r) => r.runId === runId && (r.state === 'running' || r.state === 'classifying')) ?? false;
 
   return (
     <div className="messages-runs" tabIndex={0} onKeyDown={nav}>

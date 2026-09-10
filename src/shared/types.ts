@@ -166,6 +166,8 @@ export const TaskNotificationsSchema = z
     autoPaused: z.boolean().default(false),
     /** A run hit the usage limit and waits for the reset. */
     usageLimit: z.boolean().default(false),
+    /** Also send the end notification when the run failed only because the computer was offline. */
+    networkErrors: z.boolean().default(false),
   })
   .default({});
 export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
@@ -211,6 +213,8 @@ export const TaskSchema = z.object({
   backoff: z
     .object({ maxConsecutiveErrors: z.number().int().positive().default(5) })
     .default({}),
+  /** Cycles of this task that may be in flight at once; 1 = a due slot while a run is active is skipped. */
+  maxConcurrentRuns: z.number().int().positive().default(1),
   notifications: TaskNotificationsSchema,
   note: NoteSchema.optional(),
   createdAt: z.string().optional(),
@@ -331,11 +335,31 @@ export type TaskState =
   | 'paused'
   | 'disabled';
 
+/** One cycle of a task that is in flight; a task may have up to `maxConcurrentRuns` of them. */
+export interface ActiveRun {
+  runId: string;
+  state: 'checking' | 'classifying' | 'running';
+  /** Agent finished a turn without signalling done and the task is configured to hold. */
+  held: boolean;
+  startedAt: number;
+  trigger: 'timer' | 'manual';
+}
+
+/**
+ * A task's live state. `runs` is the truth; `state`, `currentRunId` and `held`
+ * are the aggregate the task list and menus read:
+ * - `state` = the most advanced active run (`running` > `classifying` >
+ *   `checking`), or idle/paused/disabled when nothing is in flight;
+ * - `currentRunId` = the newest active run, null when none;
+ * - `held` = any active run is held.
+ */
 export interface TaskRuntime {
   taskId: string;
   state: TaskState;
-  /** Agent finished a turn without signalling done and the task is configured to hold. */
+  /** Any active run is holding for a human. */
   held: boolean;
+  /** Cycles in flight, oldest first. Empty when the task is idle/paused/disabled. */
+  runs: ActiveRun[];
   nextRunAt: number | null;
   lastRunAt: number | null;
   /** Outcome of the last cycle (success, warning, error, noop, ...). */
@@ -392,6 +416,8 @@ export interface RunRecord {
   /** The agent's final message (`result` phase) or the full prompt it was given (`agent` `started`). Markdown. */
   body?: string;
   error?: string;
+  /** The error was a network failure: no connection, DNS, refused, timed out. */
+  network?: boolean;
   stdoutTail?: string;
   detail?: Record<string, unknown>;
 }

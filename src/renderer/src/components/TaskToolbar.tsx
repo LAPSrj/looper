@@ -52,6 +52,9 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
   const hasTask = !!task;
+  const activeRuns = runtime?.runs.length ?? 0;
+  const maxRuns = task?.maxConcurrentRuns ?? 1;
+  const canRunNow = !active || activeRuns < maxRuns;
 
   const button = (
     icon: React.ReactNode,
@@ -66,7 +69,7 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
 
   return (
     <div className="toolbar">
-      {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && !active)}
+      {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && canRunNow)}
       {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}
       {button(
         paused ? ICONS.resume : ICONS.pause,

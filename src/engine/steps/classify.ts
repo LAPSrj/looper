@@ -11,6 +11,8 @@ export interface ClassifyResult {
   /** The classifier's final message (its full report), Markdown. */
   body?: string;
   error?: string;
+  /** The error was a network failure: the API was never reached. */
+  network?: boolean;
   costUsd?: number;
   /** Set when a usage limit ended the session: epoch ms of when to try again. */
   retryAtMs?: number;
@@ -78,13 +80,18 @@ export function toClassifyResult(end: SessionEnd, headless: boolean, timeoutSec:
       return { status: 'error', error: `classifier gave no verdict: ${where}`, ...base };
     }
     case 'max-runtime':
-      return { status: 'error', error: `classifier timed out after ${timeoutSec} s`, ...base };
+      return { status: 'error', error: `classifier timed out after ${timeoutSec} s`, network: end.network, ...base };
     case 'idle-timeout':
-      return { status: 'error', error: 'classifier session went idle without looper-classify', ...base };
+      return { status: 'error', error: 'classifier session went idle without looper-classify', network: end.network, ...base };
     case 'exited':
-      return { status: 'error', error: tail(`${end.headline ?? 'classifier exited'}${end.body ? ': ' + end.body.trim() : ''}`, 600), ...base };
+      return {
+        status: 'error',
+        error: tail(`${end.headline ?? 'classifier exited'}${end.body ? ': ' + end.body.trim() : ''}`, 600),
+        network: end.network,
+        ...base,
+      };
     case 'error':
-      return { status: 'error', error: end.headline ?? 'classifier failed', retryAtMs: end.retryAtMs, ...base };
+      return { status: 'error', error: end.headline ?? 'classifier failed', network: end.network, retryAtMs: end.retryAtMs, ...base };
   }
 }
 

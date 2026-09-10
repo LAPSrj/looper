@@ -101,6 +101,11 @@ Before any run it shows "No agent session for this task yet. Output appears
 here when one starts." Each new run resets the view with a `── run <id> ──`
 marker; within one run the classifier session (when configured) shows first,
 closes with `── session ended ──`, and the agent session continues below.
+When a task's "Simultaneous runs" setting lets more than one run be in
+flight at once, a plain dropdown appears above the console listing each run
+by id and state, so you can pick which one to watch and type into; with one
+run in flight (or none) the dropdown is hidden and the tab just follows that
+run.
 
 For a **headless** session the same tab still shows the streamed output, but
 there's nothing to type into — the process reads no input, so keystrokes go
@@ -210,7 +215,9 @@ starting, the agent starting, the agent holding for input, the task
 auto-pausing, a usage limit being hit, and the task ending (with a
 configurable severity threshold). Each task chooses which of these it sends
 on its Notifications tab — see [the task editor](tasks.md) for the field
-list; by default only errors and warnings at the end of a run notify.
+list; by default only errors and warnings at the end of a run notify, and a
+run that failed only because the computer was offline stays silent unless
+the task's "Include network errors" option is on.
 
 A master switch lives in **Settings → General → Show notifications**, and
 the same toggle is available from the tray menu as "Enable Notifications" /

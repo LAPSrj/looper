@@ -1,15 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
 import { RestController, type PowerAdapter, type PowerOps } from '../src/engine/rest';
-import { SettingsSchema, type RestState, type TaskRuntime } from '../src/shared/types';
+import { SettingsSchema, type ActiveRun, type RestState, type TaskRuntime } from '../src/shared/types';
 
 const MIN = 60_000;
+
+/** A run in flight; the aggregate `state`/`held` mirror it as the scheduler would. */
+function activeRun(state: ActiveRun['state'], held = false): ActiveRun {
+  return { runId: `r-${state}-${held}`, state, held, startedAt: 0, trigger: 'timer' };
+}
 
 function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
   return {
     taskId: 't1',
     state: 'idle',
     held: false,
+    runs: [],
     nextRunAt: null,
     lastRunAt: null,
     lastResult: null,
@@ -139,11 +145,26 @@ describe('rest controller', () => {
 
   it('an active task blocks the countdown; a held one does not', () => {
     const h = makeHarness();
-    h.runtimes.push(runtime({ state: 'running' }));
+    h.runtimes.push(runtime({ state: 'running', runs: [activeRun('running')] }));
     h.ctl.arm();
     expect(h.last().phase).toBe('waiting');
 
-    h.runtimes[0] = runtime({ state: 'running', held: true });
+    h.runtimes[0] = runtime({ state: 'running', held: true, runs: [activeRun('running', true)] });
+    h.ctl.poke();
+    expect(h.last().phase).toBe('countdown');
+  });
+
+  it('one busy run among several keeps the computer awake; all held does not', () => {
+    const h = makeHarness();
+    h.runtimes.push(runtime({ state: 'running', held: true, runs: [activeRun('running', true), activeRun('running')] }));
+    h.ctl.arm();
+    expect(h.last().phase).toBe('waiting');
+
+    h.runtimes[0] = runtime({
+      state: 'running',
+      held: true,
+      runs: [activeRun('running', true), { ...activeRun('running'), runId: 'r2', held: true }],
+    });
     h.ctl.poke();
     expect(h.last().phase).toBe('countdown');
   });
@@ -153,7 +174,7 @@ describe('rest controller', () => {
     h.ctl.arm();
     expect(h.last().phase).toBe('countdown');
 
-    h.runtimes.push(runtime({ state: 'checking' }));
+    h.runtimes.push(runtime({ state: 'checking', runs: [activeRun('checking')] }));
     h.clock.now += 30_000;
     h.ctl.poke();
     expect(h.last().phase).toBe('waiting');
@@ -221,7 +242,7 @@ describe('rest controller', () => {
 
   it('an external suspend followed by a resume counts as a manual wake', () => {
     const h = makeHarness();
-    h.runtimes.push(runtime({ state: 'running' }));
+    h.runtimes.push(runtime({ state: 'running', runs: [activeRun('running')] }));
     h.ctl.arm();
     expect(h.last().phase).toBe('waiting');
 

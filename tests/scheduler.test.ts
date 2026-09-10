@@ -7,7 +7,7 @@ import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { StateStore } from '../src/engine/store/state';
 import { TaskStore } from '../src/engine/store/tasks';
-import { SettingsSchema, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
+import { SettingsSchema, type ActiveRun, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
 import type { AgentEnd, AgentHandle } from '../src/engine/steps/agent';
 import type { CheckResult } from '../src/engine/steps/check';
 import type { ClassifyResult } from '../src/engine/steps/classify';
@@ -21,6 +21,14 @@ const baseTask: TaskInput = {
   check: { command: 'true' },
   agent: { prompt: 'do it' },
 };
+
+interface LiveAgent {
+  runId: string;
+  end: (e: AgentEnd) => void;
+  hold: () => void;
+  /** Push output as the agent would, into that run's terminal buffer. */
+  out: (data: string) => void;
+}
 
 interface Harness {
   dir: string;
@@ -36,7 +44,9 @@ interface Harness {
   agentStarted: number;
   /** ctx.agentSession of each agent start, in order. */
   agentSessions: ({ id: string; resume: boolean } | undefined)[];
-  liveAgent: { end: (e: AgentEnd) => void; hold: () => void } | null;
+  liveAgent: LiveAgent | null;
+  /** Every unscripted agent, in start order; with one run it is just `liveAgent`. */
+  liveAgents: LiveAgent[];
   /** When true, runCheck blocks until the cycle's stop signal aborts. */
   hangChecks: boolean;
   tickN(n: number): Promise<void>;
@@ -77,6 +87,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     agentStarted: 0,
     agentSessions: [],
     liveAgent: null,
+    liveAgents: [],
     hangChecks: false,
   };
   const sched = new Scheduler({
@@ -114,8 +125,18 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           stop: async (reason = 'stopped', headline) => resolve(agentEnd(reason, headline)),
           finished,
         };
-        if (scripted) setImmediate(() => resolve(scripted));
-        else h.liveAgent = { end: resolve, hold: () => cb.onHold?.() };
+        if (scripted) {
+          setImmediate(() => resolve(scripted));
+        } else {
+          const live: LiveAgent = {
+            runId: ctx.runId,
+            end: resolve,
+            hold: () => cb.onHold?.(),
+            out: (data) => cb.onData(data),
+          };
+          h.liveAgent = live;
+          h.liveAgents!.push(live);
+        }
         return handle;
       },
     },
@@ -142,10 +163,17 @@ afterEach(async () => {
   fs.rmSync(h.dir, { recursive: true, force: true });
 });
 
+const notifies = () =>
+  h.events.filter((e): e is Extract<EngineEvent, { type: 'notify' }> => e.type === 'notify');
+
 const records = () =>
   h.events
     .filter((e) => e.type === 'record')
-    .map((e) => (e as { record: { phase: string; result: string; summary?: string; body?: string } }).record);
+    .map(
+      (e) =>
+        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean } })
+          .record,
+    );
 
 describe('Scheduler', () => {
   it('starts idle with a next run scheduled', () => {
@@ -463,6 +491,254 @@ describe('Scheduler', () => {
   });
 });
 
+describe('simultaneous runs', () => {
+  beforeEach(async () => {
+    await h.sched.stop();
+    fs.rmSync(h.dir, { recursive: true, force: true });
+    h = await makeHarness({ ...baseTask, maxConcurrentRuns: 2 });
+  });
+
+  /** Start `n` cycles from consecutive cron slots, each with an act check and a live agent. */
+  async function startRuns(n: number): Promise<void> {
+    for (let i = 0; i < n; i++) {
+      h.checks.push(check('act'));
+      if (i > 0) h.clock.now += 60_000;
+      await h.tickN(1);
+    }
+  }
+
+  it('runs two cycles at once and skips the slot past the cap', async () => {
+    await startRuns(2);
+    const rt = h.sched.get('t1')!;
+    expect(h.agentStarted).toBe(2);
+    expect(rt.runs).toHaveLength(2);
+    expect(rt.runs.map((r) => r.state)).toEqual(['running', 'running']);
+    expect(rt.state).toBe('running');
+    expect(rt.currentRunId).toBe(h.liveAgents[1].runId);
+
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+    expect(records().at(-1)).toMatchObject({
+      phase: 'skip',
+      result: 'skipped',
+      summary: 'scheduled run skipped: 2 run(s) already active',
+    });
+  });
+
+  it('the aggregate state is the most advanced run', async () => {
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    await h.tickN(1); // run 1 sits in the check step
+    expect(h.sched.get('t1')!.state).toBe('checking');
+    h.hangChecks = false;
+    h.checks.push(check('act'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    const rt = h.sched.get('t1')!;
+    expect(rt.runs.map((r) => r.state)).toEqual(['checking', 'running']);
+    expect(rt.state).toBe('running');
+  });
+
+  it('Run Now starts a second cycle while one is active', async () => {
+    await startRuns(1);
+    h.checks.push(check('act'));
+    expect(h.sched.runNow('t1')).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(2);
+    expect(h.sched.get('t1')!.runs).toHaveLength(2);
+    // At the cap the manual run is refused with the new wording.
+    expect(h.sched.runNow('t1')).toBe(false);
+    expect(records().at(-1)!.summary).toBe('manual run ignored: 2 run(s) already active');
+  });
+
+  it('stopTask without a run id stops the newest and leaves the other running', async () => {
+    await startRuns(2);
+    const nextRunAt = h.sched.get('t1')!.nextRunAt;
+    expect(await h.sched.stopTask('t1', 'test')).toBe(true);
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.runs.map((r) => r.runId)).toEqual([h.liveAgents[0].runId]);
+    expect(rt.state).toBe('running');
+    expect(rt.currentRunId).toBe(h.liveAgents[0].runId);
+    expect(rt.lastResult).toBe('stopped');
+    // Already advanced when the cycle started: an early finish must not move it.
+    expect(rt.nextRunAt).toBe(nextRunAt);
+  });
+
+  it('each finish reports, and only the last one parks the task', async () => {
+    await startRuns(2);
+    h.liveAgents[0].end(agentEnd('done', 'first'));
+    await flush();
+    let rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('running');
+    expect(rt.lastResult).toBe('done');
+    expect(rt.lastDetail).toBe('first');
+
+    h.liveAgents[1].end({ ...agentEnd('done', 'second'), doneStatus: 'warning' });
+    await flush();
+    rt = h.sched.get('t1')!;
+    expect(rt.runs).toEqual([]);
+    expect(rt.state).toBe('idle');
+    expect(rt.currentRunId).toBeNull();
+    expect(rt.lastResult).toBe('warning');
+    expect(rt.lastDetail).toBe('second');
+    expect(rt.nextRunAt).toBe(1_080_000);
+  });
+
+  it('a run is held on its own; the task is held while any run is', async () => {
+    await startRuns(2);
+    h.liveAgents[1].hold();
+    await flush();
+    let rt = h.sched.get('t1')!;
+    expect(rt.runs.map((r) => r.held)).toEqual([false, true]);
+    expect(rt.held).toBe(true);
+    h.liveAgents[1].end(agentEnd('done'));
+    await flush();
+    rt = h.sched.get('t1')!;
+    expect(rt.held).toBe(false);
+  });
+
+  it('an environment limit defers the second run of the same task instead of skipping it', async () => {
+    h.settings.environments[0].maxConcurrentTasks = 1;
+    await startRuns(1);
+    h.checks.push(check('act'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().some((r) => r.phase === 'skip')).toBe(false);
+    // Still due: retried every tick until the slot frees up.
+    expect(h.sched.get('t1')!.nextRunAt).toBeLessThanOrEqual(h.clock.now);
+
+    h.liveAgents[0].end(agentEnd('done'));
+    await flush();
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+  });
+
+  it('a pause with runs in flight stops new slots and parks the task when the last run ends', async () => {
+    await startRuns(1);
+    h.sched.pause('t1');
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1); // the due slot did not start a second run
+    let rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('running');
+    expect(rt.nextRunAt).toBeNull();
+    h.liveAgents[0].end(agentEnd('done'));
+    await flush();
+    rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('paused');
+    // A manual run lifts the pending pause instead of ignoring it.
+    h.sched.resume('t1');
+    await startRuns(1);
+    h.sched.pause('t1');
+    h.checks.push(check('act'));
+    expect(h.sched.runNow('t1')).toBe(true);
+    await flush();
+    expect(h.sched.get('t1')!.pausedReason).toBeNull();
+  });
+
+  it('disabling with runs in flight starts nothing more and parks the task disabled', async () => {
+    await startRuns(1);
+    h.tasks.patch('t1', { enabled: false });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    h.liveAgents[0].end(agentEnd('done'));
+    await flush();
+    expect(h.sched.get('t1')!.state).toBe('disabled');
+  });
+
+  it('the run that crosses the error threshold declares the auto-pause; a sibling cannot undo it', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 2 } });
+    await startRuns(2);
+    h.liveAgents[0].end({ ...agentEnd('done', 'first'), doneStatus: 'error' });
+    await flush();
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
+    h.checks.push(check('act'));
+    h.clock.now += 60_000;
+    await h.tickN(1); // a third run replaces the finished one
+    h.liveAgents[1].end({ ...agentEnd('done', 'second'), doneStatus: 'error' });
+    await flush();
+    let rt = h.sched.get('t1')!;
+    expect(rt.pausedReason).toMatch(/auto-paused after 2/);
+    expect(rt.state).toBe('running'); // pending: a run is still in flight
+    expect(notifies().filter((n) => n.kind === 'auto-paused')).toHaveLength(0); // that toast is off by default
+    h.liveAgents[2].end(agentEnd('done', 'fine'));
+    await flush();
+    rt = h.sched.get('t1')!;
+    expect(rt.consecutiveErrors).toBe(0); // the streak reset, but the declared pause stands
+    expect(rt.state).toBe('paused');
+  });
+
+  it('a usage-limit wait reported while a sibling runs holds off new slots and parks the task at the reset', async () => {
+    await startRuns(2);
+    const retryAt = h.clock.now + 3 * 3_600_000;
+    h.liveAgents[0].end({ ...agentEnd('error', 'usage limit reached · resets 5:50am'), retryAtMs: retryAt });
+    await flush();
+    let rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('running');
+    expect(rt.nextRunAt).toBe(retryAt);
+    h.liveAgents[1].end(agentEnd('done'));
+    await flush();
+    rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.nextRunAt).toBe(retryAt);
+  });
+
+  it('a slot deferred by an environment limit is still owed when the last run ends', async () => {
+    h.settings.environments[0].maxConcurrentTasks = 1;
+    await startRuns(1);
+    h.checks.push(check('act'));
+    h.clock.now += 60_000;
+    await h.tickN(1); // due, deferred
+    const owed = h.sched.get('t1')!.nextRunAt!;
+    expect(owed).toBeLessThanOrEqual(h.clock.now);
+    h.clock.now += 5_000;
+    h.liveAgents[0].end(agentEnd('done'));
+    await flush();
+    expect(h.sched.get('t1')!.nextRunAt).toBe(owed);
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+  });
+
+  it('an agent exit the network took down is a silent network error, whatever ended it', async () => {
+    await startRuns(1);
+    h.liveAgents[0].end({ ...agentEnd('exited', 'claude exited 1'), network: true });
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.lastResult).toBe('exited');
+    expect(rt.lastDetail).toBe('no network: claude exited 1');
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(notifies()).toHaveLength(0);
+    expect(records().find((r) => r.phase === 'agent' && r.result === 'exited')).toMatchObject({ network: true });
+  });
+
+  it('the terminal buffer is per run and outlives the last run', async () => {
+    await startRuns(2);
+    h.liveAgents[0].out('one');
+    h.liveAgents[1].out('two');
+    expect(h.sched.getBuffer('t1')!.data).toBe('two'); // the newest run
+    expect(h.sched.getBuffer('t1', h.liveAgents[0].runId)!.data).toBe('one');
+
+    h.liveAgents[1].end(agentEnd('done'));
+    await flush();
+    expect(h.sched.getBuffer('t1')!.data).toBe('one'); // the run still in flight
+    h.liveAgents[0].end(agentEnd('done'));
+    await flush();
+    expect(h.sched.getBuffer('t1')).toMatchObject({ runId: h.liveAgents[1].runId, data: 'two' });
+
+    // A new run clears out the buffers of the finished ones.
+    h.checks.push(check('act'));
+    h.clock.now += 120_000;
+    await h.tickN(1);
+    expect(h.sched.getBuffer('t1')).toEqual({ runId: h.liveAgents[2].runId, data: '' });
+    expect(h.sched.getBuffer('t1', h.liveAgents[0].runId)).toBeNull();
+  });
+});
+
 describe('rolling sessions', () => {
   const continueSessions = (maxRuns: number) =>
     h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, session: 'continue', sessionMaxRuns: maxRuns } });
@@ -570,9 +846,6 @@ describe('rolling sessions', () => {
 });
 
 describe('notifications', () => {
-  const notifies = () =>
-    h.events.filter((e): e is Extract<EngineEvent, { type: 'notify' }> => e.type === 'notify');
-
   it('default level (error or warning): errors and warnings notify, success does not', async () => {
     h.checks.push(check('act'), check('act'), check('act'));
     h.agentEnds.push({ ...agentEnd('done', 'blocked'), doneStatus: 'error' });
@@ -648,6 +921,63 @@ describe('notifications', () => {
     expect(notifies().at(-1)!.kind).toBe('end');
   });
 
+  it('a network error stays silent, records itself, and never touches the error streak', async () => {
+    h.checks.push(check('error', { error: 'curl: (6) Could not resolve host', network: true }));
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    const rec = records().at(-1)!;
+    expect(rec).toMatchObject({ phase: 'check', result: 'error', network: true });
+    const rt = h.sched.get('t1')!;
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(rt.lastDetail).toMatch(/^no network: check error:/);
+  });
+
+  it('a network error notifies when the task asked for those', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'error', networkErrors: true } });
+    h.checks.push(check('error', { error: 'offline', network: true }));
+    await h.tickN(1);
+    expect(notifies().map((n) => n.kind)).toEqual(['end']);
+    expect(notifies()[0].body).toMatch(/^Error: No network:/);
+  });
+
+  it('an ordinary check error still notifies and counts', async () => {
+    h.checks.push(check('error', { error: 'boom' }));
+    await h.tickN(1);
+    expect(notifies().map((n) => `${n.kind}:${n.body}`)).toEqual(['end:Error: Check error: boom']);
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
+    expect(records().at(-1)!.network).toBeUndefined();
+  });
+
+  it('a classifier or agent network error is silent too', async () => {
+    h.tasks.patch('t1', { classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.checks.push(check('act'), check('act'));
+    h.classifies.push({ status: 'error', error: 'ENOTFOUND', network: true, durationMs: 1, exitCode: 1 });
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(h.sched.get('t1')!.lastDetail).toMatch(/^no network: classifier error:/);
+
+    h.classifies.push({ status: 'act', reason: 'go', durationMs: 1, exitCode: 0 });
+    h.agentEnds.push({ ...agentEnd('error', "can't reach the API server"), network: true });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(h.sched.get('t1')!.lastDetail).toBe("no network: can't reach the API server");
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
+  });
+
+  it('a network error neither counts nor resets a streak of real errors', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 5 } });
+    h.checks.push(check('error', { error: 'boom' }), check('error', { error: 'boom' }));
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(2);
+    h.checks.push(check('error', { error: 'offline', network: true }));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(2);
+  });
+
   it('a hold notifies when on', async () => {
     h.tasks.patch('t1', { notifications: { end: 'off', held: true } });
     h.checks.push(check('act'));
@@ -676,6 +1006,7 @@ describe('startup overdue filtering', () => {
         taskId: 't1',
         state: 'idle',
         held: false,
+        runs: [],
         nextRunAt: null,
         lastRunAt: new Date('2026-01-15T10:01:00Z').getTime(),
         lastResult: 'success',
@@ -720,6 +1051,7 @@ describe('startup overdue filtering', () => {
         taskId: 't1',
         state: 'idle',
         held: false,
+        runs: [],
         nextRunAt: null,
         lastRunAt: now - 10 * 60_000,
         lastResult: 'success',
@@ -752,40 +1084,77 @@ describe('startup overdue filtering', () => {
 });
 
 describe('interrupted runs', () => {
-  it('are recorded on startup', async () => {
+  /** Start a scheduler over a snapshot whose runs were in flight when looper died. */
+  async function restartWith(runs: ActiveRun[]): Promise<{ dir: string; store: RunStore; sched: Scheduler }> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
     const tasks = new TaskStore(path.join(dir, 'tasks.json'));
     tasks.load();
-    tasks.upsert(baseTask);
+    tasks.upsert({ ...baseTask, maxConcurrentRuns: runs.length || 1 });
     const state = new StateStore(path.join(dir, 'state.json'));
     state.save({
       t1: {
         taskId: 't1',
         state: 'running',
         held: false,
+        runs,
         nextRunAt: null,
         lastRunAt: 1,
         lastResult: null,
         lastDetail: null,
         consecutiveErrors: 0,
-        currentRunId: 'old-run',
+        currentRunId: runs.at(-1)?.runId ?? null,
         pausedReason: null,
         session: null,
       },
     });
     state.flush();
-    const runs = new RunStore(dir);
+    const store = new RunStore(dir);
     const sched = new Scheduler({
       dataDir: dir,
       host: 'wsl',
       settings: SettingsSchema.parse({}),
       tasks,
-      runs,
+      runs: store,
       state,
       log: new Logger(),
     });
     sched.start();
-    expect(runs.list('t1').at(-1)).toMatchObject({ runId: 'old-run', phase: 'system', result: 'interrupted' });
+    return { dir, store, sched };
+  }
+
+  const inFlight = (runId: string, state: ActiveRun['state'] = 'running'): ActiveRun => ({
+    runId,
+    state,
+    held: false,
+    startedAt: 1,
+    trigger: 'timer',
+  });
+
+  it('are recorded on startup', async () => {
+    const { dir, store, sched } = await restartWith([inFlight('old-run')]);
+    expect(store.list('t1').at(-1)).toMatchObject({ runId: 'old-run', phase: 'system', result: 'interrupted' });
+    expect(sched.get('t1')!.state).toBe('idle');
+    expect(sched.get('t1')!.runs).toEqual([]);
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('every run of a snapshot is recorded, not just the newest', async () => {
+    const { dir, store, sched } = await restartWith([inFlight('run-a', 'checking'), inFlight('run-b')]);
+    const interrupted = store.list('t1').filter((r) => r.result === 'interrupted');
+    expect(interrupted.map((r) => r.runId)).toEqual(['run-a', 'run-b']);
+    expect(interrupted.map((r) => r.summary)).toEqual([
+      'looper restarted while checking',
+      'looper restarted while running',
+    ]);
+    expect(sched.get('t1')!.runs).toEqual([]);
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a snapshot without runs is simply no active runs', async () => {
+    const { dir, store, sched } = await restartWith([]);
+    expect(store.list('t1').filter((r) => r.result === 'interrupted')).toEqual([]);
     expect(sched.get('t1')!.state).toBe('idle');
     await sched.stop();
     fs.rmSync(dir, { recursive: true, force: true });

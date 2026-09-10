@@ -30,6 +30,9 @@ boolean `act` field, e.g.:
   with a boolean `act` is always an **error**, never a "nothing to do".
   Errors count toward auto-pause (see [troubleshooting](troubleshooting.md));
   a deliberate no-op never should be signaled as one.
+- A failure caused by the computer being offline is recorded as a network
+  error instead of an ordinary one — see
+  [troubleshooting](troubleshooting.md#the-computer-was-offline-when-a-task-ran).
 
 ## Classifying
 
@@ -49,7 +52,9 @@ window (replies typed as **Classifier**), and its files live under
 
 `act: false` ends the cycle as **No action** with the classifier's `reason`
 as the detail; a malformed or failed response is an **error**, same as the
-check.
+check. A failure caused by the computer being offline is recorded as a
+network error instead — see
+[troubleshooting](troubleshooting.md#the-computer-was-offline-when-a-task-ran).
 
 Skipping the classifier's fee on obvious no-ops is its whole purpose: it's a
 cheap model call standing between a noisy check and an expensive agent
@@ -134,19 +139,24 @@ a held run if you'd rather abandon it.
 
 ## Skipped, deferred, and manual runs
 
-- **Overlapping slots are skipped, never queued.** If a scheduled slot comes
-  due while the task is still checking, classifying, or running, that slot is
-  recorded as skipped and the next one is computed normally — a task never
-  runs two cycles at once.
+- **A task allows as many runs in flight at once as its "Simultaneous runs"
+  setting** (task editor, Settings tab; default 1). Below that cap, a
+  scheduled slot coming due while the task is already checking, classifying,
+  or running starts another cycle alongside the ones in progress. At the cap,
+  the due slot is recorded as skipped ("scheduled run skipped: N runs already
+  active") and the next one is computed normally. **Run Now** (F5, toolbar,
+  or context menu) follows the same cap: below it, Run Now starts another
+  run even while one is active; at the cap it's refused outright and recorded
+  as skipped, the same as a scheduled slot — it isn't retried automatically.
+  The CLI/inbox `run` command behaves the same way. When more than one run of
+  a task is in flight, the **Terminal** tab shows a run selector above the
+  console so you can pick which one to watch and type into; the task's status
+  and last-result always reflect whichever run finished most recently.
 - **Concurrency limits defer, they don't skip.** An [environment or
-  harness](environments.md) can cap how many tasks run in it at once. A task
-  that's due but over that cap simply stays due and is retried every tick
-  until a slot frees up; nothing is logged as skipped for this.
-- **Run Now (F5, toolbar, or context menu) is immediate, not queued.** If the
-  task isn't idle, or a concurrency limit is in the way, the manual run is
-  refused outright and recorded as skipped rather than deferred — it isn't
-  retried automatically the way a scheduled slot is. The CLI/inbox `run`
-  command behaves the same way.
+  harness](environments.md) can cap how many tasks (counting each run of a
+  task separately) run in it at once. A task that's due but over that cap
+  simply stays due and is retried every tick until a slot frees up; nothing is
+  logged as skipped for this.
 - A **manual task** (schedule turned off in the task editor) never fires on
   its own; it only runs via Run Now, the toolbar, the context menu, or the
   CLI/inbox `run` command. `{{trigger}}` in your prompt is `"manual"` for

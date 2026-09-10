@@ -14,8 +14,8 @@ the error count and the paused reason and put it back on its schedule. A
 single successful run also resets the count on its own, so occasional
 failures that don't repeat five times in a row never trigger this.
 
-A Claude Code usage-limit hit is the one error that does **not** count toward
-this — see below.
+A Claude Code usage-limit hit and a network error are two errors that do
+**not** count toward this — see below.
 
 ## Claude Code says you've hit your usage limit
 
@@ -34,6 +34,35 @@ as an error, but treats it specially:
 If the task has the "Usage limit" notification enabled, you'll get a toast
 when this happens; otherwise the task list just shows the task idle with a
 countdown to the retry.
+
+## The computer was offline when a task ran
+
+Looper looks for a network problem at each step of a cycle:
+
+- **Check** — the check command exited non-zero or timed out with a message
+  that looks like a network failure (`ENOTFOUND`, "Could not resolve host",
+  and similar), or, failing that, a connectivity probe of `api.anthropic.com`
+  finds the machine offline.
+- **Classifying and running** — a Claude Code session that hit the
+  "API Error: Can't reach the API server — check your internet or DNS" banner
+  (interactive), or a headless run whose result reports an API error with no
+  HTTP status.
+
+When this happens, the run log shows the cycle as **Error**, with a detail
+that starts with "no network: ". Like a usage-limit hit:
+
+- It does **not** count toward the auto-pause threshold above.
+- It does **not** consume a one-off guidance note charge (see
+  [how a run works](how-a-run-works.md)), since a network error caught before
+  the agent acted means the agent never got to act on the prompt.
+
+Unlike a usage-limit hit, no end notification fires for these runs by
+default — a blip in your connection shouldn't page you. Turn on
+"Include network errors" in the task's Notifications tab to get one anyway.
+
+An HTTP 404, 401, or 403, or a plain "invalid credentials" rejection, is
+**not** a network error — those are ordinary errors and count toward
+auto-pause as usual.
 
 ## The "trust this folder?" dialog
 

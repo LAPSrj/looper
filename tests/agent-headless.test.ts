@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
 import { startAgent } from '../src/engine/steps/agent';
+import { HeadlessStream } from '../src/engine/steps/session';
 import type { RunContext } from '../src/engine/steps/common';
 import { writeText } from '../src/engine/store/fsutil';
 import { createTarget } from '../src/engine/target';
@@ -21,6 +22,82 @@ afterEach(() => {
 
 /** A one-line "final message" far longer than any terminal width, in real stream-json key order. */
 const REPORT = 'Fixed the divider\n\n' + 'Details: ' + 'x'.repeat(20_000) + ' end.';
+
+/** What claude streams when it cannot reach the API (captured live, claude 2.1.258). */
+const OFFLINE_TEXT = "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)";
+const OFFLINE_LINES = [
+  JSON.stringify({
+    type: 'system',
+    subtype: 'api_retry',
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 616,
+    error_status: null,
+    error: 'unknown',
+    session_id: 'x',
+    uuid: 'y',
+  }),
+  JSON.stringify({
+    type: 'assistant',
+    message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: OFFLINE_TEXT }] },
+    error: 'server_error',
+    is_api_error_message: true,
+    session_id: 'x',
+    uuid: 'z',
+  }),
+  JSON.stringify({
+    type: 'result',
+    is_error: true,
+    terminal_reason: 'api_error',
+    api_error_status: null,
+    result: OFFLINE_TEXT,
+    total_cost_usd: 0,
+    num_turns: 1,
+    subtype: 'success',
+    duration_ms: 184823,
+    session_id: 'x',
+    uuid: 'w',
+  }),
+];
+
+describe('HeadlessStream', () => {
+  const replay = (lines: string[]): HeadlessStream => {
+    const s = new HeadlessStream();
+    for (const l of lines) s.feed(l);
+    return s;
+  };
+
+  it('reads an unreachable API off the stream', () => {
+    const s = replay(OFFLINE_LINES);
+    expect(s.networkRetries).toBe(1);
+    expect(s.terminalReason).toBe('api_error');
+    expect(s.apiErrorStatus).toBeNull();
+    expect(s.result).toBe(OFFLINE_TEXT);
+    expect(s.isError).toBe(true);
+    expect(s.network).toBe(true);
+  });
+
+  it('an API that answered with an error is not a network failure', () => {
+    const s = replay([
+      JSON.stringify({ type: 'system', subtype: 'api_retry', error_status: 429 }),
+      JSON.stringify({ type: 'result', is_error: true, terminal_reason: 'api_error', api_error_status: 401, result: '401 Unauthorized' }),
+    ]);
+    expect(s.networkRetries).toBe(0);
+    expect(s.network).toBe(false);
+  });
+
+  it('keeps reading the fields the rest of the session needs', () => {
+    const s = replay([
+      'not json at all',
+      JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1_700_000_000 } }),
+      JSON.stringify({ type: 'result', is_error: false, result: 'all good', structured_output: { act: true }, total_cost_usd: 0.02 }),
+    ]);
+    expect(s.usageLimitResetMs).toBe(1_700_000_000_000);
+    expect(s.structured).toEqual({ act: true });
+    expect(s.costUsd).toBe(0.02);
+    expect(s.network).toBe(false);
+  });
+});
 
 function fakeHarness(dir: string, body: string): string {
   const file = path.join(dir, 'fake-claude');
@@ -268,6 +345,18 @@ describe('headless agent over pipes', () => {
     const end = await handle.finished;
     expect(end.reason).toBe('done');
     expect(end.sessionLost).toBeUndefined();
+  });
+
+  it('ends an unreachable API as a network error, not as a plain non-zero exit', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const stream = path.join(root, 'stream.jsonl');
+    writeText(stream, OFFLINE_LINES.join('\n') + '\n');
+    const harness = fakeHarness(root, [`cat ${stream}`, 'exit 1'].join('\n'));
+    const end = await (await startAgent(makeCtx(harness), { onData: () => {} })).finished;
+    expect(end.reason).toBe('error');
+    expect(end.network).toBe(true);
+    expect(end.headline).toBe(OFFLINE_TEXT);
   });
 
   it('reports a non-zero exit as exited, with whatever result it did print', async () => {

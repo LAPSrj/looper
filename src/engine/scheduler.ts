@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Cron } from 'croner';
 import type {
+  ActiveRun,
   EngineEvent,
   NotifyKind,
   RunPhase,
@@ -46,15 +47,26 @@ export interface SchedulerDeps {
 
 const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classifying', 'running']);
 
+/** How far along a run is; the task's aggregate state is its most advanced run. */
+const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 1, running: 2 };
+
+/** The newest run in flight (runs are appended in start order). */
+function newestRun(rt: TaskRuntime | undefined): ActiveRun | undefined {
+  return rt && rt.runs.length ? rt.runs[rt.runs.length - 1] : undefined;
+}
+
 export class Scheduler extends EventEmitter {
   private readonly runtimes = new Map<string, TaskRuntime>();
-  /** The live harness session of each active task: the agent, or the interactive classifier. */
+  /** The live harness session of each run: the agent, or the interactive classifier. Keyed by run id. */
   private readonly agents = new Map<string, SessionHandle>();
-  /** Per active cycle: aborting kills whatever step is running (check, classifier). */
+  /** Per active cycle (by run id): aborting kills whatever step is running (check, classifier). */
   private readonly cycleStops = new Map<string, { controller: AbortController; reason: string }>();
-  private readonly buffers = new Map<string, { runId: string; data: string }>();
+  /** Terminal output per run id; a finished run's buffer stays until the task starts a new one. */
+  private readonly buffers = new Map<string, { taskId: string; runId: string; data: string }>();
   /** Tasks whose deferral (concurrency limit) has been logged, to log once per wait. */
   private readonly deferLogged = new Set<string>();
+  /** Per task: the usage-limit reset a run reported, pending until its last sibling finishes. */
+  private readonly limitWaits = new Map<string, number>();
   private readonly steps: SchedulerSteps;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
@@ -89,9 +101,11 @@ export class Scheduler extends EventEmitter {
     const delays = this.computeStartDelays(tasks.filter((t) => overdue.has(t.id)));
     tasks.forEach((task) => {
       const prev = previous[task.id];
-      if (prev && ACTIVE.has(prev.state) && prev.currentRunId) {
-        this.record(task.id, prev.currentRunId, 'system', 'interrupted', {
-          summary: `looper restarted while ${prev.state}`,
+      // Nothing survives a restart: every run the snapshot had in flight is
+      // gone. A snapshot without `runs` is stale runtime state, not history.
+      for (const run of prev?.runs ?? []) {
+        this.record(task.id, run.runId, 'system', 'interrupted', {
+          summary: `looper restarted while ${run.state}`,
         });
       }
       const rt = this.initRuntime(task, delays.get(task.id) ?? 0, prev);
@@ -133,8 +147,17 @@ export class Scheduler extends EventEmitter {
     return this.runtimes.get(taskId);
   }
 
-  getBuffer(taskId: string): { runId: string; data: string } | null {
-    return this.buffers.get(taskId) ?? null;
+  /**
+   * The terminal buffer of a run: the named one, else the newest run in
+   * flight, else the task's most recent buffer — a finished run's output stays
+   * visible in the terminal tab while the task is idle.
+   */
+  getBuffer(taskId: string, runId?: string): { runId: string; data: string } | null {
+    let buf = this.buffers.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '');
+    if (!buf && !runId) {
+      for (const b of this.buffers.values()) if (b.taskId === taskId) buf = b;
+    }
+    return buf ? { runId: buf.runId, data: buf.data } : null;
   }
 
   // ---------- commands ----------
@@ -143,14 +166,15 @@ export class Scheduler extends EventEmitter {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
-    if (rt.state === 'paused' || rt.state === 'disabled') {
+    // A manual run lifts a pause — parked, or still pending behind runs in flight.
+    if (rt.state === 'paused' || rt.state === 'disabled' || rt.pausedReason) {
       rt.pausedReason = null;
       rt.consecutiveErrors = 0;
-      rt.state = 'idle';
+      if (!ACTIVE.has(rt.state)) rt.state = 'idle';
     }
-    if (rt.state !== 'idle') {
+    if (rt.runs.length >= task.maxConcurrentRuns) {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
-        summary: `manual run ignored: task is ${rt.state}`,
+        summary: `manual run ignored: ${this.atCapReason(rt, task)}`,
       });
       return false;
     }
@@ -192,14 +216,19 @@ export class Scheduler extends EventEmitter {
     this.emitRuntime(rt);
   }
 
-  /** Stop the task's current cycle wherever it is: a running check or classifier is killed, an agent is ended. */
-  async stopTask(taskId: string, reason = 'stopped by user'): Promise<boolean> {
-    const h = this.agents.get(taskId);
+  /**
+   * Stop a cycle wherever it is: a running check or classifier is killed, an
+   * agent is ended. Without a run id the newest run in flight is stopped.
+   */
+  async stopTask(taskId: string, reason = 'stopped by user', runId?: string): Promise<boolean> {
+    const target = runId ?? newestRun(this.runtimes.get(taskId))?.runId;
+    if (!target) return false;
+    const h = this.agents.get(target);
     if (h) {
       await h.stop('stopped', reason);
       return true;
     }
-    const cycle = this.cycleStops.get(taskId);
+    const cycle = this.cycleStops.get(target);
     if (cycle && !cycle.controller.signal.aborted) {
       cycle.reason = reason;
       cycle.controller.abort();
@@ -208,15 +237,53 @@ export class Scheduler extends EventEmitter {
     return false;
   }
 
-  writeAgent(taskId: string, data: string): void {
-    this.agents.get(taskId)?.write(data);
+  writeAgent(taskId: string, data: string, runId?: string): void {
+    this.agents.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '')?.write(data);
   }
 
-  resizeAgent(taskId: string, cols: number, rows: number): void {
-    this.agents.get(taskId)?.resize(cols, rows);
+  resizeAgent(taskId: string, cols: number, rows: number, runId?: string): void {
+    this.agents.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '')?.resize(cols, rows);
   }
 
   // ---------- internals ----------
+
+  /**
+   * The aggregate the UI reads, recomputed from the runs in flight. Leaves
+   * `state` alone when nothing is in flight: idle/paused/disabled is the
+   * caller's decision.
+   */
+  private recompute(rt: TaskRuntime): void {
+    let front: ActiveRun | undefined;
+    for (const run of rt.runs) if (!front || ADVANCE[run.state] > ADVANCE[front.state]) front = run;
+    if (front) rt.state = front.state;
+    rt.currentRunId = newestRun(rt)?.runId ?? null;
+    rt.held = rt.runs.some((r) => r.held);
+  }
+
+  /** Move one run to its next step and republish the aggregate. */
+  private setRunState(rt: TaskRuntime, runId: string, state: ActiveRun['state']): void {
+    const run = rt.runs.find((r) => r.runId === runId);
+    if (!run) return;
+    run.state = state;
+    this.recompute(rt);
+    this.emitRuntime(rt);
+  }
+
+  /** A run started/stopped holding for a human; the task is held while any run is. */
+  private setHeld(rt: TaskRuntime, runId: string, held: boolean): void {
+    const run = rt.runs.find((r) => r.runId === runId);
+    if (!run) return;
+    run.held = held;
+    this.recompute(rt);
+    this.emitRuntime(rt);
+  }
+
+  /** Why a start was refused at the cap; a cap of 1 keeps the plain wording. */
+  private atCapReason(rt: TaskRuntime, task: Task): string {
+    return task.maxConcurrentRuns === 1
+      ? `task is ${rt.state}`
+      : `${rt.runs.length} run(s) already active`;
+  }
 
   private must(taskId: string): TaskRuntime {
     const rt = this.runtimes.get(taskId);
@@ -240,6 +307,7 @@ export class Scheduler extends EventEmitter {
       taskId: task.id,
       state: task.enabled ? 'idle' : 'disabled',
       held: false,
+      runs: [],
       nextRunAt: task.enabled ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
       lastResult: prev?.lastResult ?? null,
@@ -286,12 +354,12 @@ export class Scheduler extends EventEmitter {
   private onTaskChange(task: Task, kind: 'create' | 'update' | 'remove', previous?: Task): void {
     this.emitEvent({ type: 'tasks', tasks: this.d.tasks.list() });
     if (kind === 'remove') {
-      void this.stopTask(task.id, 'task removed');
+      const gone = this.runtimes.get(task.id);
+      for (const run of [...(gone?.runs ?? [])]) void this.stopTask(task.id, 'task removed', run.runId);
       this.deferLogged.delete(task.id);
-      const rt = this.runtimes.get(task.id);
-      if (rt && !ACTIVE.has(rt.state)) {
+      if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
-        this.buffers.delete(task.id);
+        this.dropBuffers(task.id);
         this.persist();
       }
       return;
@@ -352,7 +420,15 @@ export class Scheduler extends EventEmitter {
       const rt = this.runtimes.get(task.id);
       if (!rt || rt.nextRunAt === null || rt.nextRunAt > now) continue;
       try {
-        if (rt.state === 'idle') {
+        // A slot may start another cycle while earlier ones are still going,
+        // up to the task's cap; past it the slot is skipped, never queued.
+        const room = rt.runs.length < task.maxConcurrentRuns;
+        if (ACTIVE.has(rt.state) && (rt.pausedReason || !task.enabled)) {
+          // Paused or disabled with runs in flight: the last run to finish
+          // parks the task, and no slot may start another one until then.
+          rt.nextRunAt = null;
+          this.emitRuntime(rt);
+        } else if (room && (rt.state === 'idle' || ACTIVE.has(rt.state))) {
           const block = this.concurrencyBlock(task);
           if (block) {
             // Stay due; retried every tick until a slot frees up.
@@ -365,9 +441,8 @@ export class Scheduler extends EventEmitter {
           this.deferLogged.delete(task.id);
           void this.runCycle(task, 'timer');
         } else if (ACTIVE.has(rt.state)) {
-          // A cron slot passed while a cycle is in progress: skip it, never overlap.
           this.record(task.id, rt.currentRunId ?? '-', 'skip', 'skipped', {
-            summary: `scheduled run skipped: task is ${rt.state}`,
+            summary: `scheduled run skipped: ${this.atCapReason(rt, task)}`,
           });
           rt.nextRunAt = this.computeNext(task, now);
           this.emitRuntime(rt);
@@ -380,8 +455,9 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Environment/harness concurrency limits: the reason a start must wait, or
-   * null when free to start. A task counts against its environment's limit
-   * (and its agent harness's) for its whole cycle: checking, classifying, running.
+   * null when free to start. Every run counts against its environment's limit
+   * (and its agent harness's) for its whole cycle — checking, classifying,
+   * running — including the other runs of the task that wants to start.
    */
   private concurrencyBlock(task: Task): string | null {
     const env = this.d.settings.environments.find((e) => e.id === task.environmentId);
@@ -394,11 +470,11 @@ export class Scheduler extends EventEmitter {
     let envActive = 0;
     let harnessActive = 0;
     for (const t of this.d.tasks.list()) {
-      if (t.id === task.id || t.environmentId !== env.id) continue;
-      const rt = this.runtimes.get(t.id);
-      if (!rt || !ACTIVE.has(rt.state)) continue;
-      envActive += 1;
-      if ((t.agent.harnessId ?? env.harnesses[0]?.id) === harnessId) harnessActive += 1;
+      if (t.environmentId !== env.id) continue;
+      const active = this.runtimes.get(t.id)?.runs.length ?? 0;
+      if (!active) continue;
+      envActive += active;
+      if ((t.agent.harnessId ?? env.harnesses[0]?.id) === harnessId) harnessActive += active;
     }
     if (envLimit !== undefined && envActive >= envLimit) {
       return `environment "${env.name}" is at its limit of ${envLimit} concurrent task${envLimit === 1 ? '' : 's'}`;
@@ -411,7 +487,7 @@ export class Scheduler extends EventEmitter {
 
   private async runCycle(task: Task, trigger: 'timer' | 'manual'): Promise<void> {
     const rt = this.runtimes.get(task.id);
-    if (!rt || rt.state !== 'idle') return;
+    if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
     const runId = newRunId(new Date(this.now()));
     let runDir: string;
     try {
@@ -423,11 +499,11 @@ export class Scheduler extends EventEmitter {
       return;
     }
 
-    rt.state = 'checking';
-    rt.currentRunId = runId;
+    rt.runs.push({ runId, state: 'checking', held: false, startedAt: this.now(), trigger });
     rt.lastRunAt = this.now();
-    rt.held = false;
+    // Advanced once, here: finishCycle only recomputes it when the task goes idle.
     rt.nextRunAt = task.enabled ? this.computeNext(task, this.now()) : null;
+    this.recompute(rt);
     this.emitRuntime(rt);
     this.persist();
 
@@ -438,11 +514,13 @@ export class Scheduler extends EventEmitter {
     }
 
     let errored = false;
+    /** The error above was the computer being offline, not the task failing. */
+    let network = false;
     let outcome: RunResult = 'noop';
     let detail = 'nothing to do';
     let retryAtMs: number | undefined;
     const stopper = { controller: new AbortController(), reason: 'stopped by user' };
-    this.cycleStops.set(task.id, stopper);
+    this.cycleStops.set(runId, stopper);
     const stopped = (): boolean => stopper.controller.signal.aborted;
     try {
       const ctx: RunContext = {
@@ -473,13 +551,15 @@ export class Scheduler extends EventEmitter {
             exitCode: check.exitCode,
             summary: check.summary,
             error: check.error,
+            network: check.network,
             stdoutTail: check.stdoutTail,
           });
           if (check.status === 'error') {
             errored = true;
+            network = !!check.network;
             go = false;
             outcome = 'error';
-            detail = `check error: ${check.error}`;
+            detail = `${network ? 'no network: ' : ''}check error: ${check.error}`;
           } else if (check.status === 'noop') {
             go = false;
             detail = check.summary ?? 'nothing to do';
@@ -491,8 +571,7 @@ export class Scheduler extends EventEmitter {
         }
       }
       if (go && task.classifier?.enabled) {
-        rt.state = 'classifying';
-        this.emitRuntime(rt);
+        this.setRunState(rt, runId, 'classifying');
         this.record(task.id, runId, 'classify', 'started', { summary: checkSummary, body: classifyPrompt(ctx) });
         const cls = await this.runClassifier(task, ctx);
         if (stopped() || cls.status === 'stopped') {
@@ -507,13 +586,15 @@ export class Scheduler extends EventEmitter {
             summary: cls.reason,
             body: cls.body,
             error: cls.error,
+            network: cls.network,
             detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
           });
           if (cls.status === 'error') {
             errored = true;
+            network = !!cls.network;
             go = false;
             outcome = 'error';
-            detail = `classifier error: ${cls.error}`;
+            detail = `${network ? 'no network: ' : ''}classifier error: ${cls.error}`;
             retryAtMs = cls.retryAtMs;
           } else if (cls.status === 'noop') {
             go = false;
@@ -528,8 +609,7 @@ export class Scheduler extends EventEmitter {
         detail = stopper.reason;
       }
       if (go) {
-        rt.state = 'running';
-        this.emitRuntime(rt);
+        this.setRunState(rt, runId, 'running');
         ctx.agentSession = this.rollingSession(task, rt);
         if (ctx.agentSession) {
           this.d.log.info(
@@ -551,16 +631,22 @@ export class Scheduler extends EventEmitter {
         this.record(task.id, runId, 'agent', outcome, {
           durationMs: end.durationMs,
           exitCode: end.exitCode,
+          network: end.network,
           detail: { wasHeld: end.wasHeld },
         });
         if (end.headline || end.body) {
           this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
         }
-        detail = end.headline ?? '';
-        if (end.reason === 'error' || end.doneStatus === 'error') errored = true;
+        // A session the network took down (banner, exit, or a timer that fired
+        // mid-retry) failed whatever mechanism ended it.
+        if (end.reason === 'error' || end.doneStatus === 'error' || end.network) {
+          errored = true;
+          network = !!end.network;
+        }
+        detail = `${network ? 'no network: ' : ''}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
         if (ctx.agentSession) this.rollSession(task, rt, ctx.agentSession, end);
-        if (task.note && end.reason !== 'error' && end.reason !== 'stopped') {
+        if (task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
           this.consumeNote(task.id, task.note.text);
         }
       }
@@ -571,9 +657,9 @@ export class Scheduler extends EventEmitter {
       this.d.log.error(`[${task.id}] run ${runId} failed: ${errMsg(e)}`);
       this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
     } finally {
-      this.agents.delete(task.id);
-      this.cycleStops.delete(task.id);
-      this.finishCycle(task.id, rt, errored, outcome, detail, retryAtMs);
+      this.agents.delete(runId);
+      this.cycleStops.delete(runId);
+      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network);
     }
   }
 
@@ -602,9 +688,9 @@ export class Scheduler extends EventEmitter {
   /**
    * Book the run against the rolling conversation. A lost resume clears the id
    * so the next run starts fresh (recorded in the run log via the error
-   * headline). An `error` end books nothing: the model never got the prompt
-   * (spawn failure, usage limit), and a resumed conversation is still there to
-   * try again.
+   * headline). An `error` end — or one the network took down — books nothing:
+   * the model never got the prompt (spawn failure, usage limit, offline), and
+   * a resumed conversation is still there to try again.
    */
   private rollSession(task: Task, rt: TaskRuntime, s: { id: string; resume: boolean }, end: AgentEnd): void {
     if (end.sessionLost) {
@@ -612,7 +698,7 @@ export class Scheduler extends EventEmitter {
       this.d.log.warn(`[${task.id}] conversation ${s.id} no longer exists; the next run starts a new one`);
       return;
     }
-    if (end.reason === 'error') return;
+    if (end.reason === 'error' || end.network) return;
     rt.session =
       s.resume && rt.session?.id === s.id
         ? { id: s.id, runs: rt.session.runs + 1 }
@@ -621,8 +707,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * The run's agent had the task's one-off note in its prompt: use up one
-   * charge. An `error` end never consumes (spawn failure, usage limit — the
-   * model never processed the prompt), a `stopped` end never consumes (the
+   * charge. An `error` or network end never consumes (spawn failure, usage
+   * limit, offline — the model never processed the prompt), a `stopped` end never consumes (the
    * user killed the run before it could finish acting on the note), and
    * neither does a note that was replaced while the run was going.
    */
@@ -637,52 +723,88 @@ export class Scheduler extends EventEmitter {
     }
   }
 
+  /**
+   * One run ended. Its outcome always lands on the task (last finisher wins)
+   * and it settles its own share of the streak, the auto-pause threshold and
+   * any usage-limit wait right away; but parking the task — idle, paused,
+   * disabled, and `nextRunAt` — belongs to the last run to finish: while
+   * others are still in flight the task stays in an active aggregate state,
+   * with a pause or a limit wait pending until then.
+   */
   private finishCycle(
     taskId: string,
     rt: TaskRuntime,
+    runId: string,
     errored: boolean,
     outcome: RunResult,
     detail: string,
     retryAtMs?: number,
+    network = false,
   ): void {
-    // A usage-limit wait is an error with a known end: it neither counts toward
-    // the auto-pause threshold nor resets the streak of real errors.
-    const limitWait = retryAtMs !== undefined && retryAtMs > this.now();
-    if (!limitWait) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
+    const now = this.now();
+    // A usage-limit wait is an error with a known end, and a network error is
+    // the computer's fault, not the task's: neither counts toward the
+    // auto-pause threshold nor resets the streak of real errors. An offline
+    // machine can therefore never auto-pause a task.
+    const limitWait = retryAtMs !== undefined && retryAtMs > now;
+    const counts = !limitWait && !network;
+    if (counts) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
-    const runId = rt.currentRunId ?? '-';
-    rt.currentRunId = null;
-    rt.held = false;
+    const at = rt.runs.findIndex((r) => r.runId === runId);
+    if (at >= 0) rt.runs.splice(at, 1);
+    this.recompute(rt);
     const fresh = this.d.tasks.get(taskId);
     if (!fresh) {
-      this.runtimes.delete(taskId);
-      this.buffers.delete(taskId);
+      // The task was deleted mid-cycle; drop its runtime once nothing is left.
+      if (rt.runs.length === 0) {
+        this.runtimes.delete(taskId);
+        this.dropBuffers(taskId);
+        this.limitWaits.delete(taskId);
+      }
       this.persist();
       return;
     }
+    // The run that crosses the threshold declares the pause, so a sibling
+    // ending well later can neither trigger it with the wrong evidence nor
+    // wipe the streak first; like a user pause it takes effect when the last
+    // run finishes.
     let autoPausedReason: string | undefined;
-    if (!fresh.enabled) {
-      rt.state = 'disabled';
-      rt.nextRunAt = null;
-    } else if (rt.pausedReason) {
-      rt.state = 'paused';
-      rt.nextRunAt = null;
-    } else if (limitWait) {
-      rt.state = 'idle';
-      rt.nextRunAt = retryAtMs!;
-      this.d.log.warn(`[${taskId}] usage limit reached; next attempt at ${new Date(retryAtMs!).toISOString()}`);
-    } else if (errored && rt.consecutiveErrors >= fresh.backoff.maxConsecutiveErrors) {
-      rt.state = 'paused';
+    if (counts && errored && !rt.pausedReason && rt.consecutiveErrors >= fresh.backoff.maxConsecutiveErrors) {
       rt.pausedReason = `auto-paused after ${rt.consecutiveErrors} consecutive errors`;
       autoPausedReason = rt.pausedReason;
-      rt.nextRunAt = null;
       this.d.log.warn(`[${taskId}] ${rt.pausedReason}`);
-    } else {
-      rt.state = 'idle';
-      rt.nextRunAt = this.computeNext(fresh, this.now());
     }
-    this.notifyCycleEnd(fresh, runId, { outcome, detail, errored, limitWait, autoPausedReason });
+    if (limitWait) {
+      // Remembered past this run so no slot starts into the same limit while
+      // siblings finish, and so the last finisher waits for the reset.
+      const waitUntil = Math.max(retryAtMs!, this.limitWaits.get(taskId) ?? 0);
+      this.limitWaits.set(taskId, waitUntil);
+      this.d.log.warn(`[${taskId}] usage limit reached; next attempt at ${new Date(waitUntil).toISOString()}`);
+    }
+    if (rt.runs.length === 0) {
+      const waitUntil = this.limitWaits.get(taskId);
+      this.limitWaits.delete(taskId);
+      if (!fresh.enabled) {
+        rt.state = 'disabled';
+        rt.nextRunAt = null;
+      } else if (rt.pausedReason) {
+        rt.state = 'paused';
+        rt.nextRunAt = null;
+      } else if (waitUntil !== undefined && waitUntil > now) {
+        rt.state = 'idle';
+        rt.nextRunAt = waitUntil;
+      } else {
+        rt.state = 'idle';
+        // A slot that came due while the task was blocked by an environment or
+        // harness limit is still owed; anything else is the next cron slot.
+        const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && fresh.schedule.enabled;
+        if (!owed) rt.nextRunAt = this.computeNext(fresh, now);
+      }
+    } else if (limitWait && rt.nextRunAt !== null) {
+      rt.nextRunAt = Math.max(rt.nextRunAt, retryAtMs!);
+    }
+    this.notifyCycleEnd(fresh, runId, { outcome, detail, errored, limitWait, network, autoPausedReason });
     this.emitRuntime(rt);
     this.persist();
   }
@@ -690,12 +812,22 @@ export class Scheduler extends EventEmitter {
   /**
    * At most one toast per cycle, the most specific applicable event first:
    * usage-limit wait, then auto-pause, then the plain end at the task's chosen
-   * level. A kind that is switched off falls through to the next.
+   * level. A kind that is switched off falls through to the next — except a
+   * network error, which is silent unless the task asked for those: the
+   * computer being offline says nothing about the task and would otherwise
+   * toast for every task at once.
    */
   private notifyCycleEnd(
     task: Task,
     runId: string,
-    end: { outcome: RunResult; detail: string; errored: boolean; limitWait: boolean; autoPausedReason?: string },
+    end: {
+      outcome: RunResult;
+      detail: string;
+      errored: boolean;
+      limitWait: boolean;
+      network: boolean;
+      autoPausedReason?: string;
+    },
   ): void {
     const n = task.notifications;
     if (end.limitWait && n.usageLimit) {
@@ -706,6 +838,7 @@ export class Scheduler extends EventEmitter {
       this.notify(task, runId, 'auto-paused', capFirst(end.autoPausedReason));
       return;
     }
+    if (end.errored && end.network && !n.networkErrors) return;
     const matches =
       n.end === 'all' ||
       (n.end === 'end' && end.outcome !== 'noop') ||
@@ -720,21 +853,30 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body });
   }
 
-  /** Feed a session's output into the task's terminal buffer and the live event stream. */
+  /** Feed a session's output into the run's terminal buffer and the live event stream. */
   private bufferSink(taskId: string, runId: string): (data: string) => void {
     const max = this.d.settings.outputBufferBytes;
     // Keep the buffer across the steps of one run, so the terminal tab shows
-    // the classifier's output followed by the agent's.
-    const existing = this.buffers.get(taskId);
-    if (!existing || existing.runId !== runId) this.buffers.set(taskId, { runId, data: '' });
+    // the classifier's output followed by the agent's. A new run of the task
+    // is what clears out the buffers of its finished runs — never the finish
+    // itself, so an idle task still shows what its last run printed.
+    if (!this.buffers.has(runId)) {
+      const live = new Set(this.runtimes.get(taskId)?.runs.map((r) => r.runId) ?? []);
+      for (const [id, buf] of this.buffers) if (buf.taskId === taskId && !live.has(id)) this.buffers.delete(id);
+      this.buffers.set(runId, { taskId, runId, data: '' });
+    }
     return (data) => {
-      const buf = this.buffers.get(taskId);
-      if (buf && buf.runId === runId) {
+      const buf = this.buffers.get(runId);
+      if (buf) {
         buf.data += data;
         if (buf.data.length > max) buf.data = buf.data.slice(buf.data.length - max);
       }
       this.emitEvent({ type: 'agent:data', taskId, runId, data });
     };
+  }
+
+  private dropBuffers(taskId: string): void {
+    for (const [id, buf] of this.buffers) if (buf.taskId === taskId) this.buffers.delete(id);
   }
 
   /**
@@ -745,12 +887,12 @@ export class Scheduler extends EventEmitter {
     try {
       const cls = await this.steps.runClassify(ctx, {
         onData: this.bufferSink(task.id, ctx.runId),
-        onHandle: (handle) => this.agents.set(task.id, handle),
+        onHandle: (handle) => this.agents.set(ctx.runId, handle),
       });
       this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
       return cls;
     } finally {
-      this.agents.delete(task.id);
+      this.agents.delete(ctx.runId);
     }
   }
 
@@ -758,23 +900,19 @@ export class Scheduler extends EventEmitter {
     const handle = await this.steps.startAgent(ctx, {
       onData: this.bufferSink(task.id, ctx.runId),
       onHold: () => {
-        rt.held = true;
+        this.setHeld(rt, ctx.runId, true);
         this.record(task.id, ctx.runId, 'agent', 'held', {
           summary: `idle for ${task.agent.idleGraceMin} min without looper-done; holding for a human`,
         });
         if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
-        this.emitRuntime(rt);
       },
-      onResume: () => {
-        rt.held = false;
-        this.emitRuntime(rt);
-      },
+      onResume: () => this.setHeld(rt, ctx.runId, false),
     });
-    this.agents.set(task.id, handle);
+    this.agents.set(ctx.runId, handle);
     // A stopTask that landed while the agent was still starting has no handle
     // to end and aborts the cycle signal instead: honor it now.
     if (ctx.signal?.aborted) {
-      void handle.stop('stopped', this.cycleStops.get(task.id)?.reason ?? 'stopped by user');
+      void handle.stop('stopped', this.cycleStops.get(ctx.runId)?.reason ?? 'stopped by user');
     }
     const end = await handle.finished;
     this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
@@ -801,7 +939,12 @@ export class Scheduler extends EventEmitter {
   }
 
   private emitRuntime(rt: TaskRuntime): void {
-    this.emitEvent({ type: 'runtime', runtime: { ...rt } });
+    this.emitEvent({ type: 'runtime', runtime: this.snapshot(rt) });
+  }
+
+  /** A copy listeners and the state file can keep: `runs` is mutated in place. */
+  private snapshot(rt: TaskRuntime): TaskRuntime {
+    return { ...rt, runs: rt.runs.map((r) => ({ ...r })) };
   }
 
   private emitEvent(e: EngineEvent): void {
@@ -814,7 +957,7 @@ export class Scheduler extends EventEmitter {
 
   private persist(): void {
     const snapshot: Record<string, TaskRuntime> = {};
-    for (const [id, rt] of this.runtimes) snapshot[id] = { ...rt };
+    for (const [id, rt] of this.runtimes) snapshot[id] = this.snapshot(rt);
     this.d.state.save(snapshot);
   }
 }

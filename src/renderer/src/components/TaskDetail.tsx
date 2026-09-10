@@ -27,6 +27,9 @@ interface Props {
   hideNoActionRuns: boolean;
   /** Run to select in the run log (notification click). */
   focusRun?: { runId: string } | null;
+  /** The run the Terminal tab is pinned to when several are in flight (null = the newest). */
+  terminalRun: string | null;
+  onTerminalRun: (runId: string | null) => void;
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -73,6 +76,7 @@ function describeCron(cron: string): string {
 function statusDetail(runtime: TaskRuntime | undefined): string {
   if (!runtime) return '';
   if (runtime.held) return 'The agent is waiting for you in the Terminal tab';
+  if (runtime.runs.length > 1) return `${runtime.runs.length} runs active`;
   switch (runtime.state) {
     case 'running':
       return runtime.currentRunId ? `Run ${runtime.currentRunId}` : '';
@@ -90,7 +94,7 @@ function describeNextRun(runtime: TaskRuntime | undefined, now: number): string 
   return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
 }
 
-export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun }: Props) {
+export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun, terminalRun, onTerminalRun }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
 
@@ -156,7 +160,9 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
         )}
         {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
         {tab === 'messages' && <Messages task={task} records={records} runtime={runtime} />}
-        {tab === 'terminal' && <Terminal taskId={task.id} runtime={runtime} />}
+        {tab === 'terminal' && (
+          <Terminal taskId={task.id} runtime={runtime} selectedRun={terminalRun} onSelectRun={onTerminalRun} />
+        )}
       </section>
     </div>
   );

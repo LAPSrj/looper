@@ -195,6 +195,16 @@ describe('validateTask with environments', () => {
     if (!bad.ok) expect(bad.errors[0]).toMatch(/Timezone: unknown timezone/);
   });
 
+  it('rejects simultaneous runs on a continued conversation', () => {
+    const continued = task({ agent: { ...task().agent, session: 'continue' } });
+    const bad = validateTask({ ...continued, maxConcurrentRuns: 2 }, environments);
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors[0]).toMatch(/^Simultaneous runs: /);
+    // Either half on its own is fine.
+    expect(validateTask(continued, environments).ok).toBe(true);
+    expect(validateTask(task({ maxConcurrentRuns: 2 }), environments).ok).toBe(true);
+  });
+
   it('requires environmentId', () => {
     const v = validateTask({ ...task(), environmentId: undefined });
     expect(v.ok).toBe(false);

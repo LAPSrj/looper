@@ -762,6 +762,15 @@ code,
   min-height: 0;
   background: #0f1115;
 }
+.terminal-runs {
+  align-self: flex-start;
+  margin: 6px 10px 0;
+  padding: 4px 8px;
+  background: #0f1115;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: #d7dae0;
+}
 .terminal {
   flex: 1;
   min-height: 0;

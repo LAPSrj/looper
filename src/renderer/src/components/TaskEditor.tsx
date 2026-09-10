@@ -845,6 +845,15 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 </select>
               </Field>
             </div>
+            <div className="row">
+              <NumberField
+                label="Simultaneous runs"
+                suffix="runs"
+                min={1}
+                value={draft.maxConcurrentRuns ?? 1}
+                onChange={(n) => set('maxConcurrentRuns', n)}
+              />
+            </div>
           </div>
         </div>
 
@@ -891,6 +900,14 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   {label}
                 </label>
               ))}
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={notif.networkErrors ?? false}
+                  onChange={(e) => setNotif('networkErrors', e.target.checked)}
+                />
+                Include network errors
+              </label>
             </fieldset>
             <label className="checkbox-field">
               <input type="checkbox" checked={notif.held ?? false} onChange={(e) => setNotif('held', e.target.checked)} />

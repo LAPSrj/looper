@@ -53,7 +53,9 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.onIdleTimeout': 'When idle too long',
   backoff: 'Auto-pause after',
   'backoff.maxConsecutiveErrors': 'Auto-pause after',
+  maxConcurrentRuns: 'Simultaneous runs',
   notifications: 'Notifications',
+  'notifications.networkErrors': 'Include network errors',
   note: 'Note',
 };
 
@@ -106,6 +108,10 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   }
   if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
     errors.push(`Timezone: unknown timezone "${task.schedule.timezone}"`);
+  }
+  // One rolling conversation cannot be resumed by two runs at the same time.
+  if (task.maxConcurrentRuns > 1 && task.agent.session === 'continue') {
+    errors.push('Simultaneous runs: a continued conversation cannot be shared by overlapping runs');
   }
   if (environments && task.environmentId) {
     const env = environments.find((e) => e.id === task.environmentId);

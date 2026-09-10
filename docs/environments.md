@@ -90,7 +90,10 @@ A task can still type any other model id as "Custom…" in its Model dropdown.
 Both an environment and a harness have a "Limit concurrent tasks" checkbox
 (off by default) plus a "Maximum concurrent tasks" count when it's on. A
 task counts against its environment's limit — and its chosen harness's — for
-its whole cycle: checking, classifying, and running.
+its whole cycle: checking, classifying, and running. A task whose
+"Simultaneous runs" setting (see [the task editor](tasks.md)) lets it have
+several runs in flight at once counts each of those runs separately, so such
+a task can take up several slots of the cap by itself.
 
 When a scheduled slot arrives and the environment or harness is already at
 its cap, the task simply stays due and is retried on every following tick

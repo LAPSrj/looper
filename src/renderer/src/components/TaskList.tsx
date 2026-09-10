@@ -310,7 +310,14 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           e.stopPropagation();
           onSelect(t.id);
           const rt2 = runtimes[t.id];
-          window.looper.showTaskContextMenu({ enabled: t.enabled, state: rt2?.state, held: !!rt2?.held, hasNote: !!t.note });
+          window.looper.showTaskContextMenu({
+            enabled: t.enabled,
+            state: rt2?.state,
+            held: !!rt2?.held,
+            hasNote: !!t.note,
+            activeRuns: rt2?.runs.length ?? 0,
+            maxRuns: t.maxConcurrentRuns,
+          });
         }}
       >
         <div className="task-item-row">

@@ -49,7 +49,7 @@ describe('run-log retention', () => {
     store.createRunDir('t1', oldId);
     store.append(record('t1', oldId, old));
 
-    const pruned = store.pruneOlderThan('t1', now.getTime() - 7 * DAY, oldId);
+    const pruned = store.pruneOlderThan('t1', now.getTime() - 7 * DAY, new Set([oldId]));
 
     expect(pruned).toEqual({ records: 0, dirs: 0 });
     expect(store.listRunIds('t1')).toEqual([oldId]);

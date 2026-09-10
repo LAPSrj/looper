@@ -28,7 +28,7 @@ export interface IpcHost {
   openEditorFromTemplate: (templateId: string) => void;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
-  updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean) => void;
+  updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean) => void;
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
@@ -120,7 +120,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
   ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));
   ipcMain.handle('runtime:resume', (_e, id: string) => engine.resume(id));
-  ipcMain.handle('runtime:stopTask', (_e, id: string) => engine.stopTask(id));
+  ipcMain.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
 
   ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
   ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
@@ -164,10 +164,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     await openTargetPath(id, task.cwd);
   });
 
-  ipcMain.handle('agent:buffer', (_e, id: string) => engine.agentBuffer(id));
-  ipcMain.on('agent:write', (_e, id: string, data: string) => engine.writeAgent(id, data));
-  ipcMain.on('agent:resize', (_e, id: string, cols: number, rows: number) =>
-    engine.resizeAgent(id, cols, rows),
+  ipcMain.handle('agent:buffer', (_e, id: string, runId?: string) => engine.agentBuffer(id, runId));
+  ipcMain.on('agent:write', (_e, id: string, data: string, runId?: string) => engine.writeAgent(id, data, runId));
+  ipcMain.on('agent:resize', (_e, id: string, cols: number, rows: number, runId?: string) =>
+    engine.resizeAgent(id, cols, rows, runId),
   );
 
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
@@ -257,7 +257,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       return result.canceled ? null : result.filePath;
     },
   );
-  ipcMain.on('ui:selection', (_e, hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean) => host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote));
+  ipcMain.on(
+    'ui:selection',
+    (_e, hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean) =>
+      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow),
+  );
 
   ipcMain.handle('dialog:error', async (e, message: string) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
@@ -318,12 +322,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('wsl:distros', () => listWslDistros());
   ipcMain.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean }) => {
+  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
+    // A task allowed several simultaneous runs can start another until its cap.
+    const canRun = !active || (info.activeRuns ?? 1) < (info.maxRuns ?? 1);
     const menu = Menu.buildFromTemplate([
-      { label: 'Run Now', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
+      { label: 'Run Now', enabled: canRun, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
       { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
       { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled', click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
@@ -343,7 +349,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
 
   // Folder header context menu. Bulk actions run directly against the engine;
-  // Run All skips disabled tasks and tasks already mid-cycle.
+  // Run All skips disabled tasks and tasks already at their run cap.
   ipcMain.on('context-menu:folder', (e, info: { folderId: string }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
@@ -371,9 +377,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         enabled: hasMembers,
         click: () =>
           forEachMember((t) => {
-            const state = stateOf(t.id);
-            const active = state === 'running' || state === 'checking' || state === 'classifying';
-            if (t.enabled && !active) engine.runNow(t.id);
+            const active = engine.listRuntimes().find((rt) => rt.taskId === t.id)?.runs.length ?? 0;
+            if (t.enabled && active < t.maxConcurrentRuns) engine.runNow(t.id);
           }),
       },
       {

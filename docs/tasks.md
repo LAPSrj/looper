@@ -98,6 +98,8 @@ classifier step on or off. When on, it runs after a check that returned
   every run as a fresh session. Continue across runs keeps one rolling
   conversation: the first run starts it (`--session-id`), later runs resume
   it (`--resume`), so the agent remembers what it already saw and reported.
+  It requires Settings → Simultaneous runs to be 1, since a rolling
+  conversation can't be shared by overlapping runs.
   **New conversation after** caps the roll — after that many runs the next
   run starts a new conversation (a cap of 1 behaves like New each run).
   If the conversation to resume no longer exists (e.g. its transcript was
@@ -126,6 +128,12 @@ classifier step on or off. When on, it runs after a check that returned
   `looper-done`, process exit, or Max runtime.
 - **When idle too long** — End the run, or Hold and wait for me (the run
   pauses for you to continue it by hand in the terminal).
+- **Simultaneous runs** — cycles of this task that may be in flight at once.
+  Default 1, which is today's behavior: a slot due while a run is active is
+  skipped. Above 1, a due slot starts another run alongside the ones already
+  going instead of being skipped, up to the cap. Incompatible with the
+  agent's "Continue across runs" — the editor refuses to save that
+  combination.
 
 ## Notifications
 
@@ -149,6 +157,11 @@ a Looper window is focused):
 - **With any result except no action** — everything except a cycle that
   found nothing to do.
 - **With any result** — every ending, including no-action.
+
+**Include network errors** — off by default. When a run fails only because
+the computer was offline (a check that couldn't reach the network, or Claude
+Code unable to reach its API), no end notification fires unless this is on.
+These runs also never count toward auto-pause.
 
 A cycle sends at most one end notification: if usage-limit or auto-paused
 fires, it replaces the plain end notification.

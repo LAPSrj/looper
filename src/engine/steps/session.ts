@@ -5,6 +5,7 @@ import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
+import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
@@ -40,6 +41,8 @@ export interface SessionEnd {
   costUsd?: number;
   /** Set when the run failed because the usage limit was hit: epoch ms of when to try again. */
   retryAtMs?: number;
+  /** The run failed because the computer could not reach the API, not because the job failed. */
+  network?: boolean;
   durationMs: number;
   wasHeld: boolean;
 }
@@ -170,8 +173,71 @@ export function parseUsageLimitReset(text: string, now: number): number | null {
   return at.getTime();
 }
 
+/**
+ * Everything a headless run's stream-json output says about how it ended, fed
+ * one line at a time. Split out of the session so the verdict can be replayed
+ * from captured lines.
+ */
+export class HeadlessStream {
+  /** The result event's `result`: the session's final report. */
+  result?: string;
+  /** The result event's is_error. */
+  isError = false;
+  /** The result event's structured_output (from --json-schema). */
+  structured?: unknown;
+  costUsd?: number;
+  /** Epoch ms when a rejected usage limit resets, from the rate_limit_event lines. */
+  usageLimitResetMs: number | null = null;
+  /** api_retry events with no HTTP status: the request never reached a server. */
+  networkRetries = 0;
+  /** The result event's terminal_reason and api_error_status. */
+  terminalReason?: string;
+  apiErrorStatus?: number | null;
+
+  feed(line: string): void {
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      return; // not JSON: a shell warning or a torn line
+    }
+    if (obj.type === 'rate_limit_event') {
+      const info = obj.rate_limit_info as { status?: string; resetsAt?: number } | undefined;
+      if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+        this.usageLimitResetMs = info.resetsAt * 1000;
+      }
+    } else if (obj.type === 'system' && obj.subtype === 'api_retry') {
+      // A retry with a status is the API answering (429, 500…); without one the
+      // request never got out of the machine.
+      if (obj.error_status === null) this.networkRetries += 1;
+    } else if (obj.type === 'result') {
+      if (typeof obj.result === 'string') this.result = obj.result;
+      this.isError = obj.is_error === true;
+      if (obj.structured_output !== undefined) this.structured = obj.structured_output;
+      if (typeof obj.total_cost_usd === 'number') this.costUsd = obj.total_cost_usd;
+      if (typeof obj.terminal_reason === 'string') this.terminalReason = obj.terminal_reason;
+      if (obj.api_error_status !== undefined) this.apiErrorStatus = obj.api_error_status as number | null;
+    }
+  }
+
+  /**
+   * The run failed because the API was unreachable, not because it answered
+   * with an error. Only the final result decides: a status-less retry earlier
+   * in the run may well have recovered (see `networkRetries` for a run that
+   * never got a result at all).
+   */
+  get network(): boolean {
+    if (!this.isError) return false;
+    if (this.terminalReason === 'api_error' && this.apiErrorStatus == null) return true;
+    return looksLikeNetworkError(this.result);
+  }
+}
+
 const PTY_COLS = 120;
 const PTY_ROWS = 32;
+
+/** Bytes of recent output kept to explain an exit or a timer that fired. */
+const RECENT_OUT_BYTES = 4096;
 
 let ptyModule: typeof PtyNS | null = null;
 function loadPty(): typeof PtyNS {
@@ -380,24 +446,44 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let exited = false;
   let lastInputAt = 0;
   let idleSince: number | null = null;
-  let headlessResult: string | undefined;
-  let headlessResultIsError = false;
-  let structured: unknown;
-  let costUsd: number | undefined;
-  /** Epoch ms when a rejected usage limit resets, from the stream's rate_limit_event lines. */
-  let usageLimitResetMs: number | null = null;
+  const stream = new HeadlessStream();
   let streamBuf = '';
   let prevEndedNewline = false;
+  /** Rolling tail of raw output: what an exit or an expired timer can be blamed on. */
+  let recentOut = '';
   /** Latest last_assistant_message seen from the Stop hook (interactive). */
   let lastMessage: string | undefined;
   // A --resume of a pruned/foreign conversation errors in the first output;
   // watching only the head keeps conversation text from ever matching.
   let earlyOutput = '';
   const watchResume = opts.session?.resume === true;
-  const noteEarly = (d: string): void => {
+  /** Every byte printed, kept twice: the head (resume check) and the tail (what to blame an end on). */
+  const noteOutput = (d: string): void => {
     if (watchResume && earlyOutput.length < 16384) earlyOutput += d;
+    recentOut = (recentOut + d).slice(-RECENT_OUT_BYTES);
   };
   const sessionLost = (): boolean => watchResume && RESUME_LOST_RE.test(earlyOutput);
+  /**
+   * The output on hand shows the *harness* losing the network. For claude only
+   * its own banner counts — the agent's tool output may name ECONNREFUSED and
+   * friends while doing its job; for other harnesses, whose process died
+   * (exit) with no verdict, the generic patterns are the best evidence there is.
+   */
+  const outputBlamesNetwork = (): boolean =>
+    claude
+      ? CLAUDE_NETWORK_RE.test(recentOut) || host?.screenContains(CLAUDE_NETWORK_RE) === true
+      : looksLikeNetworkError(recentOut);
+  /**
+   * A timer fired while claude was failing on (or retrying) the network: the
+   * run failed for network reasons even though the clock got there first —
+   * claude retries for ~185 s, longer than a 180 s classifier timeout. On
+   * screen that is the retry or the final banner; in a headless stream it is
+   * status-less retries with no result ever arriving.
+   */
+  const stalledOnNetwork = (): boolean =>
+    host
+      ? host.screenContains(CLAUDE_RETRY_RE) || host.screenContains(CLAUDE_NETWORK_RE)
+      : headless && stream.networkRetries > 0 && stream.result === undefined;
   /** Set once the done command has been seen: mtime of the done file, its status and headline. */
   let doneMtime: number | null = null;
   let doneStatus: string | undefined;
@@ -433,6 +519,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     headline?: string,
     body?: string,
     retryAtMs?: number,
+    network?: boolean,
   ): Promise<void> => {
     if (ended) return;
     ended = true;
@@ -441,7 +528,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (doneTimer) clearTimeout(doneTimer);
     if (!exited) await killTree();
     out.end();
-    cleanOut?.end();
+    // output.txt is read the moment `finished` resolves (run log, tests): let it land.
+    if (cleanOut) await withTimeout(new Promise<boolean>((r) => cleanOut.end(() => r(true))), 2000);
     await host?.close();
     resolveFinished({
       reason,
@@ -450,9 +538,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       headline,
       body,
       sessionLost: sessionLost() || undefined,
-      structured,
-      costUsd,
+      structured: stream.structured,
+      costUsd: stream.costUsd,
       retryAtMs,
+      network: network || undefined,
       durationMs: Date.now() - started,
       wasHeld: held,
     });
@@ -474,40 +563,31 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     const doneText = await fs.promises.readFile(path.join(ctx.runDir, f('done')), 'utf8').catch(() => '');
     const done = doneText.trim() ? parseDoneText(doneText, doneStatuses) : null;
     if (done) doneStatus = done.status ?? opts.implicitDoneStatus;
-    const body = headlessResult?.trim() || undefined;
-    if (headlessResultIsError && usageLimitResetMs !== null) {
+    const body = stream.result?.trim() || undefined;
+    if (stream.isError && stream.usageLimitResetMs !== null) {
       const headline = headlineOf(body) ?? 'usage limit reached';
-      ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(usageLimitResetMs).toISOString()}`);
-      await finish('error', headline, body, usageLimitResetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+      ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(stream.usageLimitResetMs).toISOString()}`);
+      await finish('error', headline, body, stream.usageLimitResetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+      return;
+    }
+    // The API was never reached: an engine error, not a run the agent failed.
+    if (stream.network) {
+      const headline = headlineOf(body) ?? "can't reach the API server";
+      ctx.log.error(`[${task.id}] ${headline}`);
+      await finish('error', headline, body, undefined, true);
       return;
     }
     if (code === 0) {
       await finish('done', (done && headlineOf(done.message)) ?? headlineOf(body), body);
     } else {
-      await finish('exited', `${harness.name} exited ${code}`, body);
+      await finish('exited', `${harness.name} exited ${code}`, body, undefined, outputBlamesNetwork());
     }
   };
 
-  const maxTimer = setTimeout(() => void finish('max-runtime', opts.maxRuntimeText), opts.maxRuntimeMs);
-
-  const takeResult = (line: string): void => {
-    try {
-      const obj = JSON.parse(line);
-      if (obj.type === 'rate_limit_event') {
-        const info = obj.rate_limit_info;
-        if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
-          usageLimitResetMs = info.resetsAt * 1000;
-        }
-      } else if (obj.type === 'result') {
-        if (typeof obj.result === 'string') headlessResult = obj.result;
-        headlessResultIsError = obj.is_error === true;
-        if (obj.structured_output !== undefined) structured = obj.structured_output;
-        if (typeof obj.total_cost_usd === 'number') costUsd = obj.total_cost_usd;
-      }
-    } catch {
-      /* not JSON: a shell warning or a torn line */
-    }
-  };
+  const maxTimer = setTimeout(
+    () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
+    opts.maxRuntimeMs,
+  );
 
   /** Headless stream to the terminal tab: pipes carry bare LF, xterm needs CRLF; blank runs collapse. */
   const showHeadless = (d: string): void => {
@@ -519,7 +599,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   proc.onStdout((d) => {
     out.write(d);
-    noteEarly(d);
+    noteOutput(d);
     if (!ended) host?.write(d);
     if (headless) {
       streamBuf += d;
@@ -528,7 +608,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         const line = streamBuf.slice(0, nl).trimEnd();
         streamBuf = streamBuf.slice(nl + 1);
         if (cleanOut && !cleanOut.writableEnded) cleanOut.write(line + '\n');
-        if (line) takeResult(line);
+        if (line) stream.feed(line);
       }
     }
     try {
@@ -547,7 +627,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     const cleaned = stripShellNoise(text);
     if (!cleaned) return;
     out.write(cleaned);
-    noteEarly(cleaned);
+    noteOutput(cleaned);
     try {
       showHeadless(cleaned);
     } catch {
@@ -575,7 +655,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       streamBuf = '';
       if (remaining) {
         if (cleanOut && !cleanOut.writableEnded) cleanOut.write(remaining + '\n');
-        if (!headlessResult) takeResult(remaining);
+        if (!stream.result) stream.feed(remaining);
       }
     }
     if (ended) return;
@@ -587,7 +667,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     } else if (sessionLost()) {
       void finish('error', RESUME_LOST_TEXT);
     } else {
-      void finish('exited', `${harness.name} exited ${code}`);
+      void finish('exited', `${harness.name} exited ${code}`, undefined, undefined, outputBlamesNetwork());
     }
   });
 
@@ -634,6 +714,15 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           void finish('error', headline, undefined, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
           return;
         }
+        // The API is out of reach (claude gives up after its retries): the
+        // prompt never landed, so this is an engine error, not a failed job.
+        const netErr = host.screenMatch(CLAUDE_NETWORK_RE);
+        if (netErr) {
+          const headline = netErr[0].replace(/\s+/g, ' ').trim();
+          ctx.log.error(`[${task.id}] ${headline}`);
+          void finish('error', headline, undefined, undefined, true);
+          return;
+        }
         // A prompt visible on screen = the session is waiting for a human; treat as idle.
         if (host.screenContains(WAITING_PROMPT_RE)) {
           if (promptSince === null) {
@@ -649,7 +738,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         if (since === null) return;
         if (now - since < opts.idleGraceMs) return;
         if (opts.onIdleTimeout === 'finish') {
-          void finish('idle-timeout', opts.idleText, lastMessage);
+          void finish('idle-timeout', opts.idleText, lastMessage, undefined, stalledOnNetwork());
         } else {
           held = true;
           cb.onHold?.();

@@ -72,11 +72,14 @@ export interface Engine {
   runNow(id: string): boolean;
   pause(id: string, reason?: string): void;
   resume(id: string): void;
-  /** Stop the task's current cycle wherever it is (check, classifier or agent). */
-  stopTask(id: string, reason?: string): Promise<boolean>;
-  writeAgent(id: string, data: string): void;
-  resizeAgent(id: string, cols: number, rows: number): void;
-  agentBuffer(id: string): { runId: string; data: string } | null;
+  /**
+   * Stop a cycle wherever it is (check, classifier or agent). Without a run id
+   * the task's newest run in flight is stopped; so do write/resize/buffer.
+   */
+  stopTask(id: string, reason?: string, runId?: string): Promise<boolean>;
+  writeAgent(id: string, data: string, runId?: string): void;
+  resizeAgent(id: string, cols: number, rows: number, runId?: string): void;
+  agentBuffer(id: string, runId?: string): { runId: string; data: string } | null;
   /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
   openTaskTerminal(id: string): Promise<void>;
   // rest mode
@@ -168,14 +171,15 @@ export function createEngine(opts: EngineOptions): Engine {
   });
 
   // Run-log retention: delete records and run folders past their age limit,
-  // sparing whatever run is currently in progress.
+  // sparing whatever runs are currently in progress.
   const RETENTION_SWEEP_MS = 60 * 60 * 1000;
   let retentionTimer: NodeJS.Timeout | null = null;
   const sweepRunLogs = () => {
     const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
     for (const taskId of runs.listTaskIds()) {
       try {
-        const { records, dirs } = runs.pruneOlderThan(taskId, cutoffMs, scheduler.get(taskId)?.currentRunId);
+        const active = new Set(scheduler.get(taskId)?.runs.map((r) => r.runId) ?? []);
+        const { records, dirs } = runs.pruneOlderThan(taskId, cutoffMs, active);
         if (records || dirs) {
           log.info(`${taskId}: pruned ${records} run records and ${dirs} run folders older than ${settings.runRetentionDays} days`);
         }
@@ -317,10 +321,10 @@ export function createEngine(opts: EngineOptions): Engine {
     runNow: (id) => scheduler.runNow(id),
     pause: (id, reason) => scheduler.pause(id, reason),
     resume: (id) => scheduler.resume(id),
-    stopTask: (id, reason) => scheduler.stopTask(id, reason),
-    writeAgent: (id, data) => scheduler.writeAgent(id, data),
-    resizeAgent: (id, c, r) => scheduler.resizeAgent(id, c, r),
-    agentBuffer: (id) => scheduler.getBuffer(id),
+    stopTask: (id, reason, runId) => scheduler.stopTask(id, reason, runId),
+    writeAgent: (id, data, runId) => scheduler.writeAgent(id, data, runId),
+    resizeAgent: (id, c, r, runId) => scheduler.resizeAgent(id, c, r, runId),
+    agentBuffer: (id, runId) => scheduler.getBuffer(id, runId),
     openTaskTerminal(id: string): Promise<void> {
       const task = tasks.get(id);
       if (!task) throw new Error(`unknown task ${id}`);
@@ -337,9 +341,9 @@ export function createEngine(opts: EngineOptions): Engine {
     readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),
     readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
     clearRuns(id: string): void {
-      const state = scheduler.get(id)?.state;
-      if (state === 'checking' || state === 'classifying' || state === 'running') {
-        throw new Error(`The task is ${state}; wait for the run to end or stop the task first.`);
+      const rt = scheduler.get(id);
+      if (rt && rt.runs.length > 0) {
+        throw new Error(`The task is ${rt.state}; wait for the run to end or stop the task first.`);
       }
       runs.clear(id);
       log.info(`cleared run history of ${id}`);

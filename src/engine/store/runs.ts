@@ -120,10 +120,10 @@ export class RunStore {
   }
 
   /**
-   * Delete records and run directories older than `cutoffMs`, sparing
-   * `keepRunId` (the run currently in progress).
+   * Delete records and run directories older than `cutoffMs`, sparing `keep`
+   * (the runs currently in progress).
    */
-  pruneOlderThan(taskId: string, cutoffMs: number, keepRunId?: string | null): { records: number; dirs: number } {
+  pruneOlderThan(taskId: string, cutoffMs: number, keep: ReadonlySet<string> = new Set()): { records: number; dirs: number } {
     // Run ids start with a local-time stamp, so an id below the cutoff's stamp is older.
     const c = new Date(cutoffMs);
     const cutoffStamp =
@@ -131,7 +131,7 @@ export class RunStore {
       `${pad(c.getHours())}${pad(c.getMinutes())}${pad(c.getSeconds())}`;
     let dirs = 0;
     for (const id of this.listRunIds(taskId)) {
-      if (id === keepRunId || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;
+      if (keep.has(id) || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;
       try {
         fs.rmSync(this.runDir(taskId, id), { recursive: true, force: true });
         dirs++;
@@ -149,7 +149,7 @@ export class RunStore {
     const kept = lines.filter((line) => {
       try {
         const r = JSON.parse(line) as RunRecord;
-        return r.runId === keepRunId || Date.parse(r.ts) >= cutoffMs;
+        return keep.has(r.runId) || Date.parse(r.ts) >= cutoffMs;
       } catch {
         return false;
       }

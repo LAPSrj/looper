@@ -35,10 +35,12 @@ export function App() {
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [rest, setRest] = useState<RestState | null>(null);
+  // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
+  const [terminalRun, setTerminalRun] = useState<string | null>(null);
 
   // Menu and toolbar commands act on the selected task; the ref keeps them acting on current state.
-  const uiRef = useRef({ selected, tasks, runtimes });
-  uiRef.current = { selected, tasks, runtimes };
+  const uiRef = useRef({ selected, tasks, runtimes, terminalRun });
+  uiRef.current = { selected, tasks, runtimes, terminalRun };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'log' }) => {
     setSelected(e.taskId);
@@ -47,7 +49,7 @@ export function App() {
   }, []);
 
   const uiAction = useCallback((type: UiEvent['type']) => {
-    const { selected: sel, tasks: ts, runtimes: rts } = uiRef.current;
+    const { selected: sel, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
     switch (type) {
       case 'run-now':
         if (sel) {
@@ -63,7 +65,7 @@ export function App() {
         }
         break;
       case 'stop-task':
-        if (sel) void window.looper.runtime.stopTask(sel);
+        if (sel) void window.looper.runtime.stopTask(sel, pickedRun ?? undefined);
         break;
       case 'pause-resume':
         if (sel) {
@@ -188,11 +190,17 @@ export function App() {
   }, [tasks, selected]);
 
   const selectedState = selected ? runtimes[selected]?.state : undefined;
+  const selectedActiveRuns = selected ? runtimes[selected]?.runs.length ?? 0 : 0;
 
   useEffect(() => {
     const t = tasks.find((x) => x.id === selected);
-    window.looper.reportSelection(!!selected, t?.enabled, selectedState === 'paused', selectedState, !!t?.note);
-  }, [selected, tasks, selectedState]);
+    const active = selectedState === 'running' || selectedState === 'checking' || selectedState === 'classifying';
+    const canRunNow = !active || selectedActiveRuns < (t?.maxConcurrentRuns ?? 1);
+    window.looper.reportSelection(!!selected, t?.enabled, selectedState === 'paused', selectedState, !!t?.note, canRunNow);
+  }, [selected, tasks, selectedState, selectedActiveRuns]);
+
+  // A terminal pick belongs to one task.
+  useEffect(() => setTerminalRun(null), [selected]);
 
   const select = useCallback((id: string) => {
     setSelected(id);
@@ -267,6 +275,8 @@ export function App() {
               onTab={setTab}
               hideNoActionRuns={view?.hideNoActionRuns ?? false}
               focusRun={focusRun}
+              terminalRun={terminalRun}
+              onTerminalRun={setTerminalRun}
             />
           ) : (
             <div className="empty" />

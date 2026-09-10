@@ -39,10 +39,12 @@ const EVAL_MS = 5000;
 const WAKE_WINDOW_BEFORE_MS = 120_000;
 const WAKE_WINDOW_AFTER_MS = 180_000;
 
-/** A held agent is a parked session waiting for a human: it does not keep the computer awake. */
+/**
+ * A held agent is a parked session waiting for a human: it does not keep the
+ * computer awake. With several runs in flight, one busy run is enough.
+ */
 function isBusy(rt: TaskRuntime): boolean {
-  if (rt.state === 'checking' || rt.state === 'classifying') return true;
-  return rt.state === 'running' && !rt.held;
+  return rt.runs.some((r) => (r.state === 'running' ? !r.held : true));
 }
 
 /**
