@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { expiredCompletedTasks } from '../src/engine/engine';
 import { newRunId, RunStore } from '../src/engine/store/runs';
-import type { RunRecord } from '../src/shared/types';
+import { TaskSchema, type RunRecord, type Task } from '../src/shared/types';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -74,5 +75,33 @@ describe('run-log retention', () => {
     store.createRunDir('a', newRunId());
     store.createRunDir('b', newRunId());
     expect(store.listTaskIds().sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('completed-task retention', () => {
+  const task = (id: string, completedAt?: string): Task =>
+    TaskSchema.parse({
+      id,
+      name: id,
+      schedule: { cron: '*/10 * * * *' },
+      environmentId: 'local',
+      cwd: '/tmp',
+      agent: { prompt: 'go' },
+      ...(completedAt ? { completedAt, enabled: false } : {}),
+    });
+
+  it('picks completed tasks past the cutoff and nothing else', () => {
+    const now = Date.now();
+    const tasks = [
+      task('running'),
+      task('fresh', new Date(now - 2 * DAY).toISOString()),
+      task('stale', new Date(now - 20 * DAY).toISOString()),
+    ];
+    expect(expiredCompletedTasks(tasks, now - 10 * DAY).map((t) => t.id)).toEqual(['stale']);
+  });
+
+  it('ignores an unparseable completion stamp rather than deleting the task', () => {
+    const tasks = [task('broken', 'not a date')];
+    expect(expiredCompletedTasks(tasks, Date.now())).toEqual([]);
   });
 });

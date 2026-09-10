@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
-import type { Environment, Task, TaskInput } from '@shared/types';
+import type { Environment, Task, TaskFolder, TaskInput } from '@shared/types';
+import { folderTree } from '@shared/folders';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
@@ -15,6 +16,8 @@ interface Props {
   initial?: TaskInput;
   /** The configured environments (File → Settings → Environments). */
   environments: Environment[];
+  /** Sidebar folders, for the "move to folder when completed" picker. */
+  folders?: TaskFolder[];
   /** Environment preselected for new tasks (from global settings). */
   defaultEnvironmentId?: string;
   /** Host kind, deciding the path style of `local` environments. */
@@ -77,6 +80,21 @@ const TIMEZONE_GROUPS = (() => {
   return [...groups.entries()];
 })();
 
+/** ISO instant -> the `datetime-local` input's local "YYYY-MM-DDTHH:mm". */
+function toLocalInput(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** The input's local value -> an ISO instant; empty (or unparseable) = no deadline. */
+function fromLocalInput(value: string): string | undefined {
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
+}
+
 const PERMISSION_MODES: [string, string][] = [
   ['auto', 'Auto'],
   ['acceptEdits', 'Accept edits'],
@@ -87,7 +105,7 @@ const PERMISSION_MODES: [string, string][] = [
   ['', 'None'],
 ];
 
-export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
+export function TaskEditor({ task, initial, environments, folders = [], defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId),
   );
@@ -190,6 +208,18 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   // The draft's end level is the source of truth while on; the remembered one shows while off.
   const endLevel: NotifEndLevel = notif.end && notif.end !== 'off' ? notif.end : rememberedEnd;
   const endOn = (notif.end ?? 'warning') !== 'off';
+  const completion = draft.completion ?? {};
+  const setCompletion = <K extends keyof NonNullable<Draft['completion']>>(key: K, value: NonNullable<Draft['completion']>[K]) =>
+    setDraft((d) => ({ ...d, completion: { ...(d.completion ?? {}), [key]: value } }));
+  // Status is three states over two fields: a completed task is never enabled.
+  const status = draft.completedAt ? 'completed' : draft.enabled === false ? 'disabled' : 'enabled';
+  const setStatus = (next: 'enabled' | 'disabled' | 'completed') =>
+    setDraft((d) => ({
+      ...d,
+      enabled: next === 'enabled',
+      completedAt: next === 'completed' ? (d.completedAt ?? new Date().toISOString()) : undefined,
+      completedReason: next === 'completed' ? (d.completedReason ?? 'completed by the user') : undefined,
+    }));
   const setCheck = <K extends keyof NonNullable<Draft['check']>>(key: K, value: NonNullable<Draft['check']>[K]) =>
     setDraft((d) => ({ ...d, check: { ...d.check!, [key]: value } }));
   const browseCwd = async () => {
@@ -291,11 +321,12 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             <div className="row">
               <Field label="Status">
                 <select
-                  value={draft.enabled === false ? 'disabled' : 'enabled'}
-                  onChange={(e) => set('enabled', e.target.value === 'enabled')}
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as 'enabled' | 'disabled' | 'completed')}
                 >
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
+                  <option value="completed">Completed</option>
                 </select>
               </Field>
             </div>
@@ -321,6 +352,39 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   </button>
                 </div>
             </Field>
+            <section>
+              <h3>Completion</h3>
+            </section>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={completion.allowAgent ?? false}
+                onChange={(e) => setCompletion('allowAgent', e.target.checked)}
+              />
+              Let the agent complete this task
+            </label>
+            <div className="row">
+              <Field label="Move to folder when completed">
+                <select
+                  value={completion.folderId ?? ''}
+                  onChange={(e) => setCompletion('folderId', e.target.value || undefined)}
+                >
+                  <option value="">Stay where it is</option>
+                  {folderTree(folders).map(({ folder, depth }) => (
+                    <option key={folder.id} value={folder.id}>
+                      {' '.repeat(depth * 3) + folder.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Give up on">
+                <input
+                  type="datetime-local"
+                  value={toLocalInput(completion.expiresAt)}
+                  onChange={(e) => setCompletion('expiresAt', fromLocalInput(e.target.value))}
+                />
+              </Field>
+            </div>
           </div>
         </div>
 
@@ -777,13 +841,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     value={draft.agent.session ?? 'fresh'}
                     onChange={(e) => setAgent('session', e.target.value as 'fresh' | 'continue')}
                   >
-                    <option value="fresh">New each run (default)</option>
-                    <option value="continue">Continue across runs</option>
+                    <option value="fresh">Start new on each run</option>
+                    <option value="continue">Continue previous across runs</option>
                   </select>
                 </Field>
                 {(draft.agent.session ?? 'fresh') === 'continue' && (
                   <NumberField
-                    label="New conversation after"
+                    label="Start a new conversation after"
                     suffix="runs"
                     min={1}
                     value={draft.agent.sessionMaxRuns ?? 10}
@@ -803,12 +867,14 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             >
               <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
             </Field>
-            <Field label="Extra command-line arguments">
-              <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
-            </Field>
-            <Field label="Extra environment variables">
-              <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
-            </Field>
+            <div className="row">
+              <Field label="Extra command-line arguments">
+                <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
+              </Field>
+              <Field label="Extra environment variables">
+                <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
+              </Field>
+            </div>
           </div>
         </div>
 
@@ -916,6 +982,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             <label className="checkbox-field">
               <input type="checkbox" checked={notif.autoPaused ?? false} onChange={(e) => setNotif('autoPaused', e.target.checked)} />
               Notify when the task auto-pauses
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={notif.completed ?? false} onChange={(e) => setNotif('completed', e.target.checked)} />
+              Notify when the task completes
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={notif.usageLimit ?? false} onChange={(e) => setNotif('usageLimit', e.target.checked)} />

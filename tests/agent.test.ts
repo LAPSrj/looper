@@ -63,6 +63,11 @@ describe('systemFooter', () => {
     expect(systemFooter('T', 'r1', false)).toContain('closes this session');
     expect(systemFooter('T', 'r1', true)).not.toContain('closes this session');
   });
+
+  it('teaches looper-complete only to an agent whose task allows it', () => {
+    expect(systemFooter('T', 'r1', false)).not.toContain('looper-complete');
+    expect(systemFooter('T', 'r1', false, true)).toContain('looper-complete "<why>"');
+  });
 });
 
 describe('parseDoneSignal', () => {

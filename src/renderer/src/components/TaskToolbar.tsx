@@ -36,6 +36,12 @@ const ICONS = {
       <path d="M11.5 4.2a5 5 0 1 1-7 0" />
     </>
   ),
+  complete: (
+    <>
+      <path d="M8 14.5A6.5 6.5 0 1 1 8 1.5a6.5 6.5 0 0 1 0 13Z" />
+      <path d="m5 8 2.2 2.2L11 6" />
+    </>
+  ),
   guidance: <path d="M2.5 3.5h11v7.5H7l-3 2.5v-2.5H2.5Z" />,
   edit: <path d="m11.3 2.7 2 2L5.5 12.5l-2.8.8.8-2.8Z" />,
   terminal: (
@@ -51,6 +57,7 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
+  const completed = !!task?.completedAt;
   const hasTask = !!task;
   const activeRuns = runtime?.runs.length ?? 0;
   const maxRuns = task?.maxConcurrentRuns ?? 1;
@@ -75,9 +82,10 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
         paused ? ICONS.resume : ICONS.pause,
         paused ? 'Resume (Ctrl+P)' : 'Pause (Ctrl+P)',
         'pause-resume',
-        hasTask && state !== 'disabled',
+        hasTask && state !== 'disabled' && !completed,
       )}
-      {button(ICONS.power, task?.enabled === false ? 'Enable' : 'Disable', 'enable-disable', hasTask)}
+      {button(ICONS.power, task?.enabled === false ? 'Enable' : 'Disable', 'enable-disable', hasTask && !completed)}
+      {button(ICONS.complete, completed ? 'Reopen' : 'Complete', 'complete-reopen', hasTask)}
       {button(ICONS.edit, 'Edit Task (Ctrl+E)', 'edit-task', hasTask)}
       <span className="toolbar-sep" />
       {button(

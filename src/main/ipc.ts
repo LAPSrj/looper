@@ -28,7 +28,15 @@ export interface IpcHost {
   openEditorFromTemplate: (templateId: string) => void;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
-  updateTaskMenu: (hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean) => void;
+  updateTaskMenu: (
+    hasTask: boolean,
+    taskEnabled?: boolean,
+    taskPaused?: boolean,
+    taskState?: string,
+    hasNote?: boolean,
+    canRunNow?: boolean,
+    taskCompleted?: boolean,
+  ) => void;
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
@@ -120,6 +128,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
   ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));
   ipcMain.handle('runtime:resume', (_e, id: string) => engine.resume(id));
+  ipcMain.handle('runtime:complete', (_e, id: string) => engine.completeTask(id));
+  ipcMain.handle('runtime:reopen', (_e, id: string) => engine.reopenTask(id));
   ipcMain.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
 
   ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
@@ -259,8 +269,16 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
   ipcMain.on(
     'ui:selection',
-    (_e, hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean) =>
-      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow),
+    (
+      _e,
+      hasTask: boolean,
+      taskEnabled?: boolean,
+      taskPaused?: boolean,
+      taskState?: string,
+      hasNote?: boolean,
+      canRunNow?: boolean,
+      taskCompleted?: boolean,
+    ) => host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted),
   );
 
   ipcMain.handle('dialog:error', async (e, message: string) => {
@@ -322,7 +340,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('wsl:distros', () => listWslDistros());
   ipcMain.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
+  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
@@ -331,8 +349,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const menu = Menu.buildFromTemplate([
       { label: 'Run Now', enabled: canRun, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
       { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
-      { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled', click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
-      { label: info.enabled ? 'Disable' : 'Enable', click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
+      { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled' && !info.completed, click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
+      { label: info.enabled ? 'Disable' : 'Enable', enabled: !info.completed, click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
+      { label: info.completed ? 'Reopen' : 'Complete', click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }) },
       { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
       { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
       { type: 'separator' },
@@ -384,7 +403,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       {
         label: 'Pause All',
         enabled: hasMembers,
-        click: () => forEachMember((t) => { if (stateOf(t.id) !== 'disabled') engine.pause(t.id); }),
+        click: () => forEachMember((t) => { if (stateOf(t.id) !== 'disabled' && !t.completedAt) engine.pause(t.id); }),
       },
       {
         label: 'Resume All',
@@ -394,7 +413,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       {
         label: 'Enable All',
         enabled: hasMembers,
-        click: () => forEachMember((t) => { if (!t.enabled) engine.saveTask({ ...t, enabled: true }); }),
+        click: () => forEachMember((t) => { if (!t.enabled && !t.completedAt) engine.saveTask({ ...t, enabled: true }); }),
       },
       {
         label: 'Disable All',

@@ -20,7 +20,7 @@ import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
-import { agentPrompt, startAgent as defaultStartAgent, type AgentEnd } from './steps/agent';
+import { agentPrompt, readCompleteSignal, startAgent as defaultStartAgent, type AgentEnd } from './steps/agent';
 import type { SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
 import { newRunId, type RunStore } from './store/runs';
@@ -53,6 +53,14 @@ const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 
 /** The newest run in flight (runs are appended in start order). */
 function newestRun(rt: TaskRuntime | undefined): ActiveRun | undefined {
   return rt && rt.runs.length ? rt.runs[rt.runs.length - 1] : undefined;
+}
+
+/**
+ * Where a task rests with nothing in flight and no pause: completed outranks
+ * disabled, since a completed task is always disabled too.
+ */
+function parkedState(task: Task | undefined): TaskRuntime['state'] {
+  return task?.completedAt ? 'completed' : 'disabled';
 }
 
 export class Scheduler extends EventEmitter {
@@ -167,7 +175,7 @@ export class Scheduler extends EventEmitter {
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
     // A manual run lifts a pause — parked, or still pending behind runs in flight.
-    if (rt.state === 'paused' || rt.state === 'disabled' || rt.pausedReason) {
+    if (rt.state === 'paused' || rt.state === 'disabled' || rt.state === 'completed' || rt.pausedReason) {
       rt.pausedReason = null;
       rt.consecutiveErrors = 0;
       if (!ACTIVE.has(rt.state)) rt.state = 'idle';
@@ -187,6 +195,32 @@ export class Scheduler extends EventEmitter {
     }
     void this.runCycle(task, 'manual');
     return true;
+  }
+
+  /**
+   * Finish a task for good: it stops being scheduled, moves to its completion
+   * folder if it has one, and is deleted once the completed-task retention runs
+   * out. Everything else follows from the store write (see `onTaskChange`).
+   */
+  completeTask(taskId: string, reason: string): void {
+    const task = this.d.tasks.get(taskId);
+    if (!task || task.completedAt) return;
+    try {
+      this.d.tasks.patch(taskId, { completedAt: new Date(this.now()).toISOString(), completedReason: reason });
+    } catch (e) {
+      this.d.log.error(`[${taskId}] cannot complete the task: ${errMsg(e)}`);
+    }
+  }
+
+  /** Undo a completion: the task is enabled again and its schedule resumes. */
+  reopenTask(taskId: string): void {
+    const task = this.d.tasks.get(taskId);
+    if (!task?.completedAt) return;
+    try {
+      this.d.tasks.patch(taskId, { completedAt: undefined, completedReason: undefined, enabled: true });
+    } catch (e) {
+      this.d.log.error(`[${taskId}] cannot reopen the task: ${errMsg(e)}`);
+    }
   }
 
   pause(taskId: string, reason = 'paused by user'): void {
@@ -210,7 +244,7 @@ export class Scheduler extends EventEmitter {
         rt.state = 'idle';
         rt.nextRunAt = task.schedule.enabled ? this.now() + 1000 : null;
       } else {
-        rt.state = 'disabled';
+        rt.state = parkedState(task);
       }
     }
     this.emitRuntime(rt);
@@ -305,7 +339,7 @@ export class Scheduler extends EventEmitter {
   private initRuntime(task: Task, delayMs: number, prev?: TaskRuntime): TaskRuntime {
     const rt: TaskRuntime = {
       taskId: task.id,
-      state: task.enabled ? 'idle' : 'disabled',
+      state: task.enabled ? 'idle' : parkedState(task),
       held: false,
       runs: [],
       nextRunAt: task.enabled ? this.now() + delayMs : null,
@@ -385,11 +419,14 @@ export class Scheduler extends EventEmitter {
     ) {
       rt.session = null;
     }
+    // Whoever set it — the agent, a deadline, the inbox, the editor — this is
+    // where completing a task takes effect.
+    if (previous && !previous.completedAt && task.completedAt) this.onCompleted(task, rt);
     if (ACTIVE.has(rt.state)) return; // applied when the cycle finishes
     if (!task.enabled) {
-      rt.state = 'disabled';
+      rt.state = parkedState(task);
       rt.nextRunAt = null;
-    } else if (rt.state === 'disabled') {
+    } else if (rt.state === 'disabled' || rt.state === 'completed') {
       rt.state = 'idle';
       rt.nextRunAt = this.computeNext(task, this.now());
     } else if (
@@ -400,6 +437,32 @@ export class Scheduler extends EventEmitter {
     }
     this.emitRuntime(rt);
     this.persist();
+  }
+
+  /**
+   * The task just became completed: it stops being scheduled (its `enabled` is
+   * already false), its rolling conversation is over, and a pending pause is
+   * moot. The toast is left to the cycle's own end notification while a run is
+   * still in flight, so a cycle never sends two.
+   */
+  private onCompleted(task: Task, rt: TaskRuntime): void {
+    rt.session = null;
+    rt.pausedReason = null;
+    rt.consecutiveErrors = 0;
+    const reason = task.completedReason ?? 'completed';
+    this.d.log.info(`[${task.id}] task completed: ${reason}`);
+    this.record(task.id, rt.currentRunId ?? '-', 'system', 'done', { summary: `Task completed: ${reason}` });
+    if (rt.runs.length === 0 && task.notifications.completed) {
+      this.notify(task, rt.currentRunId ?? '-', 'completed', `Completed: ${capFirst(reason)}`);
+    }
+  }
+
+  /** The task's deadline has passed and it has not completed on its own. */
+  private expired(task: Task, now: number): boolean {
+    const at = task.completion.expiresAt;
+    if (!at || task.completedAt) return false;
+    const ms = Date.parse(at);
+    return !Number.isNaN(ms) && ms <= now;
   }
 
   private computeNext(task: Task, from: number): number | null {
@@ -418,7 +481,14 @@ export class Scheduler extends EventEmitter {
     const now = this.now();
     for (const task of this.d.tasks.list()) {
       const rt = this.runtimes.get(task.id);
-      if (!rt || rt.nextRunAt === null || rt.nextRunAt > now) continue;
+      if (!rt) continue;
+      // The deadline is about the wait, not about the schedule: it fires for a
+      // paused, disabled or unscheduled task just the same.
+      if (this.expired(task, now)) {
+        this.completeTask(task.id, `gave up waiting: the deadline of ${new Date(task.completion.expiresAt!).toLocaleString()} passed`);
+        continue;
+      }
+      if (rt.nextRunAt === null || rt.nextRunAt > now) continue;
       try {
         // A slot may start another cycle while earlier ones are still going,
         // up to the task's cap; past it the slot is skipped, never queued.
@@ -499,6 +569,8 @@ export class Scheduler extends EventEmitter {
       return;
     }
 
+    // The task as it stood when the cycle started; what completes during it is the news.
+    const wasCompleted = !!task.completedAt;
     rt.runs.push({ runId, state: 'checking', held: false, startedAt: this.now(), trigger });
     rt.lastRunAt = this.now();
     // Advanced once, here: finishCycle only recomputes it when the task goes idle.
@@ -646,6 +718,7 @@ export class Scheduler extends EventEmitter {
         detail = `${network ? 'no network: ' : ''}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
         if (ctx.agentSession) this.rollSession(task, rt, ctx.agentSession, end);
+        this.applyCompleteSignal(task, runId, ctx.runDir, end);
         if (task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
           this.consumeNote(task.id, task.note.text);
         }
@@ -659,8 +732,33 @@ export class Scheduler extends EventEmitter {
     } finally {
       this.agents.delete(runId);
       this.cycleStops.delete(runId);
-      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network);
+      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted);
     }
+  }
+
+  /**
+   * The agent called `looper-complete`: finish the task for good. A task that
+   * doesn't allow it is never given the helper, so a signal from one is a
+   * leftover or a hand-written file — recorded and ignored, not silently
+   * obeyed. A run the user stopped never completes either: their stop outranks
+   * whatever the agent said on its way out.
+   */
+  private applyCompleteSignal(task: Task, runId: string, runDir: string, end: AgentEnd): void {
+    const reason = readCompleteSignal(runDir);
+    if (!reason) return;
+    if (!task.completion.allowAgent) {
+      this.record(task.id, runId, 'agent', 'warning', {
+        summary: 'completion signal ignored: this task does not let the agent complete it',
+      });
+      return;
+    }
+    if (end.reason === 'stopped') {
+      this.record(task.id, runId, 'agent', 'warning', {
+        summary: 'completion signal ignored: the run was stopped',
+      });
+      return;
+    }
+    this.completeTask(task.id, reason);
   }
 
   /**
@@ -740,6 +838,7 @@ export class Scheduler extends EventEmitter {
     detail: string,
     retryAtMs?: number,
     network = false,
+    wasCompleted = false,
   ): void {
     const now = this.now();
     // A usage-limit wait is an error with a known end, and a network error is
@@ -786,7 +885,7 @@ export class Scheduler extends EventEmitter {
       const waitUntil = this.limitWaits.get(taskId);
       this.limitWaits.delete(taskId);
       if (!fresh.enabled) {
-        rt.state = 'disabled';
+        rt.state = parkedState(fresh);
         rt.nextRunAt = null;
       } else if (rt.pausedReason) {
         rt.state = 'paused';
@@ -804,15 +903,23 @@ export class Scheduler extends EventEmitter {
     } else if (limitWait && rt.nextRunAt !== null) {
       rt.nextRunAt = Math.max(rt.nextRunAt, retryAtMs!);
     }
-    this.notifyCycleEnd(fresh, runId, { outcome, detail, errored, limitWait, network, autoPausedReason });
+    this.notifyCycleEnd(fresh, runId, {
+      outcome,
+      detail,
+      errored,
+      limitWait,
+      network,
+      autoPausedReason,
+      completed: !wasCompleted && !!fresh.completedAt,
+    });
     this.emitRuntime(rt);
     this.persist();
   }
 
   /**
    * At most one toast per cycle, the most specific applicable event first:
-   * usage-limit wait, then auto-pause, then the plain end at the task's chosen
-   * level. A kind that is switched off falls through to the next — except a
+   * usage-limit wait, then auto-pause, then the task completing, then the plain
+   * end at the task's chosen level. A kind that is switched off falls through to the next — except a
    * network error, which is silent unless the task asked for those: the
    * computer being offline says nothing about the task and would otherwise
    * toast for every task at once.
@@ -827,6 +934,8 @@ export class Scheduler extends EventEmitter {
       limitWait: boolean;
       network: boolean;
       autoPausedReason?: string;
+      /** The task finished for good during this cycle. */
+      completed: boolean;
     },
   ): void {
     const n = task.notifications;
@@ -836,6 +945,10 @@ export class Scheduler extends EventEmitter {
     }
     if (end.autoPausedReason && n.autoPaused) {
       this.notify(task, runId, 'auto-paused', capFirst(end.autoPausedReason));
+      return;
+    }
+    if (end.completed && n.completed) {
+      this.notify(task, runId, 'completed', `Completed: ${capFirst(task.completedReason ?? end.detail)}`);
       return;
     }
     if (end.errored && end.network && !n.networkErrors) return;

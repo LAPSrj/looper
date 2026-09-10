@@ -54,6 +54,10 @@ export interface LooperApi {
     runNow(id: string): Promise<boolean>;
     pause(id: string): Promise<void>;
     resume(id: string): Promise<void>;
+    /** Finish a task for good: it stops being scheduled and is deleted when its retention runs out. */
+    complete(id: string): Promise<void>;
+    /** Undo a completion: the task is enabled again and its schedule resumes. */
+    reopen(id: string): Promise<void>;
     /** No run id = the task's newest run in flight. */
     stopTask(id: string, runId?: string): Promise<boolean>;
   };
@@ -140,9 +144,19 @@ export interface LooperApi {
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
   /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
-  reportSelection(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean): void;
+  reportSelection(
+    hasTask: boolean,
+    taskEnabled?: boolean,
+    taskPaused?: boolean,
+    taskState?: string,
+    hasNote?: boolean,
+    canRunNow?: boolean,
+    taskCompleted?: boolean,
+  ): void;
   showTaskContextMenu(info: {
     enabled: boolean;
+    /** The task is finished for good: the menu offers Reopen instead of Complete. */
+    completed: boolean;
     state?: string;
     held: boolean;
     hasNote: boolean;
@@ -178,6 +192,7 @@ export type UiEvent =
         | 'export-task'
         | 'delete-task'
         | 'enable-disable'
+        | 'complete-reopen'
         | 'open-terminal'
         | 'open-work-folder'
         | 'clear-runs'

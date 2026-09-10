@@ -86,6 +86,8 @@ export interface SessionOpts {
   /** Done command defined on the session's PATH and the statuses it accepts. */
   doneCommand: string;
   doneStatuses: readonly string[];
+  /** Completion command on the session's PATH. Unset = the session cannot complete the task. */
+  completeCommand?: string;
   /** Status assumed when the done file has no recognized status line (agent: success; classify: none). */
   implicitDoneStatus?: string;
   /** Whether the Stop hook gates turn ends (reminder + background-task block). Interactive needs it. */
@@ -364,12 +366,13 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       );
       hooks.Stop = [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', stopHookFile)) }] }];
     }
+    const signalCommands = opts.completeCommand ? [doneCommand, opts.completeCommand] : [doneCommand];
     writeJsonAtomic(path.join(ctx.runDir, f('settings.json')), {
-      // The done signal must never be blocked by a permission prompt, and the
+      // A signal command must never be blocked by a permission prompt, and the
       // Bash sandbox must never confine it: the run dir sits outside the
       // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
-      permissions: { allow: [`Bash(${doneCommand}:*)`, `Bash(${doneCommand})`] },
-      sandbox: { excludedCommands: [doneCommand] },
+      permissions: { allow: signalCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
+      sandbox: { excludedCommands: signalCommands },
       hooks,
     });
     if (headless && opts.jsonSchema) {
@@ -401,6 +404,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     prefix: opts.prefix,
     doneCommand,
     doneStatuses,
+    completeCommand: opts.completeCommand,
   });
 
   const out = fs.createWriteStream(path.join(ctx.runDir, f('output.log')), { flags: 'a' });

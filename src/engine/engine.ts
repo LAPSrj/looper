@@ -72,6 +72,10 @@ export interface Engine {
   runNow(id: string): boolean;
   pause(id: string, reason?: string): void;
   resume(id: string): void;
+  /** Finish a task for good: it stops being scheduled and is deleted when its retention runs out. */
+  completeTask(id: string, reason?: string): void;
+  /** Undo a completion: the task is enabled again and its schedule resumes. */
+  reopenTask(id: string): void;
   /**
    * Stop a cycle wherever it is (check, classifier or agent). Without a run id
    * the task's newest run in flight is stopped; so do write/resize/buffer.
@@ -100,6 +104,18 @@ export interface Engine {
   inboxDir(): string;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(maxBytes?: number): string;
+}
+
+/**
+ * Tasks whose completion is older than the cutoff, i.e. past the completed-task
+ * retention. Whether one still has a run in flight is the caller's business.
+ */
+export function expiredCompletedTasks(tasks: Task[], cutoffMs: number): Task[] {
+  return tasks.filter((t) => {
+    if (!t.completedAt) return false;
+    const at = Date.parse(t.completedAt);
+    return !Number.isNaN(at) && at <= cutoffMs;
+  });
 }
 
 export function createEngine(opts: EngineOptions): Engine {
@@ -170,11 +186,35 @@ export function createEngine(opts: EngineOptions): Engine {
     if (e.type === 'runtime') rest?.poke();
   });
 
+  /**
+   * Completed-task retention: a task that has been finished for good long
+   * enough is deleted along with its run history — once the task is gone the
+   * runs are unreachable in the UI, which only opens them through the task
+   * list. A completed task with a run in flight (someone ran it by hand) waits
+   * for the next sweep.
+   */
+  const sweepCompletedTasks = () => {
+    const cfg = settings.completedTaskRetention;
+    if (!cfg.enabled) return;
+    const cutoffMs = Date.now() - cfg.days * 24 * 60 * 60 * 1000;
+    for (const task of expiredCompletedTasks(tasks.list(), cutoffMs)) {
+      if ((scheduler.get(task.id)?.runs.length ?? 0) > 0) continue;
+      try {
+        runs.clear(task.id);
+        tasks.remove(task.id);
+        log.info(`deleted completed task ${task.id}: completed ${task.completedAt}, past the ${cfg.days}-day retention`);
+      } catch (err) {
+        log.error(`deleting completed task ${task.id} failed: ${errMsg(err)}`);
+      }
+    }
+  };
+
   // Run-log retention: delete records and run folders past their age limit,
   // sparing whatever runs are currently in progress.
   const RETENTION_SWEEP_MS = 60 * 60 * 1000;
   let retentionTimer: NodeJS.Timeout | null = null;
   const sweepRunLogs = () => {
+    sweepCompletedTasks();
     const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
     for (const taskId of runs.listTaskIds()) {
       try {
@@ -223,6 +263,12 @@ export function createEngine(opts: EngineOptions): Engine {
             break;
           case 'disable':
             tasks.patch(cmd.taskId, { enabled: false });
+            break;
+          case 'complete':
+            scheduler.completeTask(cmd.taskId, cmd.reason ?? 'completed');
+            break;
+          case 'reopen':
+            scheduler.reopenTask(cmd.taskId);
             break;
         }
       },
@@ -321,6 +367,8 @@ export function createEngine(opts: EngineOptions): Engine {
     runNow: (id) => scheduler.runNow(id),
     pause: (id, reason) => scheduler.pause(id, reason),
     resume: (id) => scheduler.resume(id),
+    completeTask: (id, reason) => scheduler.completeTask(id, reason ?? 'completed by the user'),
+    reopenTask: (id) => scheduler.reopenTask(id),
     stopTask: (id, reason, runId) => scheduler.stopTask(id, reason, runId),
     writeAgent: (id, data, runId) => scheduler.writeAgent(id, data, runId),
     resizeAgent: (id, c, r, runId) => scheduler.resizeAgent(id, c, r, runId),

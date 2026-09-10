@@ -107,6 +107,7 @@ export class TaskStore extends EventEmitter {
     const existing = this.tasks.get(v.task.id);
     const task: Task = {
       ...v.task,
+      ...this.completionFields(v.task, existing, now),
       createdAt: existing?.createdAt ?? v.task.createdAt ?? now,
       updatedAt: now,
     };
@@ -116,6 +117,32 @@ export class TaskStore extends EventEmitter {
     this.emit('change', task, existing ? 'update' : 'create', existing);
     if (layoutChanged) this.emit('folders');
     return task;
+  }
+
+  /**
+   * The completion invariant, applied wherever a task comes from (editor, JSON
+   * tab, inbox, the engine itself): a completed task is never enabled, keeps
+   * the stamp of when it first completed, and moves to its completion folder as
+   * it completes. Reopening drops the stamp, the reason, and a deadline that
+   * has already passed — otherwise the next tick would just complete it again.
+   */
+  private completionFields(task: Task, existing: Task | undefined, now: string): Partial<Task> {
+    if (!task.completedAt) {
+      if (!existing?.completedAt) return {};
+      const expiresAt = task.completion.expiresAt;
+      const stale = expiresAt !== undefined && Date.parse(expiresAt) <= Date.now();
+      return {
+        completedReason: undefined,
+        ...(stale ? { completion: { ...task.completion, expiresAt: undefined } } : {}),
+      };
+    }
+    const out: Partial<Task> = { enabled: false, completedAt: existing?.completedAt ?? task.completedAt };
+    // The move happens once, as the task completes; reopening leaves it filed where it is.
+    const folderId = task.completion.folderId;
+    if (!existing?.completedAt && folderId && this.folders.some((f) => f.id === folderId)) {
+      out.folderId = folderId;
+    }
+    return out;
   }
 
   patch(id: string, patch: Partial<TaskInput>): Task {

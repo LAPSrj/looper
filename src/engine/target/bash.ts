@@ -87,6 +87,14 @@ export class BashTarget implements Target {
     ].join('\n');
   }
 
+  renderTextHelper(envVar: string, fallback: string): string {
+    return [
+      '#!/usr/bin/env bash',
+      `printf '%s\\n' "\${*:-${fallback}}" > "$${envVar}"`,
+      '',
+    ].join('\n');
+  }
+
   renderPipeHook(targetPath: string): string {
     return `cat > ${this.quote(targetPath)}`;
   }

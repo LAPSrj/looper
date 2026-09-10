@@ -23,6 +23,11 @@ const FIELD_LABELS: Record<string, string> = {
   id: 'Task id',
   name: 'Task name',
   enabled: 'Status',
+  completedAt: 'Status',
+  completion: 'Completion',
+  'completion.allowAgent': 'Let the agent complete this task',
+  'completion.folderId': 'Move to folder when completed',
+  'completion.expiresAt': 'Give up on',
   folderId: 'Folder',
   schedule: 'Schedule',
   'schedule.cron': 'Cron expression',
@@ -46,7 +51,7 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.extraArgs': 'Extra command-line arguments',
   'agent.mode': 'Session type',
   'agent.session': 'Conversation',
-  'agent.sessionMaxRuns': 'New conversation after',
+  'agent.sessionMaxRuns': 'Start a new conversation after',
   'agent.permissionMode': 'Permission mode',
   'agent.maxRuntimeMin': 'Max runtime',
   'agent.idleGraceMin': 'Idle grace',
@@ -56,6 +61,7 @@ const FIELD_LABELS: Record<string, string> = {
   maxConcurrentRuns: 'Simultaneous runs',
   notifications: 'Notifications',
   'notifications.networkErrors': 'Include network errors',
+  'notifications.completed': 'Notify when the task completes',
   note: 'Note',
 };
 
@@ -109,6 +115,9 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
     errors.push(`Timezone: unknown timezone "${task.schedule.timezone}"`);
   }
+  if (task.completion.expiresAt && Number.isNaN(Date.parse(task.completion.expiresAt))) {
+    errors.push(`Give up on: "${task.completion.expiresAt}" is not a date`);
+  }
   // One rolling conversation cannot be resumed by two runs at the same time.
   if (task.maxConcurrentRuns > 1 && task.agent.session === 'continue') {
     errors.push('Simultaneous runs: a continued conversation cannot be shared by overlapping runs');
@@ -155,6 +164,9 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
   delete draft.updatedAt;
   // A one-off run note is transient state, never part of an imported definition.
   delete draft.note;
+  // Neither is the completion stamp: an imported task starts its own life.
+  delete draft.completedAt;
+  delete draft.completedReason;
   if (draft.schedule.cron) {
     try {
       new Cron(draft.schedule.cron);

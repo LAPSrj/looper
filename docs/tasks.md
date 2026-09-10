@@ -8,13 +8,35 @@ changes.
 ## General
 
 - **Task name**
-- **Status** — Enabled or Disabled. A disabled task never runs on its own;
-  Run Now still asks for confirmation before running it anyway.
+- **Status** — Enabled, Disabled or Completed. A disabled task never runs on
+  its own; Run Now still asks for confirmation before running it anyway. A
+  **completed** task is finished for good: it behaves like a disabled one, but
+  it also moves to its completion folder, shows as completed in the task list,
+  and is deleted once the completed-task retention (Settings → Advanced) runs
+  out. Task → Reopen brings it back.
 - **Environment** — which configured environment (Settings → Environments)
   the task's check, classifier, and agent run in.
 - **Working directory** — the folder the check command and the agent both
   run in, in the path style the environment expects. Browse… opens a picker
   scoped to that environment.
+
+### Completion
+
+- **Let the agent complete this task** — off by default. When on, the agent's
+  session gets a `looper-complete "<why>"` command and a line in its system
+  prompt explaining when to use it: the task is finished for good, not merely
+  done for now. Looper applies it when the cycle ends, unless you stopped the
+  run. With the option off the command is never created, and a completion
+  signal from such a task is recorded in the run log and ignored.
+- **Move to folder when completed** — the sidebar folder the task is filed
+  into as it completes. It stays there if you reopen it.
+- **Give up on** — a deadline. If the task has not completed by then, Looper
+  completes it itself ("gave up waiting"), whether or not it is scheduled,
+  paused or disabled. Leave it empty for no deadline. Reopening a task whose
+  deadline has passed clears the deadline.
+
+A completed task keeps its whole definition and its run history until it is
+deleted, so the final report stays readable in the Run log and Messages tabs.
 
 ## Schedule
 
@@ -149,6 +171,7 @@ a Looper window is focused):
 | Notify when the agent holds and waits for input | The agent went idle and is holding for you |
 | Notify when the task auto-pauses | The task auto-pauses after consecutive errors |
 | Notify when the usage limit is reached | A run hits a Claude Code usage limit and waits for the reset |
+| Notify when the task completes | The task is finished for good — the agent completed it, its deadline passed, or you completed it yourself |
 
 "Notify when the task ends" has four levels, from narrowest to broadest:
 
@@ -163,8 +186,8 @@ the computer was offline (a check that couldn't reach the network, or Claude
 Code unable to reach its API), no end notification fires unless this is on.
 These runs also never count toward auto-pause.
 
-A cycle sends at most one end notification: if usage-limit or auto-paused
-fires, it replaces the plain end notification.
+A cycle sends at most one end notification: if usage-limit, auto-paused or
+completed fires, it replaces the plain end notification.
 
 ## Advanced
 

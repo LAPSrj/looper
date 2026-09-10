@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Note } from '../../shared/types';
 import { resolveEnvironment, resolveHarness } from '../../shared/environments';
-import { AGENT_DONE, buildPrompt, type RunContext } from './common';
+import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, type RunContext } from './common';
 import {
   parseDoneText,
   startSession,
@@ -45,7 +47,21 @@ export type AgentHandle = Omit<SessionHandle, 'finished'> & { finished: Promise<
 
 export type AgentCallbacks = SessionCallbacks;
 
-export function systemFooter(taskName: string, runId: string, headless: boolean): string {
+/**
+ * The reason the agent gave `looper-complete`, or null when it never called it.
+ * Read once the agent step is over: the completion takes effect when the cycle
+ * ends, so there is nothing to watch for live.
+ */
+export function readCompleteSignal(runDir: string): string | null {
+  try {
+    const text = fs.readFileSync(path.join(runDir, 'complete'), 'utf8').trim();
+    return text || 'completed';
+  } catch {
+    return null;
+  }
+}
+
+export function systemFooter(taskName: string, runId: string, headless: boolean, canComplete = false): string {
   const lines = [
     `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
@@ -55,6 +71,11 @@ export function systemFooter(taskName: string, runId: string, headless: boolean)
     'The headline is one short phrase stating the outcome, e.g. "Fixed 3 flaky tests" or "Nothing to do". State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
     "Then write your final message: a detailed report of what you did, what you found and what is left open, in Markdown. Looper records it as the run's summary.",
   ];
+  if (canComplete) {
+    lines.push(
+      `If this task is finished for good — future runs would have nothing left to do — run \`${AGENT_COMPLETE} "<why>"\` before ${AGENT_DONE.command}. Looper then stops scheduling the task. Leave it alone if the job is merely done for now.`,
+    );
+  }
   if (!headless) {
     lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
   }
@@ -82,6 +103,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   const headless = a.mode === 'headless';
   const env = resolveEnvironment(task, settings);
   const harness = resolveHarness(task, env);
+  const canComplete = task.completion.allowAgent;
   return startSession(
     ctx,
     {
@@ -94,10 +116,11 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       permissionMode: a.permissionMode,
       session: ctx.agentSession,
       extraArgs: a.extraArgs,
-      footer: systemFooter(task.name, ctx.runId, headless),
+      footer: systemFooter(task.name, ctx.runId, headless, canComplete),
       prompt: agentPrompt(ctx),
       doneCommand: AGENT_DONE.command,
       doneStatuses: AGENT_DONE.statuses,
+      completeCommand: canComplete ? AGENT_COMPLETE : undefined,
       implicitDoneStatus: 'success',
       stopGate: true,
       maxRuntimeMs: a.maxRuntimeMin * 60_000,

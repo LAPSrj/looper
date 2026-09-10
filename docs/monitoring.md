@@ -4,10 +4,11 @@
 
 The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active, otherwise a next-run countdown, "Not
-scheduled", "Manual", its paused reason, or "Disabled". Disabled tasks are
+scheduled", "Manual", its paused reason, "Disabled", or "Completed" with the
+date it finished for good. Disabled and completed tasks are
 shown faded. Selecting a task opens its detail pane with four tabs — Status,
 Run log, Messages, Terminal — plus a status bar at the bottom counting
-enabled, disabled, paused, and running tasks.
+enabled, disabled, completed, paused, and running tasks.
 
 Tasks and folders can be reordered by dragging them; the order is saved.
 Dropping a task on another task inserts it there (joining that task's
@@ -20,12 +21,13 @@ one) drops after the folder. Dragging a folder header moves the whole
 folder.
 
 The Status tab lists the task's current state as plain fields: Status,
-Schedule, Next run, Next run guidance (when a one-off note is set), Last
+Completed (date and reason, when the task is finished for good), Schedule,
+Next run, Gives up on (when the task has a deadline), Next run guidance (when a one-off note is set), Last
 run, Last run result, Last run details, Check command, Classifier (Yes/No),
 Harness, Model, Session type, Environment, and Working directory.
 
 The View menu controls what the window shows: a Standard or Compact task
-list, whether disabled/scheduled/manual tasks are listed at all, whether
+list, whether disabled/completed/scheduled/manual tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
 whole subtree; unchecked, folders start closed), whether runs with no
 action are hidden in every task's run log, and whether the toolbar and
@@ -42,14 +44,20 @@ tooltips:
 | Stop | Stop Task | Shift+F5 |
 | Pause/Resume | Pause / Resume | Ctrl+P |
 | Power | Enable / Disable | — |
+| Check | Complete / Reopen | — |
 | Edit | Edit Task | Ctrl+E |
 | Guidance | Add Guidance for Next Run / Edit Guidance for Next Run | — |
 | Terminal | Open Project in Terminal | Ctrl+T |
 | Folder | Open Working Directory | — |
 
-Running Now on a disabled task asks '"<task name>" is disabled. Run it
-anyway?' first. Pause/Resume and Enable/Disable swap their tooltip and icon
-depending on the task's current state. "Open Project in Terminal" opens a
+Running Now on a disabled or completed task asks '"<task name>" is disabled.
+Run it anyway?' first — the run happens, and the task goes straight back to
+being disabled or completed afterwards. Pause/Resume, Enable/Disable and
+Complete/Reopen swap their tooltip and icon
+depending on the task's current state; Pause and Enable/Disable are greyed
+out for a completed task, which is parked until you reopen it. Completing
+asks for confirmation, since the task is deleted once its retention runs
+out. "Open Project in Terminal" opens a
 real OS terminal window with the task's environment, working directory, and
 harness ready to go (model and permission mode included, no prompt) — a
 different thing from the in-app Terminal tab described below.
@@ -58,7 +66,7 @@ different thing from the in-app Terminal tab described below.
 
 Right-clicking a task in the sidebar selects it and opens a context menu
 with the same actions as the toolbar, plus a few more: Run Now, Stop Task,
-Pause/Resume, Enable/Disable, Edit Task…, Delete Task, Edit/Add Guidance
+Pause/Resume, Enable/Disable, Complete/Reopen, Edit Task…, Delete Task, Edit/Add Guidance
 for Next Run…, Clear Guidance, Move to Folder…, Clear Run History…, Open
 Project in Terminal, and Open Working Directory.
 
@@ -208,12 +216,18 @@ seconds; selecting a row shows its full message below. Entries older than
 automatically. This is separate from a task's run log, which is pruned by
 its own **Run log retention** setting (default 30 days).
 
+**Settings → Advanced → Delete completed tasks** (on by default, after 10
+days) deletes each completed task — definition and run history together —
+once it has been completed that long. Turn the checkbox off to keep
+completed tasks forever. A completed task with a run in flight is left for
+the next sweep. The sweep runs at startup and hourly.
+
 ## System notifications
 
 Looper can show a system toast for several points in a task's cycle: a run
 starting, the agent starting, the agent holding for input, the task
-auto-pausing, a usage limit being hit, and the task ending (with a
-configurable severity threshold). Each task chooses which of these it sends
+auto-pausing, a usage limit being hit, the task completing, and the task
+ending (with a configurable severity threshold). Each task chooses which of these it sends
 on its Notifications tab — see [the task editor](tasks.md) for the field
 list; by default only errors and warnings at the end of a run notify, and a
 run that failed only because the computer was offline stays silent unless
@@ -223,8 +237,8 @@ A master switch lives in **Settings → General → Show notifications**, and
 the same toggle is available from the tray menu as "Enable Notifications" /
 "Disable Notifications". Clicking a toast opens the task: for a live run
 (run started, agent started, held) it opens the Terminal tab; for a
-finished cycle (end, auto-paused, usage limit) it opens the Run log tab
-with that run selected. No toast fires while any Looper window is focused.
+finished cycle (end, auto-paused, usage limit, completed) it opens the Run
+log tab with that run selected. No toast fires while any Looper window is focused.
 
 ## Rest Mode
 

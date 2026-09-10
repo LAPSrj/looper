@@ -9,7 +9,8 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
 ```
 
 The task list shows these as **Idle**, **Checking**, **Classifying**,
-**Running**, **Paused**, and **Disabled**. Check and classifier are both
+**Running**, **Paused**, **Disabled**, and **Completed** (finished for good;
+see [the task editor](tasks.md#completion)). Check and classifier are both
 optional (each has an enable switch in the [task editor](tasks.md)); without a
 check, every due slot goes straight to the classifier or the agent.
 
@@ -122,6 +123,22 @@ does.
 You can also end a run yourself with **Stop Task** (toolbar, Shift+F5, or
 context menu) at any point in the cycle — checking, classifying, or running.
 It kills whatever step is in flight and records the run as **Stopped**.
+
+## Finishing the task for good
+
+A task whose **Let the agent complete this task** option is on also gets a
+`looper-complete "<why>"` command on the agent's PATH, and a line in the
+system footer telling it when to use it: the task is finished for good, not
+merely done for now. The agent runs it before `looper-done`; the run itself
+ends exactly as it otherwise would, and Looper completes the task once the
+cycle is over — the task stops being scheduled, moves to its completion
+folder if it has one, and is deleted when the completed-task retention runs
+out. A run you stopped never completes the task, and a task without the
+option never gets the command: a completion signal from one is recorded in
+the run log and ignored.
+
+A task with a **Give up on** deadline completes itself the same way when the
+deadline passes without anything having completed it.
 
 ## Held for a human
 

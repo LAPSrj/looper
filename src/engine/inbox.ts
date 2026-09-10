@@ -11,7 +11,7 @@ export interface InboxHandlers {
   onCommand: (cmd: InboxCommand) => Promise<void> | void;
 }
 
-const OPS = new Set(['run', 'pause', 'resume', 'stop', 'remove', 'enable', 'disable']);
+const OPS = new Set(['run', 'pause', 'resume', 'stop', 'remove', 'enable', 'disable', 'complete', 'reopen']);
 
 /**
  * Drop-folder API: agents (from WSL, via /mnt/c/...) write JSON files here.

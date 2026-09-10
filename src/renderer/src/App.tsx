@@ -54,9 +54,10 @@ export function App() {
       case 'run-now':
         if (sel) {
           const rt = rts[sel];
-          if (rt?.state === 'disabled') {
+          if (rt?.state === 'disabled' || rt?.state === 'completed') {
             const t = ts.find((x) => x.id === sel);
-            void window.looper.confirm(`"${t?.name ?? sel}" is disabled. Run it anyway?`).then((ok) => {
+            const what = rt.state === 'completed' ? 'completed' : 'disabled';
+            void window.looper.confirm(`"${t?.name ?? sel}" is ${what}. Run it anyway?`).then((ok) => {
               if (ok) void window.looper.runtime.runNow(sel).catch(() => undefined);
             });
           } else {
@@ -93,7 +94,21 @@ export function App() {
         break;
       case 'enable-disable': {
         const t = ts.find((x) => x.id === sel);
-        if (t) void window.looper.tasks.save({ ...t, enabled: !t.enabled });
+        if (t && !t.completedAt) void window.looper.tasks.save({ ...t, enabled: !t.enabled });
+        break;
+      }
+      case 'complete-reopen': {
+        const t = ts.find((x) => x.id === sel);
+        if (!t) break;
+        if (t.completedAt) {
+          void window.looper.runtime.reopen(t.id);
+        } else {
+          void window.looper
+            .confirm(`Complete "${t.name}"? It stops running and is deleted once the completed-task retention runs out.`)
+            .then((ok) => {
+              if (ok) void window.looper.runtime.complete(t.id);
+            });
+        }
         break;
       }
       case 'delete-task': {
@@ -196,7 +211,15 @@ export function App() {
     const t = tasks.find((x) => x.id === selected);
     const active = selectedState === 'running' || selectedState === 'checking' || selectedState === 'classifying';
     const canRunNow = !active || selectedActiveRuns < (t?.maxConcurrentRuns ?? 1);
-    window.looper.reportSelection(!!selected, t?.enabled, selectedState === 'paused', selectedState, !!t?.note, canRunNow);
+    window.looper.reportSelection(
+      !!selected,
+      t?.enabled,
+      selectedState === 'paused',
+      selectedState,
+      !!t?.note,
+      canRunNow,
+      !!t?.completedAt,
+    );
   }, [selected, tasks, selectedState, selectedActiveRuns]);
 
   // A terminal pick belongs to one task.
@@ -220,6 +243,7 @@ export function App() {
 
   const counts = useMemo(() => {
     const enabled = tasks.filter((t) => t.enabled).length;
+    const completed = tasks.filter((t) => t.completedAt).length;
     let paused = 0;
     let running = 0;
     for (const t of tasks) {
@@ -227,7 +251,7 @@ export function App() {
       if (state === 'paused') paused += 1;
       else if (state === 'running') running += 1;
     }
-    return { enabled, disabled: tasks.length - enabled, paused, running };
+    return { enabled, disabled: tasks.length - enabled - completed, completed, paused, running };
   }, [tasks, runtimes]);
 
   return (
@@ -256,6 +280,7 @@ export function App() {
             onSelect={select}
             compact={view?.taskList === 'compact'}
             showDisabled={view?.showDisabledTasks ?? true}
+            showCompleted={view?.showCompletedTasks ?? true}
             showScheduled={view?.showScheduledTasks ?? true}
             showManual={view?.showManualTasks ?? true}
             autoOpenFolders={view?.autoOpenFolders ?? true}
@@ -288,7 +313,8 @@ export function App() {
           {rest?.armed && <span>{restStatus(rest, now)}</span>}
           <span className="spacer" />
           <span>
-            {counts.enabled} enabled · {counts.disabled} disabled · {counts.paused} paused · {counts.running} running
+            {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}
+            {counts.running} running
           </span>
         </div>
       )}

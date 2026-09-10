@@ -252,7 +252,10 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
   const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
   // A live run lands on the terminal; a finished one on the run log, the run
   // selected so its report is on screen.
-  const view = e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' ? 'log' : 'terminal';
+  const view =
+    e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' || e.kind === 'completed'
+      ? 'log'
+      : 'terminal';
   toast.on('click', () => openTaskView(e.taskId, e.runId, view));
   toast.show();
 }
@@ -848,10 +851,26 @@ function sendUi(type: string): void {
 }
 
 /** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
-let menuSelection: [boolean, boolean | undefined, boolean | undefined, string | undefined, boolean, boolean | undefined] = [false, undefined, undefined, undefined, false, undefined];
+let menuSelection: [
+  boolean,
+  boolean | undefined,
+  boolean | undefined,
+  string | undefined,
+  boolean,
+  boolean | undefined,
+  boolean,
+] = [false, undefined, undefined, undefined, false, undefined, false];
 
-function updateTaskMenu(hasTask: boolean, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote?: boolean, canRunNow?: boolean): void {
-  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false, canRunNow];
+function updateTaskMenu(
+  hasTask: boolean,
+  taskEnabled?: boolean,
+  taskPaused?: boolean,
+  taskState?: string,
+  hasNote?: boolean,
+  canRunNow?: boolean,
+  taskCompleted?: boolean,
+): void {
+  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false, canRunNow, taskCompleted ?? false];
   buildMenu(...menuSelection);
 }
 
@@ -865,7 +884,15 @@ function updateView(patch: Partial<Settings['view']>): void {
   engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
 }
 
-function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean, taskState?: string, hasNote = false, canRunNow?: boolean): void {
+function buildMenu(
+  hasTask = false,
+  taskEnabled?: boolean,
+  taskPaused?: boolean,
+  taskState?: string,
+  hasNote = false,
+  canRunNow?: boolean,
+  taskCompleted = false,
+): void {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
   const runNow = canRunNow ?? !active;
@@ -874,6 +901,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
     statusBar: true,
     taskList: 'standard',
     showDisabledTasks: true,
+    showCompletedTasks: true,
     showScheduledTasks: true,
     showManualTasks: true,
     autoOpenFolders: true,
@@ -903,8 +931,9 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
       submenu: [
         { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && runNow, click: () => sendUi('run-now') },
         { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
-        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled', click: () => sendUi('pause-resume') },
-        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask, click: () => sendUi('enable-disable') },
+        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: () => sendUi('pause-resume') },
+        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
+        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', enabled: hasTask, click: () => sendUi('complete-reopen') },
         { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
         { id: 'task-delete', label: 'De&lete Task', enabled: hasTask, click: () => sendUi('delete-task') },
         { type: 'separator' },
@@ -928,6 +957,7 @@ function buildMenu(hasTask = false, taskEnabled?: boolean, taskPaused?: boolean,
             { label: '&Compact', type: 'radio', checked: view.taskList === 'compact', click: () => updateView({ taskList: 'compact' }) },
             { type: 'separator' },
             { label: 'Show &Disabled Tasks', type: 'checkbox', checked: view.showDisabledTasks, click: (item) => updateView({ showDisabledTasks: item.checked }) },
+            { label: 'Show Comp&leted Tasks', type: 'checkbox', checked: view.showCompletedTasks, click: (item) => updateView({ showCompletedTasks: item.checked }) },
             { label: 'Show S&cheduled Tasks', type: 'checkbox', checked: view.showScheduledTasks, click: (item) => updateView({ showScheduledTasks: item.checked }) },
             { label: 'Show &Manual Tasks', type: 'checkbox', checked: view.showManualTasks, click: (item) => updateView({ showManualTasks: item.checked }) },
             { type: 'separator' },

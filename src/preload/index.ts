@@ -31,6 +31,8 @@ const api: LooperApi = {
     runNow: (id) => ipcRenderer.invoke('runtime:runNow', id),
     pause: (id) => ipcRenderer.invoke('runtime:pause', id),
     resume: (id) => ipcRenderer.invoke('runtime:resume', id),
+    complete: (id) => ipcRenderer.invoke('runtime:complete', id),
+    reopen: (id) => ipcRenderer.invoke('runtime:reopen', id),
     stopTask: (id, runId) => ipcRenderer.invoke('runtime:stopTask', id, runId),
   },
   runs: {
@@ -81,8 +83,8 @@ const api: LooperApi = {
   setStartWithSystem: (enabled) => ipcRenderer.invoke('loginItem:set', enabled),
   showError: (message) => ipcRenderer.invoke('dialog:error', message),
   confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
-  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow) =>
-    ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow),
+  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted) =>
+    ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
   showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),

@@ -41,4 +41,19 @@ describe('writeLauncher env layering', () => {
     expect(script).toContain("export LOOPER_RUN='r1'");
     expect(script).not.toContain('evil');
   });
+
+  it('the completion helper and its file exist only when the step asks for them', () => {
+    const plain = makeCtx({});
+    writeLauncher(plain, 'run', 'exec true');
+    expect(fs.existsSync(path.join(plain.runDir, 'bin', 'looper-complete'))).toBe(false);
+    expect(fs.readFileSync(path.join(plain.runDir, 'run.sh'), 'utf8')).not.toContain('LOOPER_COMPLETE_FILE');
+
+    const ctx = makeCtx({ LOOPER_COMPLETE_FILE: '/tmp/evil' });
+    const launcher = writeLauncher(ctx, 'run', 'exec true', {}, { completeCommand: 'looper-complete' });
+    const helper = fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-complete'), 'utf8');
+    expect(helper).toContain('"$LOOPER_COMPLETE_FILE"');
+    const script = fs.readFileSync(launcher.hostPath, 'utf8');
+    expect(script).toContain(`export LOOPER_COMPLETE_FILE='${ctx.runDir}/complete'`);
+    expect(script).not.toContain('evil');
+  });
 });

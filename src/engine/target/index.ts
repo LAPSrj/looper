@@ -41,6 +41,8 @@ export interface Target {
   envRef(name: string): string;
   renderLauncher(spec: LauncherSpec): string;
   renderDoneHelper(statuses: readonly string[]): string;
+  /** Helper that writes its arguments (or `fallback`) into the file named by the `envVar` variable. */
+  renderTextHelper(envVar: string, fallback: string): string;
   /** Command for a claude hook: dump the hook's stdin JSON into the given file. */
   renderPipeHook(targetPath: string): string;
   /** File name of the Stop-hook gate script in the run's bin/ dir. */

@@ -133,3 +133,52 @@ describe('TaskStore nested folders', () => {
     expect(store.listLayout()['']).toEqual(['folder:a', 'folder:b', 'folder:c']);
   });
 });
+
+describe('TaskStore completion', () => {
+  const stamp = () => new Date().toISOString();
+
+  it('a completed task is never enabled and keeps the stamp of its first completion', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const done = store.patch('a', { completedAt: stamp(), completedReason: 'finished' });
+    expect(done.enabled).toBe(false);
+    expect(done.completedAt).toBeTruthy();
+    // A later save carrying a fresh stamp must not restart the retention clock.
+    const again = store.patch('a', { completedAt: stamp(), name: 'renamed' });
+    expect(again.completedAt).toBe(done.completedAt);
+  });
+
+  it('completing files the task in its completion folder, once', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const f = store.addFolder('Done');
+    store.patch('a', { completion: { allowAgent: false, folderId: f.id } });
+    expect(store.patch('a', { completedAt: stamp() }).folderId).toBe(f.id);
+    // Reopening leaves the task filed where the completion put it.
+    store.patch('a', { completedAt: undefined });
+    expect(store.get('a')!.folderId).toBe(f.id);
+  });
+
+  it('an unknown completion folder leaves the task where it is', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    store.patch('a', { completion: { allowAgent: false, folderId: 'ghost' } });
+    expect(store.patch('a', { completedAt: stamp() }).folderId).toBeUndefined();
+  });
+
+  it('reopening clears the reason and a deadline that has passed, but keeps a future one', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    const past = new Date(Date.now() - 60_000).toISOString();
+    store.patch('a', { completion: { allowAgent: false, expiresAt: past } });
+    store.patch('a', { completedAt: stamp(), completedReason: 'gave up' });
+    const reopened = store.patch('a', { completedAt: undefined, enabled: true });
+    expect(reopened.completedReason).toBeUndefined();
+    expect(reopened.completion.expiresAt).toBeUndefined();
+
+    const future = new Date(Date.now() + 60_000).toISOString();
+    store.patch('a', { completion: { allowAgent: false, expiresAt: future } });
+    store.patch('a', { completedAt: stamp() });
+    expect(store.patch('a', { completedAt: undefined }).completion.expiresAt).toBe(future);
+  });
+});

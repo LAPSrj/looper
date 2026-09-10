@@ -49,6 +49,8 @@ interface Harness {
   liveAgents: LiveAgent[];
   /** When true, runCheck blocks until the cycle's stop signal aborts. */
   hangChecks: boolean;
+  /** One per agent start: the reason written to the run's `complete` file, as looper-complete would. */
+  completeSignals: string[];
   tickN(n: number): Promise<void>;
 }
 
@@ -89,6 +91,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     liveAgent: null,
     liveAgents: [],
     hangChecks: false,
+    completeSignals: [],
   };
   const sched = new Scheduler({
     dataDir: dir,
@@ -113,6 +116,8 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
       startAgent: async (ctx, cb) => {
         h.agentStarted!++;
         h.agentSessions!.push(ctx.agentSession);
+        const signal = h.completeSignals!.shift();
+        if (signal !== undefined) fs.writeFileSync(path.join(ctx.runDir, 'complete'), signal + '\n', 'utf8');
         const scripted = h.agentEnds!.shift();
         let resolve!: (e: AgentEnd) => void;
         const finished = new Promise<AgentEnd>((r) => (resolve = r));
@@ -1158,5 +1163,136 @@ describe('interrupted runs', () => {
     expect(sched.get('t1')!.state).toBe('idle');
     await sched.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('task completion', () => {
+  const allowAgent = () => h.tasks.patch('t1', { completion: { allowAgent: true } });
+
+  it('the agent completing the task parks it and records why', async () => {
+    allowAgent();
+    h.checks.push(check('act'));
+    h.completeSignals.push('the migration is finished');
+    h.agentEnds.push(agentEnd('done', 'migrated'));
+    await h.tickN(1);
+    const task = h.tasks.get('t1')!;
+    expect(task.completedAt).toBeTruthy();
+    expect(task.completedReason).toBe('the migration is finished');
+    expect(task.enabled).toBe(false);
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('completed');
+    expect(rt.nextRunAt).toBeNull();
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toContain('system:done');
+    expect(records().at(-1)!.summary).toBe('Task completed: the migration is finished');
+    // And it stays parked: later slots start nothing.
+    h.clock.now += 10 * 60_000;
+    await h.tickN(3);
+    expect(h.agentStarted).toBe(1);
+  });
+
+  it('a task that does not allow it records the ignored signal and keeps running', async () => {
+    h.checks.push(check('act'));
+    h.completeSignals.push('all done forever');
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    expect(h.sched.get('t1')!.state).toBe('idle');
+    expect(records().some((r) => r.summary?.startsWith('completion signal ignored: this task'))).toBe(true);
+  });
+
+  it('a stopped run never completes the task', async () => {
+    allowAgent();
+    h.checks.push(check('act'));
+    h.completeSignals.push('done forever');
+    await h.tickN(1);
+    await h.sched.stopTask('t1', 'test');
+    await flush();
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    expect(records().some((r) => r.summary === 'completion signal ignored: the run was stopped')).toBe(true);
+  });
+
+  it('completing moves the task to its completion folder', async () => {
+    const folder = h.tasks.addFolder('Done');
+    allowAgent();
+    h.tasks.patch('t1', { completion: { allowAgent: true, folderId: folder.id } });
+    h.sched.completeTask('t1', 'by hand');
+    expect(h.tasks.get('t1')!.folderId).toBe(folder.id);
+  });
+
+  it('the deadline completes the task even with the schedule off', async () => {
+    h.tasks.patch('t1', {
+      schedule: { enabled: false, cron: '*/1 * * * *' },
+      completion: { allowAgent: false, expiresAt: new Date(h.clock.now - 1000).toISOString() },
+    });
+    await h.tickN(1);
+    const task = h.tasks.get('t1')!;
+    expect(task.completedAt).toBeTruthy();
+    expect(task.completedReason).toMatch(/^gave up waiting/);
+    expect(h.sched.get('t1')!.state).toBe('completed');
+    expect(h.agentStarted).toBe(0);
+  });
+
+  it('a deadline in the future is left alone', async () => {
+    h.tasks.patch('t1', {
+      completion: { allowAgent: false, expiresAt: new Date(h.clock.now + 60_000).toISOString() },
+    });
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+  });
+
+  it('reopening enables the task again and drops the passed deadline', async () => {
+    h.tasks.patch('t1', {
+      completion: { allowAgent: false, expiresAt: new Date(h.clock.now - 1000).toISOString() },
+    });
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
+    h.sched.reopenTask('t1');
+    const task = h.tasks.get('t1')!;
+    expect(task.completedAt).toBeUndefined();
+    expect(task.completedReason).toBeUndefined();
+    expect(task.completion.expiresAt).toBeUndefined();
+    expect(task.enabled).toBe(true);
+    expect(h.sched.get('t1')!.state).toBe('idle');
+  });
+
+  it('a manual run of a completed task runs once and goes back to completed', async () => {
+    h.sched.completeTask('t1', 'by hand');
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'one more time'));
+    expect(h.sched.runNow('t1')).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('completed');
+    expect(rt.nextRunAt).toBeNull();
+  });
+
+  it('sends one completion toast instead of the cycle end toast', async () => {
+    h.tasks.patch('t1', {
+      completion: { allowAgent: true },
+      notifications: { end: 'all', completed: true },
+    });
+    h.checks.push(check('act'));
+    h.completeSignals.push('nothing left to watch');
+    h.agentEnds.push(agentEnd('done', 'watched'));
+    await h.tickN(1);
+    expect(notifies().map((n) => n.kind)).toEqual(['completed']);
+    expect(notifies()[0].body).toBe('Completed: Nothing left to watch');
+  });
+
+  it('a completion outside a cycle toasts on its own', async () => {
+    h.tasks.patch('t1', { notifications: { completed: true } });
+    h.sched.completeTask('t1', 'by hand');
+    expect(notifies().map((n) => n.kind)).toEqual(['completed']);
+  });
+
+  it('completing ends the rolling conversation', async () => {
+    h.tasks.patch('t1', { agent: { prompt: 'do it', session: 'continue' }, completion: { allowAgent: true } });
+    h.checks.push(check('act'));
+    h.completeSignals.push('finished');
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.session).toBeNull();
   });
 });

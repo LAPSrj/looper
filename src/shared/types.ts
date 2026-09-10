@@ -150,8 +150,9 @@ export const AgentSchema = z.object({
  * Which system notifications (toasts) a task sends. The `end` levels nest so a
  * cycle's end sends at most one notification: `error` = errors only; `warning`
  * = errors and warnings; `end` = any end except no-action; `all` = every end.
- * A more specific end event (usage limit, auto-pause) replaces the plain end
- * notification when its own switch is on, and falls through to `end` when off.
+ * A more specific end event (usage limit, auto-pause, completion) replaces the
+ * plain end notification when its own switch is on, and falls through to `end`
+ * when off.
  */
 export const TaskNotificationsSchema = z
   .object({
@@ -164,6 +165,8 @@ export const TaskNotificationsSchema = z
     held: z.boolean().default(false),
     /** The task auto-paused after consecutive errors. */
     autoPaused: z.boolean().default(false),
+    /** The task is finished for good (the agent completed it, or its deadline passed). */
+    completed: z.boolean().default(false),
     /** A run hit the usage limit and waits for the reset. */
     usageLimit: z.boolean().default(false),
     /** Also send the end notification when the run failed only because the computer was offline. */
@@ -184,6 +187,23 @@ export const NoteSchema = z.object({
 });
 export type Note = z.infer<typeof NoteSchema>;
 
+/**
+ * What happens when a task is finished for good. A completed task keeps its
+ * whole definition but never runs again (`enabled` is forced off), and is
+ * deleted once the global completed-task retention runs out.
+ */
+export const CompletionSchema = z
+  .object({
+    /** The agent may end the task itself with `looper-complete`. Off = the helper is never created. */
+    allowAgent: z.boolean().default(false),
+    /** Folder the task moves to when it completes. Unset = it stays where it is. */
+    folderId: z.string().min(1).optional(),
+    /** Deadline: the task completes itself ("gave up") at this time. Unset = no deadline. */
+    expiresAt: z.string().min(1).optional(),
+  })
+  .default({});
+export type Completion = z.infer<typeof CompletionSchema>;
+
 /** A sidebar folder grouping tasks. Tasks reference it via `folderId`; folders nest via `parentId`. */
 export const TaskFolderSchema = z.object({
   id: z.string().min(1),
@@ -197,6 +217,15 @@ export const TaskSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'letters, digits, - and _ only'),
   name: z.string().min(1),
   enabled: z.boolean().default(true),
+  /**
+   * Set = the task is finished for good: when it entered that state. The store
+   * keeps `enabled` false while it is set, so every scheduling guard that reads
+   * `enabled` parks a completed task without knowing about completion at all.
+   */
+  completedAt: z.string().optional(),
+  /** Why it completed: the agent's reason, the deadline, or the user. */
+  completedReason: z.string().optional(),
+  completion: CompletionSchema,
   /** Sidebar folder the task is filed under. Unset = top level. */
   folderId: z.string().min(1).optional(),
   schedule: ScheduleSchema,
@@ -260,6 +289,13 @@ export const SettingsSchema = z.object({
   runRetentionDays: z.number().int().positive().default(30),
   /** Days engine.log entries are kept before being pruned. */
   engineLogRetentionDays: z.number().int().positive().default(10),
+  /** Delete a completed task (and its run history) once it has been completed this long. */
+  completedTaskRetention: z
+    .object({
+      enabled: z.boolean().default(true),
+      days: z.number().int().positive().default(10),
+    })
+    .default({}),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
   tasksFile: z.string().min(1).optional(),
   /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */
@@ -283,6 +319,7 @@ export const SettingsSchema = z.object({
     statusBar: z.boolean().default(true),
     taskList: z.enum(['standard', 'compact']).default('standard'),
     showDisabledTasks: z.boolean().default(true),
+    showCompletedTasks: z.boolean().default(true),
     showScheduledTasks: z.boolean().default(true),
     showManualTasks: z.boolean().default(true),
     /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
@@ -333,7 +370,8 @@ export type TaskState =
   | 'classifying'
   | 'running'
   | 'paused'
-  | 'disabled';
+  | 'disabled'
+  | 'completed';
 
 /** One cycle of a task that is in flight; a task may have up to `maxConcurrentRuns` of them. */
 export interface ActiveRun {
@@ -349,7 +387,7 @@ export interface ActiveRun {
  * A task's live state. `runs` is the truth; `state`, `currentRunId` and `held`
  * are the aggregate the task list and menus read:
  * - `state` = the most advanced active run (`running` > `classifying` >
- *   `checking`), or idle/paused/disabled when nothing is in flight;
+ *   `checking`), or idle/paused/disabled/completed when nothing is in flight;
  * - `currentRunId` = the newest active run, null when none;
  * - `held` = any active run is held.
  */
@@ -358,7 +396,7 @@ export interface TaskRuntime {
   state: TaskState;
   /** Any active run is holding for a human. */
   held: boolean;
-  /** Cycles in flight, oldest first. Empty when the task is idle/paused/disabled. */
+  /** Cycles in flight, oldest first. Empty when the task is idle/paused/disabled/completed. */
   runs: ActiveRun[];
   nextRunAt: number | null;
   lastRunAt: number | null;
@@ -429,7 +467,7 @@ export interface CheckOutput {
 }
 
 export interface InboxCommand {
-  op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable';
+  op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen';
   taskId: string;
   reason?: string;
 }
@@ -437,7 +475,7 @@ export interface InboxCommand {
 // ---------- Engine events (also the IPC contract) ----------
 
 /** What a `notify` event is about; it decides where a click on the toast lands. */
-export type NotifyKind = 'run-start' | 'agent-start' | 'held' | 'end' | 'auto-paused' | 'usage-limit';
+export type NotifyKind = 'run-start' | 'agent-start' | 'held' | 'end' | 'auto-paused' | 'usage-limit' | 'completed';
 
 export type EngineEvent =
   | { type: 'runtime'; runtime: TaskRuntime }

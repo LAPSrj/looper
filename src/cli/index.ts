@@ -84,7 +84,7 @@ program
   .description('list tasks and their current state')
   .action(() => {
     const dir = dataDir();
-    const tasks = readJsonFile<{ tasks: { id: string; name: string; enabled: boolean }[] }>(
+    const tasks = readJsonFile<{ tasks: { id: string; name: string; enabled: boolean; completedAt?: string }[] }>(
       path.join(dir, 'tasks.json'),
       { tasks: [] },
     ).tasks;
@@ -98,7 +98,7 @@ program
     const now = Date.now();
     for (const t of tasks) {
       const rt = state[t.id];
-      const st = rt?.state ?? (t.enabled ? 'idle' : 'disabled');
+      const st = rt?.state ?? (t.completedAt ? 'completed' : t.enabled ? 'idle' : 'disabled');
       const next = rt?.nextRunAt ? `next in ${formatDuration(Math.max(0, rt.nextRunAt - now))}` : '';
       const last = rt?.lastResult ? `last: ${rt.lastResult}${rt.lastDetail ? ` (${rt.lastDetail})` : ''}` : '';
       console.log(`${t.id.padEnd(24)} ${st.padEnd(11)} ${next.padEnd(16)} ${last}`);
@@ -112,6 +112,12 @@ program.command('stop <taskId>').description("stop the task's current run").opti
 program.command('remove <taskId>').description('remove a task').option('--reason <r>').action(command('remove'));
 program.command('enable <taskId>').description('enable a task').option('--reason <r>').action(command('enable'));
 program.command('disable <taskId>').description('disable a task').option('--reason <r>').action(command('disable'));
+program
+  .command('complete <taskId>')
+  .description('finish a task for good: it stops being scheduled')
+  .option('--reason <r>')
+  .action(command('complete'));
+program.command('reopen <taskId>').description('undo a completion').option('--reason <r>').action(command('reopen'));
 
 program
   .command('logs <taskId>')

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DragEvent } from 'react';
 import type { Task, TaskFolder, TaskRuntime } from '@shared/types';
 import { folderParents, folderSubtree } from '@shared/folders';
-import { capFirst, fmtCountdown, resultLabel, stateLabel } from '../format';
+import { capFirst, fmtCountdown, fmtDate, resultLabel, stateLabel } from '../format';
 import { useListNav } from './hooks';
 
 interface Props {
@@ -17,6 +17,7 @@ interface Props {
   /** Show only the task name, without the state line. */
   compact: boolean;
   showDisabled: boolean;
+  showCompleted: boolean;
   showScheduled: boolean;
   showManual: boolean;
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
@@ -43,9 +44,10 @@ type Row =
 
 const INDENT = 14;
 
-export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, showDisabled, showScheduled, showManual, autoOpenFolders }: Props) {
+export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, showDisabled, showCompleted, showScheduled, showManual, autoOpenFolders }: Props) {
   const passes = (t: Task) =>
-    (t.enabled || showDisabled) && (t.schedule.enabled !== false ? showScheduled : showManual);
+    (t.completedAt ? showCompleted : t.enabled || showDisabled) &&
+    (t.schedule.enabled !== false ? showScheduled : showManual);
   const parents = folderParents(folders);
   const folderById = new Map(folders.map((f) => [f.id, f]));
   // A task pointing at a deleted/unknown folder lists at the top level.
@@ -263,9 +265,11 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     const active = rt?.state === 'running' || rt?.state === 'checking' || rt?.state === 'classifying';
     const subLine = active
       ? label
-      : rt?.state === 'disabled'
-        ? 'Disabled'
-        : sub;
+      : t.completedAt
+        ? `Completed ${fmtDate(t.completedAt)}`
+        : rt?.state === 'disabled'
+          ? 'Disabled'
+          : sub;
     // "After the folder" on its closing row shows a line one indent step out.
     const dropClass =
       drop?.kind === 'task' && drop.taskId === t.id
@@ -312,6 +316,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           const rt2 = runtimes[t.id];
           window.looper.showTaskContextMenu({
             enabled: t.enabled,
+            completed: !!t.completedAt,
             state: rt2?.state,
             held: !!rt2?.held,
             hasNote: !!t.note,

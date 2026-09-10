@@ -37,6 +37,8 @@ export function SettingsApp() {
   const [restGrace, setRestGrace] = useState<number | null>(null);
   const [restDisarmOnWake, setRestDisarmOnWake] = useState<boolean | null>(null);
   const [engineLogDays, setEngineLogDays] = useState<number | null>(null);
+  const [deleteCompleted, setDeleteCompleted] = useState<boolean | null>(null);
+  const [completedDays, setCompletedDays] = useState<number | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -66,6 +68,8 @@ export function SettingsApp() {
       setRestGrace((v) => v ?? info.settings.rest.graceSec);
       setRestDisarmOnWake((v) => v ?? info.settings.rest.disarmOnUserWake);
       setEngineLogDays((v) => v ?? info.settings.engineLogRetentionDays);
+      setDeleteCompleted((v) => v ?? info.settings.completedTaskRetention.enabled);
+      setCompletedDays((v) => v ?? info.settings.completedTaskRetention.days);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -93,7 +97,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -202,6 +206,7 @@ export function SettingsApp() {
         templatesFile,
         runRetentionDays: retentionDays,
         engineLogRetentionDays: engineLogDays,
+        completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
         rest: {
           minSleepMin: restMinSleep,
           graceSec: restGrace,
@@ -331,6 +336,20 @@ export function SettingsApp() {
               </div>
             </Field>
             <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
+            <label className="checkbox-field">
+              <input type="checkbox" checked={deleteCompleted} onChange={(e) => setDeleteCompleted(e.target.checked)} />
+              Delete completed tasks
+            </label>
+            <div className={`stagger-fields${deleteCompleted ? '' : ' disabled'}`}>
+              <NumberField
+                label="After"
+                suffix="days"
+                min={1}
+                disabled={!deleteCompleted}
+                value={completedDays}
+                onChange={setCompletedDays}
+              />
+            </div>
           </div>
         )}
 

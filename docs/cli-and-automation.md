@@ -37,16 +37,23 @@ bottom of this page).
 | `looper remove <taskId> [--reason <r>]` | queue a command to remove the task |
 | `looper enable <taskId> [--reason <r>]` | queue a command to enable the task |
 | `looper disable <taskId> [--reason <r>]` | queue a command to disable the task |
+| `looper complete <taskId> [--reason <r>]` | queue a command to finish the task for good |
+| `looper reopen <taskId>` | queue a command to undo a completion |
 | `looper logs <taskId> [-n, --lines <n>]` | print the task's recent run records (default 30) |
-| `looper done [message...]` | signal completion from inside an agent run (needs `LOOPER_DONE_FILE`, set automatically in that run's environment) |
+| `looper done [message...]` | signal the end of the current agent run (needs `LOOPER_DONE_FILE`, set automatically in that run's environment) |
 | `looper serve [--quiet]` | run the engine in this terminal, without the desktop UI |
 
-`run`, `pause`, `resume`, `stop`, `remove`, `enable`, and `disable` don't act
+`run`, `pause`, `resume`, `stop`, `remove`, `enable`, `disable`, `complete`,
+and `reopen` don't act
 directly: each writes a small command file into the inbox and prints its
 path. The `--reason <r>` text becomes the pause/stop reason shown in the
-task's state once the running app picks the file up. `looper done` is meant
+task's state — or the completion reason kept on the task — once the running
+app picks the file up. `looper done` is meant
 to run inside an agent session started by Looper — it is the same signal an
-agent gives by running `looper-done` there.
+agent gives by running `looper-done` there. An agent whose task allows it
+finishes the task for good with `looper-complete "<why>"` instead, which is
+only on its PATH when the task's **Let the agent complete this task** option
+is on.
 
 `looper list` and `looper logs` read `tasks.json`, `state.json`, and
 `tasks/<id>/runs.jsonl` directly, so they work even if no app is currently
@@ -55,7 +62,7 @@ running — they just show whatever was last written to disk.
 ## How the CLI talks to a running app: the inbox
 
 Commands that change something (`add`, `run`, `pause`, `resume`, `stop`,
-`remove`, `enable`, `disable`) don't call the app directly. They write a
+`remove`, `enable`, `disable`, `complete`, `reopen`) don't call the app directly. They write a
 JSON file into `<data dir>/inbox/`, atomically (written to a `.tmp` file,
 then renamed). A running Looper app — the desktop app or `looper serve` —
 polls that folder, applies each file, and moves it into `inbox/processed/`
@@ -100,9 +107,11 @@ is exactly:
 {"op": "remove", "taskId": "…"}
 {"op": "enable", "taskId": "…"}
 {"op": "disable", "taskId": "…"}
+{"op": "complete", "taskId": "…", "reason": "…"}
+{"op": "reopen", "taskId": "…"}
 ```
 
-`reason` is optional and only meaningful for `pause` and `stop`.
+`reason` is optional and only meaningful for `pause`, `stop` and `complete`.
 
 Every file the inbox picks up — task or command — is moved out of `inbox/`
 once handled, never left in place:

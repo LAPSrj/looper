@@ -28,6 +28,7 @@ const STATE_LABELS: Record<string, string> = {
   running: 'Running',
   paused: 'Paused',
   disabled: 'Disabled',
+  completed: 'Completed',
 };
 
 export function stateLabel(rt: TaskRuntime | undefined): string {

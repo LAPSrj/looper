@@ -1,7 +1,7 @@
 import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
 import { cronToForm } from '@shared/cron';
-import { capFirst, fmtCountdown, fmtTime, resultLabel, stateLabel } from '../format';
+import { capFirst, fmtCountdown, fmtDate, fmtTime, resultLabel, stateLabel } from '../format';
 import { Messages } from './Messages';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
@@ -116,10 +116,31 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
             <dl className="props">
               <dt>Status</dt>
               <dd>{status}</dd>
+              {task.completedAt && (
+                <>
+                  <dt>Completed</dt>
+                  <dd>
+                    {fmtDate(task.completedAt)}
+                    {task.completedReason ? ` — ${task.completedReason}` : ''}
+                  </dd>
+                </>
+              )}
               <dt>Schedule</dt>
               <dd>{describeSchedule(task)}</dd>
               <dt>Next run</dt>
-              <dd>{task.schedule.enabled ? describeNextRun(runtime, now) : 'When triggered manually'}</dd>
+              <dd>
+                {task.completedAt
+                  ? 'Never: the task is completed'
+                  : task.schedule.enabled
+                    ? describeNextRun(runtime, now)
+                    : 'When triggered manually'}
+              </dd>
+              {!task.completedAt && task.completion.expiresAt && (
+                <>
+                  <dt>Gives up on</dt>
+                  <dd>{new Date(task.completion.expiresAt).toLocaleString()}</dd>
+                </>
+              )}
               {task.note && (
                 <>
                   <dt>Next run guidance</dt>

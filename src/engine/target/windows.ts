@@ -90,6 +90,17 @@ export class WindowsTarget implements Target {
     ].join('\r\n');
   }
 
+  renderTextHelper(envVar: string, fallback: string): string {
+    return [
+      '@echo off',
+      'setlocal',
+      'set "msg=%*"',
+      `if not defined msg set "msg=${fallback}"`,
+      `echo.%msg%> "%${envVar}%"`,
+      '',
+    ].join('\r\n');
+  }
+
   renderPipeHook(targetPath: string): string {
     // Works whether claude runs hooks through cmd or a bash-like shell on Windows.
     // .NET writes UTF-8 without BOM; the console input is declared UTF-8 so the payload survives.

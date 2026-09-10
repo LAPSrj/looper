@@ -71,12 +71,17 @@ export interface Launcher {
 /** The done command of the agent step (and of plain check launchers). */
 export const AGENT_DONE = { command: 'looper-done', statuses: ['success', 'warning', 'error'] as const };
 
+/** The command an agent that may finish its task for good calls (task completion). */
+export const AGENT_COMPLETE = 'looper-complete';
+
 export interface LauncherOpts {
   /** Step file prefix ('' = agent, 'classify-' = classifier). */
   prefix?: string;
   /** Done command defined by the launcher and written to bin/. */
   doneCommand?: string;
   doneStatuses?: readonly string[];
+  /** Completion command written to bin/. Unset = the agent cannot complete the task. */
+  completeCommand?: string;
 }
 
 /**
@@ -96,6 +101,15 @@ export function writeLauncher(
   const doneStatuses = opts.doneStatuses ?? AGENT_DONE.statuses;
   const helper = path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(doneCommand));
   writeText(helper, ctx.target.renderDoneHelper(doneStatuses), 0o755);
+  const locked = baseEnv(ctx, prefix);
+  if (opts.completeCommand) {
+    locked.LOOPER_COMPLETE_FILE = targetFile(ctx, prefix + 'complete');
+    writeText(
+      path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(opts.completeCommand)),
+      ctx.target.renderTextHelper('LOOPER_COMPLETE_FILE', 'completed'),
+      0o755,
+    );
+  }
   const hostPath = path.join(ctx.runDir, name + ctx.target.launcherExt);
   writeText(
     hostPath,
@@ -103,7 +117,7 @@ export function writeLauncher(
       taskId: ctx.task.id,
       runId: ctx.runId,
       cwd: ctx.task.cwd,
-      env: { ...extraEnv, ...ctx.task.env, ...baseEnv(ctx, prefix) },
+      env: { ...extraEnv, ...ctx.task.env, ...locked },
       binDir: targetFile(ctx, 'bin'),
       doneCommand,
       doneStatuses,
