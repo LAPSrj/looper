@@ -9,6 +9,11 @@ export const ScheduleSchema = z
     cron: z.string().min(1),
     /** IANA timezone the cron slots are evaluated in. Unset = the computer's timezone. */
     timezone: z.string().min(1).optional(),
+    /**
+     * Last moment the schedule may fire. Once it passes, the task completes
+     * itself instead of running again. Unset = the schedule never ends.
+     */
+    stopOn: z.string().min(1).optional(),
   })
   .strict();
 
@@ -189,17 +194,14 @@ export type Note = z.infer<typeof NoteSchema>;
 
 /**
  * What happens when a task is finished for good. A completed task keeps its
- * whole definition but never runs again (`enabled` is forced off), and is
- * deleted once the global completed-task retention runs out.
+ * whole definition but never runs again (`enabled` is forced off), is moved to
+ * the global completed-tasks folder when one is set, and is deleted once the
+ * global completed-task retention runs out.
  */
 export const CompletionSchema = z
   .object({
     /** The agent may end the task itself with `looper-complete`. Off = the helper is never created. */
     allowAgent: z.boolean().default(false),
-    /** Folder the task moves to when it completes. Unset = it stays where it is. */
-    folderId: z.string().min(1).optional(),
-    /** Deadline: the task completes itself ("gave up") at this time. Unset = no deadline. */
-    expiresAt: z.string().min(1).optional(),
   })
   .default({});
 export type Completion = z.infer<typeof CompletionSchema>;
@@ -273,6 +275,8 @@ export const SettingsSchema = z.object({
   environments: z.array(EnvironmentSchema).min(1).default(() => defaultEnvironments()),
   /** Environment preselected for new tasks. */
   defaultEnvironmentId: z.string().min(1).default('local'),
+  /** Sidebar folder every task is moved into as it completes. Unset = completed tasks stay put. */
+  completedFolderId: z.string().min(1).optional(),
   tickMs: z.number().int().positive().default(1000),
   inboxPollMs: z.number().int().positive().default(2000),
   signalPollMs: z.number().int().positive().default(1000),

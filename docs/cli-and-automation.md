@@ -52,8 +52,8 @@ app picks the file up. `looper done` is meant
 to run inside an agent session started by Looper — it is the same signal an
 agent gives by running `looper-done` there. An agent whose task allows it
 finishes the task for good with `looper-complete "<why>"` instead, which is
-only on its PATH when the task's **Let the agent complete this task** option
-is on.
+only on its PATH when the task's **Allow this task to be marked completed**
+option is on.
 
 `looper list` and `looper logs` read `tasks.json`, `state.json`, and
 `tasks/<id>/runs.jsonl` directly, so they work even if no app is currently

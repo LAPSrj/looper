@@ -22,7 +22,7 @@ folder.
 
 The Status tab lists the task's current state as plain fields: Status,
 Completed (date and reason, when the task is finished for good), Schedule,
-Next run, Gives up on (when the task has a deadline), Next run guidance (when a one-off note is set), Last
+Next run, Stops running on (when the schedule has an end date), Next run guidance (when a one-off note is set), Last
 run, Last run result, Last run details, Check command, Classifier (Yes/No),
 Harness, Model, Session type, Environment, and Working directory.
 
@@ -78,6 +78,10 @@ space below the task list (or the "Tasks" title above it); the window has a
 Parent folder field (blank = top level). Folders show as
 headers in the sidebar; clicking a header collapses or expands the folder
 (a collapsed header shows the task count of its whole subtree).
+
+**Settings → General → Move completed tasks to folder** picks one folder
+every task is filed into as it completes ("Leave them where they are" by
+default); reopening a task leaves it there.
 
 A task moves into a folder by dragging it there, or with **Move to
 Folder…** — on the task's context menu and the Task menu — which opens a

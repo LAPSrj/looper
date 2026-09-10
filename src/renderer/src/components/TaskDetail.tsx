@@ -135,10 +135,10 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
                     ? describeNextRun(runtime, now)
                     : 'When triggered manually'}
               </dd>
-              {!task.completedAt && task.completion.expiresAt && (
+              {!task.completedAt && task.schedule.enabled && task.schedule.stopOn && (
                 <>
-                  <dt>Gives up on</dt>
-                  <dd>{new Date(task.completion.expiresAt).toLocaleString()}</dd>
+                  <dt>Stops running on</dt>
+                  <dd>{new Date(task.schedule.stopOn).toLocaleString()}</dd>
                 </>
               )}
               {task.note && (

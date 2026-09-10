@@ -128,7 +128,7 @@ export function createEngine(opts: EngineOptions): Engine {
     const custom = store === 'tasks' ? settings.tasksFile : settings.templatesFile;
     return custom ?? path.join(dataDir, `${store}.json`);
   };
-  const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host);
+  const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host, () => settings.completedFolderId);
   const templates = new TemplateStore(storeFile('templates'));
   const runs = new RunStore(dataDir);
   const state = new StateStore(path.join(dataDir, 'state.json'));

@@ -148,37 +148,45 @@ describe('TaskStore completion', () => {
     expect(again.completedAt).toBe(done.completedAt);
   });
 
-  it('completing files the task in its completion folder, once', () => {
-    const { store } = newStore();
+  it('completing files the task in the global completed-tasks folder, once', () => {
+    let completedFolder: string | undefined;
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    const store = new TaskStore(file, undefined, undefined, () => completedFolder);
+    store.load();
     store.upsert(taskInput('a'));
-    const f = store.addFolder('Done');
-    store.patch('a', { completion: { allowAgent: false, folderId: f.id } });
-    expect(store.patch('a', { completedAt: stamp() }).folderId).toBe(f.id);
+    completedFolder = store.addFolder('Done').id;
+    expect(store.patch('a', { completedAt: stamp() }).folderId).toBe(completedFolder);
     // Reopening leaves the task filed where the completion put it.
     store.patch('a', { completedAt: undefined });
-    expect(store.get('a')!.folderId).toBe(f.id);
+    expect(store.get('a')!.folderId).toBe(completedFolder);
   });
 
-  it('an unknown completion folder leaves the task where it is', () => {
-    const { store } = newStore();
+  it('an unknown or unset completed-tasks folder leaves the task where it is', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    const store = new TaskStore(file, undefined, undefined, () => 'ghost');
+    store.load();
     store.upsert(taskInput('a'));
-    store.patch('a', { completion: { allowAgent: false, folderId: 'ghost' } });
     expect(store.patch('a', { completedAt: stamp() }).folderId).toBeUndefined();
+
+    const { store: plain } = newStore();
+    plain.upsert(taskInput('b'));
+    expect(plain.patch('b', { completedAt: stamp() }).folderId).toBeUndefined();
   });
 
-  it('reopening clears the reason and a deadline that has passed, but keeps a future one', () => {
+  it('reopening clears the reason and an end date that has passed, but keeps a future one', () => {
     const { store } = newStore();
     store.upsert(taskInput('a'));
+    const cron = '*/10 * * * *';
     const past = new Date(Date.now() - 60_000).toISOString();
-    store.patch('a', { completion: { allowAgent: false, expiresAt: past } });
-    store.patch('a', { completedAt: stamp(), completedReason: 'gave up' });
+    store.patch('a', { schedule: { enabled: true, cron, stopOn: past } });
+    store.patch('a', { completedAt: stamp(), completedReason: 'stopped running' });
     const reopened = store.patch('a', { completedAt: undefined, enabled: true });
     expect(reopened.completedReason).toBeUndefined();
-    expect(reopened.completion.expiresAt).toBeUndefined();
+    expect(reopened.schedule.stopOn).toBeUndefined();
 
     const future = new Date(Date.now() + 60_000).toISOString();
-    store.patch('a', { completion: { allowAgent: false, expiresAt: future } });
+    store.patch('a', { schedule: { enabled: true, cron, stopOn: future } });
     store.patch('a', { completedAt: stamp() });
-    expect(store.patch('a', { completedAt: undefined }).completion.expiresAt).toBe(future);
+    expect(store.patch('a', { completedAt: undefined }).schedule.stopOn).toBe(future);
   });
 });

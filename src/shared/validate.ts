@@ -25,13 +25,12 @@ const FIELD_LABELS: Record<string, string> = {
   enabled: 'Status',
   completedAt: 'Status',
   completion: 'Completion',
-  'completion.allowAgent': 'Let the agent complete this task',
-  'completion.folderId': 'Move to folder when completed',
-  'completion.expiresAt': 'Give up on',
+  'completion.allowAgent': 'Allow this task to be marked completed',
   folderId: 'Folder',
   schedule: 'Schedule',
   'schedule.cron': 'Cron expression',
   'schedule.timezone': 'Timezone',
+  'schedule.stopOn': 'Stop running on',
   environmentId: 'Environment',
   cwd: 'Working directory',
   env: 'Extra environment variables',
@@ -115,8 +114,8 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
     errors.push(`Timezone: unknown timezone "${task.schedule.timezone}"`);
   }
-  if (task.completion.expiresAt && Number.isNaN(Date.parse(task.completion.expiresAt))) {
-    errors.push(`Give up on: "${task.completion.expiresAt}" is not a date`);
+  if (task.schedule.stopOn && Number.isNaN(Date.parse(task.schedule.stopOn))) {
+    errors.push(`Stop running on: "${task.schedule.stopOn}" is not a date`);
   }
   // One rolling conversation cannot be resumed by two runs at the same time.
   if (task.maxConcurrentRuns > 1 && task.agent.session === 'continue') {

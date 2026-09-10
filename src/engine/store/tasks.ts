@@ -37,6 +37,8 @@ export class TaskStore extends EventEmitter {
     /** Current environments, so environment/harness references are checked on load and save. */
     private readonly environments?: () => Environment[],
     private readonly host?: string,
+    /** The global folder completing tasks are moved into (Settings → General). */
+    private readonly completedFolderId?: () => string | undefined,
   ) {
     super();
   }
@@ -122,23 +124,24 @@ export class TaskStore extends EventEmitter {
   /**
    * The completion invariant, applied wherever a task comes from (editor, JSON
    * tab, inbox, the engine itself): a completed task is never enabled, keeps
-   * the stamp of when it first completed, and moves to its completion folder as
-   * it completes. Reopening drops the stamp, the reason, and a deadline that
-   * has already passed — otherwise the next tick would just complete it again.
+   * the stamp of when it first completed, and moves to the global completed
+   * tasks folder as it completes. Reopening drops the stamp, the reason, and a
+   * schedule end that has already passed — otherwise the next tick would just
+   * complete it again.
    */
   private completionFields(task: Task, existing: Task | undefined, now: string): Partial<Task> {
     if (!task.completedAt) {
       if (!existing?.completedAt) return {};
-      const expiresAt = task.completion.expiresAt;
-      const stale = expiresAt !== undefined && Date.parse(expiresAt) <= Date.now();
+      const stopOn = task.schedule.stopOn;
+      const stale = stopOn !== undefined && Date.parse(stopOn) <= Date.now();
       return {
         completedReason: undefined,
-        ...(stale ? { completion: { ...task.completion, expiresAt: undefined } } : {}),
+        ...(stale ? { schedule: { ...task.schedule, stopOn: undefined } } : {}),
       };
     }
     const out: Partial<Task> = { enabled: false, completedAt: existing?.completedAt ?? task.completedAt };
     // The move happens once, as the task completes; reopening leaves it filed where it is.
-    const folderId = task.completion.folderId;
+    const folderId = this.completedFolderId?.();
     if (!existing?.completedAt && folderId && this.folders.some((f) => f.id === folderId)) {
       out.folderId = folderId;
     }

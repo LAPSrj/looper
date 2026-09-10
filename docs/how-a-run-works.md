@@ -126,19 +126,19 @@ It kills whatever step is in flight and records the run as **Stopped**.
 
 ## Finishing the task for good
 
-A task whose **Let the agent complete this task** option is on also gets a
-`looper-complete "<why>"` command on the agent's PATH, and a line in the
+A task whose **Allow this task to be marked completed** option is on also gets
+a `looper-complete "<why>"` command on the agent's PATH, and a line in the
 system footer telling it when to use it: the task is finished for good, not
 merely done for now. The agent runs it before `looper-done`; the run itself
 ends exactly as it otherwise would, and Looper completes the task once the
-cycle is over — the task stops being scheduled, moves to its completion
-folder if it has one, and is deleted when the completed-task retention runs
-out. A run you stopped never completes the task, and a task without the
-option never gets the command: a completion signal from one is recorded in
-the run log and ignored.
+cycle is over — the task stops being scheduled, moves to the completed-tasks
+folder if one is set (Settings → General), and is deleted when the
+completed-task retention runs out. A run you stopped never completes the
+task, and a task without the option never gets the command: a completion
+signal from one is recorded in the run log and ignored.
 
-A task with a **Give up on** deadline completes itself the same way when the
-deadline passes without anything having completed it.
+A scheduled task with a **Stop running on** date completes itself the same
+way once that date passes.
 
 ## Held for a human
 

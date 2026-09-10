@@ -11,32 +11,25 @@ changes.
 - **Status** — Enabled, Disabled or Completed. A disabled task never runs on
   its own; Run Now still asks for confirmation before running it anyway. A
   **completed** task is finished for good: it behaves like a disabled one, but
-  it also moves to its completion folder, shows as completed in the task list,
-  and is deleted once the completed-task retention (Settings → Advanced) runs
-  out. Task → Reopen brings it back.
+  it also moves to the completed-tasks folder (Settings → General), shows as
+  completed in the task list, and is deleted once the completed-task retention
+  (Settings → Advanced) runs out. Task → Reopen brings it back.
+- **Allow this task to be marked completed** — off by default. When on, the
+  agent's session gets a `looper-complete "<why>"` command and a line in its
+  system prompt explaining when to use it: the task is finished for good, not
+  merely done for now. Looper applies it when the cycle ends, unless you
+  stopped the run. With the option off the command is never created, and a
+  completion signal from such a task is recorded in the run log and ignored.
 - **Environment** — which configured environment (Settings → Environments)
   the task's check, classifier, and agent run in.
 - **Working directory** — the folder the check command and the agent both
   run in, in the path style the environment expects. Browse… opens a picker
   scoped to that environment.
 
-### Completion
-
-- **Let the agent complete this task** — off by default. When on, the agent's
-  session gets a `looper-complete "<why>"` command and a line in its system
-  prompt explaining when to use it: the task is finished for good, not merely
-  done for now. Looper applies it when the cycle ends, unless you stopped the
-  run. With the option off the command is never created, and a completion
-  signal from such a task is recorded in the run log and ignored.
-- **Move to folder when completed** — the sidebar folder the task is filed
-  into as it completes. It stays there if you reopen it.
-- **Give up on** — a deadline. If the task has not completed by then, Looper
-  completes it itself ("gave up waiting"), whether or not it is scheduled,
-  paused or disabled. Leave it empty for no deadline. Reopening a task whose
-  deadline has passed clears the deadline.
-
 A completed task keeps its whole definition and its run history until it is
 deleted, so the final report stays readable in the Run log and Messages tabs.
+Where completed tasks are filed is a global choice — Settings → General →
+**Move completed tasks to folder**.
 
 ## Schedule
 
@@ -60,6 +53,14 @@ invalid.
 
 **Timezone** picks the IANA zone the schedule's slots are evaluated in;
 "Use computer timezone" (the default) follows the machine's own timezone.
+
+**Stop running on** ends the schedule on a date and time. Once it passes,
+Looper completes the task instead of running it again — it stops being
+scheduled, moves to the completed-tasks folder if one is set, and is deleted
+when the completed-task retention runs out. It applies to any task with a
+schedule, including a paused or disabled one; a manual task ignores it.
+Leave it empty for a schedule that never ends. Reopening a task whose end
+date has passed clears the date.
 
 ## Check
 

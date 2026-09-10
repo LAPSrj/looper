@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
-import type { Environment, Task, TaskFolder, TaskInput } from '@shared/types';
-import { folderTree } from '@shared/folders';
+import type { Environment, Task, TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
@@ -16,8 +15,6 @@ interface Props {
   initial?: TaskInput;
   /** The configured environments (File → Settings → Environments). */
   environments: Environment[];
-  /** Sidebar folders, for the "move to folder when completed" picker. */
-  folders?: TaskFolder[];
   /** Environment preselected for new tasks (from global settings). */
   defaultEnvironmentId?: string;
   /** Host kind, deciding the path style of `local` environments. */
@@ -105,7 +102,7 @@ const PERMISSION_MODES: [string, string][] = [
   ['', 'None'],
 ];
 
-export function TaskEditor({ task, initial, environments, folders = [], defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
+export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId),
   );
@@ -330,6 +327,14 @@ export function TaskEditor({ task, initial, environments, folders = [], defaultE
                 </select>
               </Field>
             </div>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={completion.allowAgent ?? false}
+                onChange={(e) => setCompletion('allowAgent', e.target.checked)}
+              />
+              Allow this task to be marked completed
+            </label>
             <Field label="Environment">
                 <select value={env?.id ?? draft.environmentId ?? ''} onChange={(e) => setEnvironment(e.target.value)}>
                   {!env && <option value={draft.environmentId ?? ''}>Unknown environment ({draft.environmentId || 'none'})</option>}
@@ -352,39 +357,6 @@ export function TaskEditor({ task, initial, environments, folders = [], defaultE
                   </button>
                 </div>
             </Field>
-            <section>
-              <h3>Completion</h3>
-            </section>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={completion.allowAgent ?? false}
-                onChange={(e) => setCompletion('allowAgent', e.target.checked)}
-              />
-              Let the agent complete this task
-            </label>
-            <div className="row">
-              <Field label="Move to folder when completed">
-                <select
-                  value={completion.folderId ?? ''}
-                  onChange={(e) => setCompletion('folderId', e.target.value || undefined)}
-                >
-                  <option value="">Stay where it is</option>
-                  {folderTree(folders).map(({ folder, depth }) => (
-                    <option key={folder.id} value={folder.id}>
-                      {' '.repeat(depth * 3) + folder.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Give up on">
-                <input
-                  type="datetime-local"
-                  value={toLocalInput(completion.expiresAt)}
-                  onChange={(e) => setCompletion('expiresAt', fromLocalInput(e.target.value))}
-                />
-              </Field>
-            </div>
           </div>
         </div>
 
@@ -622,6 +594,14 @@ export function TaskEditor({ task, initial, environments, folders = [], defaultE
                   </optgroup>
                 ))}
               </select>
+            </Field>
+            <Field label="Stop running on">
+              <input
+                type="datetime-local"
+                disabled={!schedOn}
+                value={toLocalInput(draft.schedule.stopOn)}
+                onChange={(e) => set('schedule', { ...draft.schedule, stopOn: fromLocalInput(e.target.value) })}
+              />
             </Field>
             </fieldset>
           </div>

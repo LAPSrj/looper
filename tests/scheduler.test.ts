@@ -1211,39 +1211,38 @@ describe('task completion', () => {
     expect(records().some((r) => r.summary === 'completion signal ignored: the run was stopped')).toBe(true);
   });
 
-  it('completing moves the task to its completion folder', async () => {
-    const folder = h.tasks.addFolder('Done');
-    allowAgent();
-    h.tasks.patch('t1', { completion: { allowAgent: true, folderId: folder.id } });
-    h.sched.completeTask('t1', 'by hand');
-    expect(h.tasks.get('t1')!.folderId).toBe(folder.id);
-  });
-
-  it('the deadline completes the task even with the schedule off', async () => {
+  it('the schedule end date completes the task, even while it is paused', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: false, cron: '*/1 * * * *' },
-      completion: { allowAgent: false, expiresAt: new Date(h.clock.now - 1000).toISOString() },
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
     });
+    h.sched.pause('t1');
     await h.tickN(1);
     const task = h.tasks.get('t1')!;
     expect(task.completedAt).toBeTruthy();
-    expect(task.completedReason).toMatch(/^gave up waiting/);
+    expect(task.completedReason).toMatch(/^stopped running on /);
     expect(h.sched.get('t1')!.state).toBe('completed');
     expect(h.agentStarted).toBe(0);
   });
 
-  it('a deadline in the future is left alone', async () => {
+  it('the end date is ignored on a manual task, and before it is reached', async () => {
     h.tasks.patch('t1', {
-      completion: { allowAgent: false, expiresAt: new Date(h.clock.now + 60_000).toISOString() },
+      schedule: { enabled: false, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
+    });
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+
+    h.tasks.patch('t1', {
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now + 60_000).toISOString() },
     });
     h.checks.push(check('noop'));
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    expect(h.tasks.get('t1')!.schedule.stopOn).toBeTruthy();
   });
 
-  it('reopening enables the task again and drops the passed deadline', async () => {
+  it('reopening enables the task again and drops the passed end date', async () => {
     h.tasks.patch('t1', {
-      completion: { allowAgent: false, expiresAt: new Date(h.clock.now - 1000).toISOString() },
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
     });
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
@@ -1251,7 +1250,7 @@ describe('task completion', () => {
     const task = h.tasks.get('t1')!;
     expect(task.completedAt).toBeUndefined();
     expect(task.completedReason).toBeUndefined();
-    expect(task.completion.expiresAt).toBeUndefined();
+    expect(task.schedule.stopOn).toBeUndefined();
     expect(task.enabled).toBe(true);
     expect(h.sched.get('t1')!.state).toBe('idle');
   });

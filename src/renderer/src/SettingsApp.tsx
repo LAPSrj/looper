@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Environment, Settings, Task } from '@shared/types';
+import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
+import { folderTree } from '@shared/folders';
 import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
@@ -23,7 +24,10 @@ export function SettingsApp() {
   const [live, setLive] = useState<Settings | null>(null);
   const [dataDir, setDataDir] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [folders, setFolders] = useState<TaskFolder[]>([]);
   const [defaultEnvId, setDefaultEnvId] = useState<string | null>(null);
+  // '' = completed tasks stay where they are; loaded once, like the other drafts.
+  const [completedFolderId, setCompletedFolderId] = useState<string | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
   const [startWithSystem, setStartWithSystem] = useState<boolean | null>(null);
@@ -56,6 +60,7 @@ export function SettingsApp() {
       setLive(info.settings);
       setDataDir(info.dataDir);
       setDefaultEnvId((v) => v ?? info.settings.defaultEnvironmentId);
+      setCompletedFolderId((v) => v ?? info.settings.completedFolderId ?? '');
       setCloseToTray((v) => v ?? info.settings.closeToTray);
       setNotificationsEnabled((v) => v ?? info.settings.notificationsEnabled);
       setStaggerEnabled((v) => v ?? info.settings.staggerFirstRun.enabled);
@@ -77,6 +82,7 @@ export function SettingsApp() {
       setSelected((s) => s ?? info.settings.environments[0]?.id ?? null);
     });
     void window.looper.tasks.list().then(setTasks);
+    void window.looper.folders.list().then(setFolders);
     void window.looper.getStartWithSystem().then((v) => {
       setStartWithSystem((s) => s ?? v);
       initStartWithSystem.current ??= v;
@@ -88,6 +94,9 @@ export function SettingsApp() {
         setSelected((s) => (s && e.settings.environments.some((x) => x.id === s) ? s : e.settings.environments[0]?.id ?? null));
       } else if (e.type === 'tasks') {
         setTasks(e.tasks);
+      } else if (e.type === 'folders') {
+        setFolders(e.folders);
+        setCompletedFolderId((v) => (v && !e.folders.some((f) => f.id === v) ? '' : v));
       }
     });
   }, []);
@@ -97,7 +106,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -194,6 +203,7 @@ export function SettingsApp() {
       }
       await window.looper.updateSettings({
         defaultEnvironmentId: defaultEnvId,
+        completedFolderId: completedFolderId || undefined,
         closeToTray,
         notificationsEnabled,
         staggerFirstRun: {
@@ -240,6 +250,16 @@ export function SettingsApp() {
                 {envs.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Move completed tasks to folder">
+              <select value={completedFolderId} onChange={(e) => setCompletedFolderId(e.target.value)}>
+                <option value="">Leave them where they are</option>
+                {folderTree(folders).map(({ folder, depth }) => (
+                  <option key={folder.id} value={folder.id}>
+                    {' '.repeat(depth * 3) + folder.name}
                   </option>
                 ))}
               </select>

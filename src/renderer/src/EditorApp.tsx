@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Environment, Task, TaskFolder, TaskInput } from '@shared/types';
+import type { Environment, Task, TaskInput } from '@shared/types';
 import { importTaskDraft } from '@shared/validate';
 
 import { TaskEditor } from './components/TaskEditor';
@@ -19,7 +19,6 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, mode 
   // undefined = still loading; null = new task/template
   const [task, setTask] = useState<Task | null | undefined>(editId ? undefined : null);
   const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [folders, setFolders] = useState<TaskFolder[]>([]);
   const [defaultEnvironmentId, setDefaultEnvironmentId] = useState<string | undefined>(undefined);
   const [host, setHost] = useState<string | undefined>(undefined);
   const [initial, setInitial] = useState<TaskInput | undefined>(undefined);
@@ -39,7 +38,6 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, mode 
       setHost(i.host);
       return i;
     });
-    void window.looper.folders.list().then(setFolders);
     if (mode === 'template' && templateId) {
       void window.looper.templates.list().then((templates) => {
         const found = templates.find((t) => t.id === templateId) ?? null;
@@ -83,7 +81,6 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, mode 
         task={task}
         initial={initial}
         environments={environments}
-        folders={folders}
         defaultEnvironmentId={defaultEnvironmentId}
         host={host}
         mode={mode}

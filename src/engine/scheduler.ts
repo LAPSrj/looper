@@ -457,10 +457,10 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  /** The task's deadline has passed and it has not completed on its own. */
-  private expired(task: Task, now: number): boolean {
-    const at = task.completion.expiresAt;
-    if (!at || task.completedAt) return false;
+  /** The schedule has run past its end date and the task has not completed on its own. */
+  private scheduleEnded(task: Task, now: number): boolean {
+    const at = task.schedule.stopOn;
+    if (!at || !task.schedule.enabled || task.completedAt) return false;
     const ms = Date.parse(at);
     return !Number.isNaN(ms) && ms <= now;
   }
@@ -482,10 +482,10 @@ export class Scheduler extends EventEmitter {
     for (const task of this.d.tasks.list()) {
       const rt = this.runtimes.get(task.id);
       if (!rt) continue;
-      // The deadline is about the wait, not about the schedule: it fires for a
-      // paused, disabled or unscheduled task just the same.
-      if (this.expired(task, now)) {
-        this.completeTask(task.id, `gave up waiting: the deadline of ${new Date(task.completion.expiresAt!).toLocaleString()} passed`);
+      // The schedule's end date, checked before the due-slot guard so it also
+      // reaches a task that is paused or disabled but still scheduled.
+      if (this.scheduleEnded(task, now)) {
+        this.completeTask(task.id, `stopped running on ${new Date(task.schedule.stopOn!).toLocaleString()}`);
         continue;
       }
       if (rt.nextRunAt === null || rt.nextRunAt > now) continue;
