@@ -116,6 +116,10 @@ code,
   color: var(--fg);
 }
 
+.instructions .markdown img {
+  max-width: 100%;
+}
+
 .instructions .markdown {
   max-width: 720px;
   margin: 0 auto;

@@ -60,19 +60,30 @@ export function MessageBody({ text }: { text: string }) {
 
 /** `breaks`: render single newlines as line breaks (right for agent reports,
  * wrong for hard-wrapped documents like the user guide).
- * `onNavigate`: relative links (no scheme) call it instead of opening a browser. */
+ * `onNavigate`: relative links (no scheme) call it instead of opening a browser.
+ * `resolveImage`: maps a relative image src to a real URL (undefined keeps it). */
 export function Markdown({
   text,
   breaks = true,
   onNavigate,
+  resolveImage,
 }: {
   text: string;
   breaks?: boolean;
   onNavigate?: (href: string) => void;
+  resolveImage?: (src: string) => string | undefined;
 }) {
   const components: Components = useMemo(() => {
-    if (!onNavigate) return external;
+    const img: Components = resolveImage
+      ? {
+          img: ({ node: _node, src, ...props }) => (
+            <img {...props} src={resolveImage(String(src ?? '')) ?? src} />
+          ),
+        }
+      : {};
+    if (!onNavigate) return { ...external, ...img };
     return {
+      ...img,
       a: ({ node: _node, href, ...props }) =>
         href && !/^[a-z][a-z+.-]*:/i.test(href) ? (
           <a
@@ -87,7 +98,7 @@ export function Markdown({
           <a {...props} href={href} target="_blank" rel="noreferrer" />
         ),
     };
-  }, [onNavigate]);
+  }, [onNavigate, resolveImage]);
   return (
     <div className="markdown">
       <ReactMarkdown remarkPlugins={breaks ? withBreaks : noBreaks} components={components}>

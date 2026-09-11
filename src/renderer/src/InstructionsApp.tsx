@@ -11,6 +11,15 @@ for (const [file, text] of Object.entries(
   pages[file.split('/').pop()!] = text as string;
 }
 
+// Every image the guide references, bundled too; keyed by the docs-relative
+// path the markdown uses ("img/<name>").
+const images: Record<string, string> = {};
+for (const [file, url] of Object.entries(
+  import.meta.glob('../../../docs/img/*', { query: '?url', import: 'default', eager: true }),
+)) {
+  images['img/' + file.split('/').pop()!] = url as string;
+}
+
 function Icon({ children }: { children: React.ReactNode }) {
   return (
     <svg
@@ -104,7 +113,12 @@ export function InstructionsApp() {
         {button(ICONS.home, 'Home', () => open(HOME), page !== HOME)}
       </div>
       <div className="instructions" ref={scrollRef}>
-        <Markdown text={pages[page] ?? 'Page not found.'} breaks={false} onNavigate={onNavigate} />
+        <Markdown
+          text={pages[page] ?? 'Page not found.'}
+          breaks={false}
+          onNavigate={onNavigate}
+          resolveImage={(src) => images[src.replace(/^\.\//, '')]}
+        />
       </div>
     </div>
   );
