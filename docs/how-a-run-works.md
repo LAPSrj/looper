@@ -137,8 +137,9 @@ completed-task retention runs out. A run you stopped never completes the
 task, and a task without the option never gets the command: a completion
 signal from one is recorded in the run log and ignored.
 
-A scheduled task with a **Stop running on** date completes itself the same
-way once that date passes.
+The same option gates the manual action: Task → Complete is greyed out
+without it. A scheduled task with a **Stop running on** date completes itself
+once that date passes, option or not — the date is the instruction to stop.
 
 ## Held for a human
 

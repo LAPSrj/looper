@@ -6,6 +6,8 @@ export interface AppInfo {
   dataDir: string;
   inboxDir: string;
   host: string;
+  /** The machine's regional format (e.g. "en-150"); undefined = use the runtime default. */
+  locale?: string;
   settings: Settings;
 }
 
@@ -152,11 +154,15 @@ export interface LooperApi {
     hasNote?: boolean,
     canRunNow?: boolean,
     taskCompleted?: boolean,
+    /** The task's "Allow this task to be marked completed" option. */
+    allowComplete?: boolean,
   ): void;
   showTaskContextMenu(info: {
     enabled: boolean;
     /** The task is finished for good: the menu offers Reopen instead of Complete. */
     completed: boolean;
+    /** The task's "Allow this task to be marked completed" option. */
+    allowComplete: boolean;
     state?: string;
     held: boolean;
     hasNote: boolean;

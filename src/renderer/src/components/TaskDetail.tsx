@@ -1,7 +1,7 @@
 import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
 import { cronToForm } from '@shared/cron';
-import { capFirst, fmtCountdown, fmtDate, fmtTime, resultLabel, stateLabel } from '../format';
+import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
 import { Messages } from './Messages';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
@@ -135,10 +135,10 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
                     ? describeNextRun(runtime, now)
                     : 'When triggered manually'}
               </dd>
-              {!task.completedAt && task.schedule.enabled && task.schedule.stopOn && (
+              {!task.completedAt && task.schedule.enabled && task.schedule.stopOn?.enabled && (
                 <>
                   <dt>Stops running on</dt>
-                  <dd>{new Date(task.schedule.stopOn).toLocaleString()}</dd>
+                  <dd>{fmtDateTime(task.schedule.stopOn.at)}</dd>
                 </>
               )}
               {task.note && (

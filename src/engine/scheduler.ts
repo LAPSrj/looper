@@ -14,8 +14,8 @@ import type {
 } from '../shared/types';
 import { cronTz } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
-import { capFirst, resultLabel } from '../shared/format';
-import type { HostKind } from './host';
+import { capFirst, formatDateTime, resultLabel } from '../shared/format';
+import { detectSystemLocale, type HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
@@ -198,13 +198,22 @@ export class Scheduler extends EventEmitter {
   }
 
   /**
-   * Finish a task for good: it stops being scheduled, moves to its completion
-   * folder if it has one, and is deleted once the completed-task retention runs
-   * out. Everything else follows from the store write (see `onTaskChange`).
+   * Finish a task for good: it stops being scheduled, moves to the completed
+   * tasks folder when one is set, and is deleted once the completed-task
+   * retention runs out. Everything else follows from the store write (see
+   * `onTaskChange`).
+   *
+   * Someone asking for this — a menu click, the inbox, the agent — needs the
+   * task's "Allow this task to be marked completed" option; the task's own
+   * schedule end date is self-authorizing and passes `force`.
    */
-  completeTask(taskId: string, reason: string): void {
+  completeTask(taskId: string, reason: string, opts: { force?: boolean } = {}): void {
     const task = this.d.tasks.get(taskId);
     if (!task || task.completedAt) return;
+    if (!opts.force && !task.completion.allowed) {
+      this.d.log.warn(`[${taskId}] completion refused: the task does not allow being marked completed`);
+      return;
+    }
     try {
       this.d.tasks.patch(taskId, { completedAt: new Date(this.now()).toISOString(), completedReason: reason });
     } catch (e) {
@@ -459,9 +468,9 @@ export class Scheduler extends EventEmitter {
 
   /** The schedule has run past its end date and the task has not completed on its own. */
   private scheduleEnded(task: Task, now: number): boolean {
-    const at = task.schedule.stopOn;
-    if (!at || !task.schedule.enabled || task.completedAt) return false;
-    const ms = Date.parse(at);
+    const stopOn = task.schedule.stopOn;
+    if (!stopOn?.enabled || !task.schedule.enabled || task.completedAt) return false;
+    const ms = Date.parse(stopOn.at);
     return !Number.isNaN(ms) && ms <= now;
   }
 
@@ -485,7 +494,11 @@ export class Scheduler extends EventEmitter {
       // The schedule's end date, checked before the due-slot guard so it also
       // reaches a task that is paused or disabled but still scheduled.
       if (this.scheduleEnded(task, now)) {
-        this.completeTask(task.id, `stopped running on ${new Date(task.schedule.stopOn!).toLocaleString()}`);
+        this.completeTask(
+          task.id,
+          `stopped running on ${formatDateTime(task.schedule.stopOn!.at, detectSystemLocale())}`,
+          { force: true },
+        );
         continue;
       }
       if (rt.nextRunAt === null || rt.nextRunAt > now) continue;
@@ -746,7 +759,7 @@ export class Scheduler extends EventEmitter {
   private applyCompleteSignal(task: Task, runId: string, runDir: string, end: AgentEnd): void {
     const reason = readCompleteSignal(runDir);
     if (!reason) return;
-    if (!task.completion.allowAgent) {
+    if (!task.completion.allowed) {
       this.record(task.id, runId, 'agent', 'warning', {
         summary: 'completion signal ignored: this task does not let the agent complete it',
       });

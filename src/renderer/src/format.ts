@@ -1,4 +1,5 @@
 import { formatDuration } from '@shared/duration';
+import { formatDateTime } from '@shared/format';
 import { stripAnsi as stripAnsiShared } from '@shared/ansi';
 import type { TaskRuntime } from '@shared/types';
 
@@ -38,6 +39,22 @@ export function stateLabel(rt: TaskRuntime | undefined): string {
 }
 
 export { resultLabel, capFirst } from '@shared/format';
+
+/**
+ * The machine's regional format, reported by the main process (Chromium's own
+ * default follows the display language instead). Each window sets it once
+ * from `info()`; until then dates fall back to the runtime default.
+ */
+let appLocale: string | undefined;
+
+export function setAppLocale(locale: string | undefined): void {
+  appLocale = locale;
+}
+
+/** A date and time in the computer's format, e.g. "12/09/2026, 18:00". */
+export function fmtDateTime(value: string | number | Date): string {
+  return formatDateTime(value, appLocale);
+}
 
 export function stripAnsi(s: string): string {
   return stripAnsiShared(s).replace(/\r(?!\n)/g, '\n');

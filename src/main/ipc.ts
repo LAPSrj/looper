@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
 import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
-import { convertWslPath, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
 
@@ -36,6 +36,7 @@ export interface IpcHost {
     hasNote?: boolean,
     canRunNow?: boolean,
     taskCompleted?: boolean,
+    allowComplete?: boolean,
   ) => void;
 }
 
@@ -45,6 +46,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     dataDir: engine.dataDir,
     inboxDir: engine.inboxDir(),
     host: engine.host,
+    locale: detectSystemLocale(),
     settings: engine.settings,
   }));
 
@@ -278,7 +280,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       hasNote?: boolean,
       canRunNow?: boolean,
       taskCompleted?: boolean,
-    ) => host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted),
+      allowComplete?: boolean,
+    ) =>
+      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete),
   );
 
   ipcMain.handle('dialog:error', async (e, message: string) => {
@@ -340,7 +344,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('wsl:distros', () => listWslDistros());
   ipcMain.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
+  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; allowComplete: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
@@ -351,7 +355,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
       { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled' && !info.completed, click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', enabled: !info.completed, click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
-      { label: info.completed ? 'Reopen' : 'Complete', click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }) },
+      {
+        label: info.completed ? 'Reopen' : 'Complete',
+        enabled: info.completed || info.allowComplete,
+        click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }),
+      },
       { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
       { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
       { type: 'separator' },

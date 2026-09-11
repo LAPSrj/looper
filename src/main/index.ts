@@ -859,7 +859,8 @@ let menuSelection: [
   boolean,
   boolean | undefined,
   boolean,
-] = [false, undefined, undefined, undefined, false, undefined, false];
+  boolean,
+] = [false, undefined, undefined, undefined, false, undefined, false, false];
 
 function updateTaskMenu(
   hasTask: boolean,
@@ -869,8 +870,18 @@ function updateTaskMenu(
   hasNote?: boolean,
   canRunNow?: boolean,
   taskCompleted?: boolean,
+  allowComplete?: boolean,
 ): void {
-  menuSelection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false, canRunNow, taskCompleted ?? false];
+  menuSelection = [
+    hasTask,
+    taskEnabled,
+    taskPaused,
+    taskState,
+    hasNote ?? false,
+    canRunNow,
+    taskCompleted ?? false,
+    allowComplete ?? false,
+  ];
   buildMenu(...menuSelection);
 }
 
@@ -892,6 +903,7 @@ function buildMenu(
   hasNote = false,
   canRunNow?: boolean,
   taskCompleted = false,
+  allowComplete = false,
 ): void {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
@@ -933,7 +945,7 @@ function buildMenu(
         { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
         { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: () => sendUi('pause-resume') },
         { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
-        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', enabled: hasTask, click: () => sendUi('complete-reopen') },
+        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', enabled: hasTask && (taskCompleted || allowComplete), click: () => sendUi('complete-reopen') },
         { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
         { id: 'task-delete', label: 'De&lete Task', enabled: hasTask, click: () => sendUi('delete-task') },
         { type: 'separator' },

@@ -14,12 +14,16 @@ changes.
   it also moves to the completed-tasks folder (Settings → General), shows as
   completed in the task list, and is deleted once the completed-task retention
   (Settings → Advanced) runs out. Task → Reopen brings it back.
-- **Allow this task to be marked completed** — off by default. When on, the
-  agent's session gets a `looper-complete "<why>"` command and a line in its
-  system prompt explaining when to use it: the task is finished for good, not
-  merely done for now. Looper applies it when the cycle ends, unless you
-  stopped the run. With the option off the command is never created, and a
-  completion signal from such a task is recorded in the run log and ignored.
+- **Allow this task to be marked completed** — off by default, and required
+  before anything can complete the task. With it on, Task → Complete is
+  available, and the agent's session gets a `looper-complete "<why>"` command
+  plus a line in its system prompt explaining when to use it: the task is
+  finished for good, not merely done for now. Looper applies the agent's
+  signal when the cycle ends, unless you stopped the run. With the option off
+  the Complete action is greyed out, the agent's command is never created, and
+  a completion signal from such a task is recorded in the run log and ignored.
+  A schedule that reaches its **Stop running on** date completes the task
+  either way — that date is itself the instruction to stop.
 - **Environment** — which configured environment (Settings → Environments)
   the task's check, classifier, and agent run in.
 - **Working directory** — the folder the check command and the agent both
@@ -54,13 +58,14 @@ invalid.
 **Timezone** picks the IANA zone the schedule's slots are evaluated in;
 "Use computer timezone" (the default) follows the machine's own timezone.
 
-**Stop running on** ends the schedule on a date and time. Once it passes,
-Looper completes the task instead of running it again — it stops being
-scheduled, moves to the completed-tasks folder if one is set, and is deleted
-when the completed-task retention runs out. It applies to any task with a
-schedule, including a paused or disabled one; a manual task ignores it.
-Leave it empty for a schedule that never ends. Reopening a task whose end
-date has passed clears the date.
+A checkbox, "End the schedule on a date", turns on **Stop running on** — the
+date and time the schedule ends. Once it passes, Looper completes the task
+instead of running it again: it stops being scheduled, moves to the
+completed-tasks folder if one is set, and is deleted when the completed-task
+retention runs out. It applies to any task with a schedule, including a
+paused or disabled one; a manual task ignores it. Unchecking the box keeps
+the date on the task and simply stops it from applying, and reopening a task
+whose end date has passed switches that date off rather than erasing it.
 
 ## Check
 

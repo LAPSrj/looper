@@ -1167,10 +1167,10 @@ describe('interrupted runs', () => {
 });
 
 describe('task completion', () => {
-  const allowAgent = () => h.tasks.patch('t1', { completion: { allowAgent: true } });
+  const allowComplete = () => h.tasks.patch('t1', { completion: { allowed: true } });
 
   it('the agent completing the task parks it and records why', async () => {
-    allowAgent();
+    allowComplete();
     h.checks.push(check('act'));
     h.completeSignals.push('the migration is finished');
     h.agentEnds.push(agentEnd('done', 'migrated'));
@@ -1201,7 +1201,7 @@ describe('task completion', () => {
   });
 
   it('a stopped run never completes the task', async () => {
-    allowAgent();
+    allowComplete();
     h.checks.push(check('act'));
     h.completeSignals.push('done forever');
     await h.tickN(1);
@@ -1213,7 +1213,7 @@ describe('task completion', () => {
 
   it('the schedule end date completes the task, even while it is paused', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     h.sched.pause('t1');
     await h.tickN(1);
@@ -1226,13 +1226,13 @@ describe('task completion', () => {
 
   it('the end date is ignored on a manual task, and before it is reached', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: false, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
+      schedule: { enabled: false, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
 
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now + 60_000).toISOString() },
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now + 60_000).toISOString() } },
     });
     h.checks.push(check('noop'));
     await h.tickN(1);
@@ -1240,9 +1240,18 @@ describe('task completion', () => {
     expect(h.tasks.get('t1')!.schedule.stopOn).toBeTruthy();
   });
 
-  it('reopening enables the task again and drops the passed end date', async () => {
+  it('an end date that is switched off keeps its value and never stops the task', async () => {
+    const at = new Date(h.clock.now - 1000).toISOString();
+    h.tasks.patch('t1', { schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: false, at } } });
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    expect(h.tasks.get('t1')!.schedule.stopOn).toEqual({ enabled: false, at });
+  });
+
+  it('reopening enables the task again and switches off the passed end date', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: new Date(h.clock.now - 1000).toISOString() },
+      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
@@ -1250,12 +1259,19 @@ describe('task completion', () => {
     const task = h.tasks.get('t1')!;
     expect(task.completedAt).toBeUndefined();
     expect(task.completedReason).toBeUndefined();
-    expect(task.schedule.stopOn).toBeUndefined();
+    expect(task.schedule.stopOn?.enabled).toBe(false);
     expect(task.enabled).toBe(true);
     expect(h.sched.get('t1')!.state).toBe('idle');
   });
 
+  it('a task that does not allow completion refuses to be completed', () => {
+    h.sched.completeTask('t1', 'by hand');
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    expect(h.sched.get('t1')!.state).toBe('idle');
+  });
+
   it('a manual run of a completed task runs once and goes back to completed', async () => {
+    allowComplete();
     h.sched.completeTask('t1', 'by hand');
     h.checks.push(check('act'));
     h.agentEnds.push(agentEnd('done', 'one more time'));
@@ -1269,7 +1285,7 @@ describe('task completion', () => {
 
   it('sends one completion toast instead of the cycle end toast', async () => {
     h.tasks.patch('t1', {
-      completion: { allowAgent: true },
+      completion: { allowed: true },
       notifications: { end: 'all', completed: true },
     });
     h.checks.push(check('act'));
@@ -1281,13 +1297,13 @@ describe('task completion', () => {
   });
 
   it('a completion outside a cycle toasts on its own', async () => {
-    h.tasks.patch('t1', { notifications: { completed: true } });
+    h.tasks.patch('t1', { completion: { allowed: true }, notifications: { completed: true } });
     h.sched.completeTask('t1', 'by hand');
     expect(notifies().map((n) => n.kind)).toEqual(['completed']);
   });
 
   it('completing ends the rolling conversation', async () => {
-    h.tasks.patch('t1', { agent: { prompt: 'do it', session: 'continue' }, completion: { allowAgent: true } });
+    h.tasks.patch('t1', { agent: { prompt: 'do it', session: 'continue' }, completion: { allowed: true } });
     h.checks.push(check('act'));
     h.completeSignals.push('finished');
     h.agentEnds.push(agentEnd('done', 'ok'));

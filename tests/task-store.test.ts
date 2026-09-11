@@ -173,20 +173,21 @@ describe('TaskStore completion', () => {
     expect(plain.patch('b', { completedAt: stamp() }).folderId).toBeUndefined();
   });
 
-  it('reopening clears the reason and an end date that has passed, but keeps a future one', () => {
+  it('reopening clears the reason and switches off an end date that has passed, keeping a future one', () => {
     const { store } = newStore();
     store.upsert(taskInput('a'));
     const cron = '*/10 * * * *';
     const past = new Date(Date.now() - 60_000).toISOString();
-    store.patch('a', { schedule: { enabled: true, cron, stopOn: past } });
+    store.patch('a', { schedule: { enabled: true, cron, stopOn: { enabled: true, at: past } } });
     store.patch('a', { completedAt: stamp(), completedReason: 'stopped running' });
     const reopened = store.patch('a', { completedAt: undefined, enabled: true });
     expect(reopened.completedReason).toBeUndefined();
-    expect(reopened.schedule.stopOn).toBeUndefined();
+    // The date stays for editing, switched off so the next tick cannot re-complete the task.
+    expect(reopened.schedule.stopOn).toEqual({ enabled: false, at: past });
 
     const future = new Date(Date.now() + 60_000).toISOString();
-    store.patch('a', { schedule: { enabled: true, cron, stopOn: future } });
+    store.patch('a', { schedule: { enabled: true, cron, stopOn: { enabled: true, at: future } } });
     store.patch('a', { completedAt: stamp() });
-    expect(store.patch('a', { completedAt: undefined }).schedule.stopOn).toBe(future);
+    expect(store.patch('a', { completedAt: undefined }).schedule.stopOn).toEqual({ enabled: true, at: future });
   });
 });

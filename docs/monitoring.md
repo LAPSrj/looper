@@ -55,9 +55,10 @@ Run it anyway?' first — the run happens, and the task goes straight back to
 being disabled or completed afterwards. Pause/Resume, Enable/Disable and
 Complete/Reopen swap their tooltip and icon
 depending on the task's current state; Pause and Enable/Disable are greyed
-out for a completed task, which is parked until you reopen it. Completing
-asks for confirmation, since the task is deleted once its retention runs
-out. "Open Project in Terminal" opens a
+out for a completed task, which is parked until you reopen it. Complete is
+greyed out unless the task's **Allow this task to be marked completed**
+option is on (Reopen always works), and asks for confirmation, since the task
+is deleted once its retention runs out. "Open Project in Terminal" opens a
 real OS terminal window with the task's environment, working directory, and
 harness ready to go (model and permission mode included, no prompt) — a
 different thing from the in-app Terminal tab described below.

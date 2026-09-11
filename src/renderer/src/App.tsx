@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
 import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime } from '@shared/types';
 import { subscribe } from './events';
+import { setAppLocale } from './format';
 import { TaskList } from './components/TaskList';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
 import { TaskToolbar } from './components/TaskToolbar';
@@ -102,6 +103,8 @@ export function App() {
         if (!t) break;
         if (t.completedAt) {
           void window.looper.runtime.reopen(t.id);
+        } else if (!t.completion.allowed) {
+          break;
         } else {
           void window.looper
             .confirm(`Complete "${t.name}"? It stops running and is deleted once the completed-task retention runs out.`)
@@ -138,7 +141,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void window.looper.info().then(setInfo);
+    void window.looper.info().then((i) => {
+      setAppLocale(i.locale);
+      setInfo(i);
+    });
     void window.looper.tasks.list().then((t) => {
       setTasks(t);
       setSelected((s) => s ?? t[0]?.id ?? null);
@@ -219,6 +225,7 @@ export function App() {
       !!t?.note,
       canRunNow,
       !!t?.completedAt,
+      !!t?.completion.allowed,
     );
   }, [selected, tasks, selectedState, selectedActiveRuns]);
 

@@ -85,7 +85,12 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
         hasTask && state !== 'disabled' && !completed,
       )}
       {button(ICONS.power, task?.enabled === false ? 'Enable' : 'Disable', 'enable-disable', hasTask && !completed)}
-      {button(ICONS.complete, completed ? 'Reopen' : 'Complete', 'complete-reopen', hasTask)}
+      {button(
+        ICONS.complete,
+        completed ? 'Reopen' : 'Complete',
+        'complete-reopen',
+        hasTask && (completed || !!task?.completion.allowed),
+      )}
       {button(ICONS.edit, 'Edit Task (Ctrl+E)', 'edit-task', hasTask)}
       <span className="toolbar-sep" />
       {button(

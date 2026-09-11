@@ -317,6 +317,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           window.looper.showTaskContextMenu({
             enabled: t.enabled,
             completed: !!t.completedAt,
+            allowComplete: t.completion.allowed,
             state: rt2?.state,
             held: !!rt2?.held,
             hasNote: !!t.note,

@@ -133,10 +133,12 @@ export class TaskStore extends EventEmitter {
     if (!task.completedAt) {
       if (!existing?.completedAt) return {};
       const stopOn = task.schedule.stopOn;
-      const stale = stopOn !== undefined && Date.parse(stopOn) <= Date.now();
+      // The date itself is kept, switched off: it is there to be edited, not to
+      // complete the task again on the next tick.
+      const stale = stopOn?.enabled && Date.parse(stopOn.at) <= Date.now();
       return {
         completedReason: undefined,
-        ...(stale ? { schedule: { ...task.schedule, stopOn: undefined } } : {}),
+        ...(stale ? { schedule: { ...task.schedule, stopOn: { ...stopOn, enabled: false } } } : {}),
       };
     }
     const out: Partial<Task> = { enabled: false, completedAt: existing?.completedAt ?? task.completedAt };

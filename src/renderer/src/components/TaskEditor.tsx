@@ -86,10 +86,15 @@ function toLocalInput(iso: string | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** The input's local value -> an ISO instant; empty (or unparseable) = no deadline. */
+/** The input's local value -> an ISO instant; empty (or unparseable) = nothing to store. */
 function fromLocalInput(value: string): string | undefined {
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
+}
+
+/** What a schedule end date starts at when the task has never had one: a week out. */
+function defaultStopOn(): string {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
 const PERMISSION_MODES: [string, string][] = [
@@ -193,6 +198,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   // Model presets come from the harness; anything else is edited as "Custom".
   const modelIsCustom = customModel || (!!draft.agent.model && !models.some((m) => m.id === draft.agent.model));
   const schedOn = draft.schedule.enabled !== false;
+  // The end date keeps its value while switched off, like every other step here.
+  const stopOn = draft.schedule.stopOn;
+  const stopOnEnabled = stopOn?.enabled ?? false;
+  const setStopOn = (next: NonNullable<Draft['schedule']['stopOn']>) => set('schedule', { ...draft.schedule, stopOn: next });
   const checkOn = !!draft.check && draft.check.enabled !== false;
   const clsOn = !!draft.classifier && draft.classifier.enabled !== false;
 
@@ -323,15 +332,17 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 >
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
-                  <option value="completed">Completed</option>
+                  <option value="completed" disabled={!completion.allowed && !draft.completedAt}>
+                    Completed
+                  </option>
                 </select>
               </Field>
             </div>
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={completion.allowAgent ?? false}
-                onChange={(e) => setCompletion('allowAgent', e.target.checked)}
+                checked={completion.allowed ?? false}
+                onChange={(e) => setCompletion('allowed', e.target.checked)}
               />
               Allow this task to be marked completed
             </label>
@@ -595,14 +606,24 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 ))}
               </select>
             </Field>
-            <Field label="Stop running on">
+            <label className="checkbox-field">
               <input
-                type="datetime-local"
-                disabled={!schedOn}
-                value={toLocalInput(draft.schedule.stopOn)}
-                onChange={(e) => set('schedule', { ...draft.schedule, stopOn: fromLocalInput(e.target.value) })}
+                type="checkbox"
+                checked={stopOnEnabled}
+                onChange={(e) => setStopOn({ enabled: e.target.checked, at: stopOn?.at ?? defaultStopOn() })}
               />
-            </Field>
+              End the schedule on a date
+            </label>
+            <div className={`step-fields${stopOnEnabled ? '' : ' disabled'}`}>
+              <Field label="Stop running on">
+                <input
+                  type="datetime-local"
+                  disabled={!stopOnEnabled}
+                  value={toLocalInput(stopOn?.at)}
+                  onChange={(e) => setStopOn({ enabled: true, at: fromLocalInput(e.target.value) ?? stopOn!.at })}
+                />
+              </Field>
+            </div>
             </fieldset>
           </div>
         </div>

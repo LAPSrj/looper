@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +25,46 @@ export function defaultDataDir(): string {
 
 export function wslDistroName(): string | undefined {
   return process.env.WSL_DISTRO_NAME;
+}
+
+/** Cached: the lookup spawns a process, and the regional format never changes mid-session. */
+let systemLocale: string | null | undefined;
+
+/**
+ * The locale dates and times are shown in — Windows' **regional format**
+ * (Settings → Time & language → Region), not the display language Chromium
+ * reports. The two are set separately, so an English machine formatting dates
+ * as 12/09/2026 is ordinary. Undefined = let the runtime pick.
+ */
+export function detectSystemLocale(): string | undefined {
+  if (systemLocale !== undefined) return systemLocale ?? undefined;
+  systemLocale = readWindowsLocale() ?? readPosixLocale() ?? null;
+  return systemLocale ?? undefined;
+}
+
+/** `HKCU\Control Panel\International\LocaleName`, e.g. "en-150". Also reachable from WSL through interop. */
+function readWindowsLocale(): string | undefined {
+  const host = detectHost();
+  if (host !== 'windows' && host !== 'wsl') return undefined;
+  try {
+    const out = execFileSync('reg.exe', ['query', 'HKCU\\Control Panel\\International', '/v', 'LocaleName'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const m = /LocaleName\s+REG_SZ\s+(\S+)/.exec(out);
+    return m?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/** LC_TIME/LC_ALL/LANG, e.g. "pt_BR.UTF-8" -> "pt-BR". */
+function readPosixLocale(): string | undefined {
+  const raw = process.env.LC_ALL || process.env.LC_TIME || process.env.LANG;
+  const name = raw?.split('.')[0]?.replace('_', '-');
+  return name && name !== 'C' && name !== 'POSIX' ? name : undefined;
 }
 
 /** `/mnt/c/` -> `/mnt`. Undefined when the output is not a drive mount path. */

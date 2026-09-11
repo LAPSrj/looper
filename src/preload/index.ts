@@ -83,8 +83,18 @@ const api: LooperApi = {
   setStartWithSystem: (enabled) => ipcRenderer.invoke('loginItem:set', enabled),
   showError: (message) => ipcRenderer.invoke('dialog:error', message),
   confirm: (message) => ipcRenderer.invoke('dialog:confirm', message),
-  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted) =>
-    ipcRenderer.send('ui:selection', hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted),
+  reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete) =>
+    ipcRenderer.send(
+      'ui:selection',
+      hasTask,
+      taskEnabled,
+      taskPaused,
+      taskState,
+      hasNote,
+      canRunNow,
+      taskCompleted,
+      allowComplete,
+    ),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
   showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),

@@ -103,7 +103,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
   const headless = a.mode === 'headless';
   const env = resolveEnvironment(task, settings);
   const harness = resolveHarness(task, env);
-  const canComplete = task.completion.allowAgent;
+  const canComplete = task.completion.allowed;
   return startSession(
     ctx,
     {

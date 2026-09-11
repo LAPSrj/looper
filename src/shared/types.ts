@@ -10,10 +10,16 @@ export const ScheduleSchema = z
     /** IANA timezone the cron slots are evaluated in. Unset = the computer's timezone. */
     timezone: z.string().min(1).optional(),
     /**
-     * Last moment the schedule may fire. Once it passes, the task completes
-     * itself instead of running again. Unset = the schedule never ends.
+     * End of the schedule: once `at` passes, the task completes itself instead
+     * of running again. Off keeps the date but never stops the task; unset =
+     * no end date was ever configured.
      */
-    stopOn: z.string().min(1).optional(),
+    stopOn: z
+      .object({
+        enabled: z.boolean().default(true),
+        at: z.string().min(1),
+      })
+      .optional(),
   })
   .strict();
 
@@ -200,8 +206,12 @@ export type Note = z.infer<typeof NoteSchema>;
  */
 export const CompletionSchema = z
   .object({
-    /** The agent may end the task itself with `looper-complete`. Off = the helper is never created. */
-    allowAgent: z.boolean().default(false),
+    /**
+     * The task may be completed at all: by hand from the Task menu, and by the
+     * agent through `looper-complete`. Off = the Complete action is disabled
+     * and the agent's helper is never created.
+     */
+    allowed: z.boolean().default(false),
   })
   .default({});
 export type Completion = z.infer<typeof CompletionSchema>;
