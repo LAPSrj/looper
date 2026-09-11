@@ -16,6 +16,7 @@ import { FolderNameApp } from './FolderNameApp';
 import { FolderNoteApp } from './FolderNoteApp';
 import { MoveToFolderApp } from './MoveToFolderApp';
 import { ImageApp } from './ImageApp';
+import { MarkdownExportApp } from './MarkdownExportApp';
 import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
 import { RunDetailApp } from './RunDetailApp';
@@ -36,6 +37,7 @@ const runDetailMatch = /^run-detail\/([^/]+)\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
+const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
 const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
@@ -101,6 +103,15 @@ function pickRoot() {
     );
   }
   if (filterMatch) return <FilterApp current={decodeURIComponent(filterMatch[1] ?? '')} />;
+  if (markdownExportMatch) {
+    return (
+      <MarkdownExportApp
+        includeThinking={markdownExportMatch[1] === '1'}
+        includeTools={markdownExportMatch[2] === '1'}
+        plain={markdownExportMatch[3] === '1'}
+      />
+    );
+  }
   if (imageMatch) {
     return (
       <ImageApp

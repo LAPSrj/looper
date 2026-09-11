@@ -187,8 +187,9 @@ export const TaskNotificationsSchema = z
 export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
 
 /**
- * One-off guidance for a task's next run(s): appended to the agent prompt and
- * consumed per run whose agent actually received it (a run that ends as an
+ * One-off guidance for a task's next run(s): appended to both the classifier
+ * and the agent prompt, and consumed per run whose agent actually received it
+ * (a run that ends as an
  * engine `error` — spawn failure, usage limit — or is stopped by the user
  * never consumes a charge).
  */

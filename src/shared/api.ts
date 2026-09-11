@@ -180,6 +180,8 @@ export interface LooperApi {
   reportMessagesFilter(filter: string): void;
   /** Filter window only: apply this filter to the parent conversation window and close. */
   applyMessagesFilter(value: string): void;
+  /** Export-options window only: confirm the Save-as-Markdown choice and close. */
+  applyMarkdownExport(opts: { includeThinking: boolean; includeTools: boolean; plain: boolean }): void;
   onEvent(cb: (e: EngineEvent) => void): () => void;
   /** UI commands pushed from the application menu. */
   onUi(cb: (e: UiEvent) => void): () => void;

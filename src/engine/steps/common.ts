@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { Settings, Task } from '../../shared/types';
+import type { Note, Settings, Task } from '../../shared/types';
 import { hasPlaceholder, renderTemplate } from '../../shared/template';
 import type { HostKind } from '../host';
 import type { Logger } from '../log';
@@ -143,6 +143,16 @@ export function buildPrompt(tpl: string, vars: Record<string, unknown>): string 
     }
   }
   return text;
+}
+
+/** The task's one-off guidance, appended after everything else so it wins. */
+export function noteSection(note: Note | undefined): string {
+  if (!note) return '';
+  return (
+    '\n\n## One-off guidance for this run\n' +
+    'The user attached this note to this specific run. It applies to this run only and overrides any conflicting instruction above.\n\n' +
+    note.text
+  );
 }
 
 /**

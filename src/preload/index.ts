@@ -102,6 +102,7 @@ const api: LooperApi = {
   showMessageContextMenu: (info) => ipcRenderer.send('context-menu:message', info),
   reportMessagesFilter: (filter) => ipcRenderer.send('messages:filter-state', filter),
   applyMessagesFilter: (value) => ipcRenderer.send('messages:filter-apply', value),
+  applyMarkdownExport: (opts) => ipcRenderer.send('markdown-export:apply', opts),
   onEvent: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: EngineEvent) => cb(ev);
     ipcRenderer.on('engine:event', listener);

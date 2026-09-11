@@ -20,7 +20,10 @@
     "serve": "npm run build:cli && npm run build:worker && node out/cli/cli.js serve",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "package": "npm run build:all && electron-builder --win",
+    "package": "node scripts/package.js",
+    "package:windows": "npm run build:all && electron-builder --win",
+    "package:mac": "npm run build:all && electron-builder --mac",
+    "package:linux": "npm run build:all && electron-builder --linux",
     "register:notifications": "electron scripts/register-notifications.js"
   },
   "dependencies": {
@@ -68,26 +71,71 @@
       "assets/icon.ico",
       "package.json"
     ],
-    "fileAssociations": [
-      {
-        "ext": "loopertask",
-        "name": "Looper Task",
-        "description": "Looper Task",
-        "icon": "assets/loopertask.ico",
-        "role": "Editor"
-      },
-      {
-        "ext": "loopertpl",
-        "name": "Looper Template",
-        "description": "Looper Template",
-        "icon": "assets/loopertpl.ico",
-        "role": "Editor"
-      }
-    ],
     "win": {
       "icon": "assets/icon.ico",
       "target": [
         "nsis"
+      ],
+      "fileAssociations": [
+        {
+          "ext": "loopertask",
+          "name": "Looper Task",
+          "description": "Looper Task",
+          "icon": "assets/loopertask.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "loopertpl",
+          "name": "Looper Template",
+          "description": "Looper Template",
+          "icon": "assets/loopertpl.ico",
+          "role": "Editor"
+        }
+      ]
+    },
+    "mac": {
+      "icon": "assets/icon.png",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "fileAssociations": [
+        {
+          "ext": "loopertask",
+          "name": "Looper Task",
+          "description": "Looper Task",
+          "role": "Editor"
+        },
+        {
+          "ext": "loopertpl",
+          "name": "Looper Template",
+          "description": "Looper Template",
+          "role": "Editor"
+        }
+      ]
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "category": "Development",
+      "maintainer": "leandro@lemorim.com",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "fileAssociations": [
+        {
+          "ext": "loopertask",
+          "name": "Looper Task",
+          "description": "Looper Task",
+          "role": "Editor"
+        },
+        {
+          "ext": "loopertpl",
+          "name": "Looper Template",
+          "description": "Looper Template",
+          "role": "Editor"
+        }
       ]
     }
   }

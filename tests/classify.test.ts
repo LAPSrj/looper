@@ -24,7 +24,7 @@ function fakeHarness(dir: string, body: string): string {
   return file;
 }
 
-function makeCtx(harnessCommand: string): RunContext {
+function makeCtx(harnessCommand: string, extra: Record<string, unknown> = {}): RunContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-classify-'));
   dirs.push(root);
   const runDir = path.join(root, 'run');
@@ -46,6 +46,7 @@ function makeCtx(harnessCommand: string): RunContext {
     cwd: root,
     agent: { ...EXAMPLE_TASK.agent, harnessId: 'fake' },
     classifier: { model: 'haiku', prompt: 'act or not? {{summary}}', timeoutSec: 30 },
+    ...extra,
   });
   return {
     task,
@@ -100,6 +101,19 @@ describe('headless classifier over pipes', () => {
     // Nothing of the agent step's namespace is touched.
     expect(fs.existsSync(path.join(ctx.runDir, 'settings.json'))).toBe(false);
     expect(fs.existsSync(path.join(ctx.runDir, 'output.txt'))).toBe(false);
+  });
+
+  it('appends the run\'s one-off note to the classifier prompt', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const line = resultLine({ result: '{"act":false,"reason":"nothing"}', structured_output: { act: false, reason: 'nothing' } });
+    const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+    const harness = fakeHarness(root, [`echo '{"type":"system","subtype":"init"}'`, `printf '%s\\n' ${sq(line)}`].join('\n'));
+    const ctx = makeCtx(harness, { note: { text: 'Only act after the release freeze lifts.', runsLeft: 1 } });
+    await runClassify(ctx, { onData: () => {} });
+    const prompt = fs.readFileSync(path.join(ctx.runDir, 'classify-prompt.txt'), 'utf8');
+    expect(prompt).toContain('## One-off guidance for this run');
+    expect(prompt.trim().endsWith('Only act after the release freeze lifts.')).toBe(true);
   });
 
   it('a result without structured output is an error, not a verdict', async () => {

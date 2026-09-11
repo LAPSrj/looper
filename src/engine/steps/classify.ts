@@ -1,7 +1,7 @@
 import type { Harness } from '../../shared/types';
 import { resolveClassifierHarness, resolveEnvironment } from '../../shared/environments';
 import { tail } from '../store/fsutil';
-import { buildPrompt, type RunContext } from './common';
+import { buildPrompt, noteSection, type RunContext } from './common';
 import { headlineOf, startSession, type SessionCallbacks, type SessionEnd, type SessionHandle } from './session';
 
 export interface ClassifyResult {
@@ -52,9 +52,10 @@ export function classifierFooter(taskName: string, runId: string): string {
   ].join('\n');
 }
 
-/** The rendered classifier prompt (also recorded on the classify `started` record). */
+/** The rendered classifier prompt (also recorded on the classify `started` record).
+ * The run's one-off note is appended too: it may bear on the decision to act. */
 export function classifyPrompt(ctx: RunContext): string {
-  return buildPrompt(ctx.task.classifier!.prompt, ctx.vars);
+  return buildPrompt(ctx.task.classifier!.prompt, ctx.vars) + noteSection(ctx.task.note);
 }
 
 export interface ClassifyCallbacks extends SessionCallbacks {

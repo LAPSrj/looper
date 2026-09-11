@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Note } from '../../shared/types';
 import { resolveEnvironment, resolveHarness } from '../../shared/environments';
-import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, type RunContext } from './common';
+import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, noteSection, type RunContext } from './common';
 import {
   parseDoneText,
   startSession,
@@ -85,16 +84,6 @@ export function systemFooter(taskName: string, runId: string, headless: boolean,
 /** The full prompt the agent gets: the rendered template plus the run's one-off note. */
 export function agentPrompt(ctx: RunContext): string {
   return buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.task.note);
-}
-
-/** The task's one-off guidance, appended after everything else so it wins. */
-export function noteSection(note: Note | undefined): string {
-  if (!note) return '';
-  return (
-    '\n\n## One-off guidance for this run\n' +
-    'The user attached this note to this specific run. It applies to this run only and overrides any conflicting instruction above.\n\n' +
-    note.text
-  );
 }
 
 export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<AgentHandle> {

@@ -120,13 +120,21 @@ only via Run Now (F5, toolbar, context menu) or the CLI/inbox `run` command.
 ## Install / run
 
 No compiler toolchain needed on any platform: node-pty ships N-API prebuilds
-(win32/linux/mac), which work in both Node and Electron as-is.
+(win32/linux/mac), which work in both Node and Electron as-is. Exception:
+musl-based distros (Alpine) — the prebuilds are glibc, so `npm install` falls
+back to `node-gyp rebuild` there and needs python3, make and a C++ compiler.
 
 ```bash
 npm install
 npm run dev            # Electron app with hot reload
 npm run build:all      # out/ (app) + out/cli/ (CLI + terminal worker)
-npm run package        # Windows installer in release/win-x64/
+npm run package        # installer for this platform in release/; from WSL it
+                       # builds the WINDOWS installer via powershell.exe in the
+                       # Windows checkout (LOOPER_WIN_REPO, or the repo's own
+                       # path when it lives on /mnt/<drive>)
+npm run package:windows # Windows installer in release/win-x64/
+npm run package:mac    # dmg + zip in release/mac-*/ (run on a Mac)
+npm run package:linux  # AppImage + deb in release/linux-x64/
 npm test               # engine unit tests
 ```
 
@@ -248,7 +256,9 @@ Prompt templates get `{{summary}}`, `{{context}}`, `{{task}}`, `{{taskId}}`,
 ## Known limitations / next
 
 - Closing the window quits Looper (and stops running agents) unless "Close to
-  system tray" is on in Settings. `looper --hidden` starts straight into the
+  system tray" is on in Settings (and the desktop actually has a tray — on
+  Linux without a StatusNotifier host the app quits rather than strand a
+  hidden window). `looper --hidden` starts straight into the
   tray, and Settings → "Start with the computer" registers exactly that as a
   login item. A standalone daemon is still open; the engine has no Electron
   dependency so this is a packaging change.

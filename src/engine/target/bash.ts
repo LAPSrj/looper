@@ -14,6 +14,18 @@ function killScript(runId: string, signal: string): string {
   );
 }
 
+/**
+ * macOS has no /proc: BSD ps's `e` flag appends each (same-user) process's
+ * environment to its command line, so match the run marker as an exact field.
+ */
+function killScriptMac(runId: string, signal: string): string {
+  return (
+    `ps axeww -o pid= -o command= | ` +
+    `awk -v m='LOOPER_RUN=${runId}' '{ for (i = 2; i <= NF; i++) if ($i == m) { print $1; break } }' | ` +
+    `while read -r p; do kill -${signal} "$p" 2>/dev/null; done; exit 0`
+  );
+}
+
 export class BashTarget implements Target {
   readonly kind = 'wsl' as const;
   readonly launcherExt = '.sh';
@@ -194,8 +206,9 @@ export class BashTarget implements Target {
   }
 
   async killLeftovers(runId: string): Promise<void> {
-    await this.runShell(killScript(runId, 'TERM'), 10_000);
+    const script = this.ctx.host === 'mac' ? killScriptMac : killScript;
+    await this.runShell(script(runId, 'TERM'), 10_000);
     await new Promise((r) => setTimeout(r, 1500));
-    await this.runShell(killScript(runId, 'KILL'), 10_000);
+    await this.runShell(script(runId, 'KILL'), 10_000);
   }
 }

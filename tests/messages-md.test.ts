@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageRow } from '../src/shared/messages';
-import { messagesToMarkdown } from '../src/shared/messages-md';
+import { messagesToMarkdown, stripMarkdown } from '../src/shared/messages-md';
 
 const row = (r: Partial<MessageRow> & { kind: MessageRow['kind'] }): MessageRow => ({
   id: '0',
@@ -74,5 +74,38 @@ describe('messagesToMarkdown', () => {
     );
     expect(md).toContain('*(no output)*');
     expect(md.match(/\*\*Result/g)).toHaveLength(1);
+  });
+
+  it('strips Markdown from prose in plain mode, but keeps tool text verbatim', () => {
+    const md = messagesToMarkdown(
+      [
+        row({ kind: 'prompt', ts: '2026-09-03T10:00:00.000Z', text: 'Fix the **bold** and `code` and ~~old~~ bits.' }),
+        row({ kind: 'thinking', text: '# plan\n> quote\nsee [docs](http://x)' }),
+        row({ kind: 'agent', text: 'Done.' }),
+        row({ kind: 'tool', tool: 'Bash', text: 'command: rm *.tmp', result: '' }),
+      ],
+      { ...opts, plain: true },
+    );
+    // Prose has its markers removed…
+    expect(md).toContain('Fix the bold and code and old bits.');
+    expect(md).toContain('see docs');
+    // …and the structural wrappers are gone: no headings, bold labels, fences, quotes.
+    expect(md).not.toMatch(/^#/m);
+    expect(md).not.toContain('**');
+    expect(md).not.toContain('```');
+    expect(md).not.toMatch(/^> /m);
+    expect(md).toContain('Prompt — ');
+    // Tool input stays literal — the shell glob must not be mangled.
+    expect(md).toContain('command: rm *.tmp');
+    // The (no output) placeholder loses its emphasis.
+    expect(md).toContain('(no output)');
+    expect(md).not.toContain('*(no output)*');
+  });
+
+  it('stripMarkdown removes emphasis/code/heading/quote/link markers, leaving the words', () => {
+    expect(stripMarkdown('**a** _b_ `c` ~~d~~')).toBe('a _b_ c d');
+    expect(stripMarkdown('# Title')).toBe('Title');
+    expect(stripMarkdown('> quoted')).toBe('quoted');
+    expect(stripMarkdown('[label](http://url)')).toBe('label');
   });
 });

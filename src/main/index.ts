@@ -84,7 +84,9 @@ if (!app.requestSingleInstanceLock()) {
       openLooperFile,
       updateTaskMenu,
     });
-    Menu.setApplicationMenu(null);
+    // macOS keeps one global menu bar; elsewhere each window carries its own.
+    if (process.platform === 'darwin') buildMenu();
+    else Menu.setApplicationMenu(null);
     createTray();
     if (!startHidden) createWindow();
     // Launched by double-clicking a Looper document (file association).
@@ -98,8 +100,17 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
+  // macOS: the global menu bar follows the focused window — a window with its
+  // own menu (run detail, messages) shows it; every other window shows the main menu.
+  app.on('browser-window-focus', (_e, w) => {
+    if (process.platform !== 'darwin') return;
+    const own = macWindowMenus.get(w);
+    if (own) Menu.setApplicationMenu(own);
+    else rebuildMenu();
+  });
+
   app.on('window-all-closed', () => {
-    if (!engine?.settings.closeToTray) app.quit();
+    if (!tray || !engine?.settings.closeToTray) app.quit();
   });
 
   app.on('before-quit', (event) => {
@@ -211,6 +222,12 @@ const trayIcon = process.platform === 'win32'
   ? path.join(__dirname, '../../assets/icon.ico')
   : appIcon;
 
+/** macOS menu-bar icons are ~18pt; the full-size PNG would render huge there. */
+function trayImage(): Electron.NativeImage {
+  const img = nativeImage.createFromPath(trayIcon);
+  return process.platform === 'darwin' ? img.resize({ width: 18, height: 18 }) : img;
+}
+
 function showWindow(): void {
   if (!win || win.isDestroyed()) {
     createWindow();
@@ -239,10 +256,18 @@ function trayMenu(): Menu {
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createFromPath(trayIcon));
-  tray.setToolTip('Looper');
-  tray.on('double-click', showWindow);
-  tray.setContextMenu(trayMenu());
+  // Linux desktops without a StatusNotifier host (e.g. stock GNOME) may have
+  // no tray; a failure here must not take the app down. Close-to-tray checks
+  // `tray` so a missing tray can never strand a hidden window.
+  try {
+    tray = new Tray(trayImage());
+    tray.setToolTip('Looper');
+    tray.on('double-click', showWindow);
+    tray.setContextMenu(trayMenu());
+  } catch (err) {
+    tray = null;
+    engine?.log.error(`tray unavailable: ${(err as Error).message}`);
+  }
 }
 
 function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void {
@@ -298,6 +323,42 @@ function loadRenderer(target: BrowserWindow, hash?: string): void {
   }
 }
 
+/** macOS: windows that carry their own menu (run detail, messages). */
+const macWindowMenus = new WeakMap<BrowserWindow, Menu>();
+
+/** Drop the Windows mnemonic ampersands from labels, recursively. */
+function stripMnemonics(items: Electron.MenuItemConstructorOptions[]): Electron.MenuItemConstructorOptions[] {
+  return items.map((item) => ({
+    ...item,
+    ...(typeof item.label === 'string' ? { label: item.label.replace(/&/g, '') } : {}),
+    ...(Array.isArray(item.submenu) ? { submenu: stripMnemonics(item.submenu) } : {}),
+  }));
+}
+
+/** Fit a Windows-shaped template to the macOS menu bar: app menu first, Edit after File. */
+function macTemplate(template: Electron.MenuItemConstructorOptions[]): Electron.MenuItemConstructorOptions[] {
+  const [file, ...rest] = stripMnemonics(template);
+  return [{ role: 'appMenu' }, file, { role: 'editMenu' }, ...rest];
+}
+
+/**
+ * Attach a window's own menu: per-window on Windows/Linux; on macOS
+ * (where BrowserWindow.setMenu does not exist) the global menu bar shows it
+ * while the window is focused — see the browser-window-focus handler.
+ */
+function attachWindowMenu(child: BrowserWindow, template: Electron.MenuItemConstructorOptions[]): Menu {
+  if (process.platform !== 'darwin') {
+    const menu = Menu.buildFromTemplate(template);
+    child.setMenu(menu);
+    return menu;
+  }
+  const menu = Menu.buildFromTemplate(macTemplate(template));
+  macWindowMenus.set(child, menu);
+  child.on('closed', () => rebuildMenu());
+  if (child.isFocused()) Menu.setApplicationMenu(menu);
+  return menu;
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400,
@@ -311,7 +372,7 @@ function createWindow(): void {
     webPreferences: webPreferences(),
   });
   win.on('close', (e) => {
-    if (!quitting && engine?.settings.closeToTray) {
+    if (!quitting && tray && engine?.settings.closeToTray) {
       e.preventDefault();
       win?.hide();
       return;
@@ -371,6 +432,39 @@ function openChildWindow(
   return child;
 }
 
+interface MarkdownExportChoice {
+  includeThinking: boolean;
+  includeTools: boolean;
+  plain: boolean;
+}
+
+/**
+ * The Save-as-Markdown options, in a modal window shown after the save location
+ * is chosen (the native save dialog cannot carry checkboxes). Resolves the
+ * chosen options, or null when the window is dismissed without confirming.
+ */
+function promptMarkdownExport(parent: BrowserWindow, defaults: MarkdownExportChoice): Promise<MarkdownExportChoice | null> {
+  return new Promise((resolve) => {
+    const bit = (b: boolean): string => (b ? '1' : '0');
+    const hash = `markdown-export/${bit(defaults.includeThinking)}/${bit(defaults.includeTools)}/${bit(defaults.plain)}`;
+    const child = openChildWindow(hash, 'Export Options', 360, 260, parent, { minWidth: 320, minHeight: 220, resizable: false });
+    let settled = false;
+    const done = (value: MarkdownExportChoice | null): void => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('markdown-export:apply', onApply);
+      resolve(value);
+      if (!child.isDestroyed()) child.close();
+    };
+    const onApply = (e: Electron.IpcMainEvent, opts: MarkdownExportChoice): void => {
+      if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+      done({ includeThinking: !!opts?.includeThinking, includeTools: !!opts?.includeTools, plain: !!opts?.plain });
+    };
+    ipcMain.on('markdown-export:apply', onApply);
+    child.on('closed', () => done(null));
+  });
+}
+
 function openRunDetailWindow(taskId: string, runId: string): void {
   const task = engine?.getTask(taskId);
   const title = task ? `${task.name} – ${runId}` : `Run ${runId}`;
@@ -408,7 +502,7 @@ function openRunDetailWindow(taskId: string, runId: string): void {
     return !raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
   };
   let rawChecked = false;
-  const menu = Menu.buildFromTemplate([
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
       submenu: [
@@ -434,8 +528,8 @@ function openRunDetailWindow(taskId: string, runId: string): void {
         { id: 'raw-output', label: '&Raw Terminal Log', type: 'checkbox', checked: false, click: (item) => { rawChecked = item.checked; send('toggle-raw-output'); } },
       ],
     },
-  ]);
-  child.setMenu(menu);
+  ];
+  attachWindowMenu(child, template);
   loadRenderer(child, hash);
 }
 
@@ -481,9 +575,8 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     }
     void shell.openPath(p);
   };
-  // Export options live in the menu; the checkboxes hold their own state.
-  let mdThinking = true;
-  let mdTools = true;
+  // The export options window remembers the last choice for this window's lifetime.
+  let exportOpts = { includeThinking: true, includeTools: true, plain: false };
   const saveMarkdown = async () => {
     if (!engine) return;
     try {
@@ -498,7 +591,12 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         filters: [{ name: 'Markdown', extensions: ['md'] }],
       });
       if (picked.canceled || !picked.filePath) return;
-      const md = messagesToMarkdown(result.rows, { title, includeThinking: mdThinking, includeTools: mdTools });
+      // The native save dialog can't hold checkboxes, so the options are a
+      // follow-up window shown once the location is set.
+      const chosen = await promptMarkdownExport(child, exportOpts);
+      if (!chosen) return;
+      exportOpts = chosen;
+      const md = messagesToMarkdown(result.rows, { title, ...chosen });
       fs.writeFileSync(picked.filePath, md, 'utf8');
     } catch (err) {
       await dialog.showMessageBox(child, {
@@ -510,13 +608,11 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       });
     }
   };
-  const menu = Menu.buildFromTemplate([
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
       submenu: [
         { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown() },
-        { label: 'Include &Thinking', type: 'checkbox', checked: mdThinking, click: (item) => { mdThinking = item.checked; } },
-        { label: 'Include Tool &Usage', type: 'checkbox', checked: mdTools, click: (item) => { mdTools = item.checked; } },
         { type: 'separator' },
         {
           label: 'Open &Run Folder',
@@ -565,8 +661,8 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         },
       ],
     },
-  ]);
-  child.setMenu(menu);
+  ];
+  const menu = attachWindowMenu(child, template);
   const onFilterState = (e: Electron.IpcMainEvent, filter: string) => {
     if (BrowserWindow.fromWebContents(e.sender) !== child) return;
     filterValue = String(filter ?? '');
@@ -919,7 +1015,7 @@ function buildMenu(
     autoOpenFolders: true,
     hideNoActionRuns: false,
   };
-  const menu = Menu.buildFromTemplate([
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
       submenu: [
@@ -932,10 +1028,15 @@ function buildMenu(
         { type: 'separator' },
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
-        { type: 'separator' },
-        ...restMenuItems(),
-        ...(engine?.host === 'windows' ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
-        { role: 'quit', label: 'E&xit' },
+        // macOS: Quit lives in the app menu that macTemplate prepends.
+        ...(process.platform === 'darwin'
+          ? []
+          : ([
+              { type: 'separator' },
+              ...restMenuItems(),
+              ...(engine?.host === 'windows' ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
+              { role: 'quit', label: 'E&xit' },
+            ] as Electron.MenuItemConstructorOptions[])),
       ],
     },
     {
@@ -1017,6 +1118,15 @@ function buildMenu(
         { label: '&About Looper', click: () => openAboutWindow() },
       ],
     },
-  ]);
-  if (win && !win.isDestroyed()) win.setMenu(menu);
+  ];
+  if (process.platform === 'darwin') {
+    // Don't stomp the menu of a focused run-detail/messages window; the
+    // browser-window-focus handler restores the main menu on the next switch.
+    const focused = BrowserWindow.getFocusedWindow();
+    if (!focused || !macWindowMenus.has(focused)) {
+      Menu.setApplicationMenu(Menu.buildFromTemplate(macTemplate(template)));
+    }
+  } else if (win && !win.isDestroyed()) {
+    win.setMenu(Menu.buildFromTemplate(template));
+  }
 }
