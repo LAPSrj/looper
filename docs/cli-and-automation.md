@@ -130,8 +130,8 @@ looper example --script > check.sh  # a matching example check script
 looper add task.json                # validate and queue it
 ```
 
-`looper example` prints the same shape as `examples/task.example.json` in
-the repo.
+`looper example` prints the same shape as
+[`examples/task.example.json`](examples/task.example.json) in the repo.
 For what each field means, see the [task editor](tasks.md) — the CLI and the
 in-app editor produce and accept the same task JSON.
 

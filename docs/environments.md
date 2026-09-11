@@ -5,6 +5,8 @@ and which agent CLIs are available there.
 
 ## What an environment is
 
+![Settings → Environments](img/settings-environments.png)
+
 An environment is either the shell Looper itself runs in, or a bridge to
 another one:
 
@@ -50,6 +52,8 @@ field's placeholder shows the prefix Looper actually detected for that
 distro.
 
 ## Harnesses
+
+![The harness editor](img/harness-editor.png)
 
 Each environment holds one or more **harnesses** — agent CLIs installed
 there. Manage them from the environment editor's Harnesses tab (Add, Edit,

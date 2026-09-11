@@ -2,6 +2,8 @@
 
 ## The main window
 
+![The main window: task list, folders, and the Status tab](img/main-window.png)
+
 The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active, otherwise a next-run countdown, "Not
 scheduled", "Manual", its paused reason, "Disabled", or "Completed" with the
@@ -108,6 +110,8 @@ task in it — nested folders included:
 
 ## The terminal tab
 
+![A live agent session in the Terminal tab](img/terminal.png)
+
 The Terminal tab is a live view of the task's harness sessions — a real
 terminal (xterm) you can watch and type into while a run is in progress.
 Before any run it shows "No agent session for this task yet. Output appears
@@ -130,6 +134,8 @@ and this task is set to hold. Type into the terminal to continue it, or
 press Stop agent."
 
 ## The run log
+
+![The Run log tab with a run selected and its report below](img/run-log.png)
 
 The Run log tab lists every past run of the task as a table: Date, Start,
 End, Result, Duration, Details. Each row is one full run (check, classify,
@@ -199,6 +205,8 @@ Code (30 days by default) show "The session transcript is no longer
 available."
 
 ## The run detail window
+
+![The run detail window: one run's phases and report](img/run-detail.png)
 
 Opened from a run log row, this window breaks one run into its phase rows —
 check, classify, agent, result — each with Time, Phase, Result, Duration,

@@ -89,11 +89,15 @@ At minimum, fill in:
   check whether the agent should run" so every scheduled slot goes straight
   to the agent.
 
+![The task editor's General tab](img/task-editor-general.png)
+
 Everything else — schedule, classifier, notifications — has a working
 default. Click Save. See the [task editor](tasks.md) reference for every tab
 and field.
 
 ## Running it
+
+![The main window with a task selected](img/main-window.png)
 
 Select the task in the sidebar and click Run Now (or press F5, or use
 Task → Run Now). Switch to the task's Terminal tab to watch the agent work

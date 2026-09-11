@@ -7,6 +7,8 @@ changes.
 
 ## General
 
+![The task editor's General tab](img/task-editor-general.png)
+
 - **Task name**
 - **Status** — Enabled, Disabled or Completed. A disabled task never runs on
   its own; Run Now still asks for confirmation before running it anyway. A
@@ -36,6 +38,8 @@ Where completed tasks are filed is a global choice — Settings → General →
 **Move completed tasks to folder**.
 
 ## Schedule
+
+![The task editor's Schedule tab](img/task-editor-schedule.png)
 
 A checkbox, "Run automatically on a schedule", turns the schedule on or off.
 Off keeps the configuration but the task never fires by itself — it's a
@@ -69,6 +73,8 @@ whose end date has passed switches that date off rather than erasing it.
 
 ## Check
 
+![The task editor's Check tab](img/task-editor-check.png)
+
 The checkbox "Run a command to check whether the agent should run" turns the
 check step on or off. Off means every scheduled slot goes straight to the
 classifier/agent.
@@ -85,6 +91,8 @@ classifier/agent.
   as an error. Default 60s.
 
 ## Classifier
+
+![The task editor's Classifier tab](img/task-editor-classifier.png)
 
 The checkbox "Ask a model whether the agent should run" turns the
 classifier step on or off. When on, it runs after a check that returned
@@ -110,6 +118,8 @@ classifier step on or off. When on, it runs after a check that returned
   its replies typed as **Classifier**.
 
 ## Agent
+
+![The task editor's Agent tab](img/task-editor-agent.png)
 
 - **Harness** — which harness in the task's environment runs the agent.
 - **Session type** — Interactive terminal (default): a real pty shown in the
@@ -165,6 +175,8 @@ classifier step on or off. When on, it runs after a check that returned
 
 ## Notifications
 
+![The task editor's Notifications tab](img/task-editor-notifications.png)
+
 Each toggle sends a separate system notification (subject to the master
 switch in Settings → General and the tray menu, and to nothing firing while
 a Looper window is focused):
@@ -198,7 +210,8 @@ completed fires, it replaces the plain end notification.
 ## Advanced
 
 A raw JSON view of the whole task definition — the same shape as
-`examples/task.example.json` and what the CLI's `looper add` accepts.
+[`examples/task.example.json`](examples/task.example.json) and what the
+CLI's `looper add` accepts.
 Switching to this tab serializes your current edits; switching away parses
 your JSON back into the other tabs. Useful for copying a task definition
 out, or pasting one in, in one shot.
