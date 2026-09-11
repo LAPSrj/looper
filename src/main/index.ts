@@ -9,6 +9,7 @@ import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
 import { messagesToMarkdown } from '../shared/messages-md';
+import { adjustImportedTaskPaths } from './import-paths';
 import { registerIpc } from './ipc';
 
 let win: BrowserWindow | null = null;
@@ -932,8 +933,18 @@ async function openLooperFile(file: string): Promise<void> {
     }
     return;
   }
+  let payload: Record<string, unknown> = doc.payload;
+  // A task opened next to its script/files runs from that folder: dead paths
+  // in cwd and the check command are re-pointed at the .loopertask's own dir.
+  if (doc.kind === 'task' && engine) {
+    try {
+      payload = await adjustImportedTaskPaths(payload, file, engine.settings, engine.host);
+    } catch {
+      /* keep the payload as imported */
+    }
+  }
   const key = Math.random().toString(36).slice(2, 10);
-  importDrafts.set(key, doc.payload);
+  importDrafts.set(key, payload);
   if (doc.kind === 'task') openChildWindow(`editor-import/${key}`, 'New Task — Looper', 780, 700);
   else openChildWindow(`template-import/${key}`, 'New Template — Looper', 780, 700);
 }
