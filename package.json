@@ -5,7 +5,7 @@
   "description": "Cron-style manager for AI agent loops: cheap checks, fresh claude sessions only when there is work, one agent per task.",
   "main": "./out/main/index.js",
   "author": "Leandro Amorim",
-  "license": "MIT",
+  "license": "PolyForm-Strict-1.0.0",
   "private": true,
   "bin": {
     "looper": "./bin/looper.js"

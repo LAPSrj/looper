@@ -123,4 +123,5 @@ The engine has no Electron imports, so it also runs standalone
 
 ## License
 
-MIT
+[PolyForm Strict 1.0.0](LICENSE.md) — free to use for noncommercial and
+personal purposes; no redistribution or derivative works.
