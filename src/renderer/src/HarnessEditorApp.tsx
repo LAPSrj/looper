@@ -244,7 +244,13 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               editDisabled={modelIdx === null}
               onRemove={() => void removeModel()}
               removeDisabled={modelIdx === null}
-            />
+            >
+              {draft.kind !== 'custom' && (
+                <button className="btn" onClick={() => void window.looper.openModelUpdate(envId, harnessId)}>
+                  Update…
+                </button>
+              )}
+            </ListActions>
           </div>
         )}
       </div>

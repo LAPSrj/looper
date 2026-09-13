@@ -1,4 +1,5 @@
 import type { MessageImage, MessagesResult } from './messages';
+import type { DiscoveredModel } from './model-update';
 import type { EngineEvent, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -110,6 +111,10 @@ export interface LooperApi {
   openHarnessEditor(envId: string, harnessId: string, isNew?: boolean): Promise<void>;
   /** Open the model editor for a harness's preset list (no index = add a new model). */
   openModelEditor(envId: string, harnessId: string, index?: number): Promise<void>;
+  /** Open the Update Models window (no ids = every claude-code/codex harness). */
+  openModelUpdate(envId?: string, harnessId?: string): Promise<void>;
+  /** Query a harness's CLI/API for its current model catalog. */
+  discoverModels(envId: string, harnessId: string): Promise<DiscoveredModel[]>;
   /** Open the template editor (no id = new template). */
   openTemplateEditor(templateId?: string): Promise<void>;
   /** Open the template picker, then the task editor prefilled with the chosen template. */

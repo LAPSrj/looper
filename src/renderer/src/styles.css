@@ -1157,6 +1157,109 @@ fieldset.step-fields {
   gap: 6px;
   margin-top: 10px;
 }
+/* Update Models window: harness groups + model rows with an action select.
+   Cloned from .env-list/.env-item so the two components can't conflict. */
+.mu-list {
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  min-height: 120px;
+  flex: 1;
+}
+.mu-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 4px;
+  cursor: default;
+  user-select: none;
+}
+.mu-group:hover {
+  background: var(--bg-3);
+}
+.mu-group-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mu-group-note {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mu-chev {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform 0.1s;
+}
+.mu-chev.open {
+  transform: rotate(90deg);
+}
+.mu-chev-space {
+  width: 10px;
+  flex: none;
+}
+.mu-group:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.mu-group .link {
+  flex: none;
+}
+.mu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 5px 26px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+.mu-item:hover {
+  background: var(--bg-3);
+}
+.mu-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.mu-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mu-item-sub {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mu-item.muted .mu-item-name,
+.mu-item.muted .mu-item-sub {
+  color: var(--fg-muted);
+  opacity: 0.65;
+}
+.mu-item select {
+  width: 120px;
+  flex: none;
+  height: 28px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--fg);
+}
+.mu-item select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .harness-card {
   border: 1px solid var(--border);
   border-radius: 6px;

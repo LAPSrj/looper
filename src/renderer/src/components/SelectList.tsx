@@ -113,10 +113,12 @@ interface ListActionsProps {
   onRemove: () => void;
   removeDisabled?: boolean;
   removeTitle?: string;
+  /** Extra buttons appended after Remove. */
+  children?: ReactNode;
 }
 
 /** The Add/Edit/Duplicate/Remove button row under a SelectList. */
-export function ListActions({ onAdd, onEdit, editDisabled, onDuplicate, duplicateDisabled, onRemove, removeDisabled, removeTitle }: ListActionsProps) {
+export function ListActions({ onAdd, onEdit, editDisabled, onDuplicate, duplicateDisabled, onRemove, removeDisabled, removeTitle, children }: ListActionsProps) {
   return (
     <div className="env-actions">
       <button className="btn" onClick={onAdd}>
@@ -133,6 +135,7 @@ export function ListActions({ onAdd, onEdit, editDisabled, onDuplicate, duplicat
       <button className="btn danger" disabled={removeDisabled} title={removeTitle} onClick={onRemove}>
         Remove
       </button>
+      {children}
     </div>
   );
 }

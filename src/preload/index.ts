@@ -67,6 +67,13 @@ const api: LooperApi = {
   openEnvironmentEditor: (envId, isNew) => ipcRenderer.invoke('envEditor:open', envId, isNew),
   openHarnessEditor: (envId, harnessId, isNew) => ipcRenderer.invoke('harnessEditor:open', envId, harnessId, isNew),
   openModelEditor: (envId, harnessId, index) => ipcRenderer.invoke('modelEditor:open', envId, harnessId, index),
+  openModelUpdate: (envId, harnessId) => ipcRenderer.invoke('modelUpdate:open', envId, harnessId),
+  // The discovery error is shown to the user; drop Electron's IPC framing
+  // ("Error invoking remote method '…': Error: ") so only the message is left.
+  discoverModels: (envId, harnessId) =>
+    ipcRenderer.invoke('models:discover', envId, harnessId).catch((e: Error) => {
+      throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+    }),
   openTemplateEditor: (templateId) => ipcRenderer.invoke('templateEditor:open', templateId),
   openTemplatePicker: () => ipcRenderer.invoke('templatePicker:open'),
   openEditorFromTemplate: (templateId) => ipcRenderer.invoke('editorFromTemplate:open', templateId),

@@ -11,6 +11,7 @@ import { InstructionsApp } from './InstructionsApp';
 import { EnvEditorApp } from './EnvEditorApp';
 import { HarnessEditorApp } from './HarnessEditorApp';
 import { ModelEditorApp } from './ModelEditorApp';
+import { ModelUpdateApp } from './ModelUpdateApp';
 import { FilterApp } from './FilterApp';
 import { FolderNameApp } from './FolderNameApp';
 import { FolderNoteApp } from './FolderNoteApp';
@@ -33,6 +34,7 @@ const templateImportMatch = /^template-import\/(.+)$/.exec(hash);
 const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
+const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runDetailMatch = /^run-detail\/([^/]+)\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
@@ -65,6 +67,14 @@ function pickRoot() {
   if (moveToFolderMatch) return <MoveToFolderApp taskId={decodeURIComponent(moveToFolderMatch[1])} />;
   if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;
   if (folderRenameMatch) return <FolderNameApp folderId={decodeURIComponent(folderRenameMatch[1])} />;
+  if (modelUpdateMatch) {
+    return (
+      <ModelUpdateApp
+        envId={modelUpdateMatch[1] ? decodeURIComponent(modelUpdateMatch[1]) : undefined}
+        harnessId={modelUpdateMatch[2] ? decodeURIComponent(modelUpdateMatch[2]) : undefined}
+      />
+    );
+  }
   if (modelEditorMatch) {
     return (
       <ModelEditorApp

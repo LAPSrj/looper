@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'ele
 import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
 
@@ -23,6 +24,7 @@ export interface IpcHost {
   openEnvEditor: (envId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
   openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
   openModelEditor: (envId: string, harnessId: string, index?: number, parent?: BrowserWindow | null) => void;
+  openModelUpdate: (envId?: string, harnessId?: string, parent?: BrowserWindow | null) => void;
   openTemplateEditor: (templateId?: string, parent?: BrowserWindow | null) => void;
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
@@ -197,6 +199,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('modelEditor:open', (e, envId: string, harnessId: string, index?: number) =>
     host.openModelEditor(envId, harnessId, index, BrowserWindow.fromWebContents(e.sender)),
   );
+  ipcMain.handle('modelUpdate:open', (e, envId?: string, harnessId?: string) =>
+    host.openModelUpdate(envId, harnessId, BrowserWindow.fromWebContents(e.sender)),
+  );
+  ipcMain.handle('models:discover', (_e, envId: string, harnessId: string) => {
+    const env = engine.settings.environments.find((x) => x.id === envId);
+    const harness = env?.harnesses.find((h) => h.id === harnessId);
+    if (!env || !harness) throw new Error('This harness no longer exists.');
+    return discoverHarnessModels(env, harness, engine.host);
+  });
   ipcMain.handle('templateEditor:open', (e, templateId?: string) =>
     host.openTemplateEditor(templateId, BrowserWindow.fromWebContents(e.sender)),
   );

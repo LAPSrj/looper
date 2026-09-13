@@ -78,6 +78,7 @@ if (!app.requestSingleInstanceLock()) {
       openEnvEditor: openEnvEditorWindow,
       openHarnessEditor: openHarnessEditorWindow,
       openModelEditor: openModelEditorWindow,
+      openModelUpdate: openModelUpdateWindow,
       openTemplateEditor: openTemplateEditorWindow,
       openTemplatePicker: openTemplatePickerWindow,
       openEditorFromTemplate: openEditorFromTemplateWindow,
@@ -836,6 +837,14 @@ function openModelEditorWindow(
   );
 }
 
+function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: BrowserWindow | null): void {
+  const hash =
+    envId && harnessId
+      ? `model-update/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}`
+      : 'model-update';
+  openChildWindow(hash, 'Update Models — Looper', 560, 560, parent ?? win);
+}
+
 function openTemplateEditorWindow(templateId?: string, _parent?: BrowserWindow | null): void {
   openChildWindow(
     templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
@@ -1102,6 +1111,8 @@ function buildMenu(
     {
       label: '&Advanced',
       submenu: [
+        { label: 'Update &Models…', click: () => openModelUpdateWindow() },
+        { type: 'separator' },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },
         { type: 'separator' },
         {
