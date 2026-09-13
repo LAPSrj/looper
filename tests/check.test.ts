@@ -158,4 +158,12 @@ describe('toClassifyResult', () => {
       .toBeUndefined();
     expect(toClassifyResult(end({ reason: 'stopped', network: true }), false, 180).network).toBeUndefined();
   });
+
+  it('blames a system sleep when an errored session outlived its timeout by far', () => {
+    for (const reason of ['max-runtime', 'idle-timeout', 'exited', 'error'] as const) {
+      expect(toClassifyResult(end({ reason, durationMs: 300_000 }), true, 60).slept).toBe(true);
+      expect(toClassifyResult(end({ reason, durationMs: 60_000 }), true, 60).slept).toBeUndefined();
+    }
+    expect(toClassifyResult(end({ reason: 'stopped', durationMs: 300_000 }), false, 60).slept).toBeUndefined();
+  });
 });

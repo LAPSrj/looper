@@ -115,6 +115,18 @@ export async function probeConnectivity(opts: { now?: () => number } = {}): Prom
 }
 
 /**
+ * A step that "ran" this far past its own timeout can only have spanned a
+ * system sleep: awake, the runner force-finishes within seconds of the timer.
+ * The slack is generous so kill/teardown lag can never blame a real overrun
+ * on sleep.
+ */
+export const SLEEP_SLACK_MS = 120_000;
+
+export function sleptThrough(durationMs: number, timeoutMs: number): boolean {
+  return durationMs > timeoutMs + SLEEP_SLACK_MS;
+}
+
+/**
  * Did this failure happen because the computer was offline? The text decides
  * when it names a network failure; otherwise a step that *could* have been the
  * network (spawn failure, non-zero exit, timeout) is probed. A probe that

@@ -169,6 +169,13 @@ export function createEngine(opts: EngineOptions): Engine {
 
   const scheduler = new Scheduler({ dataDir, host, settings, tasks, runs, state, log, steps: opts.steps });
 
+  // System sleep reaches the scheduler regardless of Rest Mode: runs in
+  // flight are stopped at the suspend and their tasks owed a fresh run, and
+  // work left due by the sleep is deferred a grace past the wake so it never
+  // races the network coming back.
+  opts.power?.onSuspend(() => scheduler.onSuspend());
+  opts.power?.onResume(() => scheduler.onResume());
+
   const rest =
     host === 'windows' && opts.power
       ? new RestController({

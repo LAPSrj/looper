@@ -47,6 +47,11 @@ export interface SchedulerDeps {
 
 const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classifying', 'running']);
 
+/** Stop reason of runs cut short because the system is suspending. */
+const SLEEP_STOP_REASON = 'computer went to sleep';
+/** Work due at (or cut short by) a sleep waits this long past the wake, so the network can come back first. */
+const RESUME_GRACE_MS = 20_000;
+
 /** How far along a run is; the task's aggregate state is its most advanced run. */
 const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 1, running: 2 };
 
@@ -75,6 +80,10 @@ export class Scheduler extends EventEmitter {
   private readonly deferLogged = new Set<string>();
   /** Per task: the usage-limit reset a run reported, pending until its last sibling finishes. */
   private readonly limitWaits = new Map<string, number>();
+  /** Runs stopped mid-flight because the system suspended (by run id). */
+  private readonly sleptRuns = new Set<string>();
+  /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
+  private readonly sleepOwed = new Set<string>();
   private readonly steps: SchedulerSteps;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
@@ -278,6 +287,42 @@ export class Scheduler extends EventEmitter {
       return true;
     }
     return false;
+  }
+
+  /**
+   * The system is suspending. A run in flight cannot survive it — its child
+   * processes and WSL sessions die, or come back broken at the wake with hours
+   * of phantom "runtime" — so every non-held run is stopped now, silently, and
+   * its task is owed a fresh run. A held run stays: it is parked waiting for a
+   * human, and killing it would throw away their session.
+   */
+  onSuspend(): void {
+    for (const rt of this.runtimes.values()) {
+      for (const run of [...rt.runs]) {
+        if (run.held) continue;
+        this.sleptRuns.add(run.runId);
+        this.sleepOwed.add(rt.taskId);
+        void this.stopTask(rt.taskId, SLEEP_STOP_REASON, run.runId);
+      }
+    }
+  }
+
+  /**
+   * The system woke up. Anything already due — slots that passed while asleep,
+   * re-runs owed by `onSuspend` — would fire on the very next tick and race the
+   * network coming back, which is the exact failure the run just died of. Due
+   * work is pushed a grace into the future instead, staggered a second apart.
+   */
+  onResume(): void {
+    const now = this.now();
+    let n = 0;
+    for (const rt of this.runtimes.values()) {
+      if (rt.nextRunAt !== null && rt.nextRunAt <= now + RESUME_GRACE_MS) {
+        rt.nextRunAt = now + RESUME_GRACE_MS + n++ * 1000;
+        this.emitRuntime(rt);
+      }
+    }
+    if (n) this.persist();
   }
 
   writeAgent(taskId: string, data: string, runId?: string): void {
@@ -601,6 +646,8 @@ export class Scheduler extends EventEmitter {
     let errored = false;
     /** The error above was the computer being offline, not the task failing. */
     let network = false;
+    /** The run spanned a system sleep: the machine's fault too, and the slot's work never happened. */
+    let slept = false;
     let outcome: RunResult = 'noop';
     let detail = 'nothing to do';
     let retryAtMs: number | undefined;
@@ -637,14 +684,16 @@ export class Scheduler extends EventEmitter {
             summary: check.summary,
             error: check.error,
             network: check.network,
+            slept: check.slept,
             stdoutTail: check.stdoutTail,
           });
           if (check.status === 'error') {
             errored = true;
             network = !!check.network;
+            slept = !!check.slept;
             go = false;
             outcome = 'error';
-            detail = `${network ? 'no network: ' : ''}check error: ${check.error}`;
+            detail = `${slept ? 'slept through the run: ' : network ? 'no network: ' : ''}check error: ${check.error}`;
           } else if (check.status === 'noop') {
             go = false;
             detail = check.summary ?? 'nothing to do';
@@ -672,14 +721,16 @@ export class Scheduler extends EventEmitter {
             body: cls.body,
             error: cls.error,
             network: cls.network,
+            slept: cls.slept,
             detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
           });
           if (cls.status === 'error') {
             errored = true;
             network = !!cls.network;
+            slept = !!cls.slept;
             go = false;
             outcome = 'error';
-            detail = `${network ? 'no network: ' : ''}classifier error: ${cls.error}`;
+            detail = `${slept ? 'slept through the run: ' : network ? 'no network: ' : ''}classifier error: ${cls.error}`;
             retryAtMs = cls.retryAtMs;
           } else if (cls.status === 'noop') {
             go = false;
@@ -745,7 +796,12 @@ export class Scheduler extends EventEmitter {
     } finally {
       this.agents.delete(runId);
       this.cycleStops.delete(runId);
-      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted);
+      // Cut short by the system suspending, or a step that provably spanned a
+      // sleep: either way the machine went down mid-run and the task is owed
+      // a fresh run once it is back up.
+      if (this.sleptRuns.delete(runId)) slept = true;
+      if (slept) this.sleepOwed.add(task.id);
+      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, slept);
     }
   }
 
@@ -852,14 +908,16 @@ export class Scheduler extends EventEmitter {
     retryAtMs?: number,
     network = false,
     wasCompleted = false,
+    slept = false,
   ): void {
     const now = this.now();
-    // A usage-limit wait is an error with a known end, and a network error is
-    // the computer's fault, not the task's: neither counts toward the
-    // auto-pause threshold nor resets the streak of real errors. An offline
-    // machine can therefore never auto-pause a task.
+    // A usage-limit wait is an error with a known end, and a network error or
+    // a system sleep is the computer's fault, not the task's: none of them
+    // counts toward the auto-pause threshold nor resets the streak of real
+    // errors. An offline or sleeping machine can therefore never auto-pause a
+    // task.
     const limitWait = retryAtMs !== undefined && retryAtMs > now;
-    const counts = !limitWait && !network;
+    const counts = !limitWait && !network && !slept;
     if (counts) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
@@ -873,6 +931,7 @@ export class Scheduler extends EventEmitter {
         this.runtimes.delete(taskId);
         this.dropBuffers(taskId);
         this.limitWaits.delete(taskId);
+        this.sleepOwed.delete(taskId);
       }
       this.persist();
       return;
@@ -895,6 +954,7 @@ export class Scheduler extends EventEmitter {
       this.d.log.warn(`[${taskId}] usage limit reached; next attempt at ${new Date(waitUntil).toISOString()}`);
     }
     if (rt.runs.length === 0) {
+      const owedSleep = this.sleepOwed.delete(taskId);
       const waitUntil = this.limitWaits.get(taskId);
       this.limitWaits.delete(taskId);
       if (!fresh.enabled) {
@@ -906,6 +966,13 @@ export class Scheduler extends EventEmitter {
       } else if (waitUntil !== undefined && waitUntil > now) {
         rt.state = 'idle';
         rt.nextRunAt = waitUntil;
+      } else if (owedSleep) {
+        rt.state = 'idle';
+        // The sleep killed the run's work, so the task goes due again a grace
+        // from now. Reached at a suspend, that lands shortly after the wake:
+        // the timer only runs again once the machine is back up, and
+        // `onResume` re-defers whatever the sleep left overdue.
+        rt.nextRunAt = now + RESUME_GRACE_MS;
       } else {
         rt.state = 'idle';
         // A slot that came due while the task was blocked by an environment or
@@ -922,6 +989,7 @@ export class Scheduler extends EventEmitter {
       errored,
       limitWait,
       network,
+      slept,
       autoPausedReason,
       completed: !wasCompleted && !!fresh.completedAt,
     });
@@ -935,7 +1003,8 @@ export class Scheduler extends EventEmitter {
    * end at the task's chosen level. A kind that is switched off falls through to the next — except a
    * network error, which is silent unless the task asked for those: the
    * computer being offline says nothing about the task and would otherwise
-   * toast for every task at once.
+   * toast for every task at once. A run the system sleep cut short is treated
+   * the same way — it re-fires after the wake, and that run's own end toasts.
    */
   private notifyCycleEnd(
     task: Task,
@@ -946,6 +1015,7 @@ export class Scheduler extends EventEmitter {
       errored: boolean;
       limitWait: boolean;
       network: boolean;
+      slept: boolean;
       autoPausedReason?: string;
       /** The task finished for good during this cycle. */
       completed: boolean;
@@ -964,7 +1034,8 @@ export class Scheduler extends EventEmitter {
       this.notify(task, runId, 'completed', `Completed: ${capFirst(task.completedReason ?? end.detail)}`);
       return;
     }
-    if (end.errored && end.network && !n.networkErrors) return;
+    if (end.errored && (end.network || end.slept) && !n.networkErrors) return;
+    if (!end.errored && end.slept) return;
     const matches =
       n.end === 'all' ||
       (n.end === 'end' && end.outcome !== 'noop') ||

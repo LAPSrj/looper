@@ -176,7 +176,7 @@ const records = () =>
     .filter((e) => e.type === 'record')
     .map(
       (e) =>
-        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean } })
+        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean; slept?: boolean } })
           .record,
     );
 
@@ -993,6 +993,93 @@ describe('notifications', () => {
     h.liveAgent!.end(agentEnd('done'));
     await flush();
     expect(notifies()).toHaveLength(1);
+  });
+});
+
+describe('system sleep', () => {
+  it('onSuspend stops a mid-check run silently and owes a re-run a grace later', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'all' } });
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.state).toBe('checking');
+    h.sched.onSuspend();
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.lastResult).toBe('stopped');
+    expect(rt.lastDetail).toBe('computer went to sleep');
+    expect(rt.nextRunAt).toBe(h.clock.now + 20_000);
+    expect(h.agentStarted).toBe(0);
+    expect(notifies()).toHaveLength(0);
+  });
+
+  it('onSuspend ends a running agent the same way', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'all' } });
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.state).toBe('running');
+    h.sched.onSuspend();
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.lastResult).toBe('stopped');
+    expect(rt.nextRunAt).toBe(h.clock.now + 20_000);
+    expect(notifies()).toHaveLength(0);
+  });
+
+  it('onSuspend leaves a held run alone', async () => {
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    h.liveAgent!.hold();
+    await flush();
+    h.sched.onSuspend();
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('running');
+    expect(rt.held).toBe(true);
+  });
+
+  it('a sleep-stopped run neither counts toward nor resets the error streak', async () => {
+    h.checks.push(check('error', { error: 'boom' }));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    h.sched.onSuspend();
+    await flush();
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(1);
+  });
+
+  it('a check error that provably spanned a sleep is silent, never counts, and re-arms the task', async () => {
+    h.checks.push(check('error', { error: 'check exited 1', slept: true }));
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(records().at(-1)).toMatchObject({ phase: 'check', result: 'error', slept: true });
+    const rt = h.sched.get('t1')!;
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(rt.lastDetail).toMatch(/^slept through the run: check error:/);
+    expect(rt.nextRunAt).toBe(h.clock.now + 20_000);
+  });
+
+  it('a sleep-spanning error notifies when the task asked for network errors', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'error', networkErrors: true } });
+    h.checks.push(check('error', { error: 'boom', slept: true }));
+    await h.tickN(1);
+    expect(notifies().map((n) => n.kind)).toEqual(['end']);
+    expect(notifies()[0].body).toMatch(/^Error: Slept through the run:/);
+  });
+
+  it('onResume defers due work past the grace and leaves future slots alone', async () => {
+    const rt = h.sched.get('t1')!;
+    rt.nextRunAt = h.clock.now - 5_000; // came due while asleep
+    h.sched.onResume();
+    expect(rt.nextRunAt).toBe(h.clock.now + 20_000);
+    rt.nextRunAt = h.clock.now + 120_000;
+    h.sched.onResume();
+    expect(rt.nextRunAt).toBe(h.clock.now + 120_000);
   });
 });
 

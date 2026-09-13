@@ -471,6 +471,8 @@ export interface RunRecord {
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
+  /** The error happened because the computer slept through the run, not because the task failed. */
+  slept?: boolean;
   stdoutTail?: string;
   detail?: Record<string, unknown>;
 }

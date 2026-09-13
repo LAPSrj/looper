@@ -3,8 +3,10 @@ import {
   CLAUDE_NETWORK_RE,
   CLAUDE_RETRY_RE,
   NETWORK_ERROR_RE,
+  SLEEP_SLACK_MS,
   classifyFailure,
   looksLikeNetworkError,
+  sleptThrough,
 } from '../src/engine/network';
 
 // The Claude Code banner as a live offline run printed it (claude 2.1.258).
@@ -108,5 +110,14 @@ describe('classifyFailure', () => {
       throw new Error('probe broke');
     };
     expect(await classifyFailure({ mayBeNetwork: true, probe: boom })).toBe(false);
+  });
+});
+
+describe('sleptThrough', () => {
+  it('flags a duration far past the timeout, and nothing near it', () => {
+    expect(sleptThrough(60_000 + SLEEP_SLACK_MS + 1, 60_000)).toBe(true);
+    expect(sleptThrough(51_577_000, 60_000)).toBe(true); // a 60 s check "ran" 14.3 h across a sleep
+    expect(sleptThrough(60_000 + SLEEP_SLACK_MS, 60_000)).toBe(false);
+    expect(sleptThrough(61_000, 60_000)).toBe(false); // ordinary kill/teardown lag
   });
 });

@@ -1,6 +1,7 @@
 import type { Harness } from '../../shared/types';
 import { resolveClassifierHarness, resolveEnvironment } from '../../shared/environments';
 import { tail } from '../store/fsutil';
+import { sleptThrough } from '../network';
 import { buildPrompt, noteSection, type RunContext } from './common';
 import { headlineOf, startSession, type SessionCallbacks, type SessionEnd, type SessionHandle } from './session';
 
@@ -13,6 +14,8 @@ export interface ClassifyResult {
   error?: string;
   /** The error was a network failure: the API was never reached. */
   network?: boolean;
+  /** The run spanned a system sleep: the machine went down, not the task. */
+  slept?: boolean;
   costUsd?: number;
   /** Set when a usage limit ended the session: epoch ms of when to try again. */
   retryAtMs?: number;
@@ -66,6 +69,8 @@ export interface ClassifyCallbacks extends SessionCallbacks {
 /** Maps how the session ended to the classifier verdict. */
 export function toClassifyResult(end: SessionEnd, headless: boolean, timeoutSec: number): ClassifyResult {
   const base = { durationMs: end.durationMs, exitCode: end.exitCode, costUsd: end.costUsd, body: end.body };
+  /** A duration far past the timeout: the machine slept through the session. Rides on errors only. */
+  const slept = sleptThrough(end.durationMs, timeoutSec * 1000) || undefined;
   switch (end.reason) {
     case 'stopped':
       return { status: 'stopped', reason: end.headline, ...base };
@@ -81,18 +86,19 @@ export function toClassifyResult(end: SessionEnd, headless: boolean, timeoutSec:
       return { status: 'error', error: `classifier gave no verdict: ${where}`, ...base };
     }
     case 'max-runtime':
-      return { status: 'error', error: `classifier timed out after ${timeoutSec} s`, network: end.network, ...base };
+      return { status: 'error', error: `classifier timed out after ${timeoutSec} s`, network: end.network, slept, ...base };
     case 'idle-timeout':
-      return { status: 'error', error: 'classifier session went idle without looper-classify', network: end.network, ...base };
+      return { status: 'error', error: 'classifier session went idle without looper-classify', network: end.network, slept, ...base };
     case 'exited':
       return {
         status: 'error',
         error: tail(`${end.headline ?? 'classifier exited'}${end.body ? ': ' + end.body.trim() : ''}`, 600),
         network: end.network,
+        slept,
         ...base,
       };
     case 'error':
-      return { status: 'error', error: end.headline ?? 'classifier failed', network: end.network, retryAtMs: end.retryAtMs, ...base };
+      return { status: 'error', error: end.headline ?? 'classifier failed', network: end.network, slept, retryAtMs: end.retryAtMs, ...base };
   }
 }
 

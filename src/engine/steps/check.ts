@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { CheckOutput } from '../../shared/types';
-import { classifyFailure } from '../network';
+import { classifyFailure, sleptThrough } from '../network';
 import { tail, writeText } from '../store/fsutil';
 import { runCaptured, writeLauncher, type RunContext } from './common';
 
@@ -11,6 +11,8 @@ export interface CheckResult {
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
+  /** The run spanned a system sleep: the machine went down, not the task. */
+  slept?: boolean;
   exitCode: number | null;
   durationMs: number;
   stdoutTail: string;
@@ -57,6 +59,12 @@ export async function runCheck(ctx: RunContext): Promise<CheckResult> {
   // when the text is silent); a spawn failure is the machine's own shell and
   // only its message can say otherwise. A user stop is classified as nothing.
   const failed = async (error: string, mayBeNetwork: boolean): Promise<CheckResult> => {
+    // A duration far past the timeout proves the machine slept mid-run; a
+    // connectivity probe *now* (at the wake) would only race the network
+    // coming back and misattribute the failure.
+    if (sleptThrough(res.durationMs, check.timeoutSec * 1000)) {
+      return { status: 'error', error, ...base, slept: true };
+    }
     const network = await classifyFailure({ text: `${res.stderr}\n${base.stdoutTail}`, mayBeNetwork });
     return { status: 'error', error, ...base, ...(network ? { network: true } : {}) };
   };
