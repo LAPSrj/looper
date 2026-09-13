@@ -4,14 +4,17 @@ import { Command } from 'commander';
 import { defaultDataDir } from '../engine/host';
 import { formatDuration } from '../shared/duration';
 import { EXAMPLE_CHECK_SCRIPT, EXAMPLE_TASK } from '../shared/example-task';
-import type { InboxCommand, RunRecord, TaskRuntime } from '../shared/types';
-import { slugify, validateTask } from '../shared/validate';
+import { FILE_KINDS, readLooperFile, wrapLooperFile } from '../shared/files';
+import { taskSchemaDoc } from '../shared/schema-doc';
+import { SettingsSchema, type Environment, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
+import { importTaskDraft, slugify, validateTask } from '../shared/validate';
 
 const program = new Command();
 program
   .name('looper')
   .description('Cron-style manager for AI agent loops')
-  .option('--data-dir <dir>', 'looper data directory (default: LOOPER_HOME or ~/looper)');
+  .option('--data-dir <dir>', 'looper data directory (default: LOOPER_HOME or ~/looper)')
+  .addHelpText('before', 'Agents automating Looper: run `looper agents` for the task-authoring guide.\n');
 
 function dataDir(): string {
   const opt = program.opts<{ dataDir?: string }>().dataDir;
@@ -59,24 +62,203 @@ program
     console.error('\nSee docs/tasks.md for a full field reference and guide.');
   });
 
-program
-  .command('add <file>')
-  .description('register (or update) a task from a JSON file')
-  .action((file: string) => {
-    const raw = readJsonFile<Record<string, unknown> | null>(file, null);
-    if (!raw) {
-      console.error(`cannot read JSON from ${file}`);
+/**
+ * The settings of the app this data dir belongs to, so environment/harness
+ * references are checked here instead of bouncing off the engine. Unreadable
+ * or unparseable settings just skip those checks — the running app
+ * re-validates anyway. The host is deliberately not passed to validateTask:
+ * the CLI may run on a different OS than the app (WSL against Windows), so
+ * a `local` environment's path style is undecidable here.
+ */
+function targetSettings(): { environments: Environment[]; defaultEnvironmentId: string } | undefined {
+  const raw = readJsonFile<unknown>(path.join(dataDir(), 'settings.json'), null);
+  if (!raw) return undefined;
+  const s = SettingsSchema.safeParse(raw);
+  return s.success ? { environments: s.data.environments, defaultEnvironmentId: s.data.defaultEnvironmentId } : undefined;
+}
+
+/** Read a task definition: plain JSON, or a .loopertask (envelope stripped). Exits on unreadable input. */
+function readDefinition(file: string): Record<string, unknown> {
+  const raw = readJsonFile<Record<string, unknown> | null>(file, null);
+  if (!raw) {
+    console.error(`cannot read JSON from ${file}`);
+    process.exit(2);
+  }
+  let def = raw;
+  if ('$type' in raw) {
+    const doc = readLooperFile(raw);
+    if (!doc.ok) {
+      console.error(
+        doc.reason === 'newer'
+          ? `written by a newer Looper (${doc.app ?? 'unknown version'}) — update Looper to read it`
+          : `not a Looper task document: ${file}`,
+      );
       process.exit(2);
     }
-    if (!raw.id && typeof raw.name === 'string') raw.id = slugify(raw.name);
-    const v = validateTask(raw);
+    if (doc.kind !== 'task') {
+      console.error(`not a task document (a ${doc.kind}): ${file}`);
+      process.exit(2);
+    }
+    def = doc.payload;
+  }
+  if (!def.id && typeof def.name === 'string') def.id = slugify(def.name);
+  return def;
+}
+
+/** Version stamped as $app into written .loopertask files. */
+function cliVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+/**
+ * Dotted paths whose original value the import heuristics changed or dropped.
+ * Fields the author never set are ignored: filling a default is not a fix.
+ */
+function changedPaths(before: unknown, after: unknown, prefix: string, out: string[]): void {
+  if (before === undefined) return;
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+  if (isObj(before) && isObj(after)) {
+    for (const key of Object.keys(before)) {
+      changedPaths(before[key], after[key], prefix ? `${prefix}.${key}` : key, out);
+    }
+    return;
+  }
+  out.push(prefix || 'task');
+}
+
+const AGENTS_GUIDE = `Task-authoring guide for agents
+
+Read first:
+  looper schema              the field reference as JSON: every task field with its type,
+                             default and allowed values, and the permission modes per
+                             harness kind (includes the environments block below when
+                             this data dir's settings.json is readable)
+  looper environments        just the configured environment and harness ids — what
+                             environmentId / harnessId must name
+  looper example             a complete example task definition (every field, valid values)
+  looper example --script    an example check script (the check-output contract)
+
+Then:
+  1. write <task>.json       "id" may be omitted: "name" is slugified into one
+  2. looper validate <file>  check it; errors block (exit 1), while references to
+                             environments/harnesses this setup lacks are only warnings here;
+                             writes <id>.loopertask next to the file (or into --out <dir>)
+  3. looper add <file>       validate strictly (references included) and queue the task in
+                             the running app's inbox — registers or updates, matched by id
+     looper add --fix        first replace invalid values with defaults (the .loopertask
+                             import heuristics); each change is printed as "fixed: <path>"
+
+Notes:
+  - add and validate accept plain JSON or a .loopertask document.
+  - Exit codes: 0 ok, 1 invalid task, 2 unreadable input or missing settings.
+  - Results go to stdout; errors, warnings and fixes go to stderr.
+  - Point LOOPER_HOME (or --data-dir) at the data dir of the Looper app that should run
+    the task; a running app picks queued files from inbox/, and rejects them into
+    inbox/rejected/ with a matching .error.txt.
+
+Full documentation: docs/tasks.md (field guide), docs/cli-and-automation.md (CLI and inbox).`;
+
+program
+  .command('agents')
+  .description('print the task-authoring guide for agents: what to read, then how to validate and register')
+  .action(() => {
+    console.log(AGENTS_GUIDE);
+  });
+
+/** This setup's configured ids — what environmentId / harnessId must name. */
+function configuredIds(settings: NonNullable<ReturnType<typeof targetSettings>>): object {
+  return {
+    defaultEnvironmentId: settings.defaultEnvironmentId,
+    environments: settings.environments.map((e) => ({
+      id: e.id,
+      name: e.name,
+      kind: e.kind,
+      harnesses: e.harnesses.map((h) => ({ id: h.id, name: h.name, kind: h.kind })),
+    })),
+  };
+}
+
+program
+  .command('environments')
+  .description('print the configured environment and harness ids (what environmentId / harnessId must name)')
+  .action(() => {
+    const settings = targetSettings();
+    if (!settings) {
+      console.error(`cannot read settings.json in ${dataDir()}`);
+      process.exit(2);
+    }
+    console.log(JSON.stringify(configuredIds(settings), null, 2));
+  });
+
+program
+  .command('schema')
+  .description('print the task JSON field reference (generated from the schema): field, type, default, allowed values')
+  .action(() => {
+    const settings = targetSettings();
+    const doc = { ...taskSchemaDoc(), ...(settings && configuredIds(settings)) };
+    console.log(JSON.stringify(doc, null, 2));
+  });
+
+program
+  .command('add <file>')
+  .description('register (or update) a task from a JSON or .loopertask file')
+  .option('--fix', 'replace invalid values with defaults (the .loopertask import heuristics) instead of rejecting them')
+  .action((file: string, opts: { fix?: boolean }) => {
+    let def = readDefinition(file);
+    const settings = targetSettings();
+    const fixes: string[] = [];
+    if (opts.fix) {
+      if (!settings) {
+        console.error(`--fix needs a readable settings.json in ${dataDir()}`);
+        process.exit(2);
+      }
+      const draft = importTaskDraft(def, settings) as Record<string, unknown>;
+      changedPaths(def, draft, '', fixes);
+      def = draft;
+    }
+    const v = validateTask(def, settings?.environments);
     if (!v.ok) {
       console.error('invalid task:');
       for (const e of v.errors) console.error('  - ' + e);
       process.exit(1);
     }
+    for (const f of fixes) console.error('fixed: ' + f);
     const dest = dropInbox(v.task, `task-${v.task.id}`);
     console.log(`queued task ${v.task.id} -> ${dest}`);
+  });
+
+program
+  .command('validate <file>')
+  .description('validate a task JSON and write the .loopertask document next to it (or into --out <dir>)')
+  .option('--out <dir>', 'directory to write the .loopertask into')
+  .action((file: string, opts: { out?: string }) => {
+    const def = readDefinition(file);
+    // References to environments/harnesses this setup doesn't have are only
+    // warnings here: the file may be written for another Looper setup.
+    const v = validateTask(def, targetSettings()?.environments, undefined, { refWarnings: true });
+    if (!v.ok) {
+      console.error('invalid task:');
+      for (const e of v.errors) console.error('  - ' + e);
+      process.exit(1);
+    }
+    for (const w of v.warnings) console.error('warning: ' + w);
+    const data = { ...v.task };
+    delete data.createdAt;
+    delete data.updatedAt;
+    // A one-off run note is transient state, never part of an exported definition.
+    delete data.note;
+    const doc = wrapLooperFile('task', cliVersion(), data);
+    const dest = path.join(opts.out ?? path.dirname(path.resolve(file)), `${v.task.id}.${FILE_KINDS.task.ext}`);
+    fs.writeFileSync(dest, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+    console.log(`valid task ${v.task.id} -> ${dest}`);
   });
 
 program

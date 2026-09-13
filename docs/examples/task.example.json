@@ -2,22 +2,36 @@
   "id": "issues-triage",
   "name": "Issues triage",
   "enabled": true,
-  "schedule": { "cron": "*/10 * * * *" },
+  "completion": { "allowed": false },
+  "folderId": "my-folder",
+  "schedule": {
+    "enabled": true,
+    "cron": "*/10 * * * *",
+    "timezone": "UTC",
+    "stopOn": { "enabled": false, "at": "2027-01-01T09:00:00" }
+  },
   "environmentId": "local",
   "cwd": "/home/me/repos/project",
   "env": {},
   "check": {
+    "enabled": true,
     "command": "bash scripts/check-github-issues.sh",
     "timeoutSec": 60
   },
   "classifier": {
+    "enabled": true,
+    "harnessId": "claude",
     "model": "haiku",
+    "mode": "headless",
     "prompt": "Decide whether the agent should act now. Say yes only if the items below represent real work that needs handling. Ignore noise, duplicates, and items that need no action.\n\nSummary: {{summary}}\n\n{{context}}",
     "timeoutSec": 180
   },
   "agent": {
+    "harnessId": "claude",
     "model": "sonnet",
     "mode": "interactive",
+    "session": "fresh",
+    "sessionMaxRuns": 10,
     "permissionMode": "auto",
     "prompt": "Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go.",
     "extraArgs": [],
@@ -25,5 +39,17 @@
     "idleGraceMin": 3,
     "onIdleTimeout": "finish"
   },
-  "backoff": { "maxConsecutiveErrors": 5 }
+  "backoff": { "maxConsecutiveErrors": 5 },
+  "maxConcurrentRuns": 1,
+  "notifications": {
+    "runStart": false,
+    "agentStart": false,
+    "end": "warning",
+    "held": false,
+    "autoPaused": false,
+    "completed": false,
+    "usageLimit": false,
+    "networkErrors": false
+  },
+  "note": { "text": "One-off guidance appended to the next run(s); consumed as runs use it.", "runsLeft": 1 }
 }

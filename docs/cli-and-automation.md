@@ -28,7 +28,11 @@ bottom of this page).
 |---|---|
 | `looper home` | print the data directory in use |
 | `looper example [--script]` | print an example task JSON, or with `--script` an example check script |
-| `looper add <file>` | validate a task JSON file and queue it in the inbox (registers or updates the task) |
+| `looper agents` | print the task-authoring guide for agents: what to read, then how to validate and register |
+| `looper environments` | print the configured environment and harness ids — what a task's `environmentId`/`harnessId` must name |
+| `looper schema` | print the task JSON field reference as JSON, generated from the schema: every field with its type, default, and allowed values, the per-kind permission modes, and the configured environments/harnesses when the data dir's `settings.json` is readable |
+| `looper add <file> [--fix]` | validate a task JSON (or `.loopertask`) file and queue it in the inbox (registers or updates the task); `--fix` first replaces invalid values with defaults, using the `.loopertask` import heuristics |
+| `looper validate <file> [--out <dir>]` | validate a task JSON and write the `.loopertask` document next to it (or into `--out <dir>`) |
 | `looper list` | list every task with its current state, next run time, and last result |
 | `looper run <taskId> [--reason <r>]` | queue a run-now command |
 | `looper pause <taskId> [--reason <r>]` | queue a pause command |
@@ -122,11 +126,20 @@ once handled, never left in place:
   matching `<file>.error.txt` next to it explaining why. Nothing is retried
   automatically — fix the file and drop a new one.
 
+A task naming an environment or harness this setup doesn't have is an error
+wherever the task is actually stored — `looper add`, the inbox, and the
+editor all reject it. Only `looper validate` reports those references as
+warnings, since the file may be written for another Looper setup whose ids
+differ; everything else it finds is still an error. When the target data
+dir's `settings.json` is readable, `looper add` checks the references
+itself instead of bouncing off the engine.
+
 ## The example workflow
 
 ```bash
 looper example > task.json          # a filled-in example task definition
 looper example --script > check.sh  # a matching example check script
+looper validate task.json           # check it and get issues-triage.loopertask next to it
 looper add task.json                # validate and queue it
 ```
 

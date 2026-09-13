@@ -1,8 +1,8 @@
 import { Cron } from 'croner';
 import { z } from 'zod';
-import { TaskSchema, TemplateSchema, type Environment, type Task, type TaskInput } from './types';
+import { TaskSchema, TemplateSchema, type Environment, type Harness, type Task, type TaskInput } from './types';
 import { cronTz } from './cron';
-import { pathFlavor } from './environments';
+import { PERMISSION_MODES, harnessKindLabel, pathFlavor } from './environments';
 
 /** Whether croner accepts the IANA timezone name (it only checks on nextRun). */
 function validTimezone(tz: string): boolean {
@@ -14,9 +14,15 @@ function validTimezone(tz: string): boolean {
   }
 }
 
+/**
+ * `warnings` is empty unless `refWarnings` is set: only the standalone
+ * validate flow downgrades dangling environment/harness references to
+ * warnings, since the JSON may target another Looper setup whose ids differ.
+ * Everywhere a task is actually stored, those references are errors.
+ */
 export type ValidationResult =
-  | { ok: true; task: Task }
-  | { ok: false; errors: string[] };
+  | { ok: true; task: Task; warnings: string[] }
+  | { ok: false; errors: string[]; warnings: string[] };
 
 /** Editor field labels by schema path; error messages show these, not raw paths. */
 const FIELD_LABELS: Record<string, string> = {
@@ -79,11 +85,33 @@ function fieldLabel(path: (string | number)[]): string {
 function issueMessage(issue: z.ZodIssue): string {
   if (issue.code === z.ZodIssueCode.too_small && issue.type === 'string') return 'must not be empty';
   if (issue.code === z.ZodIssueCode.invalid_type && issue.received === 'undefined') return 'is required';
+  if (issue.code === z.ZodIssueCode.unrecognized_keys) {
+    return issue.keys.map((k) => `unknown field "${k}"`).join(', ');
+  }
   return issue.message;
 }
 
 interface ValidateOpts {
   template?: boolean;
+  /** Report dangling environment/harness references as warnings instead of errors (`looper validate`). */
+  refWarnings?: boolean;
+}
+
+/**
+ * A permission mode outside the harness's known set (schema-wise it is an
+ * open string) would only fail inside the spawned CLI at run time, so it is
+ * rejected here. Custom harnesses ignore the field, so any value passes
+ * there; with the kind unresolvable (no environments given — the CLI
+ * validates without them — or the harness reference itself broken) any
+ * kind's value passes.
+ */
+function permissionModeError(mode: string, kind?: Harness['kind']): string | null {
+  if (kind === 'custom') return null;
+  const tables = kind ? [PERMISSION_MODES[kind]] : Object.values(PERMISSION_MODES);
+  const values = [...new Set(tables.flat().map(([v]) => v))];
+  if (values.includes(mode)) return null;
+  const scope = kind ? ` for a ${harnessKindLabel(kind)} harness` : '';
+  return `Permission mode: unknown mode "${mode}"${scope} (valid: ${values.filter(Boolean).join(', ')}, or "" for none)`;
 }
 
 /**
@@ -101,10 +129,12 @@ export function validateTask(input: unknown, environments?: Environment[], host?
     return {
       ok: false,
       errors: parsed.error.issues.map((i) => `${fieldLabel(i.path)}: ${issueMessage(i)}`),
+      warnings: [],
     };
   }
   const task = parsed.data;
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (task.schedule.cron) {
     try {
       new Cron(task.schedule.cron);
@@ -122,14 +152,26 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   if (task.maxConcurrentRuns > 1 && task.agent.session === 'continue') {
     errors.push('Simultaneous runs: a continued conversation cannot be shared by overlapping runs');
   }
+  // Dangling references block a save, but the standalone validate flow only
+  // warns: the JSON may target another Looper setup whose ids differ.
+  const refs = opts?.refWarnings ? warnings : errors;
+  // Kind of the harness the agent would run with, when it can be resolved.
+  let harnessKind: Harness['kind'] | undefined;
   if (environments && task.environmentId) {
     const env = environments.find((e) => e.id === task.environmentId);
     if (!env) {
-      errors.push(`Environment: unknown environment "${task.environmentId}"`);
+      refs.push(`Environment: unknown environment "${task.environmentId}"`);
     } else {
-      if (task.agent.harnessId && !env.harnesses.some((h) => h.id === task.agent.harnessId)) {
-        errors.push(`Harness: environment "${env.name}" has no harness "${task.agent.harnessId}"`);
+      const harness = task.agent.harnessId
+        ? env.harnesses.find((h) => h.id === task.agent.harnessId)
+        : env.harnesses[0];
+      if (task.agent.harnessId && !harness) {
+        refs.push(`Harness: environment "${env.name}" has no harness "${task.agent.harnessId}"`);
       }
+      if (task.classifier?.harnessId && !env.harnesses.some((h) => h.id === task.classifier?.harnessId)) {
+        refs.push(`Classifier harness: environment "${env.name}" has no harness "${task.classifier.harnessId}"`);
+      }
+      harnessKind = harness?.kind;
       if (task.cwd) {
         const flavor = pathFlavor(env, host);
         if (flavor === 'windows' && /^\//.test(task.cwd)) {
@@ -141,7 +183,9 @@ export function validateTask(input: unknown, environments?: Environment[], host?
       }
     }
   }
-  return errors.length ? { ok: false, errors } : { ok: true, task };
+  const permError = permissionModeError(task.agent.permissionMode, harnessKind);
+  if (permError) errors.push(permError);
+  return errors.length ? { ok: false, errors, warnings } : { ok: true, task, warnings };
 }
 
 export interface ImportDraftOpts {
@@ -184,6 +228,15 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
     const hasHarness = (id?: string) => !id || known.harnesses.some((h) => h.id === id);
     if (!hasHarness(draft.agent.harnessId)) delete draft.agent.harnessId;
     if (draft.classifier && !hasHarness(draft.classifier.harnessId)) delete draft.classifier.harnessId;
+    // A permission mode the resolved harness kind doesn't know resets to Auto
+    // (the same reset the editor applies when it opens a draft).
+    const harness = draft.agent.harnessId
+      ? known.harnesses.find((h) => h.id === draft.agent.harnessId)
+      : known.harnesses[0];
+    if (harness && harness.kind !== 'custom') {
+      const modes = PERMISSION_MODES[harness.kind];
+      if (!modes.some(([v]) => v === (draft.agent.permissionMode ?? 'auto'))) draft.agent.permissionMode = 'auto';
+    }
     if (draft.cwd) {
       const flavor = pathFlavor(known, opts.host);
       if (flavor === 'windows' && /^\//.test(draft.cwd)) draft.cwd = '';

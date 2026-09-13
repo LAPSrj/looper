@@ -107,7 +107,7 @@ export function App() {
           break;
         } else {
           void window.looper
-            .confirm(`Complete "${t.name}"? It stops running and is deleted once the completed-task retention runs out.`)
+            .confirm(`Mark "${t.name}" as completed? It won't run again, and after a while it's deleted along with its run history.`)
             .then((ok) => {
               if (ok) void window.looper.runtime.complete(t.id);
             });

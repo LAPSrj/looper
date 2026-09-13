@@ -1,25 +1,46 @@
 import type { TaskInput } from './types';
 
+/**
+ * Every user-settable field, spelled out with its JSON value. The app-managed
+ * stamps (completedAt, completedReason, createdAt, updatedAt) are left out:
+ * Looper writes those itself.
+ */
 export const EXAMPLE_TASK: TaskInput = {
   id: 'issues-triage',
   name: 'Issues triage',
   enabled: true,
-  schedule: { cron: '*/10 * * * *' },
+  completion: { allowed: false },
+  // Sidebar folder id; a task pointing at no existing folder lists at the top level.
+  folderId: 'my-folder',
+  schedule: {
+    enabled: true,
+    cron: '*/10 * * * *',
+    timezone: 'UTC',
+    stopOn: { enabled: false, at: '2027-01-01T09:00:00' },
+  },
   environmentId: 'local',
   cwd: '/home/me/repos/project',
   env: {},
   check: {
+    enabled: true,
     command: 'node scripts/looper-check.js',
     timeoutSec: 60,
   },
   classifier: {
+    enabled: true,
+    harnessId: 'claude',
     model: 'haiku',
+    mode: 'headless',
     prompt:
       'Decide whether the agent should act now. Say yes only if the items below represent real work that needs handling. Ignore noise, duplicates, and items that need no action.\n\nSummary: {{summary}}\n\n{{context}}',
+    timeoutSec: 180,
   },
   agent: {
+    harnessId: 'claude',
     model: 'sonnet',
     mode: 'interactive',
+    session: 'fresh',
+    sessionMaxRuns: 10,
     permissionMode: 'auto',
     prompt:
       'Handle the pending items for this project.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one, commit as you go, and finish by running `looper-done <status> "<headline>"` followed by a closing message that reports what you did.',
@@ -29,6 +50,18 @@ export const EXAMPLE_TASK: TaskInput = {
     onIdleTimeout: 'finish',
   },
   backoff: { maxConsecutiveErrors: 5 },
+  maxConcurrentRuns: 1,
+  notifications: {
+    runStart: false,
+    agentStart: false,
+    end: 'warning',
+    held: false,
+    autoPaused: false,
+    completed: false,
+    usageLimit: false,
+    networkErrors: false,
+  },
+  note: { text: 'One-off guidance appended to the next run(s); consumed as runs use it.', runsLeft: 1 },
 };
 
 export const EXAMPLE_CHECK_SCRIPT = `#!/usr/bin/env bash
