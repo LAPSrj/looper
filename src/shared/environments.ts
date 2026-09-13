@@ -20,7 +20,11 @@ export function resolveHarness(task: Task, env: Environment): Harness {
   return first;
 }
 
-/** The classifier always runs on Claude Code: the task's harness if it is Claude Code, else the environment's first one. */
+/**
+ * The classifier needs a harness with structured output — Claude Code
+ * (--json-schema) or Codex (--output-schema): the named one, else the task's
+ * own harness when it qualifies, else the environment's first one that does.
+ */
 export function resolveClassifierHarness(task: Task, env: Environment): Harness {
   const cls = task.classifier;
   if (cls?.harnessId) {
@@ -28,12 +32,14 @@ export function resolveClassifierHarness(task: Task, env: Environment): Harness 
     if (h) return h;
   }
   const own = resolveHarness(task, env);
-  if (own.kind === 'claude-code') return own;
-  const claude = env.harnesses.find((h) => h.kind === 'claude-code');
-  if (!claude) {
-    throw new Error(`classifier needs a Claude Code harness in environment "${env.name}" (see Settings → Environments)`);
+  if (own.kind !== 'custom') return own;
+  const capable = env.harnesses.find((h) => h.kind !== 'custom');
+  if (!capable) {
+    throw new Error(
+      `classifier needs a Claude Code or Codex harness in environment "${env.name}" (see Settings → Environments)`,
+    );
   }
-  return claude;
+  return capable;
 }
 
 export function describeEnvironment(env: Environment): string {
@@ -91,7 +97,7 @@ export const SHELL_PRESETS: [string, string][] = [
   ['bash -lc', 'Basic shell, without your terminal setup'],
 ];
 
-/** claude-code only: whether looper answers the workspace-trust dialog for this harness. */
+/** claude-code and codex: whether looper answers the folder-trust dialog for this harness. */
 export function autoTrustWorkspace(harness: Harness): boolean {
   return harness.options?.autoTrustWorkspace ?? true;
 }
@@ -105,12 +111,63 @@ export const DEFAULT_MODELS: Record<Harness['kind'], HarnessModel[]> = {
     { id: 'haiku', name: 'Haiku' },
   ],
   codex: [
-    { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max' },
-    { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini' },
-    { id: 'gpt-5.1', name: 'GPT-5.1' },
+    { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
+    { id: 'gpt-5.5', name: 'GPT-5.5' },
   ],
   custom: [],
 };
+
+/**
+ * The permission modes offered per harness kind: [stored value, label]. Claude
+ * Code values go through --permission-mode verbatim; codex values map to its
+ * sandbox/approval flags (see codexPermissionArgs). '' omits every flag.
+ */
+export const PERMISSION_MODES: Record<Exclude<Harness['kind'], 'custom'>, [string, string][]> = {
+  'claude-code': [
+    ['auto', 'Auto'],
+    ['acceptEdits', 'Accept edits'],
+    ['manual', 'Manual'],
+    ['dontAsk', "Don't ask"],
+    ['plan', 'Plan mode'],
+    ['bypassPermissions', 'Bypass'],
+    ['', 'None'],
+  ],
+  codex: [
+    ['auto', 'Auto'],
+    ['read-only', 'Read-only sandbox'],
+    ['workspace-write', 'Workspace-write sandbox'],
+    ['danger-full-access', 'Full access'],
+    ['bypassPermissions', 'Bypass'],
+    ['', 'None'],
+  ],
+};
+
+/**
+ * The codex flags for a task's permission mode. 'auto' routes approvals
+ * through codex's automatic review in the workspace-write sandbox; the sandbox
+ * values pin that sandbox (never asking, since nobody is watching — the
+ * interactive CLI would otherwise stop on every approval; codex exec never
+ * asks and rejects -a); 'bypassPermissions' turns everything off. --sandbox
+ * and --approve-for-me are mutually exclusive, so each mode emits only one of
+ * them. Unknown values (a claude mode left on a switched task) emit nothing.
+ */
+export function codexPermissionArgs(mode: string | undefined, interactive: boolean): string[] {
+  switch (mode) {
+    case 'auto':
+      return ['--approve-for-me'];
+    case 'read-only':
+    case 'workspace-write':
+    case 'danger-full-access':
+      return interactive ? ['--sandbox', mode, '-a', 'never'] : ['--sandbox', mode];
+    case 'bypassPermissions':
+      return ['--dangerously-bypass-approvals-and-sandbox'];
+    default:
+      return [];
+  }
+}
 
 /** The models offered for a harness: its own preset list, or the kind's main models when unset. */
 export function harnessModels(harness: Harness): HarnessModel[] {

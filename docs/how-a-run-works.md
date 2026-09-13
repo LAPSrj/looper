@@ -145,7 +145,7 @@ once that date passes, option or not — the date is the instruction to stop.
 
 ## Held for a human
 
-When a Claude Code interactive run times out idle with `onIdleTimeout: hold`,
+When a Claude Code or Codex interactive run times out idle with `onIdleTimeout: hold`,
 the run isn't ended — it's held. The task list shows **Needs attention** and
 the status pane reads "The agent is waiting for you in the Terminal tab".
 Nothing about the run is lost; it's still the same session, just paused for

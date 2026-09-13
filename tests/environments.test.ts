@@ -97,9 +97,18 @@ describe('resolution', () => {
     expect(() => resolveHarness(t, env)).toThrow(/no harness/);
   });
 
-  it('classifier falls back to a claude-code harness, and demands one', () => {
-    expect(resolveClassifierHarness(task(), envWith([codex, claude2])).id).toBe('claude-2');
-    expect(() => resolveClassifierHarness(task(), envWith([codex]))).toThrow(/Claude Code harness/);
+  it('classifier runs on the task harness when capable, falls back past custom ones, and demands a capable one', () => {
+    const custom = { id: 'my-cli', name: 'My CLI', kind: 'custom' as const, command: 'my-cli', args: [], env: {} };
+    // The task's own harness (env's first: codex) can classify via --output-schema.
+    expect(resolveClassifierHarness(task(), envWith([codex, claude2])).id).toBe('codex');
+    expect(resolveClassifierHarness(task(), envWith([custom, claude2])).id).toBe('claude-2');
+    expect(resolveClassifierHarness(task(), envWith([custom, codex])).id).toBe('codex');
+    expect(() => resolveClassifierHarness(task(), envWith([custom]))).toThrow(/Claude Code or Codex harness/);
+    // An explicitly named classifier harness always wins.
+    const t = task({
+      classifier: { enabled: true, harnessId: 'claude-2', prompt: 'p', model: 'haiku', mode: 'headless', timeoutSec: 180 },
+    });
+    expect(resolveClassifierHarness(t, envWith([codex, claude2])).id).toBe('claude-2');
   });
 
   it('harness trust switch defaults on and can be turned off', () => {
@@ -180,11 +189,12 @@ describe('validateTask with environments', () => {
   it('rejects unknown environment and harness references', () => {
     const badEnv = validateTask(task({ environmentId: 'gone' }), environments);
     expect(badEnv.ok).toBe(false);
+    if (!badEnv.ok) expect(badEnv.errors[0]).toMatch(/unknown environment "gone"/);
     const t = task();
     t.agent.harnessId = 'missing';
     const badHarness = validateTask(t, environments);
     expect(badHarness.ok).toBe(false);
-    if (!badHarness.ok) expect(badHarness.errors[0]).toMatch(/no harness/);
+    if (!badHarness.ok) expect(badHarness.errors[0]).toMatch(/no harness "missing"/);
   });
 
   it('accepts a known schedule timezone and rejects an unknown one', () => {

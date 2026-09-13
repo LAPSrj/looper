@@ -35,9 +35,20 @@ describe('terminalHarnessCommand', () => {
     expect(cmd).toBe('claude');
   });
 
-  it('codex gets the model but never the permission mode', () => {
+  it('codex maps the permission mode to its own flags, then the model', () => {
     const cmd = terminalHarnessCommand(task(), bash, harness({ kind: 'codex', command: 'codex' }));
-    expect(cmd).toBe("codex --model 'sonnet'");
+    expect(cmd).toBe("codex --approve-for-me --model 'sonnet'");
+  });
+
+  it('codex sandbox modes never ask, and bypass turns everything off', () => {
+    const codex = harness({ kind: 'codex', command: 'codex' });
+    expect(terminalHarnessCommand(task({ model: undefined, permissionMode: 'workspace-write' }), bash, codex)).toBe(
+      'codex --sandbox workspace-write -a never',
+    );
+    expect(terminalHarnessCommand(task({ model: undefined, permissionMode: 'bypassPermissions' }), bash, codex)).toBe(
+      'codex --dangerously-bypass-approvals-and-sandbox',
+    );
+    expect(terminalHarnessCommand(task({ model: undefined, permissionMode: '' }), bash, codex)).toBe('codex');
   });
 });
 

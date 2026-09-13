@@ -200,9 +200,12 @@ rows-plus-panel view and also updates live. The link becomes available once
 the subagent has reported back to the parent.
 
 Messages come from the transcript files under the harness's own data
-directory, so they live and die with it: transcripts cleaned up by Claude
-Code (30 days by default) show "The session transcript is no longer
-available."
+directory (Claude Code's transcript JSONL, Codex's rollout files), so they
+live and die with it: transcripts cleaned up by the harness (Claude Code:
+30 days by default) show "The session transcript is no longer available."
+Custom harnesses record no transcript, so their runs have no messages.
+Codex runs show thinking rows only when the harness is configured to emit
+reasoning summaries; see [Harnesses](environments.md#harnesses).
 
 ## The run detail window
 

@@ -63,18 +63,39 @@ A harness has a Type:
 
 - **Claude Code** gets full integration: `--model` and `--permission-mode`
   flags built from the task's Agent tab, an injected system prompt, idle
-  detection (ends or holds a run that goes quiet after a turn), and a
-  per-harness "Folder trust dialog" setting — "Answer automatically
-  (recommended)" or "Wait for user" — for the first-run trust prompt Claude
-  Code shows for a new working directory.
-- **Codex** and **Custom** are invoked as `command [args…] "<prompt>"`, with
-  Looper's instruction footer prepended to the prompt. `looper-done` is on
-  PATH for all three kinds.
+  detection (ends or holds a run that goes quiet after a turn), rolling
+  conversations, and a per-harness "Folder trust dialog" setting — "Answer
+  automatically (recommended)" or "Wait for user" — for the first-run trust
+  prompt Claude Code shows for a new working directory.
+- **Codex** gets the same level of integration through its own mechanisms:
+  `--model` and sandbox/approval flags from the Agent tab, headless runs
+  through `codex exec --json`, idle detection and the final report through
+  codex's notify hook, rolling conversations through `codex … resume`, the
+  classifier through `--output-schema`, the Messages view from its rollout
+  transcripts, and the same "Folder trust dialog"
+  auto-answer. Looper's instruction footer is prepended to the prompt (codex
+  has no system-prompt flag), and interactive sessions run in codex's inline
+  scrollback mode so the captured output stays readable.
+- **Custom** is invoked as `command [args…] "<prompt>"`, with the footer
+  prepended; a run ends via `looper-done`, process exit, or the max runtime.
+
+`looper-done` is on PATH for all three kinds.
 
 Each harness has its own Command, Default arguments, and Shell environment
 variables — handy for two installs of the same tool under different
 accounts or config directories. A harness can also cap "Limit concurrent
 tasks" independently of its environment (see below).
+
+Codex's models don't produce reasoning summaries by default, so a codex
+run's Messages view shows no thinking rows. To get them, add these Default
+arguments to the codex harness:
+
+```
+-c model_reasoning_summary=auto
+```
+
+Optionally add `-c model_reasoning_effort=medium` (or `high`) to raise the
+reasoning depth at the same time.
 
 ## Models
 
@@ -84,7 +105,7 @@ optional display name). Left at its default, a harness offers the CLI's main
 models by their unprefixed ids:
 
 - Claude Code: Fable, Opus, Sonnet, Haiku
-- Codex: GPT-5.1 Codex Max, GPT-5.1 Codex Mini, GPT-5.1
+- Codex: GPT-6-Astra, GPT-5.6-Sol, GPT-5.6-Terra, GPT-5.6-Luna, GPT-5.5
 - Custom: no presets
 
 A task can still type any other model id as "Custom…" in its Model dropdown.
@@ -109,15 +130,16 @@ cap is rejected instead (logged as skipped) rather than queued.
 A task picks its environment on the editor's **General** tab, and one of
 that environment's harnesses on the **Agent** tab (blank picks the
 environment's first harness). The Agent tab is also where you set the
-model, session type (interactive or headless), and — for Claude Code — the
-permission mode; see [the task editor](tasks.md) for the full field list.
+model, session type (interactive or headless), and — for Claude Code and
+Codex — the permission mode; see [the task editor](tasks.md) for the full
+field list.
 
-The optional classifier step always runs on a Claude Code harness (headless
-`claude -p` by default, or an interactive session — its own Session type
+The optional classifier step runs on a Claude Code or Codex harness (a
+headless session by default, or an interactive one — its own Session type
 field). Left blank, its Harness field on the Classifier tab resolves to the
-task's own harness if that's Claude Code, otherwise the environment's first
-Claude Code harness; you can also pick a specific harness (and model) there
-explicitly.
+task's own harness unless that's a Custom one, otherwise the environment's
+first Claude Code or Codex harness; you can also pick a specific harness
+(and model) there explicitly.
 
 ## Default environments
 

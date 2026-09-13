@@ -124,7 +124,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
       env: parsedEnv,
       models: live?.models,
     };
-    if (folded.kind !== 'claude-code' || folded.options?.autoTrustWorkspace !== false) delete folded.options;
+    if (folded.kind === 'custom' || folded.options?.autoTrustWorkspace !== false) delete folded.options;
     if (!folded.models || sameModels(folded.models, DEFAULT_MODELS[folded.kind])) delete folded.models;
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? folded : h)) } : e,
@@ -210,7 +210,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               onChange={(n) => patch({ maxConcurrentTasks: n })}
             />
           )}
-          {draft.kind === 'claude-code' && (
+          {draft.kind !== 'custom' && (
             <Field label="Folder trust dialog">
               <select
                 value={draft.options?.autoTrustWorkspace === false ? 'manual' : 'auto'}

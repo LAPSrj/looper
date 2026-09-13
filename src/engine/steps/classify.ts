@@ -40,8 +40,8 @@ const CLASSIFY_IDLE_GRACE_MS = 2 * 60_000;
 
 /**
  * The classifier's system footer. Headless sessions answer through the
- * --json-schema structured output, so only the interactive session needs the
- * looper-classify contract spelled out.
+ * structured output (claude --json-schema / codex --output-schema), so only
+ * the interactive session needs the looper-classify contract spelled out.
  */
 export function classifierFooter(taskName: string, runId: string): string {
   return [
@@ -121,6 +121,8 @@ export async function runClassify(ctx: RunContext, cb: ClassifyCallbacks = { onD
       harness,
       headless,
       model: cls.model,
+      // The classifier only decides, so a codex classifier is pinned to the read-only sandbox.
+      permissionMode: harness.kind === 'codex' ? 'read-only' : undefined,
       extraArgs: [],
       // Headless answers via structured output; a footer would only add a turn.
       footer: headless ? '' : classifierFooter(task.name, ctx.runId),

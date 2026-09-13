@@ -40,6 +40,8 @@ export const NETWORK_ERROR_RE = new RegExp(
     // PowerShell / .NET.
     String.raw`the\s+remote\s+name\s+could\s+not\s+be\s+resolved`,
     String.raw`unable\s+to\s+connect\s+to\s+the\s+remote\s+server`,
+    // Rust reqwest (codex).
+    String.raw`error\s+sending\s+request`,
     // Claude Code.
     String.raw`can['’]t\s+reach\s+the\s+API\s+server`,
   ].join('|'),

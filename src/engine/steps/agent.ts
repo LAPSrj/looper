@@ -14,6 +14,7 @@ import {
 // The generic session machinery lives in session.ts; this module is the agent
 // step: its prompts, its looper-done contract, and the AgentEnd it reports.
 export {
+  CODEX_TRUST_PROMPT_RE,
   HEADLINE_MAX,
   TRUST_PROMPT_RE,
   USAGE_LIMIT_RE,

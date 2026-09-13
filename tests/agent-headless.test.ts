@@ -92,10 +92,59 @@ describe('HeadlessStream', () => {
       JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1_700_000_000 } }),
       JSON.stringify({ type: 'result', is_error: false, result: 'all good', structured_output: { act: true }, total_cost_usd: 0.02 }),
     ]);
+    expect(s.usageLimit).toBe(true);
     expect(s.usageLimitResetMs).toBe(1_700_000_000_000);
     expect(s.structured).toEqual({ act: true });
     expect(s.costUsd).toBe(0.02);
     expect(s.network).toBe(false);
+  });
+
+  // Codex --json JSONL, captured live from codex-cli 0.154.0.
+  it('reads a codex stream: thread id, last agent message, clean end', () => {
+    const s = replay([
+      JSON.stringify({ type: 'thread.started', thread_id: '01a09c02-3a24-7f73-b40f-a7c458d908fd' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'pong' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 15256, output_tokens: 5 } }),
+    ]);
+    expect(s.sessionId).toBe('01a09c02-3a24-7f73-b40f-a7c458d908fd');
+    expect(s.result).toBe('pong');
+    expect(s.isError).toBe(false);
+    expect(s.network).toBe(false);
+  });
+
+  it('reads a codex failure off error/turn.failed, and a completed turn clears earlier errors', () => {
+    const failMsg = '{"type":"error","status":400,"error":{"message":"The model is not supported."}}';
+    const failed = replay([
+      JSON.stringify({ type: 'thread.started', thread_id: 'x' }),
+      JSON.stringify({ type: 'error', message: failMsg }),
+      JSON.stringify({ type: 'turn.failed', error: { message: failMsg } }),
+    ]);
+    expect(failed.isError).toBe(true);
+    expect(failed.errorMessage).toBe(failMsg);
+    expect(failed.network).toBe(false);
+
+    const recovered = replay([
+      JSON.stringify({ type: 'error', message: 'transient' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'done anyway' } }),
+      JSON.stringify({ type: 'turn.completed', usage: {} }),
+    ]);
+    expect(recovered.isError).toBe(false);
+    expect(recovered.result).toBe('done anyway');
+  });
+
+  it('classifies a codex network failure and a usage limit', () => {
+    const offline = replay([
+      JSON.stringify({ type: 'turn.failed', error: { message: 'error sending request for url (https://chatgpt.com/backend-api/codex)' } }),
+    ]);
+    expect(offline.isError).toBe(true);
+    expect(offline.network).toBe(true);
+
+    const limited = replay([
+      JSON.stringify({ type: 'turn.failed', error: { message: "You've hit your usage limit." } }),
+    ]);
+    expect(limited.usageLimit).toBe(true);
+    expect(limited.network).toBe(false);
   });
 });
 
@@ -105,7 +154,11 @@ function fakeHarness(dir: string, body: string): string {
   return file;
 }
 
-function makeCtx(harnessCommand: string, taskExtra: Record<string, unknown> = {}): RunContext {
+function makeCtx(
+  harnessCommand: string,
+  taskExtra: Record<string, unknown> = {},
+  kind: 'claude-code' | 'codex' = 'claude-code',
+): RunContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-headless-'));
   dirs.push(root);
   const runDir = path.join(root, 'run');
@@ -118,7 +171,7 @@ function makeCtx(harnessCommand: string, taskExtra: Record<string, unknown> = {}
         kind: 'local',
         // No profile: keep the test independent of the machine's shell setup.
         shell: 'bash -c',
-        harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code', command: harnessCommand }],
+        harnesses: [{ id: 'fake', name: 'Fake', kind, command: harnessCommand }],
       },
     ],
   });
@@ -370,5 +423,78 @@ describe('headless agent over pipes', () => {
     expect(end.exitCode).toBe(3);
     expect(end.headline).toBe('Fake exited 3');
     expect(end.body).toBe('partial');
+  });
+
+  it('codex: exec with the permission, json and git-check flags; the stream yields report and thread id', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `echo '{"type":"thread.started","thread_id":"01a09c02-3a24-7f73-b40f-a7c458d908fd"}'`,
+        `echo '{"type":"item.completed","item":{"type":"agent_message","text":"Rotated 3 logs"}}'`,
+        `echo '{"type":"turn.completed","usage":{}}'`,
+      ].join('\n'),
+    );
+    const ctx = makeCtx(harness, {}, 'codex');
+    const end = await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(end.reason).toBe('done');
+    expect(end.body).toBe('Rotated 3 logs');
+    expect(end.headline).toBe('Rotated 3 logs');
+    expect(end.sessionId).toBe('01a09c02-3a24-7f73-b40f-a7c458d908fd');
+    const launcher = fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8');
+    expect(launcher).toContain('exec --approve-for-me --add-dir ');
+    expect(launcher).toContain(`--add-dir '${ctx.runDir}'`);
+    expect(launcher).toContain("--model 'sonnet' --json --skip-git-repo-check");
+    expect(launcher).not.toContain('--permission-mode');
+    // The launcher records the target-native codex home for the Messages view…
+    expect(launcher).toContain('CODEX_HOME');
+    expect(fs.existsSync(path.join(ctx.runDir, 'codex-home'))).toBe(true);
+    // …and the session records the thread id as soon as the stream names it.
+    const ref = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'codex-session.json'), 'utf8'));
+    expect(ref).toEqual({ thread_id: '01a09c02-3a24-7f73-b40f-a7c458d908fd' });
+    // No system-prompt flag: the footer rides at the top of the prompt itself.
+    const prompt = fs.readFileSync(path.join(ctx.runDir, 'prompt.txt'), 'utf8');
+    expect(prompt).toContain('started by Looper');
+  });
+
+  it('codex: a continued conversation resumes the thread, and a lost one flags sessionLost', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const ok = fakeHarness(root, `echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'`);
+    const continued = makeCtx(ok, {}, 'codex');
+    continued.agentSession = { id: '01a09c02-3a24-7f73-b40f-a7c458d908fd', resume: true };
+    await (await startAgent(continued, { onData: () => {} })).finished;
+    const launcher = fs.readFileSync(path.join(continued.runDir, 'run.sh'), 'utf8');
+    expect(launcher).toContain(`resume '01a09c02-3a24-7f73-b40f-a7c458d908fd'`);
+
+    const lostFile = path.join(root, 'fake-codex-lost');
+    writeText(
+      lostFile,
+      '#!/usr/bin/env bash\necho "Error: thread/resume failed: no rollout found for thread id 01a09c02 (code -32600)" >&2\nexit 1\n',
+      0o755,
+    );
+    const lost = makeCtx(lostFile, {}, 'codex');
+    lost.agentSession = { id: '01a09c02-3a24-7f73-b40f-a7c458d908fd', resume: true };
+    const end = await (await startAgent(lost, { onData: () => {} })).finished;
+    expect(end.reason).toBe('error');
+    expect(end.sessionLost).toBe(true);
+  });
+
+  it('codex: a failed turn keeps the error message as headline and body', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `echo '{"type":"error","message":"The model is not supported."}'`,
+        `echo '{"type":"turn.failed","error":{"message":"The model is not supported."}}'`,
+        `exit 1`,
+      ].join('\n'),
+    );
+    const end = await (await startAgent(makeCtx(harness, {}, 'codex'), { onData: () => {} })).finished;
+    expect(end.reason).toBe('exited');
+    expect(end.headline).toBe('The model is not supported.');
+    expect(end.body).toBe('The model is not supported.');
   });
 });

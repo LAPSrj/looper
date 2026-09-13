@@ -3,7 +3,7 @@ import { Cron } from 'croner';
 import type { Environment, Task, TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
-import { harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
+import { PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
 import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
@@ -97,15 +97,6 @@ function defaultStopOn(): string {
   return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
-const PERMISSION_MODES: [string, string][] = [
-  ['auto', 'Auto'],
-  ['acceptEdits', 'Accept edits'],
-  ['manual', 'Manual'],
-  ['dontAsk', "Don't ask"],
-  ['plan', 'Plan mode'],
-  ['bypassPermissions', 'Bypass'],
-  ['', 'None'],
-];
 
 export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
@@ -193,7 +184,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const env = environments.find((e) => e.id === draft.environmentId);
   const harnesses = env?.harnesses ?? [];
   const harness = harnesses.find((h) => h.id === draft.agent.harnessId) ?? harnesses[0];
-  const isClaude = (harness?.kind ?? 'claude-code') === 'claude-code';
+  const harnessKind = harness?.kind ?? 'claude-code';
+  const isClaude = harnessKind === 'claude-code';
+  const isCodex = harnessKind === 'codex';
+  const permissionModes = harnessKind === 'custom' ? [] : PERMISSION_MODES[harnessKind];
   const models = harness ? harnessModels(harness) : [];
   // Model presets come from the harness; anything else is edited as "Custom".
   const modelIsCustom = customModel || (!!draft.agent.model && !models.some((m) => m.id === draft.agent.model));
@@ -208,6 +202,22 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const setAgent = <K extends keyof Draft['agent']>(key: K, value: Draft['agent'][K]) =>
     setDraft((d) => ({ ...d, agent: { ...d.agent, [key]: value } }));
+  /** Switching to another harness kind: its model ids and permission modes don't carry over. */
+  const setHarness = (id: string) => {
+    const next = harnesses.find((h) => h.id === id);
+    const kind = next?.kind ?? 'claude-code';
+    setDraft((d) => {
+      const agent = { ...d.agent, harnessId: id };
+      if (kind !== harnessKind) {
+        agent.model = undefined;
+        if (kind !== 'custom' && !PERMISSION_MODES[kind].some(([v]) => v === (agent.permissionMode ?? 'auto'))) {
+          agent.permissionMode = 'auto';
+        }
+      }
+      return { ...d, agent };
+    });
+    if (kind !== harnessKind) setCustomModel(false);
+  };
   const notif = draft.notifications ?? {};
   const setNotif = <K extends keyof NonNullable<Draft['notifications']>>(key: K, value: NonNullable<Draft['notifications']>[K]) =>
     setDraft((d) => ({ ...d, notifications: { ...(d.notifications ?? {}), [key]: value } }));
@@ -685,7 +695,15 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     <select
                       value={clsHarness?.id ?? ''}
                       disabled={!clsOn || !harnesses.length}
-                      onChange={(e) => set('classifier', { ...draft.classifier!, harnessId: e.target.value })}
+                      onChange={(e) => {
+                        // Model ids don't carry across harnesses: snap to the new harness's first preset.
+                        const h = harnesses.find((x) => x.id === e.target.value);
+                        const presets = h ? harnessModels(h) : [];
+                        const cur = draft.classifier?.model;
+                        const model = cur && presets.some((m) => m.id === cur) ? cur : (presets[0]?.id ?? cur ?? 'haiku');
+                        setCustomClsModel(false);
+                        set('classifier', { ...draft.classifier!, harnessId: e.target.value, model });
+                      }}
                     >
                       {!harnesses.length && <option value="">No harnesses in this environment</option>}
                       {harnesses.map((h) => (
@@ -772,7 +790,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 <select
                   value={harness?.id ?? ''}
                   disabled={!harnesses.length}
-                  onChange={(e) => setAgent('harnessId', e.target.value)}
+                  onChange={(e) => setHarness(e.target.value)}
                 >
                   {!harnesses.length && <option value="">No harnesses in this environment</option>}
                   {harnesses.map((h) => (
@@ -785,11 +803,11 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               <Field label="Session type">
                 <select value={draft.agent.mode ?? 'interactive'} onChange={(e) => setAgent('mode', e.target.value as 'interactive' | 'headless')}>
                   <option value="interactive">Interactive terminal (default)</option>
-                  <option value="headless">Headless{harness?.kind === 'codex' ? ' (codex exec)' : ''}</option>
+                  <option value="headless">Headless{isCodex ? ' (codex exec)' : ''}</option>
                 </select>
               </Field>
             </div>
-            {(isClaude || harness?.kind === 'codex') && (
+            {(isClaude || isCodex) && (
               <div className="row">
                 <Field label="Model">
                   <select
@@ -822,10 +840,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     />
                   </Field>
                 )}
-                {isClaude && (
+                {permissionModes.length > 0 && (
                   <Field label="Permission mode">
                     <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
-                      {PERMISSION_MODES.map(([value, label]) => (
+                      {permissionModes.map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
                         </option>
@@ -835,7 +853,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 )}
               </div>
             )}
-            {isClaude && (
+            {(isClaude || isCodex) && (
               <div className="row">
                 <Field label="Conversation">
                   <select

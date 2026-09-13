@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Harness, Settings, Task } from '../shared/types';
-import { DEFAULT_SHELL, resolveEnvironment, resolveHarness } from '../shared/environments';
+import { DEFAULT_SHELL, codexPermissionArgs, resolveEnvironment, resolveHarness } from '../shared/environments';
 import type { HostKind } from './host';
 import { wslDistroName } from './host';
 import type { Logger } from './log';
@@ -21,6 +21,7 @@ export function terminalHarnessCommand(task: Task, target: Target, harness: Harn
     if (a.model) parts.push('--model', q(a.model));
     if (a.permissionMode) parts.push('--permission-mode', q(a.permissionMode));
   } else if (harness.kind === 'codex') {
+    for (const arg of codexPermissionArgs(a.permissionMode, true)) parts.push(arg);
     if (a.model) parts.push('--model', q(a.model));
   }
   for (const arg of harness.args) parts.push(q(arg));

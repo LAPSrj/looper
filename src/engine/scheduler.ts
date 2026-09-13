@@ -781,7 +781,11 @@ export class Scheduler extends EventEmitter {
         }
         detail = `${network ? 'no network: ' : ''}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
-        if (ctx.agentSession) this.rollSession(task, rt, ctx.agentSession, end);
+        // codex assigns its own thread id on a fresh run; book it once reported.
+        const booked =
+          ctx.agentSession ??
+          (task.agent.session === 'continue' && end.sessionId ? { id: end.sessionId, resume: false } : undefined);
+        if (booked) this.rollSession(task, rt, booked, end);
         this.applyCompleteSignal(task, runId, ctx.runDir, end);
         if (task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
           this.consumeNote(task.id, task.note.text);
@@ -832,24 +836,28 @@ export class Scheduler extends EventEmitter {
 
   /**
    * The conversation this run's agent gets (agent.session 'continue', Claude
-   * Code only): resume the stored one while it has runs left on it, otherwise
-   * start a new one under a fresh id. sessionMaxRuns of 1 therefore behaves
-   * exactly like 'fresh'. Any other configuration clears leftover state.
+   * Code and Codex): resume the stored one while it has runs left on it,
+   * otherwise start a new one — claude under a fresh looper-chosen id, codex
+   * under an id of its own that the run reports back (see AgentEnd.sessionId).
+   * sessionMaxRuns of 1 therefore behaves exactly like 'fresh'. Any other
+   * configuration clears leftover state.
    */
   private rollingSession(task: Task, rt: TaskRuntime): { id: string; resume: boolean } | undefined {
     if (task.agent.session !== 'continue') {
       rt.session = null;
       return undefined;
     }
+    let kind: string;
     try {
-      if (resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind !== 'claude-code') return undefined;
+      kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
     } catch {
       return undefined;
     }
+    if (kind !== 'claude-code' && kind !== 'codex') return undefined;
     if (rt.session && rt.session.runs < task.agent.sessionMaxRuns) {
       return { id: rt.session.id, resume: true };
     }
-    return { id: randomUUID(), resume: false };
+    return kind === 'claude-code' ? { id: randomUUID(), resume: false } : undefined;
   }
 
   /**

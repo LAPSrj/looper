@@ -101,8 +101,9 @@ classifier step on or off. When on, it runs after a check that returned
 - **Harness** — which Claude Code harness in the task's environment runs the
   classifier: the task's own harness if it's Claude Code, otherwise the
   environment's first Claude Code harness.
-- **Session type** — Headless (default): `claude -p` over pipes, answering
-  under a strict `{act, reason}` schema. Interactive terminal: a real pty
+- **Session type** — Headless (default): `claude -p` / `codex exec` over
+  pipes, answering under a strict `{act, reason}` schema (claude
+  `--json-schema` / codex `--output-schema`). Interactive terminal: a real pty
   shown in the task's Terminal tab (you can watch it and type into it); the
   session gives its verdict by running `looper-classify act "<reason>"` or
   `looper-classify noop "<reason>"`, then writes a short closing message.
@@ -129,13 +130,21 @@ classifier step on or off. When on, it runs after a check that returned
 - **Model** — shown for Claude Code and Codex harnesses: a preset from the
   harness's model list, Default (the CLI's own default), or Custom… to type
   a model id.
-- **Permission mode** — Claude Code only, passed as `--permission-mode`:
-  Auto, Accept edits, Manual, Don't ask, Plan mode, Bypass, or None (omits
-  the flag entirely).
-- **Conversation** — Claude Code only. New each run (the default) starts
+- **Permission mode** — Claude Code and Codex. For Claude Code it's passed
+  as `--permission-mode`: Auto, Accept edits, Manual, Don't ask, Plan mode,
+  Bypass, or None (omits the flag entirely). For Codex it maps to its
+  sandbox/approval flags: Auto (`--approve-for-me` — workspace-write sandbox
+  with automatic approval review), Read-only sandbox, Workspace-write
+  sandbox, Full access (each pinning `--sandbox`, never asking), Bypass
+  (`--dangerously-bypass-approvals-and-sandbox`), or None. Sandboxed codex
+  runs also get `--add-dir` for the run directory, so `looper-done` can
+  write its signal files there.
+- **Conversation** — Claude Code and Codex. New each run (the default) starts
   every run as a fresh session. Continue across runs keeps one rolling
-  conversation: the first run starts it (`--session-id`), later runs resume
-  it (`--resume`), so the agent remembers what it already saw and reported.
+  conversation: with Claude Code the first run starts it (`--session-id`) and
+  later runs resume it (`--resume`); with Codex the first run's thread id is
+  captured and later runs `codex … resume` it. Either way the agent remembers
+  what it already saw and reported.
   It requires Settings → Simultaneous runs to be 1, since a rolling
   conversation can't be shared by overlapping runs.
   **New conversation after** caps the roll — after that many runs the next

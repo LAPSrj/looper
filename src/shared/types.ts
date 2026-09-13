@@ -36,12 +36,13 @@ export type HarnessModel = z.output<typeof HarnessModelSchema>;
 
 /**
  * A harness is one installed agent CLI inside an environment. `claude-code`
- * gets full integration (model / permission-mode flags, injected system
- * prompt, Stop hook for idle detection and the final report, workspace-trust
- * auto-answer). `codex` and `custom`
- * are invoked as `command [args…] "<prompt>"`; codex additionally gets the
- * `exec` subcommand in headless mode and a `--model` flag when the task sets
- * one. The `looper-done` helper is on PATH for every harness.
+ * and `codex` get full integration: model and permission flags, idle detection
+ * and the final report (claude via its Stop hook, codex via its notify hook),
+ * rolling conversations, structured classifier output, folder-trust
+ * auto-answer, and a headless mode (`claude -p` / `codex exec`). `custom` is
+ * invoked as `command [args…] "<prompt>"` and ends via the done command,
+ * process exit or the max runtime. The `looper-done` helper is on PATH for
+ * every harness.
  */
 export const HarnessSchema = z.object({
   id: z.string().min(1),
@@ -61,9 +62,10 @@ export const HarnessSchema = z.object({
   options: z
     .object({
       /**
-       * claude-code only. Interactive claude asks "do you trust this folder?" the first time it
-       * runs in a directory and blocks until answered. The task's cwd was chosen deliberately,
-       * so looper answers "yes" for you unless this is false.
+       * claude-code and codex. Interactive claude asks "do you trust this folder?" (codex: "do
+       * you trust the contents of this directory?") the first time it runs in a directory and
+       * blocks until answered. The task's cwd was chosen deliberately, so looper answers "yes"
+       * for you unless this is false.
        */
       autoTrustWorkspace: z.boolean().optional(),
     })
@@ -119,43 +121,49 @@ export function defaultEnvironments(host?: string): Environment[] {
   return envs;
 }
 
-export const CheckSchema = z.object({
-  /** Off keeps the configuration but skips the step (the agent always runs). */
-  enabled: z.boolean().default(true),
-  command: z.string().min(1),
-  timeoutSec: z.number().positive().default(60),
-});
+export const CheckSchema = z
+  .object({
+    /** Off keeps the configuration but skips the step (the agent always runs). */
+    enabled: z.boolean().default(true),
+    command: z.string().min(1),
+    timeoutSec: z.number().positive().default(60),
+  })
+  .strict();
 
-export const ClassifierSchema = z.object({
-  /** Off keeps the configuration but skips the step. */
-  enabled: z.boolean().default(true),
-  harnessId: z.string().min(1).optional(),
-  model: z.string().min(1).default('haiku'),
-  prompt: z.string().min(1),
-  /** Headless answers via structured output; interactive runs in the terminal tab and answers via `looper-classify`. */
-  mode: z.enum(['interactive', 'headless']).default('headless'),
-  timeoutSec: z.number().positive().default(180),
-});
+export const ClassifierSchema = z
+  .object({
+    /** Off keeps the configuration but skips the step. */
+    enabled: z.boolean().default(true),
+    harnessId: z.string().min(1).optional(),
+    model: z.string().min(1).default('haiku'),
+    prompt: z.string().min(1),
+    /** Headless answers via structured output; interactive runs in the terminal tab and answers via `looper-classify`. */
+    mode: z.enum(['interactive', 'headless']).default('headless'),
+    timeoutSec: z.number().positive().default(180),
+  })
+  .strict();
 
-export const AgentSchema = z.object({
-  /** Harness from the task's environment; empty = the environment's first harness. */
-  harnessId: z.string().min(1).optional(),
-  model: z.string().optional(),
-  prompt: z.string().min(1),
-  /** Appended verbatim to the harness command line. */
-  extraArgs: z.array(z.string()).default([]),
-  mode: z.enum(['interactive', 'headless']).default('interactive'),
-  /** claude-code only: continue one conversation across runs instead of starting fresh each run. */
-  session: z.enum(['fresh', 'continue']).default('fresh'),
-  /** session 'continue': start a new conversation after this many runs on the same one. */
-  sessionMaxRuns: z.number().int().positive().default(10),
-  /** Passed as --permission-mode. Empty string omits the flag. */
-  permissionMode: z.string().default('auto'),
-  maxRuntimeMin: z.number().positive().default(120),
-  /** Minutes the agent may sit idle (turn finished, no `looper-done`) before the run ends / is held. */
-  idleGraceMin: z.number().positive().default(3),
-  onIdleTimeout: z.enum(['finish', 'hold']).default('finish'),
-});
+export const AgentSchema = z
+  .object({
+    /** Harness from the task's environment; empty = the environment's first harness. */
+    harnessId: z.string().min(1).optional(),
+    model: z.string().optional(),
+    prompt: z.string().min(1),
+    /** Appended verbatim to the harness command line. */
+    extraArgs: z.array(z.string()).default([]),
+    mode: z.enum(['interactive', 'headless']).default('interactive'),
+    /** claude-code and codex: continue one conversation across runs instead of starting fresh each run. */
+    session: z.enum(['fresh', 'continue']).default('fresh'),
+    /** session 'continue': start a new conversation after this many runs on the same one. */
+    sessionMaxRuns: z.number().int().positive().default(10),
+    /** claude: passed as --permission-mode; codex: mapped to its sandbox/approval flags. Empty string omits the flags. */
+    permissionMode: z.string().default('auto'),
+    maxRuntimeMin: z.number().positive().default(120),
+    /** Minutes the agent may sit idle (turn finished, no `looper-done`) before the run ends / is held. */
+    idleGraceMin: z.number().positive().default(3),
+    onIdleTimeout: z.enum(['finish', 'hold']).default('finish'),
+  })
+  .strict();
 
 /**
  * Which system notifications (toasts) a task sends. The `end` levels nest so a
@@ -183,6 +191,7 @@ export const TaskNotificationsSchema = z
     /** Also send the end notification when the run failed only because the computer was offline. */
     networkErrors: z.boolean().default(false),
   })
+  .strict()
   .default({});
 export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
 
@@ -193,10 +202,12 @@ export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
  * engine `error` — spawn failure, usage limit — or is stopped by the user
  * never consumes a charge).
  */
-export const NoteSchema = z.object({
-  text: z.string().min(1),
-  runsLeft: z.number().int().positive().default(1),
-});
+export const NoteSchema = z
+  .object({
+    text: z.string().min(1),
+    runsLeft: z.number().int().positive().default(1),
+  })
+  .strict();
 export type Note = z.infer<typeof NoteSchema>;
 
 /**
@@ -214,6 +225,7 @@ export const CompletionSchema = z
      */
     allowed: z.boolean().default(false),
   })
+  .strict()
   .default({});
 export type Completion = z.infer<typeof CompletionSchema>;
 
@@ -226,6 +238,10 @@ export const TaskFolderSchema = z.object({
 });
 export type TaskFolder = z.infer<typeof TaskFolderSchema>;
 
+// `.strict()` throughout: an unknown key is a typo or a misremembered field
+// name, and silently stripping it would ship a task that quietly lacks the
+// setting the author thought they set (e.g. `allowCompletion` instead of
+// `completion.allowed`).
 export const TaskSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'letters, digits, - and _ only'),
   name: z.string().min(1),
@@ -254,6 +270,7 @@ export const TaskSchema = z.object({
   agent: AgentSchema,
   backoff: z
     .object({ maxConsecutiveErrors: z.number().int().positive().default(5) })
+    .strict()
     .default({}),
   /** Cycles of this task that may be in flight at once; 1 = a due slot while a run is active is skipped. */
   maxConcurrentRuns: z.number().int().positive().default(1),
@@ -261,7 +278,7 @@ export const TaskSchema = z.object({
   note: NoteSchema.optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
-});
+}).strict();
 
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskInput = z.input<typeof TaskSchema>;

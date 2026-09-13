@@ -123,12 +123,21 @@ copies of Looper never need it.
 
 ## Known limitations
 
-- **`codex` and `custom` harnesses have no idle detection and no detailed
-  interactive report.** The Stop hook and the on-screen prompt check are
-  Claude Code specific. Interactive runs on these harnesses end only via
-  `looper-done` (headline only, no report body), the process exiting, or
-  `maxRuntimeMin`. The `codex exec` headless form hasn't been tested against
-  a real Codex install yet.
+- **`custom` harnesses have no idle detection and no detailed interactive
+  report.** The turn-end signal is harness-specific (Claude Code's Stop hook,
+  Codex's notify hook) and a custom CLI has neither. Interactive runs on a
+  custom harness end only via `looper-done` (headline only, no report body),
+  the process exiting, or `maxRuntimeMin`.
+- **Sandboxed codex through the WSL→Windows bridge can't run `looper-done`.**
+  When Looper runs inside WSL and the task targets Windows, the run directory
+  reaches Windows as a `\\wsl.localhost\…` share — and codex's Windows sandbox
+  blocks network shares, so the sandboxed session can't see the helper or
+  write the signal file (`--add-dir` with such a path would break its shell
+  outright, so Looper omits it there). The run still finishes: headless via
+  the final report in the stream, interactive via the notify hook and the
+  idle grace. Permission modes Bypass and Full access are unaffected, and so
+  is the normal setup of Looper running on Windows (local run dirs work with
+  the sandbox). Codex CLI 0.154.
 - **No SSH or other remote environments.** Looper's environments are the
   local shell and the WSL↔Windows bridge pair, which share a filesystem —
   that's how the `looper-done`/Stop signal files cross between the two

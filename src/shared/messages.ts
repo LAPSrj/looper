@@ -46,7 +46,7 @@ export interface MessageImage {
 export type MessagesStatus =
   /** Rows are valid (possibly empty: the session just started). */
   | 'ok'
-  /** The run has no recorded session (non-Claude harness, or the session has not started yet). */
+  /** The run has no recorded session (custom harness, or the session has not started yet). */
   | 'no-session'
   /** The session is known but its transcript cannot be read (cleaned up, or not written yet). */
   | 'no-transcript';

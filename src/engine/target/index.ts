@@ -54,6 +54,15 @@ export interface Target {
   renderStopHook(spec: StopHookSpec): string;
   /** Command for the claude Stop hook: run the gate script written at `targetPath`. */
   stopHookCommand(targetPath: string): string;
+  /** File name of the codex notify hook script in the run's bin/ dir. */
+  readonly notifyHookFile: string;
+  /**
+   * Script for the codex notify hook: codex invokes it with the event JSON as
+   * its last argument; the script drops that payload into `stopJson`.
+   */
+  renderNotifyHook(stopJson: string): string;
+  /** Argv for codex's `notify` config entry: how to run the hook script at `targetPath`. */
+  notifyCommand(targetPath: string): string[];
   spawnSpec(launcherHostPath: string): SpawnSpec;
   /** Kill any process on the target still carrying LOOPER_RUN=<runId>. Best effort. */
   killLeftovers(runId: string): Promise<void>;

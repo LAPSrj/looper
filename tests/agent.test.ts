@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { stripAnsi } from '../src/shared/ansi';
 import { ScreenModel } from '../src/engine/screen';
-import { HEADLINE_MAX, TRUST_PROMPT_RE, WAITING_PROMPT_RE, headlineOf, parseDoneSignal, systemFooter } from '../src/engine/steps/agent';
+import { CODEX_TRUST_PROMPT_RE, HEADLINE_MAX, TRUST_PROMPT_RE, WAITING_PROMPT_RE, headlineOf, parseDoneSignal, systemFooter } from '../src/engine/steps/agent';
 
 // Real fragments captured from a claude pty session (cursor-column moves between words).
 const TRUST_DIALOG =
@@ -41,6 +41,18 @@ describe('ScreenModel', () => {
     const screen = new ScreenModel(120, 32);
     await screen.write(TRUST_DIALOG);
     expect(screen.contains(TRUST_PROMPT_RE)).toBe(true);
+    screen.dispose();
+  });
+  it('sees the codex trust dialog and only that one', async () => {
+    // Wording captured live from codex-cli 0.154.0.
+    const screen = new ScreenModel(120, 32);
+    await screen.write(
+      'Do you trust the contents of this directory?\r\n' +
+        'Working with untrusted contents comes with higher risk of prompt injection.\r\n' +
+        '› 1. Yes, continue\r\n  2. No, quit\r\nPress enter to continue',
+    );
+    expect(screen.contains(CODEX_TRUST_PROMPT_RE)).toBe(true);
+    expect(screen.contains(TRUST_PROMPT_RE)).toBe(false);
     screen.dispose();
   });
 });

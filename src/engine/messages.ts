@@ -98,6 +98,32 @@ type Rec = Record<string, unknown>;
 /** Diff-line budget across a row's hunks; a patch past it is cut off. */
 const MAX_PATCH_LINES = 2000;
 
+/** Hunks parsed out of a unified diff (codex FileChange updates carry one). */
+function parseUnifiedDiff(diff: string): PatchHunk[] | undefined {
+  const hunks: PatchHunk[] = [];
+  let current: PatchHunk | null = null;
+  let total = 0;
+  for (const line of diff.split('\n')) {
+    const head = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (head) {
+      current = {
+        oldStart: Number(head[1]),
+        oldLines: head[2] !== undefined ? Number(head[2]) : 1,
+        newStart: Number(head[3]),
+        newLines: head[4] !== undefined ? Number(head[4]) : 1,
+        lines: [],
+      };
+      hunks.push(current);
+      continue;
+    }
+    if (!current || !/^[ +-]/.test(line)) continue;
+    total += 1;
+    if (total > MAX_PATCH_LINES) break;
+    current.lines.push(line);
+  }
+  return hunks.length > 0 ? hunks : undefined;
+}
+
 /** The harness's structuredPatch from a toolUseResult, loosely validated. */
 function takePatch(tur: unknown): PatchHunk[] | undefined {
   const sp = (tur as Rec | undefined)?.structuredPatch;
@@ -146,7 +172,7 @@ export class TranscriptAccumulator {
   private nextId = 0;
   private byToolId = new Map<string, MessageRow>();
 
-  constructor(private readonly opts: AccumulatorOpts = {}) {}
+  constructor(protected readonly opts: AccumulatorOpts = {}) {}
 
   reset(): void {
     this.rows = [];
@@ -236,7 +262,7 @@ export class TranscriptAccumulator {
   }
 
   /** Raw mode: the record as pretty-printed JSON, typed by its transcript `type`. */
-  private addRawLine(line: string): void {
+  protected addRawLine(line: string): void {
     let text = line;
     let ts: string | undefined;
     let type = '?';
@@ -275,7 +301,7 @@ export class TranscriptAccumulator {
     }
   }
 
-  private push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
+  protected push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
     const row: MessageRow = {
       id: (this.opts.source === 'classifier' ? CLASSIFIER_ROW_PREFIX : '') + String(this.nextId++),
       ts: r.ts,
@@ -295,6 +321,113 @@ export class TranscriptAccumulator {
 }
 
 /**
+ * Folds codex rollout records into display rows. A rollout line is
+ * `{timestamp, ordinal, type, payload}`; the conversation lives in
+ * `response_item` payloads (user/assistant messages, reasoning) and in
+ * `event_msg`/`item_completed` items (command executions, file changes).
+ * Message items appear in both streams, so only the response_item copy is
+ * rendered; bookkeeping records (session_meta, world_state, turn_context,
+ * token counts) are skipped. Format captured live from codex-cli 0.154.0.
+ */
+export class CodexAccumulator extends TranscriptAccumulator {
+  addLine(line: string): void {
+    if (this.opts.raw) {
+      this.addRawLine(line);
+      return;
+    }
+    let rec: Rec;
+    try {
+      const v: unknown = JSON.parse(line);
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) return;
+      rec = v as Rec;
+    } catch {
+      return; // torn or foreign line
+    }
+    const payload = rec.payload;
+    if (payload === null || typeof payload !== 'object') return;
+    const p = payload as Rec;
+    const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
+    if (rec.type === 'response_item') this.addResponseItem(p, ts);
+    else if (rec.type === 'event_msg' && p.type === 'item_completed') this.addItem(p.item as Rec | undefined, ts);
+  }
+
+  /** User prompts, assistant messages and reasoning summaries. */
+  private addResponseItem(p: Rec, ts?: string): void {
+    if (p.type === 'message') {
+      // Developer records are injected instructions (skills, plugins…), and a
+      // user text that is one wrapped <tag>…</tag> block is injected context.
+      if (p.role !== 'user' && p.role !== 'assistant') return;
+      if (!Array.isArray(p.content)) return;
+      for (const block of p.content as Rec[]) {
+        const text = typeof block?.text === 'string' ? block.text : '';
+        if (!text.trim()) continue;
+        if (block.type === 'input_text' && p.role === 'user') {
+          if (/^<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
+          this.push({ kind: 'prompt', ts, text });
+        } else if (block.type === 'output_text' && p.role === 'assistant') {
+          this.push({ kind: 'agent', ts, text });
+        }
+      }
+    } else if (p.type === 'reasoning' && Array.isArray(p.summary)) {
+      // Rollouts carry reasoning encrypted; only the summary is displayable.
+      const text = (p.summary as Rec[])
+        .map((b) => (typeof b?.text === 'string' ? b.text : ''))
+        .filter(Boolean)
+        .join('\n\n');
+      if (text.trim()) this.push({ kind: 'thinking', ts, text });
+    }
+  }
+
+  /** Executed commands and file changes (messages ride response_item instead). */
+  private addItem(item: Rec | undefined, ts?: string): void {
+    if (!item) return;
+    if (item.type === 'CommandExecution') {
+      // command is the spawned argv; its last element is the command line.
+      const argv = Array.isArray(item.command) ? (item.command as unknown[]).filter((c): c is string => typeof c === 'string') : [];
+      const command = argv.length > 0 ? argv[argv.length - 1] : '';
+      const row = this.push({ kind: 'tool', ts, tool: 'Bash', text: command, preview: previewOf(command) });
+      row.input = { command };
+      const out = [item.aggregated_output, item.stdout, item.stderr].find(
+        (v): v is string => typeof v === 'string' && v.trim().length > 0,
+      );
+      if (out !== undefined) row.result = cap(out, MAX_TEXT);
+      if ((typeof item.exit_code === 'number' && item.exit_code !== 0) || item.status === 'failed') row.resultError = true;
+    } else if (item.type === 'FileChange' && item.changes !== null && typeof item.changes === 'object') {
+      for (const [file, change] of Object.entries(item.changes as Rec)) {
+        const c = change as Rec | null;
+        const content = typeof c?.content === 'string' ? c.content : undefined;
+        const diff = typeof c?.unified_diff === 'string' ? c.unified_diff : undefined;
+        const movePath = typeof c?.move_path === 'string' && c.move_path ? c.move_path : undefined;
+        if (c?.type === 'add' && content !== undefined) {
+          const row = this.push({ kind: 'tool', ts, tool: 'Write', text: content, preview: file });
+          row.file = file;
+          row.input = { content };
+        } else if (diff !== undefined) {
+          // Updates and deletes carry a unified diff; renames add move_path.
+          const preview = movePath ? `${file} → ${movePath}` : file;
+          const row = this.push({ kind: 'tool', ts, tool: 'Edit', text: diff, preview });
+          row.file = file;
+          row.input = movePath ? { move_path: movePath } : {};
+          const patch = parseUnifiedDiff(diff);
+          if (patch) row.patch = patch;
+        } else {
+          const text = (() => {
+            try {
+              return JSON.stringify(c, null, 2);
+            } catch {
+              return String(c);
+            }
+          })();
+          const row = this.push({ kind: 'tool', ts, tool: 'Patch', text, preview: file });
+          row.file = file;
+        }
+        if (item.status === 'failed') this.rows[this.rows.length - 1].resultError = true;
+      }
+    }
+  }
+}
+
+/**
  * Incremental transcript tail: only bytes appended since the last read are
  * parsed, so 2-second polling stays cheap even over a \\wsl.localhost mount.
  * Lines split on raw \n bytes before decoding, so a read boundary inside a
@@ -308,9 +441,9 @@ export class TranscriptReader {
   private remainder: Buffer = Buffer.alloc(0);
 
   /** Several candidate paths may be given (e.g. a subagent under either parent transcript): the first that exists wins. */
-  constructor(file: string | string[], opts: AccumulatorOpts = {}) {
+  constructor(file: string | string[], opts: AccumulatorOpts = {}, format: 'claude' | 'codex' = 'claude') {
     this.candidates = Array.isArray(file) ? file : [file];
-    this.acc = new TranscriptAccumulator(opts);
+    this.acc = format === 'codex' ? new CodexAccumulator(opts) : new TranscriptAccumulator(opts);
   }
 
   /** The candidate that exists, kept once found. Throws (like stat) when none does yet. */
@@ -376,6 +509,46 @@ export function readTranscriptRef(runDir: string, prefix = ''): string | null {
   return null;
 }
 
+/**
+ * The codex transcript reference a run dir carries: the thread id (written by
+ * the session on the first thread.started / notify event) and the target-native
+ * codex home (written by the launcher — only the target knows its own home, and
+ * codex never reports the rollout path).
+ */
+export function readCodexRef(runDir: string, prefix = ''): { threadId: string; codexHome: string } | null {
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(path.join(runDir, prefix + 'codex-session.json'), 'utf8'));
+    const threadId = (raw as Rec | null)?.thread_id;
+    const codexHome = fs.readFileSync(path.join(runDir, prefix + 'codex-home'), 'utf8').trim();
+    if (typeof threadId === 'string' && threadId && codexHome) return { threadId, codexHome };
+  } catch {
+    /* absent or torn */
+  }
+  return null;
+}
+
+/**
+ * Locate the thread's rollout under `<codexHome>/sessions/YYYY/MM/DD/` —
+ * the file is `rollout-<start time>-<thread id>.jsonl`, so the thread id in
+ * the name is the key; newest date dirs are searched first. A resumed thread
+ * appends to its original rollout, so one file covers a rolling conversation.
+ */
+export async function findCodexRollout(sessionsDir: string, threadId: string): Promise<string | null> {
+  const suffix = `-${threadId}.jsonl`;
+  const list = async (dir: string): Promise<string[]> =>
+    (await fs.promises.readdir(dir).catch(() => [] as string[])).sort().reverse();
+  for (const year of await list(sessionsDir)) {
+    for (const month of await list(path.join(sessionsDir, year))) {
+      for (const day of await list(path.join(sessionsDir, year, month))) {
+        for (const file of await list(path.join(sessionsDir, year, month, day))) {
+          if (file.endsWith(suffix)) return path.join(sessionsDir, year, month, day, file);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export interface MessagesDeps {
   getTask(id: string): Task | undefined;
   runDir(taskId: string, runId: string): string;
@@ -385,8 +558,9 @@ export interface MessagesDeps {
 }
 
 /**
- * Serves the Messages view from the harness's own transcripts (the JSONL files
- * under the Claude config dir), located via the hook payloads in the run dir.
+ * Serves the Messages view from the harness's own transcripts — claude's JSONL
+ * files (located via the hook payloads in the run dir) and codex's rollout
+ * files (located via the thread id + codex home the run dir records).
  * A run's view merges the classifier's conversation (when the run had one)
  * ahead of the agent's — the classifier always finishes before the agent
  * starts, so plain concatenation keeps the order. Transcript paths are
@@ -447,19 +621,32 @@ export class MessagesService {
     return reader.acc.images.get(rowId) ?? null;
   }
 
-  /** One step's main conversation reader, from that step's transcript ref. */
+  /** One step's main conversation reader, from that step's transcript ref (claude hooks, or the codex ref pair). */
   private async mainReader(
     taskId: string,
     runId: string,
     source: 'agent' | 'classifier',
     raw: boolean,
   ): Promise<TranscriptReader | 'no-session' | 'no-transcript'> {
-    const targetPath = readTranscriptRef(this.deps.runDir(taskId, runId), source === 'classifier' ? 'classify-' : '');
-    if (!targetPath) return 'no-session';
+    const runDir = this.deps.runDir(taskId, runId);
+    const prefix = source === 'classifier' ? 'classify-' : '';
+    const accOpts: AccumulatorOpts = { raw, source: source === 'classifier' ? 'classifier' : undefined };
+    const targetPath = readTranscriptRef(runDir, prefix);
+    if (targetPath) {
+      return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
+        const hostPath = await this.toHostPath(targetPath, taskId);
+        if (!hostPath) return null;
+        return new TranscriptReader(hostPath, accOpts);
+      });
+    }
+    const codexRef = readCodexRef(runDir, prefix);
+    if (!codexRef) return 'no-session';
     return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
-      const hostPath = await this.toHostPath(targetPath, taskId);
-      if (!hostPath) return null;
-      return new TranscriptReader(hostPath, { raw, source: source === 'classifier' ? 'classifier' : undefined });
+      const hostHome = await this.toHostPath(codexRef.codexHome, taskId);
+      if (!hostHome) return null;
+      const rollout = await findCodexRollout(path.join(hostHome, 'sessions'), codexRef.threadId);
+      if (!rollout) return null; // not written yet; retried on the next poll
+      return new TranscriptReader(rollout, accOpts, 'codex');
     });
   }
 
