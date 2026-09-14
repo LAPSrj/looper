@@ -33,11 +33,16 @@ const FIELD_LABELS: Record<string, string> = {
   completion: 'Completion',
   'completion.allowed': 'Allow this task to be marked completed',
   folderId: 'Folder',
-  schedule: 'Schedule',
-  'schedule.cron': 'Cron expression',
-  'schedule.timezone': 'Timezone',
-  'schedule.stopOn': 'Stop running on',
-  'schedule.stopOn.at': 'Stop running on',
+  trigger: 'Trigger',
+  'trigger.mode': 'Run this task',
+  'trigger.schedule': 'Schedule',
+  'trigger.schedule.cron': 'Cron expression',
+  'trigger.schedule.timezone': 'Timezone',
+  'trigger.watcher': 'Watcher',
+  'trigger.watcher.command': 'Watcher command',
+  'trigger.watcher.debounceSec': 'Batch events for',
+  'trigger.stopOn': 'Stop running on',
+  'trigger.stopOn.at': 'Stop running on',
   environmentId: 'Environment',
   cwd: 'Working directory',
   env: 'Extra environment variables',
@@ -135,18 +140,28 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   const task = parsed.data;
   const errors: string[] = [];
   const warnings: string[] = [];
-  if (task.schedule.cron) {
+  const trigger = task.trigger;
+  if (trigger.schedule?.cron) {
     try {
-      new Cron(task.schedule.cron);
+      new Cron(trigger.schedule.cron);
     } catch (e) {
       errors.push(`Cron expression: ${(e as Error).message}`);
     }
   }
-  if (task.schedule.timezone && !validTimezone(task.schedule.timezone)) {
-    errors.push(`Timezone: unknown timezone "${task.schedule.timezone}"`);
+  if (trigger.schedule?.timezone && !validTimezone(trigger.schedule.timezone)) {
+    errors.push(`Timezone: unknown timezone "${trigger.schedule.timezone}"`);
   }
-  if (task.schedule.stopOn && Number.isNaN(Date.parse(task.schedule.stopOn.at))) {
-    errors.push(`Stop running on: "${task.schedule.stopOn.at}" is not a date`);
+  if (trigger.stopOn && Number.isNaN(Date.parse(trigger.stopOn.at))) {
+    errors.push(`Stop running on: "${trigger.stopOn.at}" is not a date`);
+  }
+  // The selected mode must have its configuration; templates stay partial.
+  if (!opts?.template) {
+    if (trigger.mode === 'schedule' && !trigger.schedule) {
+      errors.push('Schedule: the schedule trigger needs a cron expression');
+    }
+    if (trigger.mode === 'watcher' && !trigger.watcher) {
+      errors.push('Watcher: the events trigger needs a watcher command');
+    }
   }
   // One rolling conversation cannot be resumed by two runs at the same time.
   if (task.maxConcurrentRuns > 1 && task.agent.session === 'continue') {
@@ -211,15 +226,15 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
   // Neither is the completion stamp: an imported task starts its own life.
   delete draft.completedAt;
   delete draft.completedReason;
-  if (draft.schedule.cron) {
+  if (draft.trigger?.schedule?.cron) {
     try {
-      new Cron(draft.schedule.cron);
+      new Cron(draft.trigger.schedule.cron);
     } catch {
-      draft.schedule.cron = '';
+      delete draft.trigger.schedule;
     }
   }
-  if (draft.schedule.timezone && !validTimezone(draft.schedule.timezone)) {
-    delete draft.schedule.timezone;
+  if (draft.trigger?.schedule?.timezone && !validTimezone(draft.trigger.schedule.timezone)) {
+    delete draft.trigger.schedule.timezone;
   }
   const env = opts.environments.find((e) => e.id === draft.environmentId);
   if (!env) draft.environmentId = opts.defaultEnvironmentId;

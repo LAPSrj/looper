@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { Cron } from 'croner';
 import type {
   ActiveRun,
@@ -12,6 +13,7 @@ import type {
   Task,
   TaskRuntime,
 } from '../shared/types';
+import { scheduleOf, watcherOf } from '../shared/types';
 import { cronTz } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
@@ -24,8 +26,10 @@ import { agentPrompt, readCompleteSignal, startAgent as defaultStartAgent, type 
 import type { SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
 import { newRunId, type RunStore } from './store/runs';
+import { writeText } from './store/fsutil';
 import type { StateStore } from './store/state';
 import type { TaskStore } from './store/tasks';
+import { WatcherPool } from './watchers';
 
 export interface SchedulerSteps {
   runCheck: typeof defaultRunCheck;
@@ -51,6 +55,8 @@ const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classify
 const SLEEP_STOP_REASON = 'computer went to sleep';
 /** Work due at (or cut short by) a sleep waits this long past the wake, so the network can come back first. */
 const RESUME_GRACE_MS = 20_000;
+/** Watcher event lines a task may carry into its next run; past it the oldest are dropped. */
+const MAX_PENDING_EVENTS = 1000;
 
 /** How far along a run is; the task's aggregate state is its most advanced run. */
 const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 1, running: 2 };
@@ -84,7 +90,10 @@ export class Scheduler extends EventEmitter {
   private readonly sleptRuns = new Set<string>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
+  /** Watcher event lines waiting for a run slot, per task; a batch never queues a second run. */
+  private readonly pendingEvents = new Map<string, string[]>();
   private readonly steps: SchedulerSteps;
+  private readonly watchers: WatcherPool;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
   private stopping = false;
@@ -97,6 +106,21 @@ export class Scheduler extends EventEmitter {
       startAgent: d.steps?.startAgent ?? defaultStartAgent,
     };
     this.now = d.now ?? (() => Date.now());
+    this.watchers = new WatcherPool({
+      dataDir: d.dataDir,
+      host: d.host,
+      settings: d.settings,
+      log: d.log,
+      now: this.now,
+      onEvents: (taskId, lines) => this.onWatcherEvents(taskId, lines),
+      onState: (taskId, state) => {
+        const rt = this.runtimes.get(taskId);
+        if (!rt) return;
+        rt.watcher = state;
+        this.emitRuntime(rt);
+      },
+      onCrashLoop: (taskId, detail) => this.onWatcherCrashLoop(taskId, detail),
+    });
   }
 
   // ---------- lifecycle ----------
@@ -131,6 +155,8 @@ export class Scheduler extends EventEmitter {
         this.emitRuntime(rt);
       }
     });
+    // Watchers start once the runtimes exist, so their first state report lands on one.
+    for (const task of tasks) this.syncWatcher(task);
     this.d.tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) =>
       this.onTaskChange(task, kind, previous),
     );
@@ -150,7 +176,7 @@ export class Scheduler extends EventEmitter {
     const stops = [...this.agents.values()].map((h) =>
       h.stop('stopped', 'looper shutting down').catch(() => undefined),
     );
-    await Promise.all(stops);
+    await Promise.all([...stops, this.watchers.stopAll()]);
     this.d.state.flush();
   }
 
@@ -188,6 +214,8 @@ export class Scheduler extends EventEmitter {
       rt.pausedReason = null;
       rt.consecutiveErrors = 0;
       if (!ACTIVE.has(rt.state)) rt.state = 'idle';
+      // The lifted pause revives the trigger too: a watcher task starts watching again.
+      this.syncWatcher(task);
     }
     if (rt.runs.length >= task.maxConcurrentRuns) {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
@@ -248,6 +276,8 @@ export class Scheduler extends EventEmitter {
       rt.state = 'paused';
       rt.nextRunAt = null;
     }
+    // A paused task has no trigger at all: the watcher goes down with the pause.
+    void this.watchers.stop(taskId);
     // While active: takes effect when the cycle ends.
     this.emitRuntime(rt);
   }
@@ -260,11 +290,12 @@ export class Scheduler extends EventEmitter {
     if (rt.state === 'paused') {
       if (task?.enabled) {
         rt.state = 'idle';
-        rt.nextRunAt = task.schedule.enabled ? this.now() + 1000 : null;
+        rt.nextRunAt = scheduleOf(task) ? this.now() + 1000 : null;
       } else {
         rt.state = parkedState(task);
       }
     }
+    if (task) this.syncWatcher(task);
     this.emitRuntime(rt);
   }
 
@@ -297,6 +328,8 @@ export class Scheduler extends EventEmitter {
    * human, and killing it would throw away their session.
    */
   onSuspend(): void {
+    // Watchers die with the machine exactly like a run does; they come back at `onResume`.
+    this.watchers.suspend();
     for (const rt of this.runtimes.values()) {
       for (const run of [...rt.runs]) {
         if (run.held) continue;
@@ -323,6 +356,11 @@ export class Scheduler extends EventEmitter {
       }
     }
     if (n) this.persist();
+    // The watchers get the same grace: respawning into a network that is not
+    // back yet is the failure they would otherwise crash-loop on.
+    setTimeout(() => {
+      if (!this.stopping) this.watchers.resume();
+    }, RESUME_GRACE_MS);
   }
 
   writeAgent(taskId: string, data: string, runId?: string): void {
@@ -380,10 +418,11 @@ export class Scheduler extends EventEmitter {
   }
 
   private isOverdue(task: Task, lastRunAt: number | null, now: number): boolean {
-    if (!task.schedule.enabled) return false;
+    const schedule = scheduleOf(task);
+    if (!schedule) return false;
     if (lastRunAt === null) return true;
     try {
-      const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(lastRunAt));
+      const next = new Cron(schedule.cron, cronTz(schedule.timezone)).nextRun(new Date(lastRunAt));
       return next !== null && next.getTime() <= now;
     } catch {
       return false;
@@ -396,13 +435,15 @@ export class Scheduler extends EventEmitter {
       state: task.enabled ? 'idle' : parkedState(task),
       held: false,
       runs: [],
-      nextRunAt: task.enabled ? this.now() + delayMs : null,
+      // Only a cron schedule has a next slot; manual and watcher tasks never do.
+      nextRunAt: task.enabled && scheduleOf(task) ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
       lastResult: prev?.lastResult ?? null,
       lastDetail: prev?.lastDetail ?? null,
       consecutiveErrors: 0,
       currentRunId: null,
       pausedReason: null,
+      watcher: null,
       session: prev?.session ?? null,
     };
     this.runtimes.set(task.id, rt);
@@ -444,6 +485,8 @@ export class Scheduler extends EventEmitter {
     if (kind === 'remove') {
       const gone = this.runtimes.get(task.id);
       for (const run of [...(gone?.runs ?? [])]) void this.stopTask(task.id, 'task removed', run.runId);
+      void this.watchers.stop(task.id);
+      this.pendingEvents.delete(task.id);
       this.deferLogged.delete(task.id);
       if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
@@ -459,6 +502,7 @@ export class Scheduler extends EventEmitter {
         newRt.nextRunAt = this.computeNext(task, this.now());
         this.emitRuntime(newRt);
       }
+      this.syncWatcher(task);
       this.persist();
       return;
     }
@@ -476,6 +520,9 @@ export class Scheduler extends EventEmitter {
     // Whoever set it — the agent, a deadline, the inbox, the editor — this is
     // where completing a task takes effect.
     if (previous && !previous.completedAt && task.completedAt) this.onCompleted(task, rt);
+    // The trigger follows the edit right away, even with runs in flight: a task
+    // that stopped being watched must not collect more events while it finishes.
+    this.syncWatcher(task);
     if (ACTIVE.has(rt.state)) return; // applied when the cycle finishes
     if (!task.enabled) {
       rt.state = parkedState(task);
@@ -485,8 +532,9 @@ export class Scheduler extends EventEmitter {
       rt.nextRunAt = this.computeNext(task, this.now());
     } else if (
       rt.state === 'idle' &&
-      JSON.stringify(previous?.schedule) !== JSON.stringify(task.schedule)
+      JSON.stringify(previous?.trigger) !== JSON.stringify(task.trigger)
     ) {
+      // Includes a switch away from the schedule, which leaves no next slot at all.
       rt.nextRunAt = this.computeNext(task, this.now());
     }
     this.emitRuntime(rt);
@@ -511,23 +559,41 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  /** The schedule has run past its end date and the task has not completed on its own. */
+  /**
+   * The trigger has run past its end date and the task has not completed on
+   * its own. A manual task has no end date to reach — nothing runs it but the
+   * user; a schedule and a watcher both stop on theirs.
+   */
   private scheduleEnded(task: Task, now: number): boolean {
-    const stopOn = task.schedule.stopOn;
-    if (!stopOn?.enabled || !task.schedule.enabled || task.completedAt) return false;
+    const stopOn = task.trigger.stopOn;
+    if (!stopOn?.enabled || task.trigger.mode === 'manual' || task.completedAt) return false;
     const ms = Date.parse(stopOn.at);
     return !Number.isNaN(ms) && ms <= now;
   }
 
   private computeNext(task: Task, from: number): number | null {
-    if (!task.schedule.enabled) return null;
+    const schedule = scheduleOf(task);
+    if (!schedule) return null;
     try {
-      const next = new Cron(task.schedule.cron, cronTz(task.schedule.timezone)).nextRun(new Date(from));
+      const next = new Cron(schedule.cron, cronTz(schedule.timezone)).nextRun(new Date(from));
       return next ? next.getTime() : null;
     } catch (e) {
       this.d.log.error(`[${task.id}] bad schedule: ${errMsg(e)}`);
       return null;
     }
+  }
+
+  /**
+   * Start, stop or respawn the task's watcher process. A watcher is wanted
+   * while the task is enabled, unfinished, not paused and actually on the
+   * events trigger; the pool decides whether that means a respawn.
+   */
+  private syncWatcher(task: Task): void {
+    if (this.stopping) return;
+    const desired =
+      task.enabled && !task.completedAt && !!watcherOf(task) && !this.runtimes.get(task.id)?.pausedReason;
+    if (desired) this.watchers.sync(task);
+    else void this.watchers.stop(task.id);
   }
 
   private tick(): void {
@@ -541,11 +607,13 @@ export class Scheduler extends EventEmitter {
       if (this.scheduleEnded(task, now)) {
         this.completeTask(
           task.id,
-          `stopped running on ${formatDateTime(task.schedule.stopOn!.at, detectSystemLocale())}`,
+          `stopped running on ${formatDateTime(task.trigger.stopOn!.at, detectSystemLocale())}`,
           { force: true },
         );
         continue;
       }
+      // A batch of watcher events that found no free slot when it arrived.
+      if (this.pendingEvents.has(task.id)) this.flushEvents(task);
       if (rt.nextRunAt === null || rt.nextRunAt > now) continue;
       try {
         // A slot may start another cycle while earlier ones are still going,
@@ -613,7 +681,68 @@ export class Scheduler extends EventEmitter {
     return null;
   }
 
-  private async runCycle(task: Task, trigger: 'timer' | 'manual'): Promise<void> {
+  /**
+   * A debounced batch from the task's watcher. Events a task cannot act on —
+   * disabled, completed, paused, gone — are dropped where they arrive: they
+   * describe a moment that has passed, and holding them would fire a stale run
+   * whenever the task came back.
+   */
+  private onWatcherEvents(taskId: string, lines: string[]): void {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt || !task.enabled || task.completedAt || rt.pausedReason) return;
+    const pending = this.pendingEvents.get(taskId) ?? [];
+    pending.push(...lines);
+    if (pending.length > MAX_PENDING_EVENTS) pending.splice(0, pending.length - MAX_PENDING_EVENTS);
+    this.pendingEvents.set(taskId, pending);
+    this.flushEvents(task);
+  }
+
+  /**
+   * Turn what the watcher collected into one run. At the concurrency cap the
+   * batch stays pending and keeps growing until a slot frees up (retried every
+   * tick): watcher events coalesce into the next run, they never queue runs.
+   */
+  private flushEvents(task: Task): void {
+    const rt = this.runtimes.get(task.id);
+    const pending = this.pendingEvents.get(task.id);
+    if (!rt || !pending?.length) return;
+    if (rt.pausedReason || !task.enabled || task.completedAt) {
+      this.pendingEvents.delete(task.id);
+      return;
+    }
+    const block = rt.runs.length >= task.maxConcurrentRuns ? this.atCapReason(rt, task) : this.concurrencyBlock(task);
+    if (block) {
+      if (!this.deferLogged.has(task.id)) {
+        this.deferLogged.add(task.id);
+        this.d.log.info(`[${task.id}] watcher run deferred: ${block}`);
+      }
+      return;
+    }
+    this.deferLogged.delete(task.id);
+    this.pendingEvents.delete(task.id);
+    void this.runCycle(task, 'watcher', pending);
+  }
+
+  /**
+   * The task's watcher cannot stay up. Nothing is left to trigger the task, so
+   * it is paused like a run that errored too many times in a row — which also
+   * takes the watcher entry down for good.
+   */
+  private onWatcherCrashLoop(taskId: string, detail: string): void {
+    const task = this.d.tasks.get(taskId);
+    if (!this.runtimes.has(taskId)) {
+      void this.watchers.stop(taskId);
+      return;
+    }
+    this.record(taskId, '-', 'system', 'error', { summary: detail });
+    const reason = `auto-paused: ${detail}`;
+    this.d.log.warn(`[${taskId}] ${reason}`);
+    this.pause(taskId, reason);
+    if (task?.notifications.autoPaused) this.notify(task, '-', 'auto-paused', capFirst(reason));
+  }
+
+  private async runCycle(task: Task, trigger: ActiveRun['trigger'], events?: string[]): Promise<void> {
     const rt = this.runtimes.get(task.id);
     if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
     const runId = newRunId(new Date(this.now()));
@@ -636,6 +765,21 @@ export class Scheduler extends EventEmitter {
     this.recompute(rt);
     this.emitRuntime(rt);
     this.persist();
+
+    // The batch that triggered this run, kept with the run: on disk for the
+    // agent (LOOPER_EVENTS_FILE) and in the run log for the user.
+    if (events?.length) {
+      const text = events.join('\n') + '\n';
+      try {
+        writeText(path.join(runDir, 'events.jsonl'), text);
+      } catch (e) {
+        this.d.log.error(`[${task.id}] cannot write the trigger events: ${errMsg(e)}`);
+      }
+      this.record(task.id, runId, 'watcher', 'act', {
+        summary: `${events.length} event(s)`,
+        body: '```\n' + events.join('\n') + '\n```',
+      });
+    }
 
     // Without a gate step the run goes straight to the agent: one toast, not two.
     const gated = !!task.check?.enabled || !!task.classifier?.enabled;
@@ -664,7 +808,13 @@ export class Scheduler extends EventEmitter {
         host: this.d.host,
         log: this.d.log,
         signal: stopper.controller.signal,
-        vars: { task: task.name, taskId: task.id, runId, trigger },
+        vars: {
+          task: task.name,
+          taskId: task.id,
+          runId,
+          trigger,
+          ...(events?.length ? { events: events.join('\n') } : {}),
+        },
       };
 
       // No check step configured (or disabled): every slot goes straight to classifier/agent.
@@ -985,7 +1135,7 @@ export class Scheduler extends EventEmitter {
         rt.state = 'idle';
         // A slot that came due while the task was blocked by an environment or
         // harness limit is still owed; anything else is the next cron slot.
-        const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && fresh.schedule.enabled;
+        const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && !!scheduleOf(fresh);
         if (!owed) rt.nextRunAt = this.computeNext(fresh, now);
       }
     } else if (limitWait && rt.nextRunAt !== null) {

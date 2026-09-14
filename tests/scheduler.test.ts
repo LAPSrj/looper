@@ -15,7 +15,7 @@ import type { ClassifyResult } from '../src/engine/steps/classify';
 const baseTask: TaskInput = {
   id: 't1',
   name: 'Task one',
-  schedule: { cron: '*/1 * * * *' },
+  trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' } },
   environmentId: 'local',
   cwd: '/tmp',
   check: { command: 'true' },
@@ -271,7 +271,7 @@ describe('Scheduler', () => {
   });
 
   it('a manual task (schedule off) never self-schedules but runs on demand', async () => {
-    h.tasks.patch('t1', { schedule: { enabled: false, cron: '*/1 * * * *' } });
+    h.tasks.patch('t1', { trigger: { mode: 'manual', schedule: { cron: '*/1 * * * *' } } });
     expect(h.sched.get('t1')!.nextRunAt).toBeNull();
     h.clock.now += 120_000;
     await h.tickN(2);
@@ -439,12 +439,12 @@ describe('Scheduler', () => {
   it('evaluates the schedule in the task timezone', async () => {
     // Now 10:02 UTC; daily at 09:00 Asia/Tokyo (UTC+9) = 00:00 UTC → next slot is tomorrow 00:00 UTC.
     h.clock.now = new Date('2026-01-15T10:02:00Z').getTime();
-    h.tasks.patch('t1', { schedule: { enabled: true, cron: '0 9 * * *', timezone: 'Asia/Tokyo' } });
+    h.tasks.patch('t1', { trigger: { mode: 'schedule', schedule: { cron: '0 9 * * *', timezone: 'Asia/Tokyo' } } });
     expect(h.sched.get('t1')!.nextRunAt).toBe(new Date('2026-01-16T00:00:00Z').getTime());
   });
 
   it('cron schedules skip slots that pass while busy', async () => {
-    h.tasks.patch('t1', { schedule: { enabled: true, cron: '* * * * *' } });
+    h.tasks.patch('t1', { trigger: { mode: 'schedule', schedule: { cron: '* * * * *' } } });
     h.sched.get('t1')!.nextRunAt = h.clock.now; // force due now
     h.checks.push(check('act'));
     await h.tickN(1);
@@ -1089,7 +1089,7 @@ describe('startup overdue filtering', () => {
     const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
     const tasks = new TaskStore(path.join(dir, 'tasks.json'));
     tasks.load();
-    tasks.upsert({ ...baseTask, schedule: { cron: '*/5 * * * *' } });
+    tasks.upsert({ ...baseTask, trigger: { mode: 'schedule', schedule: { cron: '*/5 * * * *' } } });
     const state = new StateStore(path.join(dir, 'state.json'));
     // Last run at 10:01, now is 10:02 — the next */5 slot (10:05) hasn't passed.
     const now = new Date('2026-01-15T10:02:00Z').getTime();
@@ -1106,6 +1106,7 @@ describe('startup overdue filtering', () => {
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
+        watcher: null,
         session: null,
       },
     });
@@ -1134,7 +1135,7 @@ describe('startup overdue filtering', () => {
     const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
     const tasks = new TaskStore(path.join(dir, 'tasks.json'));
     tasks.load();
-    tasks.upsert({ ...baseTask, schedule: { cron: '*/5 * * * *' } });
+    tasks.upsert({ ...baseTask, trigger: { mode: 'schedule', schedule: { cron: '*/5 * * * *' } } });
     const state = new StateStore(path.join(dir, 'state.json'));
     // Last run 10 minutes ago — the 5-minute cron has fired since.
     const now = new Date('2026-01-15T10:10:00Z').getTime();
@@ -1151,6 +1152,7 @@ describe('startup overdue filtering', () => {
         consecutiveErrors: 0,
         currentRunId: null,
         pausedReason: null,
+        watcher: null,
         session: null,
       },
     });
@@ -1196,6 +1198,7 @@ describe('interrupted runs', () => {
         consecutiveErrors: 0,
         currentRunId: runs.at(-1)?.runId ?? null,
         pausedReason: null,
+        watcher: null,
         session: null,
       },
     });
@@ -1253,6 +1256,67 @@ describe('interrupted runs', () => {
   });
 });
 
+describe('watcher trigger', () => {
+  // The pool spawns a real (quiet) process; the event path is driven directly.
+  const watcherTask = () =>
+    h.tasks.patch('t1', { trigger: { mode: 'watcher', watcher: { command: 'sleep 60', debounceSec: 0 } } });
+  const inject = (lines: string[]) =>
+    (h.sched as unknown as { onWatcherEvents(id: string, l: string[]): void }).onWatcherEvents('t1', lines);
+
+  it('a watcher task has no next slot and runs when a batch arrives', async () => {
+    watcherTask();
+    expect(h.sched.get('t1')!.nextRunAt).toBeNull();
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'handled'));
+    inject(['{"n":1}', '{"n":2}']);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    const recs = records();
+    expect(recs[0]).toMatchObject({ phase: 'watcher', result: 'act', summary: '2 event(s)' });
+    // The unreferenced events are appended to the agent prompt.
+    const started = recs.find((r) => r.phase === 'agent' && r.result === 'started')!;
+    expect(started.body).toContain('## Trigger events');
+    expect(started.body).toContain('{"n":2}');
+    // The batch lands in the run dir for LOOPER_EVENTS_FILE.
+    const runId = records().find((r) => r.phase === 'watcher')!;
+    expect(runId).toBeTruthy();
+  });
+
+  it('events at the concurrency cap coalesce into one follow-up run', async () => {
+    watcherTask();
+    h.checks.push(check('act'));
+    inject(['a']);
+    await flush();
+    expect(h.sched.get('t1')!.state).toBe('running');
+    inject(['b']);
+    inject(['c']);
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1); // coalesced, never queued
+    h.checks.push(check('act'));
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+    expect(records().filter((r) => r.phase === 'watcher').map((r) => r.summary)).toEqual([
+      '1 event(s)',
+      '2 event(s)',
+    ]);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('events on a paused or disabled task are dropped, not held', async () => {
+    watcherTask();
+    h.sched.pause('t1');
+    inject(['x']);
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(0);
+    h.sched.resume('t1');
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(0); // the stale batch did not fire on resume
+  });
+});
+
 describe('task completion', () => {
   const allowComplete = () => h.tasks.patch('t1', { completion: { allowed: true } });
 
@@ -1300,7 +1364,7 @@ describe('task completion', () => {
 
   it('the schedule end date completes the task, even while it is paused', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
+      trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     h.sched.pause('t1');
     await h.tickN(1);
@@ -1313,32 +1377,32 @@ describe('task completion', () => {
 
   it('the end date is ignored on a manual task, and before it is reached', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: false, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
+      trigger: { mode: 'manual', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
 
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now + 60_000).toISOString() } },
+      trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(h.clock.now + 60_000).toISOString() } },
     });
     h.checks.push(check('noop'));
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
-    expect(h.tasks.get('t1')!.schedule.stopOn).toBeTruthy();
+    expect(h.tasks.get('t1')!.trigger.stopOn).toBeTruthy();
   });
 
   it('an end date that is switched off keeps its value and never stops the task', async () => {
     const at = new Date(h.clock.now - 1000).toISOString();
-    h.tasks.patch('t1', { schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: false, at } } });
+    h.tasks.patch('t1', { trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: false, at } } });
     h.checks.push(check('noop'));
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
-    expect(h.tasks.get('t1')!.schedule.stopOn).toEqual({ enabled: false, at });
+    expect(h.tasks.get('t1')!.trigger.stopOn).toEqual({ enabled: false, at });
   });
 
   it('reopening enables the task again and switches off the passed end date', async () => {
     h.tasks.patch('t1', {
-      schedule: { enabled: true, cron: '*/1 * * * *', stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
+      trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
     await h.tickN(1);
     expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
@@ -1346,7 +1410,7 @@ describe('task completion', () => {
     const task = h.tasks.get('t1')!;
     expect(task.completedAt).toBeUndefined();
     expect(task.completedReason).toBeUndefined();
-    expect(task.schedule.stopOn?.enabled).toBe(false);
+    expect(task.trigger.stopOn?.enabled).toBe(false);
     expect(task.enabled).toBe(true);
     expect(h.sched.get('t1')!.state).toBe('idle');
   });

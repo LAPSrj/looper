@@ -60,6 +60,9 @@ export function baseEnv(ctx: RunContext, prefix = ''): Record<string, string> {
     LOOPER_RUN_DIR: runDirTarget(ctx),
     LOOPER_DONE_FILE: targetFile(ctx, prefix + 'done'),
     LOOPER_STOP_FILE: targetFile(ctx, prefix + 'stop.json'),
+    ...(typeof ctx.vars.trigger === 'string' ? { LOOPER_TRIGGER: ctx.vars.trigger } : {}),
+    // Watcher-triggered runs: the batch of event lines, one per line, in the run dir.
+    ...(typeof ctx.vars.events === 'string' ? { LOOPER_EVENTS_FILE: targetFile(ctx, 'events.jsonl') } : {}),
   };
 }
 
@@ -130,10 +133,14 @@ export function writeLauncher(
 
 /**
  * Render a prompt template. If it does not reference the check output itself,
- * the summary/context are appended so the model always sees them.
+ * the summary/context are appended so the model always sees them; the same
+ * goes for the trigger events of a watcher-triggered run.
  */
 export function buildPrompt(tpl: string, vars: Record<string, unknown>): string {
   let text = renderTemplate(tpl, vars);
+  if (!hasPlaceholder(tpl, 'events') && typeof vars.events === 'string' && vars.events) {
+    text += "\n\n## Trigger events\nThis run was triggered by the task's watcher. One event per line:\n\n" + vars.events + '\n';
+  }
   if (!hasPlaceholder(tpl, 'summary', 'context') && (vars.summary || vars.context !== undefined)) {
     text += '\n\n## Check output\n';
     if (vars.summary) text += `Summary: ${String(vars.summary)}\n`;

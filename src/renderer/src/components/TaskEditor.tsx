@@ -31,11 +31,11 @@ type Draft = TaskInput & {
 
 type NotifEndLevel = Exclude<NonNullable<NonNullable<TaskInput['notifications']>['end']>, 'off'>;
 
-type EditorTab = 'general' | 'schedule' | 'check' | 'classifier' | 'agent' | 'settings' | 'notifications' | 'json';
+type EditorTab = 'general' | 'trigger' | 'check' | 'classifier' | 'agent' | 'settings' | 'notifications' | 'json';
 
 const TABS: [EditorTab, string][] = [
   ['general', 'General'],
-  ['schedule', 'Schedule'],
+  ['trigger', 'Trigger'],
   ['check', 'Check'],
   ['classifier', 'Classifier'],
   ['agent', 'Agent'],
@@ -116,17 +116,28 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     return e && e !== 'off' ? e : 'warning';
   });
 
-  // Trigger UI: draft.schedule.cron is the single source of truth; the
-  // structured controls are a parsed view of it. `customCron` pins the raw
-  // input open even when the expression matches a friendly pattern.
+  // Trigger UI: mode picks which of schedule/watcher is active; the other's
+  // configuration is kept around unselected, like a disabled step's fields.
+  const trig = draft.trigger ?? { mode: 'schedule' as const };
+  const trigMode = trig.mode ?? 'schedule';
+  // trig.schedule?.cron is the single source of truth for the schedule
+  // builder; the structured controls are a parsed view of it. `customCron`
+  // pins the raw input open even when the expression matches a friendly pattern.
   const [customCron, setCustomCron] = useState(false);
   // Daily times must share the hour or the minute; a rejected chip edit shows a hint.
   const [timesWarn, setTimesWarn] = useState(false);
-  const cronExpr = draft.schedule.cron;
+  const cronExpr = trig.schedule?.cron ?? '';
   const schedForm: CronForm = customCron ? { mode: 'custom', cron: cronExpr } : cronToForm(cronExpr);
   const setSchedule = (f: CronForm) => {
     setTimesWarn(false);
-    set('schedule', { ...draft.schedule, cron: formToCron(f) });
+    set('trigger', { ...trig, schedule: { ...trig.schedule, cron: formToCron(f) } });
+  };
+  /** Switch the trigger mode, seeding a blank config the first time a mode is entered. */
+  const setTriggerMode = (mode: 'manual' | 'schedule' | 'watcher') => {
+    const next: NonNullable<Draft['trigger']> = { ...trig, mode };
+    if (mode === 'schedule' && !trig.schedule) next.schedule = { cron: '*/10 * * * *' };
+    if (mode === 'watcher' && !trig.watcher) next.watcher = { command: '', debounceSec: 5 };
+    set('trigger', next);
   };
   const schedTime =
     'hour' in schedForm
@@ -177,7 +188,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   };
   let cronNext: string | undefined;
   try {
-    cronNext = new Cron(cronExpr, cronTz(draft.schedule.timezone)).nextRun()?.toLocaleString() ?? undefined;
+    cronNext = new Cron(cronExpr, cronTz(trig.schedule?.timezone)).nextRun()?.toLocaleString() ?? undefined;
   } catch {
     /* invalid expression or timezone: preview shows an error instead */
   }
@@ -191,11 +202,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const models = harness ? harnessModels(harness) : [];
   // Model presets come from the harness; anything else is edited as "Custom".
   const modelIsCustom = customModel || (!!draft.agent.model && !models.some((m) => m.id === draft.agent.model));
-  const schedOn = draft.schedule.enabled !== false;
   // The end date keeps its value while switched off, like every other step here.
-  const stopOn = draft.schedule.stopOn;
+  const stopOn = trig.stopOn;
   const stopOnEnabled = stopOn?.enabled ?? false;
-  const setStopOn = (next: NonNullable<Draft['schedule']['stopOn']>) => set('schedule', { ...draft.schedule, stopOn: next });
+  const setStopOn = (next: NonNullable<Draft['trigger']>['stopOn']) => set('trigger', { ...trig, stopOn: next });
   const checkOn = !!draft.check && draft.check.enabled !== false;
   const clsOn = !!draft.classifier && draft.classifier.enabled !== false;
 
@@ -266,6 +276,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       // A step turned off with nothing configured is dropped rather than saved empty.
       check: draft.check && (checkOn || (draft.check.command ?? '').trim()) ? draft.check : undefined,
       classifier: draft.classifier && (clsOn || (draft.classifier.prompt ?? '').trim()) ? draft.classifier : undefined,
+      // An empty seeded config (schedule/watcher for the unselected mode) is
+      // dropped rather than saved, mirroring the check/classifier steps above.
+      trigger: {
+        ...trig,
+        schedule: trig.schedule?.cron ? trig.schedule : undefined,
+        watcher: trig.watcher?.command?.trim() ? trig.watcher : undefined,
+      },
       agent: {
         ...draft.agent,
         extraArgs: parsedArgs.tokens,
@@ -381,17 +398,17 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
           </div>
         </div>
 
-        <div className={`editor-panel${tab !== 'schedule' ? ' hidden' : ''}`}>
+        <div className={`editor-panel${tab !== 'trigger' ? ' hidden' : ''}`}>
           <div className="form">
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={schedOn}
-                onChange={(e) => set('schedule', { ...draft.schedule, enabled: e.target.checked })}
-              />
-              Run automatically on a schedule
-            </label>
-            <fieldset className={`step-fields${schedOn ? '' : ' disabled'}`} disabled={!schedOn}>
+            <Field label="Run this task">
+              <select value={trigMode} onChange={(e) => setTriggerMode(e.target.value as 'manual' | 'schedule' | 'watcher')}>
+                <option value="manual">Manually only</option>
+                <option value="schedule">On a schedule</option>
+                <option value="watcher">On events</option>
+              </select>
+            </Field>
+            {trigMode === 'schedule' && (
+              <>
             <Field label="Frequency">
               <select
                 value={schedForm.mode === 'minutes' || schedForm.mode === 'hours' ? 'every' : schedForm.mode}
@@ -590,20 +607,24 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             )}
             {schedForm.mode === 'custom' && (
               <Field label="Cron expression">
-                <input className="mono" value={cronExpr} onChange={(e) => set('schedule', { ...draft.schedule, cron: e.target.value })} />
+                <input
+                  className="mono"
+                  value={cronExpr}
+                  onChange={(e) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: e.target.value } })}
+                />
               </Field>
             )}
             {!cronNext && <p className="help"><span className="warn">Invalid cron expression.</span></p>}
             <Field label="Timezone">
               <select
-                value={draft.schedule.timezone ?? ''}
+                value={trig.schedule?.timezone ?? ''}
                 onChange={(e) =>
-                  set('schedule', { ...draft.schedule, timezone: e.target.value || undefined })
+                  set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: e.target.value || undefined } })
                 }
               >
                 <option value="">Use computer timezone</option>
-                {draft.schedule.timezone && !TIMEZONES.includes(draft.schedule.timezone) && (
-                  <option value={draft.schedule.timezone}>{draft.schedule.timezone}</option>
+                {trig.schedule?.timezone && !TIMEZONES.includes(trig.schedule.timezone) && (
+                  <option value={trig.schedule.timezone}>{trig.schedule.timezone}</option>
                 )}
                 {TIMEZONE_GROUPS.map(([region, zones]) => (
                   <optgroup key={region} label={region}>
@@ -616,25 +637,48 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 ))}
               </select>
             </Field>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={stopOnEnabled}
-                onChange={(e) => setStopOn({ enabled: e.target.checked, at: stopOn?.at ?? defaultStopOn() })}
-              />
-              End the schedule on a date
-            </label>
-            <div className={`step-fields${stopOnEnabled ? '' : ' disabled'}`}>
-              <Field label="Stop running on">
-                <input
-                  type="datetime-local"
-                  disabled={!stopOnEnabled}
-                  value={toLocalInput(stopOn?.at)}
-                  onChange={(e) => setStopOn({ enabled: true, at: fromLocalInput(e.target.value) ?? stopOn!.at })}
+              </>
+            )}
+            {trigMode === 'watcher' && (
+              <>
+                <Field label="Watcher command">
+                  <input
+                    className="mono"
+                    value={trig.watcher?.command ?? ''}
+                    onChange={(e) => set('trigger', { ...trig, watcher: { debounceSec: 5, ...trig.watcher, command: e.target.value } })}
+                  />
+                </Field>
+                <NumberField
+                  label="Batch events for"
+                  suffix="s"
+                  min={0}
+                  value={trig.watcher?.debounceSec ?? 5}
+                  onChange={(n) => set('trigger', { ...trig, watcher: { command: '', ...trig.watcher, debounceSec: n } })}
                 />
-              </Field>
-            </div>
-            </fieldset>
+              </>
+            )}
+            {trigMode !== 'manual' && (
+              <>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={stopOnEnabled}
+                    onChange={(e) => setStopOn({ enabled: e.target.checked, at: stopOn?.at ?? defaultStopOn() })}
+                  />
+                  Stop on a date
+                </label>
+                <div className={`step-fields${stopOnEnabled ? '' : ' disabled'}`}>
+                  <Field label="Stop running on">
+                    <input
+                      type="datetime-local"
+                      disabled={!stopOnEnabled}
+                      value={toLocalInput(stopOn?.at)}
+                      onChange={(e) => setStopOn({ enabled: true, at: fromLocalInput(e.target.value) ?? stopOn!.at })}
+                    />
+                  </Field>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

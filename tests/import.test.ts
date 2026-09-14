@@ -8,7 +8,7 @@ const good = {
   id: 'nightly',
   name: 'Nightly',
   enabled: false,
-  schedule: { cron: '0 3 * * *' },
+  trigger: { mode: 'schedule', schedule: { cron: '0 3 * * *' } },
   environmentId: 'wsl',
   cwd: '/home/me/repo',
   check: { command: 'git status', timeoutSec: 30 },
@@ -25,11 +25,11 @@ describe('importTaskDraft', () => {
   });
 
   it('turns garbage into an empty draft with defaults', () => {
-    const d = importTaskDraft({ id: 42, name: null, schedule: 'daily', agent: [] }, opts);
+    const d = importTaskDraft({ id: 42, name: null, trigger: 'daily', agent: [] }, opts);
     expect(d.id).toBe('');
     expect(d.name).toBe('');
     expect(d.enabled).toBe(true);
-    expect(d.schedule).toEqual({ enabled: true, cron: '' });
+    expect(d.trigger).toMatchObject({ mode: 'schedule' });
     expect(d.environmentId).toBe('local');
     expect(d.cwd).toBe('');
     expect(d.check).toBeUndefined();
@@ -57,13 +57,17 @@ describe('importTaskDraft', () => {
     expect(importTaskDraft({ ...good, classifier: 'yes' }, opts).classifier).toBeUndefined();
   });
 
-  it('blanks a cron expression that does not parse', () => {
-    expect(importTaskDraft({ ...good, schedule: { cron: 'every day' } }, opts).schedule.cron).toBe('');
+  it('drops a schedule whose cron expression does not parse', () => {
+    const d = importTaskDraft({ ...good, trigger: { mode: 'schedule', schedule: { cron: 'every day' } } }, opts);
+    expect(d.trigger?.schedule).toBeUndefined();
   });
 
   it('keeps a known schedule timezone and drops an unknown one', () => {
-    expect(importTaskDraft({ ...good, schedule: { cron: '0 3 * * *', timezone: 'Asia/Tokyo' } }, opts).schedule.timezone).toBe('Asia/Tokyo');
-    expect(importTaskDraft({ ...good, schedule: { cron: '0 3 * * *', timezone: 'Not/AZone' } }, opts).schedule.timezone).toBeUndefined();
+    const tz = (timezone: string) =>
+      importTaskDraft({ ...good, trigger: { mode: 'schedule', schedule: { cron: '0 3 * * *', timezone } } }, opts)
+        .trigger?.schedule?.timezone;
+    expect(tz('Asia/Tokyo')).toBe('Asia/Tokyo');
+    expect(tz('Not/AZone')).toBeUndefined();
   });
 
   it('falls back to the default environment and drops unknown harnesses', () => {

@@ -24,8 +24,9 @@ changes.
   signal when the cycle ends, unless you stopped the run. With the option off
   the Complete action is greyed out, the agent's command is never created, and
   a completion signal from such a task is recorded in the run log and ignored.
-  A schedule that reaches its **Stop running on** date completes the task
-  either way — that date is itself the instruction to stop.
+  A schedule or watcher trigger that reaches its **Stop running on** date
+  completes the task either way — that date is itself the instruction to
+  stop.
 - **Environment** — which configured environment (Settings → Environments)
   the task's check, classifier, and agent run in.
 - **Working directory** — the folder the check command and the agent both
@@ -37,39 +38,79 @@ deleted, so the final report stays readable in the Run log and Messages tabs.
 Where completed tasks are filed is a global choice — Settings → General →
 **Move completed tasks to folder**.
 
-## Schedule
+## Trigger
 
-![The task editor's Schedule tab](img/task-editor-schedule.png)
+![The task editor's Trigger tab](img/task-editor-schedule.png)
 
-A checkbox, "Run automatically on a schedule", turns the schedule on or off.
-Off keeps the configuration but the task never fires by itself — it's a
-**manual task**, run only from Run Now, the toolbar, the context menu, or
-the CLI/inbox `run` command.
+What starts the task's runs — `trigger.mode` in the JSON: **Manual**,
+**Schedule**, or **Watcher**. Only one mode is selected at a time; switching
+modes keeps the other modes' configuration, like a disabled step keeps its
+fields.
 
-When on, **Frequency** selects how the schedule is expressed:
+- **Manual** — the task never fires by itself. Run Now, the toolbar, the
+  context menu, or the CLI/inbox `run` command are the only ways to start it.
+- **Schedule** (`trigger.schedule`) — a cron expression (`cron`) and an
+  optional IANA `timezone`. **Frequency** selects how the cron expression is
+  built:
 
-| Frequency | Fields |
-|---|---|
-| Every… | An hour/minute step, an optional "Active hours" window (all day, or between two hours), and which days of the week it applies on |
-| Daily | One or more times of day (Add time); each must share either the hour or the minute with the others |
-| Weekly | A time of day and which days of the week |
-| Monthly | A time of day and which days of the month |
-| Custom | A raw cron expression |
+  | Frequency | Fields |
+  |---|---|
+  | Every… | An hour/minute step, an optional "Active hours" window (all day, or between two hours), and which days of the week it applies on |
+  | Daily | One or more times of day (Add time); each must share either the hour or the minute with the others |
+  | Weekly | A time of day and which days of the week |
+  | Monthly | A time of day and which days of the month |
+  | Custom | A raw cron expression |
 
-A live preview shows the next run time, or a warning if the expression is
-invalid.
+  A live preview shows the next run time, or a warning if the expression is
+  invalid. **Timezone** picks the IANA zone the schedule's slots are
+  evaluated in; "Use computer timezone" (the default) follows the machine's
+  own timezone.
+- **Watcher** (`trigger.watcher`) — a long-running **Command** and a
+  **Batch events for** (`debounceSec`, default 5s) window. See "Watcher
+  contract" below for what the command must do.
 
-**Timezone** picks the IANA zone the schedule's slots are evaluated in;
-"Use computer timezone" (the default) follows the machine's own timezone.
+A checkbox, "Stop on a date", turns on **Stop running on**
+(`trigger.stopOn.enabled` / `.at`) — the date and time the trigger ends. Once
+it passes, Looper completes the task instead of running it again: it stops
+being scheduled or watched, moves to the completed-tasks folder if one is
+set, and is deleted when the completed-task retention runs out. It applies to
+the schedule and watcher modes, including a paused or disabled task; a manual
+task ignores it. Unchecking the box keeps the date on the task and simply
+stops it from applying, and reopening a task whose end date has passed
+switches that date off rather than erasing it.
 
-A checkbox, "End the schedule on a date", turns on **Stop running on** — the
-date and time the schedule ends. Once it passes, Looper completes the task
-instead of running it again: it stops being scheduled, moves to the
-completed-tasks folder if one is set, and is deleted when the completed-task
-retention runs out. It applies to any task with a schedule, including a
-paused or disabled one; a manual task ignores it. Unchecking the box keeps
-the date on the task and simply stops it from applying, and reopening a task
-whose end date has passed switches that date off rather than erasing it.
+### Watcher contract
+
+The watcher command is a **long-running process**, spawned once in the
+task's environment and working directory whenever the task is enabled and
+the watcher mode is selected — it is not re-run per event.
+
+- Each **non-empty line on stdout is one trigger event**. JSON is
+  recommended, one object per line, but any non-empty line counts.
+- **stderr is diagnostics** — kept for the exit message, never treated as
+  events.
+- **Exiting means "restart me"**: Looper restarts the command with
+  exponential backoff, 5s doubling up to 5min. Repeated fast crashes — the
+  same **Auto-pause after** count (Settings tab) used for run errors —
+  auto-pause the task, which also stops the watcher.
+- **Start quiet**: emit only events that happen after launch. Looper does
+  not replay history on startup, so a script that dumps its backlog on start
+  would trigger a run for everything that already happened.
+- Events are collected for **Batch events for** (`debounceSec`) and delivered
+  as a single batch: a burst within that window becomes one run, not one per
+  line. A batch that arrives while the task is already at its concurrency cap
+  (Settings tab, **Simultaneous runs**) waits and keeps growing until a slot
+  frees up, still landing in a single follow-up run.
+- The batch reaches the run as `<runDir>/events.jsonl` (env var
+  `LOOPER_EVENTS_FILE`), the `{{events}}` prompt placeholder, and — when a
+  prompt uses neither — an automatically appended "## Trigger events"
+  section, the same way check output is appended when the prompt doesn't
+  reference it.
+- Pausing, disabling, or completing the task stops the watcher; resuming or
+  re-enabling it starts a fresh one, with a clean crash streak.
+- The check, classifier, and agent steps all see `LOOPER_TRIGGER` (env var,
+  also `{{trigger}}` in prompts) set to `timer`, `manual`, or `watcher`,
+  depending on how the cycle started.
 
 ## Check
 
@@ -276,9 +317,12 @@ The classifier prompt and the agent prompt both support these placeholders:
 | `{{task}}` | The task's name |
 | `{{taskId}}` | The task's id |
 | `{{runId}}` | The current run's id |
-| `{{trigger}}` | `timer` or `manual`, depending on how the cycle started |
+| `{{trigger}}` | `timer`, `manual`, or `watcher`, depending on how the cycle started |
+| `{{events}}` | The watcher's batched trigger events for this run, one per line (watcher-triggered runs only) |
 
 Unknown or unset variables render as an empty string. As noted above, if a
 prompt uses neither `{{summary}}` nor `{{context}}`, both are appended
 automatically under a "## Check output" heading — so you always see the
-check's findings, even from a prompt that never mentions them.
+check's findings, even from a prompt that never mentions them. The same
+applies to `{{events}}`: a watcher-triggered run whose prompt doesn't
+reference it gets the events appended under a "## Trigger events" heading.

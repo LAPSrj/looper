@@ -476,6 +476,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   }
   for (const arg of harness.args) parts.push(q(arg));
   for (const extra of opts.extraArgs) parts.push(q(extra));
+  // claude's variadic options (--allowedTools, --disallowedTools, ...) swallow
+  // the following positional, eating the prompt when such a flag comes last:
+  // terminate option parsing so the prompt always lands as the prompt.
+  if (claude) parts.push('--');
   parts.push(target.catFile(targetFile(ctx, f('prompt.txt'))));
   let body = (target.kind === 'windows' ? '' : 'exec ') + parts.join(' ');
   if (codex) {

@@ -1032,6 +1032,7 @@ function buildMenu(
     showCompletedTasks: true,
     showScheduledTasks: true,
     showManualTasks: true,
+    showWatcherTasks: true,
     autoOpenFolders: true,
     hideNoActionRuns: false,
   };
@@ -1093,6 +1094,7 @@ function buildMenu(
             { label: 'Show Comp&leted Tasks', type: 'checkbox', checked: view.showCompletedTasks, click: (item) => updateView({ showCompletedTasks: item.checked }) },
             { label: 'Show S&cheduled Tasks', type: 'checkbox', checked: view.showScheduledTasks, click: (item) => updateView({ showScheduledTasks: item.checked }) },
             { label: 'Show &Manual Tasks', type: 'checkbox', checked: view.showManualTasks, click: (item) => updateView({ showManualTasks: item.checked }) },
+            { label: 'Show &Watcher Tasks', type: 'checkbox', checked: view.showWatcherTasks, click: (item) => updateView({ showWatcherTasks: item.checked }) },
             { type: 'separator' },
             { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => updateView({ autoOpenFolders: item.checked }) },
           ],

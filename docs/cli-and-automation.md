@@ -33,6 +33,7 @@ bottom of this page).
 | `looper schema` | print the task JSON field reference as JSON, generated from the schema: every field with its type, default, and allowed values, the per-kind permission modes, and the configured environments/harnesses when the data dir's `settings.json` is readable |
 | `looper add <file> [--fix]` | validate a task JSON (or `.loopertask`) file and queue it in the inbox (registers or updates the task); `--fix` first replaces invalid values with defaults, using the `.loopertask` import heuristics |
 | `looper validate <file> [--out <dir>]` | validate a task JSON and write the `.loopertask` document next to it (or into `--out <dir>`) |
+| `looper migrate <file...>` | rewrite one or more Looper files (`.loopertask`/`.loopertpl`, `tasks.json`/`templates.json`, or a bare task JSON) from an older format version to the current one |
 | `looper list` | list every task with its current state, next run time, and last result |
 | `looper run <taskId> [--reason <r>]` | queue a run-now command |
 | `looper pause <taskId> [--reason <r>]` | queue a pause command |
@@ -62,6 +63,18 @@ option is on.
 `looper list` and `looper logs` read `tasks.json`, `state.json`, and
 `tasks/<id>/runs.jsonl` directly, so they work even if no app is currently
 running — they just show whatever was last written to disk.
+
+## File versions
+
+`.loopertask`/`.loopertpl` documents carry a `$version`; `tasks.json` and
+`templates.json` carry a `version`. Both are the same integer — the
+definition-format version, currently 2. A newer Looper migrates an older
+file's `$version`/`version` up automatically the moment it reads it (`looper
+add`, `looper validate`, and the app itself all do this transparently); an
+older Looper refuses a file written by a newer one, with a message naming
+the version to update to. `looper migrate <file...>` rewrites one or more
+files to the current version in place, for anyone who wants the file itself
+brought current rather than migrated silently on every read.
 
 ## How the CLI talks to a running app: the inbox
 

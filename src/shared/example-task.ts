@@ -12,10 +12,13 @@ export const EXAMPLE_TASK: TaskInput = {
   completion: { allowed: false },
   // Sidebar folder id; a task pointing at no existing folder lists at the top level.
   folderId: 'my-folder',
-  schedule: {
-    enabled: true,
-    cron: '*/10 * * * *',
-    timezone: 'UTC',
+  // What starts runs: 'manual' (only Run Now), 'schedule' (cron slots), or
+  // 'watcher' (a long-running command whose stdout lines trigger runs). The
+  // unselected mode's configuration is kept, like a disabled step keeps its fields.
+  trigger: {
+    mode: 'schedule',
+    schedule: { cron: '*/10 * * * *', timezone: 'UTC' },
+    watcher: { command: 'node scripts/watch-events.js', debounceSec: 5 },
     stopOn: { enabled: false, at: '2027-01-01T09:00:00' },
   },
   environmentId: 'local',

@@ -2,17 +2,42 @@ import { z } from 'zod';
 
 // ---------- Task definition ----------
 
-export const ScheduleSchema = z
+export const ScheduleConfigSchema = z
   .object({
-    /** Off keeps the configuration but never fires: the task only runs when triggered manually. */
-    enabled: z.boolean().default(true),
     cron: z.string().min(1),
     /** IANA timezone the cron slots are evaluated in. Unset = the computer's timezone. */
     timezone: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const WatcherConfigSchema = z
+  .object({
     /**
-     * End of the schedule: once `at` passes, the task completes itself instead
-     * of running again. Off keeps the date but never stops the task; unset =
-     * no end date was ever configured.
+     * Long-running command spawned in the task's environment/cwd; each
+     * non-empty stdout line is one trigger event (JSON preferred). Exiting
+     * means "restart me" (with backoff); stderr is diagnostics.
+     */
+    command: z.string().min(1),
+    /** Collect events this long before starting the run, so a burst becomes one run. */
+    debounceSec: z.number().nonnegative().default(5),
+  })
+  .strict();
+
+/**
+ * What starts this task's runs. One mode at a time (Task Scheduler's "Begin
+ * the task"); the other mode's configuration is kept while unselected, like a
+ * disabled step keeps its fields.
+ */
+export const TriggerSchema = z
+  .object({
+    /** manual = only Run Now; schedule = cron slots; watcher = the watcher's events. */
+    mode: z.enum(['manual', 'schedule', 'watcher']).default('schedule'),
+    schedule: ScheduleConfigSchema.optional(),
+    watcher: WatcherConfigSchema.optional(),
+    /**
+     * End of the trigger (schedule and watcher modes): once `at` passes, the
+     * task completes itself instead of running again. Off keeps the date but
+     * never stops the task; unset = no end date was ever configured.
      */
     stopOn: z
       .object({
@@ -22,6 +47,17 @@ export const ScheduleSchema = z
       .optional(),
   })
   .strict();
+export type Trigger = z.infer<typeof TriggerSchema>;
+
+/** The task's cron schedule when the schedule trigger is selected, else null. */
+export function scheduleOf(task: { trigger: Trigger }): { cron: string; timezone?: string } | null {
+  return task.trigger.mode === 'schedule' && task.trigger.schedule ? task.trigger.schedule : null;
+}
+
+/** The task's watcher config when the events trigger is selected, else null. */
+export function watcherOf(task: { trigger: Trigger }): z.infer<typeof WatcherConfigSchema> | null {
+  return task.trigger.mode === 'watcher' && task.trigger.watcher ? task.trigger.watcher : null;
+}
 
 // ---------- Environments & harnesses ----------
 
@@ -257,7 +293,7 @@ export const TaskSchema = z.object({
   completion: CompletionSchema,
   /** Sidebar folder the task is filed under. Unset = top level. */
   folderId: z.string().min(1).optional(),
-  schedule: ScheduleSchema,
+  trigger: TriggerSchema,
   /** Environment (from Settings) the task runs in. */
   environmentId: z.string().min(1),
   /** Working directory in the environment's native form (/home/... or C:\...). */
@@ -285,7 +321,7 @@ export type TaskInput = z.input<typeof TaskSchema>;
 
 export const TemplateSchema = TaskSchema.extend({
   name: z.string(),
-  schedule: ScheduleSchema.extend({ cron: z.string() }),
+  trigger: TriggerSchema.extend({ schedule: ScheduleConfigSchema.extend({ cron: z.string() }).optional() }),
   environmentId: z.string(),
   cwd: z.string(),
   check: CheckSchema.extend({ command: z.string() }).optional(),
@@ -354,6 +390,7 @@ export const SettingsSchema = z.object({
     showCompletedTasks: z.boolean().default(true),
     showScheduledTasks: z.boolean().default(true),
     showManualTasks: z.boolean().default(true),
+    showWatcherTasks: z.boolean().default(true),
     /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
     autoOpenFolders: z.boolean().default(true),
     hideNoActionRuns: z.boolean().default(false),
@@ -412,7 +449,7 @@ export interface ActiveRun {
   /** Agent finished a turn without signalling done and the task is configured to hold. */
   held: boolean;
   startedAt: number;
-  trigger: 'timer' | 'manual';
+  trigger: 'timer' | 'manual' | 'watcher';
 }
 
 /**
@@ -439,6 +476,8 @@ export interface TaskRuntime {
   consecutiveErrors: number;
   currentRunId: string | null;
   pausedReason: string | null;
+  /** Events trigger only: the watcher process is up, waiting to respawn, or not wanted (null). */
+  watcher: 'watching' | 'restarting' | null;
   /** Rolling conversation (agent.session 'continue'): the id runs resume, and how many runs used it. */
   session: { id: string; runs: number } | null;
 }
@@ -455,7 +494,7 @@ export interface RestState {
   wakeAt: number | null;
 }
 
-export type RunPhase = 'check' | 'classify' | 'agent' | 'result' | 'skip' | 'system';
+export type RunPhase = 'watcher' | 'check' | 'classify' | 'agent' | 'result' | 'skip' | 'system';
 
 export type RunResult =
   | 'act'

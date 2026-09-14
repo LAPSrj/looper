@@ -29,4 +29,15 @@ describe('buildPrompt', () => {
     expect(out).not.toContain('## Check output');
     expect(out).toContain('"x"');
   });
+
+  it('appends trigger events when present and not referenced', () => {
+    const out = buildPrompt('Do.', { events: '{"a":1}\n{"b":2}' });
+    expect(out).toContain('## Trigger events');
+    expect(out).toContain('{"b":2}');
+  });
+
+  it('does not append events when referenced or absent', () => {
+    expect(buildPrompt('E: {{events}}', { events: 'x' })).toBe('E: x');
+    expect(buildPrompt('Do.', {})).toBe('Do.');
+  });
 });

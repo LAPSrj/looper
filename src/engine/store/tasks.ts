@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { validateTask } from '../../shared/validate';
 import { folderParents } from '../../shared/folders';
+import { DEFINITION_VERSION, migrateDefinition, type Definition } from '../../shared/migrate';
 import { TaskFolderSchema } from '../../shared/types';
 import type { Environment, Task, TaskFolder, TaskInput } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
@@ -21,10 +22,25 @@ function sanitizeLayout(raw: unknown): FolderLayout {
 }
 
 interface TasksFile {
-  version: 1;
+  version: number;
   folders?: TaskFolder[];
   layout?: FolderLayout;
   tasks: Task[];
+}
+
+/**
+ * The store file's definition-format version: missing = 1 (written before
+ * versions were stamped). Newer than this build throws — loading nothing and
+ * saving later would silently wipe the file.
+ */
+export function storeVersion(data: { version?: unknown }, file: string): number {
+  const version = typeof data.version === 'number' ? data.version : 1;
+  if (version > DEFINITION_VERSION) {
+    throw new Error(
+      `${file} was written by a newer Looper (format v${version}; this build reads up to v${DEFINITION_VERSION})`,
+    );
+  }
+  return version;
 }
 
 export class TaskStore extends EventEmitter {
@@ -49,7 +65,8 @@ export class TaskStore extends EventEmitter {
   }
 
   load(): void {
-    const data = readJson<TasksFile>(this.file, { version: 1, tasks: [] });
+    const data = readJson<TasksFile>(this.file, { version: DEFINITION_VERSION, tasks: [] });
+    const version = storeVersion(data, this.file);
     this.tasks.clear();
     this.folders = [];
     this.layout = sanitizeLayout(data.layout);
@@ -57,7 +74,10 @@ export class TaskStore extends EventEmitter {
       const f = TaskFolderSchema.safeParse(raw);
       if (f.success) this.folders.push(f.data);
     }
-    for (const raw of data.tasks ?? []) {
+    for (let raw of data.tasks ?? []) {
+      if (version < DEFINITION_VERSION && raw && typeof raw === 'object') {
+        raw = migrateDefinition(raw as unknown as Definition, version) as unknown as Task;
+      }
       const v = validateTask(raw, this.environments?.(), this.host);
       if (v.ok) this.tasks.set(v.task.id, v.task);
       else this.emit('invalid', raw, v.errors);
@@ -132,13 +152,13 @@ export class TaskStore extends EventEmitter {
   private completionFields(task: Task, existing: Task | undefined, now: string): Partial<Task> {
     if (!task.completedAt) {
       if (!existing?.completedAt) return {};
-      const stopOn = task.schedule.stopOn;
+      const stopOn = task.trigger.stopOn;
       // The date itself is kept, switched off: it is there to be edited, not to
       // complete the task again on the next tick.
       const stale = stopOn?.enabled && Date.parse(stopOn.at) <= Date.now();
       return {
         completedReason: undefined,
-        ...(stale ? { schedule: { ...task.schedule, stopOn: { ...stopOn, enabled: false } } } : {}),
+        ...(stale ? { trigger: { ...task.trigger, stopOn: { ...stopOn, enabled: false } } } : {}),
       };
     }
     const out: Partial<Task> = { enabled: false, completedAt: existing?.completedAt ?? task.completedAt };
@@ -275,7 +295,7 @@ export class TaskStore extends EventEmitter {
   }
 
   private save(): void {
-    const data: TasksFile = { version: 1, folders: this.folders, layout: this.layout, tasks: this.list() };
+    const data: TasksFile = { version: DEFINITION_VERSION, folders: this.folders, layout: this.layout, tasks: this.list() };
     writeJsonAtomic(this.file, data);
   }
 }

@@ -83,7 +83,7 @@ describe('completed-task retention', () => {
     TaskSchema.parse({
       id,
       name: id,
-      schedule: { cron: '*/10 * * * *' },
+      trigger: { mode: 'schedule', schedule: { cron: '*/10 * * * *' } },
       environmentId: 'local',
       cwd: '/tmp',
       agent: { prompt: 'go' },

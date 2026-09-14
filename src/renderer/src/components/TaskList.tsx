@@ -20,6 +20,7 @@ interface Props {
   showCompleted: boolean;
   showScheduled: boolean;
   showManual: boolean;
+  showWatcher: boolean;
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: boolean;
 }
@@ -44,10 +45,14 @@ type Row =
 
 const INDENT = 14;
 
-export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, showDisabled, showCompleted, showScheduled, showManual, autoOpenFolders }: Props) {
-  const passes = (t: Task) =>
-    (t.completedAt ? showCompleted : t.enabled || showDisabled) &&
-    (t.schedule.enabled !== false ? showScheduled : showManual);
+export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, showDisabled, showCompleted, showScheduled, showManual, showWatcher, autoOpenFolders }: Props) {
+  const passes = (t: Task) => {
+    const mode = t.trigger.mode;
+    return (
+      (t.completedAt ? showCompleted : t.enabled || showDisabled) &&
+      (mode === 'schedule' ? showScheduled : mode === 'watcher' ? showWatcher : showManual)
+    );
+  };
   const parents = folderParents(folders);
   const folderById = new Map(folders.map((f) => [f.id, f]));
   // A task pointing at a deleted/unknown folder lists at the top level.
@@ -253,9 +258,15 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     const sub =
       rt?.state === 'idle'
         ? countdown === ''
-          ? t.schedule.enabled === false
+          ? t.trigger.mode === 'manual'
             ? 'Manual'
-            : 'Not scheduled'
+            : t.trigger.mode === 'watcher'
+              ? rt.watcher === 'watching'
+                ? 'Watching'
+                : rt.watcher === 'restarting'
+                  ? 'Watcher restarting'
+                  : 'Watcher stopped'
+              : 'Not scheduled'
           : countdown === 'now'
             ? 'Next run now'
             : `Next run in ${countdown}`

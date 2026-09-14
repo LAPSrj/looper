@@ -41,10 +41,22 @@ function fmtDays(days: number[]): string {
   return contiguous ? `${DAY_NAMES[d[0]]} to ${DAY_NAMES[d[d.length - 1]]}` : d.map((x) => DAY_NAMES[x]).join(', ');
 }
 
-function describeSchedule(task: Task): string {
-  if (!task.schedule.enabled) return 'Manual';
-  const tz = task.schedule.timezone ? ` (${task.schedule.timezone})` : '';
-  return describeCron(task.schedule.cron) + tz;
+function describeTrigger(task: Task): string {
+  if (task.trigger.mode === 'manual') return 'Manual';
+  if (task.trigger.mode === 'watcher') return 'On events';
+  const schedule = task.trigger.schedule;
+  if (!schedule) return 'Not configured';
+  const tz = schedule.timezone ? ` (${schedule.timezone})` : '';
+  return describeCron(schedule.cron) + tz;
+}
+
+/** The watcher process's own state, shown wherever an idle watcher task would otherwise read "Idle". */
+function watcherLabel(runtime: TaskRuntime | undefined): string {
+  return runtime?.watcher === 'watching'
+    ? 'Watching'
+    : runtime?.watcher === 'restarting'
+      ? 'Watcher restarting'
+      : 'Watcher stopped';
 }
 
 function describeCron(cron: string): string {
@@ -100,9 +112,12 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
   const detail = statusDetail(runtime);
+  // An idle watcher task is not idle from the user's side: it is watching.
+  const idleLabel =
+    task.trigger.mode === 'watcher' && runtime?.state === 'idle' ? watcherLabel(runtime) : stateLabel(runtime);
   const status = runtime?.state === 'paused' && detail
     ? detail
-    : `${stateLabel(runtime)}${detail ? ` (${detail})` : ''}`;
+    : `${idleLabel}${detail ? ` (${detail})` : ''}`;
 
   return (
     <div className="detail">
@@ -125,20 +140,30 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
                   </dd>
                 </>
               )}
-              <dt>Schedule</dt>
-              <dd>{describeSchedule(task)}</dd>
+              <dt>Trigger</dt>
+              <dd>{describeTrigger(task)}</dd>
+              {task.trigger.mode === 'watcher' && (
+                <>
+                  <dt>Watcher command</dt>
+                  <dd className="mono">{task.trigger.watcher?.command ?? 'None'}</dd>
+                </>
+              )}
               <dt>Next run</dt>
               <dd>
                 {task.completedAt
                   ? 'Never: the task is completed'
-                  : task.schedule.enabled
+                  : task.trigger.mode === 'schedule'
                     ? describeNextRun(runtime, now)
-                    : 'When triggered manually'}
+                    : task.trigger.mode === 'watcher'
+                      ? runtime?.watcher === 'watching'
+                        ? 'When the watcher fires'
+                        : watcherLabel(runtime)
+                      : 'When triggered manually'}
               </dd>
-              {!task.completedAt && task.schedule.enabled && task.schedule.stopOn?.enabled && (
+              {!task.completedAt && task.trigger.mode !== 'manual' && task.trigger.stopOn?.enabled && (
                 <>
                   <dt>Stops running on</dt>
-                  <dd>{fmtDateTime(task.schedule.stopOn.at)}</dd>
+                  <dd>{fmtDateTime(task.trigger.stopOn.at)}</dd>
                 </>
               )}
               {task.note && (

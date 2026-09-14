@@ -290,6 +290,7 @@ export function App() {
             showCompleted={view?.showCompletedTasks ?? true}
             showScheduled={view?.showScheduledTasks ?? true}
             showManual={view?.showManualTasks ?? true}
+            showWatcher={view?.showWatcherTasks ?? true}
             autoOpenFolders={view?.autoOpenFolders ?? true}
           />
         </aside>

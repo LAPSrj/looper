@@ -37,7 +37,7 @@ function task(overrides: Partial<Task> = {}): Task {
   return TaskSchema.parse({
     id: 't1',
     name: 'T',
-    schedule: { cron: '*/10 * * * *' },
+    trigger: { mode: 'schedule', schedule: { cron: '*/10 * * * *' } },
     environmentId: 'ubuntu',
     cwd: '/tmp',
     check: { command: 'true' },
@@ -198,9 +198,10 @@ describe('validateTask with environments', () => {
   });
 
   it('accepts a known schedule timezone and rejects an unknown one', () => {
-    expect(validateTask(task({ schedule: { enabled: true, cron: '0 9 * * *', timezone: 'Asia/Tokyo' } }), environments).ok).toBe(true);
-    expect(validateTask(task({ schedule: { enabled: true, cron: '0 9 * * *', timezone: 'America/Rio_de_Janeiro' } }), environments).ok).toBe(true);
-    const bad = validateTask(task({ schedule: { enabled: true, cron: '0 9 * * *', timezone: 'Not/AZone' } }), environments);
+    const tz = (timezone: string) => task({ trigger: { mode: 'schedule', schedule: { cron: '0 9 * * *', timezone } } });
+    expect(validateTask(tz('Asia/Tokyo'), environments).ok).toBe(true);
+    expect(validateTask(tz('America/Rio_de_Janeiro'), environments).ok).toBe(true);
+    const bad = validateTask(tz('Not/AZone'), environments);
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.errors[0]).toMatch(/Timezone: unknown timezone/);
   });

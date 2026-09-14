@@ -5,6 +5,7 @@ import { defaultDataDir } from '../engine/host';
 import { formatDuration } from '../shared/duration';
 import { EXAMPLE_CHECK_SCRIPT, EXAMPLE_TASK } from '../shared/example-task';
 import { FILE_KINDS, readLooperFile, wrapLooperFile } from '../shared/files';
+import { DEFINITION_VERSION, migrateDefinition } from '../shared/migrate';
 import { taskSchemaDoc } from '../shared/schema-doc';
 import { SettingsSchema, type Environment, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
 import { importTaskDraft, slugify, validateTask } from '../shared/validate';
@@ -163,6 +164,8 @@ Notes:
   - Point LOOPER_HOME (or --data-dir) at the data dir of the Looper app that should run
     the task; a running app picks queued files from inbox/, and rejects them into
     inbox/rejected/ with a matching .error.txt.
+  - Older task files/stores are migrated to the current format automatically on read;
+    "looper migrate <file>" rewrites them in place.
 
 Full documentation: docs/tasks.md (field guide), docs/cli-and-automation.md (CLI and inbox).`;
 
@@ -259,6 +262,85 @@ program
     const dest = path.join(opts.out ?? path.dirname(path.resolve(file)), `${v.task.id}.${FILE_KINDS.task.ext}`);
     fs.writeFileSync(dest, JSON.stringify(doc, null, 2) + '\n', 'utf8');
     console.log(`valid task ${v.task.id} -> ${dest}`);
+  });
+
+/**
+ * Migrate one file in place: a `.loopertask`/`.loopertpl` document, a
+ * tasks.json/templates.json store, or a bare v1 task JSON (a `schedule` key,
+ * no `trigger` key). Prints its own result line; never throws.
+ */
+function migrateOne(file: string): boolean {
+  try {
+    const raw = readJsonFile<Record<string, unknown> | null>(file, null);
+    if (!raw) {
+      console.error(`cannot read JSON from ${file}`);
+      return false;
+    }
+    if ('$type' in raw) {
+      const oldVersion = raw.$version;
+      const doc = readLooperFile(raw);
+      if (!doc.ok) {
+        console.error(
+          doc.reason === 'newer'
+            ? `${file}: written by a newer Looper (${doc.app ?? 'unknown version'}) — update Looper to read it`
+            : `${file}: not a Looper document`,
+        );
+        return false;
+      }
+      if (oldVersion === DEFINITION_VERSION) {
+        console.log(`${file}: already v${DEFINITION_VERSION}`);
+        return true;
+      }
+      const out = wrapLooperFile(doc.kind, cliVersion(), doc.payload);
+      fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n', 'utf8');
+      console.log(`${file}: migrated v${oldVersion} -> v${DEFINITION_VERSION}`);
+      return true;
+    }
+    const entries = Array.isArray(raw.tasks)
+      ? (raw.tasks as Record<string, unknown>[])
+      : Array.isArray(raw.templates)
+        ? (raw.templates as Record<string, unknown>[])
+        : undefined;
+    if (typeof raw.version === 'number' && entries) {
+      const oldVersion = raw.version;
+      if (oldVersion > DEFINITION_VERSION) {
+        console.error(`${file}: written by a newer Looper (format v${oldVersion}; this build reads up to v${DEFINITION_VERSION})`);
+        return false;
+      }
+      if (oldVersion === DEFINITION_VERSION) {
+        console.log(`${file}: already v${DEFINITION_VERSION}`);
+        return true;
+      }
+      const key = Array.isArray(raw.tasks) ? 'tasks' : 'templates';
+      const migrated = entries.map((e) => migrateDefinition(e, oldVersion));
+      const out = { ...raw, version: DEFINITION_VERSION, [key]: migrated };
+      fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n', 'utf8');
+      console.log(`${file}: migrated v${oldVersion} -> v${DEFINITION_VERSION} (${migrated.length} task(s))`);
+      return true;
+    }
+    if (raw.schedule !== undefined && raw.trigger === undefined) {
+      const out = migrateDefinition(raw, 1);
+      fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n', 'utf8');
+      console.log(`${file}: migrated v1 -> v${DEFINITION_VERSION}`);
+      return true;
+    }
+    console.log(`${file}: already current (nothing to migrate)`);
+    return true;
+  } catch (e) {
+    console.error(`${file}: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+program
+  .command('migrate <file...>')
+  .description('rewrite Looper files from an older format version to the current one (v2)')
+  .action((files: string[]) => {
+    let ok = true;
+    for (const file of files) {
+      if (!migrateOne(file)) ok = false;
+    }
+    process.exit(ok ? 0 : 2);
   });
 
 program

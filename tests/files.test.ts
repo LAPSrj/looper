@@ -49,6 +49,34 @@ describe('wrapLooperFile / readLooperFile', () => {
     }
   });
 
+  it('migrates a v1 document up on read: schedule becomes trigger', () => {
+    const v1 = {
+      $type: 'looper/task',
+      $version: 1,
+      $app: '0.1.8',
+      id: 't1',
+      schedule: { enabled: true, cron: '0 9 * * *', timezone: 'UTC', stopOn: { enabled: true, at: '2027-01-01T00:00:00Z' } },
+    };
+    const r = readLooperFile(v1);
+    expect(r).toEqual({
+      ok: true,
+      kind: 'task',
+      payload: {
+        id: 't1',
+        trigger: {
+          mode: 'schedule',
+          schedule: { cron: '0 9 * * *', timezone: 'UTC' },
+          stopOn: { enabled: true, at: '2027-01-01T00:00:00Z' },
+        },
+      },
+    });
+  });
+
+  it('migrates a v1 manual task (schedule off) to the manual mode, keeping the config', () => {
+    const r = readLooperFile({ $type: 'looper/task', $version: 1, id: 't1', schedule: { enabled: false, cron: '*/5 * * * *' } });
+    expect(r).toMatchObject({ ok: true, payload: { trigger: { mode: 'manual', schedule: { cron: '*/5 * * * *' } } } });
+  });
+
   it('flags a newer format version and reports the writing app version', () => {
     const r = readLooperFile({ $type: 'looper/task', $version: FILE_VERSION + 1, $app: '2.0.0', id: 'x' });
     expect(r).toEqual({ ok: false, reason: 'newer', app: '2.0.0' });

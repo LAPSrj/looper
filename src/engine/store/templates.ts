@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { validateTask } from '../../shared/validate';
+import { DEFINITION_VERSION, migrateDefinition, type Definition } from '../../shared/migrate';
 import type { Task } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
+import { storeVersion } from './tasks';
 
 interface TemplatesFile {
-  version: 1;
+  version: number;
   templates: Task[];
 }
 
@@ -21,9 +23,13 @@ export class TemplateStore extends EventEmitter {
   }
 
   load(): void {
-    const data = readJson<TemplatesFile>(this.file, { version: 1, templates: [] });
+    const data = readJson<TemplatesFile>(this.file, { version: DEFINITION_VERSION, templates: [] });
+    const version = storeVersion(data, this.file);
     this.templates.clear();
-    for (const raw of data.templates ?? []) {
+    for (let raw of data.templates ?? []) {
+      if (version < DEFINITION_VERSION && raw && typeof raw === 'object') {
+        raw = migrateDefinition(raw as unknown as Definition, version) as unknown as Task;
+      }
       const v = validateTask(raw, undefined, undefined, { template: true });
       if (v.ok) this.templates.set(v.task.id, v.task);
       else this.emit('invalid', raw, v.errors);
@@ -76,6 +82,6 @@ export class TemplateStore extends EventEmitter {
   }
 
   private save(): void {
-    writeJsonAtomic(this.file, { version: 1, templates: this.list() });
+    writeJsonAtomic(this.file, { version: DEFINITION_VERSION, templates: this.list() });
   }
 }

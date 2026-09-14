@@ -10,8 +10,11 @@
  * The envelope shape itself never changes, so any Looper — however old — can
  * read it and refuse a too-new file with a meaningful message instead of a
  * validation error. Additive payload changes (new optional fields) keep the
- * same $version; readers drop unknown fields.
+ * same $version; readers drop unknown fields. An OLDER $version is migrated
+ * up on read (shared/migrate.ts), so a newer Looper opens every older file.
  */
+
+import { DEFINITION_VERSION, migrateDefinition } from './migrate';
 
 export type LooperFileKind = 'task' | 'template';
 
@@ -20,7 +23,7 @@ export const FILE_KINDS: Record<LooperFileKind, { ext: string; type: string; fil
   template: { ext: 'loopertpl', type: 'looper/template', filterName: 'Looper Template' },
 };
 
-export const FILE_VERSION = 1;
+export const FILE_VERSION = DEFINITION_VERSION;
 
 const EXT_RE = new RegExp(
   `\\.(${Object.values(FILE_KINDS)
@@ -60,9 +63,10 @@ export function readLooperFile(input: unknown): ReadLooperFileResult {
   if (version > FILE_VERSION) {
     return { ok: false, reason: 'newer', app: typeof obj.$app === 'string' ? obj.$app : undefined };
   }
-  const payload: Record<string, unknown> = {};
+  let payload: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (!key.startsWith('$')) payload[key] = value;
   }
+  if (version < FILE_VERSION) payload = migrateDefinition(payload, version);
   return { ok: true, kind, payload };
 }

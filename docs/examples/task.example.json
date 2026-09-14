@@ -4,10 +4,10 @@
   "enabled": true,
   "completion": { "allowed": false },
   "folderId": "my-folder",
-  "schedule": {
-    "enabled": true,
-    "cron": "*/10 * * * *",
-    "timezone": "UTC",
+  "trigger": {
+    "mode": "schedule",
+    "schedule": { "cron": "*/10 * * * *", "timezone": "UTC" },
+    "watcher": { "command": "node scripts/watch-events.js", "debounceSec": 5 },
     "stopOn": { "enabled": false, "at": "2027-01-01T09:00:00" }
   },
   "environmentId": "local",

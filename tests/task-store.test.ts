@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ function taskInput(id: string, folderId?: string) {
   return {
     id,
     name: id,
-    schedule: { cron: '*/10 * * * *' },
+    trigger: { mode: 'schedule' as const, schedule: { cron: '*/10 * * * *' } },
     environmentId: 'local',
     cwd: '/tmp',
     agent: { prompt: 'go' },
@@ -114,6 +114,39 @@ describe('TaskStore nested folders', () => {
     expect(store.listLayout()[f.id]).toEqual([`folder:${h.id}`, 'a']);
   });
 
+  it('loads a v1 store file by migrating each task up, and saves it back as the current version', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        tasks: [
+          {
+            id: 'old',
+            name: 'Old',
+            schedule: { enabled: true, cron: '*/10 * * * *' },
+            environmentId: 'local',
+            cwd: '/tmp',
+            agent: { prompt: 'go' },
+          },
+        ],
+      }),
+    );
+    const store = new TaskStore(file);
+    store.load();
+    expect(store.get('old')!.trigger).toMatchObject({ mode: 'schedule', schedule: { cron: '*/10 * * * *' } });
+    store.upsert(taskInput('fresh'));
+    const written = JSON.parse(readFileSync(file, 'utf8')) as { version: number };
+    expect(written.version).toBe(2);
+  });
+
+  it('refuses a store file written by a newer Looper instead of loading nothing', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    writeFileSync(file, JSON.stringify({ version: 99, tasks: [] }));
+    const store = new TaskStore(file);
+    expect(() => store.load()).toThrow(/newer Looper/);
+  });
+
   it('cyclic or unknown parents in a hand-edited file land at the top level', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
     writeFileSync(
@@ -178,16 +211,16 @@ describe('TaskStore completion', () => {
     store.upsert(taskInput('a'));
     const cron = '*/10 * * * *';
     const past = new Date(Date.now() - 60_000).toISOString();
-    store.patch('a', { schedule: { enabled: true, cron, stopOn: { enabled: true, at: past } } });
+    store.patch('a', { trigger: { mode: 'schedule', schedule: { cron }, stopOn: { enabled: true, at: past } } });
     store.patch('a', { completedAt: stamp(), completedReason: 'stopped running' });
     const reopened = store.patch('a', { completedAt: undefined, enabled: true });
     expect(reopened.completedReason).toBeUndefined();
     // The date stays for editing, switched off so the next tick cannot re-complete the task.
-    expect(reopened.schedule.stopOn).toEqual({ enabled: false, at: past });
+    expect(reopened.trigger.stopOn).toEqual({ enabled: false, at: past });
 
     const future = new Date(Date.now() + 60_000).toISOString();
-    store.patch('a', { schedule: { enabled: true, cron, stopOn: { enabled: true, at: future } } });
+    store.patch('a', { trigger: { mode: 'schedule', schedule: { cron }, stopOn: { enabled: true, at: future } } });
     store.patch('a', { completedAt: stamp() });
-    expect(store.patch('a', { completedAt: undefined }).schedule.stopOn).toEqual({ enabled: true, at: future });
+    expect(store.patch('a', { completedAt: undefined }).trigger.stopOn).toEqual({ enabled: true, at: future });
   });
 });

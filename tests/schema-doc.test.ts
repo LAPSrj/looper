@@ -8,7 +8,8 @@ describe('taskSchemaDoc', () => {
 
   it('marks author-required fields and leaves defaulted/optional ones unmarked', () => {
     expect(field('cwd')).toMatchObject({ type: 'string', required: true });
-    expect(field('schedule.cron')).toMatchObject({ type: 'string', required: true });
+    expect(field('trigger.schedule.cron')).toMatchObject({ type: 'string', required: true });
+    expect(field('trigger.watcher.command')).toMatchObject({ type: 'string', required: true });
     expect(field('agent.prompt')).toMatchObject({ type: 'string', required: true });
     expect(field('enabled')?.required).toBeUndefined();
     expect(field('folderId')?.required).toBeUndefined();
@@ -24,6 +25,7 @@ describe('taskSchemaDoc', () => {
   it('lists enum values and the id pattern', () => {
     expect(field('notifications.end')?.values).toEqual(['off', 'error', 'warning', 'end', 'all']);
     expect(field('agent.mode')?.values).toEqual(['interactive', 'headless']);
+    expect(field('trigger.mode')?.values).toEqual(['manual', 'schedule', 'watcher']);
     expect(field('id')?.pattern).toBeTruthy();
   });
 
