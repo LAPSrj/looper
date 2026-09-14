@@ -28,6 +28,36 @@ export function cronTz(timezone?: string): { timezone: string } | undefined {
   return timezone ? { timezone: TIMEZONE_ALIASES[timezone] ?? timezone } : undefined;
 }
 
+export interface RunWindow {
+  activeHours?: { from: number; to: number };
+  /** 0 = Sunday. Unset = every day. */
+  days?: number[];
+  timezone?: string;
+}
+
+const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/**
+ * Whether a run may start at `atMs` under the window's hours/days, evaluated
+ * in its timezone (unset = the computer's). No constraints = always open.
+ */
+export function runWindowOpen(window: RunWindow, atMs: number): boolean {
+  if (!window.activeHours && !window.days?.length) return true;
+  const tz = window.timezone ? (TIMEZONE_ALIASES[window.timezone] ?? window.timezone) : undefined;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    ...(tz ? { timeZone: tz } : {}),
+    hour: 'numeric',
+    hourCycle: 'h23',
+    weekday: 'short',
+  }).formatToParts(new Date(atMs));
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? NaN);
+  const day = WEEKDAY_INDEX[parts.find((p) => p.type === 'weekday')?.value ?? ''];
+  if (!Number.isFinite(hour) || day === undefined) return true; // unparseable: never hold work hostage
+  if (window.days?.length && !window.days.includes(day)) return false;
+  const h = window.activeHours;
+  return !h || (hour >= h.from && hour <= h.to);
+}
+
 /** [1,2,3,4,5] -> "1-5"; [1,3,5] -> "1,3,5"; all seven -> "*". */
 function buildDow(days: number[] | undefined): string {
   if (!days || days.length === 0 || days.length === 7) return '*';

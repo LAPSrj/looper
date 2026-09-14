@@ -20,6 +20,27 @@ export const WatcherConfigSchema = z
     command: z.string().min(1),
     /** Collect events this long before starting the run, so a burst becomes one run. */
     debounceSec: z.number().nonnegative().default(5),
+    /**
+     * Start one catch-up run when watching starts cold (app launch, task
+     * enabled, pause lifted, system wake) — the check re-derives whatever
+     * happened while nothing was watching. Never fires on crash restarts.
+     */
+    runOnStart: z.boolean().default(false),
+    /**
+     * Runs only start within these hours; events arriving outside are held
+     * and coalesce into one run when the window opens. Unset = all day.
+     */
+    activeHours: z
+      .object({
+        from: z.number().int().min(0).max(23),
+        to: z.number().int().min(0).max(23),
+      })
+      .strict()
+      .optional(),
+    /** Days of the week runs may start on (0 = Sunday). Unset = every day. */
+    days: z.array(z.number().int().min(0).max(6)).min(1).optional(),
+    /** IANA timezone the hours/days are evaluated in. Unset = the computer's timezone. */
+    timezone: z.string().min(1).optional(),
   })
   .strict();
 

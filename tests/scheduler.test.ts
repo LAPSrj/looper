@@ -1315,6 +1315,88 @@ describe('watcher trigger', () => {
     await h.tickN(2);
     expect(h.agentStarted).toBe(0); // the stale batch did not fire on resume
   });
+
+  it('events outside the active hours are held and coalesce into one run when the window opens', async () => {
+    // Clock starts at epoch 1_000_000 = Thu 1970-01-01 00:16 UTC — outside 7-22.
+    h.tasks.patch('t1', {
+      trigger: {
+        mode: 'watcher',
+        watcher: { command: 'sleep 60', debounceSec: 0, runOnStart: false, activeHours: { from: 7, to: 22 }, timezone: 'UTC' },
+      },
+    });
+    inject(['a']);
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(0);
+    inject(['b']);
+    await h.tickN(1);
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done'));
+    h.clock.now = 30_000_000; // Thu 08:20 UTC — window open
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().find((r) => r.phase === 'watcher')!.summary).toBe('2 event(s)');
+  });
+
+  it('events on a disallowed weekday wait for an allowed one', async () => {
+    h.tasks.patch('t1', {
+      // Epoch day 0 is a Thursday; only Friday (5) is allowed.
+      trigger: { mode: 'watcher', watcher: { command: 'sleep 60', debounceSec: 0, runOnStart: false, days: [5], timezone: 'UTC' } },
+    });
+    inject(['x']);
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(0);
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done'));
+    h.clock.now = 1_000_000 + 24 * 3_600_000; // Friday, same time of day
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+  });
+});
+
+describe('watcher runOnStart', () => {
+  const watcherInput = (extra: object = {}): TaskInput => ({
+    ...baseTask,
+    trigger: { mode: 'watcher', watcher: { command: 'sleep 60', debounceSec: 0, runOnStart: true, ...extra } },
+  });
+  const remake = async (input: TaskInput) => {
+    await h.sched.stop();
+    fs.rmSync(h.dir, { recursive: true, force: true });
+    h = await makeHarness(input);
+  };
+
+  it('fires one catch-up run through the check when watching starts, and only one', async () => {
+    await remake(watcherInput());
+    h.checks.push(check('noop', { summary: 'nothing missed' }));
+    await h.tickN(1);
+    expect(records().filter((r) => r.phase === 'watcher')).toEqual([
+      expect.objectContaining({ result: 'act', summary: 'catch-up: watching started' }),
+    ]);
+    expect(records().at(-1)).toMatchObject({ phase: 'check', result: 'noop' });
+    await h.tickN(3);
+    expect(records().filter((r) => r.phase === 'watcher')).toHaveLength(1);
+  });
+
+  it('waits for the run window before catching up', async () => {
+    await remake(watcherInput({ activeHours: { from: 7, to: 22 }, timezone: 'UTC' }));
+    await h.tickN(2);
+    expect(records()).toHaveLength(0); // 00:16 UTC: held
+    h.checks.push(check('noop'));
+    h.clock.now = 30_000_000; // 08:20 UTC
+    await h.tickN(1);
+    expect(records().find((r) => r.phase === 'watcher')!.summary).toBe('catch-up: watching started');
+  });
+
+  it('a pause lifted by resume owes a fresh catch-up', async () => {
+    await remake(watcherInput());
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(records().filter((r) => r.phase === 'watcher')).toHaveLength(1);
+    h.sched.pause('t1');
+    h.sched.resume('t1');
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(records().filter((r) => r.phase === 'watcher')).toHaveLength(2);
+  });
 });
 
 describe('task completion', () => {

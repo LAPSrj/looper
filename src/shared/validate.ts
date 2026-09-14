@@ -41,6 +41,10 @@ const FIELD_LABELS: Record<string, string> = {
   'trigger.watcher': 'Watcher',
   'trigger.watcher.command': 'Watcher command',
   'trigger.watcher.debounceSec': 'Batch events for',
+  'trigger.watcher.runOnStart': 'Run once when watching starts',
+  'trigger.watcher.activeHours': 'Active hours',
+  'trigger.watcher.days': 'On days',
+  'trigger.watcher.timezone': 'Watcher timezone',
   'trigger.stopOn': 'Stop running on',
   'trigger.stopOn.at': 'Stop running on',
   environmentId: 'Environment',
@@ -153,6 +157,13 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   }
   if (trigger.stopOn && Number.isNaN(Date.parse(trigger.stopOn.at))) {
     errors.push(`Stop running on: "${trigger.stopOn.at}" is not a date`);
+  }
+  const watcher = trigger.watcher;
+  if (watcher?.activeHours && watcher.activeHours.from > watcher.activeHours.to) {
+    errors.push('Active hours: the start hour must not be after the end hour');
+  }
+  if (watcher?.timezone && !validTimezone(watcher.timezone)) {
+    errors.push(`Watcher timezone: unknown timezone "${watcher.timezone}"`);
   }
   // The selected mode must have its configuration; templates stay partial.
   if (!opts?.template) {

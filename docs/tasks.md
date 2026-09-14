@@ -67,7 +67,21 @@ fields.
   own timezone.
 - **Watcher** (`trigger.watcher`) — a long-running **Command** and a
   **Batch events for** (`debounceSec`, default 5s) window. See "Watcher
-  contract" below for what the command must do.
+  contract" below for what the command must do. Three more options shape
+  when runs may start:
+  - **Run once when watching starts** (`runOnStart`) — one catch-up run
+    whenever watching starts cold: app launch, the task being enabled, a
+    pause lifted, or the system waking. The run carries no events; a check
+    step with its own cursor re-derives whatever happened while nothing was
+    watching. It never fires on crash restarts, and any event run that
+    starts first settles it.
+  - **Active hours** (`activeHours.from`/`.to`) and **On days** (`days`,
+    0 = Sunday) — runs only start inside the window; events arriving outside
+    are held and coalesce into one run when it opens. The watcher process
+    itself keeps running around the clock, so nothing is missed. A manual
+    Run Now ignores the window.
+  - **Timezone** (`timezone`) — the zone the hours/days are evaluated in;
+    unset = the computer's.
 
 A checkbox, "Stop on a date", turns on **Stop running on**
 (`trigger.stopOn.enabled` / `.at`) — the date and time the trigger ends. Once

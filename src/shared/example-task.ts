@@ -18,7 +18,14 @@ export const EXAMPLE_TASK: TaskInput = {
   trigger: {
     mode: 'schedule',
     schedule: { cron: '*/10 * * * *', timezone: 'UTC' },
-    watcher: { command: 'node scripts/watch-events.js', debounceSec: 5 },
+    watcher: {
+      command: 'node scripts/watch-events.js',
+      debounceSec: 5,
+      runOnStart: false,
+      activeHours: { from: 7, to: 22 },
+      days: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    },
     stopOn: { enabled: false, at: '2027-01-01T09:00:00' },
   },
   environmentId: 'local',

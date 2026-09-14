@@ -43,7 +43,14 @@ function fmtDays(days: number[]): string {
 
 function describeTrigger(task: Task): string {
   if (task.trigger.mode === 'manual') return 'Manual';
-  if (task.trigger.mode === 'watcher') return 'On events';
+  if (task.trigger.mode === 'watcher') {
+    const w = task.trigger.watcher;
+    const parts = ['On events'];
+    if (w?.days) parts.push(fmtDays(w.days));
+    if (w?.activeHours) parts.push(`from ${w.activeHours.from}h to ${w.activeHours.to}h`);
+    const tz = (w?.days || w?.activeHours) && w?.timezone ? ` (${w.timezone})` : '';
+    return parts.join(', ') + tz;
+  }
   const schedule = task.trigger.schedule;
   if (!schedule) return 'Not configured';
   const tz = schedule.timezone ? ` (${schedule.timezone})` : '';

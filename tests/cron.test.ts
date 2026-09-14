@@ -1,4 +1,38 @@
 import { describe, expect, it } from 'vitest';
+import { runWindowOpen } from '../src/shared/cron';
+
+describe('runWindowOpen', () => {
+  // 2026-01-15T10:00:00Z is a Thursday (day 4).
+  const thu10 = Date.parse('2026-01-15T10:00:00Z');
+  const thu23 = Date.parse('2026-01-15T23:30:00Z');
+
+  it('no constraints = always open', () => {
+    expect(runWindowOpen({}, thu23)).toBe(true);
+  });
+
+  it('holds outside the hour window and opens inside it (inclusive bounds)', () => {
+    const w = { activeHours: { from: 7, to: 22 }, timezone: 'UTC' };
+    expect(runWindowOpen(w, thu10)).toBe(true);
+    expect(runWindowOpen(w, thu23)).toBe(false);
+    expect(runWindowOpen(w, Date.parse('2026-01-15T07:00:00Z'))).toBe(true);
+    expect(runWindowOpen(w, Date.parse('2026-01-15T22:59:00Z'))).toBe(true);
+    expect(runWindowOpen(w, Date.parse('2026-01-15T06:59:00Z'))).toBe(false);
+  });
+
+  it('holds on disallowed weekdays', () => {
+    expect(runWindowOpen({ days: [1, 2, 3, 4, 5], timezone: 'UTC' }, thu10)).toBe(true);
+    expect(runWindowOpen({ days: [0, 6], timezone: 'UTC' }, thu10)).toBe(false);
+  });
+
+  it('evaluates hour and day in the given timezone', () => {
+    // Thursday 23:30 UTC = Friday 08:30 in Asia/Tokyo (UTC+9).
+    const w = { activeHours: { from: 7, to: 22 }, days: [5], timezone: 'Asia/Tokyo' };
+    expect(runWindowOpen(w, thu23)).toBe(true);
+    expect(runWindowOpen({ ...w, days: [4] }, thu23)).toBe(false);
+    // The alias resolves like the schedule's timezone does.
+    expect(runWindowOpen({ activeHours: { from: 7, to: 22 }, timezone: 'America/Rio_de_Janeiro' }, thu23)).toBe(true); // 20:30 local
+  });
+});
 import { cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '../src/shared/cron';
 
 describe('cronTz', () => {

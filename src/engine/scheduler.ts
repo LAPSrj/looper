@@ -14,7 +14,7 @@ import type {
   TaskRuntime,
 } from '../shared/types';
 import { scheduleOf, watcherOf } from '../shared/types';
-import { cronTz } from '../shared/cron';
+import { cronTz, runWindowOpen } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
 import { detectSystemLocale, type HostKind } from './host';
@@ -92,6 +92,12 @@ export class Scheduler extends EventEmitter {
   private readonly sleepOwed = new Set<string>();
   /** Watcher event lines waiting for a run slot, per task; a batch never queues a second run. */
   private readonly pendingEvents = new Map<string, string[]>();
+  /**
+   * Tasks owed a runOnStart catch-up: watching started cold (app launch,
+   * enable, pause lifted, system wake) and the check should re-derive what
+   * was missed. Settled by the next watcher run, whatever triggers it.
+   */
+  private readonly catchUpOwed = new Set<string>();
   private readonly steps: SchedulerSteps;
   private readonly watchers: WatcherPool;
   private readonly now: () => number;
@@ -156,7 +162,10 @@ export class Scheduler extends EventEmitter {
       }
     });
     // Watchers start once the runtimes exist, so their first state report lands on one.
-    for (const task of tasks) this.syncWatcher(task);
+    for (const task of tasks) {
+      this.syncWatcher(task);
+      if (this.watcherDesired(task) && watcherOf(task)?.runOnStart) this.catchUpOwed.add(task.id);
+    }
     this.d.tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) =>
       this.onTaskChange(task, kind, previous),
     );
@@ -295,7 +304,11 @@ export class Scheduler extends EventEmitter {
         rt.state = parkedState(task);
       }
     }
-    if (task) this.syncWatcher(task);
+    if (task) {
+      this.syncWatcher(task);
+      // Watching resumes cold: the pause may have swallowed events.
+      if (this.watcherDesired(task) && watcherOf(task)?.runOnStart) this.catchUpOwed.add(task.id);
+    }
     this.emitRuntime(rt);
   }
 
@@ -359,7 +372,12 @@ export class Scheduler extends EventEmitter {
     // The watchers get the same grace: respawning into a network that is not
     // back yet is the failure they would otherwise crash-loop on.
     setTimeout(() => {
-      if (!this.stopping) this.watchers.resume();
+      if (this.stopping) return;
+      this.watchers.resume();
+      // The sleep was a blind spot; runOnStart tasks owe a catch-up look.
+      for (const task of this.d.tasks.list()) {
+        if (this.watcherDesired(task) && watcherOf(task)?.runOnStart) this.catchUpOwed.add(task.id);
+      }
     }, RESUME_GRACE_MS);
   }
 
@@ -487,6 +505,7 @@ export class Scheduler extends EventEmitter {
       for (const run of [...(gone?.runs ?? [])]) void this.stopTask(task.id, 'task removed', run.runId);
       void this.watchers.stop(task.id);
       this.pendingEvents.delete(task.id);
+      this.catchUpOwed.delete(task.id);
       this.deferLogged.delete(task.id);
       if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
@@ -503,6 +522,8 @@ export class Scheduler extends EventEmitter {
         this.emitRuntime(newRt);
       }
       this.syncWatcher(task);
+      // A brand-new watcher task starts cold; its check may have a backlog.
+      if (this.watcherDesired(task) && watcherOf(task)?.runOnStart) this.catchUpOwed.add(task.id);
       this.persist();
       return;
     }
@@ -522,7 +543,13 @@ export class Scheduler extends EventEmitter {
     if (previous && !previous.completedAt && task.completedAt) this.onCompleted(task, rt);
     // The trigger follows the edit right away, even with runs in flight: a task
     // that stopped being watched must not collect more events while it finishes.
+    const wasWatched = !!previous && previous.enabled && !previous.completedAt && !!watcherOf(previous);
     this.syncWatcher(task);
+    // Watching began with this edit (enabled, reopened, or switched to the
+    // events trigger): a cold start, so the catch-up applies.
+    if (!wasWatched && this.watcherDesired(task) && watcherOf(task)?.runOnStart) {
+      this.catchUpOwed.add(task.id);
+    }
     if (ACTIVE.has(rt.state)) return; // applied when the cycle finishes
     if (!task.enabled) {
       rt.state = parkedState(task);
@@ -583,16 +610,18 @@ export class Scheduler extends EventEmitter {
     }
   }
 
+  /** A watcher is wanted while the task is enabled, unfinished, not paused and on the events trigger. */
+  private watcherDesired(task: Task): boolean {
+    return task.enabled && !task.completedAt && !!watcherOf(task) && !this.runtimes.get(task.id)?.pausedReason;
+  }
+
   /**
-   * Start, stop or respawn the task's watcher process. A watcher is wanted
-   * while the task is enabled, unfinished, not paused and actually on the
-   * events trigger; the pool decides whether that means a respawn.
+   * Start, stop or respawn the task's watcher process; the pool decides
+   * whether a change means a respawn.
    */
   private syncWatcher(task: Task): void {
     if (this.stopping) return;
-    const desired =
-      task.enabled && !task.completedAt && !!watcherOf(task) && !this.runtimes.get(task.id)?.pausedReason;
-    if (desired) this.watchers.sync(task);
+    if (this.watcherDesired(task)) this.watchers.sync(task);
     else void this.watchers.stop(task.id);
   }
 
@@ -612,8 +641,10 @@ export class Scheduler extends EventEmitter {
         );
         continue;
       }
-      // A batch of watcher events that found no free slot when it arrived.
+      // A batch of watcher events that found no free slot when it arrived,
+      // then the runOnStart catch-up (an events run settles the debt too).
       if (this.pendingEvents.has(task.id)) this.flushEvents(task);
+      if (this.catchUpOwed.has(task.id)) this.flushCatchUp(task);
       if (rt.nextRunAt === null || rt.nextRunAt > now) continue;
       try {
         // A slot may start another cycle while earlier ones are still going,
@@ -711,7 +742,7 @@ export class Scheduler extends EventEmitter {
       this.pendingEvents.delete(task.id);
       return;
     }
-    const block = rt.runs.length >= task.maxConcurrentRuns ? this.atCapReason(rt, task) : this.concurrencyBlock(task);
+    const block = this.watcherBlock(task, rt);
     if (block) {
       if (!this.deferLogged.has(task.id)) {
         this.deferLogged.add(task.id);
@@ -721,7 +752,36 @@ export class Scheduler extends EventEmitter {
     }
     this.deferLogged.delete(task.id);
     this.pendingEvents.delete(task.id);
+    // Whatever happened while nothing was watching rides along in this run.
+    this.catchUpOwed.delete(task.id);
     void this.runCycle(task, 'watcher', pending);
+  }
+
+  /** Why a watcher run may not start right now (run window, caps), or null. */
+  private watcherBlock(task: Task, rt: TaskRuntime): string | null {
+    const watcher = watcherOf(task);
+    if (watcher && !runWindowOpen(watcher, this.now())) return 'outside its run window';
+    if (rt.runs.length >= task.maxConcurrentRuns) return this.atCapReason(rt, task);
+    return this.concurrencyBlock(task);
+  }
+
+  /**
+   * The runOnStart catch-up: one event-less watcher run so the check can
+   * re-derive whatever happened while nothing was watching. Waits out the run
+   * window and the caps like any other watcher run (retried every tick), and
+   * is settled by any watcher run that starts first.
+   */
+  private flushCatchUp(task: Task): void {
+    const rt = this.runtimes.get(task.id);
+    if (!rt) return;
+    if (rt.pausedReason || !task.enabled || task.completedAt || !watcherOf(task)) {
+      this.catchUpOwed.delete(task.id);
+      return;
+    }
+    if (this.pendingEvents.get(task.id)?.length) return; // the events run will settle it
+    if (this.watcherBlock(task, rt)) return;
+    this.catchUpOwed.delete(task.id);
+    void this.runCycle(task, 'watcher', undefined, 'catch-up: watching started');
   }
 
   /**
@@ -742,7 +802,13 @@ export class Scheduler extends EventEmitter {
     if (task?.notifications.autoPaused) this.notify(task, '-', 'auto-paused', capFirst(reason));
   }
 
-  private async runCycle(task: Task, trigger: ActiveRun['trigger'], events?: string[]): Promise<void> {
+  private async runCycle(
+    task: Task,
+    trigger: ActiveRun['trigger'],
+    events?: string[],
+    /** Event-less watcher run (runOnStart): recorded so the log says why it fired. */
+    catchUpNote?: string,
+  ): Promise<void> {
     const rt = this.runtimes.get(task.id);
     if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
     const runId = newRunId(new Date(this.now()));
@@ -779,6 +845,8 @@ export class Scheduler extends EventEmitter {
         summary: `${events.length} event(s)`,
         body: '```\n' + events.join('\n') + '\n```',
       });
+    } else if (catchUpNote) {
+      this.record(task.id, runId, 'watcher', 'act', { summary: catchUpNote });
     }
 
     // Without a gate step the run goes straight to the agent: one toast, not two.

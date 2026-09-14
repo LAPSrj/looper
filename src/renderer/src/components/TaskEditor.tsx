@@ -97,6 +97,24 @@ function defaultStopOn(): string {
   return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function TimezoneSelect({ value, onChange }: { value?: string; onChange: (tz?: string) => void }) {
+  return (
+    <select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}>
+      <option value="">Use computer timezone</option>
+      {value && !TIMEZONES.includes(value) && <option value={value}>{value}</option>}
+      {TIMEZONE_GROUPS.map(([region, zones]) => (
+        <optgroup key={region} label={region}>
+          {zones.map((z) => (
+            <option key={z.id} value={z.id}>
+              {z.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 
 export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
@@ -616,47 +634,107 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             )}
             {!cronNext && <p className="help"><span className="warn">Invalid cron expression.</span></p>}
             <Field label="Timezone">
-              <select
-                value={trig.schedule?.timezone ?? ''}
-                onChange={(e) =>
-                  set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: e.target.value || undefined } })
-                }
-              >
-                <option value="">Use computer timezone</option>
-                {trig.schedule?.timezone && !TIMEZONES.includes(trig.schedule.timezone) && (
-                  <option value={trig.schedule.timezone}>{trig.schedule.timezone}</option>
-                )}
-                {TIMEZONE_GROUPS.map(([region, zones]) => (
-                  <optgroup key={region} label={region}>
-                    {zones.map((z) => (
-                      <option key={z.id} value={z.id}>
-                        {z.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+              <TimezoneSelect
+                value={trig.schedule?.timezone}
+                onChange={(tz) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: tz } })}
+              />
             </Field>
               </>
             )}
-            {trigMode === 'watcher' && (
+            {trigMode === 'watcher' && (() => {
+              const watcher = trig.watcher;
+              const setWatcher = (patch: Partial<NonNullable<NonNullable<Draft['trigger']>['watcher']>>) =>
+                set('trigger', { ...trig, watcher: { command: '', debounceSec: 5, ...watcher, ...patch } });
+              const watcherDays = watcher?.days ?? ALL_DAYS;
+              const toggleWatcherDay = (d: number) => {
+                const days = watcherDays.includes(d) ? watcherDays.filter((x) => x !== d) : [...watcherDays, d];
+                if (days.length === 0) return;
+                setWatcher({ days: days.length === 7 ? undefined : days });
+              };
+              const hours = watcher?.activeHours;
+              return (
               <>
                 <Field label="Watcher command">
                   <input
                     className="mono"
-                    value={trig.watcher?.command ?? ''}
-                    onChange={(e) => set('trigger', { ...trig, watcher: { debounceSec: 5, ...trig.watcher, command: e.target.value } })}
+                    value={watcher?.command ?? ''}
+                    onChange={(e) => setWatcher({ command: e.target.value })}
                   />
                 </Field>
                 <NumberField
                   label="Batch events for"
                   suffix="s"
                   min={0}
-                  value={trig.watcher?.debounceSec ?? 5}
-                  onChange={(n) => set('trigger', { ...trig, watcher: { command: '', ...trig.watcher, debounceSec: n } })}
+                  value={watcher?.debounceSec ?? 5}
+                  onChange={(n) => setWatcher({ debounceSec: n })}
                 />
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={watcher?.runOnStart ?? false}
+                    onChange={(e) => setWatcher({ runOnStart: e.target.checked })}
+                  />
+                  Run once when watching starts, to catch up on missed events
+                </label>
+                <Field label="Active hours">
+                  <div className="browse-row hours-row">
+                    <select
+                      value={hours ? 'window' : 'all'}
+                      onChange={(e) =>
+                        setWatcher({ activeHours: e.target.value === 'window' ? { from: 9, to: 18 } : undefined })
+                      }
+                    >
+                      <option value="all">All day</option>
+                      <option value="window">Between…</option>
+                    </select>
+                    {hours && (
+                      <>
+                        <NumberInput
+                          min={0}
+                          max={23}
+                          suffix="h"
+                          value={hours.from}
+                          onChange={(v) => {
+                            if (Number.isInteger(v) && v >= 0 && v <= 23)
+                              setWatcher({ activeHours: { from: v, to: Math.max(v, hours.to) } });
+                          }}
+                        />
+                        <span className="muted">to</span>
+                        <NumberInput
+                          min={0}
+                          max={23}
+                          suffix="h"
+                          value={hours.to}
+                          onChange={(v) => {
+                            if (Number.isInteger(v) && v >= 0 && v <= 23)
+                              setWatcher({ activeHours: { from: Math.min(v, hours.from), to: v } });
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
+                </Field>
+                <Field label="On days">
+                  <div className="day-row">
+                    {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+                      <button
+                        key={d}
+                        className={`btn small day-toggle ${watcherDays.includes(d) ? 'selected' : ''}`}
+                        onClick={() => toggleWatcherDay(d)}
+                      >
+                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                {(hours || watcher?.days) && (
+                  <Field label="Timezone">
+                    <TimezoneSelect value={watcher?.timezone} onChange={(tz) => setWatcher({ timezone: tz })} />
+                  </Field>
+                )}
               </>
-            )}
+              );
+            })()}
             {trigMode !== 'manual' && (
               <>
                 <label className="checkbox-field">
