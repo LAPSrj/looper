@@ -654,20 +654,22 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               const hours = watcher?.activeHours;
               return (
               <>
-                <Field label="Watcher command">
-                  <input
-                    className="mono"
-                    value={watcher?.command ?? ''}
-                    onChange={(e) => setWatcher({ command: e.target.value })}
+                <div className="row">
+                  <Field label="Watcher command">
+                    <input
+                      className="mono"
+                      value={watcher?.command ?? ''}
+                      onChange={(e) => setWatcher({ command: e.target.value })}
+                    />
+                  </Field>
+                  <NumberField
+                    label="Batch events for"
+                    suffix="s"
+                    min={0}
+                    value={watcher?.debounceSec ?? 5}
+                    onChange={(n) => setWatcher({ debounceSec: n })}
                   />
-                </Field>
-                <NumberField
-                  label="Batch events for"
-                  suffix="s"
-                  min={0}
-                  value={watcher?.debounceSec ?? 5}
-                  onChange={(n) => setWatcher({ debounceSec: n })}
-                />
+                </div>
                 <label className="checkbox-field">
                   <input
                     type="checkbox"
