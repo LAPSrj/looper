@@ -396,6 +396,8 @@ export const SettingsSchema = z.object({
   closeToTray: z.boolean().default(false),
   /** Master switch for system notifications; per-task selection is on the task. */
   notificationsEnabled: z.boolean().default(true),
+  /** Show a step-selection window before a manual Run Now starts. */
+  promptRunOptions: z.boolean().default(false),
   /** Rest Mode: sleep the computer between runs and wake it for the next one (Windows only). */
   rest: z.object({
     /** Earliest the wake timer may fire, counted from the moment the computer goes to sleep. */
@@ -465,6 +467,16 @@ export type TaskState =
   | 'paused'
   | 'disabled'
   | 'completed';
+
+/**
+ * Steps a manual run was told to skip (the Run Options window). Only a manual
+ * run ever carries them; a step the task doesn't have enabled is unaffected.
+ */
+export interface RunSkips {
+  check?: boolean;
+  classifier?: boolean;
+  agent?: boolean;
+}
 
 /** One cycle of a task that is in flight; a task may have up to `maxConcurrentRuns` of them. */
 export interface ActiveRun {

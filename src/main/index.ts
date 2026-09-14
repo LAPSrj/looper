@@ -69,6 +69,7 @@ if (!app.requestSingleInstanceLock()) {
       openMessages: openMessagesWindow,
       openMessageImage: openImageWindow,
       openEditor: openEditorWindow,
+      promptRunOptions,
       openNoteEditor: openNoteEditorWindow,
       openFolderNoteEditor: openFolderNoteEditorWindow,
       openMoveToFolder: openMoveToFolderWindow,
@@ -464,6 +465,44 @@ function promptMarkdownExport(parent: BrowserWindow, defaults: MarkdownExportCho
     };
     ipcMain.on('markdown-export:apply', onApply);
     child.on('closed', () => done(null));
+  });
+}
+
+/**
+ * The Run Options window: which steps of the task a manual run should go
+ * through. Its checkboxes say what to run, so the run's skips are their
+ * inverse. Resolves whether a run actually started — dismissing the window
+ * without applying starts nothing.
+ */
+function promptRunOptions(taskId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = openChildWindow(`run-options/${encodeURIComponent(taskId)}`, 'Run Options', 360, 280, win, {
+      minWidth: 320,
+      minHeight: 240,
+      resizable: false,
+    });
+    let settled = false;
+    const done = (started: boolean): void => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('run-options:apply', onApply);
+      resolve(started);
+      if (!child.isDestroyed()) child.close();
+    };
+    const onApply = (e: Electron.IpcMainEvent, opts: { check: boolean; classifier: boolean; agent: boolean }): void => {
+      if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+      let started = false;
+      try {
+        started =
+          engine?.runNow(taskId, { check: !opts?.check, classifier: !opts?.classifier, agent: !opts?.agent }) ?? false;
+      } catch (err) {
+        // An unknown task must not take the main process down with it.
+        engine?.log.error(`run options for ${taskId} failed: ${(err as Error).message}`);
+      }
+      done(started);
+    };
+    ipcMain.on('run-options:apply', onApply);
+    child.on('closed', () => done(false));
   });
 }
 

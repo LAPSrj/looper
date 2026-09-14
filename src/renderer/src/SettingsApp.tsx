@@ -43,6 +43,7 @@ export function SettingsApp() {
   const [engineLogDays, setEngineLogDays] = useState<number | null>(null);
   const [deleteCompleted, setDeleteCompleted] = useState<boolean | null>(null);
   const [completedDays, setCompletedDays] = useState<number | null>(null);
+  const [promptRunOptions, setPromptRunOptions] = useState<boolean | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -75,6 +76,7 @@ export function SettingsApp() {
       setEngineLogDays((v) => v ?? info.settings.engineLogRetentionDays);
       setDeleteCompleted((v) => v ?? info.settings.completedTaskRetention.enabled);
       setCompletedDays((v) => v ?? info.settings.completedTaskRetention.days);
+      setPromptRunOptions((v) => v ?? info.settings.promptRunOptions);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -106,7 +108,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -217,6 +219,7 @@ export function SettingsApp() {
         runRetentionDays: retentionDays,
         engineLogRetentionDays: engineLogDays,
         completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
+        promptRunOptions,
         rest: {
           minSleepMin: restMinSleep,
           graceSec: restGrace,
@@ -274,6 +277,10 @@ export function SettingsApp() {
               <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
             <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
+            <label className="checkbox-field">
+              <input type="checkbox" checked={promptRunOptions} onChange={(e) => setPromptRunOptions(e.target.checked)} />
+              Show run options before manually running a task
+            </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={notificationsEnabled} onChange={(e) => setNotificationsEnabled(e.target.checked)} />
               Show notifications

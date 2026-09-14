@@ -187,6 +187,8 @@ export interface LooperApi {
   applyMessagesFilter(value: string): void;
   /** Export-options window only: confirm the Save-as-Markdown choice and close. */
   applyMarkdownExport(opts: { includeThinking: boolean; includeTools: boolean; plain: boolean }): void;
+  /** Run-options window only: start the manual run with these steps (true = run the step) and close. */
+  applyRunOptions(opts: { check: boolean; classifier: boolean; agent: boolean }): void;
   onEvent(cb: (e: EngineEvent) => void): () => void;
   /** UI commands pushed from the application menu. */
   onUi(cb: (e: UiEvent) => void): () => void;

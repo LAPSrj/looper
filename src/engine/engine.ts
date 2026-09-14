@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { MessageImage, MessagesResult } from '../shared/messages';
-import type { EngineEvent, InboxCommand, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, InboxCommand, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
 import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
@@ -69,7 +69,8 @@ export interface Engine {
   reorderTemplates(ids: string[]): void;
   // runtime
   listRuntimes(): TaskRuntime[];
-  runNow(id: string): boolean;
+  /** `skips` is the Run Options window's choice; every other caller passes none. */
+  runNow(id: string, skips?: RunSkips): boolean;
   pause(id: string, reason?: string): void;
   resume(id: string): void;
   /** Finish a task for good: it stops being scheduled and is deleted when its retention runs out. */
@@ -371,7 +372,7 @@ export function createEngine(opts: EngineOptions): Engine {
     removeTemplate: (id) => templates.remove(id),
     reorderTemplates: (ids) => templates.reorder(ids),
     listRuntimes: () => scheduler.list(),
-    runNow: (id) => scheduler.runNow(id),
+    runNow: (id, skips) => scheduler.runNow(id, skips),
     pause: (id, reason) => scheduler.pause(id, reason),
     resume: (id) => scheduler.resume(id),
     completeTask: (id, reason) => scheduler.completeTask(id, reason ?? 'completed by the user'),

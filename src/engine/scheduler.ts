@@ -9,6 +9,7 @@ import type {
   RunPhase,
   RunRecord,
   RunResult,
+  RunSkips,
   Settings,
   Task,
   TaskRuntime,
@@ -217,7 +218,7 @@ export class Scheduler extends EventEmitter {
 
   // ---------- commands ----------
 
-  runNow(taskId: string): boolean {
+  runNow(taskId: string, skips?: RunSkips): boolean {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
@@ -242,7 +243,7 @@ export class Scheduler extends EventEmitter {
       });
       return false;
     }
-    void this.runCycle(task, 'manual');
+    void this.runCycle(task, 'manual', undefined, undefined, skips);
     return true;
   }
 
@@ -856,6 +857,8 @@ export class Scheduler extends EventEmitter {
     events?: string[],
     /** Event-less watcher run (runOnStart): recorded so the log says why it fired. */
     catchUpNote?: string,
+    /** Steps the Run Options window switched off; manual runs only. */
+    skips?: RunSkips,
   ): Promise<void> {
     const rt = this.runtimes.get(task.id);
     if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
@@ -897,8 +900,24 @@ export class Scheduler extends EventEmitter {
       this.record(task.id, runId, 'watcher', 'act', { summary: catchUpNote });
     }
 
+    // A step the Run Options window switched off does not run at all, whatever
+    // the task has configured.
+    const willCheck = !!task.check?.enabled && !skips?.check;
+    const willClassify = !!task.classifier?.enabled && !skips?.classifier;
+    // Only steps the task actually has are worth naming; the rest of the run
+    // log would otherwise report a skip of something that never ran anyway.
+    const skipped: string[] = [];
+    if (skips?.check && task.check?.enabled) skipped.push('check');
+    if (skips?.classifier && task.classifier?.enabled) skipped.push('classifier');
+    if (skips?.agent) skipped.push('agent');
+    if (skipped.length) {
+      this.record(task.id, runId, 'skip', 'skipped', {
+        summary: `skipped by run options: ${skipped.join(', ')}`,
+      });
+    }
+
     // Without a gate step the run goes straight to the agent: one toast, not two.
-    const gated = !!task.check?.enabled || !!task.classifier?.enabled;
+    const gated = willCheck || willClassify;
     if (task.notifications.runStart && (gated || !task.notifications.agentStart)) {
       this.notify(task, runId, 'run-start', 'Run started');
     }
@@ -936,7 +955,7 @@ export class Scheduler extends EventEmitter {
       // No check step configured (or disabled): every slot goes straight to classifier/agent.
       let go = true;
       let checkSummary: string | undefined;
-      if (task.check?.enabled) {
+      if (willCheck) {
         const check = await this.steps.runCheck(ctx);
         if (stopped()) {
           go = false;
@@ -970,7 +989,7 @@ export class Scheduler extends EventEmitter {
           }
         }
       }
-      if (go && task.classifier?.enabled) {
+      if (go && willClassify) {
         this.setRunState(rt, runId, 'classifying');
         this.record(task.id, runId, 'classify', 'started', { summary: checkSummary, body: classifyPrompt(ctx) });
         const cls = await this.runClassifier(task, ctx);
@@ -1009,6 +1028,12 @@ export class Scheduler extends EventEmitter {
         go = false;
         outcome = 'stopped';
         detail = stopper.reason;
+      }
+      // The gates passed but the Run Options window switched the agent off: the
+      // cycle ends here, with whatever the check had to say.
+      if (go && skips?.agent) {
+        go = false;
+        detail = checkSummary ? `agent step skipped: ${checkSummary}` : 'agent step skipped';
       }
       if (go) {
         this.setRunState(rt, runId, 'running');

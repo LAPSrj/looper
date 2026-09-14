@@ -15,6 +15,8 @@ export interface IpcHost {
   openMessages: (taskId: string, runId: string, agentId?: string, label?: string) => void;
   openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
   openEditor: (taskId?: string) => void;
+  /** Modal step-selection window for a manual run; resolves whether a run started. */
+  promptRunOptions: (taskId: string) => Promise<boolean>;
   openNoteEditor: (taskId: string) => void;
   openFolderNoteEditor: (folderId: string) => void;
   openMoveToFolder: (taskId: string) => void;
@@ -129,7 +131,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('rest:state', () => engine.restState());
 
   ipcMain.handle('runtime:list', () => engine.listRuntimes());
-  ipcMain.handle('runtime:runNow', (_e, id: string) => engine.runNow(id));
+  // With the setting on, the run is started by the Run Options window instead.
+  ipcMain.handle('runtime:runNow', (_e, id: string) =>
+    engine.settings.promptRunOptions ? host.promptRunOptions(id) : engine.runNow(id),
+  );
   ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));
   ipcMain.handle('runtime:resume', (_e, id: string) => engine.resume(id));
   ipcMain.handle('runtime:complete', (_e, id: string) => engine.completeTask(id));

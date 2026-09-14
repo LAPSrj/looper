@@ -496,6 +496,58 @@ describe('Scheduler', () => {
   });
 });
 
+describe('run options', () => {
+  it('a plain Run Now runs every step and records no skip', async () => {
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    expect(h.sched.runNow('t1')).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual([
+      'check:act',
+      'agent:started',
+      'agent:done',
+      'result:done',
+    ]);
+  });
+
+  it('a skipped check goes straight to the agent; a step the task lacks is not named', async () => {
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    // No scripted check: the step running at all would noop the cycle.
+    expect(h.sched.runNow('t1', { check: true, classifier: true })).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual([
+      'skip:skipped',
+      'agent:started',
+      'agent:done',
+      'result:done',
+    ]);
+    expect(records()[0].summary).toBe('skipped by run options: check');
+  });
+
+  it('a skipped agent ends the run as no-action, carrying the check summary', async () => {
+    h.checks.push(check('act', { summary: '2 items' }));
+    expect(h.sched.runNow('t1', { agent: true })).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(0);
+    const rt = h.sched.get('t1')!;
+    expect(rt.state).toBe('idle');
+    expect(rt.lastResult).toBe('noop');
+    expect(rt.lastDetail).toBe('agent step skipped: 2 items');
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['skip:skipped', 'check:act']);
+    expect(records()[0].summary).toBe('skipped by run options: agent');
+  });
+
+  it('a run whose only gate is skipped notifies once, like an ungated task', async () => {
+    h.tasks.patch('t1', { notifications: { runStart: true, agentStart: true, end: 'off' } });
+    h.agentEnds.push(agentEnd('done', 'ran'));
+    expect(h.sched.runNow('t1', { check: true })).toBe(true);
+    await flush();
+    expect(notifies().map((n) => n.kind)).toEqual(['agent-start']);
+  });
+});
+
 describe('simultaneous runs', () => {
   beforeEach(async () => {
     await h.sched.stop();

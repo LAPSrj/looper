@@ -21,6 +21,7 @@ import { MarkdownExportApp } from './MarkdownExportApp';
 import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
 import { RunDetailApp } from './RunDetailApp';
+import { RunOptionsApp } from './RunOptionsApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
 import { TemplatesApp } from './TemplatesApp';
@@ -36,6 +37,7 @@ const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(has
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
 const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runDetailMatch = /^run-detail\/([^/]+)\/([^/]+)$/.exec(hash);
+const runOptionsMatch = /^run-options\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
@@ -110,6 +112,7 @@ function pickRoot() {
       />
     );
   }
+  if (runOptionsMatch) return <RunOptionsApp taskId={decodeURIComponent(runOptionsMatch[1])} />;
   if (messagesMatch) {
     return (
       <MessagesApp
