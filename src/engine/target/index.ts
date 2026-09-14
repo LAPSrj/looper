@@ -33,6 +33,8 @@ export interface Target {
   doneHelperFile(command: string): string;
   /** Host path -> path as the target sees it. */
   toTargetPath(hostPath: string): string;
+  /** Target-native path -> path the host process can read. Throws when there is none. */
+  toHostPath(targetPath: string): string;
   /** Quote a literal for the target shell. */
   quote(s: string): string;
   /** Shell expression that expands to the contents of a file as ONE argument. */

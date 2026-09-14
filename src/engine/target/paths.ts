@@ -33,6 +33,29 @@ export function translatePath(hostPath: string, o: PathTranslateOpts): string {
   return hostPath;
 }
 
+/**
+ * Translate a target-native path into a form the host process can read
+ * (the inverse of translatePath): a WSL path becomes a \\wsl.localhost UNC
+ * path on a Windows host, a Windows path becomes a mount path on a WSL host.
+ */
+export function translateToHost(
+  targetPath: string,
+  o: Omit<PathTranslateOpts, 'hostDistro'> & { targetDistro?: string },
+): string {
+  if (o.host === 'windows' && o.targetKind === 'wsl') {
+    return translatePath(targetPath, {
+      host: 'wsl',
+      targetKind: 'windows',
+      wslMountPrefix: o.wslMountPrefix,
+      hostDistro: o.targetDistro,
+    });
+  }
+  if (o.host === 'wsl' && o.targetKind === 'windows') {
+    return translatePath(targetPath, { host: 'windows', targetKind: 'wsl', wslMountPrefix: o.wslMountPrefix });
+  }
+  return targetPath;
+}
+
 export function joinTarget(kind: 'wsl' | 'windows', base: string, ...parts: string[]): string {
   const sep = kind === 'windows' ? '\\' : '/';
   return [base.replace(/[\\/]+$/, ''), ...parts].join(sep);

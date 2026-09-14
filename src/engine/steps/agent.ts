@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveEnvironment, resolveHarness } from '../../shared/environments';
-import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, noteSection, type RunContext } from './common';
+import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
 import {
   parseDoneText,
   startSession,
@@ -84,7 +84,7 @@ export function systemFooter(taskName: string, runId: string, headless: boolean,
 
 /** The full prompt the agent gets: the rendered template plus the run's one-off note. */
 export function agentPrompt(ctx: RunContext): string {
-  return buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.task.note);
+  return expandFileTags(buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.task.note), ctx);
 }
 
 export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<AgentHandle> {

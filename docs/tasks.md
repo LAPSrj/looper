@@ -71,15 +71,20 @@ fields.
   when runs may start:
   - **Run once when watching starts** (`runOnStart`) — one catch-up run
     whenever watching starts cold: app launch, the task being enabled, a
-    pause lifted, or the system waking. The run carries no events; a check
+    pause lifted, the system waking, or the active-hours window opening.
+    The run carries no events; a check
     step with its own cursor re-derives whatever happened while nothing was
     watching. It never fires on crash restarts, and any event run that
     starts first settles it.
   - **Active hours** (`activeHours.from`/`.to`) and **On days** (`days`,
-    0 = Sunday) — runs only start inside the window; events arriving outside
-    are held and coalesce into one run when it opens. The watcher process
-    itself keeps running around the clock, so nothing is missed. A manual
-    Run Now ignores the window.
+    0 = Sunday) — the watcher process only runs inside the window: it is
+    stopped when the window closes and started again when it opens, a cold
+    start like any other. Events that happen while the window is closed are
+    not observed — pair the window with **Run once when watching starts** and
+    a check with its own cursor so the opening run re-derives what was
+    missed. A batch caught inside the window that found no free run slot is
+    held and coalesces into one run once a slot and the window are open. A
+    manual Run Now ignores the window.
   - **Timezone** (`timezone`) — the zone the hours/days are evaluated in;
     unset = the computer's.
 
@@ -96,8 +101,9 @@ switches that date off rather than erasing it.
 ### Watcher contract
 
 The watcher command is a **long-running process**, spawned once in the
-task's environment and working directory whenever the task is enabled and
-the watcher mode is selected — it is not re-run per event.
+task's environment and working directory whenever the task is enabled, the
+watcher mode is selected and the active-hours window (if any) is open — it
+is not re-run per event.
 
 - Each **non-empty line on stdout is one trigger event**. JSON is
   recommended, one object per line, but any non-empty line counts.
@@ -120,8 +126,9 @@ the watcher mode is selected — it is not re-run per event.
   prompt uses neither — an automatically appended "## Trigger events"
   section, the same way check output is appended when the prompt doesn't
   reference it.
-- Pausing, disabling, or completing the task stops the watcher; resuming or
-  re-enabling it starts a fresh one, with a clean crash streak.
+- Pausing, disabling, or completing the task — or its active-hours window
+  closing — stops the watcher; resuming, re-enabling, or the window opening
+  starts a fresh one, with a clean crash streak.
 - The check, classifier, and agent steps all see `LOOPER_TRIGGER` (env var,
   also `{{trigger}}` in prompts) set to `timer`, `manual`, or `watcher`,
   depending on how the cycle started.
@@ -168,8 +175,8 @@ classifier step on or off. When on, it runs after a check that returned
   as an error. Default 180s.
 - **Classifier prompt** — your yes/no question about the check output.
   `{{summary}}` and `{{context}}` insert the check's output where you place
-  them; if the prompt doesn't reference either, they're appended
-  automatically. The `reason` (one sentence) is shown in the run log; the
+  them; if the prompt references none of `{{summary}}`, `{{context}}` or
+  `{{events}}`, they're appended automatically. The `reason` (one sentence) is shown in the run log; the
   classifier's full conversation appears in the run's Messages window with
   its replies typed as **Classifier**.
 
@@ -210,9 +217,10 @@ classifier step on or off. When on, it runs after a check that returned
   also starts a new one, since a conversation can't move.
 - **Agent prompt** — the instructions the agent starts with. `{{summary}}`
   and `{{context}}` insert the check's output where you place them; if the
-  prompt doesn't reference either, they're appended under a "## Check
-  output" heading automatically. See [prompt template
-  variables](#prompt-template-variables) below for the full set.
+  prompt references none of `{{summary}}`, `{{context}}` or `{{events}}`,
+  they're appended under a "## Check output" heading automatically. See
+  [prompt template variables](#prompt-template-variables) below for the
+  full set.
 - **Extra command-line arguments** — appended verbatim to the harness
   command line.
 - **Extra environment variables** — set for every step of this task (check,
@@ -333,10 +341,19 @@ The classifier prompt and the agent prompt both support these placeholders:
 | `{{runId}}` | The current run's id |
 | `{{trigger}}` | `timer`, `manual`, or `watcher`, depending on how the cycle started |
 | `{{events}}` | The watcher's batched trigger events for this run, one per line (watcher-triggered runs only) |
+| `{{file:path}}` | The contents of that file, inlined verbatim |
 
 Unknown or unset variables render as an empty string. As noted above, if a
-prompt uses neither `{{summary}}` nor `{{context}}`, both are appended
-automatically under a "## Check output" heading — so you always see the
-check's findings, even from a prompt that never mentions them. The same
-applies to `{{events}}`: a watcher-triggered run whose prompt doesn't
-reference it gets the events appended under a "## Trigger events" heading.
+prompt references none of `{{summary}}`, `{{context}}` or `{{events}}`,
+whatever is present is appended automatically — the check output under a
+"## Check output" heading, a watcher run's events under "## Trigger
+events" — so a prompt that never mentions them still sees them. Referencing
+any one of the three turns the appending off entirely: leaving the others
+out is then taken as deliberate.
+
+`{{file:path}}` inlines a file — shared instructions, a skill file —
+directly into the prompt instead of asking the agent to read it. The path
+is written as the task's environment sees it; a relative path resolves
+against the task's working directory. The contents are inserted verbatim
+(placeholders inside the file are not rendered), and an unreadable file
+fails the run.

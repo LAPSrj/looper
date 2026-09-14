@@ -895,7 +895,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   help={
                     <>
                       Ask a yes/no question about the check output. <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code>{' '}
-                      insert it; if you don't use them it is appended automatically.
+                      insert it, <code>{'{{events}}'}</code> the watcher events; if you use none they are appended automatically.{' '}
+                      <code>{'{{file:path}}'}</code> inserts that file's contents.
                     </>
                   }
                 >
@@ -1003,8 +1004,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               label="Agent prompt"
               help={
                 <>
-                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output (appended automatically if
-                  you don't use them).
+                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output,{' '}
+                  <code>{'{{events}}'}</code> the watcher events (appended automatically if you use none).{' '}
+                  <code>{'{{file:path}}'}</code> inserts that file's contents.
                 </>
               }
             >

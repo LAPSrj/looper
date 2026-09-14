@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Note, Settings, Task } from '../../shared/types';
@@ -132,16 +133,18 @@ export function writeLauncher(
 }
 
 /**
- * Render a prompt template. If it does not reference the check output itself,
- * the summary/context are appended so the model always sees them; the same
- * goes for the trigger events of a watcher-triggered run.
+ * Render a prompt template. If it references none of events/summary/context,
+ * the user likely forgot them, so whatever is present is appended (events of a
+ * watcher-triggered run, check summary/context). Referencing any one of the
+ * three means the omission of the others is deliberate — nothing is appended.
  */
 export function buildPrompt(tpl: string, vars: Record<string, unknown>): string {
   let text = renderTemplate(tpl, vars);
-  if (!hasPlaceholder(tpl, 'events') && typeof vars.events === 'string' && vars.events) {
+  if (hasPlaceholder(tpl, 'events', 'summary', 'context')) return text;
+  if (typeof vars.events === 'string' && vars.events) {
     text += "\n\n## Trigger events\nThis run was triggered by the task's watcher. One event per line:\n\n" + vars.events + '\n';
   }
-  if (!hasPlaceholder(tpl, 'summary', 'context') && (vars.summary || vars.context !== undefined)) {
+  if (vars.summary || vars.context !== undefined) {
     text += '\n\n## Check output\n';
     if (vars.summary) text += `Summary: ${String(vars.summary)}\n`;
     if (vars.context !== undefined) {
@@ -150,6 +153,28 @@ export function buildPrompt(tpl: string, vars: Record<string, unknown>): string 
     }
   }
   return text;
+}
+
+const FILE_TAG = /\{\{\s*file:([^}]*?)\s*\}\}/g;
+
+/**
+ * Expand {{file:path}} tags with the file's contents, verbatim — placeholders
+ * inside the file are never rendered. Paths are target-native; a relative path
+ * resolves against the task's working directory. An unreadable file throws so
+ * the run fails visibly instead of running without its instructions.
+ */
+export function expandFileTags(text: string, ctx: Pick<RunContext, 'task' | 'target'>): string {
+  return text.replace(FILE_TAG, (_m, raw: string) => {
+    const p = raw.trim();
+    if (!p) throw new Error('{{file:}} tag has no path');
+    const absolute = ctx.target.kind === 'windows' ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(p) : p.startsWith('/');
+    const targetPath = absolute ? p : joinTarget(ctx.target.kind, ctx.task.cwd, p);
+    try {
+      return fs.readFileSync(ctx.target.toHostPath(targetPath), 'utf8').trimEnd();
+    } catch (e) {
+      throw new Error(`cannot include {{file:${p}}}: ${(e as Error).message}`);
+    }
+  });
 }
 
 /** The task's one-off guidance, appended after everything else so it wins. */

@@ -1,6 +1,6 @@
 import type { LauncherSpec, SpawnSpec, Target, TargetContext } from './index';
 import type { StopHookSpec } from './stop-hook';
-import { translatePath } from './paths';
+import { translatePath, translateToHost } from './paths';
 import { wslDistroName } from '../host';
 
 export class WindowsTarget implements Target {
@@ -25,6 +25,14 @@ export class WindowsTarget implements Target {
       targetKind: 'windows',
       wslMountPrefix: this.mountPrefix,
       hostDistro: wslDistroName(),
+    });
+  }
+
+  toHostPath(targetPath: string): string {
+    return translateToHost(targetPath, {
+      host: this.ctx.host,
+      targetKind: 'windows',
+      wslMountPrefix: this.mountPrefix,
     });
   }
 

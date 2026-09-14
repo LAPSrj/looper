@@ -72,9 +72,11 @@ shown in the task's terminal tab (`mode: "headless"` runs without one, driven
 by plain pipes).
 
 The prompt is your template with `{{summary}}` / `{{context}}` (plus
-`{{task}}`, `{{taskId}}`, `{{runId}}`, `{{trigger}}`) filled in. If your
-prompt doesn't reference `{{summary}}`/`{{context}}`, Looper appends the check
-output under a `## Check output` heading so the agent still sees it. If the
+`{{task}}`, `{{taskId}}`, `{{runId}}`, `{{trigger}}`) filled in, and any
+`{{file:path}}` tags replaced with that file's contents. If your prompt
+references none of `{{summary}}`/`{{context}}`/`{{events}}`, Looper appends
+the check output under a `## Check output` heading (and a watcher run's
+events under `## Trigger events`) so the agent still sees them. If the
 task has a one-off guidance note (see below), it's appended
 last, under a `## One-off guidance for this run` heading, so it overrides
 anything conflicting earlier in the prompt.

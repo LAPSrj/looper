@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { translatePath } from '../src/engine/target/paths';
+import { translatePath, translateToHost } from '../src/engine/target/paths';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
 
 describe('translatePath', () => {
@@ -29,6 +29,25 @@ describe('translatePath', () => {
   });
   it('refuses windows target from plain linux', () => {
     expect(() => translatePath('/x', { host: 'linux', targetKind: 'windows', wslMountPrefix: '/mnt' })).toThrow();
+  });
+});
+
+describe('translateToHost', () => {
+  it('wsl target -> windows host', () => {
+    expect(translateToHost('/mnt/c/Users/me/x', { host: 'windows', targetKind: 'wsl', wslMountPrefix: '/mnt' })).toBe(
+      'C:\\Users\\me\\x',
+    );
+    expect(
+      translateToHost('/home/me/skill.md', { host: 'windows', targetKind: 'wsl', wslMountPrefix: '/mnt', targetDistro: 'Ubuntu' }),
+    ).toBe('\\\\wsl.localhost\\Ubuntu\\home\\me\\skill.md');
+    expect(() => translateToHost('/home/me/x', { host: 'windows', targetKind: 'wsl', wslMountPrefix: '/mnt' })).toThrow();
+  });
+  it('windows target -> wsl host', () => {
+    expect(translateToHost('C:\\data\\x', { host: 'wsl', targetKind: 'windows', wslMountPrefix: '/mnt' })).toBe('/mnt/c/data/x');
+  });
+  it('same kind is identity', () => {
+    expect(translateToHost('/home/me/x', { host: 'linux', targetKind: 'wsl', wslMountPrefix: '/mnt' })).toBe('/home/me/x');
+    expect(translateToHost('C:\\x', { host: 'windows', targetKind: 'windows', wslMountPrefix: '/mnt' })).toBe('C:\\x');
   });
 });
 

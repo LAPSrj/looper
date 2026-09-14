@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import type { LauncherSpec, SpawnSpec, Target, TargetContext } from './index';
 import type { StopHookSpec } from './stop-hook';
-import { translatePath } from './paths';
+import { translatePath, translateToHost } from './paths';
 import { wslDistroName } from '../host';
 import { DEFAULT_SHELL } from '../../shared/environments';
 
@@ -52,6 +52,15 @@ export class BashTarget implements Target {
       targetKind: 'wsl',
       wslMountPrefix: this.mountPrefix,
       hostDistro: wslDistroName(),
+    });
+  }
+
+  toHostPath(targetPath: string): string {
+    return translateToHost(targetPath, {
+      host: this.ctx.host,
+      targetKind: 'wsl',
+      wslMountPrefix: this.mountPrefix,
+      targetDistro: this.distro,
     });
   }
 
