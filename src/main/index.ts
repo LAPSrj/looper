@@ -952,10 +952,35 @@ async function openLooperFile(file: string): Promise<void> {
       /* keep the payload as imported */
     }
   }
+  // A definition whose id is already in the store: ask whether to update that
+  // item or import the file as a new one.
+  const id = typeof payload.id === 'string' ? payload.id : '';
+  const existing = !engine || !id
+    ? undefined
+    : doc.kind === 'task'
+      ? engine.getTask(id)
+      : engine.listTemplates().find((t) => t.id === id);
+  let update = false;
+  if (existing) {
+    const kindLabel = doc.kind === 'task' ? 'task' : 'template';
+    const opts: Electron.MessageBoxOptions = {
+      type: 'question',
+      title: 'Looper',
+      message: `The ${kindLabel} "${existing.name}" is already in Looper.`,
+      detail: `Update it with the file's contents, or create a new ${kindLabel}?`,
+      buttons: ['Update', 'Create New', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+    };
+    const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+    if (r.response === 2) return;
+    update = r.response === 0;
+  }
   const key = Math.random().toString(36).slice(2, 10);
   importDrafts.set(key, payload);
-  if (doc.kind === 'task') openChildWindow(`editor-import/${key}`, 'New Task — Looper', 780, 700);
-  else openChildWindow(`template-import/${key}`, 'New Template — Looper', 780, 700);
+  const route = doc.kind === 'task' ? 'editor-import' : 'template-import';
+  const noun = doc.kind === 'task' ? 'Task' : 'Template';
+  openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun} — Looper`, 780, 700);
 }
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
@@ -1114,24 +1139,14 @@ function buildMenu(
       label: '&Advanced',
       submenu: [
         { label: 'Update &Models…', click: () => openModelUpdateWindow() },
-        { type: 'separator' },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },
-        { type: 'separator' },
         {
           label: 'Open &Data Directory',
           click: () => {
             if (engine) void shell.openPath(engine.dataDir);
           },
         },
-        {
-          label: 'Open &Inbox Directory',
-          click: () => {
-            if (engine) void shell.openPath(engine.inboxDir());
-          },
-        },
-        { type: 'separator' },
         { role: 'reload', label: '&Reload UI' },
-        { role: 'toggleDevTools', label: 'Toggle &Developer Tools' },
       ],
     },
     {
