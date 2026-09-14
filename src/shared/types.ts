@@ -22,13 +22,16 @@ export const WatcherConfigSchema = z
     debounceSec: z.number().nonnegative().default(5),
     /**
      * Start one catch-up run when watching starts cold (app launch, task
-     * enabled, pause lifted, system wake) — the check re-derives whatever
-     * happened while nothing was watching. Never fires on crash restarts.
+     * enabled, pause lifted, system wake, run window opening) — the check
+     * re-derives whatever happened while nothing was watching. Never fires on
+     * crash restarts.
      */
     runOnStart: z.boolean().default(false),
     /**
-     * Runs only start within these hours; events arriving outside are held
-     * and coalesce into one run when the window opens. Unset = all day.
+     * The watcher only runs within these hours: it is stopped when the window
+     * closes and started again (cold) when it opens. A batch caught inside
+     * the window that found no free slot is held and coalesces into one run
+     * when a slot and the window are next open. Unset = all day.
      */
     activeHours: z
       .object({

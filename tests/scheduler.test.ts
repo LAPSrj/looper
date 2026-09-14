@@ -1386,6 +1386,23 @@ describe('watcher runOnStart', () => {
     expect(records().find((r) => r.phase === 'watcher')!.summary).toBe('catch-up: watching started');
   });
 
+  it('the watcher process itself follows the run window', async () => {
+    await remake(watcherInput({ activeHours: { from: 7, to: 22 }, timezone: 'UTC' }));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.watcher).toBeNull(); // 00:16 UTC: window closed, nothing watches
+    h.checks.push(check('noop'));
+    h.clock.now = 30_000_000; // 08:20 UTC
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.watcher).toBe('watching');
+    h.clock.now = 84_000_000; // 23:20 UTC
+    await h.tickN(1);
+    // The window-close kill is awaited off the tick; give it a moment.
+    for (let i = 0; i < 500 && h.sched.get('t1')!.watcher !== null; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(h.sched.get('t1')!.watcher).toBeNull();
+  });
+
   it('a pause lifted by resume owes a fresh catch-up', async () => {
     await remake(watcherInput());
     h.checks.push(check('noop'));

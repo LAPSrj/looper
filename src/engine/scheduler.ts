@@ -94,10 +94,13 @@ export class Scheduler extends EventEmitter {
   private readonly pendingEvents = new Map<string, string[]>();
   /**
    * Tasks owed a runOnStart catch-up: watching started cold (app launch,
-   * enable, pause lifted, system wake) and the check should re-derive what
-   * was missed. Settled by the next watcher run, whatever triggers it.
+   * enable, pause lifted, system wake, run window opening) and the check
+   * should re-derive what was missed. Settled by the next watcher run,
+   * whatever triggers it.
    */
   private readonly catchUpOwed = new Set<string>();
+  /** Watcher tasks whose run window was closed at the last tick; reopening starts watching cold. */
+  private readonly windowClosed = new Set<string>();
   private readonly steps: SchedulerSteps;
   private readonly watchers: WatcherPool;
   private readonly now: () => number;
@@ -506,6 +509,7 @@ export class Scheduler extends EventEmitter {
       void this.watchers.stop(task.id);
       this.pendingEvents.delete(task.id);
       this.catchUpOwed.delete(task.id);
+      this.windowClosed.delete(task.id);
       this.deferLogged.delete(task.id);
       if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
@@ -543,10 +547,17 @@ export class Scheduler extends EventEmitter {
     if (previous && !previous.completedAt && task.completedAt) this.onCompleted(task, rt);
     // The trigger follows the edit right away, even with runs in flight: a task
     // that stopped being watched must not collect more events while it finishes.
-    const wasWatched = !!previous && previous.enabled && !previous.completedAt && !!watcherOf(previous);
+    const prevWatcher = previous ? watcherOf(previous) : null;
+    const wasWatched =
+      !!previous &&
+      previous.enabled &&
+      !previous.completedAt &&
+      !!prevWatcher &&
+      runWindowOpen(prevWatcher, this.now());
     this.syncWatcher(task);
-    // Watching began with this edit (enabled, reopened, or switched to the
-    // events trigger): a cold start, so the catch-up applies.
+    // Watching began with this edit (enabled, reopened, switched to the events
+    // trigger, or a window edit that opened it): a cold start, so the catch-up
+    // applies.
     if (!wasWatched && this.watcherDesired(task) && watcherOf(task)?.runOnStart) {
       this.catchUpOwed.add(task.id);
     }
@@ -610,9 +621,43 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  /** A watcher is wanted while the task is enabled, unfinished, not paused and on the events trigger. */
+  /**
+   * A watcher is wanted while the task is enabled, unfinished, not paused, on
+   * the events trigger and inside its run window: outside the window nothing
+   * watches at all, so no events accumulate overnight.
+   */
   private watcherDesired(task: Task): boolean {
-    return task.enabled && !task.completedAt && !!watcherOf(task) && !this.runtimes.get(task.id)?.pausedReason;
+    const watcher = watcherOf(task);
+    return (
+      task.enabled &&
+      !task.completedAt &&
+      !!watcher &&
+      runWindowOpen(watcher, this.now()) &&
+      !this.runtimes.get(task.id)?.pausedReason
+    );
+  }
+
+  /**
+   * The run window gates the watcher process itself: it goes down when the
+   * window closes and comes back when it reopens — a cold start, so the
+   * runOnStart catch-up applies. Only the transitions act (called every tick).
+   */
+  private syncWatcherWindow(task: Task): void {
+    const watcher = watcherOf(task);
+    if (!watcher) {
+      this.windowClosed.delete(task.id);
+      return;
+    }
+    const open = runWindowOpen(watcher, this.now());
+    if (open === !this.windowClosed.has(task.id)) return;
+    if (open) {
+      this.windowClosed.delete(task.id);
+      this.syncWatcher(task);
+      if (this.watcherDesired(task) && watcher.runOnStart) this.catchUpOwed.add(task.id);
+    } else {
+      this.windowClosed.add(task.id);
+      this.syncWatcher(task);
+    }
   }
 
   /**
@@ -641,6 +686,9 @@ export class Scheduler extends EventEmitter {
         );
         continue;
       }
+      // The watcher follows its run window: stopped at the close, restarted
+      // at the open (which owes the runOnStart catch-up below).
+      this.syncWatcherWindow(task);
       // A batch of watcher events that found no free slot when it arrived,
       // then the runOnStart catch-up (an events run settles the debt too).
       if (this.pendingEvents.has(task.id)) this.flushEvents(task);

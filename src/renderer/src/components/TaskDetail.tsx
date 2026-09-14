@@ -1,6 +1,7 @@
 import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
+import { watcherOf } from '@shared/types';
 import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
-import { cronToForm } from '@shared/cron';
+import { cronToForm, nextWindowOpen } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
 import { Messages } from './Messages';
 import { RunLog } from './RunLog';
@@ -57,13 +58,9 @@ function describeTrigger(task: Task): string {
   return describeCron(schedule.cron) + tz;
 }
 
-/** The watcher process's own state, shown wherever an idle watcher task would otherwise read "Idle". */
+/** The watcher process's own state, shown while it is up instead of "Idle". */
 function watcherLabel(runtime: TaskRuntime | undefined): string {
-  return runtime?.watcher === 'watching'
-    ? 'Watching'
-    : runtime?.watcher === 'restarting'
-      ? 'Watcher restarting'
-      : 'Watcher stopped';
+  return runtime?.watcher === 'watching' ? 'Watching' : 'Watcher restarting';
 }
 
 function describeCron(cron: string): string {
@@ -108,9 +105,20 @@ function statusDetail(runtime: TaskRuntime | undefined): string {
 
 function describeNextRun(runtime: TaskRuntime | undefined, now: number): string {
   if (!runtime || runtime.nextRunAt === null) return 'Not scheduled';
-  const countdown = fmtCountdown(runtime.nextRunAt, now);
-  const at = fmtTime(new Date(runtime.nextRunAt).toISOString());
-  return countdown === 'now' ? 'Now' : `${at} (in ${countdown})`;
+  return describeNextAt(runtime.nextRunAt, now);
+}
+
+function describeNextAt(at: number, now: number): string {
+  const countdown = fmtCountdown(at, now);
+  return countdown === 'now' ? 'Now' : `${fmtTime(new Date(at).toISOString())} (in ${countdown})`;
+}
+
+/** The watcher is down (outside its run window): when watching is scheduled to resume. */
+function describeNextWatch(task: Task, runtime: TaskRuntime | undefined, now: number): string {
+  const watcher = watcherOf(task);
+  if (!watcher || runtime?.state !== 'idle') return 'Not scheduled';
+  const at = nextWindowOpen(watcher, now);
+  return at === null ? 'Not scheduled' : describeNextAt(at, now);
 }
 
 export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun, terminalRun, onTerminalRun }: Props) {
@@ -119,9 +127,12 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
   const detail = statusDetail(runtime);
-  // An idle watcher task is not idle from the user's side: it is watching.
+  // An idle watcher task with its watcher up is watching, not idle; with the
+  // watcher down (outside its run window) it reads Idle like a scheduled task.
   const idleLabel =
-    task.trigger.mode === 'watcher' && runtime?.state === 'idle' ? watcherLabel(runtime) : stateLabel(runtime);
+    task.trigger.mode === 'watcher' && runtime?.state === 'idle' && runtime.watcher
+      ? watcherLabel(runtime)
+      : stateLabel(runtime);
   const status = runtime?.state === 'paused' && detail
     ? detail
     : `${idleLabel}${detail ? ` (${detail})` : ''}`;
@@ -164,7 +175,9 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
                     : task.trigger.mode === 'watcher'
                       ? runtime?.watcher === 'watching'
                         ? 'When the watcher fires'
-                        : watcherLabel(runtime)
+                        : runtime?.watcher === 'restarting'
+                          ? 'Watcher restarting'
+                          : describeNextWatch(task, runtime, now)
                       : 'When triggered manually'}
               </dd>
               {!task.completedAt && task.trigger.mode !== 'manual' && task.trigger.stopOn?.enabled && (

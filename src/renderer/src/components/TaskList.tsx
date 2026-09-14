@@ -265,7 +265,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
                 ? 'Watching'
                 : rt.watcher === 'restarting'
                   ? 'Watcher restarting'
-                  : 'Watcher stopped'
+                  : 'Idle'
               : 'Not scheduled'
           : countdown === 'now'
             ? 'Next run now'

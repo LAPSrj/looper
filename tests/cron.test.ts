@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runWindowOpen } from '../src/shared/cron';
+import { nextWindowOpen, runWindowOpen } from '../src/shared/cron';
 
 describe('runWindowOpen', () => {
   // 2026-01-15T10:00:00Z is a Thursday (day 4).
@@ -31,6 +31,36 @@ describe('runWindowOpen', () => {
     expect(runWindowOpen({ ...w, days: [4] }, thu23)).toBe(false);
     // The alias resolves like the schedule's timezone does.
     expect(runWindowOpen({ activeHours: { from: 7, to: 22 }, timezone: 'America/Rio_de_Janeiro' }, thu23)).toBe(true); // 20:30 local
+  });
+});
+
+describe('nextWindowOpen', () => {
+  const thu10 = Date.parse('2026-01-15T10:00:00Z');
+  const thu23 = Date.parse('2026-01-15T23:30:00Z');
+
+  it('an open window opens now', () => {
+    expect(nextWindowOpen({}, thu23)).toBe(thu23);
+    expect(nextWindowOpen({ activeHours: { from: 7, to: 22 }, timezone: 'UTC' }, thu10)).toBe(thu10);
+  });
+
+  it('a closed hour window opens at the next from-hour', () => {
+    const w = { activeHours: { from: 7, to: 22 }, timezone: 'UTC' };
+    expect(nextWindowOpen(w, thu23)).toBe(Date.parse('2026-01-16T07:00:00Z'));
+    expect(nextWindowOpen(w, Date.parse('2026-01-15T05:10:00Z'))).toBe(Date.parse('2026-01-15T07:00:00Z'));
+  });
+
+  it('a disallowed weekday opens on the next allowed day', () => {
+    // Thursday inside the hours but only Saturday allowed: Saturday 07:00.
+    const w = { activeHours: { from: 7, to: 22 }, days: [6], timezone: 'UTC' };
+    expect(nextWindowOpen(w, thu10)).toBe(Date.parse('2026-01-17T07:00:00Z'));
+    // Days without hours: midnight of the allowed day.
+    expect(nextWindowOpen({ days: [6], timezone: 'UTC' }, thu10)).toBe(Date.parse('2026-01-17T00:00:00Z'));
+  });
+
+  it('evaluates the opening in the window timezone', () => {
+    // 02:30 UTC Friday = 23:30 Thursday in São Paulo; 7:00 local Friday = 10:00 UTC.
+    const w = { activeHours: { from: 7, to: 22 }, timezone: 'America/Sao_Paulo' };
+    expect(nextWindowOpen(w, Date.parse('2026-01-16T02:30:00Z'))).toBe(Date.parse('2026-01-16T10:00:00Z'));
   });
 });
 import { cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '../src/shared/cron';

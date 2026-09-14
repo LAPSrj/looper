@@ -37,6 +37,23 @@ export interface RunWindow {
 
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
+/** One formatter per timezone: `nextWindowOpen` probes many instants in a row. */
+const WINDOW_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function windowFormatter(tz: string | undefined): Intl.DateTimeFormat {
+  let fmt = WINDOW_FORMATTERS.get(tz ?? '');
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      ...(tz ? { timeZone: tz } : {}),
+      hour: 'numeric',
+      hourCycle: 'h23',
+      weekday: 'short',
+    });
+    WINDOW_FORMATTERS.set(tz ?? '', fmt);
+  }
+  return fmt;
+}
+
 /**
  * Whether a run may start at `atMs` under the window's hours/days, evaluated
  * in its timezone (unset = the computer's). No constraints = always open.
@@ -44,18 +61,33 @@ const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, 
 export function runWindowOpen(window: RunWindow, atMs: number): boolean {
   if (!window.activeHours && !window.days?.length) return true;
   const tz = window.timezone ? (TIMEZONE_ALIASES[window.timezone] ?? window.timezone) : undefined;
-  const parts = new Intl.DateTimeFormat('en-US', {
-    ...(tz ? { timeZone: tz } : {}),
-    hour: 'numeric',
-    hourCycle: 'h23',
-    weekday: 'short',
-  }).formatToParts(new Date(atMs));
+  const parts = windowFormatter(tz).formatToParts(new Date(atMs));
   const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? NaN);
   const day = WEEKDAY_INDEX[parts.find((p) => p.type === 'weekday')?.value ?? ''];
   if (!Number.isFinite(hour) || day === undefined) return true; // unparseable: never hold work hostage
   if (window.days?.length && !window.days.includes(day)) return false;
   const h = window.activeHours;
   return !h || (hour >= h.from && hour <= h.to);
+}
+
+/** Search step for the window's next opening; every timezone offset is a multiple of 15 minutes. */
+const OPEN_STEP_MS = 15 * 60_000;
+/** Hours plus weekdays repeat within a week; past this the window never opens. */
+const OPEN_HORIZON_MS = 8 * 24 * 3_600_000;
+
+/**
+ * When the window next opens, at or after `fromMs`: `fromMs` itself while it
+ * is open, else the first quarter-hour boundary inside it (hours and days are
+ * whole). Null when it never opens — a window whose days/hours exclude
+ * everything.
+ */
+export function nextWindowOpen(window: RunWindow, fromMs: number): number | null {
+  if (runWindowOpen(window, fromMs)) return fromMs;
+  const end = fromMs + OPEN_HORIZON_MS;
+  for (let t = Math.ceil(fromMs / OPEN_STEP_MS) * OPEN_STEP_MS; t <= end; t += OPEN_STEP_MS) {
+    if (runWindowOpen(window, t)) return t;
+  }
+  return null;
 }
 
 /** [1,2,3,4,5] -> "1-5"; [1,3,5] -> "1,3,5"; all seven -> "*". */
