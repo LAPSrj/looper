@@ -3,7 +3,7 @@ import { Cron } from 'croner';
 import type { Environment, Task, TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
-import { PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
 import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
@@ -220,6 +220,15 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const models = harness ? harnessModels(harness) : [];
   // Model presets come from the harness; anything else is edited as "Custom".
   const modelIsCustom = customModel || (!!draft.agent.model && !models.some((m) => m.id === draft.agent.model));
+  // Effort options follow the selected model entry: only its supported levels
+  // are offered, and Default names the level the entry resolves to. A custom
+  // or unset model has no entry: full kind list, Default = the CLI's own.
+  const modelEntry = !modelIsCustom && draft.agent.model ? models.find((m) => m.id === draft.agent.model) : undefined;
+  const kindEfforts = harnessKind === 'custom' ? [] : EFFORT_LEVELS[harnessKind];
+  const effortLevels = modelEntry?.efforts ? kindEfforts.filter(([v]) => modelEntry.efforts!.includes(v)) : kindEfforts;
+  const defaultEffortLabel = modelEntry?.defaultEffort
+    ? (kindEfforts.find(([v]) => v === modelEntry.defaultEffort)?.[1] ?? modelEntry.defaultEffort)
+    : undefined;
   // The end date keeps its value while switched off, like every other step here.
   const stopOn = trig.stopOn;
   const stopOnEnabled = stopOn?.enabled ?? false;
@@ -238,8 +247,11 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       const agent = { ...d.agent, harnessId: id };
       if (kind !== harnessKind) {
         agent.model = undefined;
-        if (kind !== 'custom' && !PERMISSION_MODES[kind].some(([v]) => v === (agent.permissionMode ?? 'auto'))) {
-          agent.permissionMode = 'auto';
+        if (kind !== 'custom') {
+          if (!PERMISSION_MODES[kind].some(([v]) => v === (agent.permissionMode ?? 'auto'))) {
+            agent.permissionMode = 'auto';
+          }
+          if (agent.effort && !EFFORT_LEVELS[kind].some(([v]) => v === agent.effort)) agent.effort = undefined;
         }
       }
       return { ...d, agent };
@@ -525,14 +537,20 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     </select>
                     {schedForm.from !== undefined && schedForm.to !== undefined && (
                       <>
+                        {/* Each field commits only itself per keystroke — clamping the
+                            other bound mid-typing would destroy it (typing "20" passes
+                            through 2). The pair is normalized on blur; a transient
+                            from > to meanwhile just shows the invalid-cron warning. */}
                         <NumberInput
                           min={0}
                           max={23}
                           suffix="h"
                           value={schedForm.from}
                           onChange={(v) => {
-                            if (Number.isInteger(v) && v >= 0 && v <= 23)
-                              setSchedule({ ...schedForm, from: v, to: Math.max(v, schedForm.to!) });
+                            if (Number.isInteger(v) && v >= 0 && v <= 23) setSchedule({ ...schedForm, from: v });
+                          }}
+                          onBlur={() => {
+                            if (schedForm.from! > schedForm.to!) setSchedule({ ...schedForm, to: schedForm.from });
                           }}
                         />
                         <span className="muted">to</span>
@@ -542,8 +560,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                           suffix="h"
                           value={schedForm.to}
                           onChange={(v) => {
-                            if (Number.isInteger(v) && v >= 0 && v <= 23)
-                              setSchedule({ ...schedForm, to: v, from: Math.min(v, schedForm.from!) });
+                            if (Number.isInteger(v) && v >= 0 && v <= 23) setSchedule({ ...schedForm, to: v });
+                          }}
+                          onBlur={() => {
+                            if (schedForm.from! > schedForm.to!) setSchedule({ ...schedForm, from: schedForm.to });
                           }}
                         />
                       </>
@@ -691,6 +711,9 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     </select>
                     {hours && (
                       <>
+                        {/* Same per-keystroke rule as the schedule window: never touch
+                            the other bound while typing, normalize the pair on blur.
+                            A transient from > to is rejected at save either way. */}
                         <NumberInput
                           min={0}
                           max={23}
@@ -698,7 +721,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                           value={hours.from}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
-                              setWatcher({ activeHours: { from: v, to: Math.max(v, hours.to) } });
+                              setWatcher({ activeHours: { ...hours, from: v } });
+                          }}
+                          onBlur={() => {
+                            if (hours.from > hours.to) setWatcher({ activeHours: { from: hours.from, to: hours.from } });
                           }}
                         />
                         <span className="muted">to</span>
@@ -709,7 +735,10 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                           value={hours.to}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
-                              setWatcher({ activeHours: { from: Math.min(v, hours.from), to: v } });
+                              setWatcher({ activeHours: { ...hours, to: v } });
+                          }}
+                          onBlur={() => {
+                            if (hours.from > hours.to) setWatcher({ activeHours: { from: hours.to, to: hours.to } });
                           }}
                         />
                       </>
@@ -942,7 +971,19 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                         setCustomModel(true);
                       } else {
                         setCustomModel(false);
-                        setAgent('model', e.target.value || undefined);
+                        // An effort the new model doesn't offer falls back to its default.
+                        const entry = models.find((m) => m.id === e.target.value);
+                        setDraft((d) => ({
+                          ...d,
+                          agent: {
+                            ...d.agent,
+                            model: e.target.value || undefined,
+                            effort:
+                              d.agent.effort && entry?.efforts && !entry.efforts.includes(d.agent.effort)
+                                ? undefined
+                                : d.agent.effort,
+                          },
+                        }));
                       }
                     }}
                   >
@@ -963,6 +1004,21 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                       placeholder="model id"
                       onChange={(e) => setAgent('model', e.target.value || undefined)}
                     />
+                  </Field>
+                )}
+                {effortLevels.length > 0 && (
+                  <Field label="Effort">
+                    <select value={draft.agent.effort ?? ''} onChange={(e) => setAgent('effort', e.target.value || undefined)}>
+                      <option value="">{defaultEffortLabel ? `Default (${defaultEffortLabel})` : 'Default'}</option>
+                      {draft.agent.effort && !effortLevels.some(([v]) => v === draft.agent.effort) && (
+                        <option value={draft.agent.effort}>{draft.agent.effort}</option>
+                      )}
+                      {effortLevels.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                 )}
                 {permissionModes.length > 0 && (

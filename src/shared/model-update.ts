@@ -111,7 +111,9 @@ export function applyModelUpdate(
   const removed = new Set(rows.filter((r) => r.inList && action(r) === 'remove').map((r) => r.id));
   const next = current.filter((m) => !removed.has(m.id));
   for (const r of rows) {
-    if (!r.inList && action(r) === 'add') next.push({ id: r.id, name: r.name });
+    // Added entries get an explicit default effort, keeping runs on them
+    // predictable instead of inheriting the CLI's own effort state.
+    if (!r.inList && action(r) === 'add') next.push({ id: r.id, name: r.name, defaultEffort: 'medium' });
   }
   return next;
 }

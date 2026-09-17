@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PERMISSION_MODES } from './environments';
+import { EFFORT_LEVELS, PERMISSION_MODES } from './environments';
 import { TaskSchema } from './types';
 
 /**
@@ -69,20 +69,26 @@ export function describeSchema(schema: z.ZodTypeAny): FieldDoc[] {
   return out;
 }
 
-/** The `looper schema` payload: the task's field list plus the per-kind permission modes. */
+/** The `looper schema` payload: the task's field list plus the per-kind permission modes and effort levels. */
 export function taskSchemaDoc(): {
   task: FieldDoc[];
   permissionModes: Record<string, { value: string; label: string }[]>;
+  effortLevels: Record<string, { value: string; label: string }[]>;
 } {
   const task = describeSchema(TaskSchema);
-  // The schema keeps permissionMode an open string (custom harnesses ignore
-  // it); surface the union here and the per-kind lists below.
+  // The schema keeps permissionMode and effort open strings (custom harnesses
+  // ignore them); surface the unions here and the per-kind lists below.
   const mode = task.find((f) => f.path === 'agent.permissionMode');
   if (mode) mode.values = [...new Set(Object.values(PERMISSION_MODES).flat().map(([v]) => v))];
+  const effort = task.find((f) => f.path === 'agent.effort');
+  if (effort) effort.values = [...new Set(Object.values(EFFORT_LEVELS).flat().map(([v]) => v))];
+  const byKind = (table: Record<string, [string, string][]>) =>
+    Object.fromEntries(
+      Object.entries(table).map(([kind, rows]) => [kind, rows.map(([value, label]) => ({ value, label }))]),
+    );
   return {
     task,
-    permissionModes: Object.fromEntries(
-      Object.entries(PERMISSION_MODES).map(([kind, modes]) => [kind, modes.map(([value, label]) => ({ value, label }))]),
-    ),
+    permissionModes: byKind(PERMISSION_MODES),
+    effortLevels: byKind(EFFORT_LEVELS),
   };
 }

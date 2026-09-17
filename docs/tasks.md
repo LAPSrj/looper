@@ -192,6 +192,15 @@ classifier step on or off. When on, it runs after a check that returned
 - **Model** — shown for Claude Code and Codex harnesses: a preset from the
   harness's model list, Default (the CLI's own default), or Custom… to type
   a model id.
+- **Effort** — Claude Code and Codex: how hard the model reasons. For
+  Claude Code it's passed as `--effort` (Low, Medium, High, Extra high,
+  Max); for Codex as `-c model_reasoning_effort=` (Minimal, Low, Medium,
+  High, Extra high). The dropdown offers the levels the selected model
+  supports (Settings → Environments → harness → Models), and **Default**
+  resolves to that model's configured default effort — the option shows it,
+  e.g. "Default (Medium)" — so runs never inherit the effort the CLI on the
+  machine was last set to. Only a Custom model id (or no model) has no
+  configured default; there, Default omits the flag and the CLI decides.
 - **Permission mode** — Claude Code and Codex. For Claude Code it's passed
   as `--permission-mode`: Auto, Accept edits, Manual, Don't ask, Plan mode,
   Bypass, or None (omits the flag entirely). For Codex it maps to its

@@ -88,10 +88,27 @@ export function watcherOf(task: { trigger: Trigger }): z.infer<typeof WatcherCon
 /**
  * One entry of a harness's Model dropdown: `id` is the `--model` value, `name`
  * the label shown to the user. A bare string or a name-less entry means both.
+ * `efforts` and `defaultEffort` make runs on this model predictable: the task
+ * editor only offers the supported levels, and a task whose effort is Default
+ * emits `defaultEffort` explicitly instead of inheriting the CLI's own state.
  */
 export const HarnessModelSchema = z
-  .union([z.string().min(1), z.object({ id: z.string().min(1), name: z.string().min(1).optional() })])
-  .transform((m) => (typeof m === 'string' ? { id: m, name: m } : { id: m.id, name: m.name ?? m.id }));
+  .union([
+    z.string().min(1),
+    z.object({
+      id: z.string().min(1),
+      name: z.string().min(1).optional(),
+      /** Effort levels this model accepts, in display order. Unset = the kind's full list. */
+      efforts: z.array(z.string().min(1)).min(1).optional(),
+      /** Effort emitted when the task's effort is Default. Unset = omit the flag (the CLI decides). */
+      defaultEffort: z.string().min(1).optional(),
+    }),
+  ])
+  .transform((m): { id: string; name: string; efforts?: string[]; defaultEffort?: string } =>
+    typeof m === 'string'
+      ? { id: m, name: m }
+      : { id: m.id, name: m.name ?? m.id, efforts: m.efforts, defaultEffort: m.defaultEffort },
+  );
 export type HarnessModel = z.output<typeof HarnessModelSchema>;
 
 /**
@@ -208,6 +225,8 @@ export const AgentSchema = z
     /** Harness from the task's environment; empty = the environment's first harness. */
     harnessId: z.string().min(1).optional(),
     model: z.string().optional(),
+    /** claude: passed as --effort; codex: as -c model_reasoning_effort=. Unset = the CLI's own default. */
+    effort: z.string().min(1).optional(),
     prompt: z.string().min(1),
     /** Appended verbatim to the harness command line. */
     extraArgs: z.array(z.string()).default([]),

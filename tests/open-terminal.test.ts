@@ -27,12 +27,35 @@ const win = new WindowsTarget({ host: 'windows' });
 describe('terminalHarnessCommand', () => {
   it('claude-code carries model, permission mode, harness args and extra args — no prompt', () => {
     const cmd = terminalHarnessCommand(task({ extraArgs: ['--allowedTools', 'Bash'] }), bash, harness({ args: ['--verbose'] }));
-    expect(cmd).toBe("claude --model 'sonnet' --permission-mode 'auto' '--verbose' '--allowedTools' 'Bash'");
+    // 'sonnet' is a default-list entry, so its default effort rides along.
+    expect(cmd).toBe("claude --model 'sonnet' --effort 'medium' --permission-mode 'auto' '--verbose' '--allowedTools' 'Bash'");
   });
 
   it('empty model/permission mode omit the flags', () => {
     const cmd = terminalHarnessCommand(task({ model: undefined, permissionMode: '' }), bash, harness());
     expect(cmd).toBe('claude');
+  });
+
+  it('an effort level rides along: --effort for claude, the config override for codex', () => {
+    expect(terminalHarnessCommand(task({ effort: 'high' }), bash, harness())).toBe(
+      "claude --model 'sonnet' --effort 'high' --permission-mode 'auto'",
+    );
+    expect(terminalHarnessCommand(task({ effort: 'xhigh' }), bash, harness({ kind: 'codex', command: 'codex' }))).toBe(
+      "codex --approve-for-me --model 'sonnet' -c 'model_reasoning_effort=xhigh'",
+    );
+  });
+
+  it("a model outside the harness's list has no default effort to resolve: the flag is omitted", () => {
+    expect(terminalHarnessCommand(task({ model: 'claude-opus-4-1', permissionMode: '' }), bash, harness())).toBe(
+      "claude --model 'claude-opus-4-1'",
+    );
+  });
+
+  it("the harness's own model list overrides the default effort", () => {
+    const h = harness({ models: [{ id: 'sonnet', name: 'Sonnet', defaultEffort: 'xhigh' }] });
+    expect(terminalHarnessCommand(task({ permissionMode: '' }), bash, h)).toBe(
+      "claude --model 'sonnet' --effort 'xhigh'",
+    );
   });
 
   it('codex maps the permission mode to its own flags, then the model', () => {

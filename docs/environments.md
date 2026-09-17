@@ -100,15 +100,28 @@ reasoning depth at the same time.
 ## Models
 
 A harness's Models tab holds the preset list that fills the Model dropdown
-on a task's Agent tab. Add/Edit/Remove each entry (a model id plus an
-optional display name). Left at its default, a harness offers the CLI's main
-models by their unprefixed ids:
+on a task's Agent tab. Add/Edit/Remove each entry. Left at its default, a
+harness offers the CLI's main models by their unprefixed ids:
 
 - Claude Code: Fable, Opus, Sonnet, Haiku
 - Codex: GPT-6-Astra, GPT-5.6-Sol, GPT-5.6-Terra, GPT-5.6-Luna, GPT-5.5
 - Custom: no presets
 
+Each entry carries, besides its model id and optional display name:
+
+- **Effort levels** — which of the harness kind's levels this model offers.
+  A task on this model only sees these in its Effort dropdown. All levels by
+  default.
+- **Default effort** — the level a run emits when the task's Effort is
+  Default. This keeps runs predictable: the effort comes from these
+  settings, never from whatever the CLI on the machine was last set to. New
+  entries — and every default-list entry — start at Medium; "CLI default"
+  (omit the flag and let the CLI decide) is available as a deliberate
+  choice.
+
 A task can still type any other model id as "Custom…" in its Model dropdown.
+Such an id has no entry here, so a Default effort can't be resolved for it:
+the run omits the effort flag unless the task pins a level itself.
 
 ## Limiting concurrent tasks
 

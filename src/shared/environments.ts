@@ -102,20 +102,24 @@ export function autoTrustWorkspace(harness: Harness): boolean {
   return harness.options?.autoTrustWorkspace ?? true;
 }
 
-/** The main models of each CLI, by their unprefixed ids. */
+/**
+ * The main models of each CLI, by their unprefixed ids. Every entry carries an
+ * explicit default effort, so out-of-the-box runs never inherit whatever
+ * effort the user's own CLI happens to be set to.
+ */
 export const DEFAULT_MODELS: Record<Harness['kind'], HarnessModel[]> = {
   'claude-code': [
-    { id: 'fable', name: 'Fable' },
-    { id: 'opus', name: 'Opus' },
-    { id: 'sonnet', name: 'Sonnet' },
-    { id: 'haiku', name: 'Haiku' },
+    { id: 'fable', name: 'Fable', defaultEffort: 'medium' },
+    { id: 'opus', name: 'Opus', defaultEffort: 'medium' },
+    { id: 'sonnet', name: 'Sonnet', defaultEffort: 'medium' },
+    { id: 'haiku', name: 'Haiku', defaultEffort: 'medium' },
   ],
   codex: [
-    { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
-    { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
-    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
-    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
-    { id: 'gpt-5.5', name: 'GPT-5.5' },
+    { id: 'gpt-6-astra', name: 'GPT-6-Astra', defaultEffort: 'medium' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol', defaultEffort: 'medium' },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', defaultEffort: 'medium' },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', defaultEffort: 'medium' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', defaultEffort: 'medium' },
   ],
   custom: [],
 };
@@ -142,6 +146,28 @@ export const PERMISSION_MODES: Record<Exclude<Harness['kind'], 'custom'>, [strin
     ['danger-full-access', 'Full access'],
     ['bypassPermissions', 'Bypass'],
     ['', 'None'],
+  ],
+};
+
+/**
+ * The effort levels offered per harness kind: [stored value, label]. Claude
+ * Code values go through --effort verbatim; codex values through
+ * `-c model_reasoning_effort=`. Unset omits the flag (the CLI's own default).
+ */
+export const EFFORT_LEVELS: Record<Exclude<Harness['kind'], 'custom'>, [string, string][]> = {
+  'claude-code': [
+    ['low', 'Low'],
+    ['medium', 'Medium'],
+    ['high', 'High'],
+    ['xhigh', 'Extra high'],
+    ['max', 'Max'],
+  ],
+  codex: [
+    ['minimal', 'Minimal'],
+    ['low', 'Low'],
+    ['medium', 'Medium'],
+    ['high', 'High'],
+    ['xhigh', 'Extra high'],
   ],
 };
 
@@ -174,9 +200,31 @@ export function harnessModels(harness: Harness): HarnessModel[] {
   return harness.models ?? DEFAULT_MODELS[harness.kind];
 }
 
-/** Same preset lists, in the same order. */
+/** Same preset lists, in the same order — effort configuration included. */
 export function sameModels(a: HarnessModel[], b: HarnessModel[]): boolean {
-  return a.length === b.length && a.every((m, i) => m.id === b[i].id && m.name === b[i].name);
+  const sameEfforts = (x?: string[], y?: string[]): boolean =>
+    x === undefined ? y === undefined : y !== undefined && x.length === y.length && x.every((v, i) => v === y[i]);
+  return (
+    a.length === b.length &&
+    a.every(
+      (m, i) =>
+        m.id === b[i].id &&
+        m.name === b[i].name &&
+        m.defaultEffort === b[i].defaultEffort &&
+        sameEfforts(m.efforts, b[i].efforts),
+    )
+  );
+}
+
+/**
+ * The effort a run emits: the task's own pin, else the model entry's
+ * configured default, else none (the flag is omitted and the CLI decides —
+ * only tasks on a custom/unknown model id or no model at all land there).
+ */
+export function resolveEffort(agent: { model?: string; effort?: string }, harness: Harness): string | undefined {
+  if (agent.effort) return agent.effort;
+  if (!agent.model) return undefined;
+  return harnessModels(harness).find((m) => m.id === agent.model)?.defaultEffort;
 }
 
 export const HARNESS_KINDS: [Harness['kind'], string][] = [

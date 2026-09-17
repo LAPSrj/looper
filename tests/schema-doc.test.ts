@@ -43,6 +43,13 @@ describe('taskSchemaDoc', () => {
     expect(doc.permissionModes['codex']).toContainEqual({ value: 'danger-full-access', label: 'Full access' });
   });
 
+  it('surfaces the effort union on the field and the per-kind lists alongside', () => {
+    expect(field('agent.effort')?.values).toContain('max');
+    expect(field('agent.effort')?.values).toContain('minimal');
+    expect(doc.effortLevels['claude-code']).toContainEqual({ value: 'max', label: 'Max' });
+    expect(doc.effortLevels['codex']).toContainEqual({ value: 'xhigh', label: 'Extra high' });
+  });
+
   it('covers every field the full example sets', () => {
     const paths = new Set(doc.task.map((f) => f.path));
     const leaves: string[] = [];

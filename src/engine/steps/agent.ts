@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveEnvironment, resolveHarness } from '../../shared/environments';
+import { resolveEffort, resolveEnvironment, resolveHarness } from '../../shared/environments';
 import { AGENT_COMPLETE, AGENT_DONE, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
 import {
   parseDoneText,
@@ -103,6 +103,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       harness,
       headless,
       model: a.model,
+      effort: resolveEffort(a, harness),
       permissionMode: a.permissionMode,
       session: ctx.agentSession,
       extraArgs: a.extraArgs,

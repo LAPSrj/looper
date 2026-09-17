@@ -75,6 +75,8 @@ export interface SessionOpts {
   harness: Harness;
   headless: boolean;
   model?: string;
+  /** claude: --effort; codex: -c model_reasoning_effort=. Unset omits the flag. */
+  effort?: string;
   /** claude: --permission-mode; codex: mapped to sandbox/approval flags. Empty/undefined omits them. */
   permissionMode?: string;
   /**
@@ -435,6 +437,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const parts: string[] = [harness.command];
   if (claude) {
     if (opts.model) parts.push('--model', q(opts.model));
+    if (opts.effort) parts.push('--effort', q(opts.effort));
     if (opts.permissionMode) parts.push('--permission-mode', q(opts.permissionMode));
     if (opts.session) parts.push(opts.session.resume ? '--resume' : '--session-id', q(opts.session.id));
     if (opts.footer) parts.push('--append-system-prompt', target.catFile(targetFile(ctx, f('system.txt'))));
@@ -460,6 +463,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       parts.push('--add-dir', q(runDirT));
     }
     if (opts.model) parts.push('--model', q(opts.model));
+    if (opts.effort) parts.push('-c', q('model_reasoning_effort=' + opts.effort));
     if (opts.session?.resume) parts.push('resume', q(opts.session.id));
     if (headless) {
       parts.push('--json', '--skip-git-repo-check');

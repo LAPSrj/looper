@@ -15,12 +15,14 @@ interface NumberInputProps {
   suffix: string;
   value: number;
   onChange: (n: number) => void;
+  /** Fired when focus leaves the input; the place to normalize against other fields. */
+  onBlur?: () => void;
   min?: number;
   max?: number;
   disabled?: boolean;
 }
 
-export function NumberInput({ suffix, value, onChange, min, max, disabled }: NumberInputProps) {
+export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled }: NumberInputProps) {
   return (
     <div className="input-suffix">
       <input
@@ -29,7 +31,13 @@ export function NumberInput({ suffix, value, onChange, min, max, disabled }: Num
         max={max}
         disabled={disabled}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          // A cleared field is a keystroke on the way to a new number, not a 0.
+          if (e.target.value === '') return;
+          const n = Number(e.target.value);
+          if (!Number.isNaN(n)) onChange(n);
+        }}
+        onBlur={onBlur}
       />
       <span className="suffix">{suffix}</span>
     </div>

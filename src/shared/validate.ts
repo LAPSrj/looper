@@ -2,7 +2,7 @@ import { Cron } from 'croner';
 import { z } from 'zod';
 import { TaskSchema, TemplateSchema, type Environment, type Harness, type Task, type TaskInput } from './types';
 import { cronTz } from './cron';
-import { PERMISSION_MODES, harnessKindLabel, pathFlavor } from './environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from './environments';
 
 /** Whether croner accepts the IANA timezone name (it only checks on nextRun). */
 function validTimezone(tz: string): boolean {
@@ -62,6 +62,7 @@ const FIELD_LABELS: Record<string, string> = {
   agent: 'Agent',
   'agent.harnessId': 'Harness',
   'agent.model': 'Model',
+  'agent.effort': 'Effort',
   'agent.prompt': 'Agent prompt',
   'agent.extraArgs': 'Extra command-line arguments',
   'agent.mode': 'Session type',
@@ -121,6 +122,16 @@ function permissionModeError(mode: string, kind?: Harness['kind']): string | nul
   if (values.includes(mode)) return null;
   const scope = kind ? ` for a ${harnessKindLabel(kind)} harness` : '';
   return `Permission mode: unknown mode "${mode}"${scope} (valid: ${values.filter(Boolean).join(', ')}, or "" for none)`;
+}
+
+/** Same guard for the effort level (also an open string in the schema). Unset always passes. */
+function effortError(effort: string | undefined, kind?: Harness['kind']): string | null {
+  if (!effort || kind === 'custom') return null;
+  const tables = kind ? [EFFORT_LEVELS[kind]] : Object.values(EFFORT_LEVELS);
+  const values = [...new Set(tables.flat().map(([v]) => v))];
+  if (values.includes(effort)) return null;
+  const scope = kind ? ` for a ${harnessKindLabel(kind)} harness` : '';
+  return `Effort: unknown level "${effort}"${scope} (valid: ${values.join(', ')})`;
 }
 
 /**
@@ -198,6 +209,15 @@ export function validateTask(input: unknown, environments?: Environment[], host?
         refs.push(`Classifier harness: environment "${env.name}" has no harness "${task.classifier.harnessId}"`);
       }
       harnessKind = harness?.kind;
+      // A pinned effort must be one the selected model entry actually offers.
+      if (harness && harness.kind !== 'custom' && task.agent.effort && task.agent.model) {
+        const entry = harnessModels(harness).find((m) => m.id === task.agent.model);
+        if (entry?.efforts && !entry.efforts.includes(task.agent.effort)) {
+          errors.push(
+            `Effort: model "${entry.name}" does not offer "${task.agent.effort}" (valid: ${entry.efforts.join(', ')})`,
+          );
+        }
+      }
       if (task.cwd) {
         const flavor = pathFlavor(env, host);
         if (flavor === 'windows' && /^\//.test(task.cwd)) {
@@ -211,6 +231,8 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   }
   const permError = permissionModeError(task.agent.permissionMode, harnessKind);
   if (permError) errors.push(permError);
+  const effError = effortError(task.agent.effort, harnessKind);
+  if (effError) errors.push(effError);
   return errors.length ? { ok: false, errors, warnings } : { ok: true, task, warnings };
 }
 
@@ -262,6 +284,15 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
     if (harness && harness.kind !== 'custom') {
       const modes = PERMISSION_MODES[harness.kind];
       if (!modes.some(([v]) => v === (draft.agent.permissionMode ?? 'auto'))) draft.agent.permissionMode = 'auto';
+      // An effort level the kind — or the selected model entry — doesn't
+      // know drops back to the model's configured default.
+      if (draft.agent.effort && !EFFORT_LEVELS[harness.kind].some(([v]) => v === draft.agent.effort)) {
+        delete draft.agent.effort;
+      }
+      if (draft.agent.effort && draft.agent.model) {
+        const entry = harnessModels(harness).find((m) => m.id === draft.agent.model);
+        if (entry?.efforts && !entry.efforts.includes(draft.agent.effort)) delete draft.agent.effort;
+      }
     }
     if (draft.cwd) {
       const flavor = pathFlavor(known, opts.host);

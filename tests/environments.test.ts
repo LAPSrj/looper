@@ -5,8 +5,10 @@ import {
   harnessModels,
   pathFlavor,
   resolveClassifierHarness,
+  resolveEffort,
   resolveEnvironment,
   resolveHarness,
+  sameModels,
 } from '../src/shared/environments';
 import { validateTask } from '../src/shared/validate';
 import { createTarget, BashTarget, WindowsTarget } from '../src/engine/target';
@@ -131,6 +133,41 @@ describe('resolution', () => {
       { id: 'gpt-5.1', name: 'gpt-5.1' },
       { id: 'x', name: 'X' },
     ]);
+  });
+
+  it('keeps a model entry effort configuration through the schema', () => {
+    const h = HarnessSchema.parse({
+      ...claude2,
+      models: [{ id: 'sonnet', efforts: ['low', 'medium', 'high'], defaultEffort: 'high' }],
+    });
+    expect(h.models![0]).toEqual({ id: 'sonnet', name: 'sonnet', efforts: ['low', 'medium', 'high'], defaultEffort: 'high' });
+  });
+});
+
+describe('resolveEffort', () => {
+  it("the task's pin wins, then the model entry's default, then nothing", () => {
+    // claude2 has no own list, so 'sonnet' resolves through DEFAULT_MODELS (medium).
+    expect(resolveEffort({ model: 'sonnet', effort: 'max' }, claude2)).toBe('max');
+    expect(resolveEffort({ model: 'sonnet' }, claude2)).toBe('medium');
+    expect(resolveEffort({ model: 'claude-opus-4-1' }, claude2)).toBeUndefined();
+    expect(resolveEffort({}, claude2)).toBeUndefined();
+  });
+
+  it("an own model list replaces the default entries' efforts", () => {
+    const h = { ...claude2, models: [{ id: 'sonnet', name: 'Sonnet', defaultEffort: 'xhigh' }] };
+    expect(resolveEffort({ model: 'sonnet' }, h)).toBe('xhigh');
+  });
+});
+
+describe('sameModels', () => {
+  const entry = { id: 'sonnet', name: 'Sonnet', defaultEffort: 'medium' };
+
+  it('treats effort configuration as part of the entry', () => {
+    expect(sameModels([entry], [{ ...entry }])).toBe(true);
+    expect(sameModels([entry], [{ ...entry, defaultEffort: 'high' }])).toBe(false);
+    expect(sameModels([entry], [{ ...entry, defaultEffort: undefined }])).toBe(false);
+    expect(sameModels([entry], [{ ...entry, efforts: ['low', 'medium'] }])).toBe(false);
+    expect(sameModels([{ ...entry, efforts: ['low'] }], [{ ...entry, efforts: ['low'] }])).toBe(true);
   });
 });
 

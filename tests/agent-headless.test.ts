@@ -349,6 +349,38 @@ describe('headless agent over pipes', () => {
     expect(prompt.trim().endsWith('Use the staging mirror instead.')).toBe(true);
   });
 
+  it('passes the effort level: --effort for claude, the config override for codex', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+
+    const claude = makeCtx(harness);
+    claude.task.agent.effort = 'high';
+    await (await startAgent(claude, { onData: () => {} })).finished;
+    expect(fs.readFileSync(path.join(claude.runDir, 'run.sh'), 'utf8')).toContain("--effort 'high'");
+
+    const codex = makeCtx(harness, {}, 'codex');
+    codex.task.agent.effort = 'xhigh';
+    await (await startAgent(codex, { onData: () => {} })).finished;
+    expect(fs.readFileSync(path.join(codex.runDir, 'run.sh'), 'utf8')).toContain("-c 'model_reasoning_effort=xhigh'");
+  });
+
+  it("without a task pin, the model entry's default effort is emitted", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    // The example task runs 'sonnet', a default-list entry (defaultEffort medium).
+    const ctx = makeCtx(harness);
+    await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8')).toContain("--effort 'medium'");
+
+    // A model id with no entry has no default to resolve: the flag is omitted.
+    const custom = makeCtx(harness);
+    custom.task.agent.model = 'claude-opus-4-1';
+    await (await startAgent(custom, { onData: () => {} })).finished;
+    expect(fs.readFileSync(path.join(custom.runDir, 'run.sh'), 'utf8')).not.toContain('--effort');
+  });
+
   it('adds --session-id for a new rolling conversation and --resume for a continued one', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

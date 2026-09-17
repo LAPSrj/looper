@@ -1,6 +1,6 @@
 import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { watcherOf } from '@shared/types';
-import { describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
+import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort } from '@shared/environments';
 import { cronToForm, nextWindowOpen } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
 import { Messages } from './Messages';
@@ -124,6 +124,13 @@ function describeNextWatch(task: Task, runtime: TaskRuntime | undefined, now: nu
 export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun, terminalRun, onTerminalRun }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
+  // What a run will actually emit: the task's pin, or the model's default.
+  const resolvedEffort = harness ? resolveEffort(task.agent, harness) : task.agent.effort;
+  const effort = resolvedEffort
+    ? ((harness && harness.kind !== 'custom'
+        ? EFFORT_LEVELS[harness.kind].find(([v]) => v === resolvedEffort)?.[1]
+        : undefined) ?? resolvedEffort)
+    : null;
 
   const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
   const detail = statusDetail(runtime);
@@ -208,7 +215,10 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
               <dt>Harness</dt>
               <dd>{harness ? `${harness.name} (${harnessKindLabel(harness.kind)})` : 'None'}</dd>
               <dt>Model</dt>
-              <dd>{task.agent.model ? (harness ? harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model : task.agent.model) : 'Default'}</dd>
+              <dd>
+                {task.agent.model ? (harness ? harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model : task.agent.model) : 'Default'}
+                {effort ? `, ${effort.toLowerCase()} effort` : ''}
+              </dd>
               <dt>Session type</dt>
               <dd>{capFirst(task.agent.mode)}</dd>
               <dt>Environment</dt>

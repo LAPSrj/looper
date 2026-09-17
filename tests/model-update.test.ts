@@ -74,7 +74,8 @@ describe('applyModelUpdate', () => {
     const rows = buildUpdateRows('codex', current, codexCatalog);
     expect(applyModelUpdate(current, rows, {})).toEqual([
       { id: 'gpt-6-astra', name: 'My Astra' },
-      { id: 'gpt-6.1', name: 'GPT-6.1' },
+      // Additions get an explicit default effort; kept entries are untouched.
+      { id: 'gpt-6.1', name: 'GPT-6.1', defaultEffort: 'medium' },
     ]);
   });
 
@@ -84,7 +85,7 @@ describe('applyModelUpdate', () => {
     const next = applyModelUpdate(current, rows, { 'gpt-5.5': 'keep', 'gpt-6-astra': 'add', 'gpt-6.1': 'keep' });
     expect(next).toEqual([
       { id: 'gpt-5.5', name: 'GPT-5.5' },
-      { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra', defaultEffort: 'medium' },
     ]);
   });
 });

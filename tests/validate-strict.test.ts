@@ -65,6 +65,45 @@ describe('permission mode validation', () => {
   });
 });
 
+describe('effort validation', () => {
+  const withEffort = (effort: string): unknown => ({
+    ...EXAMPLE_TASK,
+    agent: { ...EXAMPLE_TASK.agent, effort },
+  });
+
+  it('rejects a level no harness kind knows, even without environments', () => {
+    const v = validateTask(withEffort('turbo'));
+    expect(v.ok).toBe(false);
+    expect(errorsOf(v)).toContain('Effort: unknown level "turbo"');
+  });
+
+  it("without environments, any kind's level passes; unset always passes", () => {
+    expect(validateTask(withEffort('max')).ok).toBe(true);
+    expect(validateTask(withEffort('minimal')).ok).toBe(true);
+    expect(validateTask(EXAMPLE_TASK).ok).toBe(true);
+  });
+
+  it("rejects another kind's level once the harness kind is known", () => {
+    const environments = defaultEnvironments(); // one claude-code harness, id "claude"
+    expect(validateTask(withEffort('max'), environments).ok).toBe(true);
+    const v = validateTask(withEffort('minimal'), environments);
+    expect(v.ok).toBe(false);
+    expect(errorsOf(v)).toContain('for a Claude Code harness');
+  });
+
+  it("rejects a level the selected model entry doesn't offer", () => {
+    const environments = defaultEnvironments();
+    environments[0].harnesses[0].models = [
+      { id: 'sonnet', name: 'Sonnet', efforts: ['low', 'medium'], defaultEffort: 'medium' },
+    ];
+    // EXAMPLE_TASK runs 'sonnet': 'low' is offered, 'max' is not.
+    expect(validateTask(withEffort('low'), environments).ok).toBe(true);
+    const v = validateTask(withEffort('max'), environments);
+    expect(v.ok).toBe(false);
+    expect(errorsOf(v)).toContain('Effort: model "Sonnet" does not offer "max"');
+  });
+});
+
 describe('reference checks', () => {
   const environments = defaultEnvironments(); // one environment "local" with one harness "claude"
   const broken: [string, unknown][] = [
@@ -101,6 +140,25 @@ describe('import heuristics (--fix / File → Import)', () => {
     expect(fixed.agent.permissionMode).toBe('auto');
     const kept = importTaskDraft({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, permissionMode: 'dontAsk' } }, opts);
     expect(kept.agent.permissionMode).toBe('dontAsk');
+  });
+
+  it('drops an effort level the harness kind does not know, and keeps a known one', () => {
+    const fixed = importTaskDraft({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, effort: 'minimal' } }, opts);
+    expect(fixed.agent.effort).toBeUndefined();
+    const kept = importTaskDraft({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, effort: 'high' } }, opts);
+    expect(kept.agent.effort).toBe('high');
+  });
+
+  it("drops an effort level the model entry doesn't offer", () => {
+    const environments = defaultEnvironments();
+    environments[0].harnesses[0].models = [
+      { id: 'sonnet', name: 'Sonnet', efforts: ['low', 'medium'], defaultEffort: 'medium' },
+    ];
+    const restricted = { environments, defaultEnvironmentId: 'local' };
+    const fixed = importTaskDraft({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, effort: 'max' } }, restricted);
+    expect(fixed.agent.effort).toBeUndefined();
+    const kept = importTaskDraft({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, effort: 'low' } }, restricted);
+    expect(kept.agent.effort).toBe('low');
   });
 });
 

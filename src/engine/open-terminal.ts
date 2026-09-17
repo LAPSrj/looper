@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Harness, Settings, Task } from '../shared/types';
-import { DEFAULT_SHELL, codexPermissionArgs, resolveEnvironment, resolveHarness } from '../shared/environments';
+import { DEFAULT_SHELL, codexPermissionArgs, resolveEffort, resolveEnvironment, resolveHarness } from '../shared/environments';
 import type { HostKind } from './host';
 import { wslDistroName } from './host';
 import type { Logger } from './log';
@@ -9,20 +9,23 @@ import { createTarget, type Target } from './target';
 import { writeText } from './store/fsutil';
 
 /**
- * The harness command line as a run would build it — model, permission mode,
- * harness args, extra args — minus the prompt and the run plumbing (system
+ * The harness command line as a run would build it — model, effort, permission
+ * mode, harness args, extra args — minus the prompt and the run plumbing (system
  * prompt, settings, headless flags): a plain interactive session for the user.
  */
 export function terminalHarnessCommand(task: Task, target: Target, harness: Harness): string {
   const q = (s: string) => target.quote(s);
   const a = task.agent;
+  const effort = resolveEffort(a, harness);
   const parts: string[] = [harness.command];
   if (harness.kind === 'claude-code') {
     if (a.model) parts.push('--model', q(a.model));
+    if (effort) parts.push('--effort', q(effort));
     if (a.permissionMode) parts.push('--permission-mode', q(a.permissionMode));
   } else if (harness.kind === 'codex') {
     for (const arg of codexPermissionArgs(a.permissionMode, true)) parts.push(arg);
     if (a.model) parts.push('--model', q(a.model));
+    if (effort) parts.push('-c', q('model_reasoning_effort=' + effort));
   }
   for (const arg of harness.args) parts.push(q(arg));
   for (const extra of a.extraArgs) parts.push(q(extra));

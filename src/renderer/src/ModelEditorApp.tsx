@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Harness, HarnessModel, Settings } from '@shared/types';
-import { DEFAULT_MODELS, harnessModels, sameModels } from '@shared/environments';
+import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
 import { Field, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 
@@ -13,6 +13,10 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
   const [settings, setSettings] = useState<Settings | null>(null);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
+  // Effort levels the model offers ([] until the harness kind is known) and
+  // the level a task's Default resolves to ('' = omit the flag, CLI decides).
+  const [efforts, setEfforts] = useState<string[]>([]);
+  const [defaultEffort, setDefaultEffort] = useState('');
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   const isNew = index === undefined;
@@ -26,6 +30,7 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
         setMissing(true);
         return;
       }
+      const kindLevels = harness.kind === 'custom' ? [] : EFFORT_LEVELS[harness.kind];
       if (index !== undefined) {
         const model = harnessModels(harness)[index];
         if (!model) {
@@ -34,7 +39,14 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
         }
         setId(model.id);
         setName(model.name);
+        setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
+        setDefaultEffort(model.defaultEffort ?? '');
         document.title = model.name;
+      } else {
+        // New entries start fully offered with an explicit Medium default, so
+        // runs are predictable out of the box; "CLI default" is a deliberate choice.
+        setEfforts(kindLevels.map(([v]) => v));
+        setDefaultEffort(kindLevels.some(([v]) => v === 'medium') ? 'medium' : '');
       }
     });
     return window.looper.onEvent((e) => {
@@ -51,6 +63,15 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
   if (missing) return <div className="empty">This model no longer exists.</div>;
   if (!settings) return <div className="empty">Loading…</div>;
 
+  const kind = findHarness(settings, envId, harnessId)?.kind ?? 'claude-code';
+  const kindLevels = kind === 'custom' ? [] : EFFORT_LEVELS[kind];
+  const toggleEffort = (value: string) => {
+    const next = efforts.includes(value) ? efforts.filter((v) => v !== value) : [...efforts, value];
+    if (next.length === 0) return;
+    setEfforts(next);
+    if (!next.includes(defaultEffort)) setDefaultEffort('');
+  };
+
   const doSave = async (): Promise<boolean> => {
     const trimmedId = id.trim();
     if (!trimmedId) {
@@ -63,7 +84,14 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
       return false;
     }
     const list = harnessModels(harness).slice();
-    const entry: HarnessModel = { id: trimmedId, name: name.trim() || trimmedId };
+    // The full kind list is stored as unset, and the order is the kind's, not click order.
+    const ordered = kindLevels.map(([v]) => v).filter((v) => efforts.includes(v));
+    const entry: HarnessModel = {
+      id: trimmedId,
+      name: name.trim() || trimmedId,
+      efforts: kindLevels.length === 0 || ordered.length === kindLevels.length ? undefined : ordered,
+      defaultEffort: defaultEffort || undefined,
+    };
     if (index === undefined) list.push(entry);
     else if (index < list.length) list[index] = entry;
     else {
@@ -98,6 +126,35 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
           <Field label="Display name">
             <input value={name} placeholder={id.trim() || undefined} onChange={(e) => setName(e.target.value)} />
           </Field>
+          {kindLevels.length > 0 && (
+            <>
+              <Field label="Effort levels">
+                <div className="day-row">
+                  {kindLevels.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={`btn small day-toggle ${efforts.includes(value) ? 'selected' : ''}`}
+                      onClick={() => toggleEffort(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Default effort">
+                <select value={defaultEffort} onChange={(e) => setDefaultEffort(e.target.value)}>
+                  <option value="">CLI default</option>
+                  {kindLevels
+                    .filter(([value]) => efforts.includes(value))
+                    .map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+            </>
+          )}
         </div>
       </div>
       <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
