@@ -510,6 +510,43 @@ export function readTranscriptRef(runDir: string, prefix = ''): string | null {
 }
 
 /**
+ * The conversation id a finished run can be resumed under: claude's session id
+ * (from the SessionStart/Stop hook payload, falling back to the transcript's
+ * filename), or codex's thread id. Null when the run recorded no conversation
+ * (custom harness, spawn failure, pruned run dir).
+ */
+export function readRunSessionId(runDir: string, kind: 'claude-code' | 'codex' | 'custom'): string | null {
+  if (kind === 'claude-code') {
+    for (const name of ['session.json', 'stop.json']) {
+      try {
+        const raw: unknown = JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8').replace(/^﻿/, ''));
+        const sid = (raw as Rec | null)?.session_id;
+        if (typeof sid === 'string' && sid.trim()) return sid.trim();
+        // Transcripts live at .../<session-id>.jsonl; the filename is the id.
+        const t = (raw as Rec | null)?.transcript_path;
+        if (typeof t === 'string' && t.trim().endsWith('.jsonl')) {
+          const base = t.trim().split(/[\\/]/).pop()!;
+          return base.slice(0, -'.jsonl'.length);
+        }
+      } catch {
+        /* absent or torn: try the next */
+      }
+    }
+    return null;
+  }
+  if (kind === 'codex') {
+    try {
+      const raw: unknown = JSON.parse(fs.readFileSync(path.join(runDir, 'codex-session.json'), 'utf8'));
+      const tid = (raw as Rec | null)?.thread_id;
+      if (typeof tid === 'string' && tid) return tid;
+    } catch {
+      /* absent or torn */
+    }
+  }
+  return null;
+}
+
+/**
  * The codex transcript reference a run dir carries: the thread id (written by
  * the session on the first thread.started / notify event) and the target-native
  * codex home (written by the launcher — only the target knows its own home, and

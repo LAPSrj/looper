@@ -18,6 +18,8 @@ export interface IpcHost {
   /** Modal step-selection window for a manual run; resolves whether a run started. */
   promptRunOptions: (taskId: string) => Promise<boolean>;
   openNoteEditor: (taskId: string) => void;
+  /** Guidance window for continuing a finished run's conversation. */
+  openContinueRun: (taskId: string, runId: string) => void;
   openFolderNoteEditor: (folderId: string) => void;
   openMoveToFolder: (taskId: string) => void;
   openNewFolder: (parentId?: string) => void;
@@ -160,7 +162,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipcMain.handle('engineLog:read', () => engine.readEngineLog());
 
-  ipcMain.handle('task:openTerminal', (_e, id: string) => engine.openTaskTerminal(id));
+  ipcMain.handle('task:openTerminal', (_e, id: string, runId?: string) => engine.openTaskTerminal(id, runId));
+  ipcMain.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
+    engine.continueRun(id, runId, guidance),
+  );
 
   /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
   const openTargetPath = async (taskId: string, p: string): Promise<void> => {
@@ -551,10 +556,30 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.on('context-menu:run', (e, info: { taskId: string; runId: string; details: string }) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
+    const canContinue = engine.canContinueRun(info.taskId, info.runId);
     const menu = Menu.buildFromTemplate([
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
       { label: 'View Details', click: () => host.openRunDetail(info.taskId, info.runId) },
       { label: 'View Messages', click: () => host.openMessages(info.taskId, info.runId) },
+      { type: 'separator' },
+      {
+        label: 'Continue in Terminal',
+        enabled: canContinue,
+        click: () =>
+          void engine.openTaskTerminal(info.taskId, info.runId).catch((err: unknown) => {
+            void dialog.showMessageBox(sender, {
+              type: 'error',
+              title: 'Looper',
+              message: err instanceof Error ? err.message : String(err),
+              buttons: ['OK'],
+            });
+          }),
+      },
+      {
+        label: 'Continue with Guidance…',
+        enabled: canContinue,
+        click: () => host.openContinueRun(info.taskId, info.runId),
+      },
       { type: 'separator' },
       { label: 'Open Run Folder', click: () => void shell.openPath(engine.runDir(info.taskId, info.runId)) },
     ]);

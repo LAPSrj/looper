@@ -71,6 +71,7 @@ if (!app.requestSingleInstanceLock()) {
       openEditor: openEditorWindow,
       promptRunOptions,
       openNoteEditor: openNoteEditorWindow,
+      openContinueRun: openContinueRunWindow,
       openFolderNoteEditor: openFolderNoteEditorWindow,
       openMoveToFolder: openMoveToFolderWindow,
       openNewFolder: openNewFolderWindow,
@@ -119,12 +120,55 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', (event) => {
     if (quitting || !engine) return;
     event.preventDefault();
-    quitting = true;
-    engine
-      .stop()
-      .catch(() => undefined)
-      .finally(() => app.quit());
+    void confirmQuit().then((ok) => {
+      if (!ok || quitting || !engine) return;
+      quitting = true;
+      engine
+        .stop()
+        .catch(() => undefined)
+        .finally(() => app.quit());
+    });
   });
+}
+
+/** Tasks with a run in flight; quitting would kill their sessions. */
+function activeTaskCount(): number {
+  return engine?.listRuntimes().filter((rt) => rt.runs.length > 0).length ?? 0;
+}
+
+/** Set once a quit was confirmed against active runs, so no quit path asks twice. */
+let quitConfirmed = false;
+let quitPrompting = false;
+
+/**
+ * True = go ahead and quit. With runs in flight the user decides: Quit stops
+ * them (the engine ends every session on the way out), Cancel keeps the app
+ * running. Every quit path funnels through here — the main window's X,
+ * File → Exit, the tray's Quit.
+ */
+async function confirmQuit(): Promise<boolean> {
+  if (quitConfirmed) return true;
+  const n = activeTaskCount();
+  if (n === 0) return true;
+  if (quitPrompting) return false; // a second quit while the dialog is up
+  quitPrompting = true;
+  try {
+    const opts: Electron.MessageBoxOptions = {
+      type: 'question',
+      title: 'Looper',
+      message: n === 1 ? 'A task is still running.' : `${n} tasks are still running.`,
+      detail: 'Quitting Looper stops their runs.',
+      buttons: ['Quit', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+    };
+    const parent = win && !win.isDestroyed() && win.isVisible() ? win : undefined;
+    const r = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (r.response === 0) quitConfirmed = true;
+    return r.response === 0;
+  } finally {
+    quitPrompting = false;
+  }
 }
 
 /**
@@ -380,6 +424,15 @@ function createWindow(): void {
       win?.hide();
       return;
     }
+    // Closing the main window quits the app: with runs in flight, ask before
+    // the window is gone — a cancel must leave it standing.
+    if (!quitting && !quitConfirmed && activeTaskCount() > 0) {
+      e.preventDefault();
+      void confirmQuit().then((ok) => {
+        if (ok && win && !win.isDestroyed()) win.close();
+      });
+      return;
+    }
     for (const w of BrowserWindow.getAllWindows()) {
       if (w !== win && !w.isDestroyed()) w.close();
     }
@@ -543,6 +596,8 @@ function openRunDetailWindow(taskId: string, runId: string): void {
     return !raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
   };
   let rawChecked = false;
+  // Snapshot at window open; a run still in flight then keeps the items off.
+  const canContinue = engine?.canContinueRun(taskId, runId) ?? false;
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
@@ -550,6 +605,25 @@ function openRunDetailWindow(taskId: string, runId: string): void {
         {
           label: 'Open &Output File',
           click: () => void openHostPath(outputFile(rawChecked)),
+        },
+        { type: 'separator' },
+        {
+          label: 'Continue in &Terminal',
+          enabled: canContinue,
+          click: () =>
+            void engine?.openTaskTerminal(taskId, runId).catch(async (err: unknown) => {
+              await dialog.showMessageBox(child, {
+                type: 'error',
+                title: 'Looper',
+                message: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }),
+        },
+        {
+          label: 'Continue with &Guidance…',
+          enabled: canContinue,
+          click: () => openContinueRunWindow(taskId, runId),
         },
         { type: 'separator' },
         {
@@ -760,6 +834,17 @@ function openNoteEditorWindow(taskId: string): void {
   openChildWindow(
     `note-editor/${encodeURIComponent(taskId)}`,
     'Guidance for Next Run — Looper',
+    520,
+    400,
+    undefined,
+    { minWidth: 460, minHeight: 340 },
+  );
+}
+
+function openContinueRunWindow(taskId: string, runId: string): void {
+  openChildWindow(
+    `continue-run/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
+    'Continue Run — Looper',
     520,
     400,
     undefined,

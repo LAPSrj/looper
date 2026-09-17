@@ -63,6 +63,20 @@ describe('terminalHarnessCommand', () => {
     expect(cmd).toBe("codex --approve-for-me --model 'sonnet'");
   });
 
+  it('a resume session id reopens the conversation: --resume for claude, the resume subcommand for codex', () => {
+    expect(terminalHarnessCommand(task({ model: undefined, permissionMode: '' }), bash, harness(), 'sess-1')).toBe(
+      "claude --resume 'sess-1'",
+    );
+    expect(
+      terminalHarnessCommand(
+        task({ model: undefined, permissionMode: '' }),
+        bash,
+        harness({ kind: 'codex', command: 'codex' }),
+        'thread-1',
+      ),
+    ).toBe("codex resume 'thread-1'");
+  });
+
   it('codex sandbox modes never ask, and bypass turns everything off', () => {
     const codex = harness({ kind: 'codex', command: 'codex' });
     expect(terminalHarnessCommand(task({ model: undefined, permissionMode: 'workspace-write' }), bash, codex)).toBe(

@@ -548,6 +548,67 @@ describe('run options', () => {
   });
 });
 
+describe('continue run', () => {
+  const oldRun = '20240101-000000-aaaa';
+  function seedSession(id = 'sess-1'): void {
+    const dir = h.runs.createRunDir('t1', oldRun);
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ session_id: id }));
+  }
+
+  it("skips check and classifier and resumes the run's conversation with the guidance as the prompt", async () => {
+    seedSession();
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    expect(h.sched.continueRun('t1', oldRun, 'answer: yes')).toBe(true);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(h.agentSessions[0]).toEqual({ id: 'sess-1', resume: true });
+    const started = records().find((r) => r.phase === 'agent' && r.result === 'started')!;
+    expect(started.body).toBe('answer: yes');
+    expect(started.summary).toBe(`continuing run ${oldRun}`);
+    expect(records().some((r) => r.phase === 'check')).toBe(false);
+    // A fresh-session task books no rolling conversation off the continuation.
+    expect(h.sched.get('t1')!.session).toBeNull();
+  });
+
+  it('refuses a run with no recorded conversation', () => {
+    expect(() => h.sched.continueRun('t1', 'missing-run', 'hi')).toThrow(/No conversation/);
+  });
+
+  it('refuses to continue a run still in flight', async () => {
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    const live = h.liveAgent!;
+    expect(() => h.sched.continueRun('t1', live.runId, 'hi')).toThrow(/still active/);
+    live.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('never consumes the task note: the guidance replaces it', async () => {
+    seedSession();
+    h.tasks.patch('t1', { note: { text: 'n', runsLeft: 1 } });
+    h.agentEnds.push(agentEnd('done', 'ok'));
+    h.sched.continueRun('t1', oldRun, 'guide');
+    await flush();
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'n', runsLeft: 1 });
+  });
+
+  it('a rolling-conversation task continues onto the resumed session', async () => {
+    const h2 = await makeHarness({ ...baseTask, agent: { ...baseTask.agent, session: 'continue' } });
+    try {
+      const dir = h2.runs.createRunDir('t1', oldRun);
+      fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ session_id: 'sess-2' }));
+      h2.agentEnds.push(agentEnd('done', 'ok'));
+      expect(h2.sched.continueRun('t1', oldRun, 'go on')).toBe(true);
+      await flush();
+      expect(h2.agentSessions[0]).toEqual({ id: 'sess-2', resume: true });
+      expect(h2.sched.get('t1')!.session).toEqual({ id: 'sess-2', runs: 1 });
+    } finally {
+      await h2.sched.stop();
+      fs.rmSync(h2.dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('simultaneous runs', () => {
   beforeEach(async () => {
     await h.sched.stop();

@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
 import { App } from './App';
+import { ContinueRunApp } from './ContinueRunApp';
 import { EditorApp } from './EditorApp';
 import { EngineLogApp } from './EngineLogApp';
 import { InstructionsApp } from './InstructionsApp';
@@ -43,6 +44,7 @@ const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(h
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
+const continueRunMatch = /^continue-run\/([^/]+)\/([^/]+)$/.exec(hash);
 const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
@@ -73,6 +75,14 @@ function pickRoot() {
 
   if (editorMatch) return <EditorApp taskId={editorMatch[1] ? decodeURIComponent(editorMatch[1]) : undefined} />;
   if (noteEditorMatch) return <NoteEditorApp taskId={decodeURIComponent(noteEditorMatch[1])} />;
+  if (continueRunMatch) {
+    return (
+      <ContinueRunApp
+        taskId={decodeURIComponent(continueRunMatch[1])}
+        runId={decodeURIComponent(continueRunMatch[2])}
+      />
+    );
+  }
   if (folderNoteMatch) return <FolderNoteApp folderId={decodeURIComponent(folderNoteMatch[1])} />;
   if (moveToFolderMatch) return <MoveToFolderApp taskId={decodeURIComponent(moveToFolderMatch[1])} />;
   if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;

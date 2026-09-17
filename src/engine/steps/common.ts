@@ -23,6 +23,8 @@ export interface RunContext {
   signal?: AbortSignal;
   /** Agent step, claude-code only: resume this conversation, or start a new one under this id. */
   agentSession?: { id: string; resume: boolean };
+  /** Continuation runs: used verbatim as the agent prompt — no template, no file tags, no note. */
+  promptOverride?: string;
   /** Template variables accumulated across steps (task, summary, context…). */
   vars: Record<string, unknown>;
 }

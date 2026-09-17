@@ -12,8 +12,14 @@ import { writeText } from './store/fsutil';
  * The harness command line as a run would build it — model, effort, permission
  * mode, harness args, extra args — minus the prompt and the run plumbing (system
  * prompt, settings, headless flags): a plain interactive session for the user.
+ * `resumeSessionId` reopens that conversation instead of starting a fresh one.
  */
-export function terminalHarnessCommand(task: Task, target: Target, harness: Harness): string {
+export function terminalHarnessCommand(
+  task: Task,
+  target: Target,
+  harness: Harness,
+  resumeSessionId?: string,
+): string {
   const q = (s: string) => target.quote(s);
   const a = task.agent;
   const effort = resolveEffort(a, harness);
@@ -22,10 +28,12 @@ export function terminalHarnessCommand(task: Task, target: Target, harness: Harn
     if (a.model) parts.push('--model', q(a.model));
     if (effort) parts.push('--effort', q(effort));
     if (a.permissionMode) parts.push('--permission-mode', q(a.permissionMode));
+    if (resumeSessionId) parts.push('--resume', q(resumeSessionId));
   } else if (harness.kind === 'codex') {
     for (const arg of codexPermissionArgs(a.permissionMode, true)) parts.push(arg);
     if (a.model) parts.push('--model', q(a.model));
     if (effort) parts.push('-c', q('model_reasoning_effort=' + effort));
+    if (resumeSessionId) parts.push('resume', q(resumeSessionId));
   }
   for (const arg of harness.args) parts.push(q(arg));
   for (const extra of a.extraArgs) parts.push(q(extra));
@@ -148,12 +156,13 @@ export interface OpenTerminalDeps {
 /**
  * Open the task's harness in a terminal window: same environment, working
  * directory, model and arguments as a run, but interactive and prompt-less.
+ * `resumeSessionId` continues that conversation (Continue in Terminal).
  */
-export async function openTaskTerminal(task: Task, deps: OpenTerminalDeps): Promise<void> {
+export async function openTaskTerminal(task: Task, deps: OpenTerminalDeps, resumeSessionId?: string): Promise<void> {
   const env = resolveEnvironment(task, deps.settings);
   const harness = resolveHarness(task, env);
   const target = createTarget(task, { host: deps.host, settings: deps.settings });
-  const command = terminalHarnessCommand(task, target, harness);
+  const command = terminalHarnessCommand(task, target, harness, resumeSessionId);
   const launcherHost = path.join(deps.taskDir, 'terminal' + target.launcherExt);
   writeText(launcherHost, renderTerminalScript(target, task, { ...harness.env, ...task.env }, command), 0o755);
   const launcherTarget = target.toTargetPath(launcherHost);

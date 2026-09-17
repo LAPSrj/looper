@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TranscriptAccumulator, TranscriptReader, readTranscriptRef } from '../src/engine/messages';
+import { TranscriptAccumulator, TranscriptReader, readRunSessionId, readTranscriptRef } from '../src/engine/messages';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
 
@@ -244,5 +244,37 @@ describe('readTranscriptRef', () => {
     fs.writeFileSync(path.join(dir, 'classify-session.json'), JSON.stringify({ transcript_path: '/x/cls.jsonl' }));
     expect(readTranscriptRef(dir, 'classify-')).toBe('/x/cls.jsonl');
     expect(readTranscriptRef(dir)).toBe('/x/agent.jsonl');
+  });
+});
+
+describe('readRunSessionId', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-run-session-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('claude: the hook payload session_id, from session.json or stop.json', () => {
+    expect(readRunSessionId(dir, 'claude-code')).toBeNull();
+    fs.writeFileSync(path.join(dir, 'stop.json'), JSON.stringify({ session_id: 'sid-stop' }));
+    expect(readRunSessionId(dir, 'claude-code')).toBe('sid-stop');
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ session_id: 'sid-start' }));
+    expect(readRunSessionId(dir, 'claude-code')).toBe('sid-start');
+  });
+
+  it('claude: without a session_id the transcript filename is the id, Windows paths included', () => {
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ transcript_path: '/x/projects/p/abc-123.jsonl' }));
+    expect(readRunSessionId(dir, 'claude-code')).toBe('abc-123');
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ transcript_path: 'C:\\x\\def-456.jsonl' }));
+    expect(readRunSessionId(dir, 'claude-code')).toBe('def-456');
+  });
+
+  it('codex: the thread id; custom harnesses have no conversation', () => {
+    expect(readRunSessionId(dir, 'codex')).toBeNull();
+    fs.writeFileSync(path.join(dir, 'codex-session.json'), JSON.stringify({ thread_id: 'th-1' }));
+    expect(readRunSessionId(dir, 'codex')).toBe('th-1');
+    expect(readRunSessionId(dir, 'custom')).toBeNull();
   });
 });

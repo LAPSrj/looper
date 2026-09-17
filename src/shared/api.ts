@@ -88,8 +88,10 @@ export interface LooperApi {
   openLooperFile(file: File): Promise<void>;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(): Promise<string>;
-  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
-  openTaskTerminal(taskId: string): Promise<void>;
+  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). A run id resumes that run's conversation. */
+  openTaskTerminal(taskId: string, runId?: string): Promise<void>;
+  /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
+  continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open the run detail window showing all step records for a run. */

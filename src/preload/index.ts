@@ -53,7 +53,12 @@ const api: LooperApi = {
   // webUtils resolves the dropped File to its on-disk path (File.path is gone).
   openLooperFile: (file) => ipcRenderer.invoke('file:openLooper', webUtils.getPathForFile(file)),
   readEngineLog: () => ipcRenderer.invoke('engineLog:read'),
-  openTaskTerminal: (taskId) => ipcRenderer.invoke('task:openTerminal', taskId),
+  openTaskTerminal: (taskId, runId) => ipcRenderer.invoke('task:openTerminal', taskId, runId),
+  // The engine's error is shown to the user; drop Electron's IPC framing.
+  continueRun: (taskId, runId, guidance) =>
+    ipcRenderer.invoke('run:continue', taskId, runId, guidance).catch((e: Error) => {
+      throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+    }),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
   openRunDetail: (taskId, runId) => ipcRenderer.invoke('runDetail:open', taskId, runId),
   openMessages: (taskId, runId, agentId, label) =>

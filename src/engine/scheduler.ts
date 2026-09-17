@@ -20,6 +20,7 @@ import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
 import { detectSystemLocale, type HostKind } from './host';
 import { errMsg, type Logger } from './log';
+import { readRunSessionId } from './messages';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
@@ -219,6 +220,35 @@ export class Scheduler extends EventEmitter {
   // ---------- commands ----------
 
   runNow(taskId: string, skips?: RunSkips): boolean {
+    return this.startManual(taskId, skips);
+  }
+
+  /**
+   * Continue a finished run's conversation: a manual cycle that skips check
+   * and classifier and resumes that run's session with `guidance` as the whole
+   * prompt. A rolling conversation (agent.session 'continue') follows it: the
+   * continuation books onto the resumed id like any resumed run.
+   */
+  continueRun(taskId: string, fromRunId: string, guidance: string): boolean {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    if (rt.runs.some((r) => r.runId === fromRunId)) throw new Error('This run is still active.');
+    const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+    if (kind !== 'claude-code' && kind !== 'codex') {
+      throw new Error('Only Claude Code and Codex conversations can be continued.');
+    }
+    const sessionId = readRunSessionId(this.d.runs.runDir(taskId, fromRunId), kind);
+    if (!sessionId) throw new Error('No conversation was recorded for this run.');
+    return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance });
+  }
+
+  /** The shared manual start: lift a pause, honor the caps, run the cycle. */
+  private startManual(
+    taskId: string,
+    skips?: RunSkips,
+    continuation?: { fromRunId: string; sessionId: string; prompt: string },
+  ): boolean {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
@@ -243,7 +273,7 @@ export class Scheduler extends EventEmitter {
       });
       return false;
     }
-    void this.runCycle(task, 'manual', undefined, undefined, skips);
+    void this.runCycle(task, 'manual', undefined, undefined, skips, continuation);
     return true;
   }
 
@@ -859,6 +889,8 @@ export class Scheduler extends EventEmitter {
     catchUpNote?: string,
     /** Steps the Run Options window switched off; manual runs only. */
     skips?: RunSkips,
+    /** Continuation of a finished run: resume its conversation with this prompt; check/classifier never run. */
+    continuation?: { fromRunId: string; sessionId: string; prompt: string },
   ): Promise<void> {
     const rt = this.runtimes.get(task.id);
     if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
@@ -901,9 +933,10 @@ export class Scheduler extends EventEmitter {
     }
 
     // A step the Run Options window switched off does not run at all, whatever
-    // the task has configured.
-    const willCheck = !!task.check?.enabled && !skips?.check;
-    const willClassify = !!task.classifier?.enabled && !skips?.classifier;
+    // the task has configured. A continuation run goes straight to the agent:
+    // its gates already passed when the run it continues started.
+    const willCheck = !continuation && !!task.check?.enabled && !skips?.check;
+    const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier;
     // Only steps the task actually has are worth naming; the rest of the run
     // log would otherwise report a skip of something that never ran anyway.
     const skipped: string[] = [];
@@ -943,6 +976,7 @@ export class Scheduler extends EventEmitter {
         host: this.d.host,
         log: this.d.log,
         signal: stopper.controller.signal,
+        promptOverride: continuation?.prompt,
         vars: {
           task: task.name,
           taskId: task.id,
@@ -954,7 +988,7 @@ export class Scheduler extends EventEmitter {
 
       // No check step configured (or disabled): every slot goes straight to classifier/agent.
       let go = true;
-      let checkSummary: string | undefined;
+      let checkSummary: string | undefined = continuation ? `continuing run ${continuation.fromRunId}` : undefined;
       if (willCheck) {
         const check = await this.steps.runCheck(ctx);
         if (stopped()) {
@@ -1037,15 +1071,22 @@ export class Scheduler extends EventEmitter {
       }
       if (go) {
         this.setRunState(rt, runId, 'running');
-        ctx.agentSession = this.rollingSession(task, rt);
-        if (ctx.agentSession) {
+        if (continuation) {
+          ctx.agentSession = { id: continuation.sessionId, resume: true };
           this.d.log.info(
-            `[${task.id}] agent ${
-              ctx.agentSession.resume
-                ? `resumes conversation ${ctx.agentSession.id} (run ${(rt.session?.runs ?? 0) + 1} of ${task.agent.sessionMaxRuns})`
-                : `starts conversation ${ctx.agentSession.id}`
-            }`,
+            `[${task.id}] agent resumes conversation ${continuation.sessionId}, continuing run ${continuation.fromRunId}`,
           );
+        } else {
+          ctx.agentSession = this.rollingSession(task, rt);
+          if (ctx.agentSession) {
+            this.d.log.info(
+              `[${task.id}] agent ${
+                ctx.agentSession.resume
+                  ? `resumes conversation ${ctx.agentSession.id} (run ${(rt.session?.runs ?? 0) + 1} of ${task.agent.sessionMaxRuns})`
+                  : `starts conversation ${ctx.agentSession.id}`
+              }`,
+            );
+          }
         }
         this.record(task.id, runId, 'agent', 'started', { summary: checkSummary, body: agentPrompt(ctx) });
         if (task.notifications.agentStart) {
@@ -1072,13 +1113,17 @@ export class Scheduler extends EventEmitter {
         }
         detail = `${network ? 'no network: ' : ''}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
-        // codex assigns its own thread id on a fresh run; book it once reported.
+        // codex assigns its own thread id on a fresh run; book it once
+        // reported. Only a rolling-conversation task books at all — a
+        // continuation on a 'fresh' task is one-off and leaves no session.
         const booked =
-          ctx.agentSession ??
-          (task.agent.session === 'continue' && end.sessionId ? { id: end.sessionId, resume: false } : undefined);
+          task.agent.session === 'continue'
+            ? (ctx.agentSession ?? (end.sessionId ? { id: end.sessionId, resume: false } : undefined))
+            : undefined;
         if (booked) this.rollSession(task, rt, booked, end);
         this.applyCompleteSignal(task, runId, ctx.runDir, end);
-        if (task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
+        // A continuation's prompt is the guidance itself, never the note.
+        if (!continuation && task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
           this.consumeNote(task.id, task.note.text);
         }
       }

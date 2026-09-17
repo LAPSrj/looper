@@ -3,11 +3,12 @@ import path from 'node:path';
 import type { MessageImage, MessagesResult } from '../shared/messages';
 import type { EngineEvent, InboxCommand, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
+import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
-import { MessagesService } from './messages';
+import { MessagesService, readRunSessionId } from './messages';
 import { openTaskTerminal } from './open-terminal';
 import { createWindowsPowerOps } from './power-win';
 import { RestController, type PowerAdapter, type PowerOps } from './rest';
@@ -85,8 +86,15 @@ export interface Engine {
   writeAgent(id: string, data: string, runId?: string): void;
   resizeAgent(id: string, cols: number, rows: number, runId?: string): void;
   agentBuffer(id: string, runId?: string): { runId: string; data: string } | null;
-  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). */
-  openTaskTerminal(id: string): Promise<void>;
+  /**
+   * Open the task's harness in a terminal window (same env/cwd/model/args, no
+   * prompt). A run id resumes that run's conversation instead of starting fresh.
+   */
+  openTaskTerminal(id: string, runId?: string): Promise<void>;
+  /** Whether a run's conversation can be continued: claude/codex, a session on record, the run not in flight. */
+  canContinueRun(id: string, runId: string): boolean;
+  /** Start a manual run that resumes the run's conversation with `guidance` as its whole prompt (no check/classifier). */
+  continueRun(id: string, runId: string, guidance: string): boolean;
   // rest mode
   /** Throws when Rest Mode is unavailable (non-Windows host, or no power adapter). */
   armRest(): void;
@@ -381,11 +389,34 @@ export function createEngine(opts: EngineOptions): Engine {
     writeAgent: (id, data, runId) => scheduler.writeAgent(id, data, runId),
     resizeAgent: (id, c, r, runId) => scheduler.resizeAgent(id, c, r, runId),
     agentBuffer: (id, runId) => scheduler.getBuffer(id, runId),
-    openTaskTerminal(id: string): Promise<void> {
+    openTaskTerminal(id: string, runId?: string): Promise<void> {
       const task = tasks.get(id);
       if (!task) throw new Error(`unknown task ${id}`);
-      return openTaskTerminal(task, { host, settings, taskDir: runs.taskDir(id), log });
+      let resumeSessionId: string | undefined;
+      if (runId) {
+        const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+        if (kind !== 'claude-code' && kind !== 'codex') {
+          throw new Error('Only Claude Code and Codex conversations can be continued.');
+        }
+        const sid = readRunSessionId(runs.runDir(id, runId), kind);
+        if (!sid) throw new Error('No conversation was recorded for this run.');
+        resumeSessionId = sid;
+      }
+      return openTaskTerminal(task, { host, settings, taskDir: runs.taskDir(id), log }, resumeSessionId);
     },
+    canContinueRun(id: string, runId: string): boolean {
+      const task = tasks.get(id);
+      if (!task) return false;
+      if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return false;
+      try {
+        const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+        if (kind !== 'claude-code' && kind !== 'codex') return false;
+        return readRunSessionId(runs.runDir(id, runId), kind) !== null;
+      } catch {
+        return false;
+      }
+    },
+    continueRun: (id, runId, guidance) => scheduler.continueRun(id, runId, guidance),
     armRest(): void {
       if (!rest) throw new Error('Rest Mode is only available in the Looper app on Windows.');
       rest.arm();
