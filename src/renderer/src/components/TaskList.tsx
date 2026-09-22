@@ -320,6 +320,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           if (drop) completeDrop(drop);
         }}
         onClick={() => onSelect(t.id)}
+        onDoubleClick={() => void window.looper.openEditor(t.id)}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();

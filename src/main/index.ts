@@ -523,13 +523,13 @@ function promptMarkdownExport(parent: BrowserWindow, defaults: MarkdownExportCho
 
 /**
  * The Run Options window: which steps of the task a manual run should go
- * through. Its checkboxes say what to run, so the run's skips are their
+ * through, and its guidance (the window saves that as the task's note itself). Its checkboxes say what to run, so the run's skips are their
  * inverse. Resolves whether a run actually started — dismissing the window
  * without applying starts nothing.
  */
 function promptRunOptions(taskId: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = openChildWindow(`run-options/${encodeURIComponent(taskId)}`, 'Run Options', 360, 280, win, {
+    const child = openChildWindow(`run-options/${encodeURIComponent(taskId)}`, 'Run Options', 420, 400, win, {
       minWidth: 320,
       minHeight: 240,
       resizable: false,

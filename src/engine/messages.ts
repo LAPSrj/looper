@@ -586,6 +586,15 @@ export async function findCodexRollout(sessionsDir: string, threadId: string): P
   return null;
 }
 
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.promises.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface MessagesDeps {
   getTask(id: string): Task | undefined;
   runDir(taskId: string, runId: string): string;
@@ -672,7 +681,7 @@ export class MessagesService {
     if (targetPath) {
       return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
         const hostPath = await this.toHostPath(targetPath, taskId);
-        if (!hostPath) return null;
+        if (!hostPath || !(await exists(hostPath))) return null; // not written yet; retried on the next poll
         return new TranscriptReader(hostPath, accOpts);
       });
     }
@@ -707,14 +716,23 @@ export class MessagesService {
       const candidates: string[] = [];
       for (const ref of refs) {
         const hostPath = await this.toHostPath(ref, taskId);
-        if (hostPath) candidates.push(path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`));
+        if (!hostPath) continue;
+        const candidate = path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`);
+        if (await exists(candidate)) candidates.push(candidate);
       }
-      if (candidates.length === 0) return null;
+      if (candidates.length === 0) return null; // not written yet; retried on the next poll
       return new TranscriptReader(candidates, { sidechain: true, raw });
     });
   }
 
-  /** Reader cache with LRU eviction; `make` runs only on a miss. */
+  /**
+   * Reader cache with LRU eviction; `make` runs only on a miss. `make` must
+   * return null until the transcript exists: translating a path that does not
+   * exist yet can yield a host path that never opens (wslpath resolves
+   * symlinks such as a CLAUDE_CONFIG_DIR's `projects -> ~/.claude/projects`
+   * only for existing files, and Windows cannot follow them over
+   * \\wsl.localhost), and a cached reader keeps that path for good.
+   */
   private async cached(
     key: string,
     make: () => Promise<TranscriptReader | null>,

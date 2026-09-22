@@ -1341,6 +1341,18 @@ button:focus-visible,
   outline: none;
 }
 
+.messages-live {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.messages-live-runs {
+  align-self: flex-start;
+  margin: 6px 10px;
+}
+
 .messages-runs .runlog-table tr.msg-run-row {
   cursor: default;
 }

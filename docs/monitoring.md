@@ -12,6 +12,8 @@ shown faded. Selecting a task opens its detail pane with four tabs — Status,
 Run log, Messages, Terminal — plus a status bar at the bottom counting
 enabled, disabled, completed, paused, and running tasks.
 
+Double-clicking a task opens its Edit Task window.
+
 Tasks and folders can be reordered by dragging them; the order is saved.
 Dropping a task on another task inserts it there (joining that task's
 folder, if any); dropping it on the middle of a folder header moves it into
@@ -156,6 +158,12 @@ window, read straight from the harness's own session transcripts (Claude
 Code harnesses only — other harnesses record no transcript). When the run
 had a classifier, its conversation appears first in the same list, with its
 replies typed as **Classifier**.
+
+While a run is in its classifier or agent step, the tab shows that run's
+conversation instead of the list, updating live, with the same table and
+detail pane as the conversation window. With several runs in flight, a
+dropdown above the table picks which one to show. When the run ends, the
+tab goes back to the list.
 
 In the conversation window each row is one message or tool call — Time,
 Type, Details — where Type is Prompt, Agent, Classifier, Thinking, or the

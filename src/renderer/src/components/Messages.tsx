@@ -363,7 +363,11 @@ interface Props {
   runtime: TaskRuntime | undefined;
 }
 
-/** The Messages tab: the task's agent runs; a run's conversation opens in its own window. */
+/**
+ * The Messages tab: while a run is in its classifier or agent step, that
+ * run's conversation, live; otherwise the task's agent runs, each opening its
+ * conversation in its own window.
+ */
 export function Messages({ task, records, runtime }: Props) {
   const runs = useMemo(() => {
     const byRun = new Map<string, RunRecord[]>();
@@ -403,6 +407,34 @@ export function Messages({ task, records, runtime }: Props) {
 
   const isRunning = (runId: string) =>
     runtime?.runs.some((r) => r.runId === runId && (r.state === 'running' || r.state === 'classifying')) ?? false;
+
+  // Runs with a conversation under way, newest first; several in flight get a picker.
+  const live = useMemo(
+    () =>
+      (runtime?.runs ?? [])
+        .filter((r) => r.state === 'running' || r.state === 'classifying')
+        .sort((a, b) => b.startedAt - a.startedAt),
+    [runtime],
+  );
+  const [livePick, setLivePick] = useState<string | null>(null);
+  const liveRun = live.find((r) => r.runId === livePick) ?? live[0];
+
+  if (liveRun) {
+    return (
+      <div className="messages-live">
+        {live.length > 1 && (
+          <select className="messages-live-runs" value={liveRun.runId} onChange={(e) => setLivePick(e.target.value)}>
+            {live.map((r) => (
+              <option key={r.runId} value={r.runId}>
+                Run {r.runId}
+              </option>
+            ))}
+          </select>
+        )}
+        <MessagesView key={liveRun.runId} taskId={task.id} runId={liveRun.runId} running />
+      </div>
+    );
+  }
 
   return (
     <div className="messages-runs" tabIndex={0} onKeyDown={nav}>
