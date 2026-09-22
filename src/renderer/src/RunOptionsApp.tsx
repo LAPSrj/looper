@@ -70,6 +70,14 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
+          <Field label="Guidance">
+            <textarea
+              rows={5}
+              style={{ resize: 'none' }}
+              value={guidance}
+              onChange={(e) => setGuidance(e.target.value)}
+            />
+          </Field>
           {task.check?.enabled && (
             <label className="checkbox-field">
               <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />
@@ -86,9 +94,6 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
             <input type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} />
             Agent
           </label>
-          <Field label="Guidance">
-            <textarea rows={5} value={guidance} onChange={(e) => setGuidance(e.target.value)} />
-          </Field>
         </div>
       </div>
       <EditorFooter
