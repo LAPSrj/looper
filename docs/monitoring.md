@@ -159,11 +159,8 @@ Code harnesses only — other harnesses record no transcript). When the run
 had a classifier, its conversation appears first in the same list, with its
 replies typed as **Classifier**.
 
-While a run is in its classifier or agent step, the tab shows that run's
-conversation instead of the list, updating live, with the same table and
-detail pane as the conversation window. With several runs in flight, a
-dropdown above the table picks which one to show. When the run ends, the
-tab goes back to the list.
+A run still in its classifier or agent step shows Running in the Result
+column; its conversation window updates live.
 
 In the conversation window each row is one message or tool call — Time,
 Type, Details — where Type is Prompt, Agent, Classifier, Thinking, or the
