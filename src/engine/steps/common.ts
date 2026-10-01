@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { Note, Settings, Task } from '../../shared/types';
+import type { Settings, Task } from '../../shared/types';
 import { hasPlaceholder, renderTemplate } from '../../shared/template';
 import type { HostKind } from '../host';
 import type { Logger } from '../log';
@@ -25,6 +25,12 @@ export interface RunContext {
   agentSession?: { id: string; resume: boolean };
   /** Continuation runs: used verbatim as the agent prompt — no template, no file tags, no note. */
   promptOverride?: string;
+  /**
+   * The task's one-off note as the cycle started. Every step gets it as
+   * LOOPER_NOTE_FILE; the classifier and agent prompts also append it.
+   * Unset on continuation runs and for the watcher.
+   */
+  note?: string;
   /** Template variables accumulated across steps (task, summary, context…). */
   vars: Record<string, unknown>;
 }
@@ -32,12 +38,17 @@ export interface RunContext {
 /** Markers a parent claude session leaves behind; a looper agent is never a "child session". */
 const NESTED_SESSION_VARS = ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT'];
 
-/** Environment for spawned steps: the host env minus nested-claude markers. */
+/**
+ * Environment for spawned steps: the host env minus nested-claude markers.
+ * WSL_UTF8 makes wsl.exe print its own errors in UTF-8 instead of UTF-16, so
+ * they read (and classify) like any other output; it never reaches the distro.
+ */
 export function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined && !NESTED_SESSION_VARS.includes(k)) env[k] = v;
   }
+  env.WSL_UTF8 = '1';
   return env;
 }
 
@@ -91,6 +102,13 @@ export interface LauncherOpts {
 }
 
 /**
+ * LOOPER_* variables Looper sets on some runs only. Their absence means
+ * something (no note, not a watcher run), so a task or harness env var of the
+ * same name is dropped instead of standing in for them.
+ */
+const RUN_ONLY_VARS = ['LOOPER_TRIGGER', 'LOOPER_EVENTS_FILE', 'LOOPER_NOTE_FILE', 'LOOPER_COMPLETE_FILE'];
+
+/**
  * Write the done helper + a launcher script into the run dir and return how to
  * spawn it. The task's env vars override `extraEnv` (e.g. a harness's env
  * vars); neither can override the LOOPER_* variables.
@@ -116,6 +134,13 @@ export function writeLauncher(
       0o755,
     );
   }
+  // A file rather than the text itself, so free-form text needs no quoting on any target.
+  if (ctx.note) {
+    writeText(path.join(ctx.runDir, 'note.txt'), ctx.note + '\n');
+    locked.LOOPER_NOTE_FILE = targetFile(ctx, 'note.txt');
+  }
+  const env = { ...extraEnv, ...ctx.task.env };
+  for (const k of RUN_ONLY_VARS) delete env[k];
   const hostPath = path.join(ctx.runDir, name + ctx.target.launcherExt);
   writeText(
     hostPath,
@@ -123,7 +148,7 @@ export function writeLauncher(
       taskId: ctx.task.id,
       runId: ctx.runId,
       cwd: ctx.task.cwd,
-      env: { ...extraEnv, ...ctx.task.env, ...locked },
+      env: { ...env, ...locked },
       binDir: targetFile(ctx, 'bin'),
       doneCommand,
       doneStatuses,
@@ -180,12 +205,12 @@ export function expandFileTags(text: string, ctx: Pick<RunContext, 'task' | 'tar
 }
 
 /** The task's one-off guidance, appended after everything else so it wins. */
-export function noteSection(note: Note | undefined): string {
+export function noteSection(note: string | undefined): string {
   if (!note) return '';
   return (
     '\n\n## One-off guidance for this run\n' +
     'The user attached this note to this specific run. It applies to this run only and overrides any conflicting instruction above.\n\n' +
-    note.text
+    note
   );
 }
 

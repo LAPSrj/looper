@@ -44,6 +44,9 @@ interface Harness {
   agentStarted: number;
   /** ctx.agentSession of each agent start, in order. */
   agentSessions: ({ id: string; resume: boolean } | undefined)[];
+  /** ctx.note of each check run and each agent start, in order. */
+  checkNotes: (string | undefined)[];
+  agentNotes: (string | undefined)[];
   liveAgent: LiveAgent | null;
   /** Every unscripted agent, in start order; with one run it is just `liveAgent`. */
   liveAgents: LiveAgent[];
@@ -51,6 +54,8 @@ interface Harness {
   hangChecks: boolean;
   /** One per agent start: the reason written to the run's `complete` file, as looper-complete would. */
   completeSignals: string[];
+  /** The next agent start throws this instead of starting (a spawn that failed outright). */
+  agentThrows: Error | null;
   tickN(n: number): Promise<void>;
 }
 
@@ -88,10 +93,13 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     agentEnds: [],
     agentStarted: 0,
     agentSessions: [],
+    checkNotes: [],
+    agentNotes: [],
     liveAgent: null,
     liveAgents: [],
     hangChecks: false,
     completeSignals: [],
+    agentThrows: null,
   };
   const sched = new Scheduler({
     dataDir: dir,
@@ -104,6 +112,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     now: () => clock.now,
     steps: {
       runCheck: async (ctx) => {
+        h.checkNotes!.push(ctx.note);
         if (h.hangChecks) {
           await new Promise<void>((r) => {
             if (ctx.signal?.aborted) return r();
@@ -114,8 +123,14 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
       },
       runClassify: async () => h.classifies!.shift() ?? { status: 'noop', durationMs: 1, exitCode: 0 },
       startAgent: async (ctx, cb) => {
+        const thrown = h.agentThrows;
+        if (thrown) {
+          h.agentThrows = null;
+          throw thrown;
+        }
         h.agentStarted!++;
         h.agentSessions!.push(ctx.agentSession);
+        h.agentNotes!.push(ctx.note);
         const signal = h.completeSignals!.shift();
         if (signal !== undefined) fs.writeFileSync(path.join(ctx.runDir, 'complete'), signal + '\n', 'utf8');
         const scripted = h.agentEnds!.shift();
@@ -176,7 +191,7 @@ const records = () =>
     .filter((e) => e.type === 'record')
     .map(
       (e) =>
-        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean; slept?: boolean } })
+        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean; environment?: boolean; slept?: boolean } })
           .record,
     );
 
@@ -409,6 +424,15 @@ describe('Scheduler', () => {
     expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
   });
 
+  it('hands the note to the check and the agent of the same run', async () => {
+    h.tasks.patch('t1', { note: { text: 'hint', runsLeft: 1 } });
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done'));
+    await h.tickN(1);
+    expect(h.checkNotes).toEqual(['hint']);
+    expect(h.agentNotes).toEqual(['hint']);
+  });
+
   it('pause during a run takes effect after the cycle', async () => {
     h.checks.push(check('act'));
     await h.tickN(1);
@@ -589,6 +613,7 @@ describe('continue run', () => {
     h.agentEnds.push(agentEnd('done', 'ok'));
     h.sched.continueRun('t1', oldRun, 'guide');
     await flush();
+    expect(h.agentNotes).toEqual([undefined]);
     expect(h.tasks.get('t1')!.note).toEqual({ text: 'n', runsLeft: 1 });
   });
 
@@ -1094,6 +1119,62 @@ describe('notifications', () => {
     h.clock.now += 60_000;
     await h.tickN(1);
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(2);
+  });
+
+  it('an environment error stays silent, records itself, and never touches the error streak', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 } });
+    h.checks.push(check('error', { error: 'check exited 4294967295: Error code: Wsl/Service/WSAETIMEDOUT', environment: true }));
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(records().at(-1)!).toMatchObject({ phase: 'check', result: 'error', environment: true });
+    const rt = h.sched.get('t1')!;
+    expect(rt.consecutiveErrors).toBe(0);
+    expect(rt.pausedReason).toBeFalsy();
+    expect(rt.lastDetail).toMatch(/^environment unavailable: check error:/);
+  });
+
+  it('an environment error notifies only when the task asked for environment errors', async () => {
+    h.tasks.patch('t1', { notifications: { end: 'error', networkErrors: true } });
+    h.checks.push(check('error', { error: 'Wsl/Service/WSAETIMEDOUT', environment: true }));
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    h.tasks.patch('t1', { notifications: { end: 'error', environmentErrors: true } });
+    h.checks.push(check('error', { error: 'Wsl/Service/WSAETIMEDOUT', environment: true }));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies().map((n) => n.kind)).toEqual(['end']);
+    expect(notifies()[0].body).toMatch(/^Error: Environment unavailable:/);
+  });
+
+  it('a classifier or agent environment error is silent too and leaves the note unused', async () => {
+    h.tasks.patch('t1', {
+      classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 },
+      note: { text: 'hint', runsLeft: 1 },
+    });
+    h.checks.push(check('act'), check('act'));
+    h.classifies.push({ status: 'error', error: 'Fake never started: Wsl/Service/WSAETIMEDOUT', environment: true, durationMs: 1, exitCode: 255 });
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(h.sched.get('t1')!.lastDetail).toMatch(/^environment unavailable: classifier error:/);
+
+    h.classifies.push({ status: 'act', reason: 'go', durationMs: 1, exitCode: 0 });
+    h.agentEnds.push({ ...agentEnd('error', 'Fake never started: Wsl/Service/WSAETIMEDOUT'), environment: true });
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(records().find((r) => r.phase === 'agent' && r.result === 'error')).toMatchObject({ environment: true });
+    expect(h.sched.get('t1')!.lastDetail).toBe('environment unavailable: Fake never started: Wsl/Service/WSAETIMEDOUT');
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
+    expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
+  });
+
+  it('a step that could not be spawned for want of wsl.exe is an environment error', async () => {
+    h.checks.push(check('act'));
+    h.agentThrows = new Error('spawn wsl.exe ENOENT (File not found: )');
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(records().at(-1)!).toMatchObject({ phase: 'system', result: 'error', environment: true });
+    expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
   });
 
   it('a hold notifies when on', async () => {

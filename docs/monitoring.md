@@ -255,7 +255,9 @@ ending (with a configurable severity threshold). Each task chooses which of thes
 on its Notifications tab — see [the task editor](tasks.md) for the field
 list; by default only errors and warnings at the end of a run notify, and a
 run that failed only because the computer was offline stays silent unless
-the task's "Include network errors" option is on.
+the task's "Include network errors" option is on. A run that failed only
+because WSL couldn't start a step stays silent the same way unless "Include
+environment errors" is on.
 
 A master switch lives in **Settings → General → Show notifications**, and
 the same toggle is available from the tray menu as "Enable Notifications" /

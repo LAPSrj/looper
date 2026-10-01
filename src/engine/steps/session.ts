@@ -5,7 +5,7 @@ import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
-import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeNetworkError } from '../network';
+import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
@@ -45,6 +45,8 @@ export interface SessionEnd {
   retryAtMs?: number;
   /** The run failed because the computer could not reach the API, not because the job failed. */
   network?: boolean;
+  /** The machine's environment never started the harness (WSL unreachable, wsl.exe missing). */
+  environment?: boolean;
   durationMs: number;
   wasHeld: boolean;
 }
@@ -313,13 +315,23 @@ interface SessionProc {
 /** Interactive: a real terminal, so the TUI renders and can be typed into. */
 function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
   const pty = loadPty();
-  const proc = pty.spawn(spec.command, spec.args, {
-    name: 'xterm-256color',
-    cols: PTY_COLS,
-    rows: PTY_ROWS,
-    cwd,
-    env: childEnv(),
-  });
+  let proc: PtyNS.IPty;
+  try {
+    proc = pty.spawn(spec.command, spec.args, {
+      name: 'xterm-256color',
+      cols: PTY_COLS,
+      rows: PTY_ROWS,
+      cwd,
+      env: childEnv(),
+    });
+  } catch (e) {
+    // ConPTY says "File not found: <path>" (an empty path when PATH has no
+    // match); worded like Node's spawn error so a missing wsl.exe reads the same
+    // whichever way the step was started.
+    const msg = (e as Error).message;
+    if (/^File not found:/.test(msg)) throw new Error(`spawn ${spec.command} ENOENT (${msg})`);
+    throw e;
+  }
   return {
     pid: proc.pid,
     onStdout: (cb) => proc.onData(cb),
@@ -571,12 +583,20 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   // watching only the head keeps conversation text from ever matching.
   let earlyOutput = '';
   const watchResume = opts.session?.resume === true;
-  /** Every byte printed, kept twice: the head (resume check) and the tail (what to blame an end on). */
+  /** Every byte printed, kept twice: the head (resume and environment checks) and the tail (what to blame an end on). */
   const noteOutput = (d: string): void => {
-    if (watchResume && earlyOutput.length < 16384) earlyOutput += d;
+    if (earlyOutput.length < 16384) earlyOutput += d;
     recentOut = (recentOut + d).slice(-RECENT_OUT_BYTES);
   };
   const sessionLost = (): boolean => watchResume && RESUME_LOST_RE.test(earlyOutput);
+  /**
+   * wsl.exe failed before the harness ever ran: its error is the first thing
+   * printed. Only the head counts, so a wsl.exe error the agent's own tools
+   * print mid-run can never pass for the environment failing.
+   */
+  const environmentFailed = (): boolean => looksLikeEnvironmentError(earlyOutput.slice(0, 2048));
+  /** wsl.exe's error code (Wsl/Service/WSAETIMEDOUT…): the one part of its message worth a headline. */
+  const environmentHeadline = (): string => /\bWsl\/[\w/]+/.exec(earlyOutput.replace(/\0/g, ''))?.[0] ?? 'WSL unavailable';
   /**
    * The output on hand shows the *harness* losing the network. For claude only
    * its own banner counts — the agent's tool output may name ECONNREFUSED and
@@ -640,6 +660,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     body?: string,
     retryAtMs?: number,
     network?: boolean,
+    environment?: boolean,
   ): Promise<void> => {
     if (ended) return;
     ended = true;
@@ -663,6 +684,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       sessionId: notifySessionId ?? stream.sessionId,
       retryAtMs,
       network: network || undefined,
+      environment: environment || undefined,
       durationMs: Date.now() - started,
       wasHeld: held,
     });
@@ -674,7 +696,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
    */
   const finishHeadless = async (code: number | null): Promise<void> => {
     if (spawnError) {
-      await finish('error', spawnError);
+      await finish('error', spawnError, undefined, undefined, undefined, looksLikeEnvironmentError(spawnError));
+      return;
+    }
+    // The environment never started the harness: no stream, no verdict, wsl.exe's message is all there is.
+    if (code !== 0 && environmentFailed()) {
+      await finish('error', `${harness.name} never started: ${environmentHeadline()}`, undefined, undefined, undefined, true);
       return;
     }
     if (sessionLost()) {
@@ -803,6 +830,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       void finish('done', doneHeadline);
     } else if (sessionLost()) {
       void finish('error', RESUME_LOST_TEXT);
+    } else if (environmentFailed()) {
+      void finish('error', `${harness.name} never started: ${environmentHeadline()}`, undefined, undefined, undefined, true);
     } else {
       void finish('exited', `${harness.name} exited ${code}`, undefined, undefined, outputBlamesNetwork());
     }

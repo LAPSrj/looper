@@ -109,7 +109,7 @@ describe('headless classifier over pipes', () => {
     const line = resultLine({ result: '{"act":false,"reason":"nothing"}', structured_output: { act: false, reason: 'nothing' } });
     const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
     const harness = fakeHarness(root, [`echo '{"type":"system","subtype":"init"}'`, `printf '%s\\n' ${sq(line)}`].join('\n'));
-    const ctx = makeCtx(harness, { note: { text: 'Only act after the release freeze lifts.', runsLeft: 1 } });
+    const ctx = { ...makeCtx(harness), note: 'Only act after the release freeze lifts.' };
     await runClassify(ctx, { onData: () => {} });
     const prompt = fs.readFileSync(path.join(ctx.runDir, 'classify-prompt.txt'), 'utf8');
     expect(prompt).toContain('## One-off guidance for this run');

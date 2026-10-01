@@ -14,6 +14,8 @@ export interface ClassifyResult {
   error?: string;
   /** The error was a network failure: the API was never reached. */
   network?: boolean;
+  /** The machine's environment never started the classifier (WSL unreachable, wsl.exe missing). */
+  environment?: boolean;
   /** The run spanned a system sleep: the machine went down, not the task. */
   slept?: boolean;
   costUsd?: number;
@@ -58,7 +60,7 @@ export function classifierFooter(taskName: string, runId: string): string {
 /** The rendered classifier prompt (also recorded on the classify `started` record).
  * The run's one-off note is appended too: it may bear on the decision to act. */
 export function classifyPrompt(ctx: RunContext): string {
-  return expandFileTags(buildPrompt(ctx.task.classifier!.prompt, ctx.vars) + noteSection(ctx.task.note), ctx);
+  return expandFileTags(buildPrompt(ctx.task.classifier!.prompt, ctx.vars) + noteSection(ctx.note), ctx);
 }
 
 export interface ClassifyCallbacks extends SessionCallbacks {
@@ -98,7 +100,15 @@ export function toClassifyResult(end: SessionEnd, headless: boolean, timeoutSec:
         ...base,
       };
     case 'error':
-      return { status: 'error', error: end.headline ?? 'classifier failed', network: end.network, slept, retryAtMs: end.retryAtMs, ...base };
+      return {
+        status: 'error',
+        error: end.headline ?? 'classifier failed',
+        network: end.network,
+        environment: end.environment,
+        slept,
+        retryAtMs: end.retryAtMs,
+        ...base,
+      };
   }
 }
 

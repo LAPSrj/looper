@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { CheckOutput } from '../../shared/types';
-import { classifyFailure, sleptThrough } from '../network';
+import { classifyFailure, looksLikeEnvironmentError, sleptThrough } from '../network';
 import { tail, writeText } from '../store/fsutil';
 import { runCaptured, writeLauncher, type RunContext } from './common';
 
@@ -11,6 +11,8 @@ export interface CheckResult {
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
+  /** The machine's environment never started the check (WSL unreachable, wsl.exe missing). */
+  environment?: boolean;
   /** The run spanned a system sleep: the machine went down, not the task. */
   slept?: boolean;
   exitCode: number | null;
@@ -65,7 +67,9 @@ export async function runCheck(ctx: RunContext): Promise<CheckResult> {
     if (sleptThrough(res.durationMs, check.timeoutSec * 1000)) {
       return { status: 'error', error, ...base, slept: true };
     }
-    const network = await classifyFailure({ text: `${res.stderr}\n${base.stdoutTail}`, mayBeNetwork });
+    const text = `${res.error ?? ''}\n${res.stderr}\n${base.stdoutTail}`;
+    if (looksLikeEnvironmentError(text)) return { status: 'error', error, ...base, environment: true };
+    const network = await classifyFailure({ text, mayBeNetwork });
     return { status: 'error', error, ...base, ...(network ? { network: true } : {}) };
   };
   if (res.error && res.code === null) {

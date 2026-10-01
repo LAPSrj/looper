@@ -12,6 +12,7 @@ import { stripShellNoise } from '../src/engine/steps/common';
 import { createTarget } from '../src/engine/target';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { SettingsSchema, TaskSchema } from '../src/shared/types';
+import { WSL_DISTRO_MISSING_TEXT, WSL_TIMEOUT_TEXT } from './wsl-fixtures';
 
 describe('stripShellNoise', () => {
   it('drops only the job-control warnings of a terminal-less interactive bash', () => {
@@ -99,6 +100,40 @@ describe('runCheck network classification', () => {
     expect(r.network).toBe(true);
   });
 
+  it('blames the environment, without probing, when wsl.exe never started the check', async () => {
+    let probed = false;
+    setConnectivityProbe(async () => {
+      probed = true;
+      return false;
+    });
+    const msg = path.join(os.tmpdir(), `looper-wsl-${process.pid}.txt`);
+    fs.writeFileSync(msg, WSL_TIMEOUT_TEXT);
+    try {
+      const r = await runCheck(makeCtx(`cat '${msg}'; exit 255`));
+      expect(r.status).toBe('error');
+      expect(r.environment).toBe(true);
+      expect(r.network).toBeUndefined();
+      expect(r.error).toContain('Wsl/Service/WSAETIMEDOUT');
+      expect(probed).toBe(false);
+    } finally {
+      fs.rmSync(msg, { force: true });
+    }
+  });
+
+  it('leaves a missing distro to count as an ordinary error', async () => {
+    setConnectivityProbe(async () => true);
+    const msg = path.join(os.tmpdir(), `looper-wsl-distro-${process.pid}.txt`);
+    fs.writeFileSync(msg, WSL_DISTRO_MISSING_TEXT);
+    try {
+      const r = await runCheck(makeCtx(`cat '${msg}'; exit 255`));
+      expect(r.status).toBe('error');
+      expect(r.environment).toBeUndefined();
+      expect(r.network).toBeUndefined();
+    } finally {
+      fs.rmSync(msg, { force: true });
+    }
+  });
+
   it('never probes a check that ran and answered badly', async () => {
     let probed = false;
     setConnectivityProbe(async () => {
@@ -109,6 +144,23 @@ describe('runCheck network classification', () => {
     expect(r.status).toBe('error');
     expect(r.network).toBeUndefined();
     expect(probed).toBe(false);
+  });
+});
+
+describe('runCheck one-off note', () => {
+  it('hands the note to the check as a file, verbatim', async () => {
+    const note = `Treat "takt-start" as WK work,\nput it in sprint one as 'Pre-theme setup'. $HOME \`x\``;
+    const ctx = { ...makeCtx(`cp "$LOOPER_NOTE_FILE" "$LOOPER_RUN_DIR/seen.txt"; echo '{"act": true}'`), note };
+    const r = await runCheck(ctx);
+    expect(r.status).toBe('act');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'seen.txt'), 'utf8')).toBe(note + '\n');
+  });
+
+  it('leaves LOOPER_NOTE_FILE unset when the run has no note', async () => {
+    const ctx = makeCtx(`[ -z "\${LOOPER_NOTE_FILE+x}" ] && echo '{"act": true}' || echo '{"act": false}'`);
+    const r = await runCheck(ctx);
+    expect(r.status).toBe('act');
+    expect(fs.existsSync(path.join(ctx.runDir, 'note.txt'))).toBe(false);
   });
 });
 
@@ -151,6 +203,12 @@ describe('toClassifyResult', () => {
       expect(toClassifyResult(end({ reason, network: true }), true, 180).network).toBe(true);
       expect(toClassifyResult(end({ reason }), true, 180).network).toBeUndefined();
     }
+  });
+
+  it('carries the environment verdict of a session that never started', () => {
+    const r = toClassifyResult(end({ reason: 'error', headline: 'Fake never started: Wsl/Service/WSAETIMEDOUT', environment: true }), true, 180);
+    expect(r).toMatchObject({ status: 'error', environment: true });
+    expect(r.network).toBeUndefined();
   });
 
   it('never carries it on a verdict or a stop', () => {

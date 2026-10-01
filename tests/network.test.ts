@@ -5,9 +5,11 @@ import {
   NETWORK_ERROR_RE,
   SLEEP_SLACK_MS,
   classifyFailure,
+  looksLikeEnvironmentError,
   looksLikeNetworkError,
   sleptThrough,
 } from '../src/engine/network';
+import { WSL_DISTRO_MISSING_TEXT, WSL_TIMEOUT_TEXT } from './wsl-fixtures';
 
 // The Claude Code banner as a live offline run printed it (claude 2.1.258).
 const CLAUDE_BANNER = "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)";
@@ -60,6 +62,37 @@ describe('NETWORK_ERROR_RE', () => {
     expect(NETWORK_ERROR_RE.test('could not resolve host')).toBe(true);
     expect(NETWORK_ERROR_RE.test('XECONNREFUSED')).toBe(false);
     expect(looksLikeNetworkError(undefined)).toBe(false);
+  });
+});
+
+describe('looksLikeEnvironmentError', () => {
+  it('matches wsl.exe failing to reach or start the VM', () => {
+    expect(looksLikeEnvironmentError(WSL_TIMEOUT_TEXT)).toBe(true);
+    expect(looksLikeEnvironmentError('Error code: Wsl/Service/CreateInstance/CreateVm/HCS/E_ACCESSDENIED')).toBe(true);
+  });
+
+  it('matches wsl.exe UTF-16 output decoded as UTF-8 (NUL between every character)', () => {
+    const utf16 = Buffer.from(WSL_TIMEOUT_TEXT, 'utf16le').toString('utf8');
+    expect(utf16).toContain('\0');
+    expect(looksLikeEnvironmentError(utf16)).toBe(true);
+  });
+
+  it('matches wsl.exe missing, from Node and from the pty', () => {
+    expect(looksLikeEnvironmentError('spawn wsl.exe ENOENT')).toBe(true);
+    expect(looksLikeEnvironmentError('spawn wsl.exe ENOENT (File not found: )')).toBe(true);
+  });
+
+  it('leaves a missing distro and ordinary failures alone', () => {
+    expect(looksLikeEnvironmentError(WSL_DISTRO_MISSING_TEXT)).toBe(false);
+    expect(looksLikeEnvironmentError('Error code: Wsl/Service/WSL_E_DEFAULT_DISTRO_NOT_FOUND')).toBe(false);
+    expect(looksLikeEnvironmentError('spawn bun ENOENT')).toBe(false);
+    expect(looksLikeEnvironmentError('connect ETIMEDOUT 10.0.0.5:443')).toBe(false);
+    expect(looksLikeEnvironmentError('Fixed the Wsl/Service/WSAETIMEDOUT handling in the launcher')).toBe(false);
+    expect(looksLikeEnvironmentError(undefined)).toBe(false);
+  });
+
+  it('is not a network error: WSAETIMEDOUT is no ETIMEDOUT', () => {
+    expect(looksLikeNetworkError(WSL_TIMEOUT_TEXT)).toBe(false);
   });
 });
 

@@ -208,6 +208,10 @@ tasks/<id>/runs.jsonl  one record per phase (check/classify/agent) per run;
 tasks/<id>/runs/<runId>/
   check.sh (or .ps1)      the check step's launcher script
   check.out.txt, check.err.txt
+  events.jsonl            watcher runs: the batch of trigger events
+                       (LOOPER_EVENTS_FILE)
+  note.txt                runs with a one-off guidance note: its text
+                       (LOOPER_NOTE_FILE)
   run.sh (or .ps1)        the agent's launcher script
   prompt.txt              the rendered agent prompt
   system.txt, settings.json  Claude Code only: injected instructions and

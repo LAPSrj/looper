@@ -112,7 +112,11 @@ is not re-run per event.
 - **Exiting means "restart me"**: Looper restarts the command with
   exponential backoff, 5s doubling up to 5min. Repeated fast crashes — the
   same **Auto-pause after** count (Settings tab) used for run errors —
-  auto-pause the task, which also stops the watcher.
+  auto-pause the task, which also stops the watcher. A watcher that WSL
+  couldn't start (an environment error, see
+  [troubleshooting](troubleshooting.md#wsl-couldnt-start-a-step)) is
+  restarted with the same backoff but never counts toward that, and
+  wsl.exe's error message is never delivered as events.
 - **Start quiet**: emit only events that happen after launch. Looper does
   not replay history on startup, so a script that dumps its backlog on start
   would trigger a run for everything that already happened.
@@ -131,7 +135,8 @@ is not re-run per event.
   starts a fresh one, with a clean crash streak.
 - The check, classifier, and agent steps all see `LOOPER_TRIGGER` (env var,
   also `{{trigger}}` in prompts) set to `timer`, `manual`, or `watcher`,
-  depending on how the cycle started.
+  depending on how the cycle started, and `LOOPER_NOTE_FILE` when the run
+  carries a one-off guidance note.
 
 ## Check
 
@@ -151,6 +156,13 @@ classifier/agent.
   always an **error** — never a trigger, and never "nothing to do".
 - **Timeout** — seconds before the command is killed and the cycle recorded
   as an error. Default 60s.
+
+The check runs with the same `LOOPER_*` variables as the other steps
+(`LOOPER_TASK`, `LOOPER_RUN`, `LOOPER_RUN_DIR`, `LOOPER_TRIGGER`,
+`LOOPER_EVENTS_FILE` on watcher runs). On a run with a one-off guidance note
+it also gets `LOOPER_NOTE_FILE`, the path of a file holding the note text;
+it's unset when there's no note. See [one-off guidance
+notes](how-a-run-works.md#one-off-guidance-notes).
 
 ## Classifier
 
@@ -284,6 +296,12 @@ a Looper window is focused):
 the computer was offline (a check that couldn't reach the network, or Claude
 Code unable to reach its API), no end notification fires unless this is on.
 These runs also never count toward auto-pause.
+
+**Include environment errors** — off by default. When a run fails only
+because WSL couldn't start one of its steps (wsl.exe timing out or missing
+mid-update), no end notification fires unless this is on. These runs also
+never count toward auto-pause — see
+[troubleshooting](troubleshooting.md#wsl-couldnt-start-a-step).
 
 A cycle sends at most one end notification: if usage-limit, auto-paused or
 completed fires, it replaces the plain end notification.

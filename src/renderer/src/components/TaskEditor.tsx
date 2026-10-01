@@ -1175,6 +1175,14 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 />
                 Include network errors
               </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={notif.environmentErrors ?? false}
+                  onChange={(e) => setNotif('environmentErrors', e.target.checked)}
+                />
+                Include environment errors
+              </label>
             </fieldset>
             <label className="checkbox-field">
               <input type="checkbox" checked={notif.held ?? false} onChange={(e) => setNotif('held', e.target.checked)} />

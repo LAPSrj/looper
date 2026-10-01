@@ -4,6 +4,7 @@ import type { Settings, Task } from '../shared/types';
 import { watcherOf } from '../shared/types';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
+import { looksLikeEnvironmentError } from './network';
 import { createTarget, type Target } from './target';
 import { killHostTree } from './target/kill';
 import { ensureDir } from './store/fsutil';
@@ -68,6 +69,10 @@ interface Entry {
   debounce: NodeJS.Timeout | null;
   restart: NodeJS.Timeout | null;
   crashes: number;
+  /** Exits the machine's environment caused in a row: they back off the respawn but never count as crashes. */
+  envFailures: number;
+  /** This spawn's stdout carried wsl.exe's own error: the watcher never started. */
+  envOutput: boolean;
   /** Torn down on purpose (stop): the child's exit is expected and never restarts it. */
   stopping: boolean;
   state: WatcherState | null;
@@ -170,6 +175,7 @@ export class WatcherPool {
     this.suspended = false;
     for (const entry of this.entries.values()) {
       entry.crashes = 0;
+      entry.envFailures = 0;
       if (entry.child || entry.stopping) continue;
       this.spawn(entry);
     }
@@ -199,6 +205,8 @@ export class WatcherPool {
       debounce: null,
       restart: null,
       crashes: 0,
+      envFailures: 0,
+      envOutput: false,
       stopping: false,
       state: null,
     };
@@ -247,6 +255,7 @@ export class WatcherPool {
     entry.startedAt = this.now();
     entry.stdoutBuf = '';
     entry.stderrTail = '';
+    entry.envOutput = false;
     this.d.log.info(`[${entry.taskId}] watcher started (pid ${child.pid ?? '?'})`);
     this.setState(entry, 'watching');
     child.stdout?.on('data', (d: Buffer) => this.onStdout(entry, d.toString('utf8')));
@@ -268,6 +277,13 @@ export class WatcherPool {
     entry.stdoutBuf += chunk;
     const parts = entry.stdoutBuf.split('\n');
     entry.stdoutBuf = parts.pop() ?? '';
+    // wsl.exe prints its own error on stdout, all at once, when it can't start
+    // the watcher: those lines (and any held with them) are not events.
+    if (this.now() - entry.startedAt < HEALTHY_MS && looksLikeEnvironmentError(parts.join('\n'))) {
+      entry.envOutput = true;
+      this.dropPending(entry);
+      return;
+    }
     let got = false;
     for (const part of parts) {
       const line = part.trim();
@@ -289,6 +305,12 @@ export class WatcherPool {
     entry.debounce = setTimeout(() => this.flush(entry), entry.debounceMs);
   }
 
+  private dropPending(entry: Entry): void {
+    if (entry.debounce) clearTimeout(entry.debounce);
+    entry.debounce = null;
+    entry.pending = [];
+  }
+
   private flush(entry: Entry): void {
     entry.debounce = null;
     if (entry.stopping || !entry.pending.length) return;
@@ -303,18 +325,37 @@ export class WatcherPool {
    * that already happened) are not failures; anything else is one, and a
    * streak of them without a healthy stretch in between means the command is
    * broken rather than flaky — the pool stops restarting it and lets the
-   * scheduler pause the task.
+   * scheduler pause the task. An exit the machine's environment caused (WSL
+   * could not start the watcher, wsl.exe missing) is like a network error:
+   * the watcher keeps retrying with backoff and the task never pauses for it.
    */
   private exited(entry: Entry, gen: number, code: number | null, error?: string): void {
     if (gen !== entry.gen || entry.stopping || this.suspended) return;
     entry.child = null;
+    const healthy = entry.startedAt > 0 && this.now() - entry.startedAt >= HEALTHY_MS;
+    const environment =
+      looksLikeEnvironmentError(error) ||
+      (!healthy &&
+        (entry.envOutput ||
+          looksLikeEnvironmentError(`${entry.stderrTail}\n${entry.pending.join('\n')}\n${entry.stdoutBuf}`)));
+    // Whatever is still held came from wsl.exe, not from a watcher that ran.
+    if (environment) this.dropPending(entry);
     const last = error ?? lastLine(entry.stderrTail);
     const detail = last || (code === null ? 'no exit code' : `exit code ${code}`);
     this.d.log.warn(
-      `[${entry.taskId}] watcher exited (${code === null ? 'no exit code' : `code ${code}`})${last ? `: ${last}` : ''}`,
+      `[${entry.taskId}] watcher exited (${code === null ? 'no exit code' : `code ${code}`})${last ? `: ${last}` : ''}` +
+        (environment ? '; environment unavailable, retrying without counting it' : ''),
     );
     this.setState(entry, 'restarting');
-    if (entry.startedAt && this.now() - entry.startedAt >= HEALTHY_MS) entry.crashes = 0;
+    if (healthy) {
+      entry.crashes = 0;
+      entry.envFailures = 0;
+    }
+    if (environment) {
+      entry.envFailures += 1;
+      this.scheduleRespawn(entry, entry.crashes + entry.envFailures);
+      return;
+    }
     entry.crashes += 1;
     if (entry.crashes >= entry.task.backoff.maxConsecutiveErrors) {
       // Last thing done with this entry: the callback pauses the task, which
@@ -324,7 +365,12 @@ export class WatcherPool {
       );
       return;
     }
-    const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (entry.crashes - 1));
+    this.scheduleRespawn(entry, entry.crashes);
+  }
+
+  /** Respawn after an exponential backoff: the n-th failure in a row waits 5 s × 2^(n-1), at most 5 min. */
+  private scheduleRespawn(entry: Entry, failures: number): void {
+    const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
     entry.restart = setTimeout(() => {
       entry.restart = null;
       this.spawn(entry);

@@ -56,4 +56,20 @@ describe('writeLauncher env layering', () => {
     expect(script).toContain(`export LOOPER_COMPLETE_FILE='${ctx.runDir}/complete'`);
     expect(script).not.toContain('evil');
   });
+
+  it('the note file and its variable exist only on a run with a note; a task env never fakes them', () => {
+    const plain = makeCtx({ LOOPER_NOTE_FILE: '/tmp/evil', LOOPER_EVENTS_FILE: '/tmp/evil' });
+    writeLauncher(plain, 'check', 'true');
+    const plainScript = fs.readFileSync(path.join(plain.runDir, 'check.sh'), 'utf8');
+    expect(plainScript).not.toContain('LOOPER_NOTE_FILE');
+    expect(plainScript).not.toContain('evil');
+    expect(fs.existsSync(path.join(plain.runDir, 'note.txt'))).toBe(false);
+
+    const ctx = { ...makeCtx({}), note: "line one\nit's \"quoted\"" };
+    writeLauncher(ctx, 'check', 'true');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'check.sh'), 'utf8')).toContain(
+      `export LOOPER_NOTE_FILE='${ctx.runDir}/note.txt'`,
+    );
+    expect(fs.readFileSync(path.join(ctx.runDir, 'note.txt'), 'utf8')).toBe("line one\nit's \"quoted\"\n");
+  });
 });

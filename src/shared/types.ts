@@ -269,6 +269,8 @@ export const TaskNotificationsSchema = z
     usageLimit: z.boolean().default(false),
     /** Also send the end notification when the run failed only because the computer was offline. */
     networkErrors: z.boolean().default(false),
+    /** Also send the end notification when the run failed only because the machine's environment (WSL) could not start a step. */
+    environmentErrors: z.boolean().default(false),
   })
   .strict()
   .default({});
@@ -276,7 +278,8 @@ export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
 
 /**
  * One-off guidance for a task's next run(s): appended to both the classifier
- * and the agent prompt, and consumed per run whose agent actually received it
+ * and the agent prompt, written to the run dir for every step
+ * (LOOPER_NOTE_FILE), and consumed per run whose agent actually received it
  * (a run that ends as an
  * engine `error` — spawn failure, usage limit — or is stopped by the user
  * never consumes a charge).
@@ -582,6 +585,8 @@ export interface RunRecord {
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
+  /** The error was the machine's environment failing to start a step (WSL unreachable, wsl.exe missing). */
+  environment?: boolean;
   /** The error happened because the computer slept through the run, not because the task failed. */
   slept?: boolean;
   stdoutTail?: string;

@@ -10,6 +10,7 @@ import { writeText } from '../src/engine/store/fsutil';
 import { createTarget } from '../src/engine/target';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { SettingsSchema, TaskSchema } from '../src/shared/types';
+import { WSL_TIMEOUT_TEXT } from './wsl-fixtures';
 
 // Headless runs use plain pipes: a pty would hard-wrap long stream-json lines
 // at the terminal width and the result object would never parse. These tests
@@ -341,12 +342,15 @@ describe('headless agent over pipes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);
     const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
-    const ctx = makeCtx(harness, { note: { text: 'Use the staging mirror instead.', runsLeft: 1 } });
+    const ctx = { ...makeCtx(harness), note: 'Use the staging mirror instead.' };
     const handle = await startAgent(ctx, { onData: () => {} });
     await handle.finished;
     const prompt = fs.readFileSync(path.join(ctx.runDir, 'prompt.txt'), 'utf8');
     expect(prompt).toContain('## One-off guidance for this run');
     expect(prompt.trim().endsWith('Use the staging mirror instead.')).toBe(true);
+    // Scripts the agent runs can read it too.
+    expect(fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8')).toContain('LOOPER_NOTE_FILE');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'note.txt'), 'utf8')).toBe('Use the staging mirror instead.\n');
   });
 
   it('passes the effort level: --effort for claude, the config override for codex', async () => {
@@ -442,6 +446,31 @@ describe('headless agent over pipes', () => {
     expect(end.reason).toBe('error');
     expect(end.network).toBe(true);
     expect(end.headline).toBe(OFFLINE_TEXT);
+  });
+
+  it('ends a harness wsl.exe never started as an environment error', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const msg = path.join(root, 'wsl.txt');
+    writeText(msg, WSL_TIMEOUT_TEXT);
+    const harness = fakeHarness(root, [`cat ${msg}`, 'exit 255'].join('\n'));
+    const end = await (await startAgent(makeCtx(harness), { onData: () => {} })).finished;
+    expect(end.reason).toBe('error');
+    expect(end.environment).toBe(true);
+    expect(end.network).toBeUndefined();
+    expect(end.headline).toBe('Fake never started: Wsl/Service/WSAETIMEDOUT');
+  });
+
+  it('leaves a wsl.exe error the agent printed after starting to the ordinary verdict', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const msg = path.join(root, 'wsl.txt');
+    // Past the head: the harness was up and printing long before this.
+    writeText(msg, 'x'.repeat(4096) + '\n' + WSL_TIMEOUT_TEXT);
+    const harness = fakeHarness(root, [`cat ${msg}`, 'exit 3'].join('\n'));
+    const end = await (await startAgent(makeCtx(harness), { onData: () => {} })).finished;
+    expect(end.reason).toBe('exited');
+    expect(end.environment).toBeUndefined();
   });
 
   it('reports a non-zero exit as exited, with whatever result it did print', async () => {

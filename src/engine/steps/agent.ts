@@ -86,7 +86,7 @@ export function systemFooter(taskName: string, runId: string, headless: boolean,
  * note — or, for a continuation run, the user's guidance verbatim. */
 export function agentPrompt(ctx: RunContext): string {
   if (ctx.promptOverride !== undefined) return ctx.promptOverride;
-  return expandFileTags(buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.task.note), ctx);
+  return expandFileTags(buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.note), ctx);
 }
 
 export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<AgentHandle> {

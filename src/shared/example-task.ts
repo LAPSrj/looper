@@ -70,6 +70,7 @@ export const EXAMPLE_TASK: TaskInput = {
     completed: false,
     usageLimit: false,
     networkErrors: false,
+    environmentErrors: false,
   },
   note: { text: 'One-off guidance appended to the next run(s); consumed as runs use it.', runsLeft: 1 },
 };

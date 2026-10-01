@@ -582,6 +582,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       },
       { type: 'separator' },
       { label: 'Open Run Folder', click: () => void shell.openPath(engine.runDir(info.taskId, info.runId)) },
+      { label: 'Copy Run Folder Path', click: () => clipboard.writeText(engine.runDir(info.taskId, info.runId)) },
     ]);
     menu.popup({ window: sender });
   });

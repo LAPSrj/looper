@@ -14,8 +14,8 @@ the error count and the paused reason and put it back on its schedule. A
 single successful run also resets the count on its own, so occasional
 failures that don't repeat five times in a row never trigger this.
 
-A Claude Code usage-limit hit and a network error are two errors that do
-**not** count toward this — see below.
+A Claude Code usage-limit hit, a network error and an environment error are
+three errors that do **not** count toward this — see below.
 
 ## Claude Code says you've hit your usage limit
 
@@ -63,6 +63,33 @@ default — a blip in your connection shouldn't page you. Turn on
 An HTTP 404, 401, or 403, or a plain "invalid credentials" rejection, is
 **not** a network error — those are ordinary errors and count toward
 auto-pause as usual.
+
+## WSL couldn't start a step
+
+A task in a WSL environment starts every step (check, classifier, agent,
+watcher) through `wsl.exe`. Sometimes WSL itself fails before the step runs:
+the VM doesn't answer in time and wsl.exe gives up after about 30 seconds
+with `Error code: Wsl/Service/WSAETIMEDOUT` (seen when the VM's memory was
+too fragmented to open a new session), or wsl.exe is missing for a moment while
+a WSL update replaces it (`spawn wsl.exe ENOENT`). Looper recognizes these by
+wsl.exe's own error code (`Wsl/…`) or the missing-wsl.exe spawn error.
+
+When this happens, the run log shows the cycle as **Error**, with a detail
+that starts with "environment unavailable: ". Like a network error:
+
+- It does **not** count toward the auto-pause threshold above.
+- It does **not** consume a one-off guidance note charge, since the step
+  never started.
+- No end notification fires unless "Include environment errors" is on in the
+  task's Notifications tab.
+
+A watcher WSL couldn't start is restarted with the usual backoff without
+counting toward auto-pause, and wsl.exe's error message is never delivered
+as trigger events.
+
+A task whose WSL distro doesn't exist (`WSL_E_DISTRO_NOT_FOUND`) is **not**
+an environment error: that's the task's configuration, so it's an ordinary
+error and counts toward auto-pause as usual.
 
 ## The "trust this folder?" dialog
 

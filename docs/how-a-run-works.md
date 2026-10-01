@@ -36,6 +36,8 @@ boolean `act` field, e.g.:
 - A failure caused by the computer being offline is recorded as a network
   error instead of an ordinary one — see
   [troubleshooting](troubleshooting.md#the-computer-was-offline-when-a-task-ran).
+  A check WSL never started is recorded as an environment error — see
+  [troubleshooting](troubleshooting.md#wsl-couldnt-start-a-step).
 
 ## Classifying
 
@@ -57,7 +59,9 @@ window (replies typed as **Classifier**), and its files live under
 as the detail; a malformed or failed response is an **error**, same as the
 check. A failure caused by the computer being offline is recorded as a
 network error instead — see
-[troubleshooting](troubleshooting.md#the-computer-was-offline-when-a-task-ran).
+[troubleshooting](troubleshooting.md#the-computer-was-offline-when-a-task-ran) —
+and one WSL never started as an environment error — see
+[troubleshooting](troubleshooting.md#wsl-couldnt-start-a-step).
 
 Skipping the classifier's fee on obvious no-ops is its whole purpose: it's a
 cheap model call standing between a noisy check and an expensive agent
@@ -187,9 +191,26 @@ a held run if you'd rather abandon it.
 ## One-off guidance notes
 
 You can attach one-off guidance to a task's next run(s) — via the toolbar
-("Add/Edit Guidance for Next Run"), the Task menu, or the context menu. It's
-free text plus how many upcoming runs it applies to, and it's appended to the
-agent's prompt as described above.
+("Add/Edit Guidance for Next Run"), the Task menu, the context menu, or the
+Run Options window. It's free text plus how many upcoming runs it applies to,
+and it's appended to the classifier's and the agent's prompt as described
+above.
+
+Scripts see it too. Every step of a run that carries a note — check,
+classifier, and agent — gets `LOOPER_NOTE_FILE`, the target-native path of
+`note.txt` in the run directory. The file holds the note text exactly as
+saved (UTF-8, no BOM), followed by one newline. On a run without a note the
+variable is unset and the file doesn't exist, so a check can test for it
+before acting:
+
+```bash
+if [ -n "$LOOPER_NOTE_FILE" ]; then note=$(cat "$LOOPER_NOTE_FILE"); fi
+```
+
+In PowerShell, read it with `Get-Content -Raw -Encoding UTF8 $env:LOOPER_NOTE_FILE`.
+The run carries the note as it was when the run started; editing it mid-run
+changes the next run, not this one. A continuation run (Continue with
+Guidance… on a finished run) carries no note: its prompt is your guidance itself.
 
 Each run whose agent actually received the note uses up one of those charges;
 once it reaches zero the note is cleared. A run does **not** spend a charge
@@ -199,3 +220,9 @@ failure, a Claude Code usage-limit rejection) or a run you stopped yourself.
 Any other ending — including the agent finishing and reporting
 `looper-done error` — does consume the charge, since the agent did receive
 and act on the guidance even if it didn't succeed.
+
+Only the agent spends a charge. A check that returns `act: false`, a
+classifier that says no, or an agent step switched off in Run Options leaves
+the note in place for the next run, whose check sees it again. A check that
+acts on the note itself should therefore return `act: true`, so the run's
+agent uses up the charge.

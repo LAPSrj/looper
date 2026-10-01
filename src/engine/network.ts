@@ -69,6 +69,27 @@ export function looksLikeNetworkError(text: string | undefined): boolean {
   return !!text && NETWORK_ERROR_RE.test(text);
 }
 
+/**
+ * The machine's own environment failing to start a step — the step never ran,
+ * so like a network error it is not the task's fault: wsl.exe's errors
+ * ("Error code: Wsl/Service/WSAETIMEDOUT" when the VM can't open a session,
+ * Wsl/Service/CreateInstance/… when it can't start), and wsl.exe itself
+ * missing while a WSL update replaces it. A distro that doesn't exist is the
+ * task's configuration, not the machine, so it stays an ordinary error.
+ */
+export const ENVIRONMENT_ERROR_RE = new RegExp(
+  [
+    String.raw`\berror\s+code:\s*Wsl/(?![^\n]*\bWSL_E_(?:DEFAULT_)?DISTRO_NOT_FOUND\b)`,
+    String.raw`\bspawn\s+wsl(?:\.exe)?\s+ENOENT\b`,
+  ].join('|'),
+  'i',
+);
+
+/** NULs dropped first: wsl.exe writes UTF-16 wherever WSL_UTF8 doesn't reach. */
+export function looksLikeEnvironmentError(text: string | undefined): boolean {
+  return !!text && ENVIRONMENT_ERROR_RE.test(text.replace(/\0/g, ''));
+}
+
 /** Probed host: the one every claude run needs. */
 const PROBE_HOST = 'api.anthropic.com';
 const PROBE_PORT = 443;

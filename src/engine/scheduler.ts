@@ -21,6 +21,7 @@ import { capFirst, formatDateTime, resultLabel } from '../shared/format';
 import { detectSystemLocale, type HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { readRunSessionId } from './messages';
+import { looksLikeEnvironmentError } from './network';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
@@ -958,6 +959,11 @@ export class Scheduler extends EventEmitter {
     let errored = false;
     /** The error above was the computer being offline, not the task failing. */
     let network = false;
+    /** The error above was the machine's environment (WSL) failing to start a step, not the task failing. */
+    let environment = false;
+    /** What the detail of an error the machine caused starts with. */
+    const machinePrefix = (): string =>
+      slept ? 'slept through the run: ' : network ? 'no network: ' : environment ? 'environment unavailable: ' : '';
     /** The run spanned a system sleep: the machine's fault too, and the slot's work never happened. */
     let slept = false;
     let outcome: RunResult = 'noop';
@@ -977,6 +983,8 @@ export class Scheduler extends EventEmitter {
         log: this.d.log,
         signal: stopper.controller.signal,
         promptOverride: continuation?.prompt,
+        // A continuation's prompt is the guidance itself, never the note.
+        note: continuation ? undefined : task.note?.text,
         vars: {
           task: task.name,
           taskId: task.id,
@@ -1003,16 +1011,18 @@ export class Scheduler extends EventEmitter {
             summary: check.summary,
             error: check.error,
             network: check.network,
+            environment: check.environment,
             slept: check.slept,
             stdoutTail: check.stdoutTail,
           });
           if (check.status === 'error') {
             errored = true;
             network = !!check.network;
+            environment = !!check.environment;
             slept = !!check.slept;
             go = false;
             outcome = 'error';
-            detail = `${slept ? 'slept through the run: ' : network ? 'no network: ' : ''}check error: ${check.error}`;
+            detail = `${machinePrefix()}check error: ${check.error}`;
           } else if (check.status === 'noop') {
             go = false;
             detail = check.summary ?? 'nothing to do';
@@ -1040,16 +1050,18 @@ export class Scheduler extends EventEmitter {
             body: cls.body,
             error: cls.error,
             network: cls.network,
+            environment: cls.environment,
             slept: cls.slept,
             detail: cls.costUsd !== undefined ? { costUsd: cls.costUsd } : undefined,
           });
           if (cls.status === 'error') {
             errored = true;
             network = !!cls.network;
+            environment = !!cls.environment;
             slept = !!cls.slept;
             go = false;
             outcome = 'error';
-            detail = `${slept ? 'slept through the run: ' : network ? 'no network: ' : ''}classifier error: ${cls.error}`;
+            detail = `${machinePrefix()}classifier error: ${cls.error}`;
             retryAtMs = cls.retryAtMs;
           } else if (cls.status === 'noop') {
             go = false;
@@ -1100,6 +1112,7 @@ export class Scheduler extends EventEmitter {
           durationMs: end.durationMs,
           exitCode: end.exitCode,
           network: end.network,
+          environment: end.environment,
           detail: { wasHeld: end.wasHeld },
         });
         if (end.headline || end.body) {
@@ -1107,11 +1120,12 @@ export class Scheduler extends EventEmitter {
         }
         // A session the network took down (banner, exit, or a timer that fired
         // mid-retry) failed whatever mechanism ended it.
-        if (end.reason === 'error' || end.doneStatus === 'error' || end.network) {
+        if (end.reason === 'error' || end.doneStatus === 'error' || end.network || end.environment) {
           errored = true;
           network = !!end.network;
+          environment = !!end.environment;
         }
-        detail = `${network ? 'no network: ' : ''}${end.headline ?? ''}`;
+        detail = `${machinePrefix()}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
         // codex assigns its own thread id on a fresh run; book it once
         // reported. Only a rolling-conversation task books at all — a
@@ -1122,17 +1136,19 @@ export class Scheduler extends EventEmitter {
             : undefined;
         if (booked) this.rollSession(task, rt, booked, end);
         this.applyCompleteSignal(task, runId, ctx.runDir, end);
-        // A continuation's prompt is the guidance itself, never the note.
-        if (!continuation && task.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
-          this.consumeNote(task.id, task.note.text);
+        if (ctx.note && end.reason !== 'error' && end.reason !== 'stopped' && !end.network) {
+          this.consumeNote(task.id, ctx.note);
         }
       }
     } catch (e) {
       errored = true;
       outcome = 'error';
-      detail = errMsg(e);
+      // A step whose process could not even be spawned (an interactive pty
+      // with wsl.exe gone mid-update) throws instead of ending.
+      environment = looksLikeEnvironmentError(errMsg(e));
+      detail = `${machinePrefix()}${errMsg(e)}`;
       this.d.log.error(`[${task.id}] run ${runId} failed: ${errMsg(e)}`);
-      this.record(task.id, runId, 'system', 'error', { error: errMsg(e) });
+      this.record(task.id, runId, 'system', 'error', { error: errMsg(e), environment: environment || undefined });
     } finally {
       this.agents.delete(runId);
       this.cycleStops.delete(runId);
@@ -1141,7 +1157,7 @@ export class Scheduler extends EventEmitter {
       // a fresh run once it is back up.
       if (this.sleptRuns.delete(runId)) slept = true;
       if (slept) this.sleepOwed.add(task.id);
-      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, slept);
+      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, slept, environment);
     }
   }
 
@@ -1253,15 +1269,16 @@ export class Scheduler extends EventEmitter {
     network = false,
     wasCompleted = false,
     slept = false,
+    environment = false,
   ): void {
     const now = this.now();
-    // A usage-limit wait is an error with a known end, and a network error or
-    // a system sleep is the computer's fault, not the task's: none of them
-    // counts toward the auto-pause threshold nor resets the streak of real
-    // errors. An offline or sleeping machine can therefore never auto-pause a
-    // task.
+    // A usage-limit wait is an error with a known end, and a network error, an
+    // environment error or a system sleep is the computer's fault, not the
+    // task's: none of them counts toward the auto-pause threshold nor resets
+    // the streak of real errors. An offline, WSL-less or sleeping machine can
+    // therefore never auto-pause a task.
     const limitWait = retryAtMs !== undefined && retryAtMs > now;
-    const counts = !limitWait && !network && !slept;
+    const counts = !limitWait && !network && !environment && !slept;
     if (counts) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
@@ -1333,6 +1350,7 @@ export class Scheduler extends EventEmitter {
       errored,
       limitWait,
       network,
+      environment,
       slept,
       autoPausedReason,
       completed: !wasCompleted && !!fresh.completedAt,
@@ -1349,6 +1367,8 @@ export class Scheduler extends EventEmitter {
    * computer being offline says nothing about the task and would otherwise
    * toast for every task at once. A run the system sleep cut short is treated
    * the same way — it re-fires after the wake, and that run's own end toasts.
+   * An environment error (WSL could not start the step) is silent too, unless
+   * the task asked for environment errors.
    */
   private notifyCycleEnd(
     task: Task,
@@ -1359,6 +1379,7 @@ export class Scheduler extends EventEmitter {
       errored: boolean;
       limitWait: boolean;
       network: boolean;
+      environment: boolean;
       slept: boolean;
       autoPausedReason?: string;
       /** The task finished for good during this cycle. */
@@ -1379,6 +1400,7 @@ export class Scheduler extends EventEmitter {
       return;
     }
     if (end.errored && (end.network || end.slept) && !n.networkErrors) return;
+    if (end.errored && end.environment && !n.environmentErrors) return;
     if (!end.errored && end.slept) return;
     const matches =
       n.end === 'all' ||

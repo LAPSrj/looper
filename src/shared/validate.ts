@@ -77,6 +77,7 @@ const FIELD_LABELS: Record<string, string> = {
   maxConcurrentRuns: 'Simultaneous runs',
   notifications: 'Notifications',
   'notifications.networkErrors': 'Include network errors',
+  'notifications.environmentErrors': 'Include environment errors',
   'notifications.completed': 'Notify when the task completes',
   note: 'Note',
 };
