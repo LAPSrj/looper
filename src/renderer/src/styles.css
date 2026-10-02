@@ -899,6 +899,29 @@ code,
 .stagger-fields .field {
   margin: 0;
 }
+
+/* A form whose one text box takes all the room the window gives it: no empty space under it. */
+.form.fill {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 24px;
+}
+
+.form.fill .field {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.form.fill textarea {
+  flex: 1;
+  resize: none;
+}
+
+/* A sub-option checkbox sits right under the one it depends on. */
+.stagger-fields > .checkbox-field {
+  margin: 0;
+}
 .stagger-fields.disabled {
   opacity: 0.4;
 }
@@ -958,6 +981,7 @@ fieldset.step-fields {
 .field input,
 .field select,
 .field textarea,
+.guidance-compose textarea,
 .json-editor {
   width: 100%;
   background: var(--bg-2);
@@ -976,6 +1000,7 @@ fieldset.step-fields {
 .field input:focus,
 .field select:focus,
 .field textarea:focus,
+.guidance-compose textarea:focus,
 .json-editor:focus {
   outline: none;
   border-color: var(--accent);
@@ -1384,7 +1409,8 @@ button:focus-visible,
 .guidance-compose {
   flex: none;
   display: flex;
-  align-items: flex-end;
+  /* Windows places a button that acts on a text box to its right, top-aligned. */
+  align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
   border-top: 1px solid var(--border);

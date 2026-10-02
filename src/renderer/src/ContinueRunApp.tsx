@@ -27,12 +27,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
 
   const start = async () => {
     const trimmed = text.trim();
-    if (!trimmed) {
-      void window.looper.showError(
-        mode === 'send' ? 'Enter the guidance to send to the agent.' : 'Enter the guidance to continue the run with.',
-      );
-      return;
-    }
+    if (!trimmed) return;
     setStarting(true);
     try {
       if (mode === 'send') await window.looper.sendGuidance(taskId, runId, trimmed);
@@ -49,7 +44,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="form">
+        <div className="form fill">
           <Field label="Guidance">
             <textarea autoFocus rows={10} value={text} onChange={(e) => setText(e.target.value)} />
           </Field>
@@ -60,6 +55,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
         onPrimary={() => void start()}
         onCancel={() => window.close()}
         saving={starting}
+        primaryDisabled={!text.trim()}
       />
     </div>
   );

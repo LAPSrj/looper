@@ -132,9 +132,29 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-/** Tasks with a run in flight; quitting would kill their sessions. */
-function activeTaskCount(): number {
-  return engine?.listRuntimes().filter((rt) => rt.runs.length > 0).length ?? 0;
+/**
+ * The confirmation quitting needs now, or null when it can go ahead: what it
+ * would stop that the confirmQuit setting asks about. A task with a run in
+ * flight counts as running even when its watcher is up as well.
+ */
+function quitWarning(): { message: string; detail: string } | null {
+  const ask = engine?.settings.confirmQuit;
+  if (!engine || !ask?.runs) return null;
+  const rts = engine.listRuntimes();
+  const running = rts.filter((rt) => rt.runs.length > 0).length;
+  const watching = ask.watchers ? rts.filter((rt) => rt.runs.length === 0 && rt.watcher !== null).length : 0;
+  if (running === 0 && watching === 0) return null;
+  const message: string[] = [];
+  const stops: string[] = [];
+  if (running > 0) {
+    message.push(running === 1 ? 'A task is still running.' : `${running} tasks are still running.`);
+    stops.push(running === 1 ? 'its run' : 'their runs');
+  }
+  if (watching > 0) {
+    message.push(watching === 1 ? 'A task is watching for events.' : `${watching} tasks are watching for events.`);
+    stops.push(watching === 1 ? 'the watcher until Looper starts again' : 'the watchers until Looper starts again');
+  }
+  return { message: message.join(' '), detail: `Quitting Looper stops ${stops.join(' and ')}.` };
 }
 
 /** Set once a quit was confirmed against active runs, so no quit path asks twice. */
@@ -142,23 +162,23 @@ let quitConfirmed = false;
 let quitPrompting = false;
 
 /**
- * True = go ahead and quit. With runs in flight the user decides: Quit stops
- * them (the engine ends every session on the way out), Cancel keeps the app
- * running. Every quit path funnels through here — the main window's X,
- * File → Exit, the tray's Quit.
+ * True = go ahead and quit. With runs in flight (and, when the setting asks,
+ * watchers up) the user decides: Quit stops them (the engine ends every
+ * session on the way out), Cancel keeps the app running. Every quit path
+ * funnels through here — the main window's X, File → Exit, the tray's Quit.
  */
 async function confirmQuit(): Promise<boolean> {
   if (quitConfirmed) return true;
-  const n = activeTaskCount();
-  if (n === 0) return true;
+  const warning = quitWarning();
+  if (!warning) return true;
   if (quitPrompting) return false; // a second quit while the dialog is up
   quitPrompting = true;
   try {
     const opts: Electron.MessageBoxOptions = {
       type: 'question',
       title: 'Looper',
-      message: n === 1 ? 'A task is still running.' : `${n} tasks are still running.`,
-      detail: 'Quitting Looper stops their runs.',
+      message: warning.message,
+      detail: warning.detail,
       buttons: ['Quit', 'Cancel'],
       defaultId: 1,
       cancelId: 1,
@@ -425,9 +445,9 @@ function createWindow(): void {
       win?.hide();
       return;
     }
-    // Closing the main window quits the app: with runs in flight, ask before
-    // the window is gone — a cancel must leave it standing.
-    if (!quitting && !quitConfirmed && activeTaskCount() > 0) {
+    // Closing the main window quits the app: when quitting needs a
+    // confirmation, ask before the window is gone — a cancel must leave it standing.
+    if (!quitting && !quitConfirmed && quitWarning()) {
       e.preventDefault();
       void confirmQuit().then((ok) => {
         if (ok && win && !win.isDestroyed()) win.close();
@@ -462,12 +482,14 @@ function openChildWindow(
   width: number,
   height: number,
   modalParent?: BrowserWindow | null,
-  opts?: { minWidth?: number; minHeight?: number; resizable?: boolean },
+  /** contentSize: width/height (and the minimums) size the page, not the frame around it. */
+  opts?: { minWidth?: number; minHeight?: number; resizable?: boolean; contentSize?: boolean },
 ): BrowserWindow {
   const parent = modalParent && !modalParent.isDestroyed() ? modalParent : undefined;
   const child = new BrowserWindow({
     width,
     height,
+    useContentSize: opts?.contentSize ?? false,
     minWidth: opts?.minWidth ?? 520,
     minHeight: opts?.minHeight ?? 420,
     title,
@@ -852,22 +874,28 @@ function openNoteEditorWindow(taskId: string): void {
 function openContinueRunWindow(taskId: string, runId: string): void {
   openChildWindow(
     `continue-run/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
-    'Continue Run — Looper',
+    'Continue Run',
     520,
-    400,
+    GUIDANCE_WINDOW_HEIGHT,
     undefined,
-    { minWidth: 460, minHeight: 340 },
+    { minWidth: 460, minHeight: GUIDANCE_WINDOW_HEIGHT, contentSize: true },
   );
 }
+
+/**
+ * Page height of the run guidance windows: the Guidance field (10 rows) and
+ * the button bar with nothing to spare. A taller window grows the text box.
+ */
+const GUIDANCE_WINDOW_HEIGHT = 273;
 
 function openSendGuidanceWindow(taskId: string, runId: string): void {
   openChildWindow(
     `send-guidance/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
-    'Send Guidance — Looper',
+    'Send Guidance',
     520,
-    400,
+    GUIDANCE_WINDOW_HEIGHT,
     undefined,
-    { minWidth: 460, minHeight: 340 },
+    { minWidth: 460, minHeight: GUIDANCE_WINDOW_HEIGHT, contentSize: true },
   );
 }
 
@@ -904,7 +932,8 @@ function openRenameFolderWindow(folderId: string): void {
 }
 
 function openSettingsWindow(): void {
-  openChildWindow('settings', 'Settings — Looper', 720, 620, win);
+  // Sized by its page: the General tab, the tallest, fits without a scroll bar.
+  openChildWindow('settings', 'Settings', 720, 640, win, { contentSize: true });
 }
 
 function openTemplatesWindow(): void {
@@ -972,11 +1001,12 @@ function openModelEditorWindow(
 ): void {
   openChildWindow(
     `model-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}/${index === undefined ? 'new' : index}`,
-    index === undefined ? 'New Model — Looper' : 'Edit Model — Looper',
-    420,
-    290,
+    index === undefined ? 'New Model' : 'Edit Model',
+    // Page size: all four fields of a claude-code/codex model, without a scroll bar.
+    406,
+    382,
     parent,
-    { minWidth: 420, minHeight: 290, resizable: false },
+    { minWidth: 406, minHeight: 382, resizable: false, contentSize: true },
   );
 }
 

@@ -29,6 +29,8 @@ export function SettingsApp() {
   // '' = completed tasks stay where they are; loaded once, like the other drafts.
   const [completedFolderId, setCompletedFolderId] = useState<string | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
+  const [confirmQuitRuns, setConfirmQuitRuns] = useState<boolean | null>(null);
+  const [confirmQuitWatchers, setConfirmQuitWatchers] = useState<boolean | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
   const [startWithSystem, setStartWithSystem] = useState<boolean | null>(null);
   const [staggerEnabled, setStaggerEnabled] = useState<boolean | null>(null);
@@ -63,6 +65,8 @@ export function SettingsApp() {
       setDefaultEnvId((v) => v ?? info.settings.defaultEnvironmentId);
       setCompletedFolderId((v) => v ?? info.settings.completedFolderId ?? '');
       setCloseToTray((v) => v ?? info.settings.closeToTray);
+      setConfirmQuitRuns((v) => v ?? info.settings.confirmQuit.runs);
+      setConfirmQuitWatchers((v) => v ?? info.settings.confirmQuit.watchers);
       setNotificationsEnabled((v) => v ?? info.settings.notificationsEnabled);
       setStaggerEnabled((v) => v ?? info.settings.staggerFirstRun.enabled);
       setStaggerMin((v) => v ?? info.settings.staggerFirstRun.minDelaySec);
@@ -108,7 +112,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -207,6 +211,7 @@ export function SettingsApp() {
         defaultEnvironmentId: defaultEnvId,
         completedFolderId: completedFolderId || undefined,
         closeToTray,
+        confirmQuit: { runs: confirmQuitRuns, watchers: confirmQuitWatchers },
         notificationsEnabled,
         staggerFirstRun: {
           enabled: staggerEnabled,
@@ -289,6 +294,21 @@ export function SettingsApp() {
               <input type="checkbox" checked={closeToTray} onChange={(e) => setCloseToTray(e.target.checked)} />
               Close to system tray
             </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={confirmQuitRuns} onChange={(e) => setConfirmQuitRuns(e.target.checked)} />
+              Ask before quitting while tasks are running
+            </label>
+            <div className={`stagger-fields${confirmQuitRuns ? '' : ' disabled'}`}>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  disabled={!confirmQuitRuns}
+                  checked={confirmQuitWatchers}
+                  onChange={(e) => setConfirmQuitWatchers(e.target.checked)}
+                />
+                Also while tasks are watching for events
+              </label>
+            </div>
             <label className="checkbox-field">
               <input type="checkbox" checked={startWithSystem} onChange={(e) => setStartWithSystem(e.target.checked)} />
               Start with the computer

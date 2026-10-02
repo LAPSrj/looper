@@ -416,6 +416,15 @@ export const SettingsSchema = z.object({
   templatesFile: z.string().min(1).optional(),
   /** Hide to the system tray instead of quitting when the window is closed. */
   closeToTray: z.boolean().default(false),
+  /** Ask before quitting when it would stop something. */
+  confirmQuit: z
+    .object({
+      /** Runs in flight (check, classifier or agent): quitting stops them. */
+      runs: z.boolean().default(true),
+      /** Tasks whose watcher is up: quitting stops it until Looper starts again. Only asked while `runs` is on. */
+      watchers: z.boolean().default(false),
+    })
+    .default({}),
   /** Master switch for system notifications; per-task selection is on the task. */
   notificationsEnabled: z.boolean().default(true),
   /** Show a step-selection window before a manual Run Now starts. */

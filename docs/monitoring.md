@@ -312,3 +312,10 @@ that: closing the window just hides it, and the engine (and any running
 tasks) keeps going in the background. `looper --hidden` starts straight
 into the tray without opening the window, which is also what **Settings →
 General → Start with the computer** registers as a login item.
+
+Quitting while a task is running (window close, File → Exit, or the tray's
+Quit) asks first, because it stops those runs. **Settings → General → Ask
+before quitting while tasks are running** turns that question off. Its
+sub-option **Also while tasks are watching for events** (off by default)
+asks as well when tasks with an events trigger have their watcher up, since
+quitting stops watching until Looper starts again.
