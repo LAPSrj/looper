@@ -120,6 +120,11 @@ describe('cronToForm', () => {
     expect(cronToForm('0 8 * * 0-6')).toEqual({ mode: 'daily', times: [{ hour: 8, minute: 0 }] });
   });
 
+  it('keeps a reversed hour window in its form while the editor is mid-typing', () => {
+    expect(cronToForm('*/10 7-2 * * *')).toEqual({ mode: 'minutes', step: 10, from: 7, to: 2 });
+    expect(cronToForm('0 7-2/2 * * *')).toEqual({ mode: 'hours', step: 2, minute: 0, from: 7, to: 2 });
+  });
+
   it('keeps inexpressible patterns as custom', () => {
     for (const c of [
       '0,30 9,17 * * *', // minute list x hour list cross-product

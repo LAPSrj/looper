@@ -181,10 +181,12 @@ export function cronToForm(cron: string): CronForm {
   const window = /^(\d{1,2})-(\d{1,2})$/.exec(h);
   const winStep = /^(\d{1,2})-(\d{1,2})\/(\d{1,2})$/.exec(h);
   const hourStep = /^\*\/(\d{1,2})$/.exec(h);
+  // A reversed window (from > to) is kept: the editor passes through it while
+  // typing ("20" via "2"), and croner's own validation rejects it on save.
   const win = (a: string, b: string): { from: number; to: number } | undefined => {
     const from = int(a, 23);
     const to = int(b, 23);
-    return from !== undefined && to !== undefined && from <= to ? { from, to } : undefined;
+    return from !== undefined && to !== undefined ? { from, to } : undefined;
   };
 
   // */N minute steps.
