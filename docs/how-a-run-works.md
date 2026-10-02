@@ -226,3 +226,42 @@ classifier that says no, or an agent step switched off in Run Options leaves
 the note in place for the next run, whose check sees it again. A check that
 acts on the note itself should therefore return `act: true`, so the run's
 agent uses up the charge.
+
+## Guidance for a run in progress
+
+While a Claude Code or Codex agent is running, you can send it guidance
+without stopping it: the send box under the run's conversation window
+(Ctrl+Enter sends), **Send Guidance…** on a run's context menu (Run log and
+Messages tabs) or the run detail window's File menu, the inbox `guide`
+command, or `looper guide <taskId> <text>`. Text sent before the agent picked
+up the previous one is appended to it.
+
+The guidance waits as `guidance.json` in the run directory until the agent
+gets it:
+
+- **Claude Code** gets it with the result of its next tool call (a
+  `PostToolUse` hook Looper adds to the run's settings), or, if it ends its
+  turn first, through the Stop hook, which keeps the turn going with the
+  guidance. Once `looper-done` has run, the Stop hook lets the turn end.
+- **An interactive session that has ended its turn** (idle or held) gets the
+  guidance typed in as its next prompt, the same as typing it in the Terminal
+  tab yourself.
+- **Headless Codex** gets it with its next tool result through a hook, once
+  you've trusted that hook in Codex. Codex skips a hook nobody has trusted.
+  Every run uses the same hook command, so you trust it once per Codex home
+  (WSL and Windows each have their own): run
+  `codex -c "hooks.PostToolUse=[{hooks=[{type='command',command='<the command>'}]}]"`
+  with the command from a run's `run.sh`/`run.ps1`, type `/hooks`, and trust
+  it. **Interactive Codex** gets no hook (its TUI would open on the hook
+  review screen and wait there); it gets the guidance typed in when its turn
+  ends.
+
+The conversation window shows waiting guidance as a muted "Waiting for the
+agent" row, and delivered guidance as a **Guidance** row. The run log records
+when the guidance was sent and when it was delivered.
+
+If the agent finishes before reading waiting guidance, Looper continues the
+conversation in a new run with the guidance as its prompt, exactly like
+**Continue with Guidance…**. A run that ended any other way (stopped, failed,
+timed out, exited) or whose task is paused keeps the guidance in its log
+only, as **Not delivered**.

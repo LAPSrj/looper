@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CodexAccumulator, TranscriptReader, findCodexRollout, readCodexRef } from '../src/engine/messages';
+import { guidanceMessage } from '../src/shared/messages';
 
 // Fixture shapes captured live from a codex-cli 0.154.0 rollout
 // (~/.codex/sessions/…/rollout-…-<thread id>.jsonl), trimmed to the essentials.
@@ -18,6 +19,21 @@ const agentText = (text: string, phase = 'final_answer') =>
 
 const item = (item: Record<string, unknown>) =>
   rec('event_msg', { type: 'item_completed', thread_id: 't', turn_id: 'u', item });
+
+describe('CodexAccumulator guidance', () => {
+  it('shows the hook-injected developer record and typed guidance, not other developer records', () => {
+    const acc = new CodexAccumulator();
+    const dev = (text: string) =>
+      rec('response_item', { type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
+    acc.addLine(dev('<skills>…</skills>'));
+    acc.addLine(dev(guidanceMessage('end with PINEAPPLE')));
+    acc.addLine(userText(guidanceMessage('typed in')));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['guidance', 'end with PINEAPPLE'],
+      ['guidance', 'typed in'],
+    ]);
+  });
+});
 
 describe('CodexAccumulator', () => {
   it('renders prompts, agent messages and executed commands', () => {

@@ -1381,6 +1381,21 @@ button:focus-visible,
   overflow: hidden;
 }
 
+.guidance-compose {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.guidance-compose textarea {
+  flex: 1;
+  resize: none;
+}
+
 .messages-table-wrap {
   overflow: auto;
   flex: none;

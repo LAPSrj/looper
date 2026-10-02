@@ -5,6 +5,8 @@ import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
+import { guidanceMessage } from '../../shared/messages';
+import { GUIDANCE_FILE, takePendingGuidance } from '../guidance';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
@@ -56,6 +58,11 @@ export interface SessionHandle {
   pid: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
+  /**
+   * Guidance was just queued in the run dir. An interactive session whose turn
+   * has ended gets it typed in; otherwise the hooks hand it over mid-turn.
+   */
+  deliverGuidance(): void;
   stop(reason?: SessionEndReason, headline?: string): Promise<void>;
   finished: Promise<SessionEnd>;
   readonly held: boolean;
@@ -102,6 +109,8 @@ export interface SessionOpts {
   implicitDoneStatus?: string;
   /** Whether the Stop hook gates turn ends (reminder + background-task block). Interactive needs it. */
   stopGate: boolean;
+  /** The session takes the user's guidance mid-run (engine/guidance.ts): the agent step does. */
+  guidance?: boolean;
   maxRuntimeMs: number;
   /** Headline when the max runtime kills the session. */
   maxRuntimeText: string;
@@ -383,6 +392,31 @@ function spawnPiped(spec: SpawnSpec, cwd: string, onError: (e: Error) => void): 
   };
 }
 
+/**
+ * The command of the codex guidance hook (headless only), or null when there
+ * is none. Codex runs a hook only once the user has trusted its definition in
+ * codex's /hooks screen, and the trust holds while the definition stays the
+ * same. So every run gets the same command: one script in the data dir, which
+ * finds the run through LOOPER_RUN_DIR. Untrusted, codex skips the hook
+ * without a word and the guidance reaches the agent in a continuation run
+ * instead. Interactive codex never gets the hook: its TUI would open on the
+ * "hooks need review" screen and the unattended session would wait there.
+ */
+function codexGuideHookCommand(ctx: RunContext): string | null {
+  if (!ctx.dataDir) return null;
+  const file = path.join(ctx.dataDir, 'hooks', 'codex-' + ctx.target.guideHookFile);
+  try {
+    // Atomic: a hook of another run may be reading the script right now.
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeText(tmp, ctx.target.renderGuideHook('codex'), 0o755);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    ctx.log.warn(`[${ctx.task.id}] cannot write the codex guidance hook: ${(e as Error).message}`);
+    return null;
+  }
+  return ctx.target.codexHookCommand(ctx.target.toTargetPath(file));
+}
+
 export async function startSession(ctx: RunContext, opts: SessionOpts, cb: SessionCallbacks): Promise<SessionHandle> {
   const { task, target } = ctx;
   const { harness, headless, doneCommand, doneStatuses } = opts;
@@ -402,6 +436,17 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       // The SessionStart payload names the session's transcript file: the Messages view reads it live.
       SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('session.json'))) }] }],
     };
+    if (opts.guidance) {
+      // Guidance the user sends mid-run reaches the agent with its next tool result.
+      writeText(
+        path.join(ctx.runDir, 'bin', target.guideHookFile),
+        target.renderGuideHook('claude', targetFile(ctx, GUIDANCE_FILE)),
+        0o755,
+      );
+      hooks.PostToolUse = [
+        { hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', target.guideHookFile)) }] },
+      ];
+    }
     if (opts.stopGate) {
       // The Stop-hook gate: blocks the turn from ending while background tasks
       // run (ending the session would kill them), reminds once when the done
@@ -415,6 +460,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           stopJson: targetFile(ctx, f('stop.json')),
           doneFile: targetFile(ctx, f('done')),
           reminderFile: targetFile(ctx, f('stop-reminded')),
+          guidanceFile: opts.guidance ? targetFile(ctx, GUIDANCE_FILE) : undefined,
           ...stopHookMessages(opts.step),
         }),
         0o755,
@@ -476,6 +522,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }
     if (opts.model) parts.push('--model', q(opts.model));
     if (opts.effort) parts.push('-c', q('model_reasoning_effort=' + opts.effort));
+    if (headless && opts.guidance) {
+      const hookCmd = codexGuideHookCommand(ctx);
+      if (hookCmd) parts.push('-c', q(`hooks.PostToolUse=[{hooks=[{type='command',command='${hookCmd}'}]}]`));
+    }
     if (opts.session?.resume) parts.push('resume', q(opts.session.id));
     if (headless) {
       parts.push('--json', '--skip-git-repo-check');
@@ -876,6 +926,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         }
         if (mtime <= lastInputAt) return;
         if (idleSince === null || mtime > idleSince) idleSince = mtime;
+        // Guidance that missed the turn (no hook ran after it arrived) starts the next one.
+        deliverIdleGuidance();
       },
       onTick: (now) => {
         if (ended || doneMtime !== null) return;
@@ -937,23 +989,43 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     });
   }
 
+  /** Keyboard input from the user (terminal tab) or from looper itself: the session is busy again. */
+  function input(data: string): void {
+    if (ended) return;
+    lastInputAt = Date.now();
+    idleSince = null;
+    promptSince = null;
+    if (held) {
+      held = false;
+      cb.onResume?.();
+    }
+    proc.write(data);
+  }
+
+  /**
+   * Interactive, the turn over (idle or held) and no done signal yet: nothing
+   * will run a hook, so the waiting guidance is typed in as the next prompt.
+   * A bracketed paste keeps its line breaks from submitting early; Enter
+   * follows once the TUI has taken the paste in.
+   */
+  function deliverIdleGuidance(): void {
+    if (!opts.guidance || headless || ended || doneMtime !== null) return;
+    if (idleSince === null && !held) return;
+    const text = takePendingGuidance(ctx.runDir);
+    if (text === null) return;
+    ctx.log.info(`[${task.id}] typing the user's guidance into the idle session`);
+    input('\x1b[200~' + guidanceMessage(text).replace(/\r?\n/g, '\r') + '\x1b[201~');
+    setTimeout(() => input('\r'), 300);
+  }
+
   return {
     runId: ctx.runId,
     pid: proc.pid,
     get held() {
       return held;
     },
-    write(data: string) {
-      if (ended) return;
-      lastInputAt = Date.now();
-      idleSince = null;
-      promptSince = null;
-      if (held) {
-        held = false;
-        cb.onResume?.();
-      }
-      proc.write(data);
-    },
+    write: input,
+    deliverGuidance: deliverIdleGuidance,
     resize(cols: number, rows: number) {
       if (ended) return;
       try {

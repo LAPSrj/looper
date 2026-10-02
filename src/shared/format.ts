@@ -13,6 +13,9 @@ const RESULT_LABELS: Record<string, string> = {
   'idle-timeout': 'Idle timeout',
   held: 'Held',
   stopped: 'Stopped',
+  sent: 'Sent',
+  delivered: 'Delivered',
+  undelivered: 'Not delivered',
 };
 
 export function resultLabel(result: string): string {

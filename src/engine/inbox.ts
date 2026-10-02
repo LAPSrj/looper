@@ -11,7 +11,7 @@ export interface InboxHandlers {
   onCommand: (cmd: InboxCommand) => Promise<void> | void;
 }
 
-const OPS = new Set(['run', 'pause', 'resume', 'stop', 'remove', 'enable', 'disable', 'complete', 'reopen']);
+const OPS = new Set(['run', 'pause', 'resume', 'stop', 'remove', 'enable', 'disable', 'complete', 'reopen', 'guide']);
 
 /**
  * Drop-folder API: agents (from WSL, via /mnt/c/...) write JSON files here.
@@ -79,6 +79,9 @@ export class Inbox {
         const cmd = raw as InboxCommand;
         if (!OPS.has(cmd.op) || typeof cmd.taskId !== 'string') {
           throw new Error(`invalid command (op=${String(cmd.op)}, taskId=${String(cmd.taskId)})`);
+        }
+        if (cmd.op === 'guide' && (typeof cmd.text !== 'string' || (cmd.runId !== undefined && typeof cmd.runId !== 'string'))) {
+          throw new Error('invalid guide command: text must be a string, runId a string when given');
         }
         await this.handlers.onCommand(cmd);
         this.log.info(`inbox: ${cmd.op} ${cmd.taskId} (${name})`);

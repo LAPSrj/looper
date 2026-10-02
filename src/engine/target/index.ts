@@ -1,6 +1,6 @@
 import type { HostKind } from '../host';
 import type { Settings, Task } from '../../shared/types';
-import type { StopHookSpec } from './stop-hook';
+import type { GuideHookFormat, StopHookSpec } from './stop-hook';
 import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
 import { WindowsTarget } from './windows';
@@ -54,8 +54,23 @@ export interface Target {
    * remind once when looper-done was never called, otherwise record the payload.
    */
   renderStopHook(spec: StopHookSpec): string;
-  /** Command for the claude Stop hook: run the gate script written at `targetPath`. */
+  /** Command for a claude hook (Stop gate, guidance): run the script written at `targetPath`. */
   stopHookCommand(targetPath: string): string;
+  /** File name of the guidance hook script. */
+  readonly guideHookFile: string;
+  /**
+   * Script for the PostToolUse guidance hook: take the waiting guidance file
+   * and print it as additional context. `guidanceFile` unset = find it in
+   * $LOOPER_RUN_DIR, so one script serves every run (codex trusts a hook
+   * only while its command stays the same).
+   */
+  renderGuideHook(format: GuideHookFormat, guidanceFile?: string): string;
+  /**
+   * Shell command a codex hook definition runs: the script at `targetPath`,
+   * unquoted so it fits a TOML literal string. Null when the path would need
+   * quoting.
+   */
+  codexHookCommand(targetPath: string): string | null;
   /** File name of the codex notify hook script in the run's bin/ dir. */
   readonly notifyHookFile: string;
   /**
@@ -102,4 +117,4 @@ export function createTarget(task: Task, opts: { host: HostKind; settings: Setti
 }
 
 export { BashTarget, WindowsTarget };
-export type { StopHookSpec };
+export type { GuideHookFormat, StopHookSpec };

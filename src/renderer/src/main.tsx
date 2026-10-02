@@ -44,7 +44,7 @@ const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(h
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
-const continueRunMatch = /^continue-run\/([^/]+)\/([^/]+)$/.exec(hash);
+const continueRunMatch = /^(continue-run|send-guidance)\/([^/]+)\/([^/]+)$/.exec(hash);
 const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
@@ -78,8 +78,9 @@ function pickRoot() {
   if (continueRunMatch) {
     return (
       <ContinueRunApp
-        taskId={decodeURIComponent(continueRunMatch[1])}
-        runId={decodeURIComponent(continueRunMatch[2])}
+        taskId={decodeURIComponent(continueRunMatch[2])}
+        runId={decodeURIComponent(continueRunMatch[3])}
+        mode={continueRunMatch[1] === 'send-guidance' ? 'send' : 'continue'}
       />
     );
   }

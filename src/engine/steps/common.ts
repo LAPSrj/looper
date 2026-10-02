@@ -19,6 +19,8 @@ export interface RunContext {
   settings: Settings;
   host: HostKind;
   log: Logger;
+  /** Host path of the data dir; scripts shared by every run live there (the codex guidance hook). */
+  dataDir?: string;
   /** Aborts when the user stops the task mid-cycle. */
   signal?: AbortSignal;
   /** Agent step, claude-code only: resume this conversation, or start a new one under this id. */

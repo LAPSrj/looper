@@ -44,12 +44,13 @@ bottom of this page).
 | `looper disable <taskId> [--reason <r>]` | queue a command to disable the task |
 | `looper complete <taskId> [--reason <r>]` | queue a command to finish the task for good |
 | `looper reopen <taskId>` | queue a command to undo a completion |
+| `looper guide <taskId> <text...> [--run <runId>]` | queue guidance for the task's running agent (default: its newest run in flight); see [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress) |
 | `looper logs <taskId> [-n, --lines <n>]` | print the task's recent run records (default 30) |
 | `looper done [message...]` | signal the end of the current agent run (needs `LOOPER_DONE_FILE`, set automatically in that run's environment) |
 | `looper serve [--quiet]` | run the engine in this terminal, without the desktop UI |
 
 `run`, `pause`, `resume`, `stop`, `remove`, `enable`, `disable`, `complete`,
-and `reopen` don't act
+`reopen`, and `guide` don't act
 directly: each writes a small command file into the inbox and prints its
 path. The `--reason <r>` text becomes the pause/stop reason shown in the
 task's state — or the completion reason kept on the task — once the running
@@ -79,7 +80,7 @@ brought current rather than migrated silently on every read.
 ## How the CLI talks to a running app: the inbox
 
 Commands that change something (`add`, `run`, `pause`, `resume`, `stop`,
-`remove`, `enable`, `disable`, `complete`, `reopen`) don't call the app directly. They write a
+`remove`, `enable`, `disable`, `complete`, `reopen`, `guide`) don't call the app directly. They write a
 JSON file into `<data dir>/inbox/`, atomically (written to a `.tmp` file,
 then renamed). A running Looper app — the desktop app or `looper serve` —
 polls that folder, applies each file, and moves it into `inbox/processed/`
@@ -126,9 +127,12 @@ is exactly:
 {"op": "disable", "taskId": "…"}
 {"op": "complete", "taskId": "…", "reason": "…"}
 {"op": "reopen", "taskId": "…"}
+{"op": "guide", "taskId": "…", "text": "…", "runId": "…"}
 ```
 
 `reason` is optional and only meaningful for `pause`, `stop` and `complete`.
+`guide` requires `text`; without `runId` it goes to the task's newest run in
+flight. A `guide` command for a run whose agent isn't running is rejected.
 
 Every file the inbox picks up — task or command — is moved out of `inbox/`
 once handled, never left in place:

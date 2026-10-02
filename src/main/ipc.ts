@@ -20,6 +20,8 @@ export interface IpcHost {
   openNoteEditor: (taskId: string) => void;
   /** Guidance window for continuing a finished run's conversation. */
   openContinueRun: (taskId: string, runId: string) => void;
+  /** Guidance window for a run in flight: the agent gets the text mid-run. */
+  openSendGuidance: (taskId: string, runId: string) => void;
   openFolderNoteEditor: (folderId: string) => void;
   openMoveToFolder: (taskId: string) => void;
   openNewFolder: (parentId?: string) => void;
@@ -166,6 +168,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
     engine.continueRun(id, runId, guidance),
   );
+  ipcMain.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
+  ipcMain.handle('run:guide', (_e, id: string, runId: string, text: string) => engine.sendGuidance(id, runId, text));
 
   /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
   const openTargetPath = async (taskId: string, p: string): Promise<void> => {
@@ -557,11 +561,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     const canContinue = engine.canContinueRun(info.taskId, info.runId);
+    const canGuide = engine.canGuideRun(info.taskId, info.runId);
     const menu = Menu.buildFromTemplate([
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
       { label: 'View Details', click: () => host.openRunDetail(info.taskId, info.runId) },
       { label: 'View Messages', click: () => host.openMessages(info.taskId, info.runId) },
       { type: 'separator' },
+      {
+        label: 'Send Guidance…',
+        enabled: canGuide,
+        click: () => host.openSendGuidance(info.taskId, info.runId),
+      },
       {
         label: 'Continue in Terminal',
         enabled: canContinue,

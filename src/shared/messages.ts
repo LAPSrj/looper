@@ -4,7 +4,8 @@ export interface MessageRow {
   id: string;
   /** ISO timestamp of the transcript record, when it carries one. */
   ts?: string;
-  kind: 'prompt' | 'agent' | 'thinking' | 'tool' | 'raw';
+  /** guidance: text the user sent the agent mid-run (see GUIDANCE_PREFIX). */
+  kind: 'prompt' | 'guidance' | 'agent' | 'thinking' | 'tool' | 'raw';
   /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
   source?: 'classifier';
   /** Tool rows: the tool name (Bash, Read, Task…). Raw rows: the record's type. */
@@ -56,4 +57,29 @@ export interface MessagesResult {
   rows: MessageRow[];
   /** Rows dropped from the start of an oversized transcript. */
   dropped: number;
+  /** Guidance sent to the run that the agent has not picked up yet. */
+  pendingGuidance?: string;
+}
+
+/** Opens every guidance message Looper hands a running agent; the Messages view keys its Guidance rows on it. */
+export const GUIDANCE_PREFIX = 'Looper guidance from the user';
+
+/** The message the agent gets: a header line naming it as the user's, then the text. */
+export function guidanceMessage(text: string): string {
+  return `${GUIDANCE_PREFIX} (sent while you were working; it takes precedence over earlier instructions):\n${text}`;
+}
+
+/**
+ * The user's text when `text` is a guidance message, else null. The harness
+ * may wrap it in a tag or put its own label in front: claude records a
+ * Stop-hook block as "Stop hook feedback:\n<reason>".
+ */
+export function guidanceText(text: string): string | null {
+  const t = text
+    .trim()
+    .replace(/^<([\w-]+)>\s*([\s\S]*?)\s*<\/\1>$/, '$2')
+    .replace(/^(?:Stop hook feedback:|\w+(?::\w+)? hook additional context:)\s*/, '');
+  if (!t.startsWith(GUIDANCE_PREFIX)) return null;
+  const nl = t.indexOf('\n');
+  return nl === -1 ? '' : t.slice(nl + 1).trim();
 }

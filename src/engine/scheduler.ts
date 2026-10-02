@@ -26,10 +26,11 @@ import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
 import { agentPrompt, readCompleteSignal, startAgent as defaultStartAgent, type AgentEnd } from './steps/agent';
-import type { SessionHandle } from './steps/session';
+import { headlineOf, type SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
+import { GUIDANCE_FILE, queueGuidance, takePendingGuidance } from './guidance';
 import { newRunId, type RunStore } from './store/runs';
-import { writeText } from './store/fsutil';
+import { fileExists, writeText } from './store/fsutil';
 import type { StateStore } from './store/state';
 import type { TaskStore } from './store/tasks';
 import { WatcherPool } from './watchers';
@@ -91,6 +92,8 @@ export class Scheduler extends EventEmitter {
   private readonly limitWaits = new Map<string, number>();
   /** Runs stopped mid-flight because the system suspended (by run id). */
   private readonly sleptRuns = new Set<string>();
+  /** Per run with guidance waiting for its agent: the poll that records the delivery. */
+  private readonly guidanceWatches = new Map<string, NodeJS.Timeout>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
   /** Watcher event lines waiting for a run slot, per task; a batch never queues a second run. */
@@ -242,6 +245,91 @@ export class Scheduler extends EventEmitter {
     const sessionId = readRunSessionId(this.d.runs.runDir(taskId, fromRunId), kind);
     if (!sessionId) throw new Error('No conversation was recorded for this run.');
     return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance });
+  }
+
+  /** Whether the run takes guidance now: its agent is running on Claude Code or Codex. */
+  canGuideRun(taskId: string, runId: string): boolean {
+    const task = this.d.tasks.get(taskId);
+    const run = this.runtimes.get(taskId)?.runs.find((r) => r.runId === runId);
+    return !!task && run?.state === 'running' && this.agents.has(runId) && this.takesGuidance(task);
+  }
+
+  /**
+   * Send guidance to a run in flight (without a run id, the task's newest).
+   * It waits in the run dir until the agent picks it up (engine/guidance.ts);
+   * whatever the agent never got continues the conversation in a new run once
+   * this one ends (see `settleGuidance`).
+   */
+  sendGuidance(taskId: string, runId: string | undefined, text: string): void {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('The guidance is empty.');
+    const run = runId ? rt.runs.find((r) => r.runId === runId) : newestRun(rt);
+    if (!run) throw new Error('This run has already ended. Use Continue with Guidance… to continue its conversation.');
+    const handle = this.agents.get(run.runId);
+    if (run.state !== 'running' || !handle) throw new Error('The agent of this run has not started yet.');
+    if (!this.takesGuidance(task)) throw new Error('Only Claude Code and Codex runs take guidance.');
+    const runDir = this.d.runs.runDir(taskId, run.runId);
+    queueGuidance(runDir, trimmed);
+    this.record(taskId, run.runId, 'guidance', 'sent', { summary: headlineOf(trimmed), body: trimmed });
+    this.watchGuidance(taskId, run.runId, runDir);
+    handle.deliverGuidance();
+  }
+
+  private takesGuidance(task: Task): boolean {
+    try {
+      const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+      return kind === 'claude-code' || kind === 'codex';
+    } catch {
+      return false;
+    }
+  }
+
+  /** Record the delivery once the waiting guidance is gone from the run dir. */
+  private watchGuidance(taskId: string, runId: string, runDir: string): void {
+    if (this.guidanceWatches.has(runId)) return;
+    const timer = setInterval(() => {
+      if (fileExists(path.join(runDir, GUIDANCE_FILE))) return;
+      clearInterval(timer);
+      this.guidanceWatches.delete(runId);
+      this.record(taskId, runId, 'guidance', 'delivered', { summary: 'the agent got the guidance' });
+    }, this.d.settings.signalPollMs);
+    this.guidanceWatches.set(runId, timer);
+  }
+
+  /**
+   * The run is over: guidance the agent never got is taken out of the run dir.
+   * Returned (to continue the conversation with) when the agent simply
+   * finished before reading it; a run that was stopped, failed, ran out of
+   * time, or whose task is paused keeps it in its log only.
+   */
+  private settleGuidance(taskId: string, runId: string, runDir: string, end: AgentEnd | undefined): string | null {
+    const watch = this.guidanceWatches.get(runId);
+    if (watch) {
+      clearInterval(watch);
+      this.guidanceWatches.delete(runId);
+    }
+    const text = takePendingGuidance(runDir);
+    if (text === null) {
+      if (watch) this.record(taskId, runId, 'guidance', 'delivered', { summary: 'the agent got the guidance' });
+      return null;
+    }
+    let why: string | null = null;
+    if (!end || end.reason === 'stopped') why = 'the run was stopped';
+    else if (end.reason === 'error' || end.network || end.environment || end.sessionLost) why = 'the run ended with an error';
+    else if (end.reason !== 'done') why = `the run ended without the agent finishing (${resultLabel(end.reason).toLowerCase()})`;
+    else if (this.runtimes.get(taskId)?.pausedReason) why = 'the task is paused';
+    if (why) {
+      this.record(taskId, runId, 'guidance', 'undelivered', { summary: `not delivered: ${why}`, body: text });
+      return null;
+    }
+    this.record(taskId, runId, 'guidance', 'undelivered', {
+      summary: 'the agent finished before reading it; continuing the conversation in a new run',
+      body: text,
+    });
+    return text;
   }
 
   /** The shared manual start: lift a pause, honor the caps, run the cycle. */
@@ -972,6 +1060,10 @@ export class Scheduler extends EventEmitter {
     const stopper = { controller: new AbortController(), reason: 'stopped by user' };
     this.cycleStops.set(runId, stopper);
     const stopped = (): boolean => stopper.controller.signal.aborted;
+    /** How the agent step ended; unset when the cycle never got there (or it threw). */
+    let agentEnd: AgentEnd | undefined;
+    /** Guidance the agent never got, to continue its conversation with once the cycle is over. */
+    let guidanceLeft: string | null = null;
     try {
       const ctx: RunContext = {
         task,
@@ -981,6 +1073,7 @@ export class Scheduler extends EventEmitter {
         settings: this.d.settings,
         host: this.d.host,
         log: this.d.log,
+        dataDir: this.d.dataDir,
         signal: stopper.controller.signal,
         promptOverride: continuation?.prompt,
         // A continuation's prompt is the guidance itself, never the note.
@@ -1105,6 +1198,7 @@ export class Scheduler extends EventEmitter {
           this.notify(task, runId, 'agent-start', checkSummary ? `Agent started: ${checkSummary}` : 'Agent started');
         }
         const end = await this.runAgent(task, rt, ctx);
+        agentEnd = end;
         // A done run's outcome is the status the agent reported via looper-done;
         // every other end keeps its mechanism (idle-timeout, exited, ...).
         outcome = end.doneStatus ?? end.reason;
@@ -1152,12 +1246,20 @@ export class Scheduler extends EventEmitter {
     } finally {
       this.agents.delete(runId);
       this.cycleStops.delete(runId);
+      guidanceLeft = this.settleGuidance(task.id, runId, runDir, agentEnd);
       // Cut short by the system suspending, or a step that provably spanned a
       // sleep: either way the machine went down mid-run and the task is owed
       // a fresh run once it is back up.
       if (this.sleptRuns.delete(runId)) slept = true;
       if (slept) this.sleepOwed.add(task.id);
       this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, slept, environment);
+    }
+    if (guidanceLeft !== null && !this.stopping) {
+      try {
+        this.continueRun(task.id, runId, guidanceLeft);
+      } catch (e) {
+        this.record(task.id, runId, 'guidance', 'error', { summary: `cannot continue the conversation: ${errMsg(e)}` });
+      }
     }
   }
 

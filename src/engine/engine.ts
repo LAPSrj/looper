@@ -95,6 +95,10 @@ export interface Engine {
   canContinueRun(id: string, runId: string): boolean;
   /** Start a manual run that resumes the run's conversation with `guidance` as its whole prompt (no check/classifier). */
   continueRun(id: string, runId: string, guidance: string): boolean;
+  /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
+  canGuideRun(id: string, runId: string): boolean;
+  /** Send guidance to a run in flight; the agent gets it mid-run. Throws when the run cannot take it. */
+  sendGuidance(id: string, runId: string, text: string): void;
   // rest mode
   /** Throws when Rest Mode is unavailable (non-Windows host, or no power adapter). */
   armRest(): void;
@@ -286,6 +290,9 @@ export function createEngine(opts: EngineOptions): Engine {
           case 'reopen':
             scheduler.reopenTask(cmd.taskId);
             break;
+          case 'guide':
+            scheduler.sendGuidance(cmd.taskId, cmd.runId, cmd.text ?? '');
+            break;
         }
       },
     },
@@ -417,6 +424,8 @@ export function createEngine(opts: EngineOptions): Engine {
       }
     },
     continueRun: (id, runId, guidance) => scheduler.continueRun(id, runId, guidance),
+    canGuideRun: (id, runId) => scheduler.canGuideRun(id, runId),
+    sendGuidance: (id, runId, text) => scheduler.sendGuidance(id, runId, text),
     armRest(): void {
       if (!rest) throw new Error('Rest Mode is only available in the Looper app on Windows.');
       rest.arm();

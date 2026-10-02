@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MessageImage, MessageRow, MessagesResult, PatchHunk } from '../shared/messages';
+import { guidanceText, type MessageImage, type MessageRow, type MessagesResult, type PatchHunk } from '../shared/messages';
+import { readPendingGuidance } from './guidance';
 import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
 import { convertWslPath } from './host';
@@ -161,8 +162,9 @@ export const CLASSIFIER_ROW_PREFIX = 'c';
 /**
  * Folds transcript records into display rows. Only `user`/`assistant` records
  * count; sidechain and meta records, and the transcript's bookkeeping types
- * (attachment, queue-operation, ai-title…) are skipped. Tool results attach to
- * their tool_use row instead of appearing as user messages.
+ * (attachment, queue-operation, ai-title…) are skipped, except where they carry
+ * the user's guidance. Tool results attach to their tool_use row instead of
+ * appearing as user messages.
  */
 export class TranscriptAccumulator {
   rows: MessageRow[] = [];
@@ -195,18 +197,32 @@ export class TranscriptAccumulator {
     } catch {
       return; // torn or foreign line
     }
-    if (rec.type !== 'user' && rec.type !== 'assistant') return;
-    if (rec.isMeta === true) return;
     // The main transcript may inline sidechain records; they belong to the subagent view.
     if (!this.opts.sidechain && rec.isSidechain === true) return;
+    const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
+    // Of the bookkeeping records only the user's guidance shows: a PostToolUse
+    // hook hands it over as additional context (an attachment record), a Stop
+    // hook as a meta user message ("Stop hook feedback:\n…").
+    if (rec.type === 'attachment') {
+      const att = rec.attachment as Rec | undefined;
+      if (att?.type === 'hook_additional_context' && Array.isArray(att.content)) {
+        for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
+      }
+      return;
+    }
+    if (rec.type !== 'user' && rec.type !== 'assistant') return;
     const msg = rec.message;
     if (msg === null || typeof msg !== 'object') return;
     const content = (msg as Rec).content;
-    const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
+    if (rec.isMeta === true) {
+      if (rec.type === 'user' && typeof content === 'string') this.pushGuidance(content, ts);
+      return;
+    }
 
     if (rec.type === 'user') {
       if (typeof content === 'string') {
-        this.push({ kind: 'prompt', ts, text: content });
+        // Guidance typed into an idle interactive session arrives as a plain prompt.
+        if (!this.pushGuidance(content, ts)) this.push({ kind: 'prompt', ts, text: content });
         return;
       }
       if (!Array.isArray(content)) return;
@@ -223,7 +239,7 @@ export class TranscriptAccumulator {
           const agentId = (rec.toolUseResult as Rec | undefined)?.agentId;
           if (typeof agentId === 'string' && agentId) row.agentId = agentId;
         } else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-          this.push({ kind: 'prompt', ts, text: block.text });
+          if (!this.pushGuidance(block.text, ts)) this.push({ kind: 'prompt', ts, text: block.text });
         } else if (block?.type === 'image') {
           const row = this.push({ kind: 'prompt', ts, text: '(image)' });
           this.takeImage(row, [block]);
@@ -301,6 +317,14 @@ export class TranscriptAccumulator {
     }
   }
 
+  /** A Guidance row when `text` is a guidance message (see GUIDANCE_PREFIX); false when it is not one. */
+  protected pushGuidance(text: string, ts?: string): boolean {
+    const g = guidanceText(text);
+    if (g === null) return false;
+    this.push({ kind: 'guidance', ts, text: g });
+    return true;
+  }
+
   protected push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
     const row: MessageRow = {
       id: (this.opts.source === 'classifier' ? CLASSIFIER_ROW_PREFIX : '') + String(this.nextId++),
@@ -356,11 +380,16 @@ export class CodexAccumulator extends TranscriptAccumulator {
     if (p.type === 'message') {
       // Developer records are injected instructions (skills, plugins…), and a
       // user text that is one wrapped <tag>…</tag> block is injected context.
-      if (p.role !== 'user' && p.role !== 'assistant') return;
+      // The user's guidance shows either way: the PostToolUse hook's context
+      // lands as a developer record (seen live, codex-cli 0.159.0), guidance
+      // typed into an idle TUI as a user one.
+      if (p.role !== 'user' && p.role !== 'assistant' && p.role !== 'developer') return;
       if (!Array.isArray(p.content)) return;
       for (const block of p.content as Rec[]) {
         const text = typeof block?.text === 'string' ? block.text : '';
         if (!text.trim()) continue;
+        if (p.role !== 'assistant' && this.pushGuidance(text, ts)) continue;
+        if (p.role === 'developer') continue;
         if (block.type === 'input_text' && p.role === 'user') {
           if (/^<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
           this.push({ kind: 'prompt', ts, text });
@@ -630,6 +659,7 @@ export class MessagesService {
       }
       return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
     }
+    const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
     const rows: MessageRow[] = [];
     let dropped = 0;
     let refs = 0;
@@ -647,9 +677,9 @@ export class MessagesService {
       rows.push(...reader.acc.rows);
       dropped += reader.acc.dropped;
     }
-    if (refs === 0) return none('no-session');
-    if (readable === 0) return none('no-transcript');
-    return { status: 'ok', rows, dropped };
+    if (refs === 0) return { ...none('no-session'), pendingGuidance };
+    if (readable === 0) return { ...none('no-transcript'), pendingGuidance };
+    return { status: 'ok', rows, dropped, pendingGuidance };
   }
 
   /** The image payload behind a row's marker, or null when unavailable. */

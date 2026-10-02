@@ -95,6 +95,9 @@ export function messagesToMarkdown(rows: readonly MessageRow[], opts: MessagesMa
       case 'prompt':
         parts.push(heading(2, 'Prompt', row.ts, plain), prose(row.text));
         break;
+      case 'guidance':
+        parts.push(heading(2, 'Guidance', row.ts, plain), prose(row.text));
+        break;
       case 'agent':
         parts.push(heading(2, row.source === 'classifier' ? 'Classifier' : 'Agent', row.ts, plain), prose(row.text));
         break;

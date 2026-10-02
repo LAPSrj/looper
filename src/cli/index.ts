@@ -382,6 +382,14 @@ program
   .option('--reason <r>')
   .action(command('complete'));
 program.command('reopen <taskId>').description('undo a completion').option('--reason <r>').action(command('reopen'));
+program
+  .command('guide <taskId> <text...>')
+  .description("send guidance to the task's running agent; it gets the text mid-run")
+  .option('--run <runId>', 'the run to send it to (default: the newest run in flight)')
+  .action((taskId: string, words: string[], opts: { run?: string }) => {
+    const file = dropInbox({ op: 'guide', taskId, runId: opts.run, text: words.join(' ') } satisfies InboxCommand, 'guide');
+    console.log(`queued guide ${taskId} -> ${file}`);
+  });
 
 program
   .command('logs <taskId>')

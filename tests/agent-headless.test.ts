@@ -542,6 +542,35 @@ describe('headless agent over pipes', () => {
     expect(end.sessionLost).toBe(true);
   });
 
+  it('codex: the guidance hook is one fixed command in the data dir, placed before resume', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'`);
+    const ctx = makeCtx(harness, {}, 'codex');
+    ctx.dataDir = path.join(root, 'data');
+    ctx.agentSession = { id: 'thread-1', resume: true };
+    await (await startAgent(ctx, { onData: () => {} })).finished;
+    const hook = path.join(ctx.dataDir, 'hooks', 'codex-looper-guide-hook');
+    expect(fs.readFileSync(hook, 'utf8')).toContain('"$LOOPER_RUN_DIR/guidance.json"');
+    const launcher = fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8');
+    const flag = `-c 'hooks.PostToolUse=[{hooks=[{type='\\''command'\\'',command='\\''bash ${hook}'\\''}]}]'`;
+    expect(launcher).toContain(flag);
+    expect(launcher.indexOf(flag)).toBeLessThan(launcher.indexOf("resume 'thread-1'"));
+  });
+
+  it('claude: the agent gets the PostToolUse guidance hook and a Stop gate that takes guidance', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    const ctx = makeCtx(harness);
+    await (await startAgent(ctx, { onData: () => {} })).finished;
+    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
+    expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe(`bash '${path.join(ctx.runDir, 'bin', 'looper-guide-hook')}'`);
+    expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-stop-hook'), 'utf8')).toContain(
+      `g='${path.join(ctx.runDir, 'guidance.json')}'`,
+    );
+  });
+
   it('codex: a failed turn keeps the error message as headline and body', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

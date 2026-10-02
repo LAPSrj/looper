@@ -552,7 +552,8 @@ export interface RestState {
   wakeAt: number | null;
 }
 
-export type RunPhase = 'watcher' | 'check' | 'classify' | 'agent' | 'result' | 'skip' | 'system';
+/** `guidance`: text the user sent the running agent (sent, delivered, or undelivered when it never got there). */
+export type RunPhase = 'watcher' | 'check' | 'classify' | 'agent' | 'guidance' | 'result' | 'skip' | 'system';
 
 export type RunResult =
   | 'act'
@@ -568,7 +569,10 @@ export type RunResult =
   | 'exited'
   | 'stopped'
   | 'interrupted'
-  | 'held';
+  | 'held'
+  | 'sent'
+  | 'delivered'
+  | 'undelivered';
 
 export interface RunRecord {
   ts: string;
@@ -600,9 +604,13 @@ export interface CheckOutput {
 }
 
 export interface InboxCommand {
-  op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen';
+  op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen' | 'guide';
   taskId: string;
   reason?: string;
+  /** guide: the run to send the guidance to; unset = the task's newest run in flight. */
+  runId?: string;
+  /** guide: the guidance text. */
+  text?: string;
 }
 
 // ---------- Engine events (also the IPC contract) ----------

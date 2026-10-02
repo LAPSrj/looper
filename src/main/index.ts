@@ -72,6 +72,7 @@ if (!app.requestSingleInstanceLock()) {
       promptRunOptions,
       openNoteEditor: openNoteEditorWindow,
       openContinueRun: openContinueRunWindow,
+      openSendGuidance: openSendGuidanceWindow,
       openFolderNoteEditor: openFolderNoteEditorWindow,
       openMoveToFolder: openMoveToFolderWindow,
       openNewFolder: openNewFolderWindow,
@@ -596,8 +597,10 @@ function openRunDetailWindow(taskId: string, runId: string): void {
     return !raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
   };
   let rawChecked = false;
-  // Snapshot at window open; a run still in flight then keeps the items off.
+  // Snapshot at window open; a run still in flight then keeps the Continue
+  // items off, and Send Guidance reports a run that has ended since.
   const canContinue = engine?.canContinueRun(taskId, runId) ?? false;
+  const canGuide = engine?.canGuideRun(taskId, runId) ?? false;
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
@@ -607,6 +610,11 @@ function openRunDetailWindow(taskId: string, runId: string): void {
           click: () => void openHostPath(outputFile(rawChecked)),
         },
         { type: 'separator' },
+        {
+          label: '&Send Guidance…',
+          enabled: canGuide,
+          click: () => openSendGuidanceWindow(taskId, runId),
+        },
         {
           label: 'Continue in &Terminal',
           enabled: canContinue,
@@ -845,6 +853,17 @@ function openContinueRunWindow(taskId: string, runId: string): void {
   openChildWindow(
     `continue-run/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
     'Continue Run — Looper',
+    520,
+    400,
+    undefined,
+    { minWidth: 460, minHeight: 340 },
+  );
+}
+
+function openSendGuidanceWindow(taskId: string, runId: string): void {
+  openChildWindow(
+    `send-guidance/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
+    'Send Guidance — Looper',
     520,
     400,
     undefined,

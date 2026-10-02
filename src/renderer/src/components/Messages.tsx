@@ -14,6 +14,8 @@ function typeLabel(row: MessageRow): string {
   switch (row.kind) {
     case 'prompt':
       return 'Prompt';
+    case 'guidance':
+      return 'Guidance';
     case 'agent':
       return row.source === 'classifier' ? 'Classifier' : 'Agent';
     case 'thinking':
@@ -47,6 +49,7 @@ const MESSAGE_COLS: readonly TableCol[] = [
 function categoryOf(r: MessageRow): MessagesShowKey | null {
   switch (r.kind) {
     case 'prompt':
+    case 'guidance':
     case 'agent':
       return 'messages';
     case 'thinking':
@@ -75,10 +78,12 @@ interface ViewProps {
   agentId?: string;
   /** The run is mid-flight: poll the transcript, and read "no transcript" as "not started yet". */
   running: boolean;
+  /** Changing it refetches right away. */
+  refreshKey?: number;
 }
 
 /** The conversation itself: a row per message/tool call, full content in the panel below. */
-export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
+export function MessagesView({ taskId, runId, agentId, running, refreshKey }: ViewProps) {
   const [result, setResult] = useState<MessagesResult | null>(null);
   const [raw, setRaw] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -121,13 +126,14 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
     fetchNow();
   }, [fetchNow]);
 
-  // Poll while the run is live; also refetch once when it ends, to catch the tail.
+  // Poll while the run is live; also refetch once when it ends, to catch the
+  // tail, and whenever the window sends guidance, so it shows as waiting at once.
   useEffect(() => {
     fetchNow();
     if (!running) return;
     const t = setInterval(fetchNow, POLL_MS);
     return () => clearInterval(t);
-  }, [running, fetchNow]);
+  }, [running, fetchNow, refreshKey]);
 
   const rows = result?.rows ?? [];
   const visible = useMemo(() => {
@@ -143,7 +149,7 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
   useEffect(() => {
     const wrap = wrapRef.current;
     if (wrap && atBottomRef.current) wrap.scrollTop = wrap.scrollHeight;
-  }, [visible.length]);
+  }, [visible.length, result?.pendingGuidance]);
 
   const idx = selected === null ? -1 : visible.findIndex((r) => r.id === selected);
   const current = idx >= 0 ? visible[idx] : null;
@@ -186,14 +192,14 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
     scrollToId: selected !== null ? `msg-${selected}` : null,
   });
 
-  /** Ctrl+Up/Down hops between prompt rows; everything else goes to the list nav. */
+  /** Ctrl+Up/Down hops between the user's rows (prompts, guidance); everything else goes to the list nav. */
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       const dir = e.key === 'ArrowDown' ? 1 : -1;
       const start = idx < 0 ? (dir > 0 ? -1 : visible.length) : idx;
       for (let i = start + dir; i >= 0 && i < visible.length; i += dir) {
-        if (visible[i].kind === 'prompt') {
+        if (visible[i].kind === 'prompt' || visible[i].kind === 'guidance') {
           setSelected(visible[i].id);
           return;
         }
@@ -332,6 +338,13 @@ export function MessagesView({ taskId, runId, agentId, running }: ViewProps) {
                 </td>
               </tr>
             )}
+            {result?.pendingGuidance && (
+              <tr className="muted" title={result.pendingGuidance}>
+                <td />
+                <td>Guidance</td>
+                <td>Waiting for the agent: {result.pendingGuidance.replace(/\s+/g, ' ')}</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -376,7 +389,9 @@ export function Messages({ task, records, runtime }: Props) {
       else byRun.set(r.runId, [r]);
     }
     const out: RunEntry[] = [];
-    for (const [runId, recs] of byRun) {
+    for (const [runId, all] of byRun) {
+      // Guidance records say nothing about how the run went; they may even land after its result.
+      const recs = all.filter((r) => r.phase !== 'guidance');
       // Only runs that reached the classifier or the agent have a conversation.
       const step = recs.find((r) => r.phase === 'agent') ?? recs.find((r) => r.phase === 'classify');
       if (!step) continue;
@@ -419,6 +434,11 @@ export function Messages({ task, records, runtime }: Props) {
               className={`msg-run-row result-${r.result}${selected === r.runId ? ' selected' : ''}`}
               onClick={() => setSelected(r.runId)}
               onDoubleClick={() => open(r.runId)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setSelected(r.runId);
+                window.looper.showRunContextMenu({ taskId: task.id, runId: r.runId, details: r.details });
+              }}
             >
               <td>{fmtDate(r.ts)}</td>
               <td>{fmtTime(r.ts)}</td>

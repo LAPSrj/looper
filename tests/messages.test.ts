@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TranscriptAccumulator, TranscriptReader, readRunSessionId, readTranscriptRef } from '../src/engine/messages';
+import { guidanceMessage } from '../src/shared/messages';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
 
@@ -50,6 +51,32 @@ describe('TranscriptAccumulator', () => {
     );
     expect(acc.rows[0].resultError).toBe(true);
     expect(acc.rows[0].result).toBe('boom');
+  });
+
+  it("shows the user's guidance however the hooks handed it over", () => {
+    const acc = new TranscriptAccumulator();
+    const msg = guidanceMessage('use pnpm');
+    // PostToolUse additionalContext, as claude 2.1.x records hook context.
+    acc.addLine(
+      rec({
+        type: 'attachment',
+        isSidechain: false,
+        timestamp: '2026-10-02T10:00:00.000Z',
+        attachment: { type: 'hook_additional_context', content: [msg], hookName: 'PostToolUse', hookEvent: 'PostToolUse' },
+      }),
+    );
+    // A Stop-hook block, as claude records one (captured from a looper run, claude 2.1.282).
+    acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n${guidanceMessage('and stop after')}` } }));
+    // Typed into an idle interactive session.
+    acc.addLine(userPrompt(guidanceMessage('one more\nthing')));
+    // Other hook context and meta records stay hidden.
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'hook_additional_context', content: ['Style violation…'] } }));
+    acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nLooper: the turn ended without looper-done.' } }));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['guidance', 'use pnpm'],
+      ['guidance', 'and stop after'],
+      ['guidance', 'one more\nthing'],
+    ]);
   });
 
   it('skips bookkeeping types, sidechain and meta records, and torn lines', () => {

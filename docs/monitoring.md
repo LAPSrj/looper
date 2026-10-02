@@ -146,8 +146,9 @@ Selecting a row shows that run's final report below in a resizable split
 pane. Double-clicking a row, or right-clicking it and choosing "View
 Details", opens the run detail window described below. The
 context menu also offers "Copy Details", "View Messages" (the run's
-conversation window), and "Open Run Folder"; Ctrl+C copies the selected
-row's details text.
+conversation window), "Send Guidance…" (while the run's agent is going; see
+[guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
+and "Open Run Folder"; Ctrl+C copies the selected row's details text.
 
 ## The messages tab
 
@@ -155,15 +156,16 @@ The Messages tab lists the task's runs that reached the classifier or the
 agent step — Date, Start, Result, Details, newest first. Double-clicking a
 run (or pressing Enter on it) opens that run's conversation in its own
 window, read straight from the harness's own session transcripts (Claude
-Code harnesses only — other harnesses record no transcript). When the run
+Code and Codex harnesses only — custom harnesses record no transcript). When the run
 had a classifier, its conversation appears first in the same list, with its
 replies typed as **Classifier**.
 
 A run still in its classifier or agent step shows Running in the Result
-column; its conversation window updates live.
+column; its conversation window updates live. Right-clicking a run opens the
+same context menu as in the Run log tab.
 
 In the conversation window each row is one message or tool call — Time,
-Type, Details — where Type is Prompt, Agent, Classifier, Thinking, or the
+Type, Details — where Type is Prompt, Guidance, Agent, Classifier, Thinking, or the
 tool's name;
 the Type column can be resized by dragging its header edge (the width is
 remembered; double-click the edge to reset it). Clicking a row
@@ -177,7 +179,9 @@ checklist, Task shows its prompt and the subagent's report as Markdown,
 web tools link their URL, file searches list one file per line
 (right-clickable to open), and JSON results render as a collapsible tree. While the run
 is live the table refreshes every two seconds and follows the newest
-message unless you've scrolled up.
+message unless you've scrolled up. While the run's agent is going, a box
+under the conversation sends it guidance (Send, or Ctrl+Enter); guidance it
+hasn't picked up yet shows as a muted "Waiting for the agent" row.
 
 Right-clicking a row offers Copy Content, and on rows for file tools
 (Read, Edit, Write) also Open File and Copy Path; on Task rows, Open
@@ -191,7 +195,7 @@ Usage, and Show Subagents (all on by default), plus Filter… (Ctrl+F),
 which opens a small modal Filter window — only rows whose content matches
 stay visible, the menu item shows a checkmark while a filter is active,
 and the window's Clear Filter button removes it. Ctrl+Up and Ctrl+Down
-jump between prompt rows.
+jump between prompt and guidance rows.
 
 When a tool result is an image (a Read of a screenshot, for example), the
 Result tab shows the image itself, fitted to the pane. Double-clicking the
@@ -223,8 +227,9 @@ Clicking a row shows that phase's captured output below: the agent phase
 shows the run's terminal output, cleaned of ANSI codes and, for headless
 runs, pretty-printed if it looks like JSON.
 
-The window's own menu bar adds a File menu (Open Output File, Open Run
-Folder, Open Working Directory) and a View menu with a "Raw Terminal Log"
+The window's own menu bar adds a File menu (Open Output File, Send
+Guidance…, Continue in Terminal, Continue with Guidance…, Open Run Folder,
+Open Working Directory) and a View menu with a "Raw Terminal Log"
 checkbox — the raw-output toggle — which switches the display between the
 cleaned output and the untouched raw terminal capture.
 

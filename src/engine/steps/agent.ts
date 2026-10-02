@@ -116,6 +116,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       completeCommand: canComplete ? AGENT_COMPLETE : undefined,
       implicitDoneStatus: 'success',
       stopGate: true,
+      guidance: true,
       maxRuntimeMs: a.maxRuntimeMin * 60_000,
       maxRuntimeText: `exceeded ${a.maxRuntimeMin} min`,
       idleGraceMs: a.idleGraceMin * 60_000,

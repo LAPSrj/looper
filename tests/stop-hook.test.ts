@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
 import { stopHookMessages } from '../src/engine/target/stop-hook';
+import { GUIDANCE_FILE, queueGuidance, readPendingGuidance } from '../src/engine/guidance';
+import { guidanceText } from '../src/shared/messages';
 
 const MSGS = stopHookMessages('agent');
 const STOP_BLOCK_BACKGROUND = MSGS.blockBackground;
@@ -138,6 +140,91 @@ describe('bash Stop-hook gate', () => {
   });
 });
 
+describe('guidance through the bash hooks', () => {
+  const t = new BashTarget({ host: 'wsl' }, undefined);
+
+  function runScript(file: string, input: string, env: Record<string, string> = {}): string {
+    const r = spawnSync('bash', [file], { input, encoding: 'utf8', env: { ...process.env, ...env } });
+    expect(r.status).toBe(0);
+    return r.stdout;
+  }
+
+  it('the Stop gate continues the turn with waiting guidance, once', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, 'looper-stop-hook');
+    const spec = {
+      stopJson: path.join(dir, 'stop.json'),
+      doneFile: path.join(dir, 'done'),
+      reminderFile: path.join(dir, 'stop-reminded'),
+      guidanceFile: path.join(dir, GUIDANCE_FILE),
+      ...MSGS,
+    };
+    fs.writeFileSync(script, t.renderStopHook(spec), { mode: 0o755 });
+    queueGuidance(dir, 'use "pnpm", not npm — and café');
+    // Plain ASCII on disk, so a PowerShell hook prints it intact under any code page.
+    expect(fs.readFileSync(path.join(dir, GUIDANCE_FILE), 'utf8')).toMatch(/^[\x20-\x7e]*$/);
+    const out = JSON.parse(runScript(script, '{}'));
+    expect(out.decision).toBe('block');
+    expect(guidanceText(out.reason)).toBe('use "pnpm", not npm — and café');
+    expect(readPendingGuidance(dir)).toBeNull();
+    // Nothing waiting any more: the gate goes on to its usual reminder.
+    expect(JSON.parse(runScript(script, '{}'))).toEqual(JSON.parse(STOP_BLOCK_NO_DONE));
+  });
+
+  it('the Stop gate leaves guidance alone once looper-done ran', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, 'looper-stop-hook');
+    const doneFile = path.join(dir, 'done');
+    fs.writeFileSync(
+      script,
+      t.renderStopHook({
+        stopJson: path.join(dir, 'stop.json'),
+        doneFile,
+        reminderFile: path.join(dir, 'stop-reminded'),
+        guidanceFile: path.join(dir, GUIDANCE_FILE),
+        ...MSGS,
+      }),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(doneFile, 'success\nok\n');
+    queueGuidance(dir, 'too late');
+    expect(runScript(script, '{}')).toBe('');
+    expect(readPendingGuidance(dir)).toBe('too late');
+  });
+
+  it('the claude PostToolUse hook prints the guidance as additional context', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, t.guideHookFile);
+    fs.writeFileSync(script, t.renderGuideHook('claude', path.join(dir, GUIDANCE_FILE)), { mode: 0o755 });
+    expect(runScript(script, '{"tool_name":"Bash"}')).toBe('');
+    queueGuidance(dir, 'line one\nline two');
+    const out = JSON.parse(runScript(script, '{"tool_name":"Bash"}'));
+    expect(out.hookSpecificOutput.hookEventName).toBe('PostToolUse');
+    expect(guidanceText(out.hookSpecificOutput.additionalContext)).toBe('line one\nline two');
+    expect(runScript(script, '{}')).toBe('');
+    // The taken file stays behind as the record of the delivery.
+    expect(fs.readdirSync(dir).some((n) => /^guidance-.+\.json$/.test(n))).toBe(true);
+  });
+
+  it('the codex hook finds the run through LOOPER_RUN_DIR', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, 'codex-' + t.guideHookFile);
+    fs.writeFileSync(script, t.renderGuideHook('codex'), { mode: 0o755 });
+    queueGuidance(dir, 'stop after the tests');
+    const out = JSON.parse(runScript(script, '{}', { LOOPER_RUN_DIR: dir }));
+    expect(out).toEqual({ hookSpecificOutput: { additionalContext: expect.any(String) } });
+    expect(guidanceText(out.hookSpecificOutput.additionalContext)).toBe('stop after the tests');
+    expect(t.codexHookCommand('/mnt/c/Users/me/looper/hooks/codex-looper-guide-hook')).toBe(
+      'bash /mnt/c/Users/me/looper/hooks/codex-looper-guide-hook',
+    );
+    expect(t.codexHookCommand("/home/o'neil/looper/hooks/x")).toBeNull();
+  });
+});
+
 describe('windows Stop-hook gate', () => {
   it('renders a PowerShell gate with the same decisions', () => {
     const t = new WindowsTarget({ host: 'windows' });
@@ -155,5 +242,26 @@ describe('windows Stop-hook gate', () => {
     expect(t.stopHookCommand('C:\\data\\r1\\bin\\looper-stop-hook.ps1')).toBe(
       'powershell -NoProfile -ExecutionPolicy Bypass -File "C:/data/r1/bin/looper-stop-hook.ps1"',
     );
+  });
+
+  it('renders the guidance hooks for PowerShell', () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    const gate = t.renderStopHook({
+      stopJson: 'C:\\data\\r1\\stop.json',
+      doneFile: 'C:\\data\\r1\\done',
+      reminderFile: 'C:\\data\\r1\\stop-reminded',
+      guidanceFile: 'C:\\data\\r1\\guidance.json',
+      ...MSGS,
+    });
+    // After the done check, before the reminder.
+    const at = gate.indexOf("$g = 'C:\\data\\r1\\guidance.json'");
+    expect(at).toBeGreaterThan(gate.indexOf('Test-Path -LiteralPath \'C:\\data\\r1\\done\''));
+    expect(at).toBeLessThan(gate.indexOf('stop-reminded'));
+    expect(gate).toContain(`Write-Output ('{"decision":"block","reason":' + [IO.File]::ReadAllText($d).Trim() + '}')`);
+    expect(t.renderGuideHook('codex')).toContain("$g = (Join-Path $env:LOOPER_RUN_DIR 'guidance.json')");
+    expect(t.codexHookCommand('C:\\Users\\me\\looper\\hooks\\codex-looper-guide-hook.ps1')).toBe(
+      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/me/looper/hooks/codex-looper-guide-hook.ps1',
+    );
+    expect(t.codexHookCommand('C:\\Users\\Jane Doe\\looper\\hooks\\x.ps1')).toBeNull();
   });
 });

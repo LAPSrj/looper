@@ -59,6 +59,11 @@ const api: LooperApi = {
     ipcRenderer.invoke('run:continue', taskId, runId, guidance).catch((e: Error) => {
       throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
     }),
+  canGuideRun: (taskId, runId) => ipcRenderer.invoke('run:canGuide', taskId, runId),
+  sendGuidance: (taskId, runId, text) =>
+    ipcRenderer.invoke('run:guide', taskId, runId, text).catch((e: Error) => {
+      throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+    }),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
   openRunDetail: (taskId, runId) => ipcRenderer.invoke('runDetail:open', taskId, runId),
   openMessages: (taskId, runId, agentId, label) =>

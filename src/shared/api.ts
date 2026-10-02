@@ -92,6 +92,10 @@ export interface LooperApi {
   openTaskTerminal(taskId: string, runId?: string): Promise<void>;
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
+  /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
+  canGuideRun(taskId: string, runId: string): Promise<boolean>;
+  /** Send guidance to a run in flight; the agent gets it mid-run. Rejects with the reason when the run cannot take it. */
+  sendGuidance(taskId: string, runId: string, text: string): Promise<void>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open the run detail window showing all step records for a run. */

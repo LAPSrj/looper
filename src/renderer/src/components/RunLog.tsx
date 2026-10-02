@@ -79,16 +79,18 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
     const result: RunGroup[] = [];
     for (const [runId, recs] of map) {
       const sorted = [...recs].sort((a, b) => a.ts.localeCompare(b.ts));
+      // Guidance records say nothing about how the run went; they may even land after its result.
+      const steps = sorted.filter((r) => r.phase !== 'guidance');
       const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
       const totalMs = durations.reduce((a, b) => a + b, 0);
       result.push({
         runId,
         startTs: sorted[0].ts,
         endTs: sorted[sorted.length - 1].ts,
-        result: bestResult(sorted),
+        result: bestResult(steps),
         totalDurationMs: totalMs,
-        details: lastDetail(sorted),
-        resultText: resultText(sorted),
+        details: lastDetail(steps),
+        resultText: resultText(steps),
         records: sorted,
       });
     }

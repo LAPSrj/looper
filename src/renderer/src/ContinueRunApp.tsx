@@ -3,21 +3,24 @@ import { Field, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 
 /**
- * Continue-run window (run context menu → Continue with Guidance…). The text
- * becomes the whole prompt of a new run that resumes the finished run's
- * conversation; check and classifier never run.
+ * Guidance window for one run. Continue mode (run context menu → Continue
+ * with Guidance…): the text becomes the whole prompt of a new run that resumes
+ * the finished run's conversation; check and classifier never run. Send mode
+ * (→ Send Guidance…): the text goes to the run in flight, whose agent gets it
+ * mid-run.
  */
-export function ContinueRunApp({ taskId, runId }: { taskId: string; runId: string }) {
+export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId: string; mode: 'continue' | 'send' }) {
   const [text, setText] = useState('');
   const [starting, setStarting] = useState(false);
+  const name = mode === 'send' ? 'Send Guidance' : 'Continue Run';
 
   useEffect(() => {
-    document.title = `Continue Run ${runId}`;
+    document.title = `${name} ${runId}`;
     void window.looper.tasks.list().then((tasks) => {
       const t = tasks.find((x) => x.id === taskId);
-      if (t) document.title = `${t.name} – Continue Run`;
+      if (t) document.title = `${t.name} – ${name}`;
     });
-  }, [taskId, runId]);
+  }, [taskId, runId, name]);
 
   const startRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void startRef.current(), onCancel: () => window.close() });
@@ -25,12 +28,15 @@ export function ContinueRunApp({ taskId, runId }: { taskId: string; runId: strin
   const start = async () => {
     const trimmed = text.trim();
     if (!trimmed) {
-      void window.looper.showError('Enter the guidance to continue the run with.');
+      void window.looper.showError(
+        mode === 'send' ? 'Enter the guidance to send to the agent.' : 'Enter the guidance to continue the run with.',
+      );
       return;
     }
     setStarting(true);
     try {
-      await window.looper.continueRun(taskId, runId, trimmed);
+      if (mode === 'send') await window.looper.sendGuidance(taskId, runId, trimmed);
+      else await window.looper.continueRun(taskId, runId, trimmed);
       window.close();
     } catch (e) {
       void window.looper.showError((e as Error).message);
@@ -49,7 +55,12 @@ export function ContinueRunApp({ taskId, runId }: { taskId: string; runId: strin
           </Field>
         </div>
       </div>
-      <EditorFooter primaryLabel="Continue" onPrimary={() => void start()} onCancel={() => window.close()} saving={starting} />
+      <EditorFooter
+        primaryLabel={mode === 'send' ? 'Send' : 'Continue'}
+        onPrimary={() => void start()}
+        onCancel={() => window.close()}
+        saving={starting}
+      />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { StateStore } from '../src/engine/store/state';
 import { TaskStore } from '../src/engine/store/tasks';
 import { SettingsSchema, type ActiveRun, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
 import type { AgentEnd, AgentHandle } from '../src/engine/steps/agent';
+import { readPendingGuidance, takePendingGuidance } from '../src/engine/guidance';
 import type { CheckResult } from '../src/engine/steps/check';
 import type { ClassifyResult } from '../src/engine/steps/classify';
 
@@ -142,6 +143,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           held: false,
           write: () => undefined,
           resize: () => undefined,
+          deliverGuidance: () => undefined,
           stop: async (reason = 'stopped', headline) => resolve(agentEnd(reason, headline)),
           finished,
         };
@@ -631,6 +633,92 @@ describe('continue run', () => {
       await h2.sched.stop();
       fs.rmSync(h2.dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('guidance for a run in flight', () => {
+  /** Start a run whose agent stays live; its run dir carries a recorded conversation. */
+  async function liveRun(): Promise<{ live: LiveAgent; dir: string }> {
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    const live = h.liveAgent!;
+    const dir = h.runs.runDir('t1', live.runId);
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ session_id: 'sess-g' }));
+    return { live, dir };
+  }
+
+  it('waits in the run dir for the agent and records when it was sent and delivered', async () => {
+    const { live, dir } = await liveRun();
+    expect(h.sched.canGuideRun('t1', live.runId)).toBe(true);
+    h.sched.sendGuidance('t1', live.runId, '  skip the flaky test  ');
+    expect(readPendingGuidance(dir)).toBe('skip the flaky test');
+    // A hook takes the file, as the agent's next tool call would.
+    expect(takePendingGuidance(dir)).toBe('skip the flaky test');
+    live.end(agentEnd('done', 'ok'));
+    await flush();
+    const g = records().filter((r) => r.phase === 'guidance');
+    expect(g.map((r) => r.result)).toEqual(['sent', 'delivered']);
+    expect(g[0].body).toBe('skip the flaky test');
+    expect(h.agentStarted).toBe(1);
+  });
+
+  it('continues the conversation in a new run when the agent finished before reading it', async () => {
+    const { live, dir } = await liveRun();
+    h.sched.sendGuidance('t1', live.runId, 'also update the changelog');
+    h.agentEnds.push(agentEnd('done', 'changelog updated'));
+    live.end(agentEnd('done', 'ok'));
+    await flush();
+    expect(readPendingGuidance(dir)).toBeNull();
+    expect(h.agentStarted).toBe(2);
+    expect(h.agentSessions[1]).toEqual({ id: 'sess-g', resume: true });
+    const starts = records().filter((r) => r.phase === 'agent' && r.result === 'started');
+    expect(starts[1].body).toBe('also update the changelog');
+    expect(starts[1].summary).toBe(`continuing run ${live.runId}`);
+    expect(records().find((r) => r.phase === 'guidance' && r.result === 'undelivered')!.summary).toMatch(/continuing/);
+  });
+
+  it('a stopped run keeps undelivered guidance in its log only', async () => {
+    const { live } = await liveRun();
+    h.sched.sendGuidance('t1', live.runId, 'never mind');
+    await h.sched.stopTask('t1');
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    const skipped = records().find((r) => r.phase === 'guidance' && r.result === 'undelivered')!;
+    expect(skipped.summary).toBe('not delivered: the run was stopped');
+    expect(skipped.body).toBe('never mind');
+  });
+
+  it('a run that ran out of time does not continue with the guidance', async () => {
+    const { live } = await liveRun();
+    h.sched.sendGuidance('t1', live.runId, 'wrap up');
+    live.end(agentEnd('max-runtime', 'exceeded 1 min'));
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(records().find((r) => r.phase === 'guidance' && r.result === 'undelivered')!.summary).toBe(
+      'not delivered: the run ended without the agent finishing (timed out)',
+    );
+  });
+
+  it('appends guidance sent before the agent took the earlier one', async () => {
+    const { live, dir } = await liveRun();
+    h.sched.sendGuidance('t1', live.runId, 'first');
+    h.sched.sendGuidance('t1', undefined, 'second');
+    expect(readPendingGuidance(dir)).toBe('first\n\nsecond');
+    live.end(agentEnd('stopped'));
+    await flush();
+  });
+
+  it('refuses a run whose agent has not started, a finished run, and empty text', async () => {
+    h.hangChecks = true;
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    const runId = h.sched.get('t1')!.runs[0].runId;
+    expect(h.sched.canGuideRun('t1', runId)).toBe(false);
+    expect(() => h.sched.sendGuidance('t1', runId, 'hi')).toThrow(/not started/);
+    expect(() => h.sched.sendGuidance('t1', runId, '   ')).toThrow(/empty/);
+    await h.sched.stopTask('t1');
+    await flush();
+    expect(() => h.sched.sendGuidance('t1', runId, 'hi')).toThrow(/already ended/);
   });
 });
 
