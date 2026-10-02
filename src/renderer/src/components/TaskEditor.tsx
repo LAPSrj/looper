@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
 import type { Environment, Task, TaskInput } from '@shared/types';
-import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, cronTz, formToCron, timesExpressible, type CronForm } from '@shared/cron';
+import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
@@ -145,6 +145,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   // Daily times must share the hour or the minute; a rejected chip edit shows a hint.
   const [timesWarn, setTimesWarn] = useState(false);
   const cronExpr = trig.schedule?.cron ?? '';
+  // The expression as of the last blur: errors show only for it, not mid-typing.
+  const [blurredCron, setBlurredCron] = useState(cronExpr);
   const schedForm: CronForm = customCron ? { mode: 'custom', cron: cronExpr } : cronToForm(cronExpr);
   const setSchedule = (f: CronForm) => {
     setTimesWarn(false);
@@ -204,11 +206,11 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     if (days.length === 0) return;
     setSchedule({ ...schedForm, days: days.length === 7 ? undefined : days });
   };
-  let cronNext: string | undefined;
+  let cronError: string | undefined;
   try {
-    cronNext = new Cron(cronExpr, cronTz(trig.schedule?.timezone)).nextRun()?.toLocaleString() ?? undefined;
-  } catch {
-    /* invalid expression or timezone: preview shows an error instead */
+    new Cron(cronExpr);
+  } catch (e) {
+    cronError = (e as Error).message.replace(/^CronPattern:\s*/, '');
   }
   const env = environments.find((e) => e.id === draft.environmentId);
   const harnesses = env?.harnesses ?? [];
@@ -539,8 +541,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                       <>
                         {/* Each field commits only itself per keystroke — clamping the
                             other bound mid-typing would destroy it (typing "20" passes
-                            through 2). The pair is normalized on blur; a transient
-                            from > to meanwhile just shows the invalid-cron warning. */}
+                            through 2). The pair is normalized on blur. */}
                         <NumberInput
                           min={0}
                           max={23}
@@ -649,10 +650,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   className="mono"
                   value={cronExpr}
                   onChange={(e) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: e.target.value } })}
+                  onBlur={(e) => setBlurredCron(e.target.value)}
                 />
+                {cronError && cronExpr === blurredCron && (
+                  <p className="help warn">Incorrect cron expression: {cronError}</p>
+                )}
               </Field>
             )}
-            {!cronNext && <p className="help"><span className="warn">Invalid cron expression.</span></p>}
             <Field label="Timezone">
               <TimezoneSelect
                 value={trig.schedule?.timezone}
