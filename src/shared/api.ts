@@ -225,6 +225,8 @@ export type UiEvent =
   | { type: 'messages-show'; key: MessagesShowKey; checked: boolean }
   /** Conversation window View menu: the Raw Messages toggle changed. */
   | { type: 'messages-raw'; checked: boolean }
+  /** Conversation window View menu: the Auto Scroll toggle changed. */
+  | { type: 'messages-auto-scroll'; checked: boolean }
   /** The filter window applied a filter (empty = cleared). */
   | { type: 'messages-filter'; value: string };
 

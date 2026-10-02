@@ -92,6 +92,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
   const [splitPct, setSplitPct] = useState(60);
   const [show, setShow] = useState<Record<MessagesShowKey, boolean>>({ messages: true, thinking: true, tools: true, subagents: true });
   const [filter, setFilter] = useState('');
+  const [autoScroll, setAutoScroll] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -104,6 +105,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
         setShow((s) => ({ ...s, [e.key]: e.checked }));
       } else if (e.type === 'messages-raw') {
         setRaw(e.checked);
+      } else if (e.type === 'messages-auto-scroll') {
+        setAutoScroll(e.checked);
       } else if (e.type === 'messages-filter') {
         setFilter(e.value);
         window.looper.reportMessagesFilter(e.value);
@@ -150,6 +153,22 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
     const wrap = wrapRef.current;
     if (wrap && atBottomRef.current) wrap.scrollTop = wrap.scrollHeight;
   }, [visible.length, result?.pendingGuidance]);
+
+  // Auto Scroll: while the last row is selected (or none is), a new last row
+  // takes the selection and the table scrolls to the bottom. Selecting an
+  // earlier row stops it until the last row is selected again.
+  const lastId = visible.length > 0 ? visible[visible.length - 1].id : null;
+  const prevLastRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prevLast = prevLastRef.current;
+    prevLastRef.current = lastId;
+    if (!autoScroll || lastId === null || selected === lastId) return;
+    if (selected !== null && selected !== prevLast) return;
+    setSelected(lastId);
+    atBottomRef.current = true;
+    const wrap = wrapRef.current;
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  }, [autoScroll, lastId, selected]);
 
   const idx = selected === null ? -1 : visible.findIndex((r) => r.id === selected);
   const current = idx >= 0 ? visible[idx] : null;

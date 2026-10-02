@@ -783,6 +783,12 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           checked: false,
           click: (item) => send({ type: 'messages-raw', checked: item.checked }),
         },
+        {
+          label: '&Auto Scroll',
+          type: 'checkbox',
+          checked: false,
+          click: (item) => send({ type: 'messages-auto-scroll', checked: item.checked }),
+        },
         { type: 'separator' },
         showItem('show-messages', 'Show &Messages', 'messages'),
         showItem('show-thinking', 'Show &Thinking', 'thinking'),
