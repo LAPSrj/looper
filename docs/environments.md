@@ -17,6 +17,8 @@ another one:
 - **Windows (PowerShell)** — native PowerShell, reached from inside WSL
   through Windows interop.
 
+![The environment editor](img/environment-editor.png)
+
 The environment editor's Type dropdown only lists the kinds your machine can
 actually reach. On Windows that's Local Shell and WSL distro; inside WSL
 it's Local Shell and Windows (PowerShell); everywhere else it's Local Shell
@@ -71,8 +73,8 @@ A harness has a Type:
   `--model` and sandbox/approval flags from the Agent tab, headless runs
   through `codex exec --json`, idle detection and the final report through
   codex's notify hook, rolling conversations through `codex … resume`, the
-  classifier through `--output-schema`, the Messages view from its rollout
-  transcripts, and the same "Folder trust dialog"
+  classifier through `--output-schema`, the run window's conversation from
+  its rollout transcripts, and the same "Folder trust dialog"
   auto-answer. Looper's instruction footer is prepended to the prompt (codex
   has no system-prompt flag), and interactive sessions run in codex's inline
   scrollback mode so the captured output stays readable.
@@ -87,7 +89,7 @@ accounts or config directories. A harness can also cap "Limit concurrent
 tasks" independently of its environment (see below).
 
 Codex's models don't produce reasoning summaries by default, so a codex
-run's Messages view shows no thinking rows. To get them, add these Default
+run's window shows no thinking rows. To get them, add these Default
 arguments to the codex harness:
 
 ```
@@ -123,6 +125,29 @@ A task can still type any other model id as "Custom…" in its Model dropdown.
 Such an id has no entry here, so a Default effort can't be resolved for it:
 the run omits the effort flag unless the task pins a level itself.
 
+### Updating the model lists
+
+**Update…** under a Claude Code or Codex harness's Models list opens an
+Update Models window for that harness; **Advanced → Update Models…** in the
+main window opens the same window for every Claude Code and Codex harness at
+once. Looper asks each harness for its current models: Codex through
+`codex debug models` run in the environment, Claude Code through the
+Anthropic models API, signed in with the harness's `ANTHROPIC_API_KEY` if it
+sets one, otherwise with the Claude Code login found in that environment.
+A harness that can't be reached shows the reason, with Details… for the full
+message.
+
+Each harness is a collapsible group listing its current entries and the
+models it could add. Every row has an action, Add or Remove, or Do nothing,
+and starts on a suggestion: new main models (the newest of each Claude
+family, Codex's listed models) are set to Add unless the list already covers
+that family, and entries the harness no longer offers are set to Remove.
+An id that doesn't look like one of the harness's own models (a proxy's
+model, for example) is never suggested for removal.
+Notes on each row say "new", "available", "no longer supported", or how
+many tasks use it. **Update** applies the actions. Existing entries keep their
+names and settings, and added ones start with a Medium default effort.
+
 ## Limiting concurrent tasks
 
 Both an environment and a harness have a "Limit concurrent tasks" checkbox
@@ -140,7 +165,8 @@ cap is rejected instead (logged as skipped) rather than queued.
 
 ## Which environment and harness a task uses
 
-A task picks its environment on the editor's **General** tab, and one of
+A task picks its environment on the editor's **General** tab (a new task
+starts on **Settings → General → Default environment**), and one of
 that environment's harnesses on the **Agent** tab (blank picks the
 environment's first harness). The Agent tab is also where you set the
 model, session type (interactive or headless), and — for Claude Code and
@@ -162,9 +188,12 @@ environment if the host is Windows, or a "Windows (PowerShell)" environment
 if the host is WSL. Each starts with one harness, "Claude Code", running the
 `claude` command with no extra arguments.
 
-## Everything is a fresh session
+## Every run is a fresh session by default
 
 No environment or harness setting changes this: every run starts a brand
-new agent session, with no memory of previous runs. Put anything the agent
-needs to remember between runs in the project's `CLAUDE.md`. See
-[how a run works](how-a-run-works.md) for the full run lifecycle.
+new agent session, with no memory of previous runs, unless the task's
+Agent tab sets Conversation to "Continue previous across runs" (Claude Code
+and Codex only; see [the task editor](tasks.md#agent)). Otherwise, put
+anything the agent needs to remember between runs in the project's
+`CLAUDE.md`. See [how a run works](how-a-run-works.md) for the full run
+lifecycle.

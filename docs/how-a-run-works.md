@@ -10,7 +10,7 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
 
 The task list shows these as **Idle**, **Checking**, **Classifying**,
 **Running**, **Paused**, **Disabled**, and **Completed** (finished for good;
-see [the task editor](tasks.md#completion)). Check and classifier are both
+see [the task editor](tasks.md#general)). Check and classifier are both
 optional (each has an enable switch in the [task editor](tasks.md)); without a
 check, every due slot goes straight to the classifier or the agent.
 
@@ -40,17 +40,18 @@ boolean `act` field, e.g.:
 ## Classifying
 
 If a classifier is configured, it runs after a check that returned
-`act: true` (or on every slot if there's no check). It's a Claude Code
-session at the configured model (`haiku` by default) with the check's
+`act: true` (or on every slot if there's no check). It's a Claude Code or
+Codex session at the configured model (`haiku` by default) with the check's
 `summary`/`context` folded into your prompt, under its own timeout — run the
-same two ways as the agent. Headless (the default) is a `claude -p` call
+same two ways as the agent. Headless (the default) is a `claude -p` or
+`codex exec` call
 that must answer `{"act": boolean, "reason": string}` under a strict schema.
 Interactive runs in a real pty shown in the task's terminal tab — you can
 watch it and type into it — and gives its verdict by running
 `looper-classify act "<reason>"` or `looper-classify noop "<reason>"`,
 followed by a short closing message. In both modes the classifier's output
-streams to the terminal tab, its conversation shows in the run's Messages
-window (replies typed as **Classifier**), and its files live under
+streams to the terminal tab, its conversation shows in the run window
+(replies typed as **Classifier**), and its files live under
 `classify-*` in the run folder, fully separate from the agent's.
 
 `act: false` ends the cycle as **No action** with the classifier's `reason`
@@ -69,7 +70,8 @@ session.
 
 Once check and classifier both said go, the task's harness (Claude Code,
 Codex, or a custom CLI) starts a **fresh session** — no memory of earlier
-runs — in the task's working directory, interactive by default in a real pty
+runs, unless the Agent tab's Conversation is set to continue across runs
+(see [the task editor](tasks.md#agent)) — in the task's working directory, interactive by default in a real pty
 shown in the task's terminal tab (`mode: "headless"` runs without one, driven
 by plain pipes).
 
@@ -172,8 +174,9 @@ a held run if you'd rather abandon it.
   or context menu) follows the same cap: below it, Run Now starts another
   run even while one is active; at the cap it's refused outright and recorded
   as skipped, the same as a scheduled slot — it isn't retried automatically.
-  The CLI/inbox `run` command behaves the same way. When more than one run of
-  a task is in flight, the **Terminal** tab shows a run selector above the
+  The CLI/inbox `run` command behaves the same way. Run Now on a paused task
+  also lifts the pause and clears its error count, the same as Resume. When
+  more than one run of a task is in flight, the **Terminal** tab shows a run selector above the
   console so you can pick which one to watch and type into; the task's status
   and last-result always reflect whichever run finished most recently.
 - **Concurrency limits defer, they don't skip.** An [environment or
@@ -181,10 +184,39 @@ a held run if you'd rather abandon it.
   task separately) run in it at once. A task that's due but over that cap
   simply stays due and is retried every tick until a slot frees up; nothing is
   logged as skipped for this.
-- A **manual task** (schedule turned off in the task editor) never fires on
+- A **manual task** (Trigger tab set to "Manually only") never fires on
   its own; it only runs via Run Now, the toolbar, the context menu, or the
   CLI/inbox `run` command. `{{trigger}}` in your prompt is `"manual"` for
-  these runs and `"timer"` for scheduled ones.
+  these runs, `"timer"` for scheduled ones, and `"watcher"` for runs a
+  watcher started.
+- **A sleeping computer stops runs.** When Windows suspends while the desktop
+  app is running, every run in flight is stopped (a held run is left alone,
+  since it's waiting for you) and recorded as **Stopped**, without a
+  notification. Its task is due again 20 seconds after the wake. Anything else
+  that came due while the computer slept is pushed to 20 seconds after the
+  wake as well, a second apart, so nothing starts before the network is back.
+  Watchers stop at the suspend and restart after the same delay, followed by
+  the "Run once when watching starts" catch-up run when that option is on. See
+  [troubleshooting](troubleshooting.md#the-computer-went-to-sleep-during-a-run)
+  for how a check or classifier that slept through its run is recorded.
+
+## Run options for a manual run
+
+With **Settings → General → Show run options before manually running a
+task** on, Run Now (F5, the toolbar, the Task menu, or the context menu)
+opens a Run Options window instead of starting the run. It has a
+**Guidance** box at the top, prefilled with the task's
+[one-off guidance note](#one-off-guidance-notes), and a checkbox for each
+step to run: Check and Classifier (each shown only when the task has that
+step turned on) and Agent. **Run** saves the guidance box as the task's note
+(emptying it clears the note) and starts the run with only the checked steps;
+it's greyed out while no step is checked. Cancel starts nothing.
+
+A step you unchecked doesn't run at all, and the run's log records
+"skipped by run options: …". Unchecking Agent ends the cycle after the
+check and classifier, with "agent step skipped" as its detail. Folder
+actions (Run All Now) and the CLI/inbox `run` command never open the
+window.
 
 ## One-off guidance notes
 
@@ -263,3 +295,22 @@ conversation in a new run with the guidance as its prompt, exactly like
 **Continue with Guidance…**. A run that ended any other way (stopped, failed,
 timed out, exited) or whose task is paused keeps the guidance in its log
 only, as **Not delivered**.
+
+## Continuing a finished run
+
+A finished Claude Code or Codex run whose conversation was recorded can be
+picked up again from its context menu in the Runs tab, or from the run
+window's File menu:
+
+- **Continue in Terminal** opens a real OS terminal in the task's
+  environment and working directory with the harness resuming that
+  conversation (`claude --resume <id>` / `codex resume <id>`), with the
+  task's model and permission mode. Looper doesn't track what you do there.
+- **Continue with Guidance…** opens a Continue Run window with a Guidance
+  box. **Continue** starts a new manual run that resumes the conversation
+  with your guidance as its whole prompt. The check and classifier don't
+  run, the task's one-off note is left untouched, and the run counts toward
+  the task's Simultaneous runs cap like any Run Now.
+
+Both items are greyed out while the run is still in progress, for custom
+harnesses, and for runs that never recorded a conversation.

@@ -5,12 +5,16 @@
 ![The main window: task list, folders, and the Status tab](img/main-window.png)
 
 The sidebar lists your tasks by name, with a status line under each one:
-what it's doing right now if active, otherwise a next-run countdown, "Not
-scheduled", "Manual", its paused reason, "Disabled", or "Completed" with the
-date it finished for good. Disabled and completed tasks are
+what it's doing right now if active ("Needs attention" while a run is held
+for you), otherwise a next-run countdown, "Not scheduled", "Manual", its
+paused reason, "Disabled", or "Completed" with the date it finished for good.
+A watcher task reads "Watching" while its watcher command is up, "Watcher
+restarting" while Looper waits to restart it, and "Idle" outside its active
+hours. Disabled and completed tasks are
 shown faded. Selecting a task opens its detail pane with three tabs — Status,
 Runs, Terminal — plus a status bar at the bottom counting
-enabled, disabled, completed, paused, and running tasks.
+enabled, disabled, completed, paused, and running tasks. While Rest Mode is
+on, the status bar also shows what it's doing (see [Rest Mode](#rest-mode)).
 
 Double-clicking a task opens its Edit Task window.
 
@@ -25,17 +29,28 @@ one) drops after the folder. Dragging a folder header moves the whole
 folder.
 
 The Status tab lists the task's current state as plain fields: Status,
-Completed (date and reason, when the task is finished for good), Schedule,
-Next run, Stops running on (when the schedule has an end date), Next run guidance (when a one-off note is set), Last
+Completed (date and reason, when the task is finished for good), Trigger,
+Watcher command (watcher tasks only), Next run, Stops running on (when the
+trigger has an end date), Next run guidance (when a one-off note is set), Last
 run, Last run result, Last run details, Check command, Classifier (Yes/No),
-Harness, Model, Session type, Environment, and Working directory.
+Harness, Model, Session type, Environment, and Working directory. For a
+watcher task, Next run reads "When the watcher fires" while it's watching;
+outside its active hours, Status reads Idle and Next run shows when watching
+starts again.
 
 The View menu controls what the window shows: a Standard or Compact task
-list, whether disabled/completed/scheduled/manual tasks are listed at all, whether
+list (Compact drops the status line), whether disabled, completed, scheduled,
+manual, and watcher tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
 whole subtree; unchecked, folders start closed), whether runs with no
-action are hidden in every task's Runs tab, and whether the toolbar and
-status bar themselves are shown.
+action are hidden in every task's Runs tab (Task Logs → Hide Runs with No
+Action), and whether the toolbar and status bar themselves are shown.
+
+The Advanced menu has Update Models… (see
+[Models](environments.md#models)), Engine Log (described below), Open Data
+Directory, which opens the [data directory](cli-and-automation.md#the-data-directory)
+in your file manager, and Reload UI. **Help → Instructions** (F1) opens this
+guide in its own window, and Help → About Looper shows the version.
 
 ## The toolbar
 
@@ -56,7 +71,12 @@ tooltips:
 
 Running Now on a disabled or completed task asks '"<task name>" is disabled.
 Run it anyway?' first — the run happens, and the task goes straight back to
-being disabled or completed afterwards. Pause/Resume, Enable/Disable and
+being disabled or completed afterwards. With **Settings → General → Show run
+options before manually running a task** on, Run Now opens the Run Options
+window instead of starting the run right away (see
+[run options](how-a-run-works.md#run-options-for-a-manual-run)). When several
+runs of the task are going at once, Stop Task stops the one picked in the
+Terminal tab's run selector (the newest by default). Pause/Resume, Enable/Disable and
 Complete/Reopen swap their tooltip and icon
 depending on the task's current state; Pause and Enable/Disable are greyed
 out for a completed task, which is parked until you reopen it. Complete is
@@ -97,9 +117,10 @@ onto the middle of another nests it there.
 Right-clicking a folder header opens the folder's own menu, acting on every
 task in it — nested folders included:
 
-- **Run All Now** — runs each enabled task that isn't already mid-cycle.
-- **Pause All / Resume All** — pauses every non-disabled task / resumes
-  every paused one.
+- **Run All Now** — runs each enabled task that isn't already at its
+  Simultaneous runs cap. It never opens the Run Options window.
+- **Pause All / Resume All** — pauses every task that isn't disabled or
+  completed / resumes every paused one.
 - **Enable All / Disable All**
 - **Add Guidance for Next Runs…** — opens a guidance window applied to all
   tasks in the folder's subtree (saving empty text clears their notes).
@@ -133,11 +154,11 @@ nowhere. An interactive classifier, like an interactive agent, accepts input.
 If the agent finishes a turn without signaling and the task is set to hold,
 a banner appears: "The agent finished a turn without calling `looper-done`
 and this task is set to hold. Type into the terminal to continue it, or
-press Stop agent."
+press Stop Task (Shift+F5)."
 
 ## The runs tab
 
-![The Runs tab with a run selected and its report below](img/run-log.png)
+![The Runs tab with a run selected and its report below](img/runs-tab.png)
 
 The Runs tab lists every past run of the task as a table: Date, Start,
 End, Result, Duration, Details. Each row is one full run (check, classify,
@@ -148,23 +169,29 @@ pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
 choosing "Open" opens the run window described below. The
 context menu also offers "Copy Details", "Send Guidance…" (while the run's agent is going; see
 [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
-"Continue in Terminal", "Continue with Guidance…", and "Open Run Folder";
-Ctrl+C copies the selected row's details text.
+"Continue in Terminal" and "Continue with Guidance…" (for a finished Claude
+Code or Codex run; see [continuing a finished run](how-a-run-works.md#continuing-a-finished-run)),
+"Open Run Folder", and "Copy Run Folder Path". Ctrl+C copies the selected
+run's report, or its details text when it has no report.
 
 ## The run window
+
+![A run window: the run's steps as Run rows among the conversation, the agent's output below](img/run-window.png)
 
 The run window shows one run as a single timeline: the run's own steps
 and its conversation, read straight from the harness's own session
 transcripts (Claude Code and Codex harnesses only — custom harnesses record
 no transcript, so their runs show only the steps). While the run is in
-progress the window updates live.
+progress the window updates live. Its title is the task's name and the run
+id.
 
 Each row is one step, message, or tool call — Time, Type, Details — where
 Type is Run, Prompt, Guidance, Agent, Classifier, Thinking, or the
-tool's name. Run rows are the run's steps: the watcher or check result, the
-classifier and agent starting and ending ("Agent completed in 5m10s", with
-cost in dollars when the harness reports it), guidance being sent and
-delivered, and the final result. When the run had a classifier, its
+tool's name. Run rows are the run's steps: the watcher events that started
+it, the check result ("Check found work", "Check found nothing to do"), steps
+the Run Options window skipped, the classifier and agent starting and ending
+("Agent completed in 5m10s", with cost in dollars when the harness reports
+it), guidance being sent and delivered, and the final result. When the run had a classifier, its
 conversation sits between its start and end rows, with its replies typed as
 **Classifier**. Selecting a Run row shows that step's output below: the
 agent's end row shows the run's terminal output, cleaned of ANSI codes and,
@@ -192,10 +219,16 @@ Subagent Conversation.
 
 The window's menu bar has a File menu (Save as Markdown…, Open Output File,
 Continue in Terminal, Continue with Guidance…, Open Run Folder, Open Working
-Directory) and a View menu. View starts with Raw Messages — every
+Directory) and a View menu. Save as Markdown… (Ctrl+S) asks for a file name,
+then opens an Export Options window with Include thinking, Include tool
+usage, and No formatting (plain text); it saves the conversation without the
+Run rows. View starts with Raw Messages — every
 transcript record shown verbatim as pretty-printed JSON, nothing skipped —
 and Raw Agent Output, which switches the agent's end row between the
-cleaned output and the untouched raw terminal capture. Then it filters what
+cleaned output and the untouched raw terminal capture. Auto Scroll (off by
+default) keeps the newest row selected: while the last row is selected, each
+new row takes the selection and scrolls into view, and selecting an earlier
+row stops that until you select the last row again. Then View filters what
 the table lists: Show Run Log (the Run rows), Show Messages, Show Thinking,
 Show Tool Usage, and Show Subagents (all on by default), plus Filter… (Ctrl+F),
 which opens a small modal Filter window — only rows whose content matches
@@ -211,7 +244,9 @@ an editable percentage; it opens fitted to the window).
 When the agent delegates work with the Task tool, that row can be opened as
 its own conversation: double-click it, or use the "Open Subagent
 Conversation" button in its detail pane. The subagent window is the same
-rows-plus-panel view without the Run rows, and also updates live. The link becomes available once
+rows-plus-panel view without the Run rows, and also updates live. It has no
+guidance box, and its File menu has only Save as Markdown…, Open Run Folder,
+and Open Working Directory. The link becomes available once
 the subagent has reported back to the parent.
 
 Messages come from the transcript files under the harness's own data
@@ -228,8 +263,8 @@ reasoning summaries; see [Harnesses](environments.md#harnesses).
 diagnostic log as a table (Date, Time, Level, Message), refreshed every two
 seconds; selecting a row shows its full message below. Entries older than
 **Settings → Advanced → Engine log retention** (default 10 days) are pruned
-automatically. This is separate from a task's run log, which is pruned by
-its own **Run log retention** setting (default 30 days).
+automatically. This is separate from the tasks' run history, which
+**Settings → General → Run log retention** prunes (default 30 days).
 
 **Settings → Advanced → Delete completed tasks** (on by default, after 10
 days) deletes each completed task — definition and run history together —
@@ -254,8 +289,8 @@ A master switch lives in **Settings → General → Show notifications**, and
 the same toggle is available from the tray menu as "Enable Notifications" /
 "Disable Notifications". Clicking a toast opens the task: for a live run
 (run started, agent started, held) it opens the Terminal tab; for a
-finished cycle (end, auto-paused, usage limit, completed) it opens the Run
-log tab with that run selected. No toast fires while any Looper window is focused.
+finished cycle (end, auto-paused, usage limit, completed) it opens the Runs
+tab with that run selected. No toast fires while any Looper window is focused.
 
 ## Rest Mode
 
@@ -285,15 +320,20 @@ keep it on across manual wakes instead. Turning Rest Mode on while wake
 timers are disabled in Windows' power options (common on battery) shows a
 warning first: the computer would sleep but never wake for the schedule.
 
-The three settings live in **Settings → General → Rest Mode**. Whether Rest
+The three settings are on the **Settings → Rest Mode** tab, which only
+appears on Windows. Whether Rest
 Mode is on is not remembered across restarts — a fresh Looper always starts
 with it off.
+
+The status bar shows the phase: "Rest Mode — waiting for tasks to finish",
+"Rest Mode — sleeping in N s" during the grace period, and "Rest Mode —
+sleeping until HH:MM" once the wake timer is set.
 
 ## The tray icon and close-to-tray
 
 Looper keeps a tray icon running whenever the app is open. Double-clicking
 it shows the main window; right-clicking it opens a menu with Show Looper,
-Enable/Disable Notifications, and Quit.
+Enable/Disable Notifications, Start/Stop Rest Mode (Windows only), and Quit.
 
 By default, closing the main window quits Looper — and stops any running
 agents. Turning on **Settings → General → Close to system tray** changes
@@ -308,3 +348,43 @@ before quitting while tasks are running** turns that question off. Its
 sub-option **Also while tasks are watching for events** (off by default)
 asks as well when tasks with an events trigger have their watcher up, since
 quitting stops watching until Looper starts again.
+
+## Settings
+
+![The Settings window's General tab](img/settings-general.png)
+
+**File → Settings…** (Ctrl+,) opens a modal Settings window with four tabs:
+General, Rest Mode (Windows only), Environments, and Advanced. Save writes
+the General, Rest Mode, and Advanced fields; the Environments list applies
+each change as soon as its own editor window saves.
+
+On the General tab:
+
+- **Default environment** is the environment a new task starts on.
+- **Move completed tasks to folder** is described under [Folders](#folders).
+- **Stagger overdue tasks on startup** (on by default) spreads out the runs
+  Looper owes at startup. Each enabled scheduled task that is overdue (a slot
+  passed since its last run, or it has never run) runs once, after a random
+  delay between **Minimum delay** (60 s) and **Maximum delay** (600 s), with
+  at least **Minimum interval** (30 s) between two of them. Turned off,
+  overdue tasks start one second apart.
+- **Run log retention** (30 days) sets how long run records and run folders
+  are kept.
+- **Show run options before manually running a task** (off by default) makes
+  Run Now open the [Run Options window](how-a-run-works.md#run-options-for-a-manual-run).
+- **Show notifications**, **Close to system tray**, **Ask before quitting
+  while tasks are running** (with **Also while tasks are watching for
+  events**), and **Start with the computer** are described in the sections
+  above.
+
+The Rest Mode tab holds the three [Rest Mode](#rest-mode) settings, and the
+Environments tab the [environment list](environments.md).
+
+On the Advanced tab:
+
+- **Tasks file** and **Templates file** set where the task and template
+  definitions are stored (`tasks.json` and `templates.json` in the data
+  directory by default). Browse… picks another file and asks whether to move
+  the existing definitions there; Reset goes back to the default location.
+- **Engine log retention** and **Delete completed tasks** are described under
+  [the engine log window](#the-engine-log-window).

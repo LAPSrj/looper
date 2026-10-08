@@ -10,7 +10,8 @@ changes.
 ![The task editor's General tab](img/task-editor-general.png)
 
 - **Task name**
-- **Status** — Enabled, Disabled or Completed. A disabled task never runs on
+- **Status** — Enabled, Disabled or Completed (Completed can be picked only
+  once **Allow this task to be marked completed** is on). A disabled task never runs on
   its own; Run Now still asks for confirmation before running it anyway. A
   **completed** task is finished for good: it behaves like a disabled one, but
   it also moves to the completed-tasks folder (Settings → General), shows as
@@ -40,16 +41,18 @@ Where completed tasks are filed is a global choice — Settings → General →
 
 ## Trigger
 
-![The task editor's Trigger tab](img/task-editor-schedule.png)
+![The task editor's Trigger tab](img/task-editor-trigger.png)
 
-What starts the task's runs — `trigger.mode` in the JSON: **Manual**,
-**Schedule**, or **Watcher**. Only one mode is selected at a time; switching
+What starts the task's runs. The **Run this task** dropdown picks the mode
+(`trigger.mode` in the JSON): **Manually only** (`manual`), **On a
+schedule** (`schedule`), or **On events** (`watcher`). Only one mode is
+selected at a time; switching
 modes keeps the other modes' configuration, like a disabled step keeps its
 fields.
 
-- **Manual** — the task never fires by itself. Run Now, the toolbar, the
+- **Manually only** — the task never fires by itself. Run Now, the toolbar, the
   context menu, or the CLI/inbox `run` command are the only ways to start it.
-- **Schedule** (`trigger.schedule`) — a cron expression (`cron`) and an
+- **On a schedule** (`trigger.schedule`) — a cron expression (`cron`) and an
   optional IANA `timezone`. **Frequency** selects how the cron expression is
   built:
 
@@ -61,15 +64,16 @@ fields.
   | Monthly | A time of day and which days of the month |
   | Custom | A raw cron expression |
 
-  A live preview shows the next run time, or a warning if the expression is
-  invalid. **Timezone** picks the IANA zone the schedule's slots are
-  evaluated in; "Use computer timezone" (the default) follows the machine's
-  own timezone.
-- **Watcher** (`trigger.watcher`) — a long-running **Command** and a
+  On Custom, an invalid expression shows "Incorrect cron expression:" and
+  the reason under the field once you leave it. **Timezone** picks the IANA
+  zone the schedule's slots are evaluated in; "Use computer timezone" (the
+  default) follows the machine's own timezone.
+- **On events** (`trigger.watcher`) — a long-running **Watcher command** and a
   **Batch events for** (`debounceSec`, default 5s) window. See "Watcher
   contract" below for what the command must do. Three more options shape
   when runs may start:
-  - **Run once when watching starts** (`runOnStart`) — one catch-up run
+  - **Run once when watching starts, to catch up on missed events**
+    (`runOnStart`) — one catch-up run
     whenever watching starts cold: app launch, the task being enabled, a
     pause lifted, the system waking, or the active-hours window opening.
     The run carries no events; a check
@@ -86,7 +90,8 @@ fields.
     held and coalesces into one run once a slot and the window are open. A
     manual Run Now ignores the window.
   - **Timezone** (`timezone`) — the zone the hours/days are evaluated in;
-    unset = the computer's.
+    unset = the computer's. The field appears once active hours or days are
+    restricted.
 
 A checkbox, "Stop on a date", turns on **Stop running on**
 (`trigger.stopOn.enabled` / `.at`) — the date and time the trigger ends. Once
@@ -172,9 +177,10 @@ The checkbox "Ask a model whether the agent should run" turns the
 classifier step on or off. When on, it runs after a check that returned
 `act: true` (or on every slot if there's no check).
 
-- **Harness** — which Claude Code harness in the task's environment runs the
-  classifier: the task's own harness if it's Claude Code, otherwise the
-  environment's first Claude Code harness.
+- **Harness** — which harness in the task's environment runs the
+  classifier. Left unset (`harnessId` omitted), it's the task's own agent
+  harness if that's Claude Code or Codex, otherwise the environment's first
+  Claude Code or Codex harness.
 - **Session type** — Headless (default): `claude -p` / `codex exec` over
   pipes, answering under a strict `{act, reason}` schema (claude
   `--json-schema` / codex `--output-schema`). Interactive terminal: a real pty
@@ -222,16 +228,18 @@ classifier step on or off. When on, it runs after a check that returned
   (`--dangerously-bypass-approvals-and-sandbox`), or None. Sandboxed codex
   runs also get `--add-dir` for the run directory, so `looper-done` can
   write its signal files there.
-- **Conversation** — Claude Code and Codex. New each run (the default) starts
-  every run as a fresh session. Continue across runs keeps one rolling
+- **Conversation** — Claude Code and Codex. Start new on each run (the
+  default) starts every run as a fresh session. Continue previous across
+  runs keeps one rolling
   conversation: with Claude Code the first run starts it (`--session-id`) and
   later runs resume it (`--resume`); with Codex the first run's thread id is
   captured and later runs `codex … resume` it. Either way the agent remembers
   what it already saw and reported.
-  It requires Settings → Simultaneous runs to be 1, since a rolling
+  It requires the Settings tab's Simultaneous runs to be 1, since a rolling
   conversation can't be shared by overlapping runs.
-  **New conversation after** caps the roll — after that many runs the next
-  run starts a new conversation (a cap of 1 behaves like New each run).
+  **Start a new conversation after** (default 10 runs) caps the roll — after
+  that many runs the next run starts a new conversation (a cap of 1 behaves
+  like Start new on each run).
   If the conversation to resume no longer exists (e.g. its transcript was
   cleaned up), that run ends as an error saying so and the next run starts a
   new one. Editing the task's working directory, environment, or harness
@@ -249,6 +257,8 @@ classifier step on or off. When on, it runs after a check that returned
 
 ## Settings
 
+![The task editor's Settings tab](img/task-editor-settings.png)
+
 - **Max runtime** — minutes before a run is force-ended regardless of
   activity. Default 120.
 - **Auto-pause after** — consecutive failed cycles before the task pauses
@@ -260,10 +270,10 @@ classifier step on or off. When on, it runs after a check that returned
 - **When idle too long** — End the run, or Hold and wait for me (the run
   pauses for you to continue it by hand in the terminal).
 - **Simultaneous runs** — cycles of this task that may be in flight at once.
-  Default 1, which is today's behavior: a slot due while a run is active is
+  At the default of 1, a slot due while a run is active is
   skipped. Above 1, a due slot starts another run alongside the ones already
   going instead of being skipped, up to the cap. Incompatible with the
-  agent's "Continue across runs" — the editor refuses to save that
+  agent's "Continue previous across runs" — the editor refuses to save that
   combination.
 
 ## Notifications
@@ -281,8 +291,8 @@ a Looper window is focused):
 | Notify when the task ends | The cycle ends — see levels below |
 | Notify when the agent holds and waits for input | The agent went idle and is holding for you |
 | Notify when the task auto-pauses | The task auto-pauses after consecutive errors |
-| Notify when the usage limit is reached | A run hits a Claude Code usage limit and waits for the reset |
 | Notify when the task completes | The task is finished for good — the agent completed it, its deadline passed, or you completed it yourself |
+| Notify when the usage limit is reached | A run hits a Claude Code usage limit and waits for the reset |
 
 "Notify when the task ends" has four levels, from narrowest to broadest:
 
@@ -347,7 +357,21 @@ refused with the version to update to.
   editor prefilled from it. Any field that fails validation — an unknown
   environment or harness, a bad cron expression, a path in the wrong style
   for the environment — resets to its default instead of blocking the
-  import, so you fix it in the editor rather than getting a raw error.
+  import, so you fix it in the editor rather than getting a raw error. A
+  completion stamp in the file is dropped, so an imported task never arrives
+  completed.
+- **Paths are re-pointed at the file's folder.** A task imported next to its
+  scripts runs from there: a working directory that is blank, in the wrong
+  style, or doesn't exist becomes the `.loopertask` file's own folder (in the
+  environment's path style), and an absolute path in the check command that
+  doesn't exist is replaced by the file of the same name next to the
+  `.loopertask`, when there is one. Paths that exist, and paths Looper can't
+  check (a failed WSL/Windows path translation), stay as they were.
+- **A task or template that's already in Looper** (its file's id matches one
+  you have) asks first: **Update** opens the existing item's editor ("Edit
+  Task") prefilled from the file, and saving overwrites it while it keeps its
+  folder and pending guidance note; **Create New** opens a new editor
+  without the file's id; Cancel stops the import.
 - **File → Export Task…** (with a task selected) writes the task's full
   definition to a `.loopertask` file you choose, defaulting to
   `<task id>.loopertask`. Any pending one-off guidance note is left out,

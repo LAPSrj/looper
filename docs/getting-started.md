@@ -69,7 +69,7 @@ configuration for you:
 You can see and edit these under File → Settings…; see
 [environments](environments.md) for details. The main window opens with an
 empty task list, a toolbar, and a status bar showing how many tasks are
-enabled, disabled, paused, or running.
+enabled, disabled, completed, paused, or running.
 
 ## Creating your first task
 
@@ -91,7 +91,7 @@ At minimum, fill in:
 
 ![The task editor's General tab](img/task-editor-general.png)
 
-Everything else — schedule, classifier, notifications — has a working
+Everything else — trigger, classifier, notifications — has a working
 default. Click Save. See the [task editor](tasks.md) reference for every tab
 and field.
 
@@ -115,8 +115,8 @@ what to expect during and after a run.
   pipeline and how a run ends.
 - [Environments](environments.md) — local shell, WSL, and Windows bridges,
   and the harnesses (agent CLIs) inside them.
-- [Monitoring](monitoring.md) — the terminal tab, run log, and
-  notifications.
+- [Monitoring](monitoring.md) — the terminal tab, the Runs tab and run
+  window, notifications, and settings.
 - [CLI and automation](cli-and-automation.md) — driving Looper from a
   shell or from another agent.
 - [Troubleshooting](troubleshooting.md) — common problems and fixes.

@@ -14,19 +14,23 @@ started. No idle burn, no context rot, at most one agent per task, ever.
 ## Features
 
 - **Cron-style scheduling** — wall-clock slots, timezones, schedule end dates;
-  or manual tasks you fire on demand.
+  event-driven tasks started by a watcher command; or manual tasks you fire
+  on demand.
 - **Token savings by design** — a shell check and an optional haiku-class
   classifier gate every run, so the expensive model only starts when there is
   real work to do.
-- **Fresh session every run** — no context accumulation; the agent signals
+- **Fresh session every run** — no context accumulation (unless you opt a
+  task into one rolling conversation); the agent signals
   `looper-done`, files its report, and the loop resumes.
-- **Monitoring built in** — per-task run log with results and reports, live
-  status, and a real terminal tab you can watch *and type into* mid-run.
+- **Monitoring built in** — a per-task Runs tab with results and reports, a
+  run window with each run's steps and full conversation, live status, and a
+  real terminal tab you can watch *and type into* mid-run.
 - **System notifications** — each task picks what it toasts, from errors-only
-  to every run; clicking one lands on the live terminal or the run's log entry.
+  to every run; clicking one lands on the live terminal or the run in the
+  Runs tab.
 - **Any harness, any environment** — Claude Code, Codex, or a custom agent
   CLI; Looper on Windows driving agents inside WSL, or Linux/WSL directly.
-- **Easy task setup** — an editor with Schedule / Check / Classifier / Agent
+- **Easy task setup** — an editor with Trigger / Check / Classifier / Agent
   tabs, templates, import/export; agents and scripts can register tasks by
   dropping a JSON file in the inbox.
 
@@ -101,8 +105,8 @@ The full user guide lives in [docs/](docs/README.md):
   cycle and every way a run ends.
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
-- [Monitoring](docs/monitoring.md) — terminal tab, run log, notifications,
-  Rest Mode, tray.
+- [Monitoring](docs/monitoring.md) — terminal tab, Runs tab and run window,
+  notifications, Rest Mode, tray, settings.
 - [CLI and automation](docs/cli-and-automation.md) — the CLI, the inbox
   protocol, the data directory.
 - [Troubleshooting](docs/troubleshooting.md) — common problems, current

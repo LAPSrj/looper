@@ -12,10 +12,12 @@ the task's consecutive-error count. Once that count reaches the task's
 **Resume** it (toolbar, context menu, or `looper resume <taskId>`) to clear
 the error count and the paused reason and put it back on its schedule. A
 single successful run also resets the count on its own, so occasional
-failures that don't repeat five times in a row never trigger this.
+failures that don't repeat five times in a row never trigger this. A pause,
+automatic or manual, isn't kept across a restart: when Looper starts again,
+the task starts idle on its schedule.
 
-A Claude Code usage-limit hit, a network error and an environment error are
-three errors that do **not** count toward this — see below.
+A Claude Code usage-limit hit, a network error, an environment error, and a
+run the computer slept through do **not** count toward this — see below.
 
 ## Claude Code says you've hit your usage limit
 
@@ -91,13 +93,33 @@ A task whose WSL distro doesn't exist (`WSL_E_DISTRO_NOT_FOUND`) is **not**
 an environment error: that's the task's configuration, so it's an ordinary
 error and counts toward auto-pause as usual.
 
+## The computer went to sleep during a run
+
+A run can't survive the computer sleeping: its processes and WSL sessions
+die, or come back broken at the wake. When the desktop app sees Windows
+suspend, it stops every run in flight except a held one, records it as
+**Stopped** without a notification, and runs the task again 20 seconds after
+the wake. Work that came due during the sleep waits the same 20 seconds, so
+it doesn't start before the network is back.
+
+Where no suspend was seen (for example on other platforms, or under
+`looper serve`), a check or
+classifier that failed after running more than two minutes past its timeout
+is taken to have slept through the run. The run log shows it as **Error**,
+with a detail that starts with "slept through the run: ", and the task runs
+again 20 seconds later. Like a network error, it doesn't count toward
+auto-pause, and no end notification fires unless "Include network errors" is
+on.
+
 ## The "trust this folder?" dialog
 
 Interactive Claude Code asks whether it can trust a directory the first time
-it runs there, and blocks until answered. Looper answers "yes" for you
-automatically (this is the harness's "auto-trust workspace" option in
-**Settings → Environments**, on by default) — you shouldn't normally see this
-dialog at all. If you've turned that option off for a harness, the run will
+it runs there, and blocks until answered (Codex asks the same about a
+directory's contents). Looper answers "yes" for you
+automatically (the harness's **Folder trust dialog** setting in
+**Settings → Environments**, "Answer automatically (recommended)" by
+default) — you shouldn't normally see this
+dialog at all. If you've set it to "Wait for user" for a harness, the run will
 sit waiting on it until the idle clock (below) ends or holds it.
 
 ## An interactive run holds on a permission prompt
@@ -105,15 +127,17 @@ sit waiting on it until the idle clock (below) ends or holds it.
 Any interactive prompt on screen — a permission request, a question, not
 just the trust dialog — is detected by watching for its "Esc to cancel"
 footer, and is treated as the agent waiting on a human: the idle clock
-starts, and after `idleGraceMin` minutes the run ends (or holds, if the
-task's "On idle timeout" is set to `hold`).
+starts, and after `idleGraceMin` minutes (the Settings tab's **Idle
+grace**) the run ends, or holds if the task's **When idle too long** is set
+to "Hold and wait for me" (`onIdleTimeout: hold`).
 
 Even `--permission-mode auto` has been observed still prompting before
 creating a file. For a task you want to run fully unattended:
 
-- Set the agent's permission mode to `acceptEdits`, or pass
+- Set the agent's permission mode to Accept edits (`acceptEdits`), or pass
   `--allowedTools …` in the agent's extra args, so it never needs to ask.
-- Or leave prompts possible but set "On idle timeout" to `hold`, and answer
+- Or leave prompts possible but set **When idle too long** to "Hold and wait
+  for me", and answer
   the prompt yourself in the task's Terminal tab when it comes up — see
   [how a run works](how-a-run-works.md) for what a held run looks like.
 
@@ -122,8 +146,11 @@ creating a file. For a task you want to run fully unattended:
 If Looper is closed or crashes while a task is checking, classifying, or
 running, that run is logged as **Interrupted** the next time Looper starts.
 Looper doesn't try to resume or reattach to it — the task simply returns to
-idle (or paused, if it was configured that way) and picks up its schedule
-normally from there.
+idle and picks up its schedule from there. A scheduled task whose slot
+passed while Looper was closed runs once soon after startup; with
+**Settings → General → Stagger overdue tasks on startup** on (the default),
+those catch-up runs are spread out over the first minutes instead of all
+starting together.
 
 ## Stopping a task mid-cycle
 

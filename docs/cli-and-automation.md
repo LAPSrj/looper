@@ -193,7 +193,9 @@ it shuts the engine down cleanly before exiting.
 Looper keeps all its state in `~/looper` (your home directory, every
 platform) — override with the `LOOPER_HOME` environment variable, or
 `--data-dir` for a single CLI invocation. `looper home` prints the directory
-in use.
+in use, and **Advanced → Open Data Directory** opens it from the app.
+**Settings → Advanced → Tasks file / Templates file** can keep `tasks.json`
+and `templates.json` somewhere else.
 
 ```
 settings.json         environments (each with its harnesses), default
@@ -223,6 +225,10 @@ tasks/<id>/runs/<runId>/
   output.log              raw capture of the agent session
   output.txt              rendered terminal (interactive) / stream lines (headless)
   done                    signal file: the looper-done status + headline
+  complete                signal file: the looper-complete reason
+  guidance.json           guidance sent to the running agent, until it
+                       picks it up
+  codex-session.json      Codex only: the thread id of the run's conversation
   stop.json               signal file: the last Stop-hook payload
   stop-reminded           marker: the one-time looper-done reminder was issued
   session.json            the SessionStart-hook payload (names the transcript)

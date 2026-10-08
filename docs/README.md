@@ -15,13 +15,14 @@ polling inside the agent, no context buildup, at most one agent per task.
   plus task templates, import/export, and the prompt template variables.
 - **[How a run works](how-a-run-works.md)**: the check → classify → agent
   cycle: the check and classifier contracts, how the agent's prompt is
-  built, every way a run can end, held runs, and one-off guidance notes.
+  built, every way a run can end, held runs, run options, one-off guidance
+  notes, guidance for a running agent, and continuing a finished run.
 - **[Environments](environments.md)**: environment kinds (local shell,
   WSL, Windows), the WSL shell and mount-prefix settings, harnesses and
   their models, and concurrency caps.
 - **[Monitoring](monitoring.md)**: the task list, toolbar and context-menu
   actions, the live terminal tab, the Runs tab and run window, the
-  engine log, notifications, Rest Mode, and the tray.
+  engine log, notifications, Rest Mode, the tray, and the Settings window.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a
   tour of the `~/looper` data directory.
@@ -30,4 +31,5 @@ polling inside the agent, no context buildup, at most one agent per task.
   setup, plus the current known limitations.
 
 New to Looper? Read [Getting started](getting-started.md), then skim
-[How a run works](how-a-run-works.md) — the rest is reference.
+[How a run works](how-a-run-works.md) — the rest is reference. Inside the
+app, **Help → Instructions** (F1) opens this guide in its own window.
