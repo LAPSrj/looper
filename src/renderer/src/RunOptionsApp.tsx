@@ -7,7 +7,7 @@ import { EditorFooter, Field } from './components/ui';
  * Standalone "Run Now" options window: lets the user skip any step of the
  * task's flow (check, classifier, agent) and set the next-run guidance
  * before a manual run starts. Shown
- * only when Settings → Advanced → "Show run options before manually running
+ * only when Settings → General → "Show run options before manually running
  * a task" is on.
  */
 export function RunOptionsApp({ taskId }: { taskId: string }) {

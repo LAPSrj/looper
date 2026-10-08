@@ -143,7 +143,7 @@ export function Terminal({ taskId, runtime, selectedRun, onSelectRun }: Props) {
       {held && (
         <div className="banner warn">
           The agent finished a turn without calling <code>looper-done</code> and this task is set to hold. Type into the
-          terminal to continue it, or press <b>Stop agent</b>.
+          terminal to continue it, or press <b>Stop Task</b> (Shift+F5).
         </div>
       )}
       <div className="terminal" ref={ref} />

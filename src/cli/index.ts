@@ -348,8 +348,15 @@ program
   .description('list tasks and their current state')
   .action(() => {
     const dir = dataDir();
+    // Settings → Advanced → Tasks file can keep the tasks outside the data dir, as the engine reads them.
+    const custom = readJsonFile<{ tasksFile?: unknown } | null>(path.join(dir, 'settings.json'), null)?.tasksFile;
+    const tasksFile = typeof custom === 'string' && custom ? custom : path.join(dir, 'tasks.json');
+    if (tasksFile !== path.join(dir, 'tasks.json') && !fs.existsSync(tasksFile)) {
+      console.error(`cannot read the tasks file set in Settings: ${tasksFile}`);
+      process.exit(2);
+    }
     const tasks = readJsonFile<{ tasks: { id: string; name: string; enabled: boolean; completedAt?: string }[] }>(
-      path.join(dir, 'tasks.json'),
+      tasksFile,
       { tasks: [] },
     ).tasks;
     const state = readJsonFile<{ tasks: Record<string, TaskRuntime> }>(path.join(dir, 'state.json'), {

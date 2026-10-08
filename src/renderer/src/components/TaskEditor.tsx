@@ -352,6 +352,16 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       void window.looper.showError(tab === 'json' ? `JSON: ${(e as Error).message}` : (e as Error).message);
       return false;
     }
+    // A new item (or an import saved as new) gets its id from the name; saving
+    // must never replace another item that already has that id.
+    const derivedId = !draft.id?.trim();
+    if (derivedId && typeof obj.id === 'string') {
+      const items = mode === 'template' ? await window.looper.templates.list() : await window.looper.tasks.list();
+      const taken = new Set(items.map((t) => t.id));
+      let id = obj.id;
+      for (let n = 2; taken.has(id); n++) id = `${obj.id}-${n}`;
+      obj = { ...obj, id };
+    }
     const v = validateTask(obj, environments, host, mode === 'template' ? { template: true } : undefined);
     if (!v.ok) {
       void window.looper.showError(v.errors.join('\n'));
@@ -361,6 +371,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     try {
       if (mode === 'template') await window.looper.templates.save(v.task);
       else await window.looper.tasks.save(v.task);
+      // Later Apply/Save clicks in this window update the item just created.
+      if (derivedId) setDraft((d) => ({ ...d, id: v.task.id }));
       return true;
     } catch (e) {
       void window.looper.showError((e as Error).message);
@@ -842,7 +854,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
             </label>
             {(() => {
               const cls = draft.classifier;
-              const clsHarness = harnesses.find((h) => h.id === cls?.harnessId) ?? harnesses[0];
+              // No pin: the harness the engine falls back to (resolveClassifierHarness), the
+              // agent's own unless it's custom, then the first non-custom one.
+              const agentHarness = harnesses.find((h) => h.id === draft.agent.harnessId) ?? harnesses[0];
+              const clsHarness =
+                harnesses.find((h) => h.id === cls?.harnessId) ??
+                (agentHarness && agentHarness.kind !== 'custom' ? agentHarness : harnesses.find((h) => h.kind !== 'custom')) ??
+                harnesses[0];
               const clsModels = clsHarness ? harnessModels(clsHarness) : [];
               const clsModelIsCustom = customClsModel || (!!cls?.model && !clsModels.some((m) => m.id === cls.model));
               return (
