@@ -14,8 +14,6 @@ see [the task editor](tasks.md#completion)). Check and classifier are both
 optional (each has an enable switch in the [task editor](tasks.md)); without a
 check, every due slot goes straight to the classifier or the agent.
 
-![A full run in the run detail window: check → classify → agent → result](img/run-detail.png)
-
 ## Checking
 
 If the task has a check step, your script runs in the task's working
@@ -230,9 +228,9 @@ agent uses up the charge.
 ## Guidance for a run in progress
 
 While a Claude Code or Codex agent is running, you can send it guidance
-without stopping it: the send box under the run's conversation window
-(Ctrl+Enter sends), **Send Guidance…** on a run's context menu (Run log and
-Messages tabs) or the run detail window's File menu, the inbox `guide`
+without stopping it: the send box under the run window's conversation
+(Ctrl+Enter sends), **Send Guidance…** on a run's context menu in the Runs
+tab, the inbox `guide`
 command, or `looper guide <taskId> <text>`. Text sent before the agent picked
 up the previous one is appended to it.
 

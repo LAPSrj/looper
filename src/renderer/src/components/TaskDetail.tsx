@@ -3,17 +3,15 @@ import { watcherOf } from '@shared/types';
 import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort } from '@shared/environments';
 import { cronToForm, nextWindowOpen } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
-import { Messages } from './Messages';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
 import { TabBar } from './ui';
 
-export type DetailTab = 'status' | 'log' | 'messages' | 'terminal';
+export type DetailTab = 'status' | 'runs' | 'terminal';
 
 const TABS: [DetailTab, string][] = [
   ['status', 'Status'],
-  ['log', 'Run log'],
-  ['messages', 'Messages'],
+  ['runs', 'Runs'],
   ['terminal', 'Terminal'],
 ];
 
@@ -234,8 +232,7 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
             </dl>
           </div>
         )}
-        {tab === 'log' && <RunLog task={task} records={records} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
-        {tab === 'messages' && <Messages task={task} records={records} runtime={runtime} />}
+        {tab === 'runs' && <RunLog task={task} records={records} runtime={runtime} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
         {tab === 'terminal' && (
           <Terminal taskId={task.id} runtime={runtime} selectedRun={terminalRun} onSelectRun={onTerminalRun} />
         )}

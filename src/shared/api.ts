@@ -98,9 +98,7 @@ export interface LooperApi {
   sendGuidance(taskId: string, runId: string, text: string): Promise<void>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
   openTaskWorkFolder(taskId: string): Promise<void>;
-  /** Open the run detail window showing all step records for a run. */
-  openRunDetail(taskId: string, runId: string): Promise<void>;
-  /** Open a conversation window: a run's messages, or a subagent's when agentId is set. */
+  /** Open a run's window (its step records and conversation), or a subagent's conversation when agentId is set. */
   openMessages(taskId: string, runId: string, agentId?: string, label?: string): Promise<void>;
   /** Open a message row's image in a zoomable window. */
   openMessageImage(taskId: string, runId: string, rowId: string, agentId?: string, label?: string): Promise<void>;
@@ -216,18 +214,20 @@ export type UiEvent =
         | 'complete-reopen'
         | 'open-terminal'
         | 'open-work-folder'
-        | 'clear-runs'
-        | 'toggle-raw-output';
+        | 'clear-runs';
     }
   /** A notification was clicked: select the task and show the right view. */
-  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'log' }
+  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'runs' }
   /** Conversation window View menu: a Show toggle changed. */
   | { type: 'messages-show'; key: MessagesShowKey; checked: boolean }
   /** Conversation window View menu: the Raw Messages toggle changed. */
   | { type: 'messages-raw'; checked: boolean }
+  /** Run window View menu: the Raw Agent Output toggle changed. */
+  | { type: 'messages-raw-output'; checked: boolean }
   /** Conversation window View menu: the Auto Scroll toggle changed. */
   | { type: 'messages-auto-scroll'; checked: boolean }
   /** The filter window applied a filter (empty = cleared). */
   | { type: 'messages-filter'; value: string };
 
-export type MessagesShowKey = 'messages' | 'thinking' | 'tools' | 'subagents';
+/** run: the run's own step records (check, classifier, agent, result, guidance). */
+export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

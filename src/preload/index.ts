@@ -65,7 +65,6 @@ const api: LooperApi = {
       throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
     }),
   openTaskWorkFolder: (taskId) => ipcRenderer.invoke('task:openWorkFolder', taskId),
-  openRunDetail: (taskId, runId) => ipcRenderer.invoke('runDetail:open', taskId, runId),
   openMessages: (taskId, runId, agentId, label) =>
     ipcRenderer.invoke('messages:open', taskId, runId, agentId, label),
   openMessageImage: (taskId, runId, rowId, agentId, label) =>

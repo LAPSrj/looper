@@ -20,7 +20,7 @@ polling inside the agent, no context buildup, at most one agent per task.
   WSL, Windows), the WSL shell and mount-prefix settings, harnesses and
   their models, and concurrency caps.
 - **[Monitoring](monitoring.md)**: the task list, toolbar and context-menu
-  actions, the live terminal tab, the run log and run detail windows, the
+  actions, the live terminal tab, the Runs tab and run window, the
   engine log, notifications, Rest Mode, and the tray.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a

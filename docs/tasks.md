@@ -34,7 +34,7 @@ changes.
   scoped to that environment.
 
 A completed task keeps its whole definition and its run history until it is
-deleted, so the final report stays readable in the Run log and Messages tabs.
+deleted, so the final report stays readable in the Runs tab and the run window.
 Where completed tasks are filed is a global choice — Settings → General →
 **Move completed tasks to folder**.
 
@@ -188,8 +188,8 @@ classifier step on or off. When on, it runs after a check that returned
 - **Classifier prompt** — your yes/no question about the check output.
   `{{summary}}` and `{{context}}` insert the check's output where you place
   them; if the prompt references none of `{{summary}}`, `{{context}}` or
-  `{{events}}`, they're appended automatically. The `reason` (one sentence) is shown in the run log; the
-  classifier's full conversation appears in the run's Messages window with
+  `{{events}}`, they're appended automatically. The `reason` (one sentence) is shown in the Runs tab; the
+  classifier's full conversation appears in the run window with
   its replies typed as **Classifier**.
 
 ## Agent

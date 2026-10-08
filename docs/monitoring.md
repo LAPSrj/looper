@@ -8,8 +8,8 @@ The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active, otherwise a next-run countdown, "Not
 scheduled", "Manual", its paused reason, "Disabled", or "Completed" with the
 date it finished for good. Disabled and completed tasks are
-shown faded. Selecting a task opens its detail pane with four tabs — Status,
-Run log, Messages, Terminal — plus a status bar at the bottom counting
+shown faded. Selecting a task opens its detail pane with three tabs — Status,
+Runs, Terminal — plus a status bar at the bottom counting
 enabled, disabled, completed, paused, and running tasks.
 
 Double-clicking a task opens its Edit Task window.
@@ -34,7 +34,7 @@ The View menu controls what the window shows: a Standard or Compact task
 list, whether disabled/completed/scheduled/manual tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
 whole subtree; unchecked, folders start closed), whether runs with no
-action are hidden in every task's run log, and whether the toolbar and
+action are hidden in every task's Runs tab, and whether the toolbar and
 status bar themselves are shown.
 
 ## The toolbar
@@ -135,40 +135,43 @@ a banner appears: "The agent finished a turn without calling `looper-done`
 and this task is set to hold. Type into the terminal to continue it, or
 press Stop agent."
 
-## The run log
+## The runs tab
 
-![The Run log tab with a run selected and its report below](img/run-log.png)
+![The Runs tab with a run selected and its report below](img/run-log.png)
 
-The Run log tab lists every past run of the task as a table: Date, Start,
+The Runs tab lists every past run of the task as a table: Date, Start,
 End, Result, Duration, Details. Each row is one full run (check, classify,
-and agent steps collapsed together, showing the most significant result).
+and agent steps collapsed together, showing the most significant result);
+a run still in progress shows Running in the Result column.
 Selecting a row shows that run's final report below in a resizable split
-pane. Double-clicking a row, or right-clicking it and choosing "View
-Details", opens the run detail window described below. The
-context menu also offers "Copy Details", "View Messages" (the run's
-conversation window), "Send Guidance…" (while the run's agent is going; see
+pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
+choosing "Open" opens the run window described below. The
+context menu also offers "Copy Details", "Send Guidance…" (while the run's agent is going; see
 [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
-and "Open Run Folder"; Ctrl+C copies the selected row's details text.
+"Continue in Terminal", "Continue with Guidance…", and "Open Run Folder";
+Ctrl+C copies the selected row's details text.
 
-## The messages tab
+## The run window
 
-The Messages tab lists the task's runs that reached the classifier or the
-agent step — Date, Start, Result, Details, newest first. Double-clicking a
-run (or pressing Enter on it) opens that run's conversation in its own
-window, read straight from the harness's own session transcripts (Claude
-Code and Codex harnesses only — custom harnesses record no transcript). When the run
-had a classifier, its conversation appears first in the same list, with its
-replies typed as **Classifier**.
+The run window shows one run as a single timeline: the run's own steps
+and its conversation, read straight from the harness's own session
+transcripts (Claude Code and Codex harnesses only — custom harnesses record
+no transcript, so their runs show only the steps). While the run is in
+progress the window updates live.
 
-A run still in its classifier or agent step shows Running in the Result
-column; its conversation window updates live. Right-clicking a run opens the
-same context menu as in the Run log tab.
+Each row is one step, message, or tool call — Time, Type, Details — where
+Type is Run, Prompt, Guidance, Agent, Classifier, Thinking, or the
+tool's name. Run rows are the run's steps: the watcher or check result, the
+classifier and agent starting and ending ("Agent completed in 5m10s", with
+cost in dollars when the harness reports it), guidance being sent and
+delivered, and the final result. When the run had a classifier, its
+conversation sits between its start and end rows, with its replies typed as
+**Classifier**. Selecting a Run row shows that step's output below: the
+agent's end row shows the run's terminal output, cleaned of ANSI codes and,
+for headless runs, pretty-printed if it looks like JSON.
 
-In the conversation window each row is one message or tool call — Time,
-Type, Details — where Type is Prompt, Guidance, Agent, Classifier, Thinking, or the
-tool's name;
-the Type column can be resized by dragging its header edge (the width is
-remembered; double-click the edge to reset it). Clicking a row
+The Type column can be resized by dragging its header edge (the width is
+remembered; double-click the edge to reset it). Clicking a message row
 shows its full content in the split pane below: prompts and agent replies
 render as Markdown, thinking as plain text, and tool calls as Input and
 Result tabs (opening on Result once the tool has finished). Several tools
@@ -187,11 +190,14 @@ Right-clicking a row offers Copy Content, and on rows for file tools
 (Read, Edit, Write) also Open File and Copy Path; on Task rows, Open
 Subagent Conversation.
 
-The window's menu bar has a File menu (Open Run Folder, Open Working
+The window's menu bar has a File menu (Save as Markdown…, Open Output File,
+Continue in Terminal, Continue with Guidance…, Open Run Folder, Open Working
 Directory) and a View menu. View starts with Raw Messages — every
 transcript record shown verbatim as pretty-printed JSON, nothing skipped —
-then filters what the table lists: Show Messages, Show Thinking, Show Tool
-Usage, and Show Subagents (all on by default), plus Filter… (Ctrl+F),
+and Raw Agent Output, which switches the agent's end row between the
+cleaned output and the untouched raw terminal capture. Then it filters what
+the table lists: Show Run Log (the Run rows), Show Messages, Show Thinking,
+Show Tool Usage, and Show Subagents (all on by default), plus Filter… (Ctrl+F),
 which opens a small modal Filter window — only rows whose content matches
 stay visible, the menu item shows a checkmark while a filter is active,
 and the window's Clear Filter button removes it. Ctrl+Up and Ctrl+Down
@@ -205,7 +211,7 @@ an editable percentage; it opens fitted to the window).
 When the agent delegates work with the Task tool, that row can be opened as
 its own conversation: double-click it, or use the "Open Subagent
 Conversation" button in its detail pane. The subagent window is the same
-rows-plus-panel view and also updates live. The link becomes available once
+rows-plus-panel view without the Run rows, and also updates live. The link becomes available once
 the subagent has reported back to the parent.
 
 Messages come from the transcript files under the harness's own data
@@ -215,23 +221,6 @@ live and die with it: transcripts cleaned up by the harness (Claude Code:
 Custom harnesses record no transcript, so their runs have no messages.
 Codex runs show thinking rows only when the harness is configured to emit
 reasoning summaries; see [Harnesses](environments.md#harnesses).
-
-## The run detail window
-
-![The run detail window: one run's phases and report](img/run-detail.png)
-
-Opened from a run log row, this window breaks one run into its phase rows —
-check, classify, agent, result — each with Time, Phase, Result, Duration,
-and Details (including cost in dollars when the harness reports it).
-Clicking a row shows that phase's captured output below: the agent phase
-shows the run's terminal output, cleaned of ANSI codes and, for headless
-runs, pretty-printed if it looks like JSON.
-
-The window's own menu bar adds a File menu (Open Output File, Send
-Guidance…, Continue in Terminal, Continue with Guidance…, Open Run Folder,
-Open Working Directory) and a View menu with a "Raw Terminal Log"
-checkbox — the raw-output toggle — which switches the display between the
-cleaned output and the untouched raw terminal capture.
 
 ## The engine log window
 

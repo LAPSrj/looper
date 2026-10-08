@@ -65,7 +65,6 @@ if (!app.requestSingleInstanceLock()) {
     });
     registerIpc(engine, {
       getWindow: () => win,
-      openRunDetail: openRunDetailWindow,
       openMessages: openMessagesWindow,
       openMessageImage: openImageWindow,
       openEditor: openEditorWindow,
@@ -106,7 +105,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   // macOS: the global menu bar follows the focused window — a window with its
-  // own menu (run detail, messages) shows it; every other window shows the main menu.
+  // own menu (run, subagent) shows it; every other window shows the main menu.
   app.on('browser-window-focus', (_e, w) => {
     if (process.platform !== 'darwin') return;
     const own = macWindowMenus.get(w);
@@ -343,17 +342,17 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
   // The user is already looking at the app: no toast.
   if (BrowserWindow.getFocusedWindow()) return;
   const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
-  // A live run lands on the terminal; a finished one on the run log, the run
+  // A live run lands on the terminal; a finished one on the Runs tab, the run
   // selected so its report is on screen.
   const view =
     e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' || e.kind === 'completed'
-      ? 'log'
+      ? 'runs'
       : 'terminal';
   toast.on('click', () => openTaskView(e.taskId, e.runId, view));
   toast.show();
 }
 
-function openTaskView(taskId: string, runId: string, view: 'terminal' | 'log'): void {
+function openTaskView(taskId: string, runId: string, view: 'terminal' | 'runs'): void {
   const payload = { type: 'open-task', taskId, runId, view };
   if (!win || win.isDestroyed()) {
     createWindow();
@@ -391,7 +390,7 @@ function loadRenderer(target: BrowserWindow, hash?: string): void {
   }
 }
 
-/** macOS: windows that carry their own menu (run detail, messages). */
+/** macOS: windows that carry their own menu (run, subagent). */
 const macWindowMenus = new WeakMap<BrowserWindow, Menu>();
 
 /** Drop the Windows mnemonic ampersands from labels, recursively. */
@@ -582,109 +581,13 @@ function promptRunOptions(taskId: string): Promise<boolean> {
   });
 }
 
-function openRunDetailWindow(taskId: string, runId: string): void {
-  const task = engine?.getTask(taskId);
-  const title = task ? `${task.name} – ${runId}` : `Run ${runId}`;
-  const hash = `run-detail/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`;
-  const child = new BrowserWindow({
-    width: 800,
-    height: 500,
-    minWidth: 520,
-    minHeight: 420,
-    title,
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    maximizable: true,
-    webPreferences: webPreferences(),
-  });
-  // Links in rendered output open in the system browser, never a new app window.
-  child.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  const send = (type: string) => {
-    if (!child.isDestroyed()) child.webContents.send('ui:event', { type });
-  };
-  const openHostPath = async (p: string) => {
-    if (process.platform === 'win32' && p.startsWith('/')) {
-      const winPath = await convertWslPath(p, 'windows');
-      if (winPath) { void shell.openPath(winPath); return; }
-    }
-    void shell.openPath(p);
-  };
-  const outputFile = (raw: boolean): string => {
-    if (!engine) return '';
-    const dir = engine.runDir(taskId, runId);
-    const clean = path.join(dir, 'output.txt');
-    return !raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
-  };
-  let rawChecked = false;
-  // Snapshot at window open; a run still in flight then keeps the Continue
-  // items off, and Send Guidance reports a run that has ended since.
-  const canContinue = engine?.canContinueRun(taskId, runId) ?? false;
-  const canGuide = engine?.canGuideRun(taskId, runId) ?? false;
-  const template: Electron.MenuItemConstructorOptions[] = [
-    {
-      label: '&File',
-      submenu: [
-        {
-          label: 'Open &Output File',
-          click: () => void openHostPath(outputFile(rawChecked)),
-        },
-        { type: 'separator' },
-        {
-          label: '&Send Guidance…',
-          enabled: canGuide,
-          click: () => openSendGuidanceWindow(taskId, runId),
-        },
-        {
-          label: 'Continue in &Terminal',
-          enabled: canContinue,
-          click: () =>
-            void engine?.openTaskTerminal(taskId, runId).catch(async (err: unknown) => {
-              await dialog.showMessageBox(child, {
-                type: 'error',
-                title: 'Looper',
-                message: err instanceof Error ? err.message : String(err),
-                buttons: ['OK'],
-              });
-            }),
-        },
-        {
-          label: 'Continue with &Guidance…',
-          enabled: canContinue,
-          click: () => openContinueRunWindow(taskId, runId),
-        },
-        { type: 'separator' },
-        {
-          label: 'Open &Run Folder',
-          click: () => { if (engine) void openHostPath(engine.runDir(taskId, runId)); },
-        },
-        {
-          label: 'Open &Working Directory',
-          enabled: !!task?.cwd,
-          click: () => { if (task?.cwd) void openHostPath(task.cwd); },
-        },
-      ],
-    },
-    {
-      label: '&View',
-      submenu: [
-        { id: 'raw-output', label: '&Raw Terminal Log', type: 'checkbox', checked: false, click: (item) => { rawChecked = item.checked; send('toggle-raw-output'); } },
-      ],
-    },
-  ];
-  attachWindowMenu(child, template);
-  loadRenderer(child, hash);
-}
-
 function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string): void {
   const task = engine?.getTask(taskId);
   const title = agentId
     ? label?.trim()
       ? `Subagent: ${label.trim().slice(0, 80)}`
       : `Subagent ${agentId}`
-    : `Messages – ${task ? task.name : taskId} – ${runId}`;
+    : `${task ? task.name : taskId} – ${runId}`;
   const child = new BrowserWindow({
     width: 960,
     height: 640,
@@ -753,16 +656,53 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       });
     }
   };
+  // The run's captured terminal output; the raw log while Raw Agent Output is on.
+  let rawOutput = false;
+  const outputFile = (): string => {
+    if (!engine) return '';
+    const dir = engine.runDir(taskId, runId);
+    const clean = path.join(dir, 'output.txt');
+    return !rawOutput && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
+  };
+  // Snapshot at window open: a run still in flight keeps the Continue items off.
+  const canContinue = !agentId && (engine?.canContinueRun(taskId, runId) ?? false);
+  // A subagent's window shows only its conversation; the run's own items are the run window's.
+  const runItems: Electron.MenuItemConstructorOptions[] = agentId
+    ? []
+    : [
+        { label: 'Open &Output File', click: () => void openHostPath(outputFile()) },
+        { type: 'separator' },
+        {
+          label: 'Continue in &Terminal',
+          enabled: canContinue,
+          click: () =>
+            void engine?.openTaskTerminal(taskId, runId).catch(async (err: unknown) => {
+              await dialog.showMessageBox(child, {
+                type: 'error',
+                title: 'Looper',
+                message: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }),
+        },
+        {
+          label: 'Continue with &Guidance…',
+          enabled: canContinue,
+          click: () => openContinueRunWindow(taskId, runId),
+        },
+        { type: 'separator' },
+      ];
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
       submenu: [
         { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown() },
         { type: 'separator' },
+        ...runItems,
         {
           label: 'Open &Run Folder',
           click: () => {
-            if (engine) void shell.openPath(engine.runDir(taskId, runId));
+            if (engine) void openHostPath(engine.runDir(taskId, runId));
           },
         },
         {
@@ -783,6 +723,19 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           checked: false,
           click: (item) => send({ type: 'messages-raw', checked: item.checked }),
         },
+        ...(agentId
+          ? []
+          : [
+              {
+                label: 'Raw Agent &Output',
+                type: 'checkbox' as const,
+                checked: false,
+                click: (item: Electron.MenuItem) => {
+                  rawOutput = item.checked;
+                  send({ type: 'messages-raw-output', checked: item.checked });
+                },
+              },
+            ]),
         {
           label: '&Auto Scroll',
           type: 'checkbox',
@@ -790,6 +743,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           click: (item) => send({ type: 'messages-auto-scroll', checked: item.checked }),
         },
         { type: 'separator' },
+        ...(agentId ? [] : [showItem('show-run', 'Show Run &Log', 'run')]),
         showItem('show-messages', 'Show &Messages', 'messages'),
         showItem('show-thinking', 'Show &Thinking', 'thinking'),
         showItem('show-tools', 'Show Tool &Usage', 'tools'),
@@ -1338,7 +1292,7 @@ function buildMenu(
     },
   ];
   if (process.platform === 'darwin') {
-    // Don't stomp the menu of a focused run-detail/messages window; the
+    // Don't stomp the menu of a focused run/subagent window; the
     // browser-window-focus handler restores the main menu on the next switch.
     const focused = BrowserWindow.getFocusedWindow();
     if (!focused || !macWindowMenus.has(focused)) {

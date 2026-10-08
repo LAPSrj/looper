@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { RunRecord, Task } from '@shared/types';
+import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
@@ -17,6 +17,7 @@ const RUN_COLS: readonly TableCol[] = [
 interface Props {
   task: Task;
   records: RunRecord[];
+  runtime: TaskRuntime | undefined;
   hideNoAction: boolean;
   /** Run to select (notification click); a fresh object per click re-triggers. */
   focusRun?: { runId: string } | null;
@@ -57,7 +58,7 @@ function resultText(records: RunRecord[]): string {
   return r?.body ?? r?.summary ?? '';
 }
 
-export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
+export function RunLog({ task, records, runtime, hideNoAction, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -113,7 +114,7 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
     count: groups.length,
     index: idx,
     onIndex: (i) => setSelected(groups[i].runId),
-    onActivate: (i) => void window.looper.openRunDetail(task.id, groups[i].runId),
+    onActivate: (i) => void window.looper.openMessages(task.id, groups[i].runId),
     scrollToId: selected ? `run-${selected}` : null,
   });
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -124,6 +125,8 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
     }
     nav(e);
   };
+
+  const isRunning = (runId: string) => runtime?.runs.some((r) => r.runId === runId) ?? false;
 
   const onDragStart = useDragResize({
     axis: 'y',
@@ -143,7 +146,7 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
                 id={`run-${g.runId}`}
                 className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
                 onClick={() => setSelected(g.runId)}
-                onDoubleClick={() => void window.looper.openRunDetail(task.id, g.runId)}
+                onDoubleClick={() => void window.looper.openMessages(task.id, g.runId)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setSelected(g.runId);
@@ -153,7 +156,7 @@ export function RunLog({ task, records, hideNoAction, focusRun }: Props) {
                 <td>{fmtDate(g.startTs)}</td>
                 <td>{fmtTime(g.startTs)}</td>
                 <td>{fmtTime(g.endTs)}</td>
-                <td>{resultLabel(g.result)}</td>
+                <td>{isRunning(g.runId) ? 'Running' : resultLabel(g.result)}</td>
                 <td>{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
                 <td title={g.details}>{g.details}</td>
               </tr>

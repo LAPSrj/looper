@@ -1,17 +1,133 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MessagesShowKey } from '@shared/api';
 import type { MessageRow, MessagesResult } from '@shared/messages';
-import type { RunRecord, Task, TaskRuntime } from '@shared/types';
-import { fmtDate, fmtTime, resultLabel } from '../format';
+import type { RunRecord } from '@shared/types';
+import { subscribe } from '../events';
+import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
 import { useDragResize, useListNav } from './hooks';
-import { MessageBody } from './Markdown';
+import { Markdown, MessageBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 
 const POLL_MS = 2000;
 
-function typeLabel(row: MessageRow): string {
+/** One of the run's own records (check, classifier, agent, result, guidance), shown among the messages. */
+interface StepRow {
+  id: string;
+  ts: string;
+  kind: 'step';
+  preview: string;
+  record: RunRecord;
+}
+
+type Row = MessageRow | StepRow;
+
+const STEP_NAMES: Record<string, string> = {
+  check: 'Check',
+  classify: 'Classifier',
+  agent: 'Agent',
+  guidance: 'Guidance',
+};
+
+const STEP_OUTCOMES: Record<string, string> = {
+  started: 'started',
+  done: 'completed',
+  success: 'completed',
+  warning: 'warning',
+  act: 'found work',
+  noop: 'found nothing to do',
+  error: 'failed',
+  stopped: 'stopped',
+  interrupted: 'was interrupted',
+  'idle-timeout': 'went idle',
+  'max-runtime': 'timed out',
+  held: 'is waiting for you',
+  exited: 'exited',
+  sent: 'sent',
+  delivered: 'delivered',
+  undelivered: 'not delivered',
+};
+
+/** The Details text of a run record, e.g. "Agent completed in 5m10s". */
+function stepText(r: RunRecord): string {
+  const note = r.error ?? r.summary;
+  switch (r.phase) {
+    case 'result':
+      return note ? `Result: ${note}` : 'Result';
+    case 'skip':
+      return note ? `Skipped: ${note}` : 'Skipped';
+    case 'watcher':
+      return note ? `Watcher fired: ${note}` : 'Watcher fired';
+    case 'system':
+      return capFirst(note ?? resultLabel(r.result));
+  }
+  let text = `${STEP_NAMES[r.phase] ?? capFirst(r.phase)} ${STEP_OUTCOMES[r.result] ?? resultLabel(r.result).toLowerCase()}`;
+  if (r.durationMs !== undefined) text += ` in ${formatDuration(r.durationMs)}`;
+  if (r.detail?.costUsd !== undefined) text += ` ($${Number(r.detail.costUsd).toFixed(3)})`;
+  // A started record repeats the check's summary, and a delivered one says only that.
+  if (r.result === 'started' || r.result === 'delivered') return text;
+  const shown = r.phase === 'guidance' ? note?.replace(/^not delivered: /, '') : note;
+  return shown ? `${text}: ${shown}` : text;
+}
+
+/** The run's records and the conversation in one timeline; rows without a timestamp stay where they are. */
+function mergeRows(messages: MessageRow[], steps: StepRow[]): Row[] {
+  if (steps.length === 0) return messages;
+  const out: Row[] = [];
+  let i = 0;
+  for (const m of messages) {
+    if (m.ts) {
+      const at = Date.parse(m.ts);
+      while (i < steps.length && Date.parse(steps[i].ts) < at) out.push(steps[i++]);
+    }
+    out.push(m);
+  }
+  while (i < steps.length) out.push(steps[i++]);
+  return out;
+}
+
+type AgentMode = 'interactive' | 'headless';
+
+/** Pretty output: JSON is indented and kept verbatim, anything else renders as markdown. */
+interface Output {
+  text: string;
+  kind: 'json' | 'markdown' | 'raw';
+}
+
+function formatOutput(text: string, mode: AgentMode): Output {
+  if (mode !== 'headless') return { text, kind: 'markdown' };
+  const trimmed = text.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), kind: 'json' };
+    } catch { /* not valid JSON */ }
+  }
+  const lines = trimmed.split('\n');
+  if (lines.length > 1) {
+    let anyFormatted = false;
+    const formatted = lines.map((line) => {
+      const t = line.trim();
+      if (t.startsWith('{') || t.startsWith('[')) {
+        try {
+          const pretty = JSON.stringify(JSON.parse(t), null, 2);
+          anyFormatted = true;
+          return pretty;
+        } catch { /* not JSON */ }
+      }
+      return line;
+    });
+    if (anyFormatted) return { text: formatted.join('\n'), kind: 'json' };
+  }
+  return { text, kind: 'markdown' };
+}
+
+/** The agent's end record shows the session's captured terminal output. */
+const isAgentEnd = (r: RunRecord) => r.phase === 'agent' && r.result !== 'started' && r.result !== 'warning';
+
+function typeLabel(row: Row): string {
   switch (row.kind) {
+    case 'step':
+      return 'Run';
     case 'prompt':
       return 'Prompt';
     case 'guidance':
@@ -31,7 +147,8 @@ function openSubagent(taskId: string, runId: string, row: MessageRow): void {
 }
 
 /** Double-click: an image row opens its image window; a Task row opens the subagent. */
-function openRow(taskId: string, runId: string, agentId: string | undefined, row: MessageRow): void {
+function openRow(taskId: string, runId: string, agentId: string | undefined, row: Row): void {
+  if (row.kind === 'step') return;
   if (row.image) {
     void window.looper.openMessageImage(taskId, runId, row.id, agentId, row.file ?? row.preview);
   } else {
@@ -46,8 +163,10 @@ const MESSAGE_COLS: readonly TableCol[] = [
 ];
 
 /** The View-menu category a row belongs to; null (raw rows) is always shown. */
-function categoryOf(r: MessageRow): MessagesShowKey | null {
+function categoryOf(r: Row): MessagesShowKey | null {
   switch (r.kind) {
+    case 'step':
+      return 'run';
     case 'prompt':
     case 'guidance':
     case 'agent':
@@ -61,7 +180,10 @@ function categoryOf(r: MessageRow): MessagesShowKey | null {
   }
 }
 
-function matchesFilter(r: MessageRow, f: string): boolean {
+function matchesFilter(r: Row, f: string): boolean {
+  if (r.kind === 'step') {
+    return r.preview.toLowerCase().includes(f) || (r.record.body?.toLowerCase().includes(f) ?? false);
+  }
   return (
     r.preview.toLowerCase().includes(f) ||
     r.text.toLowerCase().includes(f) ||
@@ -82,15 +204,23 @@ interface ViewProps {
   refreshKey?: number;
 }
 
-/** The conversation itself: a row per message/tool call, full content in the panel below. */
+/**
+ * A run's window: its own records (check, classifier, agent, result) and its
+ * conversation in one table, full content in the panel below. A subagent's
+ * window (agentId set) shows only its conversation.
+ */
 export function MessagesView({ taskId, runId, agentId, running, refreshKey }: ViewProps) {
   const [result, setResult] = useState<MessagesResult | null>(null);
+  const [records, setRecords] = useState<RunRecord[]>([]);
+  const [mode, setMode] = useState<AgentMode>('interactive');
   const [raw, setRaw] = useState(false);
+  const [rawOutput, setRawOutput] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>('result');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [stepOutput, setStepOutput] = useState<Output | null>(null);
   const [splitPct, setSplitPct] = useState(60);
-  const [show, setShow] = useState<Record<MessagesShowKey, boolean>>({ messages: true, thinking: true, tools: true, subagents: true });
+  const [show, setShow] = useState<Record<MessagesShowKey, boolean>>({ run: true, messages: true, thinking: true, tools: true, subagents: true });
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -105,6 +235,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
         setShow((s) => ({ ...s, [e.key]: e.checked }));
       } else if (e.type === 'messages-raw') {
         setRaw(e.checked);
+      } else if (e.type === 'messages-raw-output') {
+        setRawOutput(e.checked);
       } else if (e.type === 'messages-auto-scroll') {
         setAutoScroll(e.checked);
       } else if (e.type === 'messages-filter') {
@@ -113,6 +245,28 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
       }
     });
   }, []);
+
+  // The run's own records: loaded once, then appended as the engine writes them.
+  useEffect(() => {
+    if (agentId) return;
+    let cancelled = false;
+    void window.looper.tasks.list().then((tasks) => {
+      const t = tasks.find((x) => x.id === taskId);
+      if (!cancelled && t) setMode(t.agent.mode);
+    });
+    void window.looper.runs.list(taskId).then((all) => {
+      if (!cancelled) setRecords(all.filter((r) => r.runId === runId));
+    });
+    const unsubscribe = subscribe((e) => {
+      if (e.type === 'record' && e.record.taskId === taskId && e.record.runId === runId) {
+        setRecords((prev) => [...prev, e.record]);
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [taskId, runId, agentId]);
 
   const fetchNow = useCallback(() => {
     void window.looper.runs
@@ -138,7 +292,12 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
     return () => clearInterval(t);
   }, [running, fetchNow, refreshKey]);
 
-  const rows = result?.rows ?? [];
+  const steps = useMemo(
+    () =>
+      records.map((r, i): StepRow => ({ id: `step-${i}`, ts: r.ts, kind: 'step', preview: stepText(r), record: r })),
+    [records],
+  );
+  const rows = useMemo(() => mergeRows(result?.rows ?? [], steps), [result, steps]);
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
     return rows.filter((r) => {
@@ -178,7 +337,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
 
   // The image payload stays engine-side; fetch it when an image row is selected.
   const currentId = current?.id;
-  const currentHasImage = !!current?.image;
+  const currentHasImage = current !== null && current.kind !== 'step' && !!current.image;
   useEffect(() => {
     setImageUrl(null);
     if (currentId === undefined || !currentHasImage) return;
@@ -202,6 +361,28 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
       cancelled = true;
     };
   }, [taskId, runId, agentId, currentId, currentHasImage]);
+
+  // A run record's content; the agent's end record reads the captured terminal output.
+  // Records are only ever appended, so the selected record's identity is stable.
+  const currentRecord = current?.kind === 'step' ? current.record : null;
+  useEffect(() => {
+    setStepOutput(null);
+    if (!currentRecord) return;
+    let cancelled = false;
+    void (async () => {
+      if (isAgentEnd(currentRecord)) {
+        const text = stripAnsi(await window.looper.runs.output(taskId, runId, rawOutput)) || '(no output captured)';
+        if (!cancelled) setStepOutput(rawOutput ? { text, kind: 'raw' } : formatOutput(text, mode));
+      } else {
+        const r = currentRecord;
+        const text = r.body || r.stdoutTail || r.error || r.summary || '(no output)';
+        setStepOutput(formatOutput(text, mode));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRecord, rawOutput, mode, taskId, runId]);
 
   const nav = useListNav({
     count: visible.length,
@@ -234,9 +415,14 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
     onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
   });
 
-  const onRowContextMenu = (e: React.MouseEvent, r: MessageRow) => {
+  const onRowContextMenu = (e: React.MouseEvent, r: Row) => {
     e.preventDefault();
     setSelected(r.id);
+    if (r.kind === 'step') {
+      const text = r.record.body || r.record.stdoutTail || r.record.error || r.preview;
+      window.looper.showMessageContextMenu({ taskId, runId, label: r.preview, text });
+      return;
+    }
     window.looper.showMessageContextMenu({
       taskId,
       runId,
@@ -306,12 +492,23 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
     );
   };
 
-  const detail = (row: MessageRow) => {
+  const stepDetail = () => {
+    if (stepOutput === null) return null;
+    return stepOutput.kind === 'markdown' ? <Markdown text={stepOutput.text} /> : <pre className="output">{stepOutput.text}</pre>;
+  };
+
+  const detail = (row: Row) => {
+    if (row.kind === 'step') return stepDetail();
     if (row.kind === 'tool') return toolDetail(row);
     if (row.image) return imagePane(row);
     if (row.kind === 'thinking' || row.kind === 'raw') return <pre className="output">{row.text}</pre>;
     return <MessageBody text={row.text} />;
   };
+
+  const rowClass = (r: Row) =>
+    r.kind === 'step'
+      ? `msg-row msg-step result-${r.record.result}`
+      : `msg-row msg-${r.kind}${r.resultError ? ' msg-error' : ''}`;
 
   return (
     <div className="messages" ref={containerRef}>
@@ -340,7 +537,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
               <tr
                 key={r.id}
                 id={`msg-${r.id}`}
-                className={`msg-row msg-${r.kind}${r.resultError ? ' msg-error' : ''}${selected === r.id ? ' selected' : ''}`}
+                className={`${rowClass(r)}${selected === r.id ? ' selected' : ''}`}
                 onClick={() => setSelected(r.id)}
                 onDoubleClick={() => openRow(taskId, runId, agentId, r)}
                 onContextMenu={(e) => onRowContextMenu(e, r)}
@@ -371,109 +568,6 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
       <div className="messages-detail" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
         {current === null ? <div className="messages-detail-empty muted">Select a message</div> : detail(current)}
       </div>
-    </div>
-  );
-}
-
-const RUN_COLS: readonly TableCol[] = [
-  { label: 'Date', width: 92 },
-  { label: 'Start', width: 76 },
-  { label: 'Result', width: 96, min: 60 },
-  { label: 'Details' },
-];
-
-interface RunEntry {
-  runId: string;
-  ts: string;
-  result: string;
-  details: string;
-}
-
-interface Props {
-  task: Task;
-  records: RunRecord[];
-  runtime: TaskRuntime | undefined;
-}
-
-/**
- * The Messages tab: the task's agent runs; a run's conversation opens in its
- * own window, which updates live while the run is in flight.
- */
-export function Messages({ task, records, runtime }: Props) {
-  const runs = useMemo(() => {
-    const byRun = new Map<string, RunRecord[]>();
-    for (const r of records) {
-      const list = byRun.get(r.runId);
-      if (list) list.push(r);
-      else byRun.set(r.runId, [r]);
-    }
-    const out: RunEntry[] = [];
-    for (const [runId, all] of byRun) {
-      // Guidance records say nothing about how the run went; they may even land after its result.
-      const recs = all.filter((r) => r.phase !== 'guidance');
-      // Only runs that reached the classifier or the agent have a conversation.
-      const step = recs.find((r) => r.phase === 'agent') ?? recs.find((r) => r.phase === 'classify');
-      if (!step) continue;
-      const final = recs.findLast((r) => r.phase === 'result');
-      const last = recs[recs.length - 1];
-      out.push({
-        runId,
-        ts: step.ts,
-        result: final?.result ?? last.result,
-        details: final?.summary ?? last.error ?? last.summary ?? '',
-      });
-    }
-    out.sort((a, b) => b.runId.localeCompare(a.runId));
-    return out;
-  }, [records]);
-
-  const [selected, setSelected] = useState<string | null>(null);
-  const idx = selected === null ? -1 : runs.findIndex((r) => r.runId === selected);
-  const open = (runId: string) => void window.looper.openMessages(task.id, runId);
-  const nav = useListNav({
-    count: runs.length,
-    index: idx,
-    onIndex: (i) => setSelected(runs[i].runId),
-    onActivate: (i) => open(runs[i].runId),
-    scrollToId: selected !== null ? `msgrun-${selected}` : null,
-  });
-
-  const isRunning = (runId: string) =>
-    runtime?.runs.some((r) => r.runId === runId && (r.state === 'running' || r.state === 'classifying')) ?? false;
-
-  return (
-    <div className="messages-runs" tabIndex={0} onKeyDown={nav}>
-      <table className="runlog-table">
-        <ResizableColumns cols={RUN_COLS} storageKey="messages-runs" />
-        <tbody>
-          {runs.map((r) => (
-            <tr
-              key={r.runId}
-              id={`msgrun-${r.runId}`}
-              className={`msg-run-row result-${r.result}${selected === r.runId ? ' selected' : ''}`}
-              onClick={() => setSelected(r.runId)}
-              onDoubleClick={() => open(r.runId)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setSelected(r.runId);
-                window.looper.showRunContextMenu({ taskId: task.id, runId: r.runId, details: r.details });
-              }}
-            >
-              <td>{fmtDate(r.ts)}</td>
-              <td>{fmtTime(r.ts)}</td>
-              <td>{isRunning(r.runId) ? 'Running' : resultLabel(r.result)}</td>
-              <td title={r.details}>{r.details}</td>
-            </tr>
-          ))}
-          {runs.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                No agent runs yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
     </div>
   );
 }

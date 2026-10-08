@@ -43,10 +43,10 @@ export function App() {
   const uiRef = useRef({ selected, tasks, runtimes, terminalRun });
   uiRef.current = { selected, tasks, runtimes, terminalRun };
 
-  const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'log' }) => {
+  const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
     setSelected(e.taskId);
     setTab(e.view);
-    setFocusRun(e.view === 'log' ? { runId: e.runId } : null);
+    setFocusRun(e.view === 'runs' ? { runId: e.runId } : null);
   }, []);
 
   const uiAction = useCallback((type: UiEvent['type']) => {
@@ -197,7 +197,7 @@ export function App() {
     };
   }, []);
 
-  useDialogKeys<DetailTab>({ tabs: ['status', 'log', 'messages', 'terminal'], tab, onTab: setTab });
+  useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: setTab });
 
   useEffect(() => {
     if (!selected || records[selected]) return;

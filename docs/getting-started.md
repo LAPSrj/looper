@@ -102,7 +102,7 @@ and field.
 Select the task in the sidebar and click Run Now (or press F5, or use
 Task → Run Now). Switch to the task's Terminal tab to watch the agent work
 in a real pty — you can type into it if the agent is waiting on you. The
-Status tab shows the task's current state and last result; the Run log tab
+Status tab shows the task's current state and last result; the Runs tab
 lists every past run with its check/classifier/agent outcome. See
 [how a run works](how-a-run-works.md) and [monitoring](monitoring.md) for
 what to expect during and after a run.

@@ -11,7 +11,6 @@ import type { Task } from '../shared/types';
 
 export interface IpcHost {
   getWindow: () => BrowserWindow | null;
-  openRunDetail: (taskId: string, runId: string) => void;
   openMessages: (taskId: string, runId: string, agentId?: string, label?: string) => void;
   openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
   openEditor: (taskId?: string) => void;
@@ -199,7 +198,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
 
   ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
-  ipcMain.handle('runDetail:open', (_e, taskId: string, runId: string) => host.openRunDetail(taskId, runId));
   ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
   ipcMain.handle('noteEditor:open', (_e, taskId: string) => host.openNoteEditor(taskId));
   ipcMain.handle('moveToFolder:open', (_e, taskId: string) => host.openMoveToFolder(taskId));
@@ -563,9 +561,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const canContinue = engine.canContinueRun(info.taskId, info.runId);
     const canGuide = engine.canGuideRun(info.taskId, info.runId);
     const menu = Menu.buildFromTemplate([
+      { label: 'Open', click: () => host.openMessages(info.taskId, info.runId) },
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
-      { label: 'View Details', click: () => host.openRunDetail(info.taskId, info.runId) },
-      { label: 'View Messages', click: () => host.openMessages(info.taskId, info.runId) },
       { type: 'separator' },
       {
         label: 'Send Guidance…',

@@ -1356,30 +1356,6 @@ button:focus-visible,
 
 /* ---------- Messages ---------- */
 
-.messages-runs {
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
-}
-
-.messages-runs:focus-visible {
-  outline: none;
-}
-
-.messages-runs .runlog-table tr.msg-run-row {
-  cursor: default;
-}
-
-.messages-runs .runlog-table tr.msg-run-row:hover td {
-  background: var(--bg-3);
-}
-
-.messages-runs .runlog-table tr.msg-run-row.selected td,
-.messages-runs .runlog-table tr.msg-run-row.selected:hover td {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
 .col-resize {
   position: absolute;
   top: 0;
