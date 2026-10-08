@@ -1494,7 +1494,7 @@ export class Scheduler extends EventEmitter {
       return;
     }
     if (end.autoPausedReason && n.autoPaused) {
-      this.notify(task, runId, 'auto-paused', capFirst(end.autoPausedReason));
+      this.notify(task, runId, 'auto-paused', capFirst(end.autoPausedReason), true);
       return;
     }
     if (end.completed && n.completed) {
@@ -1511,11 +1511,12 @@ export class Scheduler extends EventEmitter {
       (n.end === 'error' && end.errored);
     if (!matches) return;
     const label = resultLabel(end.outcome);
-    this.notify(task, runId, 'end', end.detail ? `${label}: ${capFirst(end.detail)}` : label);
+    const problem = end.errored || end.outcome === 'warning';
+    this.notify(task, runId, 'end', end.detail ? `${label}: ${capFirst(end.detail)}` : label, problem);
   }
 
-  private notify(task: Task, runId: string, kind: NotifyKind, body: string): void {
-    this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body });
+  private notify(task: Task, runId: string, kind: NotifyKind, body: string, problem?: boolean): void {
+    this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body, ...(problem ? { problem } : {}) });
   }
 
   /** Feed a session's output into the run's terminal buffer and the live event stream. */

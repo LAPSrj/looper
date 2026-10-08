@@ -26,8 +26,8 @@ started. No idle burn, no context rot, at most one agent per task, ever.
   run window with each run's steps and full conversation, live status, and a
   real terminal tab you can watch *and type into* mid-run.
 - **System notifications** — each task picks what it toasts, from errors-only
-  to every run; clicking one lands on the live terminal or the run in the
-  Runs tab.
+  to every run; clicking one lands on the live terminal, the run in the Runs
+  tab, or, for an error or warning, the run's window with its report selected.
 - **Any harness, any environment** — Claude Code, Codex, or a custom agent
   CLI; Looper on Windows driving agents inside WSL, or Linux/WSL directly.
 - **Easy task setup** — an editor with Trigger / Check / Classifier / Agent

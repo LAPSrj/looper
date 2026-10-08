@@ -37,7 +37,7 @@ const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(has
 const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|\d+)$/.exec(hash);
 const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runOptionsMatch = /^run-options\/([^/]+)$/.exec(hash);
-const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
+const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(\/report)?$/.exec(hash);
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
@@ -121,6 +121,7 @@ function pickRoot() {
         runId={decodeURIComponent(messagesMatch[2])}
         agentId={messagesMatch[3] === '-' ? undefined : decodeURIComponent(messagesMatch[3])}
         title={decodeURIComponent(messagesMatch[4])}
+        focusReport={!!messagesMatch[5]}
       />
     );
   }

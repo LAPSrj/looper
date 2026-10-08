@@ -632,7 +632,8 @@ export type EngineEvent =
   | { type: 'record'; record: RunRecord }
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
   | { type: 'agent:end'; taskId: string; runId: string }
-  | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string }
+  /** problem: the run ended with an error or warning; a click opens its run window on the report. */
+  | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }
   | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }

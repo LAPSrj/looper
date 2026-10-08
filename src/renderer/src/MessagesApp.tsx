@@ -9,7 +9,20 @@ import { subscribe } from './events';
  * agent guidance; a subagent's window has none, since guidance goes to the
  * main session.
  */
-export function MessagesApp({ taskId, runId, agentId, title }: { taskId: string; runId: string; agentId?: string; title: string }) {
+export function MessagesApp({
+  taskId,
+  runId,
+  agentId,
+  title,
+  focusReport,
+}: {
+  taskId: string;
+  runId: string;
+  agentId?: string;
+  title: string;
+  /** Opened from a warning/error toast: select the report row. */
+  focusReport?: boolean;
+}) {
   const [runtime, setRuntime] = useState<TaskRuntime | null>(null);
   const [canGuide, setCanGuide] = useState(false);
   const [guidance, setGuidance] = useState('');
@@ -56,7 +69,7 @@ export function MessagesApp({ taskId, runId, agentId, title }: { taskId: string;
 
   return (
     <div className="messages-app">
-      <MessagesView taskId={taskId} runId={runId} agentId={agentId} running={running} refreshKey={sent} />
+      <MessagesView taskId={taskId} runId={runId} agentId={agentId} running={running} refreshKey={sent} focusReport={focusReport} />
       {canGuide && (
         <div className="guidance-compose">
           <textarea

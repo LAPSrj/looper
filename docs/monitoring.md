@@ -288,9 +288,13 @@ environment errors" is on.
 A master switch lives in **Settings → General → Show notifications**, and
 the same toggle is available from the tray menu as "Enable Notifications" /
 "Disable Notifications". Clicking a toast opens the task: for a live run
-(run started, agent started, held) it opens the Terminal tab; for a
-finished cycle (end, auto-paused, usage limit, completed) it opens the Runs
-tab with that run selected. No toast fires while any Looper window is focused.
+(run started, agent started, held) it opens the Terminal tab. For a run that
+ended with an error or a warning, or that auto-paused its task, it opens the
+[run window](#the-run-window) with the run's report row selected (or its
+last step, when the run has no report). Any other finished cycle (end, usage
+limit, completed) opens the Runs tab with that run selected. A toast clicked
+later from the Windows notification center still works, as long as Looper
+hasn't been closed since it showed the toast. No toast fires while any Looper window is focused.
 
 ## Rest Mode
 

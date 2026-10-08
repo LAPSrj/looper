@@ -202,6 +202,8 @@ interface ViewProps {
   running: boolean;
   /** Changing it refetches right away. */
   refreshKey?: number;
+  /** Select the run's report row (or, without one, its last step) once both have loaded. */
+  focusReport?: boolean;
 }
 
 /**
@@ -209,7 +211,7 @@ interface ViewProps {
  * conversation in one table, full content in the panel below. A subagent's
  * window (agentId set) shows only its conversation.
  */
-export function MessagesView({ taskId, runId, agentId, running, refreshKey }: ViewProps) {
+export function MessagesView({ taskId, runId, agentId, running, refreshKey, focusReport }: ViewProps) {
   const [result, setResult] = useState<MessagesResult | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [mode, setMode] = useState<AgentMode>('interactive');
@@ -328,6 +330,17 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey }: Vi
     const wrap = wrapRef.current;
     if (wrap) wrap.scrollTop = wrap.scrollHeight;
   }, [autoScroll, lastId, selected]);
+
+  // Opened from a toast: once the records and the transcript are both in,
+  // select the report row (an error run may have none: then its last step).
+  const reportFocused = useRef(false);
+  useEffect(() => {
+    if (!focusReport || reportFocused.current || result === null || steps.length === 0) return;
+    reportFocused.current = true;
+    const report = steps.findLast((s) => s.record.phase === 'result') ?? steps[steps.length - 1];
+    setSelected(report.id);
+    atBottomRef.current = false;
+  }, [focusReport, result, steps]);
 
   const idx = selected === null ? -1 : visible.findIndex((r) => r.id === selected);
   const current = idx >= 0 ? visible[idx] : null;

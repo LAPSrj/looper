@@ -337,19 +337,52 @@ function createTray(): void {
   }
 }
 
+/** Where a click on a task toast lands. */
+interface ToastTarget {
+  taskId: string;
+  runId: string;
+  view: 'terminal' | 'runs' | 'run-window';
+}
+
+/**
+ * A toast delivers its click only while its object is alive, and a toast can
+ * sit in the Windows notification center long after it popped up, so each one
+ * is kept until it is clicked. The oldest are dropped past the cap.
+ */
+const liveToasts = new Set<Notification>();
+const MAX_LIVE_TOASTS = 100;
+
 function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void {
   if (!engine?.settings.notificationsEnabled || !Notification.isSupported()) return;
   // The user is already looking at the app: no toast.
   if (BrowserWindow.getFocusedWindow()) return;
+  // A run that ended badly opens its run window on the report; another
+  // finished one lands on the Runs tab with the run selected; a live run on
+  // the terminal.
+  const hasRun = e.runId !== '-';
+  const view: ToastTarget['view'] =
+    e.problem && hasRun
+      ? 'run-window'
+      : e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' || e.kind === 'completed'
+        ? 'runs'
+        : 'terminal';
+  const target: ToastTarget = { taskId: e.taskId, runId: e.runId, view };
   const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
-  // A live run lands on the terminal; a finished one on the Runs tab, the run
-  // selected so its report is on screen.
-  const view =
-    e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' || e.kind === 'completed'
-      ? 'runs'
-      : 'terminal';
-  toast.on('click', () => openTaskView(e.taskId, e.runId, view));
+  liveToasts.add(toast);
+  if (liveToasts.size > MAX_LIVE_TOASTS) liveToasts.delete(liveToasts.values().next().value!);
+  toast.on('click', () => {
+    liveToasts.delete(toast);
+    openToastTarget(target);
+  });
   toast.show();
+}
+
+function openToastTarget(t: ToastTarget): void {
+  if (t.view === 'run-window') {
+    openMessagesWindow(t.taskId, t.runId, undefined, undefined, true);
+    return;
+  }
+  openTaskView(t.taskId, t.runId, t.view);
 }
 
 function openTaskView(taskId: string, runId: string, view: 'terminal' | 'runs'): void {
@@ -581,7 +614,8 @@ function promptRunOptions(taskId: string): Promise<boolean> {
   });
 }
 
-function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string): void {
+/** focusReport: select the run's report row (or its last step) once it loads. */
+function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string, focusReport = false): void {
   const task = engine?.getTask(taskId);
   const title = agentId
     ? label?.trim()
@@ -782,7 +816,8 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
   });
   const hash =
     `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
-    `/${encodeURIComponent(title)}`;
+    `/${encodeURIComponent(title)}` +
+    (focusReport ? '/report' : '');
   loadRenderer(child, hash);
 }
 
