@@ -45,6 +45,8 @@ interface Harness {
   agentStarted: number;
   /** ctx.agentSession of each agent start, in order. */
   agentSessions: ({ id: string; resume: boolean } | undefined)[];
+  /** ctx.restart of each agent start, in order (a copy: the scheduler moves it on). */
+  agentRestarts: ({ count: number; handoff: string; elapsedMs: number } | undefined)[];
   /** ctx.note of each check run and each agent start, in order. */
   checkNotes: (string | undefined)[];
   agentNotes: (string | undefined)[];
@@ -96,6 +98,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     agentEnds: [],
     agentStarted: 0,
     agentSessions: [],
+    agentRestarts: [],
     checkNotes: [],
     agentNotes: [],
     liveAgent: null,
@@ -133,6 +136,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
         }
         h.agentStarted!++;
         h.agentSessions!.push(ctx.agentSession);
+        h.agentRestarts!.push(ctx.restart && { ...ctx.restart });
         h.agentNotes!.push(ctx.note);
         const signal = h.completeSignals!.shift();
         if (signal !== undefined) fs.writeFileSync(path.join(ctx.runDir, 'complete'), signal + '\n', 'utf8');
@@ -969,6 +973,62 @@ describe('simultaneous runs', () => {
     await h.tickN(1);
     expect(h.sched.getBuffer('t1')).toEqual({ runId: h.liveAgents[2].runId, data: '' });
     expect(h.sched.getBuffer('t1', h.liveAgents[0].runId)).toBeNull();
+  });
+});
+
+describe('context restarts', () => {
+  const restartEnd = (handoff: string, durationMs = 10): AgentEnd => ({
+    ...agentEnd('done', 'context past the limit', handoff),
+    doneStatus: 'restart',
+    durationMs,
+  });
+
+  it('a restart starts a new session with the handoff, inside the same run', async () => {
+    h.checks.push(check('act'));
+    h.agentEnds.push(restartEnd('Done: a and b. Left: c.', 40), { ...agentEnd('done', 'fixed c', 'All three fixed.'), doneStatus: 'success' });
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+    expect(h.agentRestarts).toEqual([undefined, { count: 1, handoff: 'Done: a and b. Left: c.', elapsedMs: 40 }]);
+    const recs = records();
+    expect(recs.map((r) => `${r.phase}:${r.result}`)).toEqual([
+      'check:act',
+      'agent:started',
+      'agent:restarted',
+      'agent:success',
+      'result:success',
+    ]);
+    const restarted = recs.find((r) => r.result === 'restarted')!;
+    expect(restarted.summary).toBe('restart 1 of 3: context past the limit');
+    expect(restarted.body).toBe('Done: a and b. Left: c.');
+    // One run, the whole step's duration, the last session's result.
+    const agentRec = h.events.find(
+      (e) => e.type === 'record' && e.record.phase === 'agent' && e.record.result === 'success',
+    ) as Extract<EngineEvent, { type: 'record' }>;
+    expect(agentRec.record.durationMs).toBe(50);
+    expect(h.sched.get('t1')!.lastDetail).toBe('fixed c');
+    // Each session ended with its own agent:end, so the terminal tab marks the seam.
+    expect(h.events.filter((e) => e.type === 'agent:end')).toHaveLength(2);
+  });
+
+  it('a rolling conversation moves on to the new session', async () => {
+    h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, session: 'continue' } });
+    h.checks.push(check('act'));
+    h.agentEnds.push(restartEnd('handoff'), agentEnd('done'));
+    await h.tickN(1);
+    const [first, second] = h.agentSessions;
+    expect(first!.resume).toBe(false);
+    expect(second!.resume).toBe(false);
+    expect(second!.id).not.toBe(first!.id);
+    expect(h.sched.get('t1')!.session).toEqual({ id: second!.id, runs: 1 });
+  });
+
+  it('a restart past the max runtime ends the run instead', async () => {
+    h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, maxRuntimeMin: 1 } });
+    h.checks.push(check('act'));
+    h.agentEnds.push(restartEnd('handoff', 60_000));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().slice(-2).map((r) => `${r.phase}:${r.result}`)).toEqual(['agent:max-runtime', 'result:max-runtime']);
   });
 });
 

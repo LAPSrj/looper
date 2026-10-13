@@ -15,6 +15,8 @@ export interface StopHookSpec {
   reminderFile: string;
   /** Guidance waiting for the agent: a stop takes it and continues with it. Unset = the step takes none. */
   guidanceFile?: string;
+  /** Looper's own notice waiting for the agent, taken the same way after any guidance. */
+  noticeFile?: string;
   /** JSON decision blocking a stop while background tasks run. */
   blockBackground: string;
   /** JSON decision reminding once that the done command was never run. */

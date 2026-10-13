@@ -51,6 +51,34 @@ export function takePendingGuidance(runDir: string): string | null {
   return claim(runDir, dest) ? readGuidanceFile(dest) : null;
 }
 
+/**
+ * A message from Looper itself (the context-limit warning) waits in its own
+ * file, handed over the same way as guidance but never shown or kept as the
+ * user's: a newer notice replaces a waiting one, and none ever starts a
+ * continuation run.
+ */
+export const NOTICE_FILE = 'notice.json';
+
+/** Leave a notice for the agent, replacing one still waiting. */
+export function queueNotice(runDir: string, text: string): void {
+  const file = path.join(runDir, NOTICE_FILE);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, asciiJson(text), 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+/** Take the waiting notice for delivery; null when there is none. */
+export function takeNotice(runDir: string): string | null {
+  const dest = path.join(runDir, `notice-${Date.now()}.json`);
+  try {
+    fs.renameSync(path.join(runDir, NOTICE_FILE), dest);
+    const v: unknown = JSON.parse(fs.readFileSync(dest, 'utf8'));
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Add guidance for the agent, after whatever is still waiting from earlier. */
 export function queueGuidance(runDir: string, text: string): void {
   const merging = path.join(runDir, `guidance-merging-${process.pid}.json`);

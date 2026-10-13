@@ -154,10 +154,49 @@ export interface AccumulatorOpts {
   raw?: boolean;
   /** Rows come from the classifier's conversation (marks them and prefixes their ids). */
   source?: 'classifier';
+  /** Rows come from an agent session a context restart ended: its number, which prefixes their ids. */
+  session?: number;
 }
 
 /** Row-id prefix of classifier rows, so a run's merged list never collides. */
 export const CLASSIFIER_ROW_PREFIX = 'c';
+
+/**
+ * File prefix an agent session's run-dir files (session.json, stop.json,
+ * done…) get once a context restart ends it, numbered from 1, so the next
+ * session starts with the plain names.
+ */
+export function restartPrefix(session: number): string {
+  return `session${session}-`;
+}
+
+/** Row-id prefix of an ended session's rows. */
+function sessionRowPrefix(session: number): string {
+  return `s${session}-`;
+}
+
+/** Which conversation a row of the merged list came from, by its id prefix. */
+function rowSource(rowId: string): 'classifier' | 'agent' | number {
+  if (rowId.startsWith(CLASSIFIER_ROW_PREFIX)) return 'classifier';
+  const m = /^s(\d+)-/.exec(rowId);
+  return m ? Number(m[1]) : 'agent';
+}
+
+/** The numbers of the agent sessions context restarts ended in this run, oldest first. */
+export function endedSessions(runDir: string): number[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(runDir);
+  } catch {
+    return [];
+  }
+  const found = new Set<number>();
+  for (const n of names) {
+    const m = /^session(\d+)-/.exec(n);
+    if (m) found.add(Number(m[1]));
+  }
+  return [...found].sort((a, b) => a - b);
+}
 
 /**
  * Folds transcript records into display rows. Only `user`/`assistant` records
@@ -327,7 +366,12 @@ export class TranscriptAccumulator {
 
   protected push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
     const row: MessageRow = {
-      id: (this.opts.source === 'classifier' ? CLASSIFIER_ROW_PREFIX : '') + String(this.nextId++),
+      id:
+        (this.opts.source === 'classifier'
+          ? CLASSIFIER_ROW_PREFIX
+          : this.opts.session !== undefined
+            ? sessionRowPrefix(this.opts.session)
+            : '') + String(this.nextId++),
       ts: r.ts,
       kind: r.kind,
       source: this.opts.source,
@@ -664,7 +708,13 @@ export class MessagesService {
     let dropped = 0;
     let refs = 0;
     let readable = 0;
-    for (const source of ['classifier', 'agent'] as const) {
+    // The classifier first, then the agent sessions in the order they ran.
+    const sources: ('classifier' | 'agent' | number)[] = [
+      'classifier',
+      ...endedSessions(this.deps.runDir(taskId, runId)),
+      'agent',
+    ];
+    for (const source of sources) {
       const reader = await this.mainReader(taskId, runId, source, raw);
       if (typeof reader === 'string') continue;
       refs += 1;
@@ -687,7 +737,7 @@ export class MessagesService {
     const reader =
       agentId !== undefined
         ? await this.subagentReader(taskId, runId, agentId, false)
-        : await this.mainReader(taskId, runId, rowId.startsWith(CLASSIFIER_ROW_PREFIX) ? 'classifier' : 'agent', false);
+        : await this.mainReader(taskId, runId, rowSource(rowId), false);
     if (typeof reader === 'string') return null;
     try {
       await reader.read();
@@ -697,19 +747,29 @@ export class MessagesService {
     return reader.acc.images.get(rowId) ?? null;
   }
 
-  /** One step's main conversation reader, from that step's transcript ref (claude hooks, or the codex ref pair). */
+  /**
+   * One main conversation's reader, from its transcript ref (claude hooks, or
+   * the codex ref pair): the classifier's, the agent's current session, or an
+   * agent session a context restart ended (by its number). The ref is part of
+   * the cache key: after a restart the current session's ref names a new
+   * transcript.
+   */
   private async mainReader(
     taskId: string,
     runId: string,
-    source: 'agent' | 'classifier',
+    source: 'agent' | 'classifier' | number,
     raw: boolean,
   ): Promise<TranscriptReader | 'no-session' | 'no-transcript'> {
     const runDir = this.deps.runDir(taskId, runId);
-    const prefix = source === 'classifier' ? 'classify-' : '';
-    const accOpts: AccumulatorOpts = { raw, source: source === 'classifier' ? 'classifier' : undefined };
+    const prefix = source === 'classifier' ? 'classify-' : source === 'agent' ? '' : restartPrefix(source);
+    const accOpts: AccumulatorOpts = {
+      raw,
+      source: source === 'classifier' ? 'classifier' : undefined,
+      session: typeof source === 'number' ? source : undefined,
+    };
     const targetPath = readTranscriptRef(runDir, prefix);
     if (targetPath) {
-      return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
+      return this.cached(`${taskId} ${runId} ${source} ${raw} ${targetPath}`, async () => {
         const hostPath = await this.toHostPath(targetPath, taskId);
         if (!hostPath || !(await exists(hostPath))) return null; // not written yet; retried on the next poll
         return new TranscriptReader(hostPath, accOpts);
@@ -717,7 +777,7 @@ export class MessagesService {
     }
     const codexRef = readCodexRef(runDir, prefix);
     if (!codexRef) return 'no-session';
-    return this.cached(`${taskId} ${runId} ${source} ${raw}`, async () => {
+    return this.cached(`${taskId} ${runId} ${source} ${raw} ${codexRef.threadId}`, async () => {
       const hostHome = await this.toHostPath(codexRef.codexHome, taskId);
       if (!hostHome) return null;
       const rollout = await findCodexRollout(path.join(hostHome, 'sessions'), codexRef.threadId);
@@ -738,9 +798,8 @@ export class MessagesService {
   ): Promise<TranscriptReader | 'no-session' | 'no-transcript'> {
     if (!/^[\w.-]+$/.test(agentId)) return 'no-transcript';
     const runDir = this.deps.runDir(taskId, runId);
-    const refs = [readTranscriptRef(runDir), readTranscriptRef(runDir, 'classify-')].filter(
-      (r): r is string => r !== null,
-    );
+    const prefixes = ['', 'classify-', ...endedSessions(runDir).map(restartPrefix)];
+    const refs = prefixes.map((p) => readTranscriptRef(runDir, p)).filter((r): r is string => r !== null);
     if (refs.length === 0) return 'no-session';
     return this.cached(`${taskId} ${runId} sub:${agentId} ${raw}`, async () => {
       const candidates: string[] = [];
@@ -786,17 +845,40 @@ export class MessagesService {
 
   /** Translate the transcript path from the run target's form to the engine host's. */
   private async toHostPath(p: string, taskId: string): Promise<string | undefined> {
-    const isWindowsPath = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
-    if (this.deps.host === 'windows') {
-      if (isWindowsPath) return p;
-      const task = this.deps.getTask(taskId);
-      const env = task ? this.deps.settings.environments.find((e) => e.id === task.environmentId) : undefined;
-      const distro = env?.kind === 'wsl' ? env.distro : undefined;
-      const converted = await convertWslPath(p, 'windows', distro);
-      if (!converted) this.deps.log.warn(`${taskId}: cannot map transcript path ${p} to a host path`);
-      return converted;
-    }
-    if (isWindowsPath) return convertWslPath(p, 'posix');
-    return p;
+    const task = this.deps.getTask(taskId);
+    const env = task ? this.deps.settings.environments.find((e) => e.id === task.environmentId) : undefined;
+    const converted = await transcriptHostPath(p, this.deps.host, env?.kind === 'wsl' ? env.distro : undefined);
+    if (!converted) this.deps.log.warn(`${taskId}: cannot map transcript path ${p} to a host path`);
+    return converted;
   }
+}
+
+/** A transcript path in the run target's form, as the engine host can open it. */
+export async function transcriptHostPath(p: string, host: HostKind, distro?: string): Promise<string | undefined> {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+  if (host === 'windows') return isWindowsPath ? p : convertWslPath(p, 'windows', distro);
+  if (isWindowsPath) return convertWslPath(p, 'posix');
+  return p;
+}
+
+/**
+ * The host path of a step's own transcript and whose format it is, from the
+ * run dir's references (claude's hook payloads, or codex's thread id and
+ * home); null until the harness has written it.
+ */
+export async function findStepTranscript(
+  runDir: string,
+  prefix: string,
+  toHost: (p: string) => Promise<string | undefined>,
+): Promise<{ file: string; kind: 'claude' | 'codex' } | null> {
+  const ref = readTranscriptRef(runDir, prefix);
+  if (ref) {
+    const file = await toHost(ref);
+    return file && (await exists(file)) ? { file, kind: 'claude' } : null;
+  }
+  const codexRef = readCodexRef(runDir, prefix);
+  if (!codexRef) return null;
+  const home = await toHost(codexRef.codexHome);
+  const file = home ? await findCodexRollout(path.join(home, 'sessions'), codexRef.threadId) : null;
+  return file ? { file, kind: 'codex' } : null;
 }

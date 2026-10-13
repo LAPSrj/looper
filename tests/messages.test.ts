@@ -2,8 +2,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TranscriptAccumulator, TranscriptReader, readRunSessionId, readTranscriptRef } from '../src/engine/messages';
+import {
+  MessagesService,
+  TranscriptAccumulator,
+  TranscriptReader,
+  endedSessions,
+  readRunSessionId,
+  readTranscriptRef,
+} from '../src/engine/messages';
+import { Logger } from '../src/engine/log';
+import { endAgentSession } from '../src/engine/steps/agent';
 import { guidanceMessage } from '../src/shared/messages';
+import { SettingsSchema } from '../src/shared/types';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
 
@@ -271,6 +281,62 @@ describe('readTranscriptRef', () => {
     fs.writeFileSync(path.join(dir, 'classify-session.json'), JSON.stringify({ transcript_path: '/x/cls.jsonl' }));
     expect(readTranscriptRef(dir, 'classify-')).toBe('/x/cls.jsonl');
     expect(readTranscriptRef(dir)).toBe('/x/agent.jsonl');
+  });
+});
+
+describe('a run with context restarts', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-messages-restart-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A run dir as a claude agent leaves it: transcripts outside, session.json naming them. */
+  function session(prefix: string, name: string, text: string): string {
+    const transcript = path.join(dir, `${name}.jsonl`);
+    fs.writeFileSync(transcript, [userPrompt(`${name} prompt`), assistantBlock({ type: 'text', text })].join('\n') + '\n');
+    fs.writeFileSync(path.join(dir, 'run', `${prefix}session.json`), JSON.stringify({ session_id: name, transcript_path: transcript }));
+    return transcript;
+  }
+
+  it("files an ended session away, and the Messages view shows every session's conversation in order", async () => {
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    session('', 'first', 'first session works');
+    fs.writeFileSync(path.join(runDir, 'done'), 'restart\nfull\n');
+    fs.writeFileSync(path.join(runDir, 'stop-reminded'), '');
+    fs.writeFileSync(path.join(runDir, 'codex-home'), '/home/x/.codex');
+    fs.writeFileSync(path.join(runDir, 'notice.json'), '"waiting"');
+    endAgentSession(runDir, 1);
+    expect(fs.existsSync(path.join(runDir, 'done'))).toBe(false);
+    expect(fs.existsSync(path.join(runDir, 'stop-reminded'))).toBe(false);
+    expect(fs.existsSync(path.join(runDir, 'notice.json'))).toBe(false);
+    expect(fs.readFileSync(path.join(runDir, 'session1-done'), 'utf8')).toBe('restart\nfull\n');
+    // The launcher writes codex-home again; the ended session keeps a copy.
+    expect(fs.readFileSync(path.join(runDir, 'codex-home'), 'utf8')).toBe('/home/x/.codex');
+    expect(fs.readFileSync(path.join(runDir, 'session1-codex-home'), 'utf8')).toBe('/home/x/.codex');
+    expect(endedSessions(runDir)).toEqual([1]);
+    // The next session's files take the plain names; continuing the run resumes it.
+    session('', 'second', 'second session finishes');
+    expect(readRunSessionId(runDir, 'claude-code')).toBe('second');
+
+    const service = new MessagesService({
+      getTask: () => undefined,
+      runDir: () => runDir,
+      host: 'linux',
+      settings: SettingsSchema.parse({}),
+      log: new Logger(),
+    });
+    const res = await service.read('t1', 'r1');
+    expect(res.status).toBe('ok');
+    expect(res.rows.map((r) => [r.id, r.text])).toEqual([
+      ['s1-0', 'first prompt'],
+      ['s1-1', 'first session works'],
+      ['0', 'second prompt'],
+      ['1', 'second session finishes'],
+    ]);
   });
 });
 

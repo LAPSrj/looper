@@ -45,6 +45,8 @@ export interface Target {
   renderDoneHelper(statuses: readonly string[]): string;
   /** Helper that writes its arguments (or `fallback`) into the file named by the `envVar` variable. */
   renderTextHelper(envVar: string, fallback: string): string;
+  /** Helper that writes the done file as the done helper would with `status` given: `status` then its arguments (or `fallback`). */
+  renderStatusHelper(status: string, fallback: string): string;
   /** Command for a claude hook: dump the hook's stdin JSON into the given file. */
   renderPipeHook(targetPath: string): string;
   /** File name of the Stop-hook gate script in the run's bin/ dir. */
@@ -59,12 +61,12 @@ export interface Target {
   /** File name of the guidance hook script. */
   readonly guideHookFile: string;
   /**
-   * Script for the PostToolUse guidance hook: take the waiting guidance file
-   * and print it as additional context. `guidanceFile` unset = find it in
-   * $LOOPER_RUN_DIR, so one script serves every run (codex trusts a hook
-   * only while its command stays the same).
+   * Script for the PostToolUse guidance hook: take the waiting guidance file,
+   * or else the waiting notice, and print it as additional context. `files`
+   * unset = find both in $LOOPER_RUN_DIR, so one script serves every run
+   * (codex trusts a hook only while its command stays the same).
    */
-  renderGuideHook(format: GuideHookFormat, guidanceFile?: string): string;
+  renderGuideHook(format: GuideHookFormat, files?: { guidance: string; notice: string }): string;
   /** File name of the subagent guard script in the run's bin/ dir. */
   readonly guardHookFile: string;
   /**

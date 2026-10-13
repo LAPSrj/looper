@@ -1078,6 +1078,34 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 )}
               </div>
             )}
+            {(isClaude || isCodex) && (
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={draft.agent.contextLimitK !== undefined}
+                  onChange={(e) => setAgent('contextLimitK', e.target.checked ? 400 : undefined)}
+                />
+                Restart the agent when its context passes a limit
+              </label>
+            )}
+            {(isClaude || isCodex) && draft.agent.contextLimitK !== undefined && (
+              <div className="row">
+                <NumberField
+                  label="Context limit"
+                  suffix="k tokens"
+                  min={1}
+                  value={draft.agent.contextLimitK}
+                  onChange={(n) => setAgent('contextLimitK', n)}
+                />
+                <NumberField
+                  label="Max restarts"
+                  suffix="per run"
+                  min={0}
+                  value={draft.agent.maxRestarts ?? 3}
+                  onChange={(n) => setAgent('maxRestarts', n)}
+                />
+              </div>
+            )}
             <Field
               label="Agent prompt"
               help={

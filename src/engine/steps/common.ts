@@ -35,6 +35,12 @@ export interface RunContext {
   note?: string;
   /** Template variables accumulated across steps (task, summary, context…). */
   vars: Record<string, unknown>;
+  /**
+   * The agent session continues the run after a context restart: how many
+   * restarts the run made so far, the previous session's handoff, and the
+   * time the earlier sessions used (the run's max runtime covers them all).
+   */
+  restart?: { count: number; handoff: string; elapsedMs: number };
 }
 
 /** Markers a parent claude session leaves behind; a looper agent is never a "child session". */
@@ -92,6 +98,9 @@ export const AGENT_DONE = { command: 'looper-done', statuses: ['success', 'warni
 
 /** The command an agent that may finish its task for good calls (task completion). */
 export const AGENT_COMPLETE = 'looper-complete';
+
+/** The command an agent past its context limit calls to continue the run in a new session. */
+export const AGENT_RESTART = 'looper-restart';
 
 export interface LauncherOpts {
   /** Step file prefix ('' = agent, 'classify-' = classifier). */

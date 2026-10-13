@@ -249,6 +249,12 @@ classifier step on or off. When on, it runs after a check that returned
   cleaned up), that run ends as an error saying so and the next run starts a
   new one. Editing the task's working directory, environment, or harness
   also starts a new one, since a conversation can't move.
+- **Restart the agent when its context passes a limit** — Claude Code and
+  Codex, off by default. Once the agent's conversation passes **Context
+  limit** (default 400k tokens), Looper asks the agent to restart, and the run
+  continues in a new conversation with the agent's handoff. **Max restarts**
+  (default 3 per run) caps how often one run may restart. See
+  [context restarts](how-a-run-works.md#context-restarts).
 - **Agent prompt** — the instructions the agent starts with. `{{summary}}`
   and `{{context}}` insert the check's output where you place them; if the
   prompt references none of `{{summary}}`, `{{context}}` or `{{events}}`,
@@ -265,7 +271,8 @@ classifier step on or off. When on, it runs after a check that returned
 ![The task editor's Settings tab](img/task-editor-settings.png)
 
 - **Max runtime** — minutes before a run is force-ended regardless of
-  activity. Default 120.
+  activity. Default 120. A run that restarted at its context limit counts
+  all its sessions together.
 - **Auto-pause after** — consecutive failed cycles before the task pauses
   itself with a visible reason. Default 5.
 - **Idle grace** — minutes the agent may sit idle (a turn finished, no

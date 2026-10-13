@@ -4,7 +4,7 @@ import { ScreenModel } from './screen';
 
 /** Messages the host sends to the worker. */
 export type TerminalIn =
-  | { type: 'init'; file: string; cols: number; rows: number; screen: boolean }
+  | { type: 'init'; file: string; cols: number; rows: number; screen: boolean; append?: boolean }
   | { type: 'write'; data: string }
   | { type: 'resize'; cols: number; rows: number }
   | { type: 'close' };
@@ -63,7 +63,7 @@ async function close(): Promise<void> {
 port.on('message', (msg: TerminalIn) => {
   switch (msg.type) {
     case 'init':
-      log = new CleanLog(msg.file, msg.cols, msg.rows);
+      log = new CleanLog(msg.file, msg.cols, msg.rows, msg.append);
       if (msg.screen) screen = new ScreenModel(msg.cols, msg.rows);
       break;
     case 'write':

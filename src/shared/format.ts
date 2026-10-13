@@ -12,6 +12,7 @@ const RESULT_LABELS: Record<string, string> = {
   interrupted: 'Interrupted',
   'idle-timeout': 'Idle timeout',
   held: 'Held',
+  restarted: 'Restarted',
   stopped: 'Stopped',
   sent: 'Sent',
   delivered: 'Delivered',

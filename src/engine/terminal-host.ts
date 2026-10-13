@@ -12,6 +12,8 @@ export interface TerminalHostOpts {
   rows: number;
   /** Also keep a screen model, so screenContains() can answer. */
   screen: boolean;
+  /** Write after what the clean log already holds instead of starting it over. */
+  append?: boolean;
   /** Override the worker bundle (tests). */
   workerFile?: string;
   /** Called once if the worker dies. The run continues without terminal emulation. */
@@ -65,7 +67,7 @@ export class TerminalHost {
         this.fail(new Error(`terminal worker exited with code ${code}`));
       }
     });
-    this.post({ type: 'init', file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen });
+    this.post({ type: 'init', file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen, append: opts.append });
   }
 
   private fail(e: unknown): void {

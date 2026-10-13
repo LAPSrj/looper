@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
 import { stopHookMessages, subagentGuardMessage } from '../src/engine/target/stop-hook';
-import { GUIDANCE_FILE, queueGuidance, readPendingGuidance } from '../src/engine/guidance';
+import { GUIDANCE_FILE, NOTICE_FILE, queueGuidance, queueNotice, readPendingGuidance, takeNotice } from '../src/engine/guidance';
 import { guidanceText } from '../src/shared/messages';
 
 const MSGS = stopHookMessages('agent');
@@ -194,26 +194,56 @@ describe('guidance through the bash hooks', () => {
     expect(readPendingGuidance(dir)).toBe('too late');
   });
 
-  it('the claude PostToolUse hook prints the guidance as additional context', () => {
+  const hookFiles = (dir: string) => ({ guidance: path.join(dir, GUIDANCE_FILE), notice: path.join(dir, NOTICE_FILE) });
+
+  it('the claude PostToolUse hook prints the guidance as additional context, then the notice', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
     dirs.push(dir);
     const script = path.join(dir, t.guideHookFile);
-    fs.writeFileSync(script, t.renderGuideHook('claude', path.join(dir, GUIDANCE_FILE)), { mode: 0o755 });
+    fs.writeFileSync(script, t.renderGuideHook('claude', hookFiles(dir)), { mode: 0o755 });
     expect(runScript(script, '{"tool_name":"Bash"}')).toBe('');
     queueGuidance(dir, 'line one\nline two');
+    queueNotice(dir, 'Looper notice: restart — café');
     const out = JSON.parse(runScript(script, '{"tool_name":"Bash"}'));
     expect(out.hookSpecificOutput.hookEventName).toBe('PostToolUse');
     expect(guidanceText(out.hookSpecificOutput.additionalContext)).toBe('line one\nline two');
+    // The notice goes with the next call, as is: it isn't the user's guidance.
+    const notice = JSON.parse(runScript(script, '{"tool_name":"Bash"}'));
+    expect(notice.hookSpecificOutput.additionalContext).toBe('Looper notice: restart — café');
+    expect(guidanceText(notice.hookSpecificOutput.additionalContext)).toBeNull();
     expect(runScript(script, '{}')).toBe('');
-    // The taken file stays behind as the record of the delivery.
+    // The taken files stay behind as the record of the delivery.
     expect(fs.readdirSync(dir).some((n) => /^guidance-.+\.json$/.test(n))).toBe(true);
+    expect(fs.readdirSync(dir).some((n) => /^notice-.+\.json$/.test(n))).toBe(true);
+  });
+
+  it('the Stop gate continues the turn with a waiting notice', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, 'looper-stop-hook');
+    fs.writeFileSync(
+      script,
+      t.renderStopHook({
+        stopJson: path.join(dir, 'stop.json'),
+        doneFile: path.join(dir, 'done'),
+        reminderFile: path.join(dir, 'stop-reminded'),
+        guidanceFile: path.join(dir, GUIDANCE_FILE),
+        noticeFile: path.join(dir, NOTICE_FILE),
+        ...MSGS,
+      }),
+      { mode: 0o755 },
+    );
+    queueNotice(dir, 'Looper notice: restart');
+    const out = JSON.parse(runScript(script, '{}'));
+    expect(out).toEqual({ decision: 'block', reason: 'Looper notice: restart' });
+    expect(takeNotice(dir)).toBeNull();
   });
 
   it("the claude PostToolUse hook leaves the guidance for the agent when a subagent's call fires it", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
     dirs.push(dir);
     const script = path.join(dir, t.guideHookFile);
-    fs.writeFileSync(script, t.renderGuideHook('claude', path.join(dir, GUIDANCE_FILE)), { mode: 0o755 });
+    fs.writeFileSync(script, t.renderGuideHook('claude', hookFiles(dir)), { mode: 0o755 });
     queueGuidance(dir, 'for the agent');
     // Key order as claude sends it: agent_id/agent_type only on a subagent's call, before tool_input.
     const sub = { session_id: 's1', agent_id: 'a025a5695c64b4a2a', agent_type: 'general-purpose', tool_name: 'Bash', tool_input: { command: 'ls' } };
@@ -238,6 +268,30 @@ describe('guidance through the bash hooks', () => {
       'bash /mnt/c/Users/me/looper/hooks/codex-looper-guide-hook',
     );
     expect(t.codexHookCommand("/home/o'neil/looper/hooks/x")).toBeNull();
+  });
+});
+
+describe('restart helper', () => {
+  it('bash: writes the done file with the restart status and the reason', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-restart-'));
+    dirs.push(dir);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
+    const helper = path.join(dir, 'looper-restart');
+    fs.writeFileSync(helper, t.renderStatusHelper('restart', 'context restart'), { mode: 0o755 });
+    const done = path.join(dir, 'done');
+    const env = { ...process.env, LOOPER_DONE_FILE: done };
+    expect(spawnSync('bash', [helper, 'context', 'past the limit'], { env }).status).toBe(0);
+    expect(fs.readFileSync(done, 'utf8')).toBe('restart\ncontext past the limit\n');
+    expect(spawnSync('bash', [helper], { env }).status).toBe(0);
+    expect(fs.readFileSync(done, 'utf8')).toBe('restart\ncontext restart\n');
+  });
+
+  it('windows: the .cmd helper writes the same two lines', () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    const script = t.renderStatusHelper('restart', 'context restart');
+    expect(script).toContain('echo.restart> "%LOOPER_DONE_FILE%"');
+    expect(script).toContain('echo.%msg%>> "%LOOPER_DONE_FILE%"');
+    expect(script).toContain('if not defined msg set "msg=context restart"');
   });
 });
 
@@ -314,9 +368,11 @@ describe('windows Stop-hook gate', () => {
     expect(at).toBeLessThan(gate.indexOf('stop-reminded'));
     expect(gate).toContain(`Write-Output ('{"decision":"block","reason":' + [IO.File]::ReadAllText($d).Trim() + '}')`);
     expect(t.renderGuideHook('codex')).toContain("$g = (Join-Path $env:LOOPER_RUN_DIR 'guidance.json')");
-    expect(t.renderGuideHook('claude', 'C:\\data\\r1\\guidance.json')).toContain(
-      `if (($payload -split '"tool_input"', 2)[0] -match '"agent_id"\\s*:') { exit 0 }`,
-    );
+    expect(t.renderGuideHook('codex')).toContain("$g = (Join-Path $env:LOOPER_RUN_DIR 'notice.json')");
+    const guide = t.renderGuideHook('claude', { guidance: 'C:\\data\\r1\\guidance.json', notice: 'C:\\data\\r1\\notice.json' });
+    expect(guide).toContain(`if (($payload -split '"tool_input"', 2)[0] -match '"agent_id"\\s*:') { exit 0 }`);
+    // The user's guidance goes first.
+    expect(guide.indexOf("$g = 'C:\\data\\r1\\guidance.json'")).toBeLessThan(guide.indexOf("$g = 'C:\\data\\r1\\notice.json'"));
     expect(t.codexHookCommand('C:\\Users\\me\\looper\\hooks\\codex-looper-guide-hook.ps1')).toBe(
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/me/looper/hooks/codex-looper-guide-hook.ps1',
     );

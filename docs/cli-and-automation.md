@@ -266,12 +266,20 @@ tasks/<id>/runs/<runId>/
   complete                signal file: the looper-complete reason
   guidance.json           guidance sent to the running agent, until it
                        picks it up
+  notice.json             Looper's context-limit notice, until the agent
+                       picks it up
   codex-session.json      Codex only: the thread id of the run's conversation
   stop.json               signal file: the last Stop-hook payload
   stop-reminded           marker: the one-time looper-done reminder was issued
   session.json            the SessionStart-hook payload (names the transcript)
   bin/looper-done         the helper script the agent's PATH exposes
+  bin/looper-restart      tasks with a context limit: the restart helper
   bin/looper-stop-hook    the Stop-hook gate script (.ps1 on Windows)
+  bin/looper-subagent-guard  the PreToolUse hook that keeps subagents from
+                       running the helpers (.ps1 on Windows)
+  session<N>-*            the files of agent session N, once a context
+                       restart ended it (session1-session.json,
+                       session1-done, session1-prompt.txt, …)
   classify.sh (or .ps1)   the classifier's launcher script
   classify-*              the classifier session's own set of the same files
                        (classify-prompt.txt, classify-output.log/.txt,

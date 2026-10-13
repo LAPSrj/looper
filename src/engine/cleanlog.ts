@@ -23,8 +23,9 @@ export class CleanLog {
   private closed = false;
   private flushResolve: (() => void) | null = null;
 
-  constructor(filePath: string, cols: number, rows: number) {
-    this.fd = fs.openSync(filePath, 'w');
+  /** `append`: keep what the file holds (an earlier session of the same run) and write after it. */
+  constructor(filePath: string, cols: number, rows: number, append = false) {
+    this.fd = fs.openSync(filePath, append ? 'a' : 'w');
     this.term = new Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
   }
 

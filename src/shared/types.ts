@@ -235,6 +235,14 @@ export const AgentSchema = z
     session: z.enum(['fresh', 'continue']).default('fresh'),
     /** session 'continue': start a new conversation after this many runs on the same one. */
     sessionMaxRuns: z.number().int().positive().default(10),
+    /**
+     * claude-code and codex: once the agent's context passes this many
+     * thousand tokens, Looper asks it to restart, and the run continues in a
+     * new conversation with the agent's handoff. Unset = no limit.
+     */
+    contextLimitK: z.number().int().positive().optional(),
+    /** contextLimitK: how many restarts one run may make. */
+    maxRestarts: z.number().int().nonnegative().default(3),
     /** claude: passed as --permission-mode; codex: mapped to its sandbox/approval flags. Empty string omits the flags. */
     permissionMode: z.string().default('auto'),
     maxRuntimeMin: z.number().positive().default(120),
@@ -579,6 +587,7 @@ export type RunResult =
   | 'stopped'
   | 'interrupted'
   | 'held'
+  | 'restarted'
   | 'sent'
   | 'delivered'
   | 'undelivered';

@@ -123,6 +123,12 @@ agent ends its turn again without it, the stop goes through (in interactive
 mode, that's when the idle clock starts). Once `looper-done` has run, every
 stop is allowed.
 
+A subagent the agent starts (Claude Code's Agent tool) can't run
+`looper-done`, `looper-complete`, or `looper-restart`. It shares the
+session's PATH, so a `PreToolUse` hook Looper adds denies the call and tells
+the subagent to report back instead: only the agent itself decides when the
+run is done.
+
 In `headless` mode there's no terminal to watch: process exit is the only
 signal. The agent's final response becomes the report; `looper-done` still
 names the headline if the agent ran it, otherwise the response's first line
@@ -148,6 +154,43 @@ signal from one is recorded in the run log and ignored.
 The same option gates the manual action: Task → Complete is greyed out
 without it. A scheduled task with a **Stop running on** date completes itself
 once that date passes, option or not — the date is the instruction to stop.
+
+## Context restarts
+
+A long job can fill the agent's conversation until the harness compacts it
+and the agent loses details. With **Restart the agent when its context passes
+a limit** on (Agent tab, Claude Code and Codex), Looper reads the size of the
+agent's conversation off its transcript every 5 seconds. Once it passes the
+**Context limit**, Looper leaves the agent a notice asking it to restart as
+soon as it can. The notice reaches the agent the same way as
+[guidance](#guidance-for-a-run-in-progress): Claude Code gets it with its next
+tool result or at the end of its turn, and an interactive session whose turn
+has ended gets it typed in. If the conversation keeps growing, the notice
+comes again at every further tenth of the limit.
+
+The agent finishes the step it's on, runs `looper-restart "<reason>"`, and
+writes a handoff as its final message: what's done, what's left, and what the
+next session needs to know. Looper then ends that session and starts a new one
+in the same run, in a new conversation. Its prompt is the task's prompt again
+(with the run's guidance note, if any), followed by a
+`## Continuing after a context restart` section that holds the handoff. The
+run log records each notice and each restart (**Restarted**, with the handoff
+as its text), and the run's result is the last session's.
+
+- The run stays one run. The check and classifier don't run again, and
+  **Max runtime** counts every session together: a restart after the max
+  runtime is used up ends the run as **Timed out**.
+- **Max restarts** (default 3) caps the restarts per run. The last session
+  allowed gets neither the notice nor the `looper-restart` command, so it
+  works on until it finishes.
+- With **Continue previous across runs**, the next run resumes the newest
+  session's conversation.
+- The Terminal tab, `output.txt`, and `output.log` keep every session, with a
+  line marking each restart, and the conversation window shows every
+  session's conversation in order.
+- Interactive Codex reports its conversation only when its first turn ends,
+  so Looper measures it from then on, and it gets the notice only when a turn
+  ends (it has no hook to take it mid-turn).
 
 ## Held for a human
 
@@ -272,7 +315,9 @@ gets it:
 - **Claude Code** gets it with the result of its next tool call (a
   `PostToolUse` hook Looper adds to the run's settings), or, if it ends its
   turn first, through the Stop hook, which keeps the turn going with the
-  guidance. Once `looper-done` has run, the Stop hook lets the turn end.
+  guidance. Once `looper-done` has run, the Stop hook lets the turn end. A
+  subagent's tool call never takes it: the guidance waits for the agent's own
+  next call.
 - **An interactive session that has ended its turn** (idle or held) gets the
   guidance typed in as its next prompt, the same as typing it in the Terminal
   tab yourself.

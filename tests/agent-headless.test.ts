@@ -165,6 +165,8 @@ function makeCtx(
   const runDir = path.join(root, 'run');
   fs.mkdirSync(path.join(runDir, 'bin'), { recursive: true });
   const settings = SettingsSchema.parse({
+    // Fast polls: the context watch reads every 5 polls.
+    signalPollMs: 50,
     environments: [
       {
         id: 'local',
@@ -180,7 +182,7 @@ function makeCtx(
     ...EXAMPLE_TASK,
     cwd: root,
     ...taskExtra,
-    agent: { ...EXAMPLE_TASK.agent, harnessId: 'fake', mode: 'headless', maxRuntimeMin: 1 },
+    agent: { ...EXAMPLE_TASK.agent, ...(taskExtra.agent as object), harnessId: 'fake', mode: 'headless', maxRuntimeMin: 1 },
   });
   return {
     task,
@@ -569,6 +571,72 @@ describe('headless agent over pipes', () => {
     expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-stop-hook'), 'utf8')).toContain(
       `g='${path.join(ctx.runDir, 'guidance.json')}'`,
     );
+  });
+
+  it('context limit: past it the agent gets the notice, and looper-restart ends the session with the handoff', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const transcript = path.join(root, 'transcript.jsonl');
+    const response = JSON.stringify({
+      type: 'assistant',
+      message: { model: 'claude-opus-5-5', role: 'assistant', content: [], usage: { input_tokens: 5, cache_read_input_tokens: 240_000, cache_creation_input_tokens: 0 } },
+    });
+    // The fake writes what claude's SessionStart hook and transcript would,
+    // waits for the notice the way a PostToolUse hook would take it, then restarts.
+    const harness = fakeHarness(
+      root,
+      [
+        `printf '%s\\n' '${response}' > '${transcript}'`,
+        `printf '{"session_id":"s1","transcript_path":"%s"}' '${transcript}' > "$LOOPER_RUN_DIR/session.json"`,
+        `for i in $(seq 100); do [ -e "$LOOPER_RUN_DIR/notice.json" ] && break; sleep 0.05; done`,
+        `cp "$LOOPER_RUN_DIR/notice.json" '${path.join(root, 'notice-seen.json')}'`,
+        `looper-restart "context past the limit"`,
+        `echo '{"type":"result","result":"Done: the first two files. Left: the third. Run the tests with npm test."}'`,
+      ].join('\n'),
+    );
+    const ctx = makeCtx(harness, { agent: { contextLimitK: 200 } });
+    const seen: [number, number][] = [];
+    const end = await (await startAgent(ctx, { onData: () => {}, onContext: (t, l) => seen.push([t, l]) })).finished;
+    expect(seen).toEqual([[240_005, 200_000]]);
+    const notice = JSON.parse(fs.readFileSync(path.join(root, 'notice-seen.json'), 'utf8')) as string;
+    expect(notice).toContain('at 240k tokens, past this task\'s limit of 200k');
+    expect(notice).toContain('looper-restart "<one-line reason>"');
+    expect(end.reason).toBe('done');
+    expect(end.doneStatus).toBe('restart');
+    expect(end.headline).toBe('context past the limit');
+    expect(end.body).toBe('Done: the first two files. Left: the third. Run the tests with npm test.');
+    // The helper is one of the signal commands a subagent can't run.
+    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
+    expect(settings.permissions.allow).toContain('Bash(looper-restart:*)');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-subagent-guard'), 'utf8')).toContain("*'looper-restart'*");
+  });
+
+  it('context limit: a session after a restart gets the handoff, and none past the last restart', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `if command -v looper-restart >/dev/null; then r=offered; else r=missing; fi`,
+        `printf '{"type":"result","result":"restart helper %s"}\\n' "$r"`,
+      ].join('\n'),
+    );
+    const ctx = makeCtx(harness, { agent: { contextLimitK: 200, maxRestarts: 2 } });
+    ctx.restart = { count: 2, handoff: 'Left: the third file.', elapsedMs: 1000 };
+    fs.writeFileSync(path.join(ctx.runDir, 'output.txt'), 'first session output\n');
+    // The helper an earlier session got is still in bin/.
+    writeText(path.join(ctx.runDir, 'bin', 'looper-restart'), '#!/usr/bin/env bash\n', 0o755);
+    const end = await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(end.body).toBe('restart helper missing');
+    const prompt = fs.readFileSync(path.join(ctx.runDir, 'prompt.txt'), 'utf8');
+    expect(prompt).toContain('Handle the pending items for this project.');
+    expect(prompt).toContain('## Continuing after a context restart');
+    expect(prompt).toContain('(restart 2 of at most 2)');
+    expect(prompt.endsWith('Left: the third file.')).toBe(true);
+    // The earlier session's output stays, the new one goes after it.
+    const out = fs.readFileSync(path.join(ctx.runDir, 'output.txt'), 'utf8');
+    expect(out.startsWith('first session output\n')).toBe(true);
+    expect(out).toContain('restart helper missing');
   });
 
   it('codex: a failed turn keeps the error message as headline and body', async () => {

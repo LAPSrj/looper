@@ -68,6 +68,8 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.mode': 'Session type',
   'agent.session': 'Conversation',
   'agent.sessionMaxRuns': 'Start a new conversation after',
+  'agent.contextLimitK': 'Context limit',
+  'agent.maxRestarts': 'Max restarts',
   'agent.permissionMode': 'Permission mode',
   'agent.maxRuntimeMin': 'Max runtime',
   'agent.idleGraceMin': 'Idle grace',

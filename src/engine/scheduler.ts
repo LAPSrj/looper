@@ -25,8 +25,15 @@ import { looksLikeEnvironmentError } from './network';
 import { createTarget } from './target';
 import { runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
-import { agentPrompt, readCompleteSignal, startAgent as defaultStartAgent, type AgentEnd } from './steps/agent';
-import { headlineOf, type SessionHandle } from './steps/session';
+import {
+  agentPrompt,
+  endAgentSession,
+  readCompleteSignal,
+  startAgent as defaultStartAgent,
+  type AgentEnd,
+  type DoneStatus,
+} from './steps/agent';
+import { headlineOf, RESTART_STATUS, type SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
 import { GUIDANCE_FILE, queueGuidance, takePendingGuidance } from './guidance';
 import { newRunId, type RunStore } from './store/runs';
@@ -1673,27 +1680,74 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd> {
-    const handle = await this.steps.startAgent(ctx, {
-      onData: this.bufferSink(task.id, ctx.runId),
-      onHold: () => {
-        this.setHeld(rt, ctx.runId, true);
-        this.record(task.id, ctx.runId, 'agent', 'held', {
-          summary: `idle for ${task.agent.idleGraceMin} min without looper-done; holding for a human`,
-        });
-        if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
-      },
-      onResume: () => this.setHeld(rt, ctx.runId, false),
-    });
-    this.agents.set(ctx.runId, handle);
-    // A stopTask that landed while the agent was still starting has no handle
-    // to end and aborts the cycle signal instead: honor it now.
-    if (ctx.signal?.aborted) {
-      void handle.stop('stopped', this.cycleStops.get(ctx.runId)?.reason ?? 'stopped by user');
+  /**
+   * The agent step: one session, or several when the agent restarts at its
+   * context limit (looper-restart). Each restart ends the session, files it
+   * away (endAgentSession) and starts the next one with the task's prompt and
+   * the handoff; the end that comes back is the last session's, with the
+   * whole step's duration.
+   */
+  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd & { doneStatus?: DoneStatus }> {
+    const stopReason = (): string => this.cycleStops.get(ctx.runId)?.reason ?? 'stopped by user';
+    let elapsedMs = 0;
+    let wasHeld = false;
+    for (;;) {
+      const handle = await this.steps.startAgent(ctx, {
+        onData: this.bufferSink(task.id, ctx.runId),
+        onHold: () => {
+          this.setHeld(rt, ctx.runId, true);
+          this.record(task.id, ctx.runId, 'agent', 'held', {
+            summary: `idle for ${task.agent.idleGraceMin} min without looper-done; holding for a human`,
+          });
+          if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
+        },
+        onResume: () => this.setHeld(rt, ctx.runId, false),
+        onContext: (tokens, limit) =>
+          this.record(task.id, ctx.runId, 'agent', 'sent', {
+            summary: `context at ${Math.round(tokens / 1000)}k tokens, past the limit of ${Math.round(limit / 1000)}k: asked the agent to restart`,
+          }),
+      });
+      this.agents.set(ctx.runId, handle);
+      // A stopTask that landed while the agent was still starting has no handle
+      // to end and aborts the cycle signal instead: honor it now.
+      if (ctx.signal?.aborted) void handle.stop('stopped', stopReason());
+      const end = await handle.finished;
+      this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
+      elapsedMs += end.durationMs;
+      wasHeld ||= end.wasHeld;
+      const whole = { durationMs: elapsedMs, wasHeld };
+      const status = end.doneStatus;
+      if (status !== RESTART_STATUS) return { ...end, ...whole, doneStatus: status };
+      // The session ended for a restart: what it didn't get to stays undone.
+      const nonDone = { ...end, ...whole, doneStatus: undefined };
+      if (ctx.signal?.aborted) return { ...nonDone, reason: 'stopped', headline: stopReason() };
+      if (elapsedMs >= task.agent.maxRuntimeMin * 60_000) {
+        return { ...nonDone, reason: 'max-runtime', headline: `exceeded ${task.agent.maxRuntimeMin} min` };
+      }
+      const count = (ctx.restart?.count ?? 0) + 1;
+      const handoff = end.body?.trim() || end.headline || 'The earlier session left no handoff.';
+      this.record(task.id, ctx.runId, 'agent', 'restarted', {
+        summary: `restart ${count} of ${task.agent.maxRestarts}: ${end.headline ?? 'context restart'}`,
+        body: handoff,
+        durationMs: end.durationMs,
+      });
+      endAgentSession(ctx.runDir, count);
+      ctx.restart = { count, handoff, elapsedMs };
+      // The next session is a new conversation. A rolling one moves on to it:
+      // claude under a new looper-chosen id, codex under the id it reports.
+      ctx.agentSession = task.agent.session === 'continue' ? this.newConversation(task) : undefined;
+      this.d.log.info(`[${task.id}] agent restarts at its context limit (restart ${count} of ${task.agent.maxRestarts})`);
     }
-    const end = await handle.finished;
-    this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
-    return end;
+  }
+
+  /** A new rolling conversation for a claude agent; codex picks its own id (undefined). */
+  private newConversation(task: Task): { id: string; resume: boolean } | undefined {
+    try {
+      const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+      return kind === 'claude-code' ? { id: randomUUID(), resume: false } : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private record(

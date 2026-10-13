@@ -6,7 +6,10 @@ import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { guidanceMessage } from '../../shared/messages';
-import { GUIDANCE_FILE, takePendingGuidance } from '../guidance';
+import { resolveEnvironment } from '../../shared/environments';
+import { readContextTokens } from '../context';
+import { GUIDANCE_FILE, NOTICE_FILE, queueNotice, takeNotice, takePendingGuidance } from '../guidance';
+import { findStepTranscript, transcriptHostPath } from '../messages';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
@@ -72,7 +75,15 @@ export interface SessionCallbacks {
   onData: (data: string) => void;
   onHold?: () => void;
   onResume?: () => void;
+  /** The context passed the session's limit (or a further step past it) and the notice was left for the agent. */
+  onContext?: (tokens: number, limit: number) => void;
 }
+
+/** The done-file status of a session that ended for a context restart (written by the restart helper). */
+export const RESTART_STATUS = 'restart';
+
+/** How often the context of a session with a limit is read off its transcript, in signal polls (5 s by default). */
+const CONTEXT_POLLS = 5;
 
 export interface SessionOpts {
   /** The step behind the session, deciding the stop-hook wording and log labels. */
@@ -105,6 +116,20 @@ export interface SessionOpts {
   doneStatuses: readonly string[];
   /** Completion command on the session's PATH. Unset = the session cannot complete the task. */
   completeCommand?: string;
+  /**
+   * Restart command on the session's PATH: it writes the done file with
+   * RESTART_STATUS, so the session ends like a done one and its final message
+   * is the handoff. Unset = the session cannot restart.
+   */
+  restartCommand?: string;
+  /**
+   * claude-code and codex: read the conversation's context off its transcript
+   * and leave `notice` for the agent once it passes `limit` tokens, and again
+   * at every further tenth of the limit.
+   */
+  context?: { limit: number; notice: (tokens: number, again: boolean) => string };
+  /** The session continues a run an earlier session started (a context restart): the logs keep the earlier output. */
+  continued?: boolean;
   /** Status assumed when the done file has no recognized status line (agent: success; classify: none). */
   implicitDoneStatus?: string;
   /** Whether the Stop hook gates turn ends (reminder + background-task block). Interactive needs it. */
@@ -445,6 +470,16 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const claude = harness.kind === 'claude-code';
   const codex = harness.kind === 'codex';
   const f = (name: string): string => opts.prefix + name;
+  const signalCommands = [doneCommand, opts.completeCommand, opts.restartCommand].filter((c): c is string => !!c);
+  // The restart helper ends the session through the done file, under its own status.
+  const parseStatuses = opts.restartCommand ? [...doneStatuses, RESTART_STATUS] : doneStatuses;
+  if (opts.restartCommand) {
+    writeText(
+      path.join(ctx.runDir, 'bin', target.doneHelperFile(opts.restartCommand)),
+      target.renderStatusHelper(RESTART_STATUS, 'context restart'),
+      0o755,
+    );
+  }
 
   // Claude Code gets its instructions as a system prompt; other harnesses have
   // no equivalent flag, so the footer is prepended to the prompt itself.
@@ -459,10 +494,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('session.json'))) }] }],
     };
     if (opts.guidance) {
-      // Guidance the user sends mid-run reaches the agent with its next tool result.
+      // Guidance the user sends mid-run (and Looper's own notice) reaches the agent with its next tool result.
       writeText(
         path.join(ctx.runDir, 'bin', target.guideHookFile),
-        target.renderGuideHook('claude', targetFile(ctx, GUIDANCE_FILE)),
+        target.renderGuideHook('claude', { guidance: targetFile(ctx, GUIDANCE_FILE), notice: targetFile(ctx, NOTICE_FILE) }),
         0o755,
       );
       hooks.PostToolUse = [
@@ -483,13 +518,13 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           doneFile: targetFile(ctx, f('done')),
           reminderFile: targetFile(ctx, f('stop-reminded')),
           guidanceFile: opts.guidance ? targetFile(ctx, GUIDANCE_FILE) : undefined,
+          noticeFile: opts.guidance ? targetFile(ctx, NOTICE_FILE) : undefined,
           ...stopHookMessages(opts.step),
         }),
         0o755,
       );
       hooks.Stop = [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', stopHookFile)) }] }];
     }
-    const signalCommands = opts.completeCommand ? [doneCommand, opts.completeCommand] : [doneCommand];
     // A subagent shares the session's PATH and environment, so only a hook can
     // keep it from ending the session with a signal command.
     writeText(
@@ -602,6 +637,17 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     completeCommand: opts.completeCommand,
   });
 
+  if (opts.continued) {
+    // A restarted session writes after the earlier one; a line in the logs marks where.
+    const mark = '\n── context restart: a new session continues the run ──\n\n';
+    for (const name of headless ? ['output.log'] : ['output.log', 'output.txt']) {
+      try {
+        fs.appendFileSync(path.join(ctx.runDir, f(name)), mark);
+      } catch {
+        /* never fatal */
+      }
+    }
+  }
   const out = fs.createWriteStream(path.join(ctx.runDir, f('output.log')), { flags: 'a' });
   out.on('error', () => {
     /* never fatal */
@@ -611,7 +657,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   // written straight from the stream. Interactive output is a TUI and needs
   // the terminal emulation, which lives in a worker thread.
   const cleanOut = headless
-    ? fs.createWriteStream(path.join(ctx.runDir, f('output.txt')), { flags: 'w' })
+    ? fs.createWriteStream(path.join(ctx.runDir, f('output.txt')), { flags: opts.continued ? 'a' : 'w' })
     : null;
   cleanOut?.on('error', () => {
     /* never fatal */
@@ -627,6 +673,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         cols: PTY_COLS,
         rows: PTY_ROWS,
         screen: screenEnabled,
+        append: opts.continued,
         onError: (e) => ctx.log.warn(`[${task.id}] terminal worker failed: ${e.message}`),
       });
 
@@ -751,6 +798,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     ended = true;
     watcher.stop();
     clearTimeout(maxTimer);
+    if (contextTimer) clearInterval(contextTimer);
     if (doneTimer) clearTimeout(doneTimer);
     if (!exited) await killTree();
     out.end();
@@ -794,7 +842,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       return;
     }
     const doneText = await fs.promises.readFile(path.join(ctx.runDir, f('done')), 'utf8').catch(() => '');
-    const done = doneText.trim() ? parseDoneText(doneText, doneStatuses) : null;
+    const done = doneText.trim() ? parseDoneText(doneText, parseStatuses) : null;
     if (done) doneStatus = done.status ?? opts.implicitDoneStatus;
     // codex --output-schema constrains the final message itself to the schema.
     if (codex && opts.jsonSchema && stream.structured === undefined && stream.result) {
@@ -827,6 +875,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }
   };
 
+  /** The context watch's poll (see below); unset without a context limit. */
+  let contextTimer: NodeJS.Timeout | null = null;
   const maxTimer = setTimeout(
     () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
     opts.maxRuntimeMs,
@@ -927,7 +977,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       onDone: (msg, mtime) => {
         if (ended || doneMtime !== null) return;
         doneMtime = mtime;
-        const parsed = parseDoneText(msg, doneStatuses);
+        const parsed = parseDoneText(msg, parseStatuses);
         doneStatus = parsed.status ?? opts.implicitDoneStatus;
         doneHeadline = headlineOf(parsed.message) ?? 'done';
         ctx.log.info(`[${task.id}] ${doneCommand} ${doneStatus ?? '(no status)'} "${doneHeadline}"; waiting for the final message`);
@@ -1047,10 +1097,52 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (!opts.guidance || headless || ended || doneMtime !== null) return;
     if (idleSince === null && !held) return;
     const text = takePendingGuidance(ctx.runDir);
-    if (text === null) return;
-    ctx.log.info(`[${task.id}] typing the user's guidance into the idle session`);
-    input('\x1b[200~' + guidanceMessage(text).replace(/\r?\n/g, '\r') + '\x1b[201~');
+    // Looper's own notice waits behind the user's guidance.
+    const message = text !== null ? guidanceMessage(text) : takeNotice(ctx.runDir);
+    if (message === null) return;
+    ctx.log.info(`[${task.id}] typing ${text !== null ? "the user's guidance" : "Looper's notice"} into the idle session`);
+    input('\x1b[200~' + message.replace(/\r?\n/g, '\r') + '\x1b[201~');
     setTimeout(() => input('\r'), 300);
+  }
+
+  /**
+   * The context watch: once the conversation passes the limit, the notice is
+   * left for the agent (a hook hands it over with the next tool result or at
+   * the turn's end; an idle session gets it typed in), and again each time
+   * the context grows another tenth of the limit.
+   */
+  if (opts.context && (claude || codex)) {
+    const { limit, notice } = opts.context;
+    const stepSize = Math.max(1, Math.round(limit / 10));
+    let distro: string | undefined;
+    try {
+      const env = resolveEnvironment(task, ctx.settings);
+      distro = env.kind === 'wsl' ? env.distro : undefined;
+    } catch {
+      /* no environment: the paths need no distro */
+    }
+    let transcript: { file: string; kind: 'claude' | 'codex' } | null = null;
+    let asked = 0;
+    let busy = false;
+    contextTimer = setInterval(() => {
+      if (busy || ended || doneMtime !== null) return;
+      busy = true;
+      void (async () => {
+        transcript ??= await findStepTranscript(ctx.runDir, opts.prefix, (p) => transcriptHostPath(p, ctx.host, distro));
+        if (!transcript) return; // not written yet
+        const tokens = await readContextTokens(transcript.file, transcript.kind);
+        if (tokens === null || tokens < limit || ended || doneMtime !== null) return;
+        const step = 1 + Math.floor((tokens - limit) / stepSize);
+        if (step <= asked) return;
+        queueNotice(ctx.runDir, notice(tokens, asked > 0));
+        asked = step;
+        ctx.log.info(`[${task.id}] context at ${tokens} tokens, past the limit of ${limit}; notice left for the agent`);
+        cb.onContext?.(tokens, limit);
+        deliverIdleGuidance();
+      })()
+        .catch((e: Error) => ctx.log.warn(`[${task.id}] cannot read the context: ${e.message}`))
+        .finally(() => (busy = false));
+    }, ctx.settings.signalPollMs * CONTEXT_POLLS);
   }
 
   return {
