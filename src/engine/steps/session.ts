@@ -12,7 +12,7 @@ import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
-import { stopHookMessages } from '../target/stop-hook';
+import { stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
 import { childEnv, runDirTarget, stripShellNoise, targetFile, writeLauncher, type RunContext } from './common';
 
 /**
@@ -490,6 +490,19 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       hooks.Stop = [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', stopHookFile)) }] }];
     }
     const signalCommands = opts.completeCommand ? [doneCommand, opts.completeCommand] : [doneCommand];
+    // A subagent shares the session's PATH and environment, so only a hook can
+    // keep it from ending the session with a signal command.
+    writeText(
+      path.join(ctx.runDir, 'bin', f(target.guardHookFile)),
+      target.renderSubagentGuard(signalCommands, subagentGuardMessage(signalCommands)),
+      0o755,
+    );
+    hooks.PreToolUse = [
+      {
+        matcher: 'Bash',
+        hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', f(target.guardHookFile))) }],
+      },
+    ];
     writeJsonAtomic(path.join(ctx.runDir, f('settings.json')), {
       // A signal command must never be blocked by a permission prompt, and the
       // Bash sandbox must never confine it: the run dir sits outside the

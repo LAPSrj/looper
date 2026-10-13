@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
-import { stopHookMessages } from '../src/engine/target/stop-hook';
+import { stopHookMessages, subagentGuardMessage } from '../src/engine/target/stop-hook';
 import { GUIDANCE_FILE, queueGuidance, readPendingGuidance } from '../src/engine/guidance';
 import { guidanceText } from '../src/shared/messages';
 
@@ -238,6 +238,45 @@ describe('guidance through the bash hooks', () => {
       'bash /mnt/c/Users/me/looper/hooks/codex-looper-guide-hook',
     );
     expect(t.codexHookCommand("/home/o'neil/looper/hooks/x")).toBeNull();
+  });
+});
+
+describe('subagent guard', () => {
+  const commands = ['looper-done', 'looper-complete'];
+  const message = subagentGuardMessage(commands);
+  const sub = (command: string) => ({
+    session_id: 's1',
+    agent_id: 'a025a5695c64b4a2a',
+    agent_type: 'general-purpose',
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command },
+  });
+
+  it('bash: denies a subagent running a signal command, allows everything else', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guard-'));
+    dirs.push(dir);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
+    const script = path.join(dir, t.guardHookFile);
+    fs.writeFileSync(script, t.renderSubagentGuard(commands, message), { mode: 0o755 });
+    const run = (payload: unknown) => spawnSync('bash', [script], { input: JSON.stringify(payload), encoding: 'utf8' });
+
+    const denied = run(sub('looper-done success "Fixed it"'));
+    expect(denied.status).toBe(2);
+    expect(denied.stderr.trim()).toBe(message);
+    expect(run(sub('cd x && looper-complete "all done"')).status).toBe(2);
+    expect(run(sub('npm test')).status).toBe(0);
+    // The agent itself may run them.
+    const { agent_id: _id, agent_type: _type, ...own } = sub('looper-done success "ok"');
+    expect(run(own).status).toBe(0);
+  });
+
+  it('windows: renders the same guard for PowerShell', () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    const script = t.renderSubagentGuard(commands, message);
+    expect(script).toContain(`if (-not (($payload -split '"tool_input"', 2)[0] -match '"agent_id"\\s*:')) { exit 0 }`);
+    expect(script).toContain("foreach ($c in @('looper-done', 'looper-complete')) {");
+    expect(script).toContain('exit 2');
   });
 });
 

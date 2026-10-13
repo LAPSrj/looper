@@ -35,6 +35,15 @@ export function guideHookJson(format: GuideHookFormat): { before: string; after:
     : { before: '{"hookSpecificOutput":{"additionalContext":', after: '}}' };
 }
 
+/**
+ * Why the subagent guard denied a call. A subagent shares the session's
+ * environment, so the signal helpers can't tell it from the agent: the
+ * PreToolUse guard stops it from ending or restarting the agent's session.
+ */
+export function subagentGuardMessage(commands: readonly string[]): string {
+  return `Looper: a subagent can't run ${commands.join(' or ')}. Those commands end or restart the whole Looper session, the main agent included. Finish your part and report back to the agent that started you; it decides when the run is done.`;
+}
+
 /** The Stop-hook decision around a guidance message literal: block, and continue with the guidance. */
 export const STOP_GUIDANCE_JSON = { before: '{"decision":"block","reason":', after: '}' };
 

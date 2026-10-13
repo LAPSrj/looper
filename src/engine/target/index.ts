@@ -65,6 +65,14 @@ export interface Target {
    * only while its command stays the same).
    */
   renderGuideHook(format: GuideHookFormat, guidanceFile?: string): string;
+  /** File name of the subagent guard script in the run's bin/ dir. */
+  readonly guardHookFile: string;
+  /**
+   * Script for the claude PreToolUse guard on Bash: deny a subagent's call
+   * whose input names one of `commands` (the step's signal helpers), with
+   * `message` as the reason.
+   */
+  renderSubagentGuard(commands: readonly string[], message: string): string;
   /**
    * Shell command a codex hook definition runs: the script at `targetPath`,
    * unquoted so it fits a TOML literal string. Null when the path would need
