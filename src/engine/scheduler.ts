@@ -61,6 +61,23 @@ const SLEEP_STOP_REASON = 'computer went to sleep';
 const RESUME_GRACE_MS = 20_000;
 /** Watcher event lines a task may carry into its next run; past it the oldest are dropped. */
 const MAX_PENDING_EVENTS = 1000;
+/** Waits before each retry of a scheduled run the machine failed (offline, WSL unavailable); the last repeats. */
+const MACHINE_RETRY_MS = [2, 5, 15, 30].map((min) => min * 60_000);
+
+/**
+ * A scheduled run the machine failed, owed a retry before the next regular
+ * slot. The steps that already passed are kept, so the retry starts at the
+ * one that failed: a check with side effects (a sync that pushes) never runs
+ * twice for one slot.
+ */
+interface MachineRetry {
+  /** 1 for the first retry. */
+  attempt: number;
+  /** The failed run's detail, for the retry's run log. */
+  reason: string;
+  check?: { summary?: string; context?: unknown };
+  classified: boolean;
+}
 
 /** How far along a run is; the task's aggregate state is its most advanced run. */
 const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 1, running: 2 };
@@ -96,6 +113,8 @@ export class Scheduler extends EventEmitter {
   private readonly guidanceWatches = new Map<string, NodeJS.Timeout>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
+  /** Per task: the retry a machine-failed scheduled run is owed (see MachineRetry). */
+  private readonly machineRetries = new Map<string, MachineRetry>();
   /** Watcher event lines waiting for a run slot, per task; a batch never queues a second run. */
   private readonly pendingEvents = new Map<string, string[]>();
   /**
@@ -404,6 +423,7 @@ export class Scheduler extends EventEmitter {
   pause(taskId: string, reason = 'paused by user'): void {
     const rt = this.must(taskId);
     rt.pausedReason = reason;
+    this.machineRetries.delete(taskId);
     if (rt.state === 'idle' || rt.state === 'disabled') {
       rt.state = 'paused';
       rt.nextRunAt = null;
@@ -634,6 +654,7 @@ export class Scheduler extends EventEmitter {
       this.catchUpOwed.delete(task.id);
       this.windowClosed.delete(task.id);
       this.deferLogged.delete(task.id);
+      this.machineRetries.delete(task.id);
       if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
         this.dropBuffers(task.id);
@@ -664,6 +685,13 @@ export class Scheduler extends EventEmitter {
         previous.agent.harnessId !== task.agent.harnessId)
     ) {
       rt.session = null;
+    }
+    // An edit keeps a pending retry, but the steps it saved may no longer
+    // match the task: the retry runs every step again.
+    const retry = this.machineRetries.get(task.id);
+    if (retry) {
+      retry.check = undefined;
+      retry.classified = false;
     }
     // Whoever set it — the agent, a deadline, the inbox, the editor — this is
     // where completing a task takes effect.
@@ -1016,6 +1044,11 @@ export class Scheduler extends EventEmitter {
   ): Promise<void> {
     const rt = this.runtimes.get(task.id);
     if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
+    // Any new cycle takes the place of a pending retry; only the retry's own
+    // slot (a timer run) starts where the failed run stopped.
+    const pendingRetry = this.machineRetries.get(task.id);
+    this.machineRetries.delete(task.id);
+    const retry = trigger === 'timer' ? pendingRetry : undefined;
     const runId = newRunId(new Date(this.now()));
     let runDir: string;
     try {
@@ -1053,12 +1086,24 @@ export class Scheduler extends EventEmitter {
     } else if (catchUpNote) {
       this.record(task.id, runId, 'watcher', 'act', { summary: catchUpNote });
     }
+    if (retry) {
+      const reused = [retry.check && 'check', retry.classified && 'classifier'].filter(Boolean);
+      this.record(task.id, runId, 'system', 'started', {
+        summary: `retry ${retry.attempt} after: ${retry.reason}${
+          reused.length ? `; ${reused.join(' and ')} already passed, not run again` : ''
+        }`,
+      });
+    }
 
     // A step the Run Options window switched off does not run at all, whatever
     // the task has configured. A continuation run goes straight to the agent:
-    // its gates already passed when the run it continues started.
-    const willCheck = !continuation && !!task.check?.enabled && !skips?.check;
-    const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier;
+    // its gates already passed when the run it continues started. A retry
+    // skips the steps that passed in the run it retries.
+    const willCheck = !continuation && !!task.check?.enabled && !skips?.check && !retry?.check;
+    const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier && !retry?.classified;
+    /** The steps that passed, kept for a retry should the machine fail this run. */
+    let passedCheck = retry?.check;
+    let passedClassify = !!retry?.classified;
     // Only steps the task actually has are worth naming; the rest of the run
     // log would otherwise report a skip of something that never ran anyway.
     const skipped: string[] = [];
@@ -1123,6 +1168,11 @@ export class Scheduler extends EventEmitter {
       // No check step configured (or disabled): every slot goes straight to classifier/agent.
       let go = true;
       let checkSummary: string | undefined = continuation ? `continuing run ${continuation.fromRunId}` : undefined;
+      if (retry?.check) {
+        ctx.vars.summary = retry.check.summary ?? '';
+        ctx.vars.context = retry.check.context;
+        checkSummary = retry.check.summary;
+      }
       if (willCheck) {
         const check = await this.steps.runCheck(ctx);
         if (stopped()) {
@@ -1156,6 +1206,7 @@ export class Scheduler extends EventEmitter {
             ctx.vars.summary = check.summary ?? '';
             ctx.vars.context = check.context;
             checkSummary = check.summary;
+            passedCheck = { summary: check.summary, context: check.context };
           }
         }
       }
@@ -1192,6 +1243,8 @@ export class Scheduler extends EventEmitter {
           } else if (cls.status === 'noop') {
             go = false;
             detail = `classifier: ${cls.reason ?? 'no'}`;
+          } else {
+            passedClassify = true;
           }
         }
       }
@@ -1285,6 +1338,16 @@ export class Scheduler extends EventEmitter {
       // a fresh run once it is back up.
       if (this.sleptRuns.delete(runId)) slept = true;
       if (slept) this.sleepOwed.add(task.id);
+      // A scheduled run the machine failed is owed a retry; finishCycle
+      // decides whether it comes before the next regular slot.
+      else if (trigger === 'timer' && errored && (network || environment) && !this.stopping) {
+        this.machineRetries.set(task.id, {
+          attempt: (retry?.attempt ?? 0) + 1,
+          reason: detail,
+          check: passedCheck,
+          classified: passedClassify,
+        });
+      }
       this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, slept, environment);
     }
     if (guidanceLeft !== null && !this.stopping) {
@@ -1453,6 +1516,9 @@ export class Scheduler extends EventEmitter {
       const owedSleep = this.sleepOwed.delete(taskId);
       const waitUntil = this.limitWaits.get(taskId);
       this.limitWaits.delete(taskId);
+      // Taken here and put back only when the retry is scheduled below.
+      const machineRetry = this.machineRetries.get(taskId);
+      this.machineRetries.delete(taskId);
       if (!fresh.enabled) {
         rt.state = parkedState(fresh);
         rt.nextRunAt = null;
@@ -1475,6 +1541,18 @@ export class Scheduler extends EventEmitter {
         // harness limit is still owed; anything else is the next cron slot.
         const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && !!scheduleOf(fresh);
         if (!owed) rt.nextRunAt = this.computeNext(fresh, now);
+        // The machine failed a scheduled run: retry it on a widening wait,
+        // as long as that comes before the next regular slot.
+        if (machineRetry) {
+          const at = now + MACHINE_RETRY_MS[Math.min(machineRetry.attempt, MACHINE_RETRY_MS.length) - 1];
+          if (rt.nextRunAt === null || at < rt.nextRunAt) {
+            this.machineRetries.set(taskId, machineRetry);
+            rt.nextRunAt = at;
+            const when = formatDateTime(at, detectSystemLocale());
+            rt.lastDetail = `${detail}; retrying at ${when}`;
+            this.d.log.info(`[${taskId}] the machine failed the run; retry ${machineRetry.attempt} at ${new Date(at).toISOString()}`);
+          }
+        }
       }
     } else if (limitWait && rt.nextRunAt !== null) {
       rt.nextRunAt = Math.max(rt.nextRunAt, retryAtMs!);

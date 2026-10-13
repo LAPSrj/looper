@@ -1367,6 +1367,125 @@ describe('system sleep', () => {
   });
 });
 
+describe('machine retries', () => {
+  const MIN = 60_000;
+  /** The daily slot after the fake clock's start: 1970-01-01 09:00 UTC. */
+  const SLOT = 9 * 60 * MIN;
+  const wslDown = { error: 'Wsl/Service/WSAETIMEDOUT', environment: true };
+
+  beforeEach(() => {
+    h.tasks.patch('t1', { trigger: { mode: 'schedule', schedule: { cron: '0 9 * * *', timezone: 'UTC' } } });
+    h.sched.get('t1')!.nextRunAt = h.clock.now;
+  });
+
+  /** Move the clock to the task's next run and tick once. */
+  async function runDue(): Promise<void> {
+    h.clock.now = h.sched.get('t1')!.nextRunAt!;
+    await h.tickN(1);
+  }
+
+  it('retries an agent the machine failed without running the passed check again', async () => {
+    h.checks.push(check('act', { summary: 'pushed 3 entries', context: 'the report' }));
+    h.agentThrows = new Error('spawn wsl.exe ENOENT (File not found: )');
+    await h.tickN(1);
+    const rt = h.sched.get('t1')!;
+    expect(rt.nextRunAt).toBe(h.clock.now + 2 * MIN);
+    expect(rt.lastDetail).toMatch(/^environment unavailable: spawn wsl\.exe ENOENT .*; retrying at /);
+    expect(h.checkNotes).toHaveLength(1);
+
+    h.agentEnds.push(agentEnd('done', 'relayed'));
+    await runDue();
+    expect(h.checkNotes).toHaveLength(1);
+    expect(h.agentStarted).toBe(1);
+    expect(records().find((r) => r.phase === 'system' && r.result === 'started')!.summary).toBe(
+      'retry 1 after: environment unavailable: spawn wsl.exe ENOENT (File not found: ); check already passed, not run again',
+    );
+    expect(records().filter((r) => r.phase === 'agent' && r.result === 'started').at(-1)!.summary).toBe('pushed 3 entries');
+    expect(rt.nextRunAt).toBe(SLOT);
+  });
+
+  it('keeps a passed classifier too and retries only the agent', async () => {
+    h.tasks.patch('t1', { classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    h.checks.push(check('act'));
+    h.classifies.push({ status: 'act', reason: 'go', durationMs: 1, exitCode: 0 });
+    h.agentEnds.push({ ...agentEnd('error', 'offline'), network: true });
+    await h.tickN(1);
+    h.agentEnds.push(agentEnd('done'));
+    await runDue();
+    expect(h.checkNotes).toHaveLength(1);
+    expect(records().filter((r) => r.phase === 'classify' && r.result === 'started')).toHaveLength(1);
+    expect(h.agentStarted).toBe(2);
+  });
+
+  it('a failed check is retried on a widening wait that never counts toward auto-pause', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 } });
+    const waits: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      h.checks.push(check('error', wslDown));
+      const started = h.clock.now;
+      await h.tickN(1);
+      waits.push((h.sched.get('t1')!.nextRunAt! - started) / MIN);
+      h.clock.now = h.sched.get('t1')!.nextRunAt!;
+    }
+    expect(waits).toEqual([2, 5, 15, 30, 30, 30]);
+    expect(h.checkNotes).toHaveLength(6);
+    expect(h.sched.get('t1')!.pausedReason).toBeFalsy();
+  });
+
+  it('gives way to the next regular slot, which runs every step again', async () => {
+    h.clock.now = SLOT - 3 * MIN;
+    h.sched.get('t1')!.nextRunAt = h.clock.now;
+    h.checks.push(check('act'));
+    h.agentThrows = new Error('spawn wsl.exe ENOENT');
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.nextRunAt).toBe(SLOT - MIN);
+
+    h.agentThrows = new Error('spawn wsl.exe ENOENT');
+    await runDue();
+    expect(h.sched.get('t1')!.nextRunAt).toBe(SLOT);
+    expect(h.sched.get('t1')!.lastDetail).not.toMatch(/retrying/);
+
+    h.checks.push(check('noop'));
+    await runDue();
+    expect(h.checkNotes).toHaveLength(2);
+    expect(records().filter((r) => r.phase === 'check')).toHaveLength(2);
+  });
+
+  it('a task error, a manual run or a pause never gets a retry', async () => {
+    h.checks.push(check('error', { error: 'boom' }));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.nextRunAt).toBe(SLOT);
+
+    h.checks.push(check('error', wslDown));
+    h.sched.runNow('t1');
+    await flush();
+    expect(h.sched.get('t1')!.nextRunAt).toBe(SLOT);
+
+    h.sched.get('t1')!.nextRunAt = h.clock.now;
+    h.checks.push(check('error', wslDown));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.nextRunAt).toBe(h.clock.now + 2 * MIN);
+    h.sched.pause('t1');
+    h.sched.resume('t1');
+    h.checks.push(check('noop'));
+    await runDue();
+    expect(records().filter((r) => r.phase === 'system' && r.result === 'started')).toHaveLength(0);
+  });
+
+  it('an edit while a retry is pending runs every step again', async () => {
+    h.checks.push(check('act'));
+    h.agentThrows = new Error('spawn wsl.exe ENOENT');
+    await h.tickN(1);
+    h.tasks.patch('t1', { agent: { prompt: 'do it differently' } });
+    h.checks.push(check('noop'));
+    await runDue();
+    expect(h.checkNotes).toHaveLength(2);
+    expect(records().find((r) => r.phase === 'system' && r.result === 'started')!.summary).toBe(
+      'retry 1 after: environment unavailable: spawn wsl.exe ENOENT',
+    );
+  });
+});
+
 describe('startup overdue filtering', () => {
   it('non-overdue tasks wait for their next cron slot instead of running immediately', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));

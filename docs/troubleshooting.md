@@ -57,6 +57,8 @@ that starts with "no network: ". Like a usage-limit hit:
 - It does **not** consume a one-off guidance note charge (see
   [how a run works](how-a-run-works.md)), since a network error caught before
   the agent acted means the agent never got to act on the prompt.
+- A scheduled run is retried within minutes instead of waiting for the next
+  slot (see [below](#a-scheduled-run-the-computer-failed-is-retried)).
 
 Unlike a usage-limit hit, no end notification fires for these runs by
 default — a blip in your connection shouldn't page you. Turn on
@@ -84,6 +86,8 @@ that starts with "environment unavailable: ". Like a network error:
   never started.
 - No end notification fires unless "Include environment errors" is on in the
   task's Notifications tab.
+- A scheduled run is retried within minutes instead of waiting for the next
+  slot (see [below](#a-scheduled-run-the-computer-failed-is-retried)).
 
 A watcher WSL couldn't start is restarted with the usual backoff without
 counting toward auto-pause, and wsl.exe's error message is never delivered
@@ -92,6 +96,23 @@ as trigger events.
 A task whose WSL distro doesn't exist (`WSL_E_DISTRO_NOT_FOUND`) is **not**
 an environment error: that's the task's configuration, so it's an ordinary
 error and counts toward auto-pause as usual.
+
+## A scheduled run the computer failed is retried
+
+When a scheduled run ends with a network or environment error, Looper tries
+it again 2 minutes later, then after 5, 15 and 30 minutes, and every 30
+minutes after that, until a run gets through or the task's next regular slot
+comes first. The task list shows the time of the next try after the error
+("…; retrying at 9:32 AM"), and the retry's run log starts with the error it
+retries.
+
+The retry starts at the step that failed. A check or classifier that already
+passed doesn't run again, and the agent gets the check's original summary and
+context, so a check that changes things (a sync that pushes data, for
+example) runs only once per slot.
+
+Only scheduled runs are retried. A manual run or a pause cancels a pending
+retry, and editing the task makes the retry run every step again. A pending retry doesn't survive a restart of Looper.
 
 ## The computer went to sleep during a run
 
