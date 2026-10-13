@@ -24,6 +24,7 @@ function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
     currentRunId: null,
     pausedReason: null,
     watcher: null,
+    lastEventAt: null,
     session: null,
     ...partial,
   };

@@ -7,7 +7,9 @@ import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files
 import { folderSubtree } from '../shared/folders';
 
 import type { AppInfo } from '../shared/api';
-import type { Task } from '../shared/types';
+import type { PaneId } from '../shared/panes';
+import type { Task, View } from '../shared/types';
+import { paneMenuItems, singleMenuItems } from './view-menu';
 
 export interface IpcHost {
   getWindow: () => BrowserWindow | null;
@@ -502,6 +504,19 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
     Menu.buildFromTemplate([{ label: 'New Folder…', click: () => host.openNewFolder() }]).popup({ window: sender });
+  });
+
+  // A task list's header: its View-menu options (the pane's, or the single list's), then New Folder.
+  ipcMain.on('context-menu:pane', (e, info: { pane?: PaneId }) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const view = engine.settings.view;
+    const update = (patch: Partial<View>) => engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
+    Menu.buildFromTemplate([
+      ...(info.pane ? paneMenuItems(view, info.pane, update) : singleMenuItems(view, update)),
+      { type: 'separator' },
+      { label: 'New Folder…', click: () => host.openNewFolder() },
+    ]).popup({ window: sender });
   });
 
   ipcMain.on(

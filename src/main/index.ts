@@ -5,13 +5,14 @@ import { createEngine, type Engine } from '../engine/engine';
 import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
 import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
-import type { EngineEvent, Settings } from '../shared/types';
+import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
 import { messagesToMarkdown } from '../shared/messages-md';
 import { adjustImportedTaskPaths } from './import-paths';
 import { registerIpc } from './ipc';
+import { taskListMenu } from './view-menu';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
@@ -63,7 +64,11 @@ if (!app.requestSingleInstanceLock()) {
     engine.start();
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
-      else if (event.type === 'settings') tray?.setContextMenu(trayMenu());
+      else if (event.type === 'settings') {
+        tray?.setContextMenu(trayMenu());
+        // The View menu follows the view settings, which a pane header's context menu also changes.
+        rebuildMenu();
+      }
       else if (event.type === 'rest') {
         if (event.disarmReason === 'user-wake') showRestDisarmNotification();
         tray?.setContextMenu(trayMenu());
@@ -1270,18 +1275,7 @@ function buildMenu(
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
   const runNow = canRunNow ?? !active;
-  const view: Settings['view'] = engine?.settings.view ?? {
-    toolbar: true,
-    statusBar: true,
-    taskList: 'standard',
-    showDisabledTasks: true,
-    showCompletedTasks: true,
-    showScheduledTasks: true,
-    showManualTasks: true,
-    showWatcherTasks: true,
-    autoOpenFolders: true,
-    hideNoActionRuns: false,
-  };
+  const view: Settings['view'] = engine?.settings.view ?? ViewSchema.parse({});
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
@@ -1330,21 +1324,7 @@ function buildMenu(
     {
       label: '&View',
       submenu: [
-        {
-          label: 'Task &List',
-          submenu: [
-            { label: '&Standard', type: 'radio', checked: view.taskList !== 'compact', click: () => updateView({ taskList: 'standard' }) },
-            { label: '&Compact', type: 'radio', checked: view.taskList === 'compact', click: () => updateView({ taskList: 'compact' }) },
-            { type: 'separator' },
-            { label: 'Show &Disabled Tasks', type: 'checkbox', checked: view.showDisabledTasks, click: (item) => updateView({ showDisabledTasks: item.checked }) },
-            { label: 'Show Comp&leted Tasks', type: 'checkbox', checked: view.showCompletedTasks, click: (item) => updateView({ showCompletedTasks: item.checked }) },
-            { label: 'Show S&cheduled Tasks', type: 'checkbox', checked: view.showScheduledTasks, click: (item) => updateView({ showScheduledTasks: item.checked }) },
-            { label: 'Show &Manual Tasks', type: 'checkbox', checked: view.showManualTasks, click: (item) => updateView({ showManualTasks: item.checked }) },
-            { label: 'Show &Watcher Tasks', type: 'checkbox', checked: view.showWatcherTasks, click: (item) => updateView({ showWatcherTasks: item.checked }) },
-            { type: 'separator' },
-            { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => updateView({ autoOpenFolders: item.checked }) },
-          ],
-        },
+        { label: 'Task &List', submenu: taskListMenu(view, updateView) },
         {
           label: 'Task Lo&gs',
           submenu: [

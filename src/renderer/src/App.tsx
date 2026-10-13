@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
-import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime } from '@shared/types';
+import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
-import { TaskList } from './components/TaskList';
+import { Sidebar } from './components/Sidebar';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
 import { TaskToolbar } from './components/TaskToolbar';
 import { useDialogKeys, useDragResize } from './components/hooks';
@@ -239,6 +239,14 @@ export function App() {
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
   const view = info?.settings.view;
 
+  // Shown at once; the settings event that follows carries the same view back.
+  const changeView = (patch: Partial<View>) => {
+    if (!view) return;
+    const next = { ...view, ...patch };
+    setInfo((i) => (i ? { ...i, settings: { ...i.settings, view: next } } : i));
+    void window.looper.updateSettings({ view: next }).catch((e) => void window.looper.showError((e as Error).message));
+  };
+
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const appRef = useRef<HTMLDivElement>(null);
 
@@ -267,17 +275,8 @@ export function App() {
         <TaskToolbar task={task} runtime={task ? runtimes[task.id] : undefined} onAction={uiAction} />
       )}
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
-        <aside className="sidebar">
-          <div
-            className="sidebar-header"
-            onContextMenu={(e) => {
-              e.preventDefault();
-              window.looper.showTasksEmptyContextMenu();
-            }}
-          >
-            <span className="pane-title">Tasks</span>
-          </div>
-          <TaskList
+        {view ? (
+          <Sidebar
             tasks={tasks}
             folders={folders}
             layout={layout}
@@ -285,15 +284,12 @@ export function App() {
             selected={selected}
             now={now}
             onSelect={select}
-            compact={view?.taskList === 'compact'}
-            showDisabled={view?.showDisabledTasks ?? true}
-            showCompleted={view?.showCompletedTasks ?? true}
-            showScheduled={view?.showScheduledTasks ?? true}
-            showManual={view?.showManualTasks ?? true}
-            showWatcher={view?.showWatcherTasks ?? true}
-            autoOpenFolders={view?.autoOpenFolders ?? true}
+            view={view}
+            onView={changeView}
           />
-        </aside>
+        ) : (
+          <aside className="sidebar" />
+        )}
         <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
         <main className="main">
           {task ? (

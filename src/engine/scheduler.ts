@@ -615,6 +615,7 @@ export class Scheduler extends EventEmitter {
       currentRunId: null,
       pausedReason: null,
       watcher: null,
+      lastEventAt: prev?.lastEventAt ?? null,
       session: prev?.session ?? null,
     };
     this.runtimes.set(task.id, rt);
@@ -958,6 +959,8 @@ export class Scheduler extends EventEmitter {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt || !task.enabled || task.completedAt || rt.pausedReason) return;
+    rt.lastEventAt = this.now();
+    this.emitRuntime(rt);
     const pending = this.pendingEvents.get(taskId) ?? [];
     pending.push(...lines);
     if (pending.length > MAX_PENDING_EVENTS) pending.splice(0, pending.length - MAX_PENDING_EVENTS);

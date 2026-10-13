@@ -1570,6 +1570,7 @@ describe('startup overdue filtering', () => {
         currentRunId: null,
         pausedReason: null,
         watcher: null,
+        lastEventAt: null,
         session: null,
       },
     });
@@ -1616,6 +1617,7 @@ describe('startup overdue filtering', () => {
         currentRunId: null,
         pausedReason: null,
         watcher: null,
+        lastEventAt: null,
         session: null,
       },
     });
@@ -1691,6 +1693,7 @@ describe('interrupted runs', () => {
         currentRunId: runs.at(-1)?.runId ?? null,
         pausedReason: null,
         watcher: null,
+        lastEventAt: null,
         session: null,
       },
     });

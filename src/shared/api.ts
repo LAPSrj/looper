@@ -1,5 +1,6 @@
 import type { MessageImage, MessagesResult } from './messages';
 import type { DiscoveredModel } from './model-update';
+import type { PaneId } from './panes';
 import type { EngineEvent, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -181,8 +182,10 @@ export interface LooperApi {
   }): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
-  /** Context menu of the task list's empty space / "Tasks" title (New Folder…). */
+  /** Context menu of the task list's empty space (New Folder…). */
   showTasksEmptyContextMenu(): void;
+  /** Context menu of a task list's header: that pane's view options (no pane = the single list's), then New Folder…. */
+  showPaneContextMenu(info: { pane?: PaneId }): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }): void;
   /** Report the conversation window's current filter text (drives the Filter… checkmark and the filter window's initial value). */

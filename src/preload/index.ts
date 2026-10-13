@@ -114,6 +114,7 @@ const api: LooperApi = {
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
   showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),
+  showPaneContextMenu: (info) => ipcRenderer.send('context-menu:pane', info),
   showRunContextMenu: (info) => ipcRenderer.send('context-menu:run', info),
   showMessageContextMenu: (info) => ipcRenderer.send('context-menu:message', info),
   reportMessagesFilter: (filter) => ipcRenderer.send('messages:filter-state', filter),

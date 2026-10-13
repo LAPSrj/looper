@@ -103,13 +103,17 @@ interface DragResizeOpts {
   containerRef: RefObject<HTMLElement | null>;
   /** Pointer position relative to the container's left/top edge, on every move. */
   onDrag: (pos: number, rect: DOMRect) => void;
+  /** The mouse was released. */
+  onEnd?: () => void;
 }
 
 /** Mouse-drag handler for a splitter; returns the divider's onMouseDown. */
-export function useDragResize({ axis, containerRef, onDrag }: DragResizeOpts): (e: ReactMouseEvent) => void {
+export function useDragResize({ axis, containerRef, onDrag, onEnd }: DragResizeOpts): (e: ReactMouseEvent) => void {
   const dragging = useRef(false);
   const onDragRef = useRef(onDrag);
   onDragRef.current = onDrag;
+  const onEndRef = useRef(onEnd);
+  onEndRef.current = onEnd;
   return useCallback(
     (e: ReactMouseEvent) => {
       e.preventDefault();
@@ -125,6 +129,7 @@ export function useDragResize({ axis, containerRef, onDrag }: DragResizeOpts): (
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        onEndRef.current?.();
       };
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { DragEvent } from 'react';
-import type { Task, TaskFolder, TaskRuntime } from '@shared/types';
+import type { Task, TaskFilter, TaskFolder, TaskRuntime } from '@shared/types';
 import { folderParents, folderSubtree } from '@shared/folders';
-import { capFirst, fmtCountdown, fmtDate, resultLabel, stateLabel } from '../format';
+import { ALL_FILTERS, passesFilter, type PaneDef } from '@shared/panes';
+import { capFirst, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
 import { useListNav } from './hooks';
 
 interface Props {
@@ -16,13 +17,31 @@ interface Props {
   onSelect: (id: string) => void;
   /** Show only the task name, without the state line. */
   compact: boolean;
-  showDisabled: boolean;
-  showCompleted: boolean;
-  showScheduled: boolean;
-  showManual: boolean;
-  showWatcher: boolean;
+  /** The pane this list is (multiple-pane sidebar), null = the single list of every task. */
+  pane: PaneDef | null;
+  filter: TaskFilter;
+  /** Show folders without any task in them; in a pane, other folders show only when they hold its members. */
+  showEmptyFolders: boolean;
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: boolean;
+}
+
+/** Goals order: the next due first, then the ones with no next run, then the completed (latest first). */
+function dueOrder(rts: Record<string, TaskRuntime>) {
+  const key = (t: Task): [number, number] =>
+    t.completedAt ? [2, -Date.parse(t.completedAt)] : [rts[t.id]?.nextRunAt == null ? 1 : 0, rts[t.id]?.nextRunAt ?? 0];
+  return (a: Task, b: Task) => {
+    const [ga, va] = key(a);
+    const [gb, vb] = key(b);
+    return ga - gb || va - vb;
+  };
+}
+
+function fmtEventTime(ts: number, now: number): string {
+  const d = new Date(ts);
+  return d.toDateString() === new Date(now).toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    : fmtDateTime(ts);
 }
 
 /** What is being dragged: a task row or a folder header. */
@@ -45,14 +64,12 @@ type Row =
 
 const INDENT = 14;
 
-export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, showDisabled, showCompleted, showScheduled, showManual, showWatcher, autoOpenFolders }: Props) {
-  const passes = (t: Task) => {
-    const mode = t.trigger.mode;
-    return (
-      (t.completedAt ? showCompleted : t.enabled || showDisabled) &&
-      (mode === 'schedule' ? showScheduled : mode === 'watcher' ? showWatcher : showManual)
-    );
-  };
+export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, pane, filter, showEmptyFolders, autoOpenFolders }: Props) {
+  const passes = (t: Task) => (!pane || pane.member(t)) && passesFilter(t, filter, pane?.filters ?? ALL_FILTERS);
+  // Goals list by due time; the other lists keep the order the user dragged them into.
+  const sorted = pane?.id === 'goals';
+  // Row ids stay unique when a task is listed in two panes.
+  const rowId = (id: string) => `task-${pane ? `${pane.id}-` : ''}${id}`;
   const parents = folderParents(folders);
   const folderById = new Map(folders.map((f) => [f.id, f]));
   // A task pointing at a deleted/unknown folder lists at the top level.
@@ -105,13 +122,25 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     const ids = folderSubtree(folders, id);
     return tasks.filter((t) => t.folderId && ids.has(t.folderId) && passes(t)).length;
   };
+  const folderShown = (id: string) => {
+    if (!pane) return true;
+    const ids = folderSubtree(folders, id);
+    const inside = tasks.filter((t) => t.folderId && ids.has(t.folderId));
+    return inside.length === 0 ? showEmptyFolders : inside.some(pane.member);
+  };
+  const byDue = dueOrder(runtimes);
   const build = (container: string, depth: number) => {
-    const entries = entriesOf.get(container) ?? [];
+    let entries = entriesOf.get(container) ?? [];
+    if (sorted) {
+      // Folders keep their order, ahead of the sorted tasks.
+      const inOrder = entries.flatMap((e) => (e.startsWith('folder:') ? [] : tasks.filter((t) => t.id === e)));
+      entries = [...entries.filter((e) => e.startsWith('folder:')), ...inOrder.sort(byDue).map((t) => t.id)];
+    }
     entries.forEach((entry, i) => {
       const lastHere = i === entries.length - 1;
       if (entry.startsWith('folder:')) {
         const f = folderById.get(entry.slice(7));
-        if (!f) return;
+        if (!f || !folderShown(f.id)) return;
         const open = isOpen(f.id);
         const children = entriesOf.get(f.id) ?? [];
         rows.push({
@@ -140,7 +169,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     onIndex: (i) => {
       if (visible[i].id !== selected) onSelect(visible[i].id);
     },
-    scrollToId: selected ? `task-${selected}` : null,
+    scrollToId: selected ? rowId(selected) : null,
   });
 
   const [drag, setDrag] = useState<DragItem | null>(null);
@@ -261,15 +290,14 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           ? t.trigger.mode === 'manual'
             ? 'Manual'
             : t.trigger.mode === 'watcher'
-              ? rt.watcher === 'watching'
-                ? 'Watching'
-                : rt.watcher === 'restarting'
-                  ? 'Watcher restarting'
-                  : 'Idle'
+              ? (rt.watcher === 'watching' ? 'Watching' : rt.watcher === 'restarting' ? 'Watcher restarting' : 'Idle') +
+                (rt.lastEventAt !== null ? ` · last event ${fmtEventTime(rt.lastEventAt, now)}` : '')
               : 'Not scheduled'
           : countdown === 'now'
             ? 'Next run now'
-            : `Next run in ${countdown}`
+            : sorted && rt.nextRunAt !== null
+              ? `Next run ${fmtDateTime(rt.nextRunAt)}`
+              : `Next run in ${countdown}`
         : rt?.state === 'paused'
           ? capFirst(rt.pausedReason ?? 'paused')
           : capFirst(rt?.lastDetail ?? '') || resultLabel(rt?.lastResult ?? '');
@@ -291,7 +319,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     return (
       <li
         key={t.id}
-        id={`task-${t.id}`}
+        id={rowId(t.id)}
         role="option"
         aria-selected={selected === t.id}
         className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held ? 'held' : ''}${t.enabled ? '' : ' disabled'}${dropClass}`}
@@ -307,7 +335,10 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           if (!drag) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const y = e.clientY - rect.top;
-          if (popOut && y >= rect.height * 0.75) {
+          if (sorted) {
+            // The list sorts itself: a drop on a task only moves into that task's folder.
+            allowDrop(e, container ? { kind: 'folder', folderId: container, pos: 'into' } : { kind: 'root' });
+          } else if (popOut && y >= rect.height * 0.75) {
             // Bottom quarter of a folder's closing row: leave it, land right after it.
             allowDrop(e, { kind: 'folder', folderId: container, pos: 'after' });
           } else {
@@ -424,7 +455,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
       aria-label="Tasks"
       tabIndex={0}
       onKeyDown={onKeyDown}
-      aria-activedescendant={selected ? `task-${selected}` : undefined}
+      aria-activedescendant={selected && visible.some((t) => t.id === selected) ? rowId(selected) : undefined}
       onDragOver={(e) => {
         if (e.target === e.currentTarget) allowDrop(e, { kind: 'root' });
       }}

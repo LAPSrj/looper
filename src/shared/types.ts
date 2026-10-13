@@ -388,6 +388,45 @@ export type TemplateInput = TaskInput;
 
 // ---------- Settings ----------
 
+/** Which tasks a task list shows. A pane offers only the filters that can change its contents (see shared/panes). */
+export const TaskFilterSchema = z.object({
+  showDisabled: z.boolean().default(true),
+  showCompleted: z.boolean().default(true),
+  showScheduled: z.boolean().default(true),
+  showManual: z.boolean().default(true),
+  showWatcher: z.boolean().default(true),
+});
+export type TaskFilter = z.infer<typeof TaskFilterSchema>;
+
+/** One pane of the multiple-pane sidebar. */
+export const SidebarPaneSchema = TaskFilterSchema.extend({
+  visible: z.boolean().default(true),
+  collapsed: z.boolean().default(false),
+  /** Share of the sidebar's height among the open panes. */
+  weight: z.number().positive().default(1),
+});
+export type SidebarPane = z.infer<typeof SidebarPaneSchema>;
+
+export const ViewSchema = z.object({
+  toolbar: z.boolean().default(true),
+  statusBar: z.boolean().default(true),
+  taskList: z.enum(['standard', 'compact']).default('standard'),
+  /** One task list, or the Tasks / Goals / Watchers panes stacked. */
+  sidebar: z.enum(['single', 'multiple']).default('single'),
+  single: TaskFilterSchema.default({}),
+  panes: z
+    .object({
+      tasks: SidebarPaneSchema.default({}),
+      goals: SidebarPaneSchema.default({ showCompleted: false }),
+      watchers: SidebarPaneSchema.default({}),
+    })
+    .default({}),
+  /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
+  autoOpenFolders: z.boolean().default(true),
+  hideNoActionRuns: z.boolean().default(false),
+});
+export type View = z.infer<typeof ViewSchema>;
+
 export const SettingsSchema = z.object({
   /** Where checks and agents can run, each with its own harness list. */
   environments: z.array(EnvironmentSchema).min(1).default(() => defaultEnvironments()),
@@ -447,19 +486,7 @@ export const SettingsSchema = z.object({
     disarmOnUserWake: z.boolean().default(true),
   }).default({}),
   /** Main-window view options (View menu). */
-  view: z.object({
-    toolbar: z.boolean().default(true),
-    statusBar: z.boolean().default(true),
-    taskList: z.enum(['standard', 'compact']).default('standard'),
-    showDisabledTasks: z.boolean().default(true),
-    showCompletedTasks: z.boolean().default(true),
-    showScheduledTasks: z.boolean().default(true),
-    showManualTasks: z.boolean().default(true),
-    showWatcherTasks: z.boolean().default(true),
-    /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
-    autoOpenFolders: z.boolean().default(true),
-    hideNoActionRuns: z.boolean().default(false),
-  }).default({}),
+  view: ViewSchema.default({}),
 }).superRefine((s, ctx) => {
   const envIds = new Set<string>();
   for (const env of s.environments) {
@@ -553,6 +580,8 @@ export interface TaskRuntime {
   pausedReason: string | null;
   /** Events trigger only: the watcher process is up, waiting to respawn, or not wanted (null). */
   watcher: 'watching' | 'restarting' | null;
+  /** Events trigger only: when the watcher last reported events, null = never. */
+  lastEventAt: number | null;
   /** Rolling conversation (agent.session 'continue'): the id runs resume, and how many runs used it. */
   session: { id: string; runs: number } | null;
 }
