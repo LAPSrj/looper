@@ -159,7 +159,7 @@ once that date passes, option or not — the date is the instruction to stop.
 
 A long job can fill the agent's conversation until the harness compacts it
 and the agent loses details. With **Restart the agent when its context passes
-a limit** on (Agent tab, Claude Code and Codex), Looper reads the size of the
+a limit** on (Settings tab, Claude Code and Codex), Looper reads the size of the
 agent's conversation off its transcript every 5 seconds. Once it passes the
 **Context limit**, Looper leaves the agent a notice asking it to restart as
 soon as it can. The notice reaches the agent the same way as
