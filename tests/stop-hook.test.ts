@@ -209,6 +209,22 @@ describe('guidance through the bash hooks', () => {
     expect(fs.readdirSync(dir).some((n) => /^guidance-.+\.json$/.test(n))).toBe(true);
   });
 
+  it("the claude PostToolUse hook leaves the guidance for the agent when a subagent's call fires it", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
+    dirs.push(dir);
+    const script = path.join(dir, t.guideHookFile);
+    fs.writeFileSync(script, t.renderGuideHook('claude', path.join(dir, GUIDANCE_FILE)), { mode: 0o755 });
+    queueGuidance(dir, 'for the agent');
+    // Key order as claude sends it: agent_id/agent_type only on a subagent's call, before tool_input.
+    const sub = { session_id: 's1', agent_id: 'a025a5695c64b4a2a', agent_type: 'general-purpose', tool_name: 'Bash', tool_input: { command: 'ls' } };
+    expect(runScript(script, JSON.stringify(sub))).toBe('');
+    expect(readPendingGuidance(dir)).toBe('for the agent');
+    // The agent's own call, even one whose command or output names agent_id, takes it.
+    const own = { session_id: 's1', tool_name: 'Bash', tool_input: { command: 'jq .agent_id x.json' }, tool_response: { agent_id: 'x' } };
+    const out = JSON.parse(runScript(script, JSON.stringify(own)));
+    expect(guidanceText(out.hookSpecificOutput.additionalContext)).toBe('for the agent');
+  });
+
   it('the codex hook finds the run through LOOPER_RUN_DIR', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
     dirs.push(dir);
@@ -259,6 +275,9 @@ describe('windows Stop-hook gate', () => {
     expect(at).toBeLessThan(gate.indexOf('stop-reminded'));
     expect(gate).toContain(`Write-Output ('{"decision":"block","reason":' + [IO.File]::ReadAllText($d).Trim() + '}')`);
     expect(t.renderGuideHook('codex')).toContain("$g = (Join-Path $env:LOOPER_RUN_DIR 'guidance.json')");
+    expect(t.renderGuideHook('claude', 'C:\\data\\r1\\guidance.json')).toContain(
+      `if (($payload -split '"tool_input"', 2)[0] -match '"agent_id"\\s*:') { exit 0 }`,
+    );
     expect(t.codexHookCommand('C:\\Users\\me\\looper\\hooks\\codex-looper-guide-hook.ps1')).toBe(
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/me/looper/hooks/codex-looper-guide-hook.ps1',
     );
