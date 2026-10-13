@@ -321,17 +321,39 @@ interface SessionProc {
   kill(): void;
 }
 
+/**
+ * A bare Windows command resolved against the env's Path. node-pty's own
+ * lookup fails ("File not found: " with an empty path) whenever the command
+ * also exists in the app's working directory, and a login start runs Looper
+ * from C:\Windows\System32, where wsl.exe is. Anything else passes through.
+ */
+export function resolveWinCommand(command: string, env: Record<string, string>): string {
+  if (process.platform !== 'win32' || /[\\/]/.test(command)) return command;
+  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path');
+  for (const dir of (key ? env[key] : '').split(';')) {
+    if (!dir) continue;
+    const candidate = path.win32.join(dir, command);
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // not in this dir
+    }
+  }
+  return command;
+}
+
 /** Interactive: a real terminal, so the TUI renders and can be typed into. */
 function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
   const pty = loadPty();
+  const env = childEnv();
   let proc: PtyNS.IPty;
   try {
-    proc = pty.spawn(spec.command, spec.args, {
+    proc = pty.spawn(resolveWinCommand(spec.command, env), spec.args, {
       name: 'xterm-256color',
       cols: PTY_COLS,
       rows: PTY_ROWS,
       cwd,
-      env: childEnv(),
+      env,
     });
   } catch (e) {
     // ConPTY says "File not found: <path>" (an empty path when PATH has no
