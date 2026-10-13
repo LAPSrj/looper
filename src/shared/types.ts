@@ -398,8 +398,17 @@ export const TaskFilterSchema = z.object({
 });
 export type TaskFilter = z.infer<typeof TaskFilterSchema>;
 
+/** A task list's options: its filters, and how it shows folders. */
+export const TaskListOptionsSchema = TaskFilterSchema.extend({
+  /** Off: the list shows its tasks straight, without folder rows. */
+  showFolders: z.boolean().default(true),
+  /** Hide a folder none of whose tasks this list shows. */
+  hideEmptyFolders: z.boolean().default(false),
+});
+export type TaskListOptions = z.infer<typeof TaskListOptionsSchema>;
+
 /** One pane of the multiple-pane sidebar. */
-export const SidebarPaneSchema = TaskFilterSchema.extend({
+export const SidebarPaneSchema = TaskListOptionsSchema.extend({
   visible: z.boolean().default(true),
   collapsed: z.boolean().default(false),
   /** Share of the sidebar's height among the open panes. */
@@ -413,7 +422,7 @@ export const ViewSchema = z.object({
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
-  single: TaskFilterSchema.default({}),
+  single: TaskListOptionsSchema.default({}),
   panes: z
     .object({
       tasks: SidebarPaneSchema.default({}),

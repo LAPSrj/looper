@@ -88,7 +88,7 @@ export function Sidebar({ tasks, folders, layout, runtimes, selected, now, onSel
         >
           <span className="pane-title">Tasks</span>
         </div>
-        <TaskList {...listProps} pane={null} filter={view.single} showEmptyFolders />
+        <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders />
       </aside>
     );
   }
@@ -126,8 +126,8 @@ export function Sidebar({ tasks, folders, layout, runtimes, selected, now, onSel
     <aside className="sidebar" ref={asideRef}>
       {shown.map((p, i) => {
         const open = isOpen(p.id);
-        const filter = view.panes[p.id];
-        const count = tasks.filter((t) => p.member(t) && passesFilter(t, filter, p.filters)).length;
+        const options = view.panes[p.id];
+        const count = tasks.filter((t) => p.member(t) && passesFilter(t, options, p.filters)).length;
         const pair = i > 0 ? sashPair(i) : null;
         return (
           <div
@@ -141,7 +141,7 @@ export function Sidebar({ tasks, folders, layout, runtimes, selected, now, onSel
             {pair && <div className="pane-sash" onMouseDown={(e) => startSash(e, pair)} />}
             <div
               className="sidebar-header pane-header"
-              onClick={() => onView({ panes: { ...view.panes, [p.id]: { ...filter, collapsed: open } } })}
+              onClick={() => onView({ panes: { ...view.panes, [p.id]: { ...options, collapsed: open } } })}
               onContextMenu={(e) => {
                 e.preventDefault();
                 window.looper.showPaneContextMenu({ pane: p.id });
@@ -165,7 +165,7 @@ export function Sidebar({ tasks, folders, layout, runtimes, selected, now, onSel
               <span className="pane-count">{count}</span>
             </div>
             {open && (
-              <TaskList {...listProps} pane={p} filter={filter} showEmptyFolders={p.id === emptyFoldersIn} />
+              <TaskList {...listProps} pane={p} options={options}showEmptyFolders={p.id === emptyFoldersIn} />
             )}
           </div>
         );

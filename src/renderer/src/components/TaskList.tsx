@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DragEvent } from 'react';
-import type { Task, TaskFilter, TaskFolder, TaskRuntime } from '@shared/types';
+import type { Task, TaskFolder, TaskListOptions, TaskRuntime } from '@shared/types';
 import { folderParents, folderSubtree } from '@shared/folders';
 import { ALL_FILTERS, passesFilter, type PaneDef } from '@shared/panes';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
@@ -19,7 +19,7 @@ interface Props {
   compact: boolean;
   /** The pane this list is (multiple-pane sidebar), null = the single list of every task. */
   pane: PaneDef | null;
-  filter: TaskFilter;
+  options: TaskListOptions;
   /** Show folders without any task in them; in a pane, other folders show only when they hold its members. */
   showEmptyFolders: boolean;
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
@@ -64,8 +64,8 @@ type Row =
 
 const INDENT = 14;
 
-export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, pane, filter, showEmptyFolders, autoOpenFolders }: Props) {
-  const passes = (t: Task) => (!pane || pane.member(t)) && passesFilter(t, filter, pane?.filters ?? ALL_FILTERS);
+export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, pane, options, showEmptyFolders, autoOpenFolders }: Props) {
+  const passes = (t: Task) => (!pane || pane.member(t)) && passesFilter(t, options, pane?.filters ?? ALL_FILTERS);
   // Goals list by due time; the other lists keep the order the user dragged them into.
   const sorted = pane?.id === 'goals';
   // Row ids stay unique when a task is listed in two panes.
@@ -123,12 +123,26 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
     return tasks.filter((t) => t.folderId && ids.has(t.folderId) && passes(t)).length;
   };
   const folderShown = (id: string) => {
-    if (!pane) return true;
     const ids = folderSubtree(folders, id);
     const inside = tasks.filter((t) => t.folderId && ids.has(t.folderId));
+    if (options.hideEmptyFolders) return inside.some(passes);
+    if (!pane) return true;
     return inside.length === 0 ? showEmptyFolders : inside.some(pane.member);
   };
   const byDue = dueOrder(runtimes);
+  /** Folders off: every task the list shows, in tree order (folders open or not), at the top level. */
+  const buildFlat = () => {
+    const inOrder: Task[] = [];
+    const walk = (container: string) => {
+      for (const entry of entriesOf.get(container) ?? []) {
+        if (entry.startsWith('folder:')) walk(entry.slice(7));
+        else inOrder.push(...tasks.filter((t) => t.id === entry && passes(t)));
+      }
+    };
+    walk('');
+    if (sorted) inOrder.sort(byDue);
+    for (const t of inOrder) rows.push({ kind: 'task', task: t, depth: 0, container: containerOf(t), popOut: false });
+  };
   const build = (container: string, depth: number) => {
     let entries = entriesOf.get(container) ?? [];
     if (sorted) {
@@ -159,7 +173,8 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
       }
     });
   };
-  build('', 0);
+  if (options.showFolders) build('', 0);
+  else buildFlat();
 
   const visible = rows.flatMap((r) => (r.kind === 'task' ? [r.task] : []));
   const idx = visible.findIndex((t) => t.id === selected);
@@ -265,6 +280,13 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
   const allowDrop = (e: DragEvent, target: DropTarget) => {
     if (!drag) return;
     if (drag.kind === 'task' && target.kind === 'task' && target.taskId === drag.id) return;
+    if (!options.showFolders) {
+      // Without folder rows, a drop only reorders a task among its own folder's tasks.
+      if (sorted || drag.kind !== 'task' || target.kind !== 'task') return;
+      const dragged = tasks.find((t) => t.id === drag.id);
+      const anchor = tasks.find((t) => t.id === target.taskId);
+      if (!dragged || !anchor || containerOf(dragged) !== containerOf(anchor)) return;
+    }
     if (drag.kind === 'folder') {
       // Never into (or next to anything inside) the dragged folder's own subtree.
       if (target.kind === 'folder' && forbidden.has(target.folderId)) return;
@@ -324,7 +346,8 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
         aria-selected={selected === t.id}
         className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held ? 'held' : ''}${t.enabled ? '' : ' disabled'}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
-        draggable
+        // A flat list that sorts itself has nowhere to drop a task.
+        draggable={options.showFolders || !sorted}
         onDragStart={(e) => {
           setDrag({ kind: 'task', id: t.id });
           e.dataTransfer.effectAllowed = 'move';

@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, it } from 'vitest';
-import { paneMenuItems, taskListMenu } from '../src/main/view-menu';
+import { paneMenuItems, singleMenuItems, taskListMenu } from '../src/main/view-menu';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { ALL_FILTERS, PANES, passesFilter } from '../src/shared/panes';
 import { TaskFilterSchema, TaskSchema, ViewSchema, type TaskInput, type View } from '../src/shared/types';
@@ -43,7 +43,21 @@ describe('sidebar panes', () => {
     expect(labels(menu)).toEqual(expect.arrayContaining(['&Tasks Pane', '&Goals Pane', '&Watchers Pane']));
     expect(labels(menu)).not.toContain('Show &Watcher Tasks');
     const goals = menu.find((i) => i.label === '&Goals Pane')!.submenu as MenuItemConstructorOptions[];
-    expect(labels(goals)).toEqual(['Show &Pane', '-', ...['Disabled', 'Comp&leted', 'S&cheduled', '&Manual', '&Watcher'].map((k) => expect.stringContaining(k))]);
+    expect(labels(goals)).toEqual([
+      'Show &Pane',
+      '-',
+      ...['Disabled', 'Comp&leted', 'S&cheduled', '&Manual', '&Watcher'].map((k) => expect.stringContaining(k)),
+      '-',
+      'Show &Folders',
+      'Hide &Empty Folders',
+    ]);
+  });
+
+  it('offers Hide Empty Folders only while the list shows folders', () => {
+    const hideEmpty = (showFolders: boolean) =>
+      singleMenuItems(ViewSchema.parse({ single: { showFolders } }), () => undefined).find((i) => i.label === 'Hide &Empty Folders')!;
+    expect(hideEmpty(true).enabled).toBe(true);
+    expect(hideEmpty(false).enabled).toBe(false);
   });
 
   it('changes only its own pane, and never hides the last pane showing', () => {

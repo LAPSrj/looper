@@ -1,20 +1,32 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../shared/panes';
-import type { TaskFilter, View } from '../shared/types';
+import type { TaskFilter, TaskListOptions, View } from '../shared/types';
 
 export type ViewUpdate = (patch: Partial<View>) => void;
 
-function filterItems(
-  filter: TaskFilter,
+/** A list's filters, then its folder options. */
+function listItems(
+  options: TaskListOptions,
   offered: (keyof TaskFilter)[],
-  set: (patch: Partial<TaskFilter>) => void,
+  set: (patch: Partial<TaskListOptions>) => void,
 ): MenuItemConstructorOptions[] {
-  return offered.map((k) => ({
-    label: FILTER_LABELS[k],
-    type: 'checkbox',
-    checked: filter[k],
-    click: (item) => set({ [k]: item.checked }),
-  }));
+  return [
+    ...offered.map((k): MenuItemConstructorOptions => ({
+      label: FILTER_LABELS[k],
+      type: 'checkbox',
+      checked: options[k],
+      click: (item) => set({ [k]: item.checked }),
+    })),
+    { type: 'separator' },
+    { label: 'Show &Folders', type: 'checkbox', checked: options.showFolders, click: (item) => set({ showFolders: item.checked }) },
+    {
+      label: 'Hide &Empty Folders',
+      type: 'checkbox',
+      checked: options.hideEmptyFolders,
+      enabled: options.showFolders,
+      click: (item) => set({ hideEmptyFolders: item.checked }),
+    },
+  ];
 }
 
 /** One pane's items: whether it shows, then its filters. Used by its View submenu and its header's context menu. */
@@ -28,13 +40,13 @@ export function paneMenuItems(view: View, id: PaneId, update: ViewUpdate): MenuI
   return [
     { label: 'Show &Pane', type: 'checkbox', checked: pane.visible, enabled: !lastVisible, click: (item) => set({ visible: item.checked }) },
     { type: 'separator' },
-    ...filterItems(pane, def.filters, set),
+    ...listItems(pane, def.filters, set),
   ];
 }
 
-/** The single list's filters. */
+/** The single list's filters and folder options. */
 export function singleMenuItems(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
-  return filterItems(view.single, ALL_FILTERS, (patch) => update({ single: { ...view.single, ...patch } }));
+  return listItems(view.single, ALL_FILTERS, (patch) => update({ single: { ...view.single, ...patch } }));
 }
 
 /** View > Task List. */
@@ -47,10 +59,13 @@ export function taskListMenu(view: View, update: ViewUpdate): MenuItemConstructo
     { label: '&Standard', type: 'radio', checked: view.taskList !== 'compact', click: () => update({ taskList: 'standard' }) },
     { label: '&Compact', type: 'radio', checked: view.taskList === 'compact', click: () => update({ taskList: 'compact' }) },
     { type: 'separator' },
+    // The single list's folder options end its items, so Open Folders Automatically joins them.
     ...(multiple
-      ? PANES.map((p): MenuItemConstructorOptions => ({ label: p.menuLabel, submenu: paneMenuItems(view, p.id, update) }))
+      ? [
+          ...PANES.map((p): MenuItemConstructorOptions => ({ label: p.menuLabel, submenu: paneMenuItems(view, p.id, update) })),
+          { type: 'separator' } as MenuItemConstructorOptions,
+        ]
       : singleMenuItems(view, update)),
-    { type: 'separator' },
     { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => update({ autoOpenFolders: item.checked }) },
   ];
 }
