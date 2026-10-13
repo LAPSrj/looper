@@ -561,9 +561,12 @@ export class Scheduler extends EventEmitter {
   private isOverdue(task: Task, lastRunAt: number | null, now: number): boolean {
     const schedule = scheduleOf(task);
     if (!schedule) return false;
-    if (lastRunAt === null) return true;
+    // A task that never ran is owed only the slots since it was created, so a
+    // restart doesn't run a task scheduled for a later date early.
+    const from = lastRunAt ?? Date.parse(task.createdAt ?? '');
+    if (Number.isNaN(from)) return true;
     try {
-      const next = new Cron(schedule.cron, cronTz(schedule.timezone)).nextRun(new Date(lastRunAt));
+      const next = new Cron(schedule.cron, cronTz(schedule.timezone)).nextRun(new Date(from));
       return next !== null && next.getTime() <= now;
     } catch {
       return false;
@@ -729,6 +732,21 @@ export class Scheduler extends EventEmitter {
     return !Number.isNaN(ms) && ms <= now;
   }
 
+  /**
+   * A schedule that reached its end date without the task ever running in it
+   * (the app was closed or the machine asleep through every slot) gets one
+   * run before it completes. Only a slot that fell between the task's
+   * creation and the end date counts, and only an enabled, unpaused task.
+   */
+  private owesFinalRun(task: Task, rt: TaskRuntime, endMs: number): boolean {
+    if (!task.enabled || rt.pausedReason || !scheduleOf(task)) return false;
+    const createdMs = Date.parse(task.createdAt ?? '');
+    if (Number.isNaN(createdMs)) return false;
+    if (rt.lastRunAt !== null && rt.lastRunAt >= createdMs) return false;
+    const firstSlot = this.computeNext(task, createdMs);
+    return firstSlot !== null && firstSlot <= endMs;
+  }
+
   private computeNext(task: Task, from: number): number | null {
     const schedule = scheduleOf(task);
     if (!schedule) return null;
@@ -799,12 +817,27 @@ export class Scheduler extends EventEmitter {
       // The schedule's end date, checked before the due-slot guard so it also
       // reaches a task that is paused or disabled but still scheduled.
       if (this.scheduleEnded(task, now)) {
-        this.completeTask(
-          task.id,
-          `stopped running on ${formatDateTime(task.trigger.stopOn!.at, detectSystemLocale())}`,
-          { force: true },
-        );
-        continue;
+        const endMs = Date.parse(task.trigger.stopOn!.at);
+        // The final run started after the end date: it may still complete the task itself.
+        if (rt.runs.some((r) => r.startedAt >= endMs)) continue;
+        if (this.owesFinalRun(task, rt, endMs)) {
+          // Due through the normal path below, so the startup stagger, the
+          // wake grace and the concurrency limits still apply. A next slot
+          // that is just the schedule's regular one (a year away for a dated
+          // task) is brought forward.
+          const regular = this.computeNext(task, now);
+          if (rt.nextRunAt === null || (regular !== null && rt.nextRunAt >= regular)) {
+            rt.nextRunAt = now;
+            this.emitRuntime(rt);
+          }
+        } else {
+          this.completeTask(
+            task.id,
+            `stopped running on ${formatDateTime(task.trigger.stopOn!.at, detectSystemLocale())}`,
+            { force: true },
+          );
+          continue;
+        }
       }
       // The watcher follows its run window: stopped at the close, restarted
       // at the open (which owes the runOnStart catch-up below).

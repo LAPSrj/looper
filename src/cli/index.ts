@@ -9,6 +9,7 @@ import { DEFINITION_VERSION, migrateDefinition } from '../shared/migrate';
 import { taskSchemaDoc } from '../shared/schema-doc';
 import { SettingsSchema, type Environment, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
 import { importTaskDraft, slugify, validateTask } from '../shared/validate';
+import { waitForInbox } from './inbox-wait';
 
 const program = new Command();
 program
@@ -39,6 +40,20 @@ function dropInbox(obj: unknown, prefix: string): string {
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
   fs.renameSync(tmp, final); // rename so the engine never sees a half-written file
   return final;
+}
+
+/** The tasks the app has stored. Settings → Advanced → Tasks file can keep them outside the data dir, as the engine reads them. */
+function readTasks(): { id: string; name: string; enabled: boolean; completedAt?: string; [field: string]: unknown }[] {
+  const dir = dataDir();
+  const custom = readJsonFile<{ tasksFile?: unknown } | null>(path.join(dir, 'settings.json'), null)?.tasksFile;
+  const tasksFile = typeof custom === 'string' && custom ? custom : path.join(dir, 'tasks.json');
+  if (tasksFile !== path.join(dir, 'tasks.json') && !fs.existsSync(tasksFile)) {
+    console.error(`cannot read the tasks file set in Settings: ${tasksFile}`);
+    process.exit(2);
+  }
+  return readJsonFile<{ tasks: ReturnType<typeof readTasks> }>(tasksFile, {
+    tasks: [],
+  }).tasks;
 }
 
 function command(op: InboxCommand['op']) {
@@ -78,11 +93,23 @@ function targetSettings(): { environments: Environment[]; defaultEnvironmentId: 
   return s.success ? { environments: s.data.environments, defaultEnvironmentId: s.data.defaultEnvironmentId } : undefined;
 }
 
-/** Read a task definition: plain JSON, or a .loopertask (envelope stripped). Exits on unreadable input. */
+/**
+ * Read a task definition: plain JSON, or a .loopertask (envelope stripped),
+ * from a file or, for "-", from stdin. Exits on unreadable input.
+ */
 function readDefinition(file: string): Record<string, unknown> {
-  const raw = readJsonFile<Record<string, unknown> | null>(file, null);
-  if (!raw) {
-    console.error(`cannot read JSON from ${file}`);
+  let raw: Record<string, unknown> | null = null;
+  if (file === '-') {
+    try {
+      raw = JSON.parse(fs.readFileSync(0, 'utf8')) as Record<string, unknown>;
+    } catch {
+      /* reported below */
+    }
+  } else {
+    raw = readJsonFile<Record<string, unknown> | null>(file, null);
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    console.error(`cannot read a JSON object from ${file === '-' ? 'stdin' : file}`);
     process.exit(2);
   }
   let def = raw;
@@ -152,18 +179,22 @@ Then:
   2. looper validate <file>  check it; errors block (exit 1), while references to
                              environments/harnesses this setup lacks are only warnings here;
                              writes <id>.loopertask next to the file (or into --out <dir>)
-  3. looper add <file>       validate strictly (references included) and queue the task in
-                             the running app's inbox — registers or updates, matched by id
+  3. looper add <file>       validate strictly (references included), queue the task in the
+                             running app's inbox, and wait until the app has stored it
+                             (--timeout <s>, default 30); refuses an id that already exists
+     looper add --update     update the existing task with that id instead (refuses a new id)
      looper add --fix        first replace invalid values with defaults (the .loopertask
                              import heuristics); each change is printed as "fixed: <path>"
+  To change a stored task: looper export <id> --out <dir>, edit the file, looper add --update.
 
 Notes:
-  - add and validate accept plain JSON or a .loopertask document.
-  - Exit codes: 0 ok, 1 invalid task, 2 unreadable input or missing settings.
+  - add and validate accept plain JSON or a .loopertask document; "-" as the file reads
+    it from stdin, e.g. looper add - <<'EOF' … EOF
+  - Exit codes: 0 ok; 1 invalid task, id conflict, or rejected by the app; 2 unreadable
+    input or missing settings; 3 (add only) queued, but no running app picked it up.
   - Results go to stdout; errors, warnings and fixes go to stderr.
   - Point LOOPER_HOME (or --data-dir) at the data dir of the Looper app that should run
-    the task; a running app picks queued files from inbox/, and rejects them into
-    inbox/rejected/ with a matching .error.txt.
+    the task.
   - Older task files/stores are migrated to the current format automatically on read;
     "looper migrate <file>" rewrites them in place.
 
@@ -212,9 +243,16 @@ program
 
 program
   .command('add <file>')
-  .description('register (or update) a task from a JSON or .loopertask file')
+  .description('register a new task from a JSON or .loopertask file ("-" reads stdin) and wait for the running app to store it')
+  .option('--update', 'update the existing task with this id instead of creating a new one')
   .option('--fix', 'replace invalid values with defaults (the .loopertask import heuristics) instead of rejecting them')
-  .action((file: string, opts: { fix?: boolean }) => {
+  .option('--timeout <s>', 'seconds to wait for the running app to pick the task up', '30')
+  .action(async (file: string, opts: { update?: boolean; fix?: boolean; timeout: string }) => {
+    const timeoutSec = Number(opts.timeout);
+    if (!(timeoutSec >= 0)) {
+      console.error(`--timeout must be a number of seconds, got "${opts.timeout}"`);
+      process.exit(2);
+    }
     let def = readDefinition(file);
     const settings = targetSettings();
     const fixes: string[] = [];
@@ -234,8 +272,34 @@ program
       process.exit(1);
     }
     for (const f of fixes) console.error('fixed: ' + f);
-    const dest = dropInbox(v.task, `task-${v.task.id}`);
-    console.log(`queued task ${v.task.id} -> ${dest}`);
+    const id = v.task.id;
+    const exists = readTasks().some((t) => t.id === id);
+    if (exists && !opts.update) {
+      console.error(`task ${id} already exists: pass --update to change it, or give the new task another id`);
+      process.exit(1);
+    }
+    if (!exists && opts.update) {
+      console.error(`no task ${id} to update: leave out --update to create it`);
+      process.exit(1);
+    }
+    const dest = dropInbox(v.task, `task-${id}`);
+    const outcome = await waitForInbox(dest, timeoutSec * 1000);
+    if (outcome.status === 'rejected') {
+      console.error(`rejected task ${id}: ${outcome.reason}`);
+      process.exit(1);
+    }
+    if (outcome.status === 'pending') {
+      console.error(
+        `queued task ${id} -> ${dest}, but no running Looper app picked it up within ${timeoutSec}s; ` +
+          'it is applied when the app starts, or delete the file to cancel',
+      );
+      process.exit(3);
+    }
+    if (outcome.status === 'vanished' || !readTasks().some((t) => t.id === id)) {
+      console.error(`task ${id} left the inbox but isn't in the tasks file; check ${path.join(dataDir(), 'engine.log')}`);
+      process.exit(1);
+    }
+    console.log(`${opts.update ? 'updated' : 'added'} task ${id}`);
   });
 
 program
@@ -253,15 +317,31 @@ program
       process.exit(1);
     }
     for (const w of v.warnings) console.error('warning: ' + w);
-    const data = { ...v.task };
-    delete data.createdAt;
-    delete data.updatedAt;
-    // A one-off run note is transient state, never part of an exported definition.
-    delete data.note;
-    const doc = wrapLooperFile('task', cliVersion(), data);
+    const doc = wrapLooperFile('task', cliVersion(), v.task);
     const dest = path.join(opts.out ?? path.dirname(path.resolve(file)), `${v.task.id}.${FILE_KINDS.task.ext}`);
     fs.writeFileSync(dest, JSON.stringify(doc, null, 2) + '\n', 'utf8');
     console.log(`valid task ${v.task.id} -> ${dest}`);
+  });
+
+program
+  .command('export <taskId>')
+  .description('print a stored task as a .loopertask document, or write it with --out')
+  .option('--out <path>', 'file to write, or a directory to write <id>.loopertask into')
+  .action((taskId: string, opts: { out?: string }) => {
+    const task = readTasks().find((t) => t.id === taskId);
+    if (!task) {
+      console.error(`no task ${taskId}`);
+      process.exit(1);
+    }
+    const text = JSON.stringify(wrapLooperFile('task', cliVersion(), task), null, 2) + '\n';
+    if (!opts.out) {
+      process.stdout.write(text);
+      return;
+    }
+    const isDir = fs.existsSync(opts.out) && fs.statSync(opts.out).isDirectory();
+    const dest = isDir ? path.join(opts.out, `${taskId}.${FILE_KINDS.task.ext}`) : opts.out;
+    fs.writeFileSync(dest, text, 'utf8');
+    console.log(`exported task ${taskId} -> ${dest}`);
   });
 
 /**
@@ -348,17 +428,7 @@ program
   .description('list tasks and their current state')
   .action(() => {
     const dir = dataDir();
-    // Settings → Advanced → Tasks file can keep the tasks outside the data dir, as the engine reads them.
-    const custom = readJsonFile<{ tasksFile?: unknown } | null>(path.join(dir, 'settings.json'), null)?.tasksFile;
-    const tasksFile = typeof custom === 'string' && custom ? custom : path.join(dir, 'tasks.json');
-    if (tasksFile !== path.join(dir, 'tasks.json') && !fs.existsSync(tasksFile)) {
-      console.error(`cannot read the tasks file set in Settings: ${tasksFile}`);
-      process.exit(2);
-    }
-    const tasks = readJsonFile<{ tasks: { id: string; name: string; enabled: boolean; completedAt?: string }[] }>(
-      tasksFile,
-      { tasks: [] },
-    ).tasks;
+    const tasks = readTasks();
     const state = readJsonFile<{ tasks: Record<string, TaskRuntime> }>(path.join(dir, 'state.json'), {
       tasks: {},
     }).tasks;
@@ -439,9 +509,42 @@ program
   .command('serve')
   .description('run the engine headless in this terminal (no UI)')
   .option('--quiet', 'do not echo agent terminal output')
-  .action(async (opts: { quiet?: boolean }) => {
+  .option('--take-over', 'when another Looper is running on this data dir, stop it and run here without asking')
+  .action(async (opts: { quiet?: boolean; takeOver?: boolean }) => {
     const { createEngine } = await import('../engine/engine');
+    const { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS } = await import('../engine/lock');
+    const holder = liveHolder(dataDir());
+    if (holder) {
+      const who = `Looper is already running on ${dataDir()}: ${describeHolder(holder)}.`;
+      let takeOver = !!opts.takeOver;
+      if (!takeOver && process.stdin.isTTY) {
+        const readline = await import('node:readline/promises');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await rl.question(`${who}\nRunning both would run every task twice. Take over (stops it and its runs)? [y/N] `);
+        rl.close();
+        takeOver = /^y(es)?$/i.test(answer.trim());
+      }
+      if (!takeOver) {
+        console.error(process.stdin.isTTY ? 'not started' : `${who}\nPass --take-over to stop it and run here.`);
+        process.exit(1);
+      }
+    }
+    let stopping = false;
+    let started: ReturnType<typeof createEngine> | null = null;
+    const lock = new EngineLock(dataDir(), 'serve', (by) => {
+      if (stopping) return;
+      stopping = true;
+      console.error(`\nanother Looper took over ${dataDir()}${by ? `: ${describeHolder(by)}` : ''}; stopping`);
+      void (started?.stop() ?? Promise.resolve()).finally(() => process.exit(1));
+    });
+    lock.acquire();
+    if (holder) {
+      console.log('waiting for the other Looper to stop…');
+      await new Promise((r) => setTimeout(r, TAKEOVER_WAIT_MS));
+      if (stopping) return;
+    }
     const engine = createEngine({ dataDir: dataDir(), echoLog: true });
+    started = engine;
     engine.on((e) => {
       if (e.type === 'record') {
         const r = e.record;
@@ -453,8 +556,11 @@ program
       }
     });
     const shutdown = async () => {
+      if (stopping) return;
+      stopping = true;
       console.log('\nstopping…');
       await engine.stop();
+      lock.release();
       process.exit(0);
     };
     process.on('SIGINT', shutdown);

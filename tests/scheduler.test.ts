@@ -77,11 +77,13 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
   const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
   const tasks = new TaskStore(path.join(dir, 'tasks.json'));
   tasks.load();
-  tasks.upsert(taskInput);
+  const clock = { now: 1_000_000 };
+  // Created a minute before the fake clock: the store would stamp the real
+  // date, and a task created after "now" is owed no slot at startup.
+  tasks.upsert({ createdAt: new Date(clock.now - 60_000).toISOString(), ...taskInput });
   const runs = new RunStore(dir);
   const state = new StateStore(path.join(dir, 'state.json'));
   const log = new Logger();
-  const clock = { now: 1_000_000 };
   const h: Partial<Harness> = {
     dir,
     tasks,
@@ -1459,6 +1461,35 @@ describe('startup overdue filtering', () => {
   });
 });
 
+describe('startup of a task that never ran', () => {
+  it('waits for its first slot after creation instead of running at once', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
+    const settings = SettingsSchema.parse({ tickMs: 100000, staggerFirstRun: { enabled: false } });
+    const tasks = new TaskStore(path.join(dir, 'tasks.json'));
+    tasks.load();
+    const now = new Date('2026-10-14T10:00:00Z').getTime();
+    tasks.upsert({
+      ...baseTask,
+      createdAt: '2026-10-13T18:00:00Z',
+      trigger: { mode: 'schedule', schedule: { cron: '0 9 20 11 *', timezone: 'UTC' } },
+    });
+    const sched = new Scheduler({
+      dataDir: dir,
+      host: 'wsl',
+      settings,
+      tasks,
+      runs: new RunStore(dir),
+      state: new StateStore(path.join(dir, 'state.json')),
+      log: new Logger(),
+      now: () => now,
+    });
+    sched.start();
+    expect(sched.get('t1')!.nextRunAt).toBe(new Date('2026-11-20T09:00:00Z').getTime());
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('interrupted runs', () => {
   /** Start a scheduler over a snapshot whose runs were in flight when looper died. */
   async function restartWith(runs: ActiveRun[]): Promise<{ dir: string; store: RunStore; sched: Scheduler }> {
@@ -1785,7 +1816,8 @@ describe('task completion', () => {
     h.tasks.patch('t1', {
       trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(h.clock.now - 1000).toISOString() } },
     });
-    await h.tickN(1);
+    // The first tick is the final run it never had; the second completes it.
+    await h.tickN(2);
     expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
     h.sched.reopenTask('t1');
     const task = h.tasks.get('t1')!;
@@ -1794,6 +1826,72 @@ describe('task completion', () => {
     expect(task.trigger.stopOn?.enabled).toBe(false);
     expect(task.enabled).toBe(true);
     expect(h.sched.get('t1')!.state).toBe('idle');
+  });
+
+  const endedAgo = (ms: number) => ({
+    trigger: {
+      mode: 'schedule' as const,
+      schedule: { cron: '*/1 * * * *' },
+      stopOn: { enabled: true, at: new Date(h.clock.now - ms).toISOString() },
+    },
+  });
+
+  it('an end date that passed before the task ever ran gets one run, then completes', async () => {
+    h.tasks.patch('t1', endedAgo(1000));
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('done', 'checked'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedReason).toMatch(/^stopped running on /);
+    await h.tickN(3);
+    expect(h.agentStarted).toBe(1);
+  });
+
+  it('the final run may complete the task itself; the end date waits for it', async () => {
+    allowComplete();
+    h.tasks.patch('t1', endedAgo(1000));
+    h.checks.push(check('act'));
+    h.completeSignals.push('the cert renewed');
+    await h.tickN(3);
+    expect(h.agentStarted).toBe(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
+    h.liveAgent!.end(agentEnd('done', 'renewed'));
+    await flush();
+    expect(h.tasks.get('t1')!.completedReason).toBe('the cert renewed');
+  });
+
+  it('a task that already ran in its period completes at the end date without another run', async () => {
+    h.checks.push(check('noop'));
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.lastRunAt).toBe(h.clock.now);
+    h.tasks.patch('t1', endedAgo(1000));
+    await h.tickN(1);
+    expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
+    expect(h.checkNotes).toHaveLength(1);
+  });
+
+  it('a task enabled after its end date still gets its final run right away', async () => {
+    h.tasks.patch('t1', { enabled: false, ...endedAgo(1000) });
+    h.tasks.patch('t1', { enabled: true });
+    expect(h.sched.get('t1')!.nextRunAt).toBeGreaterThan(h.clock.now);
+    await h.tickN(1);
+    expect(h.checkNotes).toHaveLength(1);
+  });
+
+  it('a task created after its last slot completes at the end date without running', async () => {
+    // Created at 00:16:39.5, ending at 00:16:39: the next slot (00:17) is past the end.
+    const late = await makeHarness({
+      ...baseTask,
+      createdAt: new Date(1_000_000 - 500).toISOString(),
+      trigger: { mode: 'schedule', schedule: { cron: '*/1 * * * *' }, stopOn: { enabled: true, at: new Date(1_000_000 - 1000).toISOString() } },
+    });
+    await late.tickN(1);
+    expect(late.tasks.get('t1')!.completedAt).toBeTruthy();
+    expect(late.checkNotes).toHaveLength(0);
+    await late.sched.stop();
+    fs.rmSync(late.dir, { recursive: true, force: true });
   });
 
   it('a task that does not allow completion refuses to be completed', () => {

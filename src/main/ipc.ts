@@ -72,13 +72,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     };
     const result = sender ? await dialog.showSaveDialog(sender, options) : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return;
-    const data = { ...item };
-    delete data.createdAt;
-    delete data.updatedAt;
-    // A one-off run note is transient state, never part of an exported definition.
-    delete data.note;
     try {
-      const doc = wrapLooperFile(kind, app.getVersion(), data);
+      const doc = wrapLooperFile(kind, app.getVersion(), item);
       fs.writeFileSync(result.filePath, JSON.stringify(doc, null, 2) + '\n', 'utf8');
     } catch (err) {
       const opts: Electron.MessageBoxOptions = {
@@ -267,17 +262,20 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   // Start-with-the-computer registration lives in the OS (login item / Run key),
   // not in settings.json. The args must match on get and set so Windows finds
   // the same registry entry; --hidden makes a login start go to the tray.
+  // Only the packaged app registers: a dev run's execPath is the bare
+  // electron.exe, which starts Electron's default window without the app path.
   const loginArgs = ['--hidden'];
   ipcMain.handle('loginItem:get', () => {
+    if (!app.isPackaged) return false;
     try {
       return app.getLoginItemSettings({ args: loginArgs }).openAtLogin;
     } catch {
       return false; // not supported on this platform
     }
   });
-  ipcMain.handle('loginItem:set', (_e, enabled: boolean) =>
-    app.setLoginItemSettings({ openAtLogin: enabled, args: loginArgs }),
-  );
+  ipcMain.handle('loginItem:set', (_e, enabled: boolean) => {
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled, args: loginArgs });
+  });
 
   ipcMain.handle(
     'dialog:pickSaveFile',

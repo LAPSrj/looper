@@ -37,9 +37,17 @@ export function isLooperFileName(name: string): boolean {
   return EXT_RE.test(name);
 }
 
-/** Wrap a definition for writing to disk. Envelope keys first, payload spread after. */
+/**
+ * Wrap a definition for writing to disk. Envelope keys first, payload spread
+ * after. The stamps and a one-off run note are dropped: they are state of the
+ * stored item, never part of its exported definition.
+ */
 export function wrapLooperFile(kind: LooperFileKind, appVersion: string, payload: object): object {
-  return { $type: FILE_KINDS[kind].type, $version: FILE_VERSION, $app: appVersion, ...payload };
+  const data: Record<string, unknown> = { ...payload };
+  delete data.createdAt;
+  delete data.updatedAt;
+  delete data.note;
+  return { $type: FILE_KINDS[kind].type, $version: FILE_VERSION, $app: appVersion, ...data };
 }
 
 export type ReadLooperFileResult =

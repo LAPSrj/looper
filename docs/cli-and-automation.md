@@ -31,7 +31,8 @@ bottom of this page).
 | `looper agents` | print the task-authoring guide for agents: what to read, then how to validate and register |
 | `looper environments` | print the configured environment and harness ids — what a task's `environmentId`/`harnessId` must name |
 | `looper schema` | print the task JSON field reference as JSON, generated from the schema: every field with its type, default, and allowed values, the per-kind permission modes, and the configured environments/harnesses when the data dir's `settings.json` is readable |
-| `looper add <file> [--fix]` | validate a task JSON (or `.loopertask`) file and queue it in the inbox (registers or updates the task); `--fix` first replaces invalid values with defaults, using the `.loopertask` import heuristics |
+| `looper add <file> [--update] [--fix] [--timeout <s>]` | validate a task JSON (or `.loopertask`) file (`-` reads it from stdin), queue it in the inbox, and wait until the running app has stored it (see [adding a task](#adding-a-task)); `--update` changes the existing task with that id instead of creating one; `--fix` first replaces invalid values with defaults, using the `.loopertask` import heuristics |
+| `looper export <taskId> [--out <path>]` | print a stored task as a `.loopertask` document (the same file as **File → Export Task…**), or write it to `--out` (a file, or a directory to write `<id>.loopertask` into) |
 | `looper validate <file> [--out <dir>]` | validate a task JSON and write the `.loopertask` document next to it (or into `--out <dir>`) |
 | `looper migrate <file...>` | rewrite one or more Looper files (`.loopertask`/`.loopertpl`, `tasks.json`/`templates.json`, or a bare task JSON) from an older format version to the current one |
 | `looper list` | list every task with its current state, next run time, and last result |
@@ -47,7 +48,33 @@ bottom of this page).
 | `looper guide <taskId> <text...> [--run <runId>]` | queue guidance for the task's running agent (default: its newest run in flight); see [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress) |
 | `looper logs <taskId> [-n, --lines <n>]` | print the task's recent run records (default 30) |
 | `looper done [message...]` | signal the end of the current agent run (needs `LOOPER_DONE_FILE`, set automatically in that run's environment) |
-| `looper serve [--quiet]` | run the engine in this terminal, without the desktop UI |
+| `looper serve [--quiet] [--take-over]` | run the engine in this terminal, without the desktop UI |
+
+### Adding a task
+
+`looper add` reads the task from a file, or from stdin when the file is `-`,
+so a script or an agent can pass the JSON inline:
+
+```bash
+looper add - <<'EOF'
+{ "name": "Check the cert renewed", "environmentId": "env-1", … }
+EOF
+```
+
+It creates a task, and refuses an id that already exists, so a new
+task never replaces one by accident. `looper add --update` changes an
+existing task, and refuses an id that doesn't exist yet. After queuing the
+file, `add` waits (30s by default, `--timeout <s>`) for the running app to
+pick it up and prints the result:
+
+| exit | output | meaning |
+|---|---|---|
+| 0 | `added task <id>` / `updated task <id>` | the app stored it |
+| 1 | `invalid task:` and the errors, `task <id> already exists…`, `no task <id> to update…`, or `rejected task <id>: <reason>` | nothing was stored |
+| 2 | `cannot read …` | unreadable input or settings |
+| 3 | `queued task <id> -> <file>, but no running Looper app picked it up…` | the file stays in the inbox and is applied when the app starts; delete it to cancel |
+
+### Commands that queue
 
 `run`, `pause`, `resume`, `stop`, `remove`, `enable`, `disable`, `complete`,
 `reopen`, and `guide` don't act
@@ -157,7 +184,7 @@ itself instead of bouncing off the engine.
 looper example > task.json          # a filled-in example task definition
 looper example --script > check.sh  # a matching example check script
 looper validate task.json           # check it and get issues-triage.loopertask next to it
-looper add task.json                # validate and queue it
+looper add task.json                # validate it and wait for the app to store it
 ```
 
 `looper example` prints the same shape as
@@ -183,6 +210,16 @@ What it does the same as the app:
 - Writes `engine.log`, `tasks/<id>/runs.jsonl`, and per-run directories
   exactly as the app would.
 
+Only one Looper runs on a data directory at a time, since two would run
+every task twice. The running one (the desktop app or `looper serve`) keeps
+`engine.lock` there and refreshes it every 5 seconds. Starting a second one
+asks whether to take over: the desktop app with a dialog, and `looper serve`
+with a y/N prompt (or `--take-over` when there's no terminal to ask in).
+Taking over stops the other one, along with any runs it has going, and the
+new one starts about 7 seconds later. A lock that wasn't refreshed for 20
+seconds, or whose process is gone, belongs to a Looper that crashed, so the
+next one starts without asking.
+
 What it doesn't do: there's no terminal tab, no system notifications, no
 tray icon, and no settings/task editor UI — manage tasks with the CLI, the
 inbox, or by editing `tasks.json` while it's stopped. Stop it with Ctrl-C;
@@ -203,6 +240,7 @@ settings.json         environments (each with its harnesses), default
 tasks.json             every task definition
 state.json             runtime snapshot: current state, next run time, last
                        result — what `looper list` reads
+engine.lock            the running Looper's heartbeat: one Looper per data dir
 engine.log             diagnostics; entries older than Settings -> Engine
                        log retention (default 10 days) are pruned
 inbox/                 JSON drop folder for the CLI and scripts

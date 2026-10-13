@@ -28,6 +28,11 @@ describe('wrapLooperFile / readLooperFile', () => {
     expect(Object.keys(wrapLooperFile('task', '0.1.0', { id: 'x' }))).toEqual(['$type', '$version', '$app', 'id']);
   });
 
+  it('leaves out the stored stamps and the one-off run note', () => {
+    const stored = { id: 'x', createdAt: 'c', updatedAt: 'u', note: { text: 'n', runsLeft: 1 } };
+    expect(Object.keys(wrapLooperFile('task', '0.1.0', stored))).toEqual(['$type', '$version', '$app', 'id']);
+  });
+
   it('strips every $-prefixed key from the payload, known or not', () => {
     const r = readLooperFile({ $type: 'looper/task', $version: FILE_VERSION, $app: '9.9.9', $future: 1, id: 'x' });
     expect(r).toEqual({ ok: true, kind: 'task', payload: { id: 'x' } });

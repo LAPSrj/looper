@@ -99,7 +99,12 @@ it passes, Looper completes the task instead of running it again: it stops
 being scheduled or watched, moves to the completed-tasks folder if one is
 set, and is deleted when the completed-task retention runs out. It applies to
 the schedule and watcher modes, including a paused or disabled task; a manual
-task ignores it. Unchecking the box keeps the date on the task and simply
+task ignores it. A scheduled task that never ran between its creation and the
+end date (Looper was closed or the computer asleep through every slot) runs
+once before it completes, as long as it is enabled, not paused, and at least
+one of its slots fell in that period. That run may complete the task itself;
+otherwise the end date completes it once the run ends. Unchecking the box
+keeps the date on the task and simply
 stops it from applying, and reopening a task whose end date has passed
 switches that date off rather than erasing it.
 

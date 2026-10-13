@@ -16,6 +16,8 @@ export class FileSignalWatcher {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
   private doneFired = false;
+  /** mtime:size of the done file at the last poll; it is read once two polls agree. */
+  private doneSeen: string | null = null;
   private lastStopMtime = 0;
 
   constructor(
@@ -40,16 +42,25 @@ export class FileSignalWatcher {
     try {
       if (!this.doneFired) {
         const done = await fs.stat(this.doneFile).catch(() => null);
-        if (done) {
+        // The done command writes with a plain redirect (cmd in two steps), so
+        // the file is read once it looks the same on two polls in a row:
+        // read mid-write, its status and headline would be lost.
+        const seen = done ? `${done.mtimeMs}:${done.size}` : null;
+        if (done && seen === this.doneSeen) {
           this.doneFired = true;
           const text = await fs.readFile(this.doneFile, 'utf8').catch(() => '');
           cb.onDone(text.trim() || 'done', done.mtimeMs);
         }
+        this.doneSeen = seen;
       }
       const stop = await fs.stat(this.stopFile).catch(() => null);
       if (stop && stop.mtimeMs !== this.lastStopMtime) {
         // The hook may still be writing: an empty or truncated file is retried on the next poll.
-        const payload = parseJsonObject(await fs.readFile(this.stopFile, 'utf8').catch(() => ''));
+        const text = await fs.readFile(this.stopFile, 'utf8').catch(() => '');
+        // A write that landed between the stat and the read would be reported
+        // again under its own mtime: only content read at an unchanged mtime counts.
+        const after = await fs.stat(this.stopFile).catch(() => null);
+        const payload = after?.mtimeMs === stop.mtimeMs ? parseJsonObject(text) : null;
         if (payload) {
           this.lastStopMtime = stop.mtimeMs;
           cb.onStop(stop.mtimeMs, payload);

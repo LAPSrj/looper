@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, No
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
+import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
 import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import type { EngineEvent, Settings } from '../shared/types';
@@ -40,7 +41,7 @@ if (!app.requestSingleInstanceLock()) {
     if (file) void openLooperFile(file);
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // Windows routes toasts by AppUserModelID; without it dev runs show nothing.
     // Dev runs get their own id so the dev Start Menu shortcut (see
     // scripts/register-notifications.js) can never hijack the packaged app's
@@ -49,8 +50,14 @@ if (!app.requestSingleInstanceLock()) {
       app.setAppUserModelId(app.isPackaged ? 'com.lemorim.looper' : 'com.lemorim.looper.dev');
       if (!app.isPackaged) removeDevAumidHijackers();
     }
+    const dataDir = defaultDataDir();
+    if (!(await claimDataDir(dataDir))) {
+      quitting = true;
+      app.quit();
+      return;
+    }
     engine = createEngine({
-      dataDir: defaultDataDir(),
+      dataDir,
       ...(process.platform === 'win32' ? { power: createPowerAdapter() } : {}),
     });
     engine.start();
@@ -126,9 +133,55 @@ if (!app.requestSingleInstanceLock()) {
       engine
         .stop()
         .catch(() => undefined)
-        .finally(() => app.quit());
+        .finally(() => {
+          engineLock?.release();
+          app.quit();
+        });
     });
   });
+}
+
+let engineLock: EngineLock | null = null;
+
+/**
+ * Take the data dir's engine lock. When another engine is running on the
+ * same folder, ask first: Take Over makes that one stop (it notices at its
+ * next heartbeat) and waits for it to, Quit leaves it running. False = quit.
+ */
+async function claimDataDir(dataDir: string): Promise<boolean> {
+  const holder = liveHolder(dataDir);
+  if (holder) {
+    const r = await dialog.showMessageBox({
+      type: 'question',
+      title: 'Looper',
+      message: 'Looper is already running on this data folder.',
+      detail:
+        `It's ${describeHolder(holder)}. Running both would run every task twice. ` +
+        'Take Over stops that one, along with any runs it has going.',
+      buttons: ['Take Over', 'Quit'],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (r.response !== 0) return false;
+  }
+  engineLock = new EngineLock(dataDir, 'desktop', (by) => void onLockLost(by));
+  engineLock.acquire();
+  if (holder) await new Promise((r) => setTimeout(r, TAKEOVER_WAIT_MS));
+  return true;
+}
+
+/** Another engine took the data dir over: stop running tasks here and quit. */
+async function onLockLost(by: LockHolder | null): Promise<void> {
+  quitting = true;
+  await engine?.stop().catch(() => undefined);
+  await dialog.showMessageBox({
+    type: 'error',
+    title: 'Looper',
+    message: 'Another Looper took over this data folder.',
+    detail: `${by ? `It's ${describeHolder(by)}. ` : ''}This Looper stopped its runs and quits.`,
+    buttons: ['OK'],
+  });
+  app.quit();
 }
 
 /**

@@ -48,6 +48,25 @@ describe('FileSignalWatcher', () => {
     }
   });
 
+  it('reads the done file only once it stops changing, so a write in progress keeps its status', async () => {
+    const w = new FileSignalWatcher(path.join(dir, 'done'), path.join(dir, 'stop.json'), 20);
+    const dones: string[] = [];
+    w.start({ onDone: (m) => dones.push(m), onStop: () => undefined });
+    try {
+      // Rewritten every 5ms, it never looks the same on two polls 20ms apart.
+      for (let i = 0; i < 20; i++) {
+        fs.writeFileSync(path.join(dir, 'done'), i % 2 ? 'error\n' : 'error\nGave up\n'.slice(0, 6 + (i % 7)));
+        await sleep(5);
+      }
+      expect(dones).toEqual([]);
+      fs.writeFileSync(path.join(dir, 'done'), 'error\nGave up\n');
+      await until(() => dones.length === 1);
+      expect(dones[0]).toBe('error\nGave up');
+    } finally {
+      w.stop();
+    }
+  });
+
   it('reports an empty done file as "done"', async () => {
     const w = new FileSignalWatcher(path.join(dir, 'done'), path.join(dir, 'stop.json'), 10);
     const dones: string[] = [];
