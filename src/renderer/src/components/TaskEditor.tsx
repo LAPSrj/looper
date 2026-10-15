@@ -317,6 +317,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
       },
       agent: {
         ...draft.agent,
+        command: draft.agent.command?.trim() || undefined,
         extraArgs: parsedArgs.tokens,
       },
     };
@@ -1091,6 +1092,14 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
             </Field>
             <div className="row">
+              <Field label="Command">
+                <input
+                  className="mono"
+                  value={draft.agent.command ?? ''}
+                  placeholder={harness?.command}
+                  onChange={(e) => setAgent('command', e.target.value || undefined)}
+                />
+              </Field>
               <Field label="Extra command-line arguments">
                 <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
               </Field>

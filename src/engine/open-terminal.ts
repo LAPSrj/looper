@@ -23,7 +23,7 @@ export function terminalHarnessCommand(
   const q = (s: string) => target.quote(s);
   const a = task.agent;
   const effort = resolveEffort(a, harness);
-  const parts: string[] = [harness.command];
+  const parts: string[] = [a.command ?? harness.command];
   if (harness.kind === 'claude-code') {
     if (a.model) parts.push('--model', q(a.model));
     if (effort) parts.push('--effort', q(effort));

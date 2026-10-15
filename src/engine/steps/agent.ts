@@ -187,7 +187,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       step: 'agent',
       prefix: '',
       launcherName: 'run',
-      harness,
+      harness: a.command ? { ...harness, command: a.command } : harness,
       headless,
       model: a.model,
       effort: resolveEffort(a, harness),

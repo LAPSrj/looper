@@ -64,6 +64,7 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.model': 'Model',
   'agent.effort': 'Effort',
   'agent.prompt': 'Agent prompt',
+  'agent.command': 'Command',
   'agent.extraArgs': 'Extra command-line arguments',
   'agent.mode': 'Session type',
   'agent.session': 'Conversation',

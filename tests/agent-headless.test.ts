@@ -371,6 +371,20 @@ describe('headless agent over pipes', () => {
     expect(fs.readFileSync(path.join(codex.runDir, 'run.sh'), 'utf8')).toContain("-c 'model_reasoning_effort=xhigh'");
   });
 
+  it("the task's command replaces the harness's and keeps the flags Looper builds", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const wrapper = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    const ctx = makeCtx('/nonexistent/claude');
+    ctx.task.agent.command = `bash ${wrapper}`;
+    const end = await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(end.reason).toBe('done');
+    expect(end.body).toBe('ok');
+    const launcher = fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8');
+    expect(launcher).toContain(`exec bash ${wrapper} --model 'sonnet'`);
+    expect(launcher).not.toContain('/nonexistent/claude');
+  });
+
   it("without a task pin, the model entry's default effort is emitted", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

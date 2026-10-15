@@ -121,6 +121,12 @@ export type HarnessModel = z.output<typeof HarnessModelSchema>;
  * process exit or the max runtime. The `looper-done` helper is on PATH for
  * every harness.
  */
+/** Environment variables. Launchers write the names unquoted (`export NAME=…`), so only plain names pass. */
+export const EnvVarsSchema = z.record(
+  z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'variable names may only use letters, digits and _, and not start with a digit'),
+  z.string(),
+);
+
 export const HarnessSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -130,7 +136,7 @@ export const HarnessSchema = z.object({
   /** Arguments always added before the prompt. */
   args: z.array(z.string()).default([]),
   /** Extra environment variables for this harness's runs (e.g. two installs on different accounts). */
-  env: z.record(z.string()).default({}),
+  env: EnvVarsSchema.default({}),
   /** Models offered in the task editor's Model dropdown. Unset = the kind's main models. */
   models: z.array(HarnessModelSchema).optional(),
   /** Max tasks active at once on this harness. Unset = unlimited. */
@@ -228,6 +234,8 @@ export const AgentSchema = z
     /** claude: passed as --effort; codex: as -c model_reasoning_effort=. Unset = the CLI's own default. */
     effort: z.string().min(1).optional(),
     prompt: z.string().min(1),
+    /** Replaces the harness's command for the agent (e.g. a wrapper script). Unset = the harness's command. */
+    command: z.string().min(1).optional(),
     /** Appended verbatim to the harness command line. */
     extraArgs: z.array(z.string()).default([]),
     mode: z.enum(['interactive', 'headless']).default('interactive'),
@@ -353,7 +361,7 @@ export const TaskSchema = z.object({
   /** Working directory in the environment's native form (/home/... or C:\...). */
   cwd: z.string().min(1),
   /** Extra environment variables for every step of this task (check, classifier, agent). Override the harness's. */
-  env: z.record(z.string()).default({}),
+  env: EnvVarsSchema.default({}),
   /** Unset or disabled = no check step: every scheduled slot goes straight to the agent. */
   check: CheckSchema.optional(),
   classifier: ClassifierSchema.optional(),

@@ -31,6 +31,16 @@ describe('terminalHarnessCommand', () => {
     expect(cmd).toBe("claude --model 'sonnet' --effort 'medium' --permission-mode 'auto' '--verbose' '--allowedTools' 'Bash'");
   });
 
+  it("the task's command replaces the harness's", () => {
+    const cmd = terminalHarnessCommand(task({ command: 'bun run claude', model: undefined, permissionMode: '' }), bash, harness());
+    expect(cmd).toBe('bun run claude');
+  });
+
+  it('rejects env names that are not plain variable names', () => {
+    expect(() => task({}, { 'A; touch /tmp/x; B': '1' })).toThrow(/variable names/);
+    expect(task({}, { LOOPER_X_1: 'a b' }).env).toEqual({ LOOPER_X_1: 'a b' });
+  });
+
   it('empty model/permission mode omit the flags', () => {
     const cmd = terminalHarnessCommand(task({ model: undefined, permissionMode: '' }), bash, harness());
     expect(cmd).toBe('claude');
