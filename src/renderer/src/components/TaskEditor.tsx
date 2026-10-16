@@ -983,6 +983,17 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   <option value="headless">Headless{isCodex ? ' (codex exec)' : ''}</option>
                 </select>
               </Field>
+              {permissionModes.length > 0 && (
+                <Field label="Permission mode">
+                  <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
+                    {permissionModes.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
             </div>
             {(isClaude || isCodex) && (
               <div className="row">
@@ -1044,39 +1055,6 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     </select>
                   </Field>
                 )}
-                {permissionModes.length > 0 && (
-                  <Field label="Permission mode">
-                    <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
-                      {permissionModes.map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                )}
-              </div>
-            )}
-            {(isClaude || isCodex) && (
-              <div className="row">
-                <Field label="Conversation">
-                  <select
-                    value={draft.agent.session ?? 'fresh'}
-                    onChange={(e) => setAgent('session', e.target.value as 'fresh' | 'continue')}
-                  >
-                    <option value="fresh">Start new on each run</option>
-                    <option value="continue">Continue previous across runs</option>
-                  </select>
-                </Field>
-                {(draft.agent.session ?? 'fresh') === 'continue' && (
-                  <NumberField
-                    label="Start a new conversation after"
-                    suffix="runs"
-                    min={1}
-                    value={draft.agent.sessionMaxRuns ?? 10}
-                    onChange={(n) => setAgent('sessionMaxRuns', n)}
-                  />
-                )}
               </div>
             )}
             <Field
@@ -1092,6 +1070,26 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
             </Field>
             <div className="row">
+              {(isClaude || isCodex) && (
+                <Field label="Conversation">
+                  <select
+                    value={draft.agent.session ?? 'fresh'}
+                    onChange={(e) => setAgent('session', e.target.value as 'fresh' | 'continue')}
+                  >
+                    <option value="fresh">Start new on each run</option>
+                    <option value="continue">Continue previous across runs</option>
+                  </select>
+                </Field>
+              )}
+              {(isClaude || isCodex) && (draft.agent.session ?? 'fresh') === 'continue' && (
+                <NumberField
+                  label="Start a new conversation after"
+                  suffix="runs"
+                  min={1}
+                  value={draft.agent.sessionMaxRuns ?? 10}
+                  onChange={(n) => setAgent('sessionMaxRuns', n)}
+                />
+              )}
               <Field label="Command">
                 <input
                   className="mono"
@@ -1100,6 +1098,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   onChange={(e) => setAgent('command', e.target.value || undefined)}
                 />
               </Field>
+            </div>
+            <div className="row">
               <Field label="Extra command-line arguments">
                 <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
               </Field>

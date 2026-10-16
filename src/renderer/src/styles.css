@@ -1011,7 +1011,7 @@ fieldset.step-fields {
 }
 .form .row {
   display: flex;
-  gap: 0 18px;
+  gap: 14px 18px;
   flex-wrap: wrap;
   margin: 14px 0;
 }
