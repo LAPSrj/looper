@@ -95,12 +95,15 @@ A run ends on the first of these:
 
 - **The agent signals it's done.** It runs the shell command
   `looper-done <status> "<headline>"` — `status` is `success` (everything
-  fully done), `warning` (fully done, but read the report), or `error`
-  (couldn't complete; say why); omitted means success. It then writes its
-  final message: a detailed Markdown report of what it did. For Claude Code
-  in interactive mode, a `Stop` hook Looper injects captures that message the
-  moment the turn ends, and the session is closed. The run's result in the
-  log is whatever status you gave `looper-done`.
+  done and verified), `warning` (done and verified, but a person must decide
+  or act on something in the report, such as a decision, a credential, or
+  access the agent doesn't have), or `error` (couldn't finish; list each
+  method tried and what it showed); omitted means success. A check the agent
+  skipped or couldn't get working counts as unfinished work, not a warning.
+  It then writes its final message: a detailed Markdown report of what it
+  did. For Claude Code in interactive mode, a `Stop` hook Looper injects
+  captures that message the moment the turn ends, and the session is closed.
+  The run's result in the log is whatever status you gave `looper-done`.
 - **Idle timeout (Claude Code, interactive only).** If a turn finishes and
   the agent sits longer than `idleGraceMin` minutes without calling
   `looper-done`, the run ends as **Idle timeout** — or, if the task's

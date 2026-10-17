@@ -69,6 +69,11 @@ describe('systemFooter', () => {
       const footer = systemFooter('T', 'r1', headless);
       expect(footer).toContain('looper-done <status> "<headline>"');
       expect(footer).toContain('success, warning or error');
+      expect(footer).toContain('success: everything was done and verified.');
+      expect(footer).toContain('a person must decide or act on something in your report');
+      expect(footer).toContain("A check you didn't run or couldn't get working is unfinished work, not a warning");
+      expect(footer).toContain('List each method you tried and what it showed.');
+      expect(footer).toContain('what is left open and who needs to act on it');
       expect(footer).toContain('final message');
     }
     // Only the interactive session is closed by Looper.

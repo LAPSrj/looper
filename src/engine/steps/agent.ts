@@ -73,9 +73,9 @@ export function systemFooter(taskName: string, runId: string, headless: boolean,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
     'When you are finished, or if there is nothing to do, run the shell command:',
     '    looper-done <status> "<headline>"',
-    'The status is success, warning or error. success: everything was fully done. warning: the job was fully done, but the user should read your report. error: you could not complete the job (blocked, failed, gave up) — say why in your report.',
+    'The status is success, warning or error. success: everything was done and verified. warning: everything was done and verified, but a person must decide or act on something in your report (a decision, a credential, access you don\'t have). A check you didn\'t run or couldn\'t get working is unfinished work, not a warning: keep going. error: you could not finish (blocked, failed, gave up). List each method you tried and what it showed.',
     'The headline is one short phrase stating the outcome, e.g. "Fixed 3 flaky tests" or "Nothing to do". State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
-    "Then write your final message: a detailed report of what you did, what you found and what is left open, in Markdown. Looper records it as the run's summary.",
+    "Then write your final message: a detailed report of what you did, what you found and what is left open and who needs to act on it, in Markdown. Looper records it as the run's summary.",
   ];
   if (canComplete) {
     lines.push(
