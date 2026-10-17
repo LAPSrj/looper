@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
 import { folderTree } from '@shared/folders';
-import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
+import { Field, NumberField, RadioField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 
@@ -48,6 +48,7 @@ export function SettingsApp() {
   const [binDays, setBinDays] = useState<number | null>(null);
   const [promptRunOptions, setPromptRunOptions] = useState<boolean | null>(null);
   const [builderView, setBuilderView] = useState<'chat' | 'terminal' | null>(null);
+  const [terminal, setTerminal] = useState<Settings['terminal'] | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -85,6 +86,7 @@ export function SettingsApp() {
       setBinDays((v) => v ?? info.settings.recycleBinDays);
       setPromptRunOptions((v) => v ?? info.settings.promptRunOptions);
       setBuilderView((v) => v ?? info.settings.builder.view);
+      setTerminal((v) => v ?? info.settings.terminal);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -116,7 +118,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -231,6 +233,7 @@ export function SettingsApp() {
         completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
         recycleBinDays: binDays,
         promptRunOptions,
+        terminal,
         builder: { view: builderView },
         rest: {
           minSleepMin: restMinSleep,
@@ -289,6 +292,16 @@ export function SettingsApp() {
               <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
             <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
+            <RadioField
+              label="Open terminal sessions in"
+              name="terminal"
+              value={terminal}
+              options={[
+                ['looper', 'Looper'],
+                ['system', 'Default terminal'],
+              ]}
+              onChange={setTerminal}
+            />
             <label className="checkbox-field">
               <input type="checkbox" checked={promptRunOptions} onChange={(e) => setPromptRunOptions(e.target.checked)} />
               Show run options before manually running a task
@@ -405,12 +418,16 @@ export function SettingsApp() {
               />
             </div>
             <NumberField label="Delete tasks in the Recycle Bin after" suffix="days" min={1} value={binDays} onChange={setBinDays} />
-            <Field label="Show conversations with the agent in">
-              <select value={builderView} onChange={(e) => setBuilderView(e.target.value as 'chat' | 'terminal')}>
-                <option value="chat">Chat window</option>
-                <option value="terminal">Terminal</option>
-              </select>
-            </Field>
+            <RadioField
+              label="Show conversations with the agent in"
+              name="builder-view"
+              value={builderView}
+              options={[
+                ['chat', 'Chat window'],
+                ['terminal', 'Terminal'],
+              ]}
+              onChange={setBuilderView}
+            />
           </div>
         )}
 

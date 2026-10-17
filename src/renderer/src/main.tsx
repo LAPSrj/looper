@@ -7,6 +7,7 @@ import { AboutApp } from './AboutApp';
 import { App } from './App';
 import { BuilderApp } from './BuilderApp';
 import { BuilderSetupApp } from './BuilderSetupApp';
+import { ChatApp } from './ChatApp';
 import { VersionDetailApp } from './VersionDetailApp';
 import { VersionHistoryApp } from './VersionHistoryApp';
 import { ContinueRunApp } from './ContinueRunApp';
@@ -30,6 +31,7 @@ import { RunOptionsApp } from './RunOptionsApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
 import { TemplatesApp } from './TemplatesApp';
+import { TerminalSessionApp } from './TerminalSessionApp';
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
@@ -55,6 +57,8 @@ const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
+const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
+const chatMatch = /^chat\/([^/]+)\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
@@ -79,6 +83,10 @@ function pickRoot() {
     );
   }
   if (hash === 'builder-setup') return <BuilderSetupApp />;
+  if (chatMatch) return <ChatApp id={decodeURIComponent(chatMatch[1])} title={decodeURIComponent(chatMatch[2])} />;
+  if (terminalMatch) {
+    return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
+  }
   if (builderMatch) return <BuilderApp id={decodeURIComponent(builderMatch[1])} />;
   if (versionsMatch) return <VersionHistoryApp taskId={decodeURIComponent(versionsMatch[1])} />;
   if (versionMatch) {

@@ -58,6 +58,14 @@ export interface Target {
   renderStopHook(spec: StopHookSpec): string;
   /** Command for a claude hook (Stop gate, guidance): run the script written at `targetPath`. */
   stopHookCommand(targetPath: string): string;
+  /** File name of the permission hook script (task chats). */
+  readonly permissionHookFile: string;
+  /**
+   * Script for claude's PermissionRequest hook in a task chat: write the
+   * request (the hook's stdin JSON) as <id>.req into `queueDir`, wait for
+   * Looper's <id>.ans there, print it as the hook's answer, and delete both.
+   */
+  renderPermissionHook(queueDir: string): string;
   /** File name of the guidance hook script. */
   readonly guideHookFile: string;
   /**

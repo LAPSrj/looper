@@ -177,6 +177,11 @@ code,
   background: var(--border);
 }
 
+.toolbar button.pressed {
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
 .toolbar button:disabled {
   color: var(--fg-muted);
   opacity: 0.45;
@@ -459,6 +464,44 @@ code,
 .status-pane {
   padding: 16px 18px;
   overflow-y: auto;
+}
+
+/* ---------- dashboard (no task selected) ---------- */
+.dashboard {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.dashboard-section > .pane-title {
+  display: block;
+  margin-bottom: 6px;
+}
+.dashboard-list:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+.dashboard-empty {
+  padding: 6px 10px;
+}
+.runlog-table .num {
+  text-align: right;
+}
+.status-icon {
+  flex: none;
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+.status-icon-error {
+  fill: var(--red);
+}
+.status-icon-warning {
+  fill: #f7c948;
+  stroke: #9d5d00;
+  stroke-width: 0.8;
 }
 .status-pane .props {
   margin-top: 0;
@@ -800,6 +843,104 @@ code,
 
 /* ---------- terminal ---------- */
 /* The agent console stays dark in both themes (matches the xterm theme in Terminal.tsx). */
+/* ---------- task chat window ---------- */
+.chat-app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chat-app.dragging .chat-composer {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+/* The chat window's status line closes the conversation instead of sitting above the message box. */
+.chat-scroll .chat-status {
+  padding: 0;
+  border-top: none;
+}
+.chat-divider {
+  display: block;
+  margin-top: 4px;
+}
+/* Both classes: the builder's .chat-card rules come later in this file. */
+.chat-card.chat-permission {
+  align-self: flex-start;
+  max-width: 88%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  font-weight: 400;
+  text-align: left;
+  padding: 10px 12px;
+}
+.chat-permission .chat-tool-body {
+  margin: 0;
+}
+.chat-permission-actions {
+  display: flex;
+  gap: 8px;
+}
+.chat-pending {
+  padding: 8px 18px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.chat-pending + .chat-composer {
+  border-top: none;
+}
+.chat-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.chat-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chat-thumb-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.chat-thumb {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+  line-height: 0;
+}
+.chat-thumb img {
+  max-height: 120px;
+  max-width: 220px;
+  border-radius: 3px;
+}
+.chat-thumb span {
+  display: inline-block;
+  padding: 6px 8px;
+  line-height: normal;
+}
+.chat-file {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.chat-file .link {
+  font-size: 13px;
+}
+
+/* A Looper terminal window: the session fills it. */
+.terminal-session {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 0 6px;
+  background: #0f1115;
+}
 .terminal-wrap {
   display: flex;
   flex-direction: column;
@@ -994,6 +1135,17 @@ fieldset.step-fields {
   margin-top: -10px;
 }
 
+/* A radio group: laid out like a field, but its inputs keep their own size (no .field input rules). */
+.radio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 14px 0;
+}
+.checkbox-field.radio-option {
+  margin: 2px 0;
+  font-weight: 400;
+}
 .radio-list .checkbox-field {
   margin: 4px 0;
   font-weight: 400;

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Terminal as XTerm } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 import type { ActiveRun, TaskRuntime } from '@shared/types';
 import { subscribe } from '../events';
+import { openXterm } from './xterm';
 
 interface Props {
   taskId: string;
@@ -49,23 +48,7 @@ export function Terminal({ taskId, runtime, selectedRun, onSelectRun }: Props) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const term = new XTerm({
-      fontFamily: 'Cascadia Mono, Consolas, "DejaVu Sans Mono", monospace',
-      fontSize: 13,
-      cursorBlink: true,
-      scrollback: 10000,
-      allowProposedApi: true,
-      theme: {
-        background: '#0f1115',
-        foreground: '#d7dae0',
-        cursor: '#d7dae0',
-        selectionBackground: '#3a4252',
-      },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(el);
-    fit.fit();
+    const { term, fit } = openXterm(el);
 
     const pinned = attachTo !== null;
     let loaded = false;

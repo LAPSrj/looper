@@ -7,6 +7,16 @@ const plainError = (e: Error): never => {
   throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
 };
 
+/** Dropped or picked files go by path; a pasted image has none, so its bytes go instead. */
+async function attachmentInputs(files: File[]): Promise<({ name: string; path: string } | { name: string; data: Uint8Array })[]> {
+  return Promise.all(
+    files.map(async (f) => {
+      const path = webUtils.getPathForFile(f);
+      return path ? { name: f.name || path, path } : { name: f.name || 'pasted-image.png', data: new Uint8Array(await f.arrayBuffer()) };
+    }),
+  );
+}
+
 const api: LooperApi = {
   info: () => ipcRenderer.invoke('info'),
   tasks: {
@@ -95,6 +105,24 @@ const api: LooperApi = {
   openLooperFile: (file) => ipcRenderer.invoke('file:openLooper', webUtils.getPathForFile(file)),
   readEngineLog: () => ipcRenderer.invoke('engineLog:read'),
   openTaskTerminal: (taskId, runId) => ipcRenderer.invoke('task:openTerminal', taskId, runId),
+  openTaskChat: (taskId, runId) => ipcRenderer.invoke('task:openChat', taskId, runId).catch(plainError),
+  chat: {
+    get: (id) => ipcRenderer.invoke('chat:get', id),
+    send: (id, text, attachments) => ipcRenderer.send('chat:send', id, text, attachments),
+    answer: (id, requestId, allow) => ipcRenderer.send('chat:answer', id, requestId, allow),
+    attachFiles: async (id, files) => ipcRenderer.invoke('chat:attach', id, await attachmentInputs(files)),
+  },
+  attachment: {
+    open: (path) => ipcRenderer.invoke('attachment:open', path),
+    thumbnail: (path) => ipcRenderer.invoke('attachment:thumbnail', path),
+  },
+  terminalSession: {
+    attachFiles: async (id, files) => ipcRenderer.invoke('terminalSession:attach', id, await attachmentInputs(files)),
+    showContextMenu: (id, hasSelection) => ipcRenderer.send('context-menu:terminal', id, hasSelection),
+    output: (id) => ipcRenderer.invoke('terminalSession:output', id),
+    write: (id, data) => ipcRenderer.send('terminalSession:write', id, data),
+    resize: (id, cols, rows) => ipcRenderer.send('terminalSession:resize', id, cols, rows),
+  },
   // The engine's error is shown to the user; drop Electron's IPC framing.
   continueRun: (taskId, runId, guidance) =>
     ipcRenderer.invoke('run:continue', taskId, runId, guidance).catch((e: Error) => {

@@ -283,7 +283,9 @@ export function ToolInputView({ row }: { row: MessageRow }) {
   const input = inputOf(row);
   if (!input) return plain(row.text);
   switch (row.tool) {
+    // Claude Code on Windows runs commands with its PowerShell tool: same input shape as Bash.
     case 'Bash':
+    case 'PowerShell':
       return <>{bashInput(input)}</>;
     case 'Edit':
       return <>{editInput(row, input)}</>;
@@ -310,7 +312,8 @@ export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) 
     case 'Task':
     case 'Agent':
       return <MessageBody text={result} />;
-    case 'Bash': {
+    case 'Bash':
+    case 'PowerShell': {
       const text = stripAnsi(result);
       const parsed = parseJson(text);
       return parsed !== undefined ? jsonTree(parsed) : plain(text);

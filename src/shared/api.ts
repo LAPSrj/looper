@@ -1,4 +1,5 @@
 import type { BuilderSetup, BuilderState } from './builder';
+import type { Attachment, ChatState } from './chat';
 import type { MessageImage, MessagesResult } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -139,8 +140,39 @@ export interface LooperApi {
   openLooperFile(file: File): Promise<void>;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(): Promise<string>;
-  /** Open the task's harness in a terminal window (same env/cwd/model/args, no prompt). A run id resumes that run's conversation. */
+  /**
+   * Open the task's harness in a terminal (same env/cwd/model/args, no prompt):
+   * a Looper terminal window or the system's terminal, as the setting says. A
+   * run id resumes that run's conversation.
+   */
   openTaskTerminal(taskId: string, runId?: string): Promise<void>;
+  /** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a Looper chat window. */
+  openTaskChat(taskId: string, runId?: string): Promise<void>;
+  /** A chat window's chat. */
+  chat: {
+    get(id: string): Promise<ChatState | null>;
+    send(id: string, text: string, attachments: Attachment[]): void;
+    /** Allow or deny the agent's permission request. */
+    answer(id: string, requestId: string, allow: boolean): void;
+    /** Copy pasted or dropped files into the task's attachments, ready to send. */
+    attachFiles(id: string, files: File[]): Promise<Attachment[]>;
+  };
+  /** One of Looper's attachment copies: open it in its default app, or get a thumbnail of an image. */
+  attachment: {
+    open(path: string): Promise<void>;
+    thumbnail(path: string): Promise<string | null>;
+  };
+  /** A Looper terminal window's session. */
+  terminalSession: {
+    /** Copy dropped or pasted files into the task's attachments; returns their paths as the terminal pastes them. */
+    attachFiles(id: string, files: File[]): Promise<string>;
+    /** The terminal's right-click menu: Copy, Paste, Attach Files…; the choice comes back as a ui event. */
+    showContextMenu(id: string, hasSelection: boolean): void;
+    /** The output so far and whether the session ended; null once it's closed. */
+    output(id: string): Promise<{ data: string; ended: boolean } | null>;
+    write(id: string, data: string): void;
+    resize(id: string, cols: number, rows: number): void;
+  };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
@@ -270,10 +302,13 @@ export type UiEvent =
         | 'enable-disable'
         | 'complete-reopen'
         | 'open-terminal'
+        | 'open-chat'
         | 'open-work-folder'
         | 'clear-runs'
         | 'edit-with-agent'
         | 'version-history'
+        /** Main window: clear the task selection, which shows the dashboard. */
+        | 'show-dashboard'
         /** Recycle Bin window: act on the selected item. */
         | 'bin-restore'
         | 'bin-delete'
@@ -293,7 +328,13 @@ export type UiEvent =
   /** Conversation window View menu: the Auto Scroll toggle changed. */
   | { type: 'messages-auto-scroll'; checked: boolean }
   /** The filter window applied a filter (empty = cleared). */
-  | { type: 'messages-filter'; value: string };
+  | { type: 'messages-filter'; value: string }
+  /** Terminal window right-click menu: copy the selection, paste the clipboard. */
+  | { type: 'terminal-copy' | 'terminal-paste' }
+  /** Terminal window: Attach Files… copied the files; paste their paths. */
+  | { type: 'terminal-attached'; text: string }
+  /** Chat window: File → Attach Files… copied the files; they wait to be sent. */
+  | { type: 'chat-attached'; attachments: Attachment[] };
 
 /** run: the run's own step records (check, classifier, agent, result, guidance). */
 export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

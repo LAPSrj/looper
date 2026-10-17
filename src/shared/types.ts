@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { BuilderState } from './builder';
+import type { ChatState } from './chat';
 
 // ---------- Task definition ----------
 
@@ -506,6 +507,11 @@ export const SettingsSchema = z.object({
   notificationsEnabled: z.boolean().default(true),
   /** Show a step-selection window before a manual Run Now starts. */
   promptRunOptions: z.boolean().default(false),
+  /**
+   * Where Open Project in Terminal and Continue in Terminal open the session:
+   * looper = a Looper terminal window; system = the system's default terminal.
+   */
+  terminal: z.enum(['looper', 'system']).default('looper'),
   /** Where the task builder (New Task with Agent, Edit with Agent) shows the conversation. */
   builder: z
     .object({
@@ -721,5 +727,10 @@ export type EngineEvent =
   | { type: 'builder'; state: BuilderState }
   /** Terminal output of a task builder in the terminal view. */
   | { type: 'builder:data'; id: string; data: string }
+  /** A task chat's conversation, status or permission requests changed. */
+  | { type: 'chat'; state: ChatState }
+  /** Output of a terminal session in a Looper terminal window, and its end. */
+  | { type: 'terminal:data'; id: string; data: string }
+  | { type: 'terminal:end'; id: string }
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' };

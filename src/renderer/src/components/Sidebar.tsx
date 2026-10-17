@@ -12,7 +12,7 @@ interface Props {
   runtimes: Record<string, TaskRuntime>;
   selected: string | null;
   now: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   view: View;
   onView: (patch: Partial<View>) => void;
 }

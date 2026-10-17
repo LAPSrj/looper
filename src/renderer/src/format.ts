@@ -56,6 +56,14 @@ export function fmtDateTime(value: string | number | Date): string {
   return formatDateTime(value, appLocale);
 }
 
+/** A moment as "HH:MM" when it is today, else the full date and time. */
+export function fmtClock(ts: number, now: number): string {
+  const d = new Date(ts);
+  return d.toDateString() === new Date(now).toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    : fmtDateTime(ts);
+}
+
 export function stripAnsi(s: string): string {
   return stripAnsiShared(s).replace(/\r(?!\n)/g, '\n');
 }

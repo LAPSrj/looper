@@ -18,6 +18,35 @@ on, the status bar also shows what it's doing (see [Rest Mode](#rest-mode)).
 
 Double-clicking a task opens its Edit Task window.
 
+## The dashboard
+
+With no task selected, the detail pane shows the dashboard. It's what the
+window opens on, and you get back to it with the Dashboard button at the
+start of the toolbar, **View → Dashboard**, or a click on the empty space
+below the task list.
+
+**Needs attention** lists each task that needs you, errors first, with the
+problem and when its run started. A task is listed when:
+
+- a run is waiting for you (warning icon), until you answer it in the
+  Terminal tab;
+- it was auto-paused after too many consecutive errors, or because its
+  watcher kept crashing (error icon);
+- its last run ended in an error, a time-out or an idle time-out (error
+  icon), or a warning (warning icon), until a later run ends well.
+
+Disabled and completed tasks aren't listed.
+
+**Running now** lists every run in progress, oldest first: the task, its
+step (Checking, Classifying, Running agent, or Waiting for you), what
+triggered it (Schedule, Manual, or Event), when it started, and how long it
+has been going.
+
+Clicking a row picks it, and the toolbar, the Task menu and the row's
+right-click menu then act on that task. Stop Task stops that row's run.
+Double-clicking a row, or pressing Enter, selects the task and opens its
+Terminal tab, or its Runs tab for a failed run.
+
 Tasks and folders can be reordered by dragging them; the order is saved.
 Dropping a task on another task inserts it there (joining that task's
 folder, if any); dropping it on the middle of a folder header moves it into
@@ -38,7 +67,8 @@ watcher task, Next run reads "When the watcher fires" while it's watching;
 outside its active hours, Status reads Idle and Next run shows when watching
 starts again.
 
-The View menu controls what the window shows: a Standard or Compact task
+The View menu opens the [dashboard](#the-dashboard) and controls what the
+window shows: a Standard or Compact task
 list (Compact drops the status line), whether disabled, completed, scheduled,
 manual, and watcher tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
@@ -54,11 +84,12 @@ guide in its own window, and Help → About Looper shows the version.
 
 ## The toolbar
 
-The toolbar acts on the selected task. Buttons, left to right, with their
-tooltips:
+The toolbar acts on the selected task, or on the row picked on the
+dashboard. Buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
+| Grid | Dashboard (stays pressed while the dashboard shows) | — |
 | Run | Run Now | F5 |
 | Stop | Stop Task | Shift+F5 |
 | Pause/Resume | Pause / Resume | Ctrl+P |
@@ -83,10 +114,79 @@ out for a completed task, which is parked until you reopen it. Complete is
 greyed out unless the task's **Allow this task to be marked completed**
 option is on (Reopen always works), and asks for confirmation, since the task
 moves to the [Recycle Bin](#the-recycle-bin) once its retention runs out.
-"Open Project in Terminal" opens a
-real OS terminal window with the task's environment, working directory, and
-harness ready to go (model and permission mode included, no prompt) — a
-different thing from the in-app Terminal tab described below.
+"Open Project in Terminal" opens a terminal session with the task's
+environment, working directory, and harness ready to go (model and
+permission mode included, no prompt) — a different thing from the in-app
+Terminal tab described below. See [terminal sessions](#terminal-sessions)
+for where it opens.
+
+## Terminal sessions
+
+Open Project in Terminal and Continue in Terminal (see [continuing a
+run](how-a-run-works.md)) open a terminal session where
+**Settings → General → Open terminal sessions in** says:
+
+- **Looper** (the default) opens a Looper terminal window titled with the
+  task's name. The session isn't a run: it has no time limits, isn't
+  recorded, and doesn't show in the Runs tab or on the dashboard. When the
+  harness exits, the window shows "session ended". Closing the window ends
+  the session, and so does quitting Looper, which asks first while a
+  session is still running, whatever **Ask before quitting while tasks are
+  running** is set to.
+- **Default terminal** opens a window of the system's terminal instead. On
+  Windows that's the default terminal application set in Windows (Settings
+  → System → For developers → Terminal); on Linux, `$TERMINAL` or the first
+  common terminal found; on macOS, Terminal. That window doesn't depend on
+  Looper and stays open when Looper quits.
+
+In a Looper terminal window you can attach files: drop them on the window,
+paste a copied screenshot with Ctrl+V, or right-click and choose **Attach
+Files…** (the right-click menu also has Copy and Paste). Looper saves a copy
+in the task's [attachments](#attachments) and pastes its path where the
+cursor is. Claude Code and Codex turn a pasted image path into an image
+attachment; any other file is a path the agent can read.
+
+## Chats
+
+**Open Project in Chat** (Task menu, or right-click a task) and **Continue
+in Chat** (right-click a run in the Runs tab, or the run window's File menu)
+open the task's harness in a Looper chat window, as messages instead of a
+terminal. Like a terminal session, a chat isn't a run: it has no time limits,
+isn't recorded, and doesn't show in the Runs tab or on the dashboard. It uses
+the task's own harness, model, effort, permission mode and arguments. Continue
+in Chat shows the run's conversation above the new messages and goes on from
+where the run left off.
+
+Enter sends the message (Shift+Enter starts a new line). The window's menu
+bar has a File menu (Attach Files… (Ctrl+O), Close (Ctrl+W)) and a Chat
+menu with **Stop** (Esc), which ends the agent's turn while it works; the
+next message goes on with the same conversation.
+
+With Claude Code, a tool call that the task's permission mode would ask about
+shows in the chat with **Allow** and **Deny**, and the agent waits for your
+answer. Codex can't ask for permission in a chat, so it does only what the
+task's permission mode allows; the window says so at the top. The agent's
+clarifying-question form isn't available in a chat, so it asks in the
+conversation instead.
+
+To attach files, drop them on the window, paste with Ctrl+V, or use **File →
+Attach Files…**. They're listed under the message box until you send them, each
+with a Remove link. An image (PNG, JPEG, GIF or WebP) goes to the agent inside
+the message, so it sees it at once; any other file, or an image over 3.75 MB,
+goes as a path the agent reads itself. In the conversation, images show as
+thumbnails and other files by name, and clicking one opens it in its default
+app.
+
+Closing a chat window while the agent is working or waiting for your answer
+asks first, and so does quitting Looper.
+
+## Attachments
+
+Files attached in a chat or a Looper terminal window are copied into the
+task's data folder (`tasks/<task id>/attachments` in the [data
+directory](cli-and-automation.md#the-data-directory)), so they stay readable
+after you move or delete the original. They're deleted by **Run log
+retention**, like the run folders.
 
 ## The context menu
 
@@ -95,8 +195,8 @@ with the same actions as the toolbar, plus a few more: Run Now, Stop Task,
 Pause/Resume, Enable/Disable, Complete/Reopen, Edit Task…, [Edit with
 Agent…](task-builder.md), [Version History…](tasks.md#version-history),
 Delete Task, Edit/Add Guidance for Next Run…, Clear Guidance, Move to
-Folder…, Clear Run History…, Open Project in Terminal, and Open Working
-Directory.
+Folder…, Clear Run History…, Open Project in Terminal, Open Project in
+[Chat](#chats), and Open Working Directory.
 
 ## The Recycle Bin
 
@@ -242,8 +342,8 @@ Right-clicking a row offers Copy Content, and on rows for file tools
 Subagent Conversation.
 
 The window's menu bar has a File menu (Save as Markdown…, Open Output File,
-Continue in Terminal, Continue with Guidance…, Open Run Folder, Open Working
-Directory) and a View menu. Save as Markdown… (Ctrl+S) asks for a file name,
+Continue in Terminal, Continue in Chat, Continue with Guidance…, Open Run
+Folder, Copy Run Folder Path, Open Working Directory) and a View menu. Save as Markdown… (Ctrl+S) asks for a file name,
 then opens an Export Options window with Include thinking, Include tool
 usage, and No formatting (plain text); it saves the conversation without the
 Run rows. View starts with Raw Messages — every
@@ -270,7 +370,7 @@ its own conversation: double-click it, or use the "Open Subagent
 Conversation" button in its detail pane. The subagent window is the same
 rows-plus-panel view without the Run rows, and also updates live. It has no
 guidance box, and its File menu has only Save as Markdown…, Open Run Folder,
-and Open Working Directory. The link becomes available once
+Copy Run Folder Path, and Open Working Directory. The link becomes available once
 the subagent has reported back to the parent.
 
 Messages come from the transcript files under the harness's own data
@@ -400,6 +500,8 @@ On the General tab:
   overdue tasks start one second apart.
 - **Run log retention** (30 days) sets how long run records and run folders
   are kept.
+- **Open terminal sessions in** picks Looper (default) or Default terminal
+  for [terminal sessions](#terminal-sessions).
 - **Show run options before manually running a task** (off by default) makes
   Run Now open the [Run Options window](how-a-run-works.md#run-options-for-a-manual-run).
 - **Show notifications**, **Close to system tray**, **Ask before quitting

@@ -1,3 +1,5 @@
+import type { Attachment } from './chat';
+
 /** One row of the Messages view: a prompt, an agent reply, a thought, a tool call, or (raw mode) a record. */
 export interface MessageRow {
   /** Stable per-transcript id (monotonic; survives head truncation). */
@@ -27,6 +29,8 @@ export interface MessageRow {
   input?: unknown;
   /** Edit/Write rows: the diff hunks the harness recorded for the change. */
   patch?: PatchHunk[];
+  /** Prompt rows of a task chat: the files sent with the message. */
+  attachments?: Attachment[];
 }
 
 /** One hunk of a recorded file change; lines are prefixed ' ', '-' or '+'. */

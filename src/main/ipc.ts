@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import fs from 'node:fs';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
@@ -8,6 +8,7 @@ import { folderSubtree } from '../shared/folders';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
+import type { Attachment, AttachmentInput } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
 import type { Task, View } from '../shared/types';
 import { paneMenuItems, singleMenuItems } from './view-menu';
@@ -50,6 +51,18 @@ export interface IpcHost {
   reviewBuilder: (builderId: string) => void;
   /** The window of a builder, which alone gets its events. */
   builderWindow: (builderId: string) => BrowserWindow | undefined;
+  /**
+   * Open Project in Terminal / Continue in Terminal (with a run id): a Looper
+   * terminal window or the system's terminal, as the setting says. Rejects
+   * with the reason when the session can't start.
+   */
+  openTerminal: (taskId: string, runId?: string) => Promise<void>;
+  /** The Looper terminal window of a session, which alone gets its events. */
+  terminalWindow: (sessionId: string) => BrowserWindow | undefined;
+  /** Open Project in Chat / Continue in Chat (with a run id). Rejects with the reason when the chat can't start. */
+  openChat: (taskId: string, runId?: string) => Promise<void>;
+  /** The window of a chat, which alone gets its events. */
+  chatWindow: (chatId: string) => BrowserWindow | undefined;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (
@@ -62,6 +75,28 @@ export interface IpcHost {
     taskCompleted?: boolean,
     allowComplete?: boolean,
   ) => void;
+}
+
+/** Height of an attachment's thumbnail in a chat message. */
+const THUMBNAIL_HEIGHT = 160;
+
+/** Files from a renderer, checked: pasted bytes, or the path of an existing file. */
+function attachmentInputs(files: unknown): AttachmentInput[] {
+  if (!Array.isArray(files)) return [];
+  const out: AttachmentInput[] = [];
+  for (const f of files as Record<string, unknown>[]) {
+    const name = typeof f?.name === 'string' && f.name.trim() ? f.name : 'attachment';
+    if (f?.data instanceof Uint8Array) {
+      out.push({ name, data: f.data });
+    } else if (typeof f?.path === 'string' && f.path) {
+      try {
+        if (fs.statSync(f.path).isFile()) out.push({ name, path: f.path });
+      } catch {
+        /* gone or unreadable: skipped */
+      }
+    }
+  }
+  return out;
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
@@ -207,7 +242,63 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipcMain.handle('engineLog:read', () => engine.readEngineLog());
 
-  ipcMain.handle('task:openTerminal', (_e, id: string, runId?: string) => engine.openTaskTerminal(id, runId));
+  ipcMain.handle('task:openTerminal', (_e, id: string, runId?: string) => host.openTerminal(id, runId));
+  ipcMain.handle('terminalSession:output', (_e, id: string) => engine.terminalSessionOutput(id));
+  ipcMain.on('terminalSession:write', (_e, id: string, data: string) => engine.writeTerminalSession(id, data));
+  ipcMain.on('terminalSession:resize', (_e, id: string, cols: number, rows: number) =>
+    engine.resizeTerminalSession(id, cols, rows),
+  );
+  ipcMain.handle('terminalSession:attach', (_e, id: string, files: unknown) => engine.attachToTerminal(id, attachmentInputs(files)));
+  ipcMain.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const send = (payload: unknown) => {
+      if (!sender.isDestroyed()) sender.webContents.send('ui:event', payload);
+    };
+    const attachFiles = async () => {
+      const r = await dialog.showOpenDialog(sender, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
+      if (r.canceled || r.filePaths.length === 0) return;
+      const files = r.filePaths.map((p) => ({ name: p.split(/[\\/]/).pop() ?? p, path: p }));
+      send({ type: 'terminal-attached', text: engine.attachToTerminal(id, files) });
+    };
+    Menu.buildFromTemplate([
+      { label: 'Copy', enabled: !!hasSelection, click: () => send({ type: 'terminal-copy' }) },
+      { label: 'Paste', click: () => send({ type: 'terminal-paste' }) },
+      { type: 'separator' },
+      {
+        label: 'Attach Files…',
+        click: () =>
+          void attachFiles().catch((err: unknown) => {
+            void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+          }),
+      },
+    ]).popup({ window: sender });
+  });
+
+  ipcMain.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
+  ipcMain.handle('chat:get', (_e, id: string) => engine.getChat(id) ?? null);
+  ipcMain.on('chat:send', (_e, id: string, text: string, attachments: Attachment[]) => {
+    // Only Looper's own copies: the renderer never makes the agent read any other file.
+    const files = (Array.isArray(attachments) ? attachments : [])
+      .filter((a) => engine.isAttachment(String(a?.path)))
+      .map((a) => ({ name: String(a.name), path: String(a.path), image: !!a.image }));
+    engine.sendChat(id, String(text ?? ''), files);
+  });
+  ipcMain.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
+  ipcMain.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
+  /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
+  ipcMain.handle('attachment:open', async (_e, p: string) => {
+    if (!engine.isAttachment(String(p))) return;
+    const err = await shell.openPath(String(p));
+    if (err) throw new Error(err);
+  });
+  ipcMain.handle('attachment:thumbnail', (_e, p: string) => {
+    if (!engine.isAttachment(String(p))) return null;
+    const img = nativeImage.createFromPath(String(p));
+    if (img.isEmpty()) return null;
+    const { height } = img.getSize();
+    return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
+  });
   ipcMain.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
     engine.continueRun(id, runId, guidance),
   );
@@ -442,6 +533,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
       { type: 'separator' },
       { label: 'Open Project in Terminal', click: () => sender.webContents.send('ui:event', { type: 'open-terminal' }) },
+      { label: 'Open Project in Chat', click: () => sender.webContents.send('ui:event', { type: 'open-chat' }) },
       { label: 'Open Working Directory', click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
     ]);
     menu.popup({ window: sender });
@@ -645,6 +737,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!sender) return;
     const canContinue = engine.canContinueRun(info.taskId, info.runId);
     const canGuide = engine.canGuideRun(info.taskId, info.runId);
+    const showError = (err: unknown) =>
+      void dialog.showMessageBox(sender, {
+        type: 'error',
+        title: 'Looper',
+        message: err instanceof Error ? err.message : String(err),
+        buttons: ['OK'],
+      });
     const menu = Menu.buildFromTemplate([
       { label: 'Open', click: () => host.openMessages(info.taskId, info.runId) },
       { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
@@ -657,15 +756,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       {
         label: 'Continue in Terminal',
         enabled: canContinue,
-        click: () =>
-          void engine.openTaskTerminal(info.taskId, info.runId).catch((err: unknown) => {
-            void dialog.showMessageBox(sender, {
-              type: 'error',
-              title: 'Looper',
-              message: err instanceof Error ? err.message : String(err),
-              buttons: ['OK'],
-            });
-          }),
+        click: () => void host.openTerminal(info.taskId, info.runId).catch(showError),
+      },
+      {
+        label: 'Continue in Chat',
+        enabled: canContinue,
+        click: () => void host.openChat(info.taskId, info.runId).catch(showError),
       },
       {
         label: 'Continue with Guidance…',
@@ -683,6 +779,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     // A builder's conversation goes to its own window only: it is large and nobody else shows it.
     if (event.type === 'builder' || event.type === 'builder:data') {
       const w = host.builderWindow(event.type === 'builder' ? event.state.id : event.id);
+      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
+      return;
+    }
+    if (event.type === 'chat') {
+      const w = host.chatWindow(event.state.id);
+      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
+      return;
+    }
+    // Likewise a terminal session's output: only its window shows it.
+    if (event.type === 'terminal:data' || event.type === 'terminal:end') {
+      const w = host.terminalWindow(event.id);
       if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
       return;
     }

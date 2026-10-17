@@ -7,12 +7,17 @@ function pad(n: number, w = 2): string {
   return String(n).padStart(w, '0');
 }
 
+/** YYYYMMDD-HHMMSS in local time: run ids and attachment names start with it, so they sort by age. */
+function stampOf(d: Date): string {
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
 export function newRunId(now = new Date()): string {
-  const stamp =
-    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-` +
-    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const rand = Math.random().toString(36).slice(2, 6);
-  return `${stamp}-${rand}`;
+  const rand = Math.random().toString(36).slice(2, 6).padEnd(4, '0');
+  return `${stampOf(now)}-${rand}`;
 }
 
 export class RunStore {
@@ -24,6 +29,53 @@ export class RunStore {
 
   runDir(taskId: string, runId: string): string {
     return path.join(this.taskDir(taskId), 'runs', runId);
+  }
+
+  /** Files attached to the task's chats and terminal sessions: each name starts with a run-id-like stamp. */
+  attachmentsDir(taskId: string): string {
+    return path.join(this.taskDir(taskId), 'attachments');
+  }
+
+  /**
+   * Copy a file into the task's attachments (bytes, or a host file to copy)
+   * and return the copy's host path. The stamp in front keeps names apart
+   * and dates the file for pruning; the rest is the file's own name.
+   */
+  saveAttachment(taskId: string, name: string, from: { data: Buffer } | { file: string }): string {
+    const dir = this.attachmentsDir(taskId);
+    ensureDir(dir);
+    const safe = path.basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'attachment';
+    const file = path.join(dir, `${newRunId()}-${safe}`);
+    if ('data' in from) fs.writeFileSync(file, from.data);
+    else fs.copyFileSync(from.file, file);
+    return file;
+  }
+
+  /** The file's own name, without the stamp saveAttachment put in front. */
+  static attachmentName(file: string): string {
+    return path.basename(file).replace(/^\d{8}-\d{6}-[a-z0-9]{4}-/, '');
+  }
+
+  /** Delete attachments older than `cutoffMs`; returns how many. */
+  pruneAttachments(taskId: string, cutoffMs: number): number {
+    const stamp = stampOf(new Date(cutoffMs));
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.attachmentsDir(taskId));
+    } catch {
+      return 0;
+    }
+    let n = 0;
+    for (const name of names) {
+      if (!/^\d{8}-\d{6}/.test(name) || name >= stamp) continue;
+      try {
+        fs.rmSync(path.join(this.attachmentsDir(taskId), name), { force: true });
+        n++;
+      } catch {
+        /* best effort */
+      }
+    }
+    return n;
   }
 
   createRunDir(taskId: string, runId: string): string {
@@ -125,10 +177,7 @@ export class RunStore {
    */
   pruneOlderThan(taskId: string, cutoffMs: number, keep: ReadonlySet<string> = new Set()): { records: number; dirs: number } {
     // Run ids start with a local-time stamp, so an id below the cutoff's stamp is older.
-    const c = new Date(cutoffMs);
-    const cutoffStamp =
-      `${c.getFullYear()}${pad(c.getMonth() + 1)}${pad(c.getDate())}-` +
-      `${pad(c.getHours())}${pad(c.getMinutes())}${pad(c.getSeconds())}`;
+    const cutoffStamp = stampOf(new Date(cutoffMs));
     let dirs = 0;
     for (const id of this.listRunIds(taskId)) {
       if (keep.has(id) || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;

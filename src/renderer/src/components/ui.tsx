@@ -1,6 +1,33 @@
 import { useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 
+/** A labelled group of radio buttons, one per option, stacked vertically. */
+export function RadioField<T extends string>({
+  label,
+  name,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  name: string;
+  value: T;
+  options: [T, string][];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="radio-field" role="radiogroup" aria-label={label}>
+      <span className="field-label">{label}</span>
+      {options.map(([v, text]) => (
+        <label key={v} className="checkbox-field radio-option">
+          <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} />
+          {text}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
   return (
     <div className="field">

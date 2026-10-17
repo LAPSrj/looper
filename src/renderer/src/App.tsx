@@ -3,6 +3,8 @@ import type { AppInfo, UiEvent } from '@shared/api';
 import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
+import { attentionRows, runningRows } from '@shared/dashboard';
+import { Dashboard, type DashboardPick } from './components/Dashboard';
 import { Sidebar } from './components/Sidebar';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
 import { TaskToolbar } from './components/TaskToolbar';
@@ -30,7 +32,10 @@ export function App() {
   const [layout, setLayout] = useState<Record<string, string[]>>({});
   const [runtimes, setRuntimes] = useState<Record<string, TaskRuntime>>({});
   const [records, setRecords] = useState<Record<string, RunRecord[]>>({});
+  // null = no task selected: the dashboard shows.
   const [selected, setSelected] = useState<string | null>(null);
+  // The dashboard row picked while it shows.
+  const [pick, setPick] = useState<DashboardPick | null>(null);
   const [tab, setTab] = useState<DetailTab>('status');
   // Run to select in the run log (notification click); a fresh object per click re-triggers.
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
@@ -39,9 +44,20 @@ export function App() {
   // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
   const [terminalRun, setTerminalRun] = useState<string | null>(null);
 
-  // Menu and toolbar commands act on the selected task; the ref keeps them acting on current state.
-  const uiRef = useRef({ selected, tasks, runtimes, terminalRun });
-  uiRef.current = { selected, tasks, runtimes, terminalRun };
+  const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
+  const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
+  // A picked row that left its list (the run ended, the problem cleared) no longer counts.
+  const livePick =
+    !selected && pick && (pick.list === 'attention' ? attention : running).some((r) => r.task.id === pick.taskId && r.runId === pick.runId)
+      ? pick
+      : null;
+  // The task menus and the toolbar act on: the selected task, or the dashboard row's.
+  const target = selected ?? livePick?.taskId ?? null;
+
+  // Menu and toolbar commands act on the target task; the ref keeps them acting on current state.
+  // On the dashboard, Stop Task stops the picked row's run.
+  const uiRef = useRef({ selected: target, tasks, runtimes, terminalRun });
+  uiRef.current = { selected: target, tasks, runtimes, terminalRun: selected ? terminalRun : (livePick?.runId ?? null) };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
     setSelected(e.taskId);
@@ -136,8 +152,14 @@ export function App() {
       case 'open-terminal':
         if (sel) void window.looper.openTaskTerminal(sel).catch((e) => void window.looper.showError((e as Error).message));
         break;
+      case 'open-chat':
+        if (sel) void window.looper.openTaskChat(sel).catch((e) => void window.looper.showError((e as Error).message));
+        break;
       case 'open-work-folder':
         if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
+        break;
+      case 'show-dashboard':
+        setSelected(null);
         break;
       case 'clear-runs': {
         const t = ts.find((x) => x.id === sel);
@@ -159,10 +181,7 @@ export function App() {
       setAppLocale(i.locale);
       setInfo(i);
     });
-    void window.looper.tasks.list().then((t) => {
-      setTasks(t);
-      setSelected((s) => s ?? t[0]?.id ?? null);
-    });
+    void window.looper.tasks.list().then(setTasks);
     void window.looper.folders.list().then(setFolders);
     void window.looper.folders.layout().then(setLayout);
     void window.looper.runtime.list().then((list) => {
@@ -221,18 +240,18 @@ export function App() {
   }, [selected, records]);
 
   useEffect(() => {
-    if (selected && !tasks.some((t) => t.id === selected)) setSelected(tasks[0]?.id ?? null);
+    if (selected && !tasks.some((t) => t.id === selected)) setSelected(null);
   }, [tasks, selected]);
 
-  const selectedState = selected ? runtimes[selected]?.state : undefined;
-  const selectedActiveRuns = selected ? runtimes[selected]?.runs.length ?? 0 : 0;
+  const selectedState = target ? runtimes[target]?.state : undefined;
+  const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
 
   useEffect(() => {
-    const t = tasks.find((x) => x.id === selected);
+    const t = tasks.find((x) => x.id === target);
     const active = selectedState === 'running' || selectedState === 'checking' || selectedState === 'classifying';
     const canRunNow = !active || selectedActiveRuns < (t?.maxConcurrentRuns ?? 1);
     window.looper.reportSelection(
-      !!selected,
+      !!target,
       t?.enabled,
       selectedState === 'paused',
       selectedState,
@@ -241,16 +260,23 @@ export function App() {
       !!t?.completedAt,
       !!t?.completion.allowed,
     );
-  }, [selected, tasks, selectedState, selectedActiveRuns]);
+  }, [target, tasks, selectedState, selectedActiveRuns]);
 
   // A terminal pick belongs to one task.
   useEffect(() => setTerminalRun(null), [selected]);
 
-  const select = useCallback((id: string) => {
+  const select = useCallback((id: string | null) => {
     setSelected(id);
   }, []);
 
+  const openFromDashboard = useCallback((taskId: string, view: DetailTab) => {
+    setSelected(taskId);
+    setTab(view);
+    setFocusRun(null);
+  }, []);
+
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
+  const targetTask = useMemo(() => tasks.find((t) => t.id === target) ?? null, [tasks, target]);
   const view = info?.settings.view;
 
   // Shown at once; the settings event that follows carries the same view back.
@@ -278,7 +304,8 @@ export function App() {
     for (const t of tasks) {
       const state = runtimes[t.id]?.state;
       if (state === 'paused') paused += 1;
-      else if (state === 'running') running += 1;
+      // A cycle in its check or classifier step is running too.
+      else if (state === 'running' || state === 'checking' || state === 'classifying') running += 1;
     }
     return { enabled, disabled: tasks.length - enabled - completed, completed, paused, running };
   }, [tasks, runtimes]);
@@ -286,7 +313,12 @@ export function App() {
   return (
     <div className="app-shell">
       {(view?.toolbar ?? true) && (
-        <TaskToolbar task={task} runtime={task ? runtimes[task.id] : undefined} onAction={uiAction} />
+        <TaskToolbar
+          task={targetTask}
+          runtime={targetTask ? runtimes[targetTask.id] : undefined}
+          dashboard={!selected}
+          onAction={uiAction}
+        />
       )}
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
         {view ? (
@@ -322,7 +354,15 @@ export function App() {
               onTerminalRun={setTerminalRun}
             />
           ) : (
-            <div className="empty" />
+            <Dashboard
+              attention={attention}
+              running={running}
+              runtimes={runtimes}
+              now={now}
+              pick={livePick}
+              onPick={setPick}
+              onOpen={openFromDashboard}
+            />
           )}
         </main>
       </div>

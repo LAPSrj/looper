@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
@@ -104,6 +104,10 @@ if (!app.requestSingleInstanceLock()) {
       editWithAgent,
       reviewBuilder,
       builderWindow: (id) => builderWindows.get(id),
+      openTerminal,
+      terminalWindow: (id) => terminalWindows.get(id),
+      openChat,
+      chatWindow: (id) => chatWindows.get(id),
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
@@ -199,18 +203,30 @@ async function onLockLost(by: LockHolder | null): Promise<void> {
 
 /**
  * The confirmation quitting needs now, or null when it can go ahead: what it
- * would stop that the confirmQuit setting asks about. A task with a run in
- * flight counts as running even when its watcher is up as well.
+ * would stop that the confirmQuit setting asks about, plus any terminal
+ * session still running in a Looper window. A task with a run in flight
+ * counts as running even when its watcher is up as well.
  */
 function quitWarning(): { message: string; detail: string } | null {
-  const ask = engine?.settings.confirmQuit;
-  if (!engine || !ask?.runs) return null;
-  const rts = engine.listRuntimes();
+  if (!engine) return null;
+  const ask = engine.settings.confirmQuit;
+  // Someone is typing into a terminal session or a chat: always ask, whatever the setting says about runs.
+  const terminals = engine.runningTerminalSessions();
+  const chats = engine.busyChats();
+  const rts = ask.runs ? engine.listRuntimes() : [];
   const running = rts.filter((rt) => rt.runs.length > 0).length;
   const watching = ask.watchers ? rts.filter((rt) => rt.runs.length === 0 && rt.watcher !== null).length : 0;
-  if (running === 0 && watching === 0) return null;
+  if (running === 0 && watching === 0 && terminals === 0 && chats === 0) return null;
   const message: string[] = [];
   const stops: string[] = [];
+  if (terminals > 0) {
+    message.push(terminals === 1 ? 'A terminal session is still open.' : `${terminals} terminal sessions are still open.`);
+    stops.push(terminals === 1 ? 'the session' : 'the sessions');
+  }
+  if (chats > 0) {
+    message.push(chats === 1 ? 'An agent in a chat is still working.' : `Agents in ${chats} chats are still working.`);
+    stops.push(chats === 1 ? 'the chat' : 'the chats');
+  }
   if (running > 0) {
     message.push(running === 1 ? 'A task is still running.' : `${running} tasks are still running.`);
     stops.push(running === 1 ? 'its run' : 'their runs');
@@ -785,7 +801,20 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           label: 'Continue in &Terminal',
           enabled: canContinue,
           click: () =>
-            void engine?.openTaskTerminal(taskId, runId).catch(async (err: unknown) => {
+            void openTerminal(taskId, runId).catch(async (err: unknown) => {
+              await dialog.showMessageBox(child, {
+                type: 'error',
+                title: 'Looper',
+                message: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }),
+        },
+        {
+          label: 'Continue in &Chat',
+          enabled: canContinue,
+          click: () =>
+            void openChat(taskId, runId).catch(async (err: unknown) => {
               await dialog.showMessageBox(child, {
                 type: 'error',
                 title: 'Looper',
@@ -812,6 +841,12 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           label: 'Open &Run Folder',
           click: () => {
             if (engine) void openHostPath(engine.runDir(taskId, runId));
+          },
+        },
+        {
+          label: 'Copy Run Folder &Path',
+          click: () => {
+            if (engine) clipboard.writeText(engine.runDir(taskId, runId));
           },
         },
         {
@@ -1154,6 +1189,110 @@ function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _p
     900,
     680,
   );
+}
+
+// ---------- terminal sessions ----------
+
+/** Open Looper terminal windows by session id; closing one ends its session. */
+const terminalWindows = new Map<string, BrowserWindow>();
+
+/**
+ * Open Project in Terminal, or Continue in Terminal with a run id: in a Looper
+ * terminal window, or the system's default terminal when the setting says so.
+ */
+async function openTerminal(taskId: string, runId?: string): Promise<void> {
+  if (!engine) return;
+  if (engine.settings.terminal === 'system') {
+    await engine.openTaskTerminal(taskId, runId);
+    return;
+  }
+  const sessionId = engine.startTerminalSession(taskId, runId);
+  const title = `${engine.getTask(taskId)?.name ?? taskId} – Terminal`;
+  const hash = `terminal/${encodeURIComponent(sessionId)}/${encodeURIComponent(title)}`;
+  const child = openChildWindow(hash, title, 960, 600, undefined, {
+    minWidth: 480,
+    minHeight: 300,
+    contentSize: true,
+  });
+  child.setMaximizable(true);
+  terminalWindows.set(sessionId, child);
+  child.on('closed', () => {
+    terminalWindows.delete(sessionId);
+    engine?.closeTerminalSession(sessionId);
+  });
+}
+
+// ---------- task chats ----------
+
+/** Open chat windows by chat id; closing one ends its chat. */
+const chatWindows = new Map<string, BrowserWindow>();
+
+/** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a Looper chat window. */
+async function openChat(taskId: string, runId?: string): Promise<void> {
+  if (!engine) return;
+  const state = engine.startChat(taskId, runId);
+  const title = `${state.taskName} – Chat`;
+  const hash = `chat/${encodeURIComponent(state.id)}/${encodeURIComponent(title)}`;
+  const child = openChildWindow(hash, title, 900, 680, undefined, { minWidth: 520, minHeight: 400, contentSize: true });
+  child.setMaximizable(true);
+  chatWindows.set(state.id, child);
+  const showError = (err: unknown) =>
+    void dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+  const attachFiles = async () => {
+    const r = await dialog.showOpenDialog(child, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
+    if (r.canceled || r.filePaths.length === 0 || !engine) return;
+    const added = engine.attachToChat(state.id, r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+    if (!child.isDestroyed()) child.webContents.send('ui:event', { type: 'chat-attached', attachments: added });
+  };
+  const menu = attachWindowMenu(child, [
+    {
+      label: '&File',
+      submenu: [
+        { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', click: () => void attachFiles().catch(showError) },
+        { type: 'separator' },
+        { label: '&Close', accelerator: 'CmdOrCtrl+W', click: () => child.close() },
+      ],
+    },
+    {
+      label: '&Chat',
+      submenu: [
+        // Esc, as in Claude Code's own terminal: it ends the agent's turn.
+        { id: 'stop', label: '&Stop', accelerator: 'Esc', enabled: false, click: () => void engine?.stopChat(state.id).catch(showError) },
+      ],
+    },
+  ]);
+  const unsubscribe = engine.on((e) => {
+    if (e.type !== 'chat' || e.state.id !== state.id) return;
+    const stop = menu.getMenuItemById('stop');
+    if (stop) stop.enabled = e.state.status === 'working';
+  });
+  child.on('closed', unsubscribe);
+  let confirmed = false;
+  child.on('close', (e) => {
+    const chat = engine?.getChat(state.id);
+    if (quitting || confirmed || !chat || (chat.status !== 'working' && chat.permissions.length === 0)) return;
+    // Closing ends the agent's turn: ask, as Windows apps do before cutting work short.
+    e.preventDefault();
+    void dialog
+      .showMessageBox(child, {
+        type: 'question',
+        title: child.getTitle(),
+        message: `${chat.harnessName} is still working.`,
+        detail: 'Closing the chat stops it.',
+        buttons: ['Close', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      })
+      .then((r) => {
+        if (r.response !== 0 || child.isDestroyed()) return;
+        confirmed = true;
+        child.close();
+      });
+  });
+  child.on('closed', () => {
+    chatWindows.delete(state.id);
+    void engine?.closeChat(state.id);
+  });
 }
 
 // ---------- task builder ----------
@@ -1553,12 +1692,15 @@ function buildMenu(
         { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
         { type: 'separator' },
         { id: 'task-terminal', label: 'Open Project in &Terminal', accelerator: 'CmdOrCtrl+T', enabled: hasTask, click: () => sendUi('open-terminal') },
+        { id: 'task-chat', label: 'Open Project in &Chat', enabled: hasTask, click: () => sendUi('open-chat') },
         { id: 'task-work-folder', label: 'Open &Working Directory', enabled: hasTask, click: () => sendUi('open-work-folder') },
       ],
     },
     {
       label: '&View',
       submenu: [
+        { label: '&Dashboard', click: () => sendUi('show-dashboard') },
+        { type: 'separator' },
         { label: 'Task &List', submenu: taskListMenu(view, updateView) },
         {
           label: 'Task Lo&gs',

@@ -154,17 +154,31 @@ export interface OpenTerminalDeps {
 }
 
 /**
- * Open the task's harness in a terminal window: same environment, working
- * directory, model and arguments as a run, but interactive and prompt-less.
- * `resumeSessionId` continues that conversation (Continue in Terminal).
+ * Write the launcher of a terminal session into the task's data dir: same
+ * environment, working directory, model and arguments as a run, but
+ * interactive and prompt-less. `resumeSessionId` continues that conversation
+ * (Continue in Terminal); `name` keeps the launchers of sessions open at the
+ * same time apart.
  */
-export async function openTaskTerminal(task: Task, deps: OpenTerminalDeps, resumeSessionId?: string): Promise<void> {
+export function writeTerminalLauncher(
+  task: Task,
+  deps: Pick<OpenTerminalDeps, 'host' | 'settings' | 'taskDir'>,
+  resumeSessionId?: string,
+  name = 'terminal',
+): { target: Target; launcherHost: string } {
   const env = resolveEnvironment(task, deps.settings);
   const harness = resolveHarness(task, env);
   const target = createTarget(task, { host: deps.host, settings: deps.settings });
   const command = terminalHarnessCommand(task, target, harness, resumeSessionId);
-  const launcherHost = path.join(deps.taskDir, 'terminal' + target.launcherExt);
+  const launcherHost = path.join(deps.taskDir, name + target.launcherExt);
   writeText(launcherHost, renderTerminalScript(target, task, { ...harness.env, ...task.env }, command), 0o755);
+  return { target, launcherHost };
+}
+
+/** Open the task's harness in a window of the system's own terminal (see `writeTerminalLauncher`). */
+export async function openTaskTerminal(task: Task, deps: OpenTerminalDeps, resumeSessionId?: string): Promise<void> {
+  const env = resolveEnvironment(task, deps.settings);
+  const { target, launcherHost } = writeTerminalLauncher(task, deps, resumeSessionId);
   const launcherTarget = target.toTargetPath(launcherHost);
   const launches = buildTerminalLaunches(deps.host, target.kind, {
     launcherTarget,

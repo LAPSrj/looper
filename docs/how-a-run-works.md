@@ -350,15 +350,20 @@ A finished Claude Code or Codex run whose conversation was recorded can be
 picked up again from its context menu in the Runs tab, or from the run
 window's File menu:
 
-- **Continue in Terminal** opens a real OS terminal in the task's
-  environment and working directory with the harness resuming that
-  conversation (`claude --resume <id>` / `codex resume <id>`), with the
-  task's model and permission mode. Looper doesn't track what you do there.
+- **Continue in Terminal** opens a [terminal
+  session](monitoring.md#terminal-sessions) in the task's environment and
+  working directory with the harness resuming that conversation
+  (`claude --resume <id>` / `codex resume <id>`), with the task's model and
+  permission mode. It isn't a run, so Looper doesn't record what you do
+  there.
+- **Continue in Chat** resumes the same conversation in a [chat
+  window](monitoring.md#chats) instead, with the run's conversation shown
+  above the new messages.
 - **Continue with Guidance…** opens a Continue Run window with a Guidance
   box. **Continue** starts a new manual run that resumes the conversation
   with your guidance as its whole prompt. The check and classifier don't
   run, the task's one-off note is left untouched, and the run counts toward
   the task's Simultaneous runs cap like any Run Now.
 
-Both items are greyed out while the run is still in progress, for custom
+All three are greyed out while the run is still in progress, for custom
 harnesses, and for runs that never recorded a conversation.

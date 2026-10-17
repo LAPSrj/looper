@@ -1,16 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Terminal as XTerm } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 import type { BuilderState, BuilderTest } from '@shared/builder';
 import { describeCron } from '@shared/cron';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels } from '@shared/environments';
-import type { MessageRow } from '@shared/messages';
 import type { Environment, Harness, Task } from '@shared/types';
 import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
+import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
 import { Icon } from './components/Icon';
-import { MessageBody } from './components/Markdown';
-import { ToolInputView, ToolResultView } from './components/ToolContent';
 import { TabBar } from './components/ui';
+import { openXterm } from './components/xterm';
 import { subscribe } from './events';
 import { fmtDateTime } from './format';
 import { settingLabel, settingValue } from './taskSettings';
@@ -263,84 +260,6 @@ function BuilderToolbar({ state }: { state: BuilderState }) {
   );
 }
 
-function ChatRow({ row, ctx }: { row: MessageRow; ctx: { taskId: string; runId: string } }) {
-  switch (row.kind) {
-    case 'prompt':
-      return (
-        <div className="chat-msg chat-user">
-          <MessageBody text={row.text} />
-        </div>
-      );
-    case 'agent':
-      return (
-        <div className="chat-msg chat-agent">
-          <MessageBody text={row.text} />
-        </div>
-      );
-    case 'thinking':
-      return (
-        <details className="chat-aside">
-          <summary>Thinking</summary>
-          <MessageBody text={row.text} />
-        </details>
-      );
-    case 'tool':
-      return (
-        <details className="chat-aside chat-tool">
-          <summary>
-            <span className="chat-tool-name">{row.tool}</span> <span className="chat-tool-preview">{row.preview}</span>
-            {row.resultError ? <span className="error-text"> failed</span> : null}
-          </summary>
-          <div className="chat-tool-body">
-            <ToolInputView row={row} />
-            {row.result !== undefined && (
-              <div className="chat-tool-result">
-                <ToolResultView row={row} ctx={ctx} />
-              </div>
-            )}
-          </div>
-        </details>
-      );
-    default:
-      return null;
-  }
-}
-
-type ChatItem = { kind: 'row'; row: MessageRow } | { kind: 'tools'; rows: MessageRow[] };
-
-/** Messages stay as they are; each run of tool calls (and the thinking between them) becomes one group. */
-function groupRows(rows: MessageRow[]): ChatItem[] {
-  const items: ChatItem[] = [];
-  for (const row of rows) {
-    const last = items[items.length - 1];
-    if (row.kind === 'tool' || row.kind === 'thinking') {
-      if (last?.kind === 'tools') last.rows.push(row);
-      else items.push({ kind: 'tools', rows: [row] });
-    } else items.push({ kind: 'row', row });
-  }
-  return items;
-}
-
-/** "5 tool uses, 1 failed": closed, the group is one line; open, it lists each call, and each call opens to its details. */
-function ToolGroup({ rows, ctx }: { rows: MessageRow[]; ctx: { taskId: string; runId: string } }) {
-  const tools = rows.filter((r) => r.kind === 'tool');
-  if (tools.length === 0) return <>{rows.map((r) => <ChatRow key={r.id} row={r} ctx={ctx} />)}</>;
-  const failed = tools.filter((r) => r.resultError).length;
-  return (
-    <details className="chat-aside chat-tools">
-      <summary>
-        {tools.length === 1 ? '1 tool use' : `${tools.length} tool uses`}
-        {failed ? <span className="error-text">, {failed} failed</span> : null}
-      </summary>
-      <div className="chat-tools-list">
-        {rows.map((r) => (
-          <ChatRow key={r.id} row={r} ctx={ctx} />
-        ))}
-      </div>
-    </details>
-  );
-}
-
 /** One line above the input: what the session is doing, or why it ended. */
 function ChatStatus({ state }: { state: BuilderState }) {
   if (state.status === 'working') return <div className="chat-status muted">{state.harnessName} is working…</div>;
@@ -429,18 +348,7 @@ function BuilderTerminal({ state }: { state: BuilderState }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const term = new XTerm({
-      fontFamily: 'Cascadia Mono, Consolas, "DejaVu Sans Mono", monospace',
-      fontSize: 13,
-      cursorBlink: true,
-      scrollback: 10000,
-      allowProposedApi: true,
-      theme: { background: '#0f1115', foreground: '#d7dae0', cursor: '#d7dae0', selectionBackground: '#3a4252' },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(el);
-    fit.fit();
+    const { term, fit } = openXterm(el);
     let loaded = false;
     void window.looper.builder.output(id).then((data) => {
       if (data) term.write(data);

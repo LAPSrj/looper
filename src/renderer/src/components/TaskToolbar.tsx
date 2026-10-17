@@ -5,10 +5,20 @@ import { Icon } from './Icon';
 interface Props {
   task: Task | null;
   runtime: TaskRuntime | undefined;
+  /** The dashboard is showing: its button stays pressed. */
+  dashboard: boolean;
   onAction: (type: UiEvent['type']) => void;
 }
 
 const ICONS = {
+  dashboard: (
+    <>
+      <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
+      <rect x="9.5" y="2.5" width="4" height="4" rx="0.5" />
+      <rect x="2.5" y="9.5" width="4" height="4" rx="0.5" />
+      <rect x="9.5" y="9.5" width="4" height="4" rx="0.5" />
+    </>
+  ),
   run: <path d="M4.5 2.8v10.4L13 8Z" />,
   stop: <rect x="3.5" y="3.5" width="9" height="9" rx="1" />,
   pause: <path d="M5.5 3.5v9M10.5 3.5v9" />,
@@ -36,7 +46,7 @@ const ICONS = {
   folder: <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" />,
 };
 
-export function TaskToolbar({ task, runtime, onAction }: Props) {
+export function TaskToolbar({ task, runtime, dashboard, onAction }: Props) {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
@@ -59,6 +69,16 @@ export function TaskToolbar({ task, runtime, onAction }: Props) {
 
   return (
     <div className="toolbar">
+      <button
+        className={dashboard ? 'pressed' : undefined}
+        title="Dashboard"
+        aria-label="Dashboard"
+        aria-pressed={dashboard}
+        onClick={() => onAction('show-dashboard')}
+      >
+        <Icon>{ICONS.dashboard}</Icon>
+      </button>
+      <span className="toolbar-sep" />
       {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && canRunNow)}
       {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}
       {button(

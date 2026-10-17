@@ -3,7 +3,7 @@ import type { DragEvent } from 'react';
 import type { Task, TaskFolder, TaskListOptions, TaskRuntime } from '@shared/types';
 import { folderParents, folderSubtree } from '@shared/folders';
 import { ALL_FILTERS, passesFilter, type PaneDef } from '@shared/panes';
-import { capFirst, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
+import { capFirst, fmtClock, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
 import { useListNav } from './hooks';
 
 interface Props {
@@ -14,7 +14,8 @@ interface Props {
   runtimes: Record<string, TaskRuntime>;
   selected: string | null;
   now: number;
-  onSelect: (id: string) => void;
+  /** null = nothing selected (a click on the list's empty space). */
+  onSelect: (id: string | null) => void;
   /** Show only the task name, without the state line. */
   compact: boolean;
   /** The pane this list is (multiple-pane sidebar), null = the single list of every task. */
@@ -37,11 +38,18 @@ function dueOrder(rts: Record<string, TaskRuntime>) {
   };
 }
 
-function fmtEventTime(ts: number, now: number): string {
-  const d = new Date(ts);
-  return d.toDateString() === new Date(now).toDateString()
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-    : fmtDateTime(ts);
+/** The task row context menu; its commands act on the main window's current task. */
+export function showTaskMenu(t: Task, rt: TaskRuntime | undefined): void {
+  window.looper.showTaskContextMenu({
+    enabled: t.enabled,
+    completed: !!t.completedAt,
+    allowComplete: t.completion.allowed,
+    state: rt?.state,
+    held: !!rt?.held,
+    hasNote: !!t.note,
+    activeRuns: rt?.runs.length ?? 0,
+    maxRuns: t.maxConcurrentRuns,
+  });
 }
 
 /** What is being dragged: a task row or a folder header. */
@@ -313,7 +321,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
             ? 'Manual'
             : t.trigger.mode === 'watcher'
               ? (rt.watcher === 'watching' ? 'Watching' : rt.watcher === 'restarting' ? 'Watcher restarting' : 'Idle') +
-                (rt.lastEventAt !== null ? ` · last event ${fmtEventTime(rt.lastEventAt, now)}` : '')
+                (rt.lastEventAt !== null ? ` · last event ${fmtClock(rt.lastEventAt, now)}` : '')
               : 'Not scheduled'
           : countdown === 'now'
             ? 'Next run now'
@@ -379,17 +387,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           e.preventDefault();
           e.stopPropagation();
           onSelect(t.id);
-          const rt2 = runtimes[t.id];
-          window.looper.showTaskContextMenu({
-            enabled: t.enabled,
-            completed: !!t.completedAt,
-            allowComplete: t.completion.allowed,
-            state: rt2?.state,
-            held: !!rt2?.held,
-            hasNote: !!t.note,
-            activeRuns: rt2?.runs.length ?? 0,
-            maxRuns: t.maxConcurrentRuns,
-          });
+          showTaskMenu(t, runtimes[t.id]);
         }}
       >
         <div className="task-item-row">
@@ -479,6 +477,10 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
       tabIndex={0}
       onKeyDown={onKeyDown}
       aria-activedescendant={selected && visible.some((t) => t.id === selected) ? rowId(selected) : undefined}
+      // A click on the empty space below the rows clears the selection, which shows the dashboard.
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onSelect(null);
+      }}
       onDragOver={(e) => {
         if (e.target === e.currentTarget) allowDrop(e, { kind: 'root' });
       }}

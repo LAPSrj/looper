@@ -68,8 +68,9 @@ configuration for you:
 
 You can see and edit these under File → Settings…; see
 [environments](environments.md) for details. The main window opens with an
-empty task list, a toolbar, and a status bar showing how many tasks are
-enabled, disabled, completed, paused, or running.
+empty task list, a toolbar, the [dashboard](monitoring.md#the-dashboard) of
+tasks that need you and runs in progress, and a status bar showing how many
+tasks are enabled, disabled, completed, paused, or running.
 
 ## Creating your first task
 

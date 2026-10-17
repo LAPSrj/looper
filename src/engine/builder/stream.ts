@@ -1,3 +1,4 @@
+import type { Attachment } from '../../shared/chat';
 import type { MessageRow } from '../../shared/messages';
 import { TranscriptAccumulator } from '../messages';
 
@@ -28,8 +29,9 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
   }
 
   /** The user's message as a prompt row: stream-json never echoes what was sent on stdin. */
-  addPrompt(text: string): void {
-    this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+  addPrompt(text: string, attachments?: Attachment[]): void {
+    const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+    if (attachments?.length) row.attachments = attachments;
   }
 
   /** Looper's own line in the conversation (why a turn failed). */
@@ -60,8 +62,9 @@ export class CodexExecAccumulator extends TranscriptAccumulator {
     this.byItem.clear();
   }
 
-  addPrompt(text: string): void {
-    this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+  addPrompt(text: string, attachments?: Attachment[]): void {
+    const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+    if (attachments?.length) row.attachments = attachments;
   }
 
   /** Looper's own line in the conversation (why a turn failed). */
