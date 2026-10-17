@@ -27,6 +27,37 @@ export function wslDistroName(): string | undefined {
   return process.env.WSL_DISTRO_NAME;
 }
 
+/** The default WSL distro's name, once detected: what a WSL environment with no distro set runs in. */
+let defaultWslDistro: string | undefined;
+
+export function detectedDefaultWslDistro(): string | undefined {
+  return defaultWslDistro;
+}
+
+/**
+ * Learn the default distro's name by asking it (`wsl.exe printenv
+ * WSL_DISTRO_NAME` runs there when no -d is given), so its files get a
+ * \\wsl.localhost\<name> host path. Windows hosts only.
+ */
+export function detectDefaultWslDistro(): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    try {
+      execFile('wsl.exe', ['printenv', 'WSL_DISTRO_NAME'], { timeout: 15_000, windowsHide: true }, (err, stdout) => {
+        const name = stdout ? String(stdout).replace(/\0/g, '').trim() : '';
+        if (!err && name) defaultWslDistro = name;
+        resolve(defaultWslDistro);
+      });
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+/** Tests: set or clear the detected default distro. */
+export function setDefaultWslDistro(name: string | undefined): void {
+  defaultWslDistro = name;
+}
+
 /** Cached: the lookup spawns a process, and the regional format never changes mid-session. */
 let systemLocale: string | null | undefined;
 

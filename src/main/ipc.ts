@@ -7,6 +7,7 @@ import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files
 import { folderSubtree } from '../shared/folders';
 
 import type { AppInfo } from '../shared/api';
+import type { BuilderSetup } from '../shared/builder';
 import type { PaneId } from '../shared/panes';
 import type { Task, View } from '../shared/types';
 import { paneMenuItems, singleMenuItems } from './view-menu';
@@ -35,6 +36,20 @@ export interface IpcHost {
   openTemplateEditor: (templateId?: string, parent?: BrowserWindow | null) => void;
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
+  /** The task's Version History window (one per task). */
+  openVersions: (taskId: string) => void;
+  /** A version's View or Compare window. */
+  openVersionDetail: (taskId: string, n: number, compare: boolean, parent: BrowserWindow | null) => void;
+  /** The New Task with Agent setup window. */
+  openBuilderSetup: () => void;
+  /** Start a builder from its setup window, which then becomes the conversation. */
+  startBuilder: (setupWindow: BrowserWindow | null, setup: BuilderSetup) => void;
+  /** Edit with Agent: a builder on the task, or the one already open brought forward. */
+  editWithAgent: (taskId: string) => Promise<void>;
+  /** Create/Update: the import editor prefilled with the builder's draft. */
+  reviewBuilder: (builderId: string) => void;
+  /** The window of a builder, which alone gets its events. */
+  builderWindow: (builderId: string) => BrowserWindow | undefined;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (
@@ -60,8 +75,40 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   }));
 
   ipcMain.handle('tasks:list', () => engine.listTasks());
-  ipcMain.handle('tasks:save', (_e, input: unknown) => engine.saveTask(input));
+  ipcMain.handle('tasks:save', (_e, input: unknown, opts?: { builderId?: string }) =>
+    engine.saveTask(input, opts?.builderId ? { builderId: String(opts.builderId) } : undefined),
+  );
+  ipcMain.handle('versions:list', (_e, id: string) => engine.listVersions(id));
+  ipcMain.handle('versions:detail', (_e, id: string, n: number, compare?: boolean) => engine.versionDetail(id, n, compare));
+  ipcMain.handle('versions:restore', (_e, id: string, n: number) => engine.restoreVersion(id, n));
+  ipcMain.handle('versions:open', (_e, id: string) => host.openVersions(id));
+  ipcMain.handle('versions:openDetail', (e, id: string, n: number, compare: boolean) =>
+    host.openVersionDetail(id, n, !!compare, BrowserWindow.fromWebContents(e.sender)),
+  );
+  ipcMain.handle('builder:start', (e, setup: BuilderSetup) => host.startBuilder(BrowserWindow.fromWebContents(e.sender), setup));
+  ipcMain.handle('builder:get', (_e, id: string) => engine.getBuilder(id) ?? null);
+  ipcMain.on('builder:send', (_e, id: string, text: string) => engine.sendBuilder(id, String(text ?? '')));
+  ipcMain.handle('builder:review', (_e, id: string) => host.reviewBuilder(id));
+  ipcMain.handle('builder:save', (_e, id: string) => engine.saveBuilder(id));
+  ipcMain.handle('builder:undo', (_e, id: string) => engine.undoBuilder(id));
+  ipcMain.handle('builder:redo', (_e, id: string) => engine.redoBuilder(id));
+  ipcMain.handle('builder:forTask', (_e, taskId: string) => engine.builderForTask(taskId) ?? null);
+  ipcMain.handle('builder:loadVersion', async (_e, taskId: string, n: number) => {
+    const id = engine.builderForTask(taskId);
+    if (!id) throw new Error("The task's Edit Task with Agent window was closed.");
+    await engine.loadBuilderVersion(id, n);
+    host.builderWindow(id)?.focus();
+  });
+  ipcMain.handle('builder:editTask', (_e, taskId: string) => host.editWithAgent(taskId));
+  ipcMain.handle('builder:openNew', () => host.openBuilderSetup());
+  ipcMain.handle('builder:output', (_e, id: string) => engine.builderOutput(id));
+  ipcMain.on('builder:write', (_e, id: string, data: string) => engine.writeBuilder(id, data));
+  ipcMain.on('builder:resize', (_e, id: string, cols: number, rows: number) => engine.resizeBuilder(id, cols, rows));
   ipcMain.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
+  ipcMain.handle('recycleBin:list', () => engine.listRecycleBin());
+  ipcMain.handle('recycleBin:restore', (_e, id: string) => engine.restoreTask(id));
+  ipcMain.handle('recycleBin:delete', (_e, id: string) => engine.purgeTask(id));
+  ipcMain.handle('recycleBin:empty', () => engine.emptyRecycleBin());
   /** Save dialog, then write the definition as a Looper document of the given kind. */
   const exportDocument = async (e: Electron.IpcMainInvokeEvent, kind: LooperFileKind, item?: Task): Promise<void> => {
     if (!item) return;
@@ -384,6 +431,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }),
       },
       { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
+      { label: 'Edit with Agent…', click: () => sender.webContents.send('ui:event', { type: 'edit-with-agent' }) },
+      { label: 'Version History…', click: () => sender.webContents.send('ui:event', { type: 'version-history' }) },
       { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
       { type: 'separator' },
       { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
@@ -500,6 +549,29 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     menu.popup({ window: sender });
   });
 
+  ipcMain.on('context-menu:recycle-bin', (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    Menu.buildFromTemplate([
+      { label: 'Restore', click: () => sender.webContents.send('ui:event', { type: 'bin-restore' }) },
+      { label: 'Delete', click: () => sender.webContents.send('ui:event', { type: 'bin-delete' }) },
+    ]).popup({ window: sender });
+  });
+
+  ipcMain.on('context-menu:version', (e, info?: { builder?: boolean }) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    Menu.buildFromTemplate([
+      { label: 'View…', click: () => sender.webContents.send('ui:event', { type: 'version-view' }) },
+      { label: 'Compare with Current…', click: () => sender.webContents.send('ui:event', { type: 'version-compare' }) },
+      { type: 'separator' },
+      {
+        label: info?.builder ? 'Edit with Agent' : 'Restore',
+        click: () => sender.webContents.send('ui:event', { type: 'version-restore' }),
+      },
+    ]).popup({ window: sender });
+  });
+
   ipcMain.on('context-menu:tasks-empty', (e) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
@@ -608,6 +680,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
 
   engine.on((event) => {
+    // A builder's conversation goes to its own window only: it is large and nobody else shows it.
+    if (event.type === 'builder' || event.type === 'builder:data') {
+      const w = host.builderWindow(event.type === 'builder' ? event.state.id : event.id);
+      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
+      return;
+    }
     for (const w of BrowserWindow.getAllWindows()) {
       if (!w.isDestroyed()) w.webContents.send('engine:event', event);
     }

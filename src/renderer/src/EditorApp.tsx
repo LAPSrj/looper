@@ -12,11 +12,13 @@ interface EditorAppProps {
   importKey?: string;
   /** The import draft's id is already in the store and the user chose to update that item. */
   importUpdate?: boolean;
+  /** The draft came from a task builder's Create/Update: saving records the agent's version. */
+  builderId?: string;
   mode?: 'task' | 'template';
 }
 
 /** Standalone editor window (opened from the menu or the + New button). */
-export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, mode = 'task' }: EditorAppProps) {
+export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task' }: EditorAppProps) {
   const editId = mode === 'template' ? templateId : taskId;
   // undefined = still loading; null = new task/template
   const [task, setTask] = useState<Task | null | undefined>(editId ? undefined : null);
@@ -96,6 +98,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
         defaultEnvironmentId={defaultEnvironmentId}
         host={host}
         mode={mode}
+        builderId={builderId}
         onSaved={() => window.close()}
         onCancel={() => window.close()}
       />

@@ -76,7 +76,9 @@ enabled, disabled, completed, paused, or running.
 Open File → New Task… (Ctrl+N) for a blank task, or File → New Task from
 Template… (Ctrl+Shift+N) to pick a starting point from your saved templates
 (see [task templates](tasks.md#task-templates)). Either way, a task editor
-window opens.
+window opens. File → New Task with Agent… lets an agent build the task from
+a description instead (see [building a task with an
+agent](task-builder.md)).
 
 At minimum, fill in:
 

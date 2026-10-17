@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { BuilderState } from './builder';
 
 // ---------- Task definition ----------
 
@@ -311,8 +312,8 @@ export type Note = z.infer<typeof NoteSchema>;
 /**
  * What happens when a task is finished for good. A completed task keeps its
  * whole definition but never runs again (`enabled` is forced off), is moved to
- * the global completed-tasks folder when one is set, and is deleted once the
- * global completed-task retention runs out.
+ * the global completed-tasks folder when one is set, and goes to the Recycle
+ * Bin once the global completed-task retention runs out.
  */
 export const CompletionSchema = z
   .object({
@@ -380,6 +381,16 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskInput = z.input<typeof TaskSchema>;
+
+/**
+ * A deleted task waiting in the Recycle Bin. The definition is kept as it was
+ * and only checked again on restore, so a task whose environment went away
+ * while it sat in the bin is still listed (restoring it reports why it can't).
+ */
+export interface RecycleBinEntry {
+  task: Task;
+  deletedAt: string;
+}
 
 export const TemplateSchema = TaskSchema.extend({
   name: z.string(),
@@ -467,13 +478,15 @@ export const SettingsSchema = z.object({
   runRetentionDays: z.number().int().positive().default(30),
   /** Days engine.log entries are kept before being pruned. */
   engineLogRetentionDays: z.number().int().positive().default(10),
-  /** Delete a completed task (and its run history) once it has been completed this long. */
+  /** Move a completed task to the Recycle Bin once it has been completed this long. */
   completedTaskRetention: z
     .object({
       enabled: z.boolean().default(true),
       days: z.number().int().positive().default(10),
     })
     .default({}),
+  /** Days a task stays in the Recycle Bin before it is deleted for good, along with its run history. */
+  recycleBinDays: z.number().int().positive().default(30),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
   tasksFile: z.string().min(1).optional(),
   /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */
@@ -493,6 +506,13 @@ export const SettingsSchema = z.object({
   notificationsEnabled: z.boolean().default(true),
   /** Show a step-selection window before a manual Run Now starts. */
   promptRunOptions: z.boolean().default(false),
+  /** Where the task builder (New Task with Agent, Edit with Agent) shows the conversation. */
+  builder: z
+    .object({
+      /** chat = Looper's message view; terminal = the harness's own interactive session. */
+      view: z.enum(['chat', 'terminal']).default('chat'),
+    })
+    .default({}),
   /** Rest Mode: sleep the computer between runs and wake it for the next one (Windows only). */
   rest: z.object({
     /** Earliest the wake timer may fire, counted from the moment the computer goes to sleep. */
@@ -659,6 +679,8 @@ export interface RunRecord {
   slept?: boolean;
   stdoutTail?: string;
   detail?: Record<string, unknown>;
+  /** The task's version (Version History) when the record was written. */
+  taskVersion?: number;
 }
 
 export interface CheckOutput {
@@ -690,7 +712,14 @@ export type EngineEvent =
   /** problem: the run ended with an error or warning; a click opens its run window on the report. */
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }
+  | { type: 'recycleBin'; entries: RecycleBinEntry[] }
   | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }
+  /** A task's version history changed (a version was added, or the history was deleted). */
+  | { type: 'versions'; taskId: string }
+  /** A task builder's chat, draft or tests changed. */
+  | { type: 'builder'; state: BuilderState }
+  /** Terminal output of a task builder in the terminal view. */
+  | { type: 'builder:data'; id: string; data: string }
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' };

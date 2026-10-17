@@ -5,6 +5,10 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
 import { App } from './App';
+import { BuilderApp } from './BuilderApp';
+import { BuilderSetupApp } from './BuilderSetupApp';
+import { VersionDetailApp } from './VersionDetailApp';
+import { VersionHistoryApp } from './VersionHistoryApp';
 import { ContinueRunApp } from './ContinueRunApp';
 import { EditorApp } from './EditorApp';
 import { EngineLogApp } from './EngineLogApp';
@@ -21,6 +25,7 @@ import { ImageApp } from './ImageApp';
 import { MarkdownExportApp } from './MarkdownExportApp';
 import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
+import { RecycleBinApp } from './RecycleBinApp';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
@@ -30,7 +35,10 @@ const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
 const templateEditorMatch = /^template-editor(?:\/(.+))?$/.exec(hash);
 const fromTemplateMatch = /^editor-from-template\/(.+)$/.exec(hash);
-const importMatch = /^editor-import\/([^/]+)(\/update)?$/.exec(hash);
+const importMatch = /^editor-import\/([^/]+)(\/update)?(?:\/builder\/([^/]+))?$/.exec(hash);
+const builderMatch = /^builder\/([^/]+)$/.exec(hash);
+const versionsMatch = /^versions\/([^/]+)$/.exec(hash);
+const versionMatch = /^version\/([^/]+)\/(\d+)\/(view|compare)$/.exec(hash);
 const templateImportMatch = /^template-import\/([^/]+)(\/update)?$/.exec(hash);
 const envEditorMatch = /^env-editor\/([^/]+)(\/new)?$/.exec(hash);
 const harnessEditorMatch = /^harness-editor\/([^/]+)\/([^/]+)(\/new)?$/.exec(hash);
@@ -51,6 +59,7 @@ const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
   if (hash === 'templates') return <TemplatesApp />;
+  if (hash === 'recycle-bin') return <RecycleBinApp />;
   if (templateEditorMatch) {
     return (
       <EditorApp
@@ -60,7 +69,27 @@ function pickRoot() {
     );
   }
   if (fromTemplateMatch) return <EditorApp fromTemplateId={decodeURIComponent(fromTemplateMatch[1])} />;
-  if (importMatch) return <EditorApp importKey={decodeURIComponent(importMatch[1])} importUpdate={!!importMatch[2]} />;
+  if (importMatch) {
+    return (
+      <EditorApp
+        importKey={decodeURIComponent(importMatch[1])}
+        importUpdate={!!importMatch[2]}
+        builderId={importMatch[3] ? decodeURIComponent(importMatch[3]) : undefined}
+      />
+    );
+  }
+  if (hash === 'builder-setup') return <BuilderSetupApp />;
+  if (builderMatch) return <BuilderApp id={decodeURIComponent(builderMatch[1])} />;
+  if (versionsMatch) return <VersionHistoryApp taskId={decodeURIComponent(versionsMatch[1])} />;
+  if (versionMatch) {
+    return (
+      <VersionDetailApp
+        taskId={decodeURIComponent(versionMatch[1])}
+        n={Number(versionMatch[2])}
+        compare={versionMatch[3] === 'compare'}
+      />
+    );
+  }
   if (templateImportMatch) {
     return (
       <EditorApp

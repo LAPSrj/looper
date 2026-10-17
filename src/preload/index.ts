@@ -2,14 +2,55 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { LooperApi, UiEvent } from '../shared/api';
 import type { EngineEvent } from '../shared/types';
 
+/** The engine's message alone, without Electron's IPC framing, for errors shown to the user. */
+const plainError = (e: Error): never => {
+  throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+};
+
 const api: LooperApi = {
   info: () => ipcRenderer.invoke('info'),
   tasks: {
     list: () => ipcRenderer.invoke('tasks:list'),
-    save: (input) => ipcRenderer.invoke('tasks:save', input),
+    save: (input, opts) => ipcRenderer.invoke('tasks:save', input, opts),
     remove: (id) => ipcRenderer.invoke('tasks:remove', id),
     export: (id) => ipcRenderer.invoke('tasks:export', id),
     reorder: (ids, folders, layout, parents) => ipcRenderer.invoke('tasks:reorder', ids, folders, layout, parents),
+  },
+  versions: {
+    list: (taskId) => ipcRenderer.invoke('versions:list', taskId),
+    detail: (taskId, n, compare) => ipcRenderer.invoke('versions:detail', taskId, n, compare).catch(plainError),
+    restore: (taskId, n) => ipcRenderer.invoke('versions:restore', taskId, n).catch(plainError),
+    open: (taskId) => ipcRenderer.invoke('versions:open', taskId),
+    openDetail: (taskId, n, compare) => ipcRenderer.invoke('versions:openDetail', taskId, n, compare),
+  },
+  builder: {
+    start: (setup) => ipcRenderer.invoke('builder:start', setup).catch(plainError),
+    get: (id) => ipcRenderer.invoke('builder:get', id),
+    send: (id, text) => ipcRenderer.send('builder:send', id, text),
+    review: (id) => ipcRenderer.invoke('builder:review', id).catch(plainError),
+    save: (id) => ipcRenderer.invoke('builder:save', id).catch(plainError),
+    undo: (id) => ipcRenderer.invoke('builder:undo', id).catch(plainError),
+    redo: (id) => ipcRenderer.invoke('builder:redo', id).catch(plainError),
+    forTask: (taskId) => ipcRenderer.invoke('builder:forTask', taskId),
+    loadVersion: (taskId, n) => ipcRenderer.invoke('builder:loadVersion', taskId, n).catch(plainError),
+    editTask: (taskId) => ipcRenderer.invoke('builder:editTask', taskId),
+    openNew: () => ipcRenderer.invoke('builder:openNew'),
+    output: (id) => ipcRenderer.invoke('builder:output', id),
+    write: (id, data) => ipcRenderer.send('builder:write', id, data),
+    resize: (id, cols, rows) => ipcRenderer.send('builder:resize', id, cols, rows),
+  },
+  recycleBin: {
+    list: () => ipcRenderer.invoke('recycleBin:list'),
+    // The engine's reason is shown to the user; drop Electron's IPC framing.
+    restore: (id) =>
+      ipcRenderer.invoke('recycleBin:restore', id).catch((e: Error) => {
+        throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+      }),
+    delete: (id) =>
+      ipcRenderer.invoke('recycleBin:delete', id).catch((e: Error) => {
+        throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+      }),
+    empty: () => ipcRenderer.invoke('recycleBin:empty'),
   },
   folders: {
     list: () => ipcRenderer.invoke('folders:list'),
@@ -113,6 +154,8 @@ const api: LooperApi = {
     ),
   showTaskContextMenu: (info) => ipcRenderer.send('context-menu:task', info),
   showFolderContextMenu: (info) => ipcRenderer.send('context-menu:folder', info),
+  showRecycleBinContextMenu: () => ipcRenderer.send('context-menu:recycle-bin'),
+  showVersionContextMenu: (info) => ipcRenderer.send('context-menu:version', info),
   showTasksEmptyContextMenu: () => ipcRenderer.send('context-menu:tasks-empty'),
   showPaneContextMenu: (info) => ipcRenderer.send('context-menu:pane', info),
   showRunContextMenu: (info) => ipcRenderer.send('context-menu:run', info),

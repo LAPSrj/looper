@@ -146,8 +146,8 @@ system footer telling it when to use it: the task is finished for good, not
 merely done for now. The agent runs it before `looper-done`; the run itself
 ends exactly as it otherwise would, and Looper completes the task once the
 cycle is over — the task stops being scheduled, moves to the completed-tasks
-folder if one is set (Settings → General), and is deleted when the
-completed-task retention runs out. A run you stopped never completes the
+folder if one is set (Settings → General), and moves to the Recycle Bin when
+the completed-task retention runs out. A run you stopped never completes the
 task, and a task without the option never gets the command: a completion
 signal from one is recorded in the run log and ignored.
 

@@ -46,6 +46,7 @@ const FIELD_LABELS: Record<string, string> = {
   'trigger.watcher.days': 'On days',
   'trigger.watcher.timezone': 'Watcher timezone',
   'trigger.stopOn': 'Stop running on',
+  'trigger.stopOn.enabled': 'Stop on a date',
   'trigger.stopOn.at': 'Stop running on',
   environmentId: 'Environment',
   cwd: 'Working directory',
@@ -79,6 +80,12 @@ const FIELD_LABELS: Record<string, string> = {
   'backoff.maxConsecutiveErrors': 'Auto-pause after',
   maxConcurrentRuns: 'Simultaneous runs',
   notifications: 'Notifications',
+  'notifications.runStart': 'Notify when a run starts',
+  'notifications.agentStart': 'Notify when the agent starts',
+  'notifications.end': 'Notify when the task ends',
+  'notifications.held': 'Notify when the agent holds and waits for input',
+  'notifications.autoPaused': 'Notify when the task auto-pauses',
+  'notifications.usageLimit': 'Notify when the usage limit is reached',
   'notifications.networkErrors': 'Include network errors',
   'notifications.environmentErrors': 'Include environment errors',
   'notifications.completed': 'Notify when the task completes',
@@ -86,7 +93,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 /** Longest known prefix wins, so nested/indexed paths fall back to their section label. */
-function fieldLabel(path: (string | number)[]): string {
+export function fieldLabel(path: (string | number)[]): string {
   const parts = path.filter((p): p is string => typeof p === 'string');
   for (let i = parts.length; i > 0; i--) {
     const label = FIELD_LABELS[parts.slice(0, i).join('.')];

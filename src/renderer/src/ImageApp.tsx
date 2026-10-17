@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MessageImage } from '@shared/messages';
+import { Icon } from './components/Icon';
 
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 800;
@@ -17,24 +18,6 @@ function scrollbarWidth(): number {
     probe.remove();
   }
   return sbWidth;
-}
-
-function Icon({ children }: { children: React.ReactNode }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
 }
 
 const ICONS = {

@@ -1,7 +1,9 @@
+import type { BuilderSetup, BuilderState } from './builder';
 import type { MessageImage, MessagesResult } from './messages';
+import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
-import type { EngineEvent, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
+import type { EngineEvent, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -18,7 +20,9 @@ export interface LooperApi {
   info(): Promise<AppInfo>;
   tasks: {
     list(): Promise<Task[]>;
-    save(input: unknown): Promise<Task>;
+    /** `builderId`: the editor was opened by a task builder's Create/Update; the version is the agent's. */
+    save(input: unknown, opts?: { builderId?: string }): Promise<Task>;
+    /** Delete a task: it stops and moves to the Recycle Bin. */
     remove(id: string): Promise<boolean>;
     /** Native save dialog, then write the task as a .loopertask document (store timestamps stripped). */
     export(id: string): Promise<void>;
@@ -33,6 +37,52 @@ export interface LooperApi {
       layout?: Record<string, string[]>,
       parents?: Record<string, string | null>,
     ): Promise<void>;
+  };
+  versions: {
+    /** A task's versions, oldest first. */
+    list(taskId: string): Promise<VersionSummary[]>;
+    /** One version's definition and files; `compare` adds its differences from the current task. */
+    detail(taskId: string, n: number, compare?: boolean): Promise<VersionDetail>;
+    /** Put a version's definition and files back; rejects with the reason when it can't be. */
+    restore(taskId: string, n: number): Promise<Task>;
+    /** Open the task's Version History window. */
+    open(taskId: string): Promise<void>;
+    /** Open a version in its own window: its definition and files, or (compare) its differences from the current task. */
+    openDetail(taskId: string, n: number, compare: boolean): Promise<void>;
+  };
+  builder: {
+    /** Setup window only: start the builder; the window becomes its conversation. Rejects with the reason. */
+    start(setup: BuilderSetup): Promise<void>;
+    get(id: string): Promise<BuilderState | null>;
+    send(id: string, text: string): void;
+    /** Create/Update: open the task editor prefilled with the draft. */
+    review(id: string): Promise<void>;
+    /** Save the draft as it is; rejects with the reason when it isn't valid. */
+    save(id: string): Promise<Task>;
+    /** Move the draft and the task's files back or forward through the builder's changes; rejects with the reason. */
+    undo(id: string): Promise<void>;
+    redo(id: string): Promise<void>;
+    /** The builder open on a task, if any. */
+    forTask(taskId: string): Promise<string | null>;
+    /** Version History: continue the open builder's work from a saved version; rejects with the reason. */
+    loadVersion(taskId: string, n: number): Promise<void>;
+    /** Open Edit with Agent for a task (or bring its open builder forward). */
+    editTask(taskId: string): Promise<void>;
+    /** Open the New Task with Agent setup window. */
+    openNew(): Promise<void>;
+    /** Terminal view. */
+    output(id: string): Promise<string>;
+    write(id: string, data: string): void;
+    resize(id: string, cols: number, rows: number): void;
+  };
+  recycleBin: {
+    /** Most recently deleted first. */
+    list(): Promise<RecycleBinEntry[]>;
+    /** Put a deleted task back; rejects with the reason when it can't be. */
+    restore(id: string): Promise<Task>;
+    /** Delete a task in the bin for good, with its run history; rejects while its run is still stopping. */
+    delete(id: string): Promise<boolean>;
+    empty(): Promise<void>;
   };
   folders: {
     list(): Promise<TaskFolder[]>;
@@ -182,6 +232,10 @@ export interface LooperApi {
   }): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
+  /** Context menu of a Recycle Bin item (Restore, Delete). */
+  showRecycleBinContextMenu(): void;
+  /** Context menu of a Version History item (View, Compare with Current, then Restore or, with Edit Task with Agent open on the task, Edit with Agent). */
+  showVersionContextMenu(info: { builder: boolean }): void;
   /** Context menu of the task list's empty space (New Folder…). */
   showTasksEmptyContextMenu(): void;
   /** Context menu of a task list's header: that pane's view options (no pane = the single list's), then New Folder…. */
@@ -217,7 +271,16 @@ export type UiEvent =
         | 'complete-reopen'
         | 'open-terminal'
         | 'open-work-folder'
-        | 'clear-runs';
+        | 'clear-runs'
+        | 'edit-with-agent'
+        | 'version-history'
+        /** Recycle Bin window: act on the selected item. */
+        | 'bin-restore'
+        | 'bin-delete'
+        /** Version History window: act on the selected version. */
+        | 'version-view'
+        | 'version-compare'
+        | 'version-restore';
     }
   /** A notification was clicked: select the task and show the right view. */
   | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'runs' }

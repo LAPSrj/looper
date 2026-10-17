@@ -90,6 +90,21 @@ export interface Target {
   renderNotifyHook(stopJson: string): string;
   /** Argv for codex's `notify` config entry: how to run the hook script at `targetPath`. */
   notifyCommand(targetPath: string): string[];
+  /**
+   * The task builder's helper scripts, as file name -> content for its bin/
+   * dir: one command per entry of `ops` (command name -> request op). Each
+   * drops its request into $LOOPER_BUILDER_DIR/requests, waits for Looper's
+   * answer in responses/, prints it, and exits with its code.
+   */
+  renderBuilderHelpers(ops: Record<string, string>): Record<string, string>;
+  /**
+   * Run `command` (a codex command line) with CODEX_HOME set to `codexHome`,
+   * a home of the builder's own that holds only a copy of the user's login,
+   * so none of the user's instructions or config reach it. A login codex
+   * refreshed is copied back, unless the user's own changed meanwhile.
+   * Ends with codex's exit code.
+   */
+  renderCodexHomeWrapper(command: string, codexHome: string): string;
   spawnSpec(launcherHostPath: string): SpawnSpec;
   /** Kill any process on the target still carrying LOOPER_RUN=<runId>. Best effort. */
   killLeftovers(runId: string): Promise<void>;

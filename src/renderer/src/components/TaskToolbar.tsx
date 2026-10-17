@@ -1,28 +1,11 @@
 import type { Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
+import { Icon } from './Icon';
 
 interface Props {
   task: Task | null;
   runtime: TaskRuntime | undefined;
   onAction: (type: UiEvent['type']) => void;
-}
-
-function Icon({ children }: { children: React.ReactNode }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
 }
 
 const ICONS = {

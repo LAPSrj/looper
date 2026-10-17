@@ -3,7 +3,8 @@
 Every task — new, from a template, or an existing one you're editing — opens
 in the same editor window, organized into tabs. Save writes the task and
 closes the window; Apply saves without closing; Cancel discards unsaved
-changes.
+changes. To have an agent write the task (and its scripts) from a
+description instead, see [building a task with an agent](task-builder.md).
 
 ## General
 
@@ -15,8 +16,9 @@ changes.
   its own; Run Now still asks for confirmation before running it anyway. A
   **completed** task is finished for good: it behaves like a disabled one, but
   it also moves to the completed-tasks folder (Settings → General), shows as
-  completed in the task list, and is deleted once the completed-task retention
-  (Settings → Advanced) runs out. Task → Reopen brings it back.
+  completed in the task list, and moves to the
+  [Recycle Bin](monitoring.md#the-recycle-bin) once the completed-task
+  retention (Settings → Advanced) runs out. Task → Reopen brings it back.
 - **Allow this task to be marked completed** — off by default, and required
   before anything can complete the task. With it on, Task → Complete is
   available, and the agent's session gets a `looper-complete "<why>"` command
@@ -97,7 +99,7 @@ A checkbox, "Stop on a date", turns on **Stop running on**
 (`trigger.stopOn.enabled` / `.at`) — the date and time the trigger ends. Once
 it passes, Looper completes the task instead of running it again: it stops
 being scheduled or watched, moves to the completed-tasks folder if one is
-set, and is deleted when the completed-task retention runs out. It applies to
+set, and moves to the Recycle Bin when the completed-task retention runs out. It applies to
 the schedule and watcher modes, including a paused or disabled task; a manual
 task ignores it. A scheduled task that never ran between its creation and the
 end date (Looper was closed or the computer asleep through every slot) runs
@@ -390,6 +392,52 @@ refused with the version to update to.
   since it's run-specific, not part of the task's definition.
 - **Templates** import and export the same way from the Templates window
   (File → Templates… → Import…/Export…), as `.loopertpl` files.
+
+## Version history
+
+![Version History with a restored version](img/version-history.png)
+
+Every change to a task's definition saves a new version, whoever made it:
+you in the editor, an [agent](task-builder.md), the CLI or inbox, or
+a restore. Changes to the status fields alone (Enabled/Disabled, completed,
+the folder, the guidance note) don't add a version. A save that changes
+nothing doesn't either.
+
+A version also records the task's files: the scripts its check, watcher and
+agent commands refer to, the files its prompts include with `{{file:…}}`,
+and the files an agent wrote in New or Edit Task with Agent. When only a
+script changed, saving the task adds a version too. For files the agent
+changed, Looper also keeps their content from before the agent touched
+them, so restoring an earlier version puts that back.
+
+**Task → Version History…** (also on the task's context menu) lists the
+versions, newest first, with when each was saved, who changed it, and what
+changed. A task that existed before version history starts with its state
+before the first recorded change, marked "Before history".
+
+- **View…** lists the version's settings, grouped by the editor's tabs and
+  named and worded the way the editor shows them, and then the files it
+  recorded, noting files that differ on disk now. Select one to see it in
+  full below the list.
+- **Compare with Current…** lists each field and file that differs from the
+  current version, with both values. Select one to see the two side by side
+  below the list, with line numbers and the changed lines marked. Files are
+  compared as each version recorded them.
+- **Restore** puts the version's definition and recorded files back. The
+  status fields keep their current values, files the version never recorded
+  are left alone (Looper doesn't delete files), and the restore is saved as
+  a new version, so you can restore the one before it. A run already going keeps the
+  definition it started with.
+- **Edit with Agent** replaces Restore while [Edit Task with
+  Agent](task-builder.md#saving-undo-and-redo) is open on the task: the
+  conversation continues from the version, and nothing is saved until you
+  save there.
+
+![Compare with Current: a prompt and a script as line diffs](img/version-compare.png)
+
+The Runs tab's **Version** column shows which version each run started
+with. Deleting a task for good from the Recycle Bin deletes its history too;
+Clear Run History doesn't touch it.
 
 ## Prompt template variables
 

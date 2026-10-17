@@ -3,7 +3,7 @@ import { validateTask } from '../../shared/validate';
 import { folderParents } from '../../shared/folders';
 import { DEFINITION_VERSION, migrateDefinition, type Definition } from '../../shared/migrate';
 import { TaskFolderSchema } from '../../shared/types';
-import type { Environment, Task, TaskFolder, TaskInput } from '../../shared/types';
+import type { Environment, RecycleBinEntry, Task, TaskFolder, TaskInput } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
 
 /**
@@ -26,6 +26,15 @@ interface TasksFile {
   folders?: TaskFolder[];
   layout?: FolderLayout;
   tasks: Task[];
+  recycleBin?: RecycleBinEntry[];
+}
+
+/** Recycle Bin entries whose deletion is older than the cutoff. An unparseable stamp never expires. */
+export function expiredBinEntries(entries: RecycleBinEntry[], cutoffMs: number): RecycleBinEntry[] {
+  return entries.filter((e) => {
+    const at = Date.parse(e.deletedAt);
+    return !Number.isNaN(at) && at <= cutoffMs;
+  });
 }
 
 /**
@@ -45,6 +54,8 @@ export function storeVersion(data: { version?: unknown }, file: string): number 
 
 export class TaskStore extends EventEmitter {
   private tasks = new Map<string, Task>();
+  /** Deleted tasks by id. They never reach `list()`, so nothing schedules or shows them. */
+  private bin = new Map<string, RecycleBinEntry>();
   private folders: TaskFolder[] = [];
   private layout: FolderLayout = {};
 
@@ -81,6 +92,15 @@ export class TaskStore extends EventEmitter {
       const v = validateTask(raw, this.environments?.(), this.host);
       if (v.ok) this.tasks.set(v.task.id, v.task);
       else this.emit('invalid', raw, v.errors);
+    }
+    this.bin.clear();
+    for (const entry of data.recycleBin ?? []) {
+      let task: unknown = entry?.task;
+      if (!task || typeof task !== 'object' || typeof (task as Task).id !== 'string' || typeof entry.deletedAt !== 'string') {
+        continue;
+      }
+      if (version < DEFINITION_VERSION) task = migrateDefinition(task as Definition, version);
+      this.bin.set((task as Task).id, { task: task as Task, deletedAt: entry.deletedAt });
     }
     this.syncLayout();
   }
@@ -176,14 +196,57 @@ export class TaskStore extends EventEmitter {
     return this.upsert({ ...existing, ...patch, id });
   }
 
+  /**
+   * Delete a task: it moves to the Recycle Bin. An older bin entry with the
+   * same id (deleted before, then recreated) is replaced.
+   */
   remove(id: string): boolean {
     const existing = this.tasks.get(id);
     if (!existing) return false;
     this.tasks.delete(id);
+    this.bin.set(id, { task: existing, deletedAt: new Date().toISOString() });
     const layoutChanged = this.syncLayout();
     this.save();
     this.emit('change', existing, 'remove');
+    this.emit('bin');
     if (layoutChanged) this.emit('folders');
+    return true;
+  }
+
+  /** The Recycle Bin, most recently deleted first. */
+  listBin(): RecycleBinEntry[] {
+    return [...this.bin.values()].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  }
+
+  /**
+   * Put a task from the Recycle Bin back as it was when deleted. Throws when
+   * a task with its id exists again or the definition no longer validates
+   * (e.g. its environment was removed); the entry then stays in the bin.
+   */
+  restore(id: string): Task {
+    const entry = this.bin.get(id);
+    if (!entry) throw new Error('The task is no longer in the Recycle Bin.');
+    if (this.tasks.has(id)) throw new Error(`A task with the id "${id}" already exists. Rename or delete it first.`);
+    const v = validateTask(entry.task, this.environments?.(), this.host);
+    if (!v.ok) throw new Error(`The task can't be restored: ${v.errors.join('; ')}`);
+    // A folder deleted meanwhile: the task comes back at the top level.
+    const folderGone = v.task.folderId && !this.folders.some((f) => f.id === v.task.folderId);
+    const task: Task = { ...v.task, ...(folderGone ? { folderId: undefined } : {}), updatedAt: new Date().toISOString() };
+    this.bin.delete(id);
+    this.tasks.set(id, task);
+    const layoutChanged = this.syncLayout();
+    this.save();
+    this.emit('change', task, 'create');
+    this.emit('bin');
+    if (layoutChanged) this.emit('folders');
+    return task;
+  }
+
+  /** Delete a task in the Recycle Bin for good. Its run history is the caller's business. */
+  purge(id: string): boolean {
+    if (!this.bin.delete(id)) return false;
+    this.save();
+    this.emit('bin');
     return true;
   }
 
@@ -295,7 +358,13 @@ export class TaskStore extends EventEmitter {
   }
 
   private save(): void {
-    const data: TasksFile = { version: DEFINITION_VERSION, folders: this.folders, layout: this.layout, tasks: this.list() };
+    const data: TasksFile = {
+      version: DEFINITION_VERSION,
+      folders: this.folders,
+      layout: this.layout,
+      tasks: this.list(),
+      recycleBin: [...this.bin.values()],
+    };
     writeJsonAtomic(this.file, data);
   }
 }

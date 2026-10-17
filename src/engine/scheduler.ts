@@ -58,6 +58,8 @@ export interface SchedulerDeps {
   log: Logger;
   steps?: Partial<SchedulerSteps>;
   now?: () => number;
+  /** The task's current version (Version History), stamped on its run records. */
+  taskVersion?: (taskId: string) => number | undefined;
 }
 
 const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classifying', 'running']);
@@ -1761,6 +1763,12 @@ export class Scheduler extends EventEmitter {
     extra: Partial<RunRecord> = {},
   ): void {
     const rec: RunRecord = { ts: new Date(this.now()).toISOString(), taskId, runId, phase, result };
+    try {
+      const version = this.d.taskVersion?.(taskId);
+      if (version !== undefined) rec.taskVersion = version;
+    } catch {
+      /* an unreadable history only costs the stamp */
+    }
     for (const [k, v] of Object.entries(extra)) {
       if (v !== undefined) (rec as unknown as Record<string, unknown>)[k] = v;
     }

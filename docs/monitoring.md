@@ -82,7 +82,8 @@ depending on the task's current state; Pause and Enable/Disable are greyed
 out for a completed task, which is parked until you reopen it. Complete is
 greyed out unless the task's **Allow this task to be marked completed**
 option is on (Reopen always works), and asks for confirmation, since the task
-is deleted once its retention runs out. "Open Project in Terminal" opens a
+moves to the [Recycle Bin](#the-recycle-bin) once its retention runs out.
+"Open Project in Terminal" opens a
 real OS terminal window with the task's environment, working directory, and
 harness ready to go (model and permission mode included, no prompt) — a
 different thing from the in-app Terminal tab described below.
@@ -91,9 +92,31 @@ different thing from the in-app Terminal tab described below.
 
 Right-clicking a task in the sidebar selects it and opens a context menu
 with the same actions as the toolbar, plus a few more: Run Now, Stop Task,
-Pause/Resume, Enable/Disable, Complete/Reopen, Edit Task…, Delete Task, Edit/Add Guidance
-for Next Run…, Clear Guidance, Move to Folder…, Clear Run History…, Open
-Project in Terminal, and Open Working Directory.
+Pause/Resume, Enable/Disable, Complete/Reopen, Edit Task…, [Edit with
+Agent…](task-builder.md), [Version History…](tasks.md#version-history),
+Delete Task, Edit/Add Guidance for Next Run…, Clear Guidance, Move to
+Folder…, Clear Run History…, Open Project in Terminal, and Open Working
+Directory.
+
+## The Recycle Bin
+
+Delete Task moves the task to the Recycle Bin: it stops (a run in flight is
+stopped, and only then does Delete ask first), never runs again, and leaves
+the task list. Deleting a folder with **Also delete tasks inside** checked
+does the same to each of its tasks. **File → Recycle Bin…** opens a window
+listing the deleted tasks, most recently deleted first. **Restore** puts the
+selected task back as it was, in its folder if that still exists. It can't
+be restored while another task has its id, or when its environment or
+harness was removed in the meantime; the error says which. **Delete** removes
+it for good, and **Empty Recycle Bin** removes every task in the bin. Both
+ask first. Right-clicking a task in the list offers Restore and Delete too.
+
+A task stays in the Recycle Bin for **Settings → Advanced → Delete tasks in
+the Recycle Bin after** (30 days by default), then is deleted for good with
+its run history. Completed tasks reach the bin on their own, through the
+completed-task retention described under
+[the engine log window](#the-engine-log-window). While a task is in the bin,
+its run history is pruned by **Run log retention** like any other task's.
 
 ## Folders
 
@@ -161,7 +184,8 @@ press Stop Task (Shift+F5)."
 ![The Runs tab with a run selected and its report below](img/runs-tab.png)
 
 The Runs tab lists every past run of the task as a table: Date, Start,
-End, Result, Duration, Details. Each row is one full run (check, classify,
+End, Result, Duration, Version (the task's [version](tasks.md#version-history)
+when the run started), Details. Each row is one full run (check, classify,
 and agent steps collapsed together, showing the most significant result);
 a run still in progress shows Running in the Result column.
 Selecting a row shows that run's final report below in a resizable split
@@ -266,11 +290,13 @@ seconds; selecting a row shows its full message below. Entries older than
 automatically. This is separate from the tasks' run history, which
 **Settings → General → Run log retention** prunes (default 30 days).
 
-**Settings → Advanced → Delete completed tasks** (on by default, after 10
-days) deletes each completed task — definition and run history together —
-once it has been completed that long. Turn the checkbox off to keep
-completed tasks forever. A completed task with a run in flight is left for
-the next sweep. The sweep runs at startup and hourly.
+**Settings → Advanced → Move completed tasks to the Recycle Bin** (on by
+default, after 10 days) moves each completed task to the
+[Recycle Bin](#the-recycle-bin) once it has been completed that long. Turn
+the checkbox off to keep completed tasks in the task list. A completed task
+with a run in flight is left for the next sweep. The sweep, and the one that
+empties the Recycle Bin of tasks past its retention, runs at startup and
+hourly.
 
 ## System notifications
 
@@ -390,5 +416,10 @@ On the Advanced tab:
   definitions are stored (`tasks.json` and `templates.json` in the data
   directory by default). Browse… picks another file and asks whether to move
   the existing definitions there; Reset goes back to the default location.
-- **Engine log retention** and **Delete completed tasks** are described under
-  [the engine log window](#the-engine-log-window).
+- **Engine log retention** and **Move completed tasks to the Recycle Bin**
+  are described under [the engine log window](#the-engine-log-window).
+- **Delete tasks in the Recycle Bin after** is described under
+  [the Recycle Bin](#the-recycle-bin).
+- **Show conversations with the agent in** picks Chat window (default) or
+  Terminal for [New Task with Agent and Edit with
+  Agent](task-builder.md#terminal-view).

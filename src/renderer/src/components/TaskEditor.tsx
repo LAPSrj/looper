@@ -21,6 +21,8 @@ interface Props {
   host?: string;
   /** 'template' saves to the template store instead of the task store. */
   mode?: 'task' | 'template';
+  /** The definition came from a task builder: saving records the agent's version. */
+  builderId?: string;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }
@@ -116,7 +118,7 @@ function TimezoneSelect({ value, onChange }: { value?: string; onChange: (tz?: s
 }
 
 
-export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', onSaved, onCancel }: Props) {
+export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId),
   );
@@ -371,7 +373,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     setSaving(true);
     try {
       if (mode === 'template') await window.looper.templates.save(v.task);
-      else await window.looper.tasks.save(v.task);
+      else await window.looper.tasks.save(v.task, builderId ? { builderId } : undefined);
       // Later Apply/Save clicks in this window update the item just created.
       if (derivedId) setDraft((d) => ({ ...d, id: v.task.id }));
       return true;

@@ -40,7 +40,7 @@ bottom of this page).
 | `looper pause <taskId> [--reason <r>]` | queue a pause command |
 | `looper resume <taskId> [--reason <r>]` | queue a resume command |
 | `looper stop <taskId> [--reason <r>]` | queue a command to stop the task's current run |
-| `looper remove <taskId> [--reason <r>]` | queue a command to remove the task |
+| `looper remove <taskId> [--reason <r>]` | queue a command to move the task to the Recycle Bin |
 | `looper enable <taskId> [--reason <r>]` | queue a command to enable the task |
 | `looper disable <taskId> [--reason <r>]` | queue a command to disable the task |
 | `looper complete <taskId> [--reason <r>]` | queue a command to finish the task for good |
@@ -237,7 +237,8 @@ and `templates.json` somewhere else.
 ```
 settings.json         environments (each with its harnesses), default
                        environment, timing settings
-tasks.json             every task definition
+tasks.json             every task definition, and the deleted tasks in the
+                       Recycle Bin
 state.json             runtime snapshot: current state, next run time, last
                        result — what `looper list` reads
 engine.lock            the running Looper's heartbeat: one Looper per data dir
@@ -249,6 +250,11 @@ inbox/rejected/        failed files, plus a matching .error.txt each
 tasks/<id>/runs.jsonl  one record per phase (check/classify/agent) per run;
                        records and run folders older than Settings -> Run
                        log retention (default 30 days) are pruned
+tasks/<id>/versions.jsonl  the task's version history, one version per line
+tasks/<id>/versions/blobs/ the file contents those versions recorded, one
+                       file per content (named by its SHA-1)
+builder/<id>/          an open New or Edit Task with Agent window's draft,
+                       helpers and tests; deleted when the window closes
 tasks/<id>/runs/<runId>/
   check.sh (or .ps1)      the check step's launcher script
   check.out.txt, check.err.txt

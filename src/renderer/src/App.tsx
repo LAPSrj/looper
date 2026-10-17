@@ -79,6 +79,12 @@ export function App() {
       case 'edit-task':
         if (sel) void window.looper.openEditor(sel);
         break;
+      case 'edit-with-agent':
+        if (sel) void window.looper.builder.editTask(sel);
+        break;
+      case 'version-history':
+        if (sel) void window.looper.versions.open(sel);
+        break;
       case 'edit-note':
         if (sel) void window.looper.openNoteEditor(sel);
         break;
@@ -107,7 +113,7 @@ export function App() {
           break;
         } else {
           void window.looper
-            .confirm(`Mark "${t.name}" as completed? It won't run again, and after a while it's deleted along with its run history.`)
+            .confirm(`Mark "${t.name}" as completed? It won't run again, and after a while it moves to the Recycle Bin.`)
             .then((ok) => {
               if (ok) void window.looper.runtime.complete(t.id);
             });
@@ -115,8 +121,16 @@ export function App() {
         break;
       }
       case 'delete-task': {
+        // The Recycle Bin can undo a delete, but not a run it stopped: only that asks first.
         const t = ts.find((x) => x.id === sel);
-        if (t) void window.looper.confirm(`Delete task "${t.name}"?`).then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
+        if (!t) break;
+        if ((rts[t.id]?.runs.length ?? 0) > 0) {
+          void window.looper
+            .confirm(`"${t.name}" is running. Stop it and move it to the Recycle Bin?`)
+            .then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
+        } else {
+          void window.looper.tasks.remove(t.id);
+        }
         break;
       }
       case 'open-terminal':

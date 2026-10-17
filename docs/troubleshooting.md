@@ -213,6 +213,20 @@ copies of Looper never need it.
   idle grace. Permission modes Bypass and Full access are unaffected, and so
   is the normal setup of Looper running on Windows (local run dirs work with
   the sandbox). Codex CLI 0.154.
+- **With Codex, New and Edit Task with Agent can't use their helpers when
+  Looper runs in WSL and the task targets Windows.** The conversation's
+  folder then reaches Windows as a `\\wsl.localhost\…` share, which codex's
+  Windows sandbox can't write, so `looper-validate` and `looper-test` fail
+  there. Use a Claude Code harness for those tasks; the normal setup of
+  Looper running on Windows is unaffected.
+- **A file the agent in New or Edit Task with Agent changes with shell
+  commands may lose its original.** Looper learns a file's content from
+  before the agent touched it from the agent's file tools: Claude Code
+  reports it, and Codex's session records every patch, which Looper reverses
+  on the file as it is now. A file Codex also changed with a shell command
+  keeps the copy Looper read when Codex announced its first patch, which can
+  already be the new content. The agent is told to change files only with
+  its file tools.
 - **No SSH or other remote environments.** Looper's environments are the
   local shell and the WSL↔Windows bridge pair, which share a filesystem —
   that's how the `looper-done`/Stop signal files cross between the two

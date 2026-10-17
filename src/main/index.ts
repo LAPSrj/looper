@@ -6,6 +6,7 @@ import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHold
 import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
+import type { BuilderSetup } from '../shared/builder';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
@@ -96,6 +97,13 @@ if (!app.requestSingleInstanceLock()) {
       openTemplateEditor: openTemplateEditorWindow,
       openTemplatePicker: openTemplatePickerWindow,
       openEditorFromTemplate: openEditorFromTemplateWindow,
+      openVersions: openVersionsWindow,
+      openVersionDetail: openVersionDetailWindow,
+      openBuilderSetup: openBuilderSetupWindow,
+      startBuilder: startBuilderInWindow,
+      editWithAgent,
+      reviewBuilder,
+      builderWindow: (id) => builderWindows.get(id),
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
@@ -225,6 +233,7 @@ let quitPrompting = false;
  * funnels through here — the main window's X, File → Exit, the tray's Quit.
  */
 async function confirmQuit(): Promise<boolean> {
+  if (!(await settleAllBuilders())) return false;
   if (quitConfirmed) return true;
   const warning = quitWarning();
   if (!warning) return true;
@@ -533,6 +542,14 @@ function createWindow(): void {
     if (!quitting && tray && engine?.settings.closeToTray) {
       e.preventDefault();
       win?.hide();
+      return;
+    }
+    // Closing the main window closes the task builders: each asks about its unsaved changes first.
+    if (!quitting && [...builderWindows.keys()].some((id) => !settledBuilders.has(id))) {
+      e.preventDefault();
+      void settleAllBuilders().then((ok) => {
+        if (ok && win && !win.isDestroyed()) win.close();
+      });
       return;
     }
     // Closing the main window quits the app: when quitting needs a
@@ -993,6 +1010,20 @@ function openTemplatesWindow(): void {
   openChildWindow('templates', 'Templates — Looper', 560, 520);
 }
 
+let recycleBinWindow: BrowserWindow | null = null;
+
+/** One Recycle Bin window: opening it again brings the open one forward. */
+function openRecycleBinWindow(): void {
+  if (recycleBinWindow && !recycleBinWindow.isDestroyed()) {
+    recycleBinWindow.focus();
+    return;
+  }
+  recycleBinWindow = openChildWindow('recycle-bin', 'Recycle Bin', 560, 520);
+  recycleBinWindow.on('closed', () => {
+    recycleBinWindow = null;
+  });
+}
+
 function openInstructionsWindow(): void {
   openChildWindow('instructions', 'Instructions', 800, 700);
 }
@@ -1098,6 +1129,206 @@ function openEditorFromTemplateWindow(templateId: string): void {
     win.once('focus', redirect);
     child.once('closed', () => win?.removeListener('focus', redirect));
   }
+}
+
+// ---------- version history ----------
+
+const versionWindows = new Map<string, BrowserWindow>();
+
+/** One Version History window per task: opening it again brings the open one forward. */
+function openVersionsWindow(taskId: string): void {
+  const open = versionWindows.get(taskId);
+  if (open && !open.isDestroyed()) {
+    open.focus();
+    return;
+  }
+  const child = openChildWindow(`versions/${encodeURIComponent(taskId)}`, 'Version History', 640, 480);
+  versionWindows.set(taskId, child);
+  child.on('closed', () => versionWindows.delete(taskId));
+}
+
+function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _parent: BrowserWindow | null): void {
+  openChildWindow(
+    `version/${encodeURIComponent(taskId)}/${n}/${compare ? 'compare' : 'view'}`,
+    compare ? `Compare Version ${n} with Current` : `Version ${n}`,
+    900,
+    680,
+  );
+}
+
+// ---------- task builder ----------
+
+/** Open builder windows by builder id; closing one ends its session. */
+const builderWindows = new Map<string, BrowserWindow>();
+
+const BUILDER_SIZE = { width: 1180, height: 760 };
+
+function openBuilderSetupWindow(): void {
+  openChildWindow('builder-setup', 'New Task with Agent', 480, 372, undefined, {
+    minWidth: 420,
+    minHeight: 372,
+    contentSize: true,
+  });
+}
+
+/** Builders whose unsaved changes were answered (saved or put back): their window closes without asking again. */
+const settledBuilders = new Set<string>();
+/** Builders whose Save question is on screen, so a second close doesn't ask twice. */
+const settlingBuilders = new Set<string>();
+
+/**
+ * Before a builder's window closes, ask about unsaved changes: Save stores the
+ * draft, Don't Save puts back the files the agent changed, Cancel keeps the
+ * window open. True = the window may close.
+ */
+async function settleBuilder(id: string, child: BrowserWindow): Promise<boolean> {
+  if (!engine || settledBuilders.has(id)) return true;
+  if (settlingBuilders.has(id)) return false;
+  settlingBuilders.add(id);
+  try {
+    if (!(await engine.builderUnsaved(id))) {
+      settledBuilders.add(id);
+      return true;
+    }
+    const state = engine.getBuilder(id);
+    const raw = state?.draft.raw?.name;
+    const name = typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+    const existing = !!state?.taskId && !!engine.getTask(state.taskId);
+    // Not saving also undoes the agent's file changes, which isn't obvious: say which files.
+    const files = (state?.changedFiles ?? []).map((f) => f.split(/[\\/]/).pop() ?? f);
+    const fileList = listInWords(files.length > 3 ? [...files.slice(0, 2), `${files.length - 2} other files`] : files);
+    if (child.isMinimized()) child.restore();
+    child.focus();
+    const r = await dialog.showMessageBox(child, {
+      // A routine "save changes" confirmation: no icon.
+      type: 'none',
+      title: child.getTitle(),
+      message: existing
+        ? `Do you want to save changes to "${name || state?.taskId}"?`
+        : name
+          ? `Do you want to save the new task "${name}"?`
+          : 'Do you want to save this new task?',
+      ...(files.length ? { detail: `If you don't save, ${fileList} ${files.length === 1 ? 'goes' : 'go'} back to how ${files.length === 1 ? 'it was' : 'they were'}.` } : {}),
+      buttons: ['Save', "Don't Save", 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (r.response === 2) return false;
+    if (r.response === 0) {
+      try {
+        await engine.saveBuilder(id);
+      } catch (err) {
+        await dialog.showMessageBox(child, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
+        return false;
+      }
+    } else {
+      try {
+        await engine.discardBuilder(id);
+      } catch (err) {
+        await dialog.showMessageBox(child, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
+      }
+    }
+    settledBuilders.add(id);
+    return true;
+  } finally {
+    settlingBuilders.delete(id);
+  }
+}
+
+/** "a", "a and b", "a, b, and c". */
+function listInWords(items: string[]): string {
+  if (items.length <= 2) return items.join(' and ');
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+/** Every open builder answered (quitting, or closing the main window, which closes them). */
+async function settleAllBuilders(): Promise<boolean> {
+  for (const [id, child] of builderWindows) {
+    if (!child.isDestroyed() && !(await settleBuilder(id, child))) return false;
+  }
+  return true;
+}
+
+/** Tie a builder to its window: the window's events, the Save question, and the session's end when it closes. */
+function attachBuilder(child: BrowserWindow, id: string): void {
+  builderWindows.set(id, child);
+  child.on('close', (e) => {
+    if (quitting || settledBuilders.has(id) || !engine) return;
+    e.preventDefault();
+    void settleBuilder(id, child).then((ok) => {
+      if (ok && !child.isDestroyed()) child.close();
+    });
+  });
+  child.on('closed', () => {
+    builderWindows.delete(id);
+    settledBuilders.delete(id);
+    void engine?.closeBuilder(id);
+  });
+}
+
+function builderTitle(edit: boolean): string {
+  return edit ? 'Edit Task with Agent' : 'New Task with Agent';
+}
+
+/** The setup window's Start: the builder starts and the same window turns into its conversation. */
+function startBuilderInWindow(setupWindow: BrowserWindow | null, setup: BuilderSetup): void {
+  if (!engine) return;
+  const state = engine.startBuilder(setup);
+  if (!setupWindow || setupWindow.isDestroyed()) {
+    void engine.closeBuilder(state.id);
+    return;
+  }
+  attachBuilder(setupWindow, state.id);
+  setupWindow.setResizable(true);
+  setupWindow.setMaximizable(true);
+  setupWindow.setMinimumSize(760, 480);
+  setupWindow.setContentSize(BUILDER_SIZE.width, BUILDER_SIZE.height);
+  setupWindow.center();
+  setupWindow.setTitle(builderTitle(false));
+  // Same page, new hash: an in-page navigation the router never sees, so reload once it lands.
+  setupWindow.webContents.once('did-navigate-in-page', () => {
+    if (!setupWindow.isDestroyed()) setupWindow.webContents.reload();
+  });
+  loadRenderer(setupWindow, `builder/${state.id}`);
+}
+
+async function editWithAgent(taskId: string): Promise<void> {
+  if (!engine) return;
+  const openId = engine.builderForTask(taskId);
+  const open = openId ? builderWindows.get(openId) : undefined;
+  if (open && !open.isDestroyed()) {
+    open.focus();
+    return;
+  }
+  try {
+    const state = engine.startBuilder(engine.builderSetupFor(taskId));
+    const child = openChildWindow(`builder/${state.id}`, builderTitle(true), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
+      minWidth: 760,
+      minHeight: 480,
+      contentSize: true,
+    });
+    child.setMaximizable(true);
+    attachBuilder(child, state.id);
+  } catch (err) {
+    await fileErrorBox('Could not open Edit with Agent.', (err as Error).message);
+  }
+}
+
+/** Create/Update: the import editor prefilled with the draft, saving as the agent's version. */
+function reviewBuilder(builderId: string): void {
+  if (!engine) return;
+  const payload = engine.builderDraft(builderId);
+  const state = engine.getBuilder(builderId);
+  const update = !!state?.taskId && !!engine.getTask(state.taskId);
+  const key = Math.random().toString(36).slice(2, 10);
+  importDrafts.set(key, payload);
+  openChildWindow(
+    `editor-import/${key}${update ? '/update' : ''}/builder/${encodeURIComponent(builderId)}`,
+    update ? 'Edit Task' : 'New Task',
+    780,
+    700,
+  );
 }
 
 /** Raw JSON of pending imports, keyed by the editor window that will consume it. */
@@ -1282,12 +1513,14 @@ function buildMenu(
       submenu: [
         { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
         { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
+        { label: 'New Task with A&gent…', click: () => openBuilderSetupWindow() },
         { label: 'New &Folder…', click: () => openNewFolderWindow() },
         { type: 'separator' },
         { label: '&Import Task…', click: () => void importTask() },
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
         { type: 'separator' },
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
+        { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         // macOS: Quit lives in the app menu that macTemplate prepends.
         ...(process.platform === 'darwin'
@@ -1309,6 +1542,8 @@ function buildMenu(
         { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
         { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', enabled: hasTask && (taskCompleted || allowComplete), click: () => sendUi('complete-reopen') },
         { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
+        { id: 'task-edit-agent', label: 'Edit with &Agent…', enabled: hasTask, click: () => sendUi('edit-with-agent') },
+        { id: 'task-versions', label: '&Version History…', enabled: hasTask, click: () => sendUi('version-history') },
         { id: 'task-delete', label: 'De&lete Task', enabled: hasTask, click: () => sendUi('delete-task') },
         { type: 'separator' },
         { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', enabled: hasTask, click: () => sendUi('edit-note') },

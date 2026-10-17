@@ -17,12 +17,14 @@ interface SelectListProps<T> {
   onOpen?: (item: T, i: number) => void;
   /** Makes rows draggable; called with the full key list in its new order. */
   onReorder?: (keys: string[]) => void;
+  /** Right-click: the row is selected first. */
+  onContextMenu?: (item: T, i: number) => void;
   /** Shown as a single muted row when there are no items. */
   empty?: ReactNode;
 }
 
 /** The classic list-then-window listbox: click selects, double-click/Enter opens. */
-export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, empty }: SelectListProps<T>) {
+export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, onContextMenu, empty }: SelectListProps<T>) {
   const index = selectedKey === null ? -1 : items.findIndex((it, i) => itemKey(it, i) === selectedKey);
   const nav = useListNav({
     count: items.length,
@@ -92,6 +94,15 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
             className={`env-item ${key === selectedKey ? 'selected' : ''}${drop}`}
             onClick={() => onSelect(item, i)}
             onDoubleClick={onOpen ? () => onOpen(item, i) : undefined}
+            onContextMenu={
+              onContextMenu
+                ? (e) => {
+                    e.preventDefault();
+                    onSelect(item, i);
+                    onContextMenu(item, i);
+                  }
+                : undefined
+            }
             {...dragProps(key)}
           >
             <div className="env-item-name">{itemName(item, i)}</div>

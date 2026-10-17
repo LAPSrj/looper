@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { expiredCompletedTasks } from '../src/engine/engine';
 import { newRunId, RunStore } from '../src/engine/store/runs';
+import { expiredBinEntries } from '../src/engine/store/tasks';
 import { TaskSchema, type RunRecord, type Task } from '../src/shared/types';
 
 const dirs: string[] = [];
@@ -103,5 +104,29 @@ describe('completed-task retention', () => {
   it('ignores an unparseable completion stamp rather than deleting the task', () => {
     const tasks = [task('broken', 'not a date')];
     expect(expiredCompletedTasks(tasks, Date.now())).toEqual([]);
+  });
+});
+
+describe('recycle bin retention', () => {
+  const entry = (id: string, deletedAt: string) => ({
+    task: TaskSchema.parse({
+      id,
+      name: id,
+      trigger: { mode: 'schedule', schedule: { cron: '*/10 * * * *' } },
+      environmentId: 'local',
+      cwd: '/tmp',
+      agent: { prompt: 'go' },
+    }),
+    deletedAt,
+  });
+
+  it('picks entries deleted before the cutoff, and never one with an unparseable stamp', () => {
+    const now = Date.now();
+    const entries = [
+      entry('fresh', new Date(now - 2 * DAY).toISOString()),
+      entry('stale', new Date(now - 40 * DAY).toISOString()),
+      entry('broken', 'not a date'),
+    ];
+    expect(expiredBinEntries(entries, now - 30 * DAY).map((e) => e.task.id)).toEqual(['stale']);
   });
 });

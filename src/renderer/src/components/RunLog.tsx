@@ -11,6 +11,7 @@ const RUN_COLS: readonly TableCol[] = [
   { label: 'End', width: 76 },
   { label: 'Result', width: 96 },
   { label: 'Duration', width: 72 },
+  { label: 'Version', width: 60 },
   { label: 'Details' },
 ];
 
@@ -31,6 +32,8 @@ interface RunGroup {
   totalDurationMs: number;
   details: string;
   resultText: string;
+  /** The task's version when the run started. */
+  version?: number;
   records: RunRecord[];
 }
 
@@ -92,6 +95,7 @@ export function RunLog({ task, records, runtime, hideNoAction, focusRun }: Props
         totalDurationMs: totalMs,
         details: lastDetail(steps),
         resultText: resultText(steps),
+        version: sorted.find((r) => r.taskVersion !== undefined)?.taskVersion,
         records: sorted,
       });
     }
@@ -158,12 +162,13 @@ export function RunLog({ task, records, runtime, hideNoAction, focusRun }: Props
                 <td>{fmtTime(g.endTs)}</td>
                 <td>{isRunning(g.runId) ? 'Running' : resultLabel(g.result)}</td>
                 <td>{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
+                <td>{g.version ?? ''}</td>
                 <td title={g.details}>{g.details}</td>
               </tr>
             ))}
             {groups.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">
+                <td colSpan={7} className="muted">
                   No runs yet.
                 </td>
               </tr>

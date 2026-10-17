@@ -240,6 +240,56 @@ export function cronToForm(cron: string): CronForm {
   return custom;
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function clock(hour: number, minute: number): string {
+  return `${hour}:${String(minute).padStart(2, '0')}`;
+}
+
+function andList(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** "Weekdays", "Fridays", "Mondays and Thursdays"; undefined = every day. */
+function daysPlural(days: number[] | undefined): string | undefined {
+  if (!days || days.length === 0 || days.length === 7) return undefined;
+  const key = days.join(',');
+  if (key === '1,2,3,4,5') return 'Weekdays';
+  if (key === '0,6') return 'Weekends';
+  return andList(days.map((d) => `${DAY_NAMES[d]}s`));
+}
+
+/**
+ * A schedule in words, the way the Trigger tab's Frequency would put it:
+ * "Weekdays at 9:00", "Every 2 hours at :15, between 8:00 and 18:59".
+ * A shape the editor can't show reads "Custom schedule (<cron>)".
+ */
+export function describeCron(cron: string): string {
+  const f = cronToForm(cron);
+  const daysSuffix = (days: number[] | undefined): string => {
+    const d = daysPlural(days);
+    return d ? `, ${d.toLowerCase()} only` : '';
+  };
+  const windowText = (from?: number, to?: number): string =>
+    from !== undefined && to !== undefined ? `, between ${clock(from, 0)} and ${clock(to, 59)}` : '';
+  switch (f.mode) {
+    case 'minutes':
+      return `Every ${f.step === 1 ? 'minute' : `${f.step} minutes`}${windowText(f.from, f.to)}${daysSuffix(f.days)}`;
+    case 'hours':
+      return `Every ${f.step === 1 ? 'hour' : `${f.step} hours`} at :${String(f.minute).padStart(2, '0')}${windowText(f.from, f.to)}${daysSuffix(f.days)}`;
+    case 'daily':
+      return `Every day at ${andList(f.times.map((t) => clock(t.hour, t.minute)))}`;
+    case 'weekly': {
+      const d = daysPlural(f.days);
+      return d ? `${d} at ${clock(f.hour, f.minute)}` : `Every day at ${clock(f.hour, f.minute)}`;
+    }
+    case 'monthly':
+      return `Day ${andList(f.days.map(String))} of every month at ${clock(f.hour, f.minute)}`;
+    case 'custom':
+      return `Custom schedule (${f.cron})`;
+  }
+}
+
 /** Whether a set of daily times fits one cron expression (shared hour or shared minute). */
 export function timesExpressible(times: { hour: number; minute: number }[]): boolean {
   return new Set(times.map((t) => t.hour)).size <= 1 || new Set(times.map((t) => t.minute)).size <= 1;

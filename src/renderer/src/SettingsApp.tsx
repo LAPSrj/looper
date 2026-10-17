@@ -45,7 +45,9 @@ export function SettingsApp() {
   const [engineLogDays, setEngineLogDays] = useState<number | null>(null);
   const [deleteCompleted, setDeleteCompleted] = useState<boolean | null>(null);
   const [completedDays, setCompletedDays] = useState<number | null>(null);
+  const [binDays, setBinDays] = useState<number | null>(null);
   const [promptRunOptions, setPromptRunOptions] = useState<boolean | null>(null);
+  const [builderView, setBuilderView] = useState<'chat' | 'terminal' | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -80,7 +82,9 @@ export function SettingsApp() {
       setEngineLogDays((v) => v ?? info.settings.engineLogRetentionDays);
       setDeleteCompleted((v) => v ?? info.settings.completedTaskRetention.enabled);
       setCompletedDays((v) => v ?? info.settings.completedTaskRetention.days);
+      setBinDays((v) => v ?? info.settings.recycleBinDays);
       setPromptRunOptions((v) => v ?? info.settings.promptRunOptions);
+      setBuilderView((v) => v ?? info.settings.builder.view);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -112,7 +116,7 @@ export function SettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null) return <div className="empty">Loading…</div>;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -167,7 +171,8 @@ export function SettingsApp() {
 
   // ---------- Store files ----------
 
-  const defaultFile = (store: 'tasks' | 'templates') => dataDir + `\\${store}.json`;
+  // The data dir's own separator: a POSIX host's path has no backslashes.
+  const defaultFile = (store: 'tasks' | 'templates') => `${dataDir}${dataDir.includes('\\') ? '\\' : '/'}${store}.json`;
   const jsonFilter = [{ name: 'JSON', extensions: ['json'] }];
 
   const browseStoreFile = async (store: 'tasks' | 'templates') => {
@@ -224,7 +229,9 @@ export function SettingsApp() {
         runRetentionDays: retentionDays,
         engineLogRetentionDays: engineLogDays,
         completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
+        recycleBinDays: binDays,
         promptRunOptions,
+        builder: { view: builderView },
         rest: {
           minSleepMin: restMinSleep,
           graceSec: restGrace,
@@ -385,7 +392,7 @@ export function SettingsApp() {
             <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
             <label className="checkbox-field">
               <input type="checkbox" checked={deleteCompleted} onChange={(e) => setDeleteCompleted(e.target.checked)} />
-              Delete completed tasks
+              Move completed tasks to the Recycle Bin
             </label>
             <div className={`stagger-fields${deleteCompleted ? '' : ' disabled'}`}>
               <NumberField
@@ -397,6 +404,13 @@ export function SettingsApp() {
                 onChange={setCompletedDays}
               />
             </div>
+            <NumberField label="Delete tasks in the Recycle Bin after" suffix="days" min={1} value={binDays} onChange={setBinDays} />
+            <Field label="Show conversations with the agent in">
+              <select value={builderView} onChange={(e) => setBuilderView(e.target.value as 'chat' | 'terminal')}>
+                <option value="chat">Chat window</option>
+                <option value="terminal">Terminal</option>
+              </select>
+            </Field>
           </div>
         )}
 

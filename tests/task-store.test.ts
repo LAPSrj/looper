@@ -224,3 +224,71 @@ describe('TaskStore completion', () => {
     expect(store.patch('a', { completedAt: undefined }).trigger.stopOn).toEqual({ enabled: true, at: future });
   });
 });
+
+describe('TaskStore recycle bin', () => {
+  it('deleting moves the task out of the list and into the bin, which survives a reload', () => {
+    const { store, file } = newStore();
+    store.upsert(taskInput('a'));
+    store.upsert(taskInput('b'));
+    expect(store.remove('a')).toBe(true);
+    expect(store.list().map((t) => t.id)).toEqual(['b']);
+    expect(store.get('a')).toBeUndefined();
+    expect(store.listBin().map((e) => e.task.id)).toEqual(['a']);
+    const again = new TaskStore(file);
+    again.load();
+    expect(again.list().map((t) => t.id)).toEqual(['b']);
+    expect(again.listBin().map((e) => e.task.id)).toEqual(['a']);
+  });
+
+  it('restoring puts the task back as it was, in its folder', () => {
+    const { store } = newStore();
+    const f = store.addFolder('F');
+    store.upsert({ ...taskInput('a', f.id), enabled: false });
+    store.remove('a');
+    const back = store.restore('a');
+    expect(back).toMatchObject({ id: 'a', enabled: false, folderId: f.id });
+    expect(store.listBin()).toEqual([]);
+    expect(store.listLayout()[f.id]).toEqual(['a']);
+  });
+
+  it('a task whose folder was deleted meanwhile is restored at the top level', () => {
+    const { store } = newStore();
+    const f = store.addFolder('F');
+    store.upsert(taskInput('a', f.id));
+    store.remove('a');
+    store.removeFolder(f.id);
+    expect(store.restore('a').folderId).toBeUndefined();
+  });
+
+  it('refuses to restore over a task with the same id, keeping the entry', () => {
+    const { store } = newStore();
+    store.upsert(taskInput('a'));
+    store.remove('a');
+    store.upsert(taskInput('a'));
+    expect(() => store.restore('a')).toThrow(/already exists/);
+    expect(store.listBin().map((e) => e.task.id)).toEqual(['a']);
+  });
+
+  it('refuses to restore a task that no longer validates, keeping the entry', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-store-')), 'tasks.json');
+    let envs = [{ id: 'local', name: 'Local', kind: 'local' as const, harnesses: [{ id: 'claude', name: 'Claude', kind: 'claude-code' as const, command: 'claude' }] }];
+    const store = new TaskStore(file, () => envs as never);
+    store.load();
+    store.upsert(taskInput('a'));
+    store.remove('a');
+    envs = [];
+    expect(() => store.restore('a')).toThrow(/can't be restored/);
+    expect(store.listBin().map((e) => e.task.id)).toEqual(['a']);
+  });
+
+  it('purging deletes the entry for good', () => {
+    const { store, file } = newStore();
+    store.upsert(taskInput('a'));
+    store.remove('a');
+    expect(store.purge('a')).toBe(true);
+    expect(store.purge('a')).toBe(false);
+    const again = new TaskStore(file);
+    again.load();
+    expect(again.listBin()).toEqual([]);
+  });
+});

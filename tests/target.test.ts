@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { translatePath, translateToHost } from '../src/engine/target/paths';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
+import { setDefaultWslDistro } from '../src/engine/host';
 
 describe('translatePath', () => {
   it('windows host -> wsl target', () => {
@@ -29,6 +30,22 @@ describe('translatePath', () => {
   });
   it('refuses windows target from plain linux', () => {
     expect(() => translatePath('/x', { host: 'linux', targetKind: 'windows', wslMountPrefix: '/mnt' })).toThrow();
+  });
+});
+
+describe('BashTarget on the default distro (Windows host)', () => {
+  it("can't name a distro file until the default distro is known, then uses its name", () => {
+    const target = new BashTarget({ host: 'windows' }, undefined);
+    setDefaultWslDistro(undefined);
+    expect(() => target.toHostPath('/home/me/check.sh')).toThrow(/unknown WSL distro/);
+    setDefaultWslDistro('Ubuntu-22.04');
+    try {
+      expect(target.toHostPath('/home/me/check.sh')).toBe('\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\check.sh');
+      // A named distro keeps its own name.
+      expect(new BashTarget({ host: 'windows' }, 'Debian').toHostPath('/x')).toBe('\\\\wsl.localhost\\Debian\\x');
+    } finally {
+      setDefaultWslDistro(undefined);
+    }
   });
 });
 

@@ -1,4 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { describeCron } from '../src/shared/cron';
+
+describe('describeCron', () => {
+  it('puts the editor frequencies in words', () => {
+    expect(describeCron('0 9 * * 1-5')).toBe('Weekdays at 9:00');
+    expect(describeCron('0 17 * * 5')).toBe('Fridays at 17:00');
+    expect(describeCron('30 8 * * 1,3')).toBe('Mondays and Wednesdays at 8:30');
+    expect(describeCron('0 9,17 * * *')).toBe('Every day at 9:00 and 17:00');
+    expect(describeCron('15 */2 * * *')).toBe('Every 2 hours at :15');
+    expect(describeCron('*/10 8-18 * * 1-5')).toBe('Every 10 minutes, between 8:00 and 18:59, weekdays only');
+    expect(describeCron('0 6 1,15 * *')).toBe('Day 1 and 15 of every month at 6:00');
+    expect(describeCron('0 9 * 3 *')).toBe('Custom schedule (0 9 * 3 *)');
+  });
+});
 import { nextWindowOpen, runWindowOpen } from '../src/shared/cron';
 
 describe('runWindowOpen', () => {

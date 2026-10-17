@@ -334,7 +334,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
 }
 
 /** What the session needs from a running process, whether it sits behind a pty or plain pipes. */
-interface SessionProc {
+export interface SessionProc {
   /** 0 when the spawn itself failed. */
   readonly pid: number;
   onStdout(cb: (data: string) => void): void;
@@ -368,7 +368,7 @@ export function resolveWinCommand(command: string, env: Record<string, string>):
 }
 
 /** Interactive: a real terminal, so the TUI renders and can be typed into. */
-function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
+export function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
   const pty = loadPty();
   const env = childEnv();
   let proc: PtyNS.IPty;

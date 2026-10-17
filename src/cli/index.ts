@@ -450,7 +450,7 @@ program.command('run <taskId>').description('run a task now').option('--reason <
 program.command('pause <taskId>').description('pause a task').option('--reason <r>').action(command('pause'));
 program.command('resume <taskId>').description('resume a paused task').option('--reason <r>').action(command('resume'));
 program.command('stop <taskId>').description("stop the task's current run").option('--reason <r>').action(command('stop'));
-program.command('remove <taskId>').description('remove a task').option('--reason <r>').action(command('remove'));
+program.command('remove <taskId>').description('move a task to the Recycle Bin').option('--reason <r>').action(command('remove'));
 program.command('enable <taskId>').description('enable a task').option('--reason <r>').action(command('enable'));
 program.command('disable <taskId>').description('disable a task').option('--reason <r>').action(command('disable'));
 program
