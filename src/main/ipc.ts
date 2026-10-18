@@ -517,14 +517,23 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.on('context-menu:remote-conversation', (e, id: string) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     if (!sender) return;
-    const conv = engine.remoteState().conversations.find((c) => c.id === id);
+    const state = engine.remoteState();
+    const conv = state.conversations.find((c) => c.id === id);
     if (!conv) return;
     const open = conv.status !== 'ended';
+    const restart = () => {
+      try {
+        engine.restartRemoteConversation(id);
+      } catch (err) {
+        void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+      }
+    };
     Menu.buildFromTemplate([
       { label: 'Open', click: () => void host.openRemoteConversation(id) },
       { label: 'Open in Browser', enabled: !!conv.link, click: () => conv.link && void shell.openExternal(conv.link) },
       { label: 'Copy Link', enabled: !!conv.link, click: () => conv.link && clipboard.writeText(conv.link) },
       { type: 'separator' },
+      { label: 'Restart', enabled: state.running && conv.source !== 'helper' && conv.status !== 'waiting', click: restart },
       { label: 'Stop', enabled: open, click: () => engine.stopRemoteConversation(id) },
     ]).popup({ window: sender });
   });

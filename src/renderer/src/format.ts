@@ -1,6 +1,7 @@
 import { formatDuration } from '@shared/duration';
 import { formatDateTime } from '@shared/format';
 import { stripAnsi as stripAnsiShared } from '@shared/ansi';
+import type { RemoteConversation } from '@shared/remote';
 import type { TaskRuntime } from '@shared/types';
 
 export function fmtDate(iso: string): string {
@@ -30,6 +31,13 @@ const STATE_LABELS: Record<string, string> = {
   paused: 'Paused',
   disabled: 'Disabled',
   completed: 'Completed',
+};
+
+export const REMOTE_STATUS_LABELS: Record<RemoteConversation['status'], string> = {
+  waiting: 'Waiting',
+  working: 'Working',
+  idle: 'Idle',
+  ended: 'Ended',
 };
 
 export function stateLabel(rt: TaskRuntime | undefined): string {

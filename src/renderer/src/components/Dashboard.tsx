@@ -1,15 +1,17 @@
 import type { ActiveRun, Task, TaskRuntime } from '@shared/types';
 import type { AttentionRow, RunningRow } from '@shared/dashboard';
-import { fmtClock, formatDuration } from '../format';
+import type { RemoteConversation } from '@shared/remote';
+import { REMOTE_STATUS_LABELS, fmtClock, formatDuration } from '../format';
 import type { DetailTab } from './TaskDetail';
 import { showTaskMenu } from './TaskList';
 import { useListNav } from './hooks';
 
 /** A row the user picked on the dashboard; the toolbar and menus act on its task. */
 export interface DashboardPick {
-  list: 'attention' | 'running';
+  /** remote: a Remote Control conversation, which the task menus and toolbar leave alone. */
+  list: 'attention' | 'running' | 'remote';
   taskId: string;
-  /** The run the row is about; null for a row about the task's last result. */
+  /** The run the row is about (a conversation's id); null for a row about the task's last result. */
   runId: string | null;
 }
 
@@ -48,6 +50,8 @@ function StatusIcon({ level }: { level: 'error' | 'warning' }) {
 interface Props {
   attention: AttentionRow[];
   running: RunningRow[];
+  /** Remote Control's open conversations; null while it is stopped (no section shows). */
+  remote: RemoteConversation[] | null;
   runtimes: Record<string, TaskRuntime>;
   now: number;
   pick: DashboardPick | null;
@@ -57,7 +61,7 @@ interface Props {
 }
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, runtimes, now, pick, onPick, onOpen }: Props) {
+export function Dashboard({ attention, running, remote, runtimes, now, pick, onPick, onOpen }: Props) {
   const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
     pick?.list === list && pick.taskId === taskId && pick.runId === runId;
 
@@ -80,6 +84,16 @@ export function Dashboard({ attention, running, runtimes, now, pick, onPick, onO
     index: runningIndex,
     onIndex: (i) => onPick(runningPick(running[i])),
     onActivate: (i) => openRunning(running[i]),
+  });
+  const conversations = remote ?? [];
+  const remotePick = (c: RemoteConversation): DashboardPick => ({ list: 'remote', taskId: c.taskId, runId: c.id });
+  // An open conversation opens in a Looper terminal window.
+  const openRemote = (c: RemoteConversation) => void window.looper.remote.open(c.id);
+  const remoteKeys = useListNav({
+    count: conversations.length,
+    index: conversations.findIndex((c) => isPicked('remote', c.taskId, c.id)),
+    onIndex: (i) => onPick(remotePick(conversations[i])),
+    onActivate: (i) => openRemote(conversations[i]),
   });
 
   const menu = (task: Task, p: DashboardPick) => (e: React.MouseEvent) => {
@@ -186,6 +200,57 @@ export function Dashboard({ attention, running, runtimes, now, pick, onPick, onO
             </div>
           )}
         </section>
+
+        {remote && (
+          <section className="dashboard-section">
+            <span className="pane-title">Remote Control</span>
+            {conversations.length === 0 ? (
+              <div className="dashboard-empty muted">No sessions are open.</div>
+            ) : (
+              <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Remote Control" onKeyDown={remoteKeys}>
+                <table className="runlog-table">
+                  <colgroup>
+                    <col style={{ width: 240 }} />
+                    <col style={{ width: 110 }} />
+                    <col />
+                    <col style={{ width: 120 }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Session</th>
+                      <th>Status</th>
+                      <th>Last message</th>
+                      <th className="num">Started</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conversations.map((c) => {
+                      const p = remotePick(c);
+                      return (
+                        <tr
+                          key={c.id}
+                          className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
+                          onClick={() => onPick(p)}
+                          onDoubleClick={() => openRemote(c)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            onPick(p);
+                            window.looper.remote.showContextMenu(c.id);
+                          }}
+                        >
+                          <td title={c.cwd}>{c.name}</td>
+                          <td>{REMOTE_STATUS_LABELS[c.status]}</td>
+                          <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
+                          <td className="num">{fmtClock(Date.parse(c.startedAt), now)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );

@@ -73,6 +73,28 @@ describe('terminal sessions', () => {
     expect(fs.existsSync(launcher)).toBe(false);
   });
 
+  it("a closed session's late output and exit stay out of a new session that took its id", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-terminals-'));
+    const events: EngineEvent[] = [];
+    const procs = [fakeProc(), fakeProc()];
+    let n = 0;
+    const sessions = new TerminalSessions({ emit: (e) => events.push(e), log: new Logger(), spawn: () => procs[n++].proc });
+    const launcher = path.join(dir, 'terminal.sh');
+    const prepare = () => {
+      fs.writeFileSync(launcher, '');
+      return { spec: { command: 'bash', args: [] }, cwd: dir, launcher };
+    };
+    sessions.start('task-1', prepare, 'run-1');
+    sessions.close('run-1');
+    sessions.start('task-1', prepare, 'run-1');
+    procs[0].print('old');
+    procs[0].exit();
+    procs[1].print('new');
+    expect(events).toEqual([{ type: 'terminal:data', id: 'run-1', data: 'new' }]);
+    expect(sessions.output('run-1')).toEqual({ data: 'new', ended: false });
+    expect(fs.existsSync(launcher)).toBe(true);
+  });
+
   it('deletes the launcher when the pty cannot start', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-terminals-'));
     const launcher = path.join(dir, 'terminal.sh');

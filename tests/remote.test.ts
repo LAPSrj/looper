@@ -33,6 +33,7 @@ interface Started {
   task: Task;
   dir: string;
   launch: RemoteLaunch;
+  resume?: string;
 }
 
 function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; output?: (n: number) => string } = {}) {
@@ -52,11 +53,11 @@ function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; outp
     getTask: (id) => opts.tasks?.find((t) => t.id === id),
     listTasks: () => opts.tasks ?? [],
     createTarget: (t) => createTarget(t, { host: 'linux', settings }),
-    startSession(t, launch) {
-      const runId = `r${++n}`;
+    startSession(t, launch, resume) {
+      const runId = resume?.runId ?? `r${++n}`;
       const dir = path.join(root, 'tasks', t.id, 'runs', runId);
       fs.mkdirSync(dir, { recursive: true });
-      started.push({ runId, task: t, dir, launch: launch(dir, createTarget(t, { host: 'linux', settings })) });
+      started.push({ runId, task: t, dir, launch: launch(dir, createTarget(t, { host: 'linux', settings })), resume: resume?.sessionId });
       outputs.set(runId, opts.output?.(n) ?? '');
       return { runId, dir };
     },
@@ -228,6 +229,54 @@ describe('Remote Control', () => {
     const waiting = rc.state().conversations.find((c) => c.status === 'waiting');
     rc.stop();
     expect(rc.state().conversations.some((c) => c.id === waiting?.id)).toBe(false);
+  });
+
+  it("lists each conversation's last message on one line, and keeps it once the conversation ends", async () => {
+    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    rc.start();
+    const dir = started[0].dir;
+    fs.writeFileSync(path.join(dir, 'prompt.json'), '{"prompt":"Fix the\\nfooter"}');
+    await sleep(80);
+    expect(rc.state().conversations.find((c) => c.id === 'r1')?.lastMessage).toBe('Fix the footer');
+    fs.writeFileSync(path.join(dir, 'stop.json'), '{"last_assistant_message":"Fixed it.\\n\\nThe footer is done."}');
+    await sleep(80);
+    expect(rc.state().conversations.find((c) => c.id === 'r1')?.lastMessage).toBe('Fixed it. The footer is done.');
+    rc.stopConversation('r1');
+    expect(rc.state().conversations.find((c) => c.id === 'r1')).toMatchObject({ status: 'ended', lastMessage: 'Fixed it. The footer is done.' });
+  });
+
+  it('restarts a conversation in its own run, resuming it in the same folder; an open one ends first', async () => {
+    const { rc, started, closed } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    rc.start();
+    const dir = started[0].dir;
+    fs.writeFileSync(path.join(dir, 'session.json'), '{"session_id":"abc-123"}');
+    touch(path.join(dir, 'prompt.json'));
+    await sleep(30);
+    fs.writeFileSync(path.join(dir, 'stop.json'), '{"last_assistant_message":"Done."}');
+    await sleep(80);
+    const before = rc.state().conversations.find((c) => c.id === 'r1')!;
+    rc.restartConversation('r1');
+    expect(closed).toEqual(['r1']);
+    expect(started.map((s) => [s.runId, s.resume])).toEqual([
+      ['r1', undefined],
+      ['r1', 'abc-123'],
+    ]);
+    expect(started[1].launch.name).toBe('Task t1');
+    // Still the project's conversation: no empty one opens next to it.
+    expect(rc.liveCount()).toBe(1);
+    expect(rc.state().conversations[0]).toMatchObject({ id: 'r1', status: 'idle', startedAt: before.startedAt, lastMessage: 'Done.' });
+    rc.stopConversation('r1');
+    rc.restartConversation('r1');
+    expect(started.at(-1)).toMatchObject({ runId: 'r1', resume: 'abc-123' });
+  });
+
+  it("won't restart a helper, a conversation with nothing recorded, or one while Remote Control is off", async () => {
+    const { rc, started } = setup({ helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    expect(() => rc.restartConversation('r1')).toThrow('Start Remote Control first.');
+    rc.start();
+    expect(() => rc.restartConversation('r1')).toThrow(/replaces a helper/);
+    expect(() => rc.restartConversation('r2')).toThrow(/No conversation was recorded/);
+    expect(started).toHaveLength(2);
   });
 
   it('replaces a helper that has been idle past its restart time: the fresh one first, then the old one ends', async () => {

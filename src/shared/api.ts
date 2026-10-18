@@ -202,7 +202,7 @@ export interface LooperApi {
     lastMessage(id: string): Promise<RemoteMessage | null>;
     /** An open conversation in a Looper terminal window, an ended one in its run window. */
     open(id: string): Promise<void>;
-    /** A conversation's right-click menu: Open, Open in Browser, Copy Link, Stop. */
+    /** A conversation's right-click menu: Open, Open in Browser, Copy Link, Restart, Stop. */
     showContextMenu(id: string): void;
     openHelperEditor(id: string, isNew?: boolean): Promise<void>;
     openProjectEditor(id: string, isNew?: boolean): Promise<void>;

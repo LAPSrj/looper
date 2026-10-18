@@ -17,6 +17,8 @@ export interface RemoteConversation {
   name: string;
   /** The first line of its first message, once it has one. */
   title?: string;
+  /** Its last message (see `RemoteMessage`) on one line, once it has one. */
+  lastMessage?: string;
   /** Working directory, as the environment sees it. */
   cwd: string;
   startedAt: string;

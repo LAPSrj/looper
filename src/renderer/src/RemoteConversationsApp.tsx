@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RemoteConversation, RemoteMessage, RemoteState } from '@shared/remote';
+import type { RemoteMessage, RemoteState } from '@shared/remote';
 import { useDialogKeys, useDragResize, useListNav } from './components/hooks';
 import { Markdown } from './components/Markdown';
 import { ResizableColumns, type TableCol } from './components/ui';
-import { fmtDate, fmtTime } from './format';
-
-const STATUS: Record<RemoteConversation['status'], string> = {
-  waiting: 'Waiting',
-  working: 'Working',
-  idle: 'Idle',
-  ended: 'Ended',
-};
+import { REMOTE_STATUS_LABELS, fmtDate, fmtTime } from './format';
 
 const COLS: readonly TableCol[] = [
   { label: 'Date', width: 92 },
@@ -102,9 +95,9 @@ export function RemoteConversationsApp() {
               >
                 <td>{fmtDate(c.startedAt)}</td>
                 <td>{fmtTime(c.startedAt)}</td>
-                <td>{STATUS[c.status]}</td>
+                <td>{REMOTE_STATUS_LABELS[c.status]}</td>
                 <td title={c.cwd}>{c.name}</td>
-                <td title={c.title}>{c.title ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
+                <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
               </tr>
             ))}
             {list.length === 0 && (

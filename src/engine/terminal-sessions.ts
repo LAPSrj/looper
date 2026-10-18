@@ -55,12 +55,18 @@ export class TerminalSessions {
     }
     const session: Session = { taskId, proc, output: '', launcher };
     this.sessions.set(id, session);
+    // A closed session whose id a new one took (a restarted Remote Control conversation) speaks for it no longer.
+    const replaced = () => {
+      const now = this.sessions.get(id);
+      return !!now && now !== session;
+    };
     proc.onStdout((data) => {
       session.output = (session.output + data).slice(-OUTPUT_BYTES);
-      this.d.emit({ type: 'terminal:data', id, data });
+      if (!replaced()) this.d.emit({ type: 'terminal:data', id, data });
     });
     proc.onExit(() => {
       session.proc = null;
+      if (replaced()) return;
       removeFile(launcher);
       this.d.emit({ type: 'terminal:end', id });
     });

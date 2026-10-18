@@ -12,6 +12,7 @@ import {
 } from '../shared/remote';
 import { TaskSchema, type RemoteFolderProject, type RemoteHelper, type RemoteProject, type Settings, type Task } from '../shared/types';
 import { errMsg, type Logger } from './log';
+import { readRunSessionId } from './messages';
 import type { RemoteLaunch } from './open-terminal';
 import { readJson, writeJsonAtomic } from './store/fsutil';
 import type { Target } from './target';
@@ -28,6 +29,8 @@ const RESPAWN_GAP_MS = 2_000;
 const LINK_WAIT_MS = 30_000;
 /** Ended conversations the Conversations window lists. */
 const MAX_PAST = 200;
+/** How much of a conversation's last message the list keeps. */
+const MESSAGE_MAX = 300;
 const LINK_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
 const HELPER_COMMAND = 'looper-remote';
 /** In a helper's run folder: its environment's home and Claude Code config folders, written by its launcher. */
@@ -44,9 +47,14 @@ export interface RemoteDeps {
   /**
    * Start a recorded Remote Control session of the task in a new run folder
    * and return its run id; `launch` gets the folder (host path) and target.
-   * Throws with the reason.
+   * `resume`: start it in that run's folder instead, going on with the
+   * conversation `sessionId`. Throws with the reason.
    */
-  startSession: (task: Task, launch: (dir: string, target: Target) => RemoteLaunch) => { runId: string; dir: string };
+  startSession: (
+    task: Task,
+    launch: (dir: string, target: Target) => RemoteLaunch,
+    resume?: { runId: string; sessionId: string },
+  ) => { runId: string; dir: string };
   /** End a session: its process stops, and its conversation stays as a run. */
   closeSession: (runId: string) => void;
   /** The session's output so far; null once it's closed. */
@@ -73,8 +81,10 @@ interface Live {
   trustAnswered: boolean;
   /** Helper requests being answered, by file name. */
   taken: Set<string>;
-  /** The title and link last saved to the record of used conversations. */
+  /** The title, last message and link last saved to the record of used conversations. */
   saved?: string;
+  /** The hook files' times `conv.lastMessage` was read at. */
+  messageOf?: string;
 }
 
 /** The task-like stand-in a folder project or helper runs its sessions as. */
@@ -258,23 +268,36 @@ export class RemoteControl {
    */
   lastMessage(id: string): RemoteMessage | null {
     const conv = this.live.get(id)?.conv ?? this.pastList().find((c) => c.id === id);
-    if (!conv) return null;
-    const dir = this.d.runDir(conv.taskId, id);
-    const read = (file: string): Record<string, unknown> | null => {
-      try {
-        return JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8').replace(/^﻿/, '')) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    };
-    const promptAt = mtime(path.join(dir, 'prompt.json'));
-    const stopAt = mtime(path.join(dir, 'stop.json'));
-    if (promptAt !== null && promptAt > (stopAt ?? 0)) {
-      const text = read('prompt.json')?.prompt;
-      if (typeof text === 'string') return { from: 'user', text };
-    }
-    const text = read('stop.json')?.last_assistant_message;
-    return typeof text === 'string' ? { from: 'agent', text } : null;
+    return conv ? readLastMessage(this.d.runDir(conv.taskId, id)) : null;
+  }
+
+  /**
+   * Restart a conversation (the Conversations window's Restart): a new
+   * session in the same run goes on with it, in the same folder and under
+   * the same name; an open one ends first. Helpers are Looper's own to
+   * replace. Throws with the reason.
+   */
+  restartConversation(id: string): void {
+    if (!this.running) throw new Error('Start Remote Control first.');
+    const old = this.live.get(id);
+    const conv = old?.conv ?? this.pastList().find((c) => c.id === id);
+    if (!conv) throw new Error('This conversation no longer exists.');
+    if (conv.source === 'helper') throw new Error('Looper replaces a helper by itself: Stop this one, and a fresh one starts.');
+    const sessionId = readRunSessionId(this.d.runDir(conv.taskId, id), 'claude-code');
+    if (!sessionId) throw new Error('No conversation was recorded for this session yet.');
+    const task = this.d.getTask(conv.taskId) ?? this.standIn(conv.taskId);
+    if (!task) throw new Error('The task no longer exists.');
+    const entryKey = old?.entryKey;
+    if (old) this.end(id);
+    // Claude Code keeps a conversation under its folder: the same one resumes it.
+    const l = this.launch({ ...task, cwd: conv.cwd }, conv.source, conv.name, conv.entryId, () => ({ name: conv.name }), { runId: id, sessionId });
+    l.conv.startedAt = conv.startedAt;
+    if (conv.title) l.conv.title = conv.title;
+    if (entryKey) l.entryKey = entryKey;
+    // Its turns so far: it's a used conversation from the start, never an empty one.
+    this.watchTurns(l);
+    this.reconcile();
+    this.emitState();
   }
 
   /** The stand-in task a folder project's or helper's conversations were recorded under, from its run history. */
@@ -392,6 +415,7 @@ export class RemoteControl {
     name: string,
     entryId: string | undefined,
     launch: (dir: string, target: Target) => RemoteLaunch,
+    resume?: { runId: string; sessionId: string },
   ): Live {
     const harness = resolveHarness(task, resolveEnvironment(task, this.d.settings));
     if (harness.kind !== 'claude-code') throw new Error(`Remote Control needs a Claude Code harness, and "${harness.name}" isn't one.`);
@@ -399,7 +423,7 @@ export class RemoteControl {
       const { id: _id, ...rest } = task;
       writeJsonAtomic(this.standInFile(task.id), rest);
     }
-    const { runId, dir } = this.d.startSession(task, launch);
+    const { runId, dir } = this.d.startSession(task, launch, resume);
     const now = this.now();
     const l: Live = {
       conv: {
@@ -484,9 +508,18 @@ export class RemoteControl {
     if (l.promptAt === null && l.stopAt === null) l.conv.status = 'waiting';
     else l.conv.status = l.promptAt !== null && l.promptAt > (l.stopAt ?? 0) ? 'working' : 'idle';
     if (!l.conv.title && l.stopAt !== null) l.conv.title = this.d.readTitle(l.conv.taskId, l.conv.id);
+    const turn = `${l.promptAt}/${l.stopAt}`;
+    if (l.conv.status !== 'waiting' && l.messageOf !== turn) {
+      // A hook still writing its file reads as no message: the next poll tries again.
+      const text = readLastMessage(l.dir)?.text.replace(/\s+/g, ' ').trim().slice(0, MESSAGE_MAX);
+      if (text) {
+        l.conv.lastMessage = text;
+        l.messageOf = turn;
+      }
+    }
     if (wasWaiting && l.conv.status !== 'waiting') this.d.log.info(`remote control: ${l.conv.id} "${l.conv.name}" got its first message`);
-    // A used conversation goes on the record, and again when its title or link arrives.
-    const saved = JSON.stringify([l.conv.title, l.conv.link]);
+    // A used conversation goes on the record, and again when its title, last message or link changes.
+    const saved = JSON.stringify([l.conv.title, l.conv.lastMessage, l.conv.link]);
     if (l.conv.status !== 'waiting' && l.saved !== saved) {
       l.saved = saved;
       this.remember(l.conv);
@@ -746,6 +779,29 @@ export class RemoteControl {
     this.lastEmitted = json;
     this.d.emit(state);
   }
+}
+
+/**
+ * A conversation's last message, from the hooks' records in its run folder:
+ * the user's message while a turn works on it, else Claude's last answer.
+ * Null before the first message, or once the run is gone.
+ */
+function readLastMessage(dir: string): RemoteMessage | null {
+  const read = (file: string): Record<string, unknown> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8').replace(/^﻿/, '')) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  const promptAt = mtime(path.join(dir, 'prompt.json'));
+  const stopAt = mtime(path.join(dir, 'stop.json'));
+  if (promptAt !== null && promptAt > (stopAt ?? 0)) {
+    const text = read('prompt.json')?.prompt;
+    if (typeof text === 'string') return { from: 'user', text };
+  }
+  const text = read('stop.json')?.last_assistant_message;
+  return typeof text === 'string' ? { from: 'agent', text } : null;
 }
 
 function mtime(file: string): number | null {

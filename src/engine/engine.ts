@@ -193,6 +193,8 @@ export interface Engine {
   remoteLastMessage(id: string): RemoteMessage | null;
   /** End one Remote Control conversation; its entry gets a new one if it keeps one open. */
   stopRemoteConversation(id: string): void;
+  /** Go on with a Remote Control conversation in a new session (an open one ends first). Throws with the reason. */
+  restartRemoteConversation(id: string): void;
   /** Whether a terminal session is a Remote Control conversation (closing its window leaves it running). */
   isRemoteSession(id: string): boolean;
   /** Remote Control conversations that have had a message and are still open. */
@@ -506,19 +508,21 @@ export function createEngine(opts: EngineOptions): Engine {
     getTask: (id) => tasks.get(id),
     listTasks: () => tasks.list(),
     createTarget: (task) => createTarget(task, { host, settings }),
-    startSession(task, launch) {
-      const runId = newRunId();
+    startSession(task, launch, resume) {
+      const runId = resume?.runId ?? newRunId();
       const dir = runs.createRunDir(task.id, runId);
       terminals.start(
         task.id,
         () => {
           const target = createTarget(task, { host, settings });
-          const { launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, undefined, true, launch(dir, target));
+          const { launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, resume?.sessionId, true, launch(dir, target));
           return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
         },
         runId,
       );
-      terminalRuns.start({ taskId: task.id, runId, harnessKind: 'claude-code' });
+      // A restarted conversation is the same run, as Continue in Terminal reopens a terminal session's own.
+      const info = resume ? (runs.readTerminalInfo(task.id, runId) ?? undefined) : undefined;
+      terminalRuns.start({ taskId: task.id, runId, harnessKind: 'claude-code', info });
       return { runId, dir };
     },
     closeSession(runId) {
@@ -1076,6 +1080,7 @@ export function createEngine(opts: EngineOptions): Engine {
     remoteState: () => remote.state(),
     remoteLastMessage: (id) => remote.lastMessage(id),
     stopRemoteConversation: (id) => remote.stopConversation(id),
+    restartRemoteConversation: (id) => remote.restartConversation(id),
     isRemoteSession: (id) => remote.owns(id),
     usedRemoteConversations: () => remote.usedCount(),
     taskName: (id) => (tasks.get(id) ?? remote.standIn(id))?.name,

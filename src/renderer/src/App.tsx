@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
+import type { RemoteState } from '@shared/remote';
 import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
@@ -43,21 +44,30 @@ export function App() {
   const [rest, setRest] = useState<RestState | null>(null);
   // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
   const [terminalRun, setTerminalRun] = useState<string | null>(null);
+  const [remote, setRemote] = useState<RemoteState | null>(null);
 
   const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
+  // Remote Control's open conversations while it runs; null while it's stopped.
+  const remoteOpen = useMemo(
+    () => (remote?.running ? remote.conversations.filter((c) => c.status !== 'ended') : null),
+    [remote],
+  );
   // A picked row that left its list (the run ended, the problem cleared) no longer counts.
+  const pickedRows = (list: DashboardPick['list']) =>
+    list === 'remote'
+      ? (remoteOpen ?? []).map((c) => ({ taskId: c.taskId, runId: c.id }))
+      : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
   const livePick =
-    !selected && pick && (pick.list === 'attention' ? attention : running).some((r) => r.task.id === pick.taskId && r.runId === pick.runId)
-      ? pick
-      : null;
-  // The task menus and the toolbar act on: the selected task, or the dashboard row's.
-  const target = selected ?? livePick?.taskId ?? null;
+    !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
+  // The task menus and the toolbar act on: the selected task, or the dashboard row's (a task's, not a conversation's).
+  const taskPick = livePick?.list === 'remote' ? null : livePick;
+  const target = selected ?? taskPick?.taskId ?? null;
 
   // Menu and toolbar commands act on the target task; the ref keeps them acting on current state.
   // On the dashboard, Stop Task stops the picked row's run.
   const uiRef = useRef({ selected: target, tasks, runtimes, terminalRun });
-  uiRef.current = { selected: target, tasks, runtimes, terminalRun: selected ? terminalRun : (livePick?.runId ?? null) };
+  uiRef.current = { selected: target, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
     setSelected(e.taskId);
@@ -190,8 +200,12 @@ export function App() {
       setRuntimes(map);
     });
     void window.looper.restState().then(setRest);
+    void window.looper.remote.state().then(setRemote);
     const unsub = subscribe((e) => {
       switch (e.type) {
+        case 'remote':
+          setRemote(e.state);
+          break;
         case 'tasks':
           setTasks(e.tasks);
           break;
@@ -358,6 +372,7 @@ export function App() {
             <Dashboard
               attention={attention}
               running={running}
+              remote={remoteOpen}
               runtimes={runtimes}
               now={now}
               pick={livePick}
@@ -374,6 +389,7 @@ export function App() {
           <span>
             {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}
             {counts.running} running
+            {remoteOpen && ` · ${remoteOpen.length} Remote Control session${remoteOpen.length === 1 ? '' : 's'}`}
           </span>
         </div>
       )}
