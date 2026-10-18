@@ -62,8 +62,8 @@ export function contextOfLine(line: string, kind: TranscriptKind): number | 'unk
   return tokens > 0 ? tokens : 'unknown';
 }
 
-/** The conversation's context now, in tokens; null when the transcript doesn't tell (yet). */
-export async function readContextTokens(file: string, kind: TranscriptKind): Promise<number | null> {
+/** The newest line `pick` has an answer for (non-null), reading the file from the end. */
+async function newestFromEnd<T>(file: string, pick: (line: string) => T | null): Promise<T | null> {
   const fh = await fs.promises.open(file, 'r');
   try {
     const size = (await fh.stat()).size;
@@ -74,12 +74,35 @@ export async function readContextTokens(file: string, kind: TranscriptKind): Pro
       const lines = buf.toString('utf8').split('\n');
       // The first line of a partial chunk may be cut.
       for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
-        const found = contextOfLine(lines[i], kind);
-        if (found !== null) return found === 'unknown' ? null : found;
+        const found = pick(lines[i]);
+        if (found !== null) return found;
       }
       if (len >= size) return null;
     }
   } finally {
     await fh.close();
   }
+}
+
+/** The conversation's context now, in tokens; null when the transcript doesn't tell (yet). */
+export async function readContextTokens(file: string, kind: TranscriptKind): Promise<number | null> {
+  const found = await newestFromEnd(file, (line) => contextOfLine(line, kind));
+  return found === 'unknown' ? null : found;
+}
+
+/** Codex's context window, which each token_count names as info.model_context_window. */
+export function codexWindowOfLine(line: string): number | null {
+  if (!line.includes('model_context_window')) return null;
+  try {
+    const info = obj(obj(obj(JSON.parse(line))?.payload)?.info);
+    const w = info?.model_context_window;
+    return typeof w === 'number' && w > 0 ? w : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The model's context window as the newest token_count of a codex rollout names it. */
+export function readCodexContextWindow(file: string): Promise<number | null> {
+  return newestFromEnd(file, codexWindowOfLine);
 }

@@ -24,6 +24,7 @@ interface Props {
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
   hideNoActionRuns: boolean;
+  hideChatsAndTerminals: boolean;
   /** Run to select in the run log (notification click). */
   focusRun?: { runId: string } | null;
   /** The run the Terminal tab is pinned to when several are in flight (null = the newest). */
@@ -119,7 +120,20 @@ function describeNextWatch(task: Task, runtime: TaskRuntime | undefined, now: nu
   return at === null ? 'Not scheduled' : describeNextAt(at, now);
 }
 
-export function TaskDetail({ task, environments, runtime, records, now, tab, onTab, hideNoActionRuns, focusRun, terminalRun, onTerminalRun }: Props) {
+export function TaskDetail({
+  task,
+  environments,
+  runtime,
+  records,
+  now,
+  tab,
+  onTab,
+  hideNoActionRuns,
+  hideChatsAndTerminals,
+  focusRun,
+  terminalRun,
+  onTerminalRun,
+}: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
   // What a run will actually emit: the task's pin, or the model's default.
@@ -232,7 +246,16 @@ export function TaskDetail({ task, environments, runtime, records, now, tab, onT
             </dl>
           </div>
         )}
-        {tab === 'runs' && <RunLog task={task} records={records} runtime={runtime} hideNoAction={hideNoActionRuns} focusRun={focusRun} />}
+        {tab === 'runs' && (
+          <RunLog
+            task={task}
+            records={records}
+            runtime={runtime}
+            hideNoAction={hideNoActionRuns}
+            hideChatsAndTerminals={hideChatsAndTerminals}
+            focusRun={focusRun}
+          />
+        )}
         {tab === 'terminal' && (
           <Terminal taskId={task.id} runtime={runtime} selectedRun={terminalRun} onSelectRun={onTerminalRun} />
         )}

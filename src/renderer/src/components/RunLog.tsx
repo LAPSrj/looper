@@ -20,6 +20,7 @@ interface Props {
   records: RunRecord[];
   runtime: TaskRuntime | undefined;
   hideNoAction: boolean;
+  hideChatsAndTerminals: boolean;
   /** Run to select (notification click); a fresh object per click re-triggers. */
   focusRun?: { runId: string } | null;
 }
@@ -61,7 +62,7 @@ function resultText(records: RunRecord[]): string {
   return r?.body ?? r?.summary ?? '';
 }
 
-export function RunLog({ task, records, runtime, hideNoAction, focusRun }: Props) {
+export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTerminals, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,9 +101,13 @@ export function RunLog({ task, records, runtime, hideNoAction, focusRun }: Props
       });
     }
     result.sort((a, b) => b.startTs.localeCompare(a.startTs));
-    // "No action" to the user covers both no-action check runs and scheduler skips.
-    return hideNoAction ? result.filter((g) => g.result !== 'skipped' && g.result !== 'noop') : result;
-  }, [records, hideNoAction]);
+    return result.filter(
+      (g) =>
+        // "No action" to the user covers both no-action check runs and scheduler skips.
+        !(hideNoAction && (g.result === 'skipped' || g.result === 'noop')) &&
+        !(hideChatsAndTerminals && (g.result === 'chat' || g.result === 'terminal')),
+    );
+  }, [records, hideNoAction, hideChatsAndTerminals]);
 
   useEffect(() => {
     // While records are still loading (groups empty) keep the selection: a

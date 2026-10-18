@@ -17,6 +17,8 @@ const RESULT_LABELS: Record<string, string> = {
   sent: 'Sent',
   delivered: 'Delivered',
   undelivered: 'Not delivered',
+  chat: 'Chat',
+  terminal: 'Terminal',
 };
 
 export function resultLabel(result: string): string {

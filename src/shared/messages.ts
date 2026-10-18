@@ -31,6 +31,8 @@ export interface MessageRow {
   patch?: PatchHunk[];
   /** Prompt rows of a task chat: the files sent with the message. */
   attachments?: Attachment[];
+  /** Claude: the id of the transcript message the row came from (Fork from Here resumes the conversation at it). */
+  uuid?: string;
 }
 
 /** One hunk of a recorded file change; lines are prefixed ' ', '-' or '+'. */

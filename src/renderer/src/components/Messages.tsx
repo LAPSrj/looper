@@ -60,6 +60,13 @@ function stepText(r: RunRecord): string {
       return note ? `Watcher fired: ${note}` : 'Watcher fired';
     case 'system':
       return capFirst(note ?? resultLabel(r.result));
+    case 'chat':
+    case 'terminal': {
+      const what = r.phase === 'chat' ? 'Chat' : 'Terminal';
+      return r.detail?.event === 'closed'
+        ? `${what} closed${r.durationMs !== undefined ? ` after ${formatDuration(r.durationMs)}` : ''}`
+        : `${what} opened`;
+    }
   }
   let text = `${STEP_NAMES[r.phase] ?? capFirst(r.phase)} ${STEP_OUTCOMES[r.result] ?? resultLabel(r.result).toLowerCase()}`;
   if (r.durationMs !== undefined) text += ` in ${formatDuration(r.durationMs)}`;

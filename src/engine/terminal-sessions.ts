@@ -34,8 +34,8 @@ interface Session {
 /**
  * Terminal sessions in Looper's own windows (Open Project in Terminal and
  * Continue in Terminal, with the Looper terminal setting): the task's harness
- * in a pty, typed into by the user. A session isn't a run: it has no time
- * limits, records or done signal, and it ends when its window closes.
+ * in a pty, typed into by the user. It has no time limits or done signal, and
+ * it ends when its window closes. TerminalRuns records it as a run.
  */
 export class TerminalSessions {
   private readonly sessions = new Map<string, Session>();
@@ -43,9 +43,8 @@ export class TerminalSessions {
 
   constructor(private readonly d: TerminalSessionsDeps) {}
 
-  /** Start a session for the task; `prepare` writes its launcher. Returns the session id. */
-  start(taskId: string, prepare: (id: string) => TerminalSessionSpec): string {
-    const id = `${taskId}-${Date.now().toString(36)}${(++this.seq).toString(36)}`;
+  /** Start a session for the task; `prepare` writes its launcher. `id` (its run id) defaults to a new one. Returns the session id. */
+  start(taskId: string, prepare: (id: string) => TerminalSessionSpec, id = `${taskId}-${Date.now().toString(36)}${(++this.seq).toString(36)}`): string {
     const { spec, cwd, launcher } = prepare(id);
     let proc: SessionProc;
     try {

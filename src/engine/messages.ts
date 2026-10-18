@@ -212,6 +212,8 @@ export class TranscriptAccumulator {
   readonly images = new Map<string, MessageImage>();
   private nextId = 0;
   private byToolId = new Map<string, MessageRow>();
+  /** The id of the record addLine is folding: its rows get it. */
+  private recordUuid: string | undefined;
 
   constructor(protected readonly opts: AccumulatorOpts = {}) {}
 
@@ -236,6 +238,15 @@ export class TranscriptAccumulator {
     } catch {
       return; // torn or foreign line
     }
+    this.recordUuid = typeof rec.uuid === 'string' && rec.uuid ? rec.uuid : undefined;
+    try {
+      this.addRecord(rec);
+    } finally {
+      this.recordUuid = undefined;
+    }
+  }
+
+  private addRecord(rec: Rec): void {
     // The main transcript may inline sidechain records; they belong to the subagent view.
     if (!this.opts.sidechain && rec.isSidechain === true) return;
     const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
@@ -379,6 +390,7 @@ export class TranscriptAccumulator {
       preview: r.preview ?? previewOf(r.text),
       text: cap(r.text, MAX_TEXT),
     };
+    if (this.recordUuid) row.uuid = this.recordUuid;
     this.rows.push(row);
     if (this.rows.length > MAX_ROWS) {
       this.rows.shift();
@@ -435,7 +447,9 @@ export class CodexAccumulator extends TranscriptAccumulator {
         if (p.role !== 'assistant' && this.pushGuidance(text, ts)) continue;
         if (p.role === 'developer') continue;
         if (block.type === 'input_text' && p.role === 'user') {
-          if (/^<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
+          // Injected context is one <tag>…</tag> block, after a heading line for the AGENTS.md
+          // instructions ("# AGENTS.md instructions", seen live in codex-cli 0.163.0).
+          if (/^(?:#[^\n]*\n+)?<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
           this.push({ kind: 'prompt', ts, text });
         } else if (block.type === 'output_text' && p.role === 'assistant') {
           this.push({ kind: 'agent', ts, text });
@@ -535,7 +549,16 @@ export class TranscriptReader {
     throw lastErr ?? new Error('no transcript');
   }
 
-  async read(): Promise<void> {
+  /** Reads one at a time: two overlapping ones would both start at the same offset and add the new lines twice. */
+  private queue: Promise<void> = Promise.resolve();
+
+  read(): Promise<void> {
+    const next = this.queue.then(() => this.readNew());
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async readNew(): Promise<void> {
     const file = await this.resolve();
     const st = await fs.promises.stat(file);
     if (st.size < this.offset) {

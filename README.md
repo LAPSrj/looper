@@ -25,6 +25,10 @@ started. No idle burn, no context rot, at most one agent per task, ever.
 - **Monitoring built in** — a per-task Runs tab with results and reports, a
   run window with each run's steps and full conversation, live status, and a
   real terminal tab you can watch *and type into* mid-run.
+- **Chats and terminals on demand** — open a task's agent in a chat window
+  or a terminal, pick up a finished run's conversation in either, and fork a
+  chat from any message; each one you start is kept in the Runs tab with the
+  task's runs.
 - **System notifications** — each task picks what it toasts, from errors-only
   to every run; clicking one lands on the live terminal, the run in the Runs
   tab, or, for an error or warning, the run's window with its report selected.
@@ -105,8 +109,8 @@ The full user guide lives in [docs/](docs/README.md):
   cycle and every way a run ends.
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
-- [Monitoring](docs/monitoring.md) — terminal tab, Runs tab and run window,
-  notifications, Rest Mode, tray, settings.
+- [Monitoring](docs/monitoring.md) — terminal tab, chats and terminal
+  sessions, Runs tab and run window, notifications, Rest Mode, tray, settings.
 - [CLI and automation](docs/cli-and-automation.md) — the CLI, the inbox
   protocol, the data directory.
 - [Troubleshooting](docs/troubleshooting.md) — common problems, current

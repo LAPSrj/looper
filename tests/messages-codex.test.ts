@@ -140,6 +140,8 @@ describe('CodexAccumulator', () => {
   it('skips injected context, developer records, duplicates and bookkeeping', () => {
     const acc = new CodexAccumulator();
     acc.addLine(userText('<environment_context>\n  <cwd>/ws</cwd>\n</environment_context>'));
+    // codex-cli 0.163.0 puts a heading before the AGENTS.md block.
+    acc.addLine(userText('# AGENTS.md instructions\n\n<INSTRUCTIONS>\n## Style\n</INSTRUCTIONS>'));
     acc.addLine(rec('response_item', { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'skills' }] }));
     // Messages ride response_item; the item_completed copies must not duplicate them.
     acc.addLine(item({ type: 'UserMessage', content: [{ type: 'text', text: 'dupe' }] }));

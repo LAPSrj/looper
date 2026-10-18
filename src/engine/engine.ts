@@ -10,14 +10,15 @@ import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { MessagesService, readRunSessionId } from './messages';
 import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
+import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions } from './terminal-sessions';
 import { ChatManager, imageMediaType } from './chat';
-import type { Attachment, AttachmentInput, ChatState } from '../shared/chat';
+import type { Attachment, AttachmentInput, ChatSettings, ChatState, TerminalInfo } from '../shared/chat';
 import { createWindowsPowerOps } from './power-win';
 import { RestController, type PowerAdapter, type PowerOps } from './rest';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir } from './store/fsutil';
-import { RunStore } from './store/runs';
+import { RunStore, newRunId } from './store/runs';
 import { loadSettings, saveSettings } from './store/settings';
 import { StateStore } from './store/state';
 import { expiredBinEntries, TaskStore } from './store/tasks';
@@ -161,10 +162,16 @@ export interface Engine {
   /**
    * Open the task's harness in a window of the system's terminal (same
    * env/cwd/model/args, no prompt). A run id resumes that run's conversation
-   * instead of starting fresh.
+   * instead of starting fresh. Looper can't tell when that window's session
+   * ends, so it isn't recorded as a run.
    */
   openTaskTerminal(id: string, runId?: string): Promise<void>;
-  /** The same session in a pty for a Looper terminal window. Returns the session id. */
+  /**
+   * The same session in a pty for a Looper terminal window, a run of the task
+   * from its first finished turn (Claude Code and Codex). Returns the session
+   * id, which is its run id; Continue in Terminal gives the open window's when
+   * one holds the run's conversation (it comes forward).
+   */
   startTerminalSession(id: string, runId?: string): string;
   writeTerminalSession(sessionId: string, data: string): void;
   resizeTerminalSession(sessionId: string, cols: number, rows: number): void;
@@ -176,12 +183,20 @@ export interface Engine {
   runningTerminalSessions(): number;
   /** Terminal window: copy the files into the task's attachments; returns their paths as the terminal pastes them. */
   attachToTerminal(sessionId: string, files: AttachmentInput[]): string;
-  /** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a chat. Throws with the reason. */
+  /**
+   * Open Project in Chat, or Continue in Chat with a run id: the task's
+   * harness in a chat. Continue gives the open chat holding the run's
+   * conversation when there is one (its window comes forward). Throws with the reason.
+   */
   startChat(id: string, runId?: string): ChatState;
+  /** Fork from Here: a new chat with the conversation up to the row at `index` of the chat's history and rows. Throws with the reason. */
+  forkChat(chatId: string, index: number): ChatState;
   getChat(chatId: string): ChatState | undefined;
   sendChat(chatId: string, text: string, attachments: Attachment[]): void;
   /** End the agent's turn; the conversation goes on with the next message. */
   stopChat(chatId: string): Promise<void>;
+  /** Chat menu: the chat's own model, effort or permission mode. */
+  configureChat(chatId: string, patch: Partial<ChatSettings>): Promise<void>;
   /** Answer the agent's permission request. */
   answerChat(chatId: string, requestId: string, allow: boolean): void;
   /** End a chat (its window closed). */
@@ -192,8 +207,13 @@ export interface Engine {
   attachToChat(chatId: string, files: AttachmentInput[]): Attachment[];
   /** Whether a host path is one of Looper's attachment copies (the only files a click on an attachment opens). */
   isAttachment(hostPath: string): boolean;
-  /** Whether a run's conversation can be continued: claude/codex, a session on record, the run not in flight. */
-  canContinueRun(id: string, runId: string): boolean;
+  /**
+   * Which Continue items a run offers: claude/codex, a session on record, the
+   * run not in flight. While a chat or Looper terminal window holds the
+   * conversation, only the item of that kind is on (it brings the window
+   * forward), so nothing else writes to the conversation meanwhile.
+   */
+  canContinueRun(id: string, runId: string): { chat: boolean; terminal: boolean; guidance: boolean };
   /** Start a manual run that resumes the run's conversation with `guidance` as its whole prompt (no check/classifier). */
   continueRun(id: string, runId: string, guidance: string): boolean;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
@@ -406,18 +426,114 @@ export function createEngine(opts: EngineOptions): Engine {
     return sid;
   };
 
+  // Chats and terminal sessions are runs: they share how a run's records and conversation are kept.
+  const runDirOf = (taskId: string, runId: string) => runs.runDir(taskId, runId);
+  const readHistory = async (taskId: string, runId: string) => {
+    const r = await messages.read(taskId, runId);
+    return r.status === 'ok' ? r.rows.filter((row) => row.kind !== 'raw') : [];
+  };
+  const appendRecord = (record: RunRecord) => {
+    try {
+      runs.append(record);
+    } catch (err) {
+      log.error(`[${record.taskId}] cannot write run log: ${errMsg(err)}`);
+    }
+    emit({ type: 'record', record });
+  };
+  const taskVersion = (taskId: string) => {
+    try {
+      return versions.current(taskId);
+    } catch {
+      return undefined; // an unreadable history only costs the stamp
+    }
+  };
+
   const chats = new ChatManager({
     dataDir,
     host,
     settings,
     log,
     emit,
-    resumeIdOf,
-    readHistory: async (taskId, runId) => {
-      const r = await messages.read(taskId, runId);
-      return r.status === 'ok' ? r.rows.filter((row) => row.kind !== 'raw') : [];
-    },
+    runDir: runDirOf,
+    readHistory,
+    writeInfo: (taskId, runId, info) => runs.writeChatInfo(taskId, runId, info),
+    appendRecord,
+    taskVersion,
   });
+
+  const terminalRuns = new TerminalRuns({
+    runDir: runDirOf,
+    readHistory,
+    writeInfo: (taskId, runId, info) => runs.writeTerminalInfo(taskId, runId, info),
+    appendRecord,
+    taskVersion,
+    log,
+  });
+
+  /**
+   * The run of a kind (chat or terminal session) that already holds a run's
+   * conversation `sessionId`: the run itself when it is one, else the newest
+   * one that went on with it. One per conversation.
+   */
+  const holderOf = (task: Task, runId: string, sessionId: string, kind: 'chat' | 'terminal'): string | undefined => {
+    const harness = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+    const ids = kind === 'chat' ? runs.listChatRunIds(task.id) : runs.listTerminalRunIds(task.id);
+    if (ids.includes(runId)) return runId;
+    return ids.reverse().find((id) => readRunSessionId(runs.runDir(task.id, id), harness) === sessionId);
+  };
+
+  /** Which kind of open window holds a run's conversation, if any (the other kind keeps off it). */
+  const openHolder = (task: Task, runId: string): { chat?: ChatState; terminal?: string } => {
+    let sessionId: string;
+    try {
+      sessionId = resumeIdOf(task, runId);
+    } catch {
+      return {};
+    }
+    return { chat: chats.findOpen(task.id, runId, sessionId), terminal: terminalRuns.findOpen(task.id, runId, sessionId) };
+  };
+
+  /**
+   * Continue in Chat on a run: one chat per conversation. The open chat that
+   * holds it comes forward; else the run's own chat, or the chat that already
+   * went on with its conversation, opens again; else a new chat goes on with it.
+   */
+  const continueInChat = (task: Task, runId: string): ChatState => {
+    const sessionId = resumeIdOf(task, runId);
+    const open = chats.findOpen(task.id, runId, sessionId);
+    if (open) return open;
+    if (terminalRuns.findOpen(task.id, runId, sessionId)) throw new Error('The conversation is open in a terminal window.');
+    const holder = holderOf(task, runId, sessionId, 'chat');
+    const info = holder ? runs.readChatInfo(task.id, holder) : null;
+    if (holder && info) return chats.start(task, { kind: 'reopen', runId: holder, info, sessionId });
+    return chats.start(task, { kind: 'continue', runId, sessionId });
+  };
+
+  /**
+   * Where a terminal session goes, as Continue in Chat decides for a chat:
+   * the open Looper terminal window holding the conversation (`open`), the
+   * terminal session's run that holds it, or a new run.
+   */
+  const terminalRunFor = (
+    task: Task,
+    runId?: string,
+  ): { runId: string; open?: boolean; resume?: string; info?: TerminalInfo; fromRunId?: string } => {
+    if (!runId) return { runId: newRunId() };
+    const sessionId = resumeIdOf(task, runId);
+    const open = terminalRuns.findOpen(task.id, runId, sessionId);
+    if (open) return { runId: open, open: true };
+    if (chats.findOpen(task.id, runId, sessionId)) throw new Error('The conversation is open in a chat window.');
+    const holder = holderOf(task, runId, sessionId, 'terminal');
+    const info = holder ? runs.readTerminalInfo(task.id, holder) : null;
+    if (holder && info) return { runId: holder, resume: sessionId, info };
+    return { runId: newRunId(), resume: sessionId, fromRunId: runId };
+  };
+
+  /** Claude Code and Codex sessions are recorded as runs; a custom harness has no conversation to record. */
+  const recordedKind = (task: Task): 'claude-code' | 'codex' | null => {
+    const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+    return kind === 'custom' ? null : kind;
+  };
 
   /** Copies of the given files (bytes, or a host file) in the task's attachments. */
   const saveAttachments = (taskId: string, files: AttachmentInput[]): Attachment[] =>
@@ -546,7 +662,12 @@ export function createEngine(opts: EngineOptions): Engine {
     const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
     for (const taskId of runs.listTaskIds()) {
       try {
-        const active = new Set(scheduler.get(taskId)?.runs.map((r) => r.runId) ?? []);
+        // Runs in progress and open chats keep their records and folders.
+        const active = new Set([
+          ...(scheduler.get(taskId)?.runs.map((r) => r.runId) ?? []),
+          ...chats.openIds(),
+          ...terminalRuns.openIds(),
+        ]);
         const { records, dirs } = runs.pruneOlderThan(taskId, cutoffMs, active);
         if (records || dirs) {
           log.info(`${taskId}: pruned ${records} run records and ${dirs} run folders older than ${settings.runRetentionDays} days`);
@@ -621,7 +742,6 @@ export function createEngine(opts: EngineOptions): Engine {
       log.info(`looper engine starting (host=${host}, dataDir=${dataDir})`);
       warmMountPrefixes();
       builders.sweep();
-      chats.sweep();
       tasks.load();
       templates.load();
       tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) => {
@@ -645,6 +765,7 @@ export function createEngine(opts: EngineOptions): Engine {
       inbox.stop();
       rest?.dispose();
       terminals.closeAll();
+      terminalRuns.closeAll();
       await Promise.all([scheduler.stop(), builders.closeAll(), chats.closeAll()]);
       await versionQueue;
       log.info('looper engine stopped');
@@ -842,27 +963,40 @@ export function createEngine(opts: EngineOptions): Engine {
       const task = tasks.get(id);
       if (!task) throw new Error(`unknown task ${id}`);
       const resumeSessionId = runId ? resumeIdOf(task, runId) : undefined;
-      return openTaskTerminal(task, { host, settings, taskDir: runs.taskDir(id), log }, resumeSessionId);
+      return openTaskTerminal(task, { host, settings, log }, runs.taskDir(id), resumeSessionId);
     },
     startTerminalSession(id: string, runId?: string): string {
       const task = tasks.get(id);
       if (!task) throw new Error(`unknown task ${id}`);
-      const resumeSessionId = runId ? resumeIdOf(task, runId) : undefined;
-      const taskDir = runs.taskDir(id);
-      return terminals.start(id, (sessionId) => {
-        const { target, launcherHost } = writeTerminalLauncher(
-          task,
-          { host, settings, taskDir },
-          resumeSessionId,
-          `terminal-${sessionId}`,
-        );
-        return { spec: target.spawnSpec(launcherHost), cwd: taskDir, launcher: launcherHost };
-      });
+      const kind = recordedKind(task);
+      const to = kind ? terminalRunFor(task, runId) : { runId: newRunId() };
+      if ('open' in to && to.open) return to.runId;
+      const dir = runs.createRunDir(id, to.runId);
+      const resume = 'resume' in to ? to.resume : undefined;
+      const sessionId = terminals.start(
+        id,
+        () => {
+          const { target, launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, resume, !!kind);
+          return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
+        },
+        to.runId,
+      );
+      if (kind) {
+        const extra = to as { info?: TerminalInfo; fromRunId?: string };
+        terminalRuns.start({ taskId: id, runId: to.runId, harnessKind: kind, info: extra.info, fromRunId: extra.fromRunId });
+      }
+      return sessionId;
     },
     writeTerminalSession: (sessionId, data) => terminals.write(sessionId, data),
     resizeTerminalSession: (sessionId, cols, rows) => terminals.resize(sessionId, cols, rows),
     terminalSessionOutput: (sessionId) => terminals.output(sessionId),
-    closeTerminalSession: (sessionId) => terminals.close(sessionId),
+    closeTerminalSession(sessionId: string): void {
+      const taskId = terminals.taskOf(sessionId);
+      terminals.close(sessionId);
+      if (terminalRuns.openIds().has(sessionId)) terminalRuns.close(sessionId);
+      // A custom harness's session records nothing: its folder only held the launcher.
+      else if (taskId) fs.rmSync(runs.runDir(taskId, sessionId), { recursive: true, force: true });
+    },
     runningTerminalSessions: () => terminals.running(),
     attachToTerminal(sessionId: string, files: AttachmentInput[]): string {
       const taskId = terminals.taskOf(sessionId);
@@ -877,11 +1011,18 @@ export function createEngine(opts: EngineOptions): Engine {
     startChat(id: string, runId?: string): ChatState {
       const task = tasks.get(id);
       if (!task) throw new Error(`unknown task ${id}`);
-      return chats.start(task, runId);
+      return runId ? continueInChat(task, runId) : chats.start(task, { kind: 'new' });
+    },
+    forkChat(chatId: string, index: number): ChatState {
+      const taskId = chats.taskOf(chatId);
+      const task = taskId ? tasks.get(taskId) : undefined;
+      if (!task) throw new Error('This chat is closed.');
+      return chats.fork(task, chatId, index);
     },
     getChat: (chatId) => chats.get(chatId),
     sendChat: (chatId, text, attachments) => chats.send(chatId, text, attachments),
     stopChat: (chatId) => chats.stop(chatId),
+    configureChat: (chatId, patch) => chats.configure(chatId, patch),
     answerChat: (chatId, requestId, allow) => chats.answer(chatId, requestId, allow),
     closeChat: (chatId) => chats.close(chatId),
     busyChats: () => chats.busy(),
@@ -895,16 +1036,19 @@ export function createEngine(opts: EngineOptions): Engine {
       const parts = rel.split(path.sep);
       return !rel.startsWith('..') && !path.isAbsolute(rel) && parts.length === 3 && parts[1] === 'attachments';
     },
-    canContinueRun(id: string, runId: string): boolean {
+    canContinueRun(id: string, runId: string): { chat: boolean; terminal: boolean; guidance: boolean } {
+      const none = { chat: false, terminal: false, guidance: false };
       const task = tasks.get(id);
-      if (!task) return false;
-      if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return false;
+      if (!task) return none;
+      if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return none;
       try {
-        const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
-        if (kind !== 'claude-code' && kind !== 'codex') return false;
-        return readRunSessionId(runs.runDir(id, runId), kind) !== null;
+        const kind = recordedKind(task);
+        if (!kind) return none;
+        if (readRunSessionId(runs.runDir(id, runId), kind) === null) return none;
+        const open = openHolder(task, runId);
+        return { chat: !open.terminal, terminal: !open.chat, guidance: !open.chat && !open.terminal };
       } catch {
-        return false;
+        return none;
       }
     },
     continueRun: (id, runId, guidance) => scheduler.continueRun(id, runId, guidance),
@@ -924,6 +1068,9 @@ export function createEngine(opts: EngineOptions): Engine {
       const rt = scheduler.get(id);
       if (rt && rt.runs.length > 0) {
         throw new Error(`The task is ${rt.state}; wait for the run to end or stop the task first.`);
+      }
+      if (chats.hasOpen(id) || terminalRuns.hasOpen(id)) {
+        throw new Error('A chat or terminal window of this task is open. Close it first.');
       }
       runs.clear(id);
       log.info(`cleared run history of ${id}`);

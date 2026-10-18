@@ -61,6 +61,8 @@ export interface IpcHost {
   terminalWindow: (sessionId: string) => BrowserWindow | undefined;
   /** Open Project in Chat / Continue in Chat (with a run id). Rejects with the reason when the chat can't start. */
   openChat: (taskId: string, runId?: string) => Promise<void>;
+  /** Fork from Here: a new chat window with the conversation up to the row at `index`. Throws with the reason. */
+  forkChat: (chatId: string, index: number) => void;
   /** The window of a chat, which alone gets its events. */
   chatWindow: (chatId: string) => BrowserWindow | undefined;
   takeImportDraft: (key: string) => unknown;
@@ -285,6 +287,79 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.sendChat(id, String(text ?? ''), files);
   });
   ipcMain.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
+  ipcMain.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
+  // A chat message's right-click menu; Edit as New Message hands the message back to the window's message box.
+  ipcMain.on(
+    'context-menu:chat',
+    (
+      e,
+      info: {
+        chatId: string;
+        taskId: string;
+        selection?: string;
+        text?: string;
+        textLabel?: string;
+        result?: string;
+        file?: string;
+        resend?: { text: string; attachments: Attachment[] };
+        fork?: number;
+      },
+    ) => {
+      const sender = BrowserWindow.fromWebContents(e.sender);
+      if (!sender) return;
+      const groups: Electron.MenuItemConstructorOptions[][] = [];
+      if (info.selection) groups.push([{ label: 'Copy', click: () => clipboard.writeText(info.selection!) }]);
+      const copies: Electron.MenuItemConstructorOptions[] = [];
+      if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => clipboard.writeText(info.text!) });
+      if (info.result) copies.push({ label: 'Copy Result', click: () => clipboard.writeText(info.result!) });
+      if (copies.length) groups.push(copies);
+      if (info.file) {
+        const file = info.file;
+        groups.push([
+          {
+            label: 'Open File',
+            click: () =>
+              void openTargetPath(info.taskId, file).catch((err: unknown) => {
+                void dialog.showMessageBox(sender, {
+                  type: 'error',
+                  title: 'Looper',
+                  message: `Could not open ${file}.`,
+                  detail: err instanceof Error ? err.message : String(err),
+                  buttons: ['OK'],
+                });
+              }),
+          },
+          { label: 'Copy Path', click: () => clipboard.writeText(file) },
+        ]);
+      }
+      const again: Electron.MenuItemConstructorOptions[] = [];
+      if (info.resend) {
+        const resend = info.resend;
+        again.push({ label: 'Edit as New Message', click: () => sender.webContents.send('ui:event', { type: 'chat-edit', ...resend }) });
+      }
+      if (typeof info.fork === 'number') {
+        const index = info.fork;
+        again.push({
+          label: 'Fork from Here',
+          click: () => {
+            try {
+              host.forkChat(String(info.chatId), index);
+            } catch (err) {
+              void dialog.showMessageBox(sender, {
+                type: 'error',
+                title: 'Looper',
+                message: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }
+          },
+        });
+      }
+      if (again.length) groups.push(again);
+      const items = groups.flatMap((g, i) => (i ? [{ type: 'separator' } as const, ...g] : g));
+      if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: sender });
+    },
+  );
   ipcMain.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
   /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
   ipcMain.handle('attachment:open', async (_e, p: string) => {
@@ -755,17 +830,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       },
       {
         label: 'Continue in Terminal',
-        enabled: canContinue,
+        enabled: canContinue.terminal,
         click: () => void host.openTerminal(info.taskId, info.runId).catch(showError),
       },
       {
         label: 'Continue in Chat',
-        enabled: canContinue,
+        enabled: canContinue.chat,
         click: () => void host.openChat(info.taskId, info.runId).catch(showError),
       },
       {
         label: 'Continue with Guidance…',
-        enabled: canContinue,
+        enabled: canContinue.guidance,
         click: () => host.openContinueRun(info.taskId, info.runId),
       },
       { type: 'separator' },

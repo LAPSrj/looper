@@ -72,9 +72,11 @@ window shows: a Standard or Compact task
 list (Compact drops the status line), whether disabled, completed, scheduled,
 manual, and watcher tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
-whole subtree; unchecked, folders start closed), whether runs with no
-action are hidden in every task's Runs tab (Task Logs → Hide Runs with No
-Action), and whether the toolbar and status bar themselves are shown.
+whole subtree; unchecked, folders start closed), whether every task's Runs
+tab hides runs with no action (Task Logs → Hide Runs with No Action) and the
+[chats](#chats) and [terminal sessions](#terminal-sessions) you started (Task
+Logs → Hide Chats and Terminals), and whether the toolbar and status bar
+themselves are shown.
 
 The Advanced menu has Update Models… (see
 [Models](environments.md#models)), Engine Log (described below), Open Data
@@ -127,17 +129,37 @@ run](how-a-run-works.md)) open a terminal session where
 **Settings → General → Open terminal sessions in** says:
 
 - **Looper** (the default) opens a Looper terminal window titled with the
-  task's name. The session isn't a run: it has no time limits, isn't
-  recorded, and doesn't show in the Runs tab or on the dashboard. When the
-  harness exits, the window shows "session ended". Closing the window ends
-  the session, and so does quitting Looper, which asks first while a
-  session is still running, whatever **Ask before quitting while tasks are
-  running** is set to.
+  task's name. When the harness exits, the window shows "session ended".
+  Closing the window ends the session, and so does quitting Looper, which
+  asks first while a session is still running, whatever **Ask before
+  quitting while tasks are running** is set to.
 - **Default terminal** opens a window of the system's terminal instead. On
   Windows that's the default terminal application set in Windows (Settings
   → System → For developers → Terminal); on Linux, `$TERMINAL` or the first
   common terminal found; on macOS, Terminal. That window doesn't depend on
   Looper and stays open when Looper quits.
+
+With Claude Code or Codex, a session in a Looper terminal window becomes a
+run of the task when the agent finishes its first turn. It shows in the Runs
+tab with **Terminal** as its result and its first message as the details,
+and it has no time limits and no dashboard row. Each time a window on it
+opens and closes adds a line to the run's records ("Terminal opened",
+"Terminal closed after 12m"). A session closed before the agent's first turn
+leaves nothing behind. Sessions in the system's terminal aren't recorded,
+because Looper can't tell when they end, and neither are a custom harness's.
+
+The run window shows the session's conversation, and the run's right-click
+menu has the Continue items. **Continue in Terminal** opens the same run
+again on its conversation. As with [chats](#chats), a conversation has one
+terminal session: Continue in Terminal on a run whose conversation a terminal
+session already went on with opens that session's run, and a Looper terminal
+window that's open comes to the front.
+
+Looper learns about each finished turn from hooks it passes to the harness:
+Claude Code's SessionStart and Stop hooks, and Codex's `notify` setting.
+Because that setting is passed with `-c`, Codex shows "⚠ 1 warning" in its
+status line, saying it runs without its shared background server; the
+session works the same.
 
 In a Looper terminal window you can attach files: drop them on the window,
 paste a copied screenshot with Ctrl+V, or right-click and choose **Attach
@@ -148,19 +170,69 @@ attachment; any other file is a path the agent can read.
 
 ## Chats
 
+![A chat window: a question, the agent's tool uses collapsed into one line, its answer, and the status bar](img/chat.png)
+
 **Open Project in Chat** (Task menu, or right-click a task) and **Continue
 in Chat** (right-click a run in the Runs tab, or the run window's File menu)
 open the task's harness in a Looper chat window, as messages instead of a
-terminal. Like a terminal session, a chat isn't a run: it has no time limits,
-isn't recorded, and doesn't show in the Runs tab or on the dashboard. It uses
-the task's own harness, model, effort, permission mode and arguments. Continue
-in Chat shows the run's conversation above the new messages and goes on from
-where the run left off.
+terminal. It starts with the task's own harness, model, effort, permission
+mode and arguments. Continue in Chat shows the run's conversation above the
+new messages and goes on from where the run left off.
 
-Enter sends the message (Shift+Enter starts a new line). The window's menu
-bar has a File menu (Attach Files… (Ctrl+O), Close (Ctrl+W)) and a Chat
-menu with **Stop** (Esc), which ends the agent's turn while it works; the
-next message goes on with the same conversation.
+Once you send the first message, the chat is a run of the task: it shows in
+the Runs tab with **Chat** as its result and its first message as the
+details, and each time its window opens and closes adds a line to the run's
+records. It has no time limits and no dashboard row. Double-click it for the
+run window, and right-click it for the same Continue items as any run.
+Continue in Chat opens the chat again with its conversation and settings,
+and goes on from where it ended. A conversation has one chat at a time: if a
+chat already went on with a run's conversation, Continue in Chat on that run
+opens that chat, and a chat that's open comes to the front. While a chat or
+a Looper terminal window holds a conversation, the runs whose conversation it
+is offer only the Continue item that brings that window forward, so nothing
+else writes to the conversation at the same time. A chat closed without a
+message sent leaves nothing behind. Chats and terminal sessions are deleted
+by **Run log retention** (Settings → General), like other runs, and **View →
+Task Logs → Hide Chats and Terminals** hides them from the Runs tab.
+
+Enter sends the message (Shift+Enter starts a new line). In an empty message
+box, Up brings back the messages you sent, newest first, and Down goes back
+toward your draft. The status bar at the bottom shows the harness, model,
+effort and permission mode, and how much of the model's context the
+conversation fills (after the agent's first reply).
+
+The window's File menu has Attach Files… (Ctrl+O), Save as Markdown… (Ctrl+S,
+with the same export options as the run window), Open Working Directory, and
+Close (Ctrl+W).
+
+The Edit menu has Undo, Redo, Cut, Copy, Paste, Select All, and **Find…**
+(Ctrl+F), which opens a find bar above the conversation. Enter or F3 goes to
+the next match, Shift+Enter or Shift+F3 to the previous one, and Esc closes
+the bar. Text inside a collapsed tool group or thinking block isn't searched.
+
+The Chat menu has **Stop** (Esc), which ends the agent's turn while it works
+(the next message goes on with the same conversation), and the **Model**,
+**Effort** and **Permission Mode** submenus. They change this chat only, and
+the task keeps its own settings. A new permission mode applies right away,
+even mid-turn. With Claude Code, a new model or effort, or switching to
+Bypass, restarts the session on the same conversation, so those wait until the
+agent finishes its turn. With Codex, every change applies from the next
+message.
+
+Right-click a message for Copy (the selected text) and Copy Message; on a tool
+call, Copy Input and Copy Result, plus Open File and Copy Path when it worked
+on a file. On a message you sent, **Edit as New Message** puts its text and
+files back in the message box so you can change them and send them again. The
+earlier message stays in the conversation.
+
+**Fork from Here** (right-click a message) opens a new chat whose conversation
+is this one up to that message; this chat goes on unchanged. On the agent's
+message, the new chat's conversation ends with it. On a message you sent, it
+ends just before it, and the message waits in the new chat's message box, so
+you can change it and send it on the other branch. Codex can only fork where
+the agent ended a turn, so with Codex the item is on the agent's last message
+of each turn (and on your messages), and not while the turn is running. The
+new chat becomes a run of its own once you send a message.
 
 With Claude Code, a tool call that the task's permission mode would ask about
 shows in the chat with **Allow** and **Deny**, and the agent waits for your
@@ -281,20 +353,22 @@ press Stop Task (Shift+F5)."
 
 ## The runs tab
 
-![The Runs tab with a run selected and its report below](img/runs-tab.png)
+![The Runs tab: a chat and a terminal session among the scheduled runs, and a run selected with its report below](img/runs-tab.png)
 
 The Runs tab lists every past run of the task as a table: Date, Start,
 End, Result, Duration, Version (the task's [version](tasks.md#version-history)
 when the run started), Details. Each row is one full run (check, classify,
 and agent steps collapsed together, showing the most significant result);
-a run still in progress shows Running in the Result column.
+a run still in progress shows Running in the Result column. A
+[chat](#chats) or [terminal session](#terminal-sessions) you started shows as
+Chat or Terminal, with its first message as the details.
 Selecting a row shows that run's final report below in a resizable split
 pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
 choosing "Open" opens the run window described below. The
 context menu also offers "Copy Details", "Send Guidance…" (while the run's agent is going; see
 [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
-"Continue in Terminal" and "Continue with Guidance…" (for a finished Claude
-Code or Codex run; see [continuing a finished run](how-a-run-works.md#continuing-a-finished-run)),
+"Continue in Terminal", "Continue in Chat" and "Continue with Guidance…" (for
+a finished Claude Code or Codex run; see [continuing a finished run](how-a-run-works.md#continuing-a-finished-run)),
 "Open Run Folder", and "Copy Run Folder Path". Ctrl+C copies the selected
 run's report, or its details text when it has no report.
 
@@ -315,7 +389,9 @@ tool's name. Run rows are the run's steps: the watcher events that started
 it, the check result ("Check found work", "Check found nothing to do"), steps
 the Run Options window skipped, the classifier and agent starting and ending
 ("Agent completed in 5m10s", with cost in dollars when the harness reports
-it), guidance being sent and delivered, and the final result. When the run had a classifier, its
+it), guidance being sent and delivered, and the final result; for a chat or
+terminal session, each time its window opened and closed ("Chat closed after
+4m"). When the run had a classifier, its
 conversation sits between its start and end rows, with its replies typed as
 **Classifier**. Selecting a Run row shows that step's output below: the
 agent's end row shows the run's terminal output, cleaned of ANSI codes and,

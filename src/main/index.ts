@@ -7,6 +7,8 @@ import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
+import type { ChatSettings, ChatState } from '../shared/chat';
+import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
@@ -107,6 +109,7 @@ if (!app.requestSingleInstanceLock()) {
       openTerminal,
       terminalWindow: (id) => terminalWindows.get(id),
       openChat,
+      forkChat,
       chatWindow: (id) => chatWindows.get(id),
       takeImportDraft,
       openLooperFile,
@@ -542,6 +545,17 @@ function attachWindowMenu(child: BrowserWindow, template: Electron.MenuItemConst
   return menu;
 }
 
+/** Swap a window's own menu for a new one (attachWindowMenu set the first). */
+function replaceWindowMenu(child: BrowserWindow, template: Electron.MenuItemConstructorOptions[]): void {
+  if (process.platform !== 'darwin') {
+    child.setMenu(Menu.buildFromTemplate(template));
+    return;
+  }
+  const menu = Menu.buildFromTemplate(macTemplate(template));
+  macWindowMenus.set(child, menu);
+  if (child.isFocused()) Menu.setApplicationMenu(menu);
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400,
@@ -705,6 +719,18 @@ function promptRunOptions(taskId: string): Promise<boolean> {
   });
 }
 
+/** Open a file or folder in its default app; on Windows a WSL path crosses via wslpath. */
+async function openHostPath(p: string): Promise<void> {
+  if (process.platform === 'win32' && p.startsWith('/')) {
+    const winPath = await convertWslPath(p, 'windows');
+    if (winPath) {
+      void shell.openPath(winPath);
+      return;
+    }
+  }
+  void shell.openPath(p);
+}
+
 /** focusReport: select the run's report row (or its last step) once it loads. */
 function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string, focusReport = false): void {
   const task = engine?.getTask(taskId);
@@ -738,16 +764,6 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     checked: true,
     click: (item) => send({ type: 'messages-show', key, checked: item.checked }),
   });
-  const openHostPath = async (p: string) => {
-    if (process.platform === 'win32' && p.startsWith('/')) {
-      const winPath = await convertWslPath(p, 'windows');
-      if (winPath) {
-        void shell.openPath(winPath);
-        return;
-      }
-    }
-    void shell.openPath(p);
-  };
   // The export options window remembers the last choice for this window's lifetime.
   let exportOpts = { includeThinking: true, includeTools: true, plain: false };
   const saveMarkdown = async () => {
@@ -790,7 +806,8 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     return !rawOutput && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
   };
   // Snapshot at window open: a run still in flight keeps the Continue items off.
-  const canContinue = !agentId && (engine?.canContinueRun(taskId, runId) ?? false);
+  const none = { chat: false, terminal: false, guidance: false };
+  const canContinue = agentId ? none : (engine?.canContinueRun(taskId, runId) ?? none);
   // A subagent's window shows only its conversation; the run's own items are the run window's.
   const runItems: Electron.MenuItemConstructorOptions[] = agentId
     ? []
@@ -799,7 +816,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         { type: 'separator' },
         {
           label: 'Continue in &Terminal',
-          enabled: canContinue,
+          enabled: canContinue.terminal,
           click: () =>
             void openTerminal(taskId, runId).catch(async (err: unknown) => {
               await dialog.showMessageBox(child, {
@@ -812,7 +829,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         },
         {
           label: 'Continue in &Chat',
-          enabled: canContinue,
+          enabled: canContinue.chat,
           click: () =>
             void openChat(taskId, runId).catch(async (err: unknown) => {
               await dialog.showMessageBox(child, {
@@ -825,7 +842,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         },
         {
           label: 'Continue with &Guidance…',
-          enabled: canContinue,
+          enabled: canContinue.guidance,
           click: () => openContinueRunWindow(taskId, runId),
         },
         { type: 'separator' },
@@ -1207,6 +1224,13 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
     return;
   }
   const sessionId = engine.startTerminalSession(taskId, runId);
+  // Continue in Terminal on a conversation a window already holds: that window comes forward.
+  const open = terminalWindows.get(sessionId);
+  if (open && !open.isDestroyed()) {
+    if (open.isMinimized()) open.restore();
+    open.focus();
+    return;
+  }
   const title = `${engine.getTask(taskId)?.name ?? taskId} – Terminal`;
   const hash = `terminal/${encodeURIComponent(sessionId)}/${encodeURIComponent(title)}`;
   const child = openChildWindow(hash, title, 960, 600, undefined, {
@@ -1227,44 +1251,199 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
 /** Open chat windows by chat id; closing one ends its chat. */
 const chatWindows = new Map<string, BrowserWindow>();
 
-/** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a Looper chat window. */
+/**
+ * Open Project in Chat, or Continue in Chat with a run id: the task's harness
+ * in a Looper chat window. A chat already open on the run's conversation
+ * comes forward instead.
+ */
 async function openChat(taskId: string, runId?: string): Promise<void> {
   if (!engine) return;
   const state = engine.startChat(taskId, runId);
+  const open = chatWindows.get(state.id);
+  if (open && !open.isDestroyed()) {
+    if (open.isMinimized()) open.restore();
+    open.focus();
+    return;
+  }
+  openChatWindow(state);
+}
+
+/** Fork from Here: a new chat window with the conversation up to the message. */
+function forkChat(chatId: string, index: number): void {
+  if (engine) openChatWindow(engine.forkChat(chatId, index));
+}
+
+/** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
+const menuText = (s: string): string => s.replace(/&/g, '&&');
+
+/** A radio list for a Chat submenu; a current value the list doesn't offer shows too, checked. */
+function radioItems(
+  options: [string, string][],
+  current: string,
+  enabled: (value: string) => boolean,
+  pick: (value: string) => void,
+): Electron.MenuItemConstructorOptions[] {
+  const all = options.some(([v]) => v === current) ? options : [...options, [current, current] as [string, string]];
+  return all.map(([value, label]) => ({
+    label: menuText(label),
+    type: 'radio',
+    checked: value === current,
+    enabled: enabled(value),
+    click: () => pick(value),
+  }));
+}
+
+/**
+ * The chat window's Chat menu: Stop, and the chat's own model, effort and
+ * permission mode. Claude replaces its process for a new model, effort or
+ * Bypass, which would cut a turn short, so those wait for the turn to end.
+ */
+function chatMenu(s: ChatState, stop: () => void, configure: (patch: Partial<ChatSettings>) => void): Electron.MenuItemConstructorOptions {
+  const ended = s.status === 'ended';
+  const claude = s.harnessKind === 'claude-code';
+  const busy = s.status === 'working' || s.status === 'starting' || s.permissions.length > 0;
+  const canReplace = !ended && !(claude && busy);
+  const entry = s.models.find((m) => m.id === s.settings.model);
+  const levels = EFFORT_LEVELS[s.harnessKind];
+  const offered = entry?.efforts ? levels.filter(([v]) => entry.efforts!.includes(v)) : levels;
+  const defaultEffort = entry?.defaultEffort ? levels.find(([v]) => v === entry.defaultEffort)?.[1] ?? entry.defaultEffort : undefined;
+  const bypassLive = s.settings.permissionMode === 'bypassPermissions';
+  return {
+    label: '&Chat',
+    submenu: [
+      // Esc, as in Claude Code's own terminal: it ends the agent's turn. The window handles
+      // the key itself, so Esc in the find bar closes that instead.
+      { label: '&Stop', accelerator: 'Esc', registerAccelerator: false, enabled: s.status === 'working', click: stop },
+      { type: 'separator' },
+      {
+        label: '&Model',
+        submenu: radioItems(
+          [['', 'Default'], ...s.models.map((m): [string, string] => [m.id, m.name])],
+          s.settings.model ?? '',
+          () => canReplace,
+          (v) => configure({ model: v || undefined }),
+        ),
+      },
+      {
+        label: '&Effort',
+        submenu: radioItems(
+          [['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered],
+          s.settings.effort ?? '',
+          () => canReplace,
+          (v) => configure({ effort: v || undefined }),
+        ),
+      },
+      {
+        label: '&Permission Mode',
+        submenu: radioItems(
+          PERMISSION_MODES[s.harnessKind],
+          s.settings.permissionMode,
+          (v) => !ended && (v !== 'bypassPermissions' || bypassLive || canReplace),
+          (v) => configure({ permissionMode: v }),
+        ),
+      },
+    ],
+  };
+}
+
+/** A chat's window: the conversation, File/Edit/Chat menus, and a question before closing cuts a turn short. */
+function openChatWindow(state: ChatState): BrowserWindow {
   const title = `${state.taskName} – Chat`;
   const hash = `chat/${encodeURIComponent(state.id)}/${encodeURIComponent(title)}`;
   const child = openChildWindow(hash, title, 900, 680, undefined, { minWidth: 520, minHeight: 400, contentSize: true });
   child.setMaximizable(true);
   chatWindows.set(state.id, child);
+  const send = (payload: unknown) => {
+    if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
+  };
   const showError = (err: unknown) =>
     void dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   const attachFiles = async () => {
     const r = await dialog.showOpenDialog(child, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
     if (r.canceled || r.filePaths.length === 0 || !engine) return;
     const added = engine.attachToChat(state.id, r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
-    if (!child.isDestroyed()) child.webContents.send('ui:event', { type: 'chat-attached', attachments: added });
+    send({ type: 'chat-attached', attachments: added });
   };
-  const menu = attachWindowMenu(child, [
-    {
+  // The export options window remembers the last choice for this window's lifetime.
+  let exportOpts = { includeThinking: true, includeTools: true, plain: false };
+  const saveMarkdown = async () => {
+    const chat = engine?.getChat(state.id);
+    if (!chat) return;
+    const rows = [...chat.history, ...chat.rows];
+    if (rows.length === 0) {
+      await dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
+      return;
+    }
+    const picked = await dialog.showSaveDialog(child, {
+      title: 'Save as Markdown',
+      defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '-')}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (picked.canceled || !picked.filePath) return;
+    const chosen = await promptMarkdownExport(child, exportOpts);
+    if (!chosen) return;
+    exportOpts = chosen;
+    fs.writeFileSync(picked.filePath, messagesToMarkdown(rows, { title, ...chosen }), 'utf8');
+  };
+  const openWorkingDirectory = () => {
+    const cwd = engine?.getTask(state.taskId)?.cwd;
+    if (cwd) void openHostPath(cwd);
+  };
+  const find: Electron.MenuItemConstructorOptions = { label: '&Find…', accelerator: 'CmdOrCtrl+F', click: () => send({ type: 'chat-find' }) };
+  const template = (s: ChatState): Electron.MenuItemConstructorOptions[] => {
+    const ended = s.status === 'ended';
+    const chat = chatMenu(
+      s,
+      () => void engine?.stopChat(state.id).catch(showError),
+      // The menu shows the chat's settings as they are once the change is through (or refused).
+      (patch) => void engine?.configureChat(state.id, patch).catch(showError).finally(() => refresh(true)),
+    );
+    const file: Electron.MenuItemConstructorOptions = {
       label: '&File',
       submenu: [
-        { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', click: () => void attachFiles().catch(showError) },
+        { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', enabled: !ended, click: () => void attachFiles().catch(showError) },
+        { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown().catch(showError) },
+        { type: 'separator' },
+        { label: 'Open &Working Directory', click: openWorkingDirectory },
         { type: 'separator' },
         { label: '&Close', accelerator: 'CmdOrCtrl+W', click: () => child.close() },
       ],
-    },
-    {
-      label: '&Chat',
+    };
+    // macOS adds its own Edit menu (see macTemplate): Find goes under Chat there.
+    if (process.platform === 'darwin') {
+      (chat.submenu as Electron.MenuItemConstructorOptions[]).push({ type: 'separator' }, find);
+      return [file, chat];
+    }
+    const edit: Electron.MenuItemConstructorOptions = {
+      label: '&Edit',
       submenu: [
-        // Esc, as in Claude Code's own terminal: it ends the agent's turn.
-        { id: 'stop', label: '&Stop', accelerator: 'Esc', enabled: false, click: () => void engine?.stopChat(state.id).catch(showError) },
+        { role: 'undo', label: '&Undo' },
+        { role: 'redo', label: '&Redo' },
+        { type: 'separator' },
+        { role: 'cut', label: 'Cu&t' },
+        { role: 'copy', label: '&Copy' },
+        { role: 'paste', label: '&Paste' },
+        { role: 'selectAll', label: 'Select &All' },
+        { type: 'separator' },
+        find,
       ],
-    },
-  ]);
-  const unsubscribe = engine.on((e) => {
-    if (e.type !== 'chat' || e.state.id !== state.id) return;
-    const stop = menu.getMenuItemById('stop');
-    if (stop) stop.enabled = e.state.status === 'working';
+    };
+    return [file, edit, chat];
+  };
+  // Rebuilt when what it shows changes: radio checks and enabled items follow the chat.
+  let shown = '';
+  const refresh = (force = false) => {
+    const s = engine?.getChat(state.id);
+    if (!s || child.isDestroyed()) return;
+    const key = JSON.stringify([s.settings, s.status, s.permissions.length > 0, s.models]);
+    if (key === shown && !force) return;
+    shown = key;
+    replaceWindowMenu(child, template(s));
+  };
+  attachWindowMenu(child, template(state));
+  shown = JSON.stringify([state.settings, state.status, state.permissions.length > 0, state.models]);
+  const unsubscribe = engine!.on((e) => {
+    if (e.type === 'chat' && e.state.id === state.id) refresh();
   });
   child.on('closed', unsubscribe);
   let confirmed = false;
@@ -1293,6 +1472,7 @@ async function openChat(taskId: string, runId?: string): Promise<void> {
     chatWindows.delete(state.id);
     void engine?.closeChat(state.id);
   });
+  return child;
 }
 
 // ---------- task builder ----------
@@ -1706,6 +1886,12 @@ function buildMenu(
           label: 'Task Lo&gs',
           submenu: [
             { label: 'Hide Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
+            {
+              label: 'Hide &Chats and Terminals',
+              type: 'checkbox',
+              checked: view.hideChatsAndTerminals,
+              click: (item) => updateView({ hideChatsAndTerminals: item.checked }),
+            },
           ],
         },
         { type: 'separator' },

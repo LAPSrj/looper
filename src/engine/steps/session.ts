@@ -205,6 +205,17 @@ export const RESUME_LOST_RE = /No conversation found with session ID|no rollout 
 /** Headline of a run that ended because its rolling conversation was gone. */
 export const RESUME_LOST_TEXT = 'the conversation to continue no longer exists; the next run starts a new one';
 
+/**
+ * A launcher line that writes the target-native codex home into `quotedFile`:
+ * the rollout transcript lives under it, only the target knows its own home,
+ * and codex never prints the path.
+ */
+export function recordCodexHome(kind: 'wsl' | 'windows', quotedFile: string): string {
+  return kind === 'windows'
+    ? `Set-Content -NoNewline -LiteralPath ${quotedFile} -Value $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' })`
+    : `printf '%s' "\${CODEX_HOME:-$HOME/.codex}" > ${quotedFile}`;
+}
+
 /** Epoch ms of the "resets 5:50am" wall-clock time in `text` (next occurrence, local), or null. */
 export function parseUsageLimitReset(text: string, now: number): number | null {
   const m = /resets(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
@@ -622,13 +633,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     // Record the target-native codex home before the CLI starts: the rollout
     // transcript behind the Messages view lives under it, only the target
     // knows its own home, and codex never prints the path.
-    const homeFile = q(targetFile(ctx, f('codex-home')));
-    body =
-      (target.kind === 'windows'
-        ? `Set-Content -NoNewline -LiteralPath ${homeFile} -Value $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' })`
-        : `printf '%s' "\${CODEX_HOME:-$HOME/.codex}" > ${homeFile}`) +
-      '\n' +
-      body;
+    body = recordCodexHome(target.kind, q(targetFile(ctx, f('codex-home')))) + '\n' + body;
   }
   const launcher = writeLauncher(ctx, opts.launcherName, body, harness.env, {
     prefix: opts.prefix,

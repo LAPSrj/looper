@@ -110,7 +110,9 @@ const api: LooperApi = {
     get: (id) => ipcRenderer.invoke('chat:get', id),
     send: (id, text, attachments) => ipcRenderer.send('chat:send', id, text, attachments),
     answer: (id, requestId, allow) => ipcRenderer.send('chat:answer', id, requestId, allow),
+    stop: (id) => ipcRenderer.invoke('chat:stop', id),
     attachFiles: async (id, files) => ipcRenderer.invoke('chat:attach', id, await attachmentInputs(files)),
+    showContextMenu: (info) => ipcRenderer.send('context-menu:chat', info),
   },
   attachment: {
     open: (path) => ipcRenderer.invoke('attachment:open', path),

@@ -863,6 +863,26 @@ code,
   display: block;
   margin-top: 4px;
 }
+/* Edit → Find…: a bar above the conversation; matches are CSS highlights, not markup. */
+.chat-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 12px;
+}
+.chat-find input {
+  width: 240px;
+}
+::highlight(chat-find) {
+  background: rgba(255, 196, 0, 0.45);
+}
+::highlight(chat-find-current) {
+  background: var(--accent);
+  color: #fff;
+}
 /* Both classes: the builder's .chat-card rules come later in this file. */
 .chat-card.chat-permission {
   align-self: flex-start;

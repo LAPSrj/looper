@@ -354,11 +354,17 @@ window's File menu:
   session](monitoring.md#terminal-sessions) in the task's environment and
   working directory with the harness resuming that conversation
   (`claude --resume <id>` / `codex resume <id>`), with the task's model and
-  permission mode. It isn't a run, so Looper doesn't record what you do
-  there.
+  permission mode. In a Looper terminal window, the session is a run of its
+  own in the Runs tab from the agent's first turn. A conversation has one
+  such session: when one already went on with it, Continue in Terminal opens
+  that session's run again (or brings its window to the front while it's
+  open). A session in the system's terminal isn't recorded.
 - **Continue in Chat** resumes the same conversation in a [chat
   window](monitoring.md#chats) instead, with the run's conversation shown
-  above the new messages.
+  above the new messages. Once you send a message the chat is a run of its
+  own in the Runs tab. A conversation has one chat: when a chat already went
+  on with it, Continue in Chat opens that chat again (or brings it to the
+  front while it's open).
 - **Continue with Guidance…** opens a Continue Run window with a Guidance
   box. **Continue** starts a new manual run that resumes the conversation
   with your guidance as its whole prompt. The check and classifier don't
@@ -366,4 +372,6 @@ window's File menu:
   the task's Simultaneous runs cap like any Run Now.
 
 All three are greyed out while the run is still in progress, for custom
-harnesses, and for runs that never recorded a conversation.
+harnesses, and for runs that never recorded a conversation. While a chat or
+a Looper terminal window holds the conversation, only the Continue item of
+that kind is available, and it brings the window to the front.

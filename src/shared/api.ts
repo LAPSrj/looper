@@ -154,8 +154,29 @@ export interface LooperApi {
     send(id: string, text: string, attachments: Attachment[]): void;
     /** Allow or deny the agent's permission request. */
     answer(id: string, requestId: string, allow: boolean): void;
+    /** End the agent's turn (Esc). */
+    stop(id: string): Promise<void>;
     /** Copy pasted or dropped files into the task's attachments, ready to send. */
     attachFiles(id: string, files: File[]): Promise<Attachment[]>;
+    /**
+     * A message's right-click menu: Copy (the selection), the copy items for
+     * the message, Open File and Copy Path for a file, Edit as New Message
+     * for the user's own message (it comes back as a chat-edit ui event), and
+     * Fork from Here when `fork` gives the message's index in the chat's
+     * history and rows.
+     */
+    showContextMenu(info: {
+      chatId: string;
+      taskId: string;
+      selection?: string;
+      text?: string;
+      /** The text's copy item, e.g. "Copy Input"; default "Copy Message". */
+      textLabel?: string;
+      result?: string;
+      file?: string;
+      resend?: { text: string; attachments: Attachment[] };
+      fork?: number;
+    }): void;
   };
   /** One of Looper's attachment copies: open it in its default app, or get a thumbnail of an image. */
   attachment: {
@@ -304,6 +325,8 @@ export type UiEvent =
         | 'open-terminal'
         | 'open-chat'
         | 'open-work-folder'
+        /** Chat window: Edit → Find…. */
+        | 'chat-find'
         | 'clear-runs'
         | 'edit-with-agent'
         | 'version-history'
@@ -334,7 +357,9 @@ export type UiEvent =
   /** Terminal window: Attach Files… copied the files; paste their paths. */
   | { type: 'terminal-attached'; text: string }
   /** Chat window: File → Attach Files… copied the files; they wait to be sent. */
-  | { type: 'chat-attached'; attachments: Attachment[] };
+  | { type: 'chat-attached'; attachments: Attachment[] }
+  /** Chat window: Edit as New Message put a sent message back in the message box. */
+  | { type: 'chat-edit'; text: string; attachments: Attachment[] };
 
 /** run: the run's own step records (check, classifier, agent, result, guidance). */
 export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

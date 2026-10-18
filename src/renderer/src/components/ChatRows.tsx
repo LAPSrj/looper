@@ -4,7 +4,12 @@ import type { MessageRow } from '@shared/messages';
 import { MessageBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 
-export type RowCtx = { taskId: string; runId: string };
+export type RowCtx = {
+  taskId: string;
+  runId: string;
+  /** Right-click on a message or tool call (the chat window's menu). */
+  onContextMenu?: (e: React.MouseEvent, row: MessageRow) => void;
+};
 
 const openAttachment = (a: Attachment) =>
   void window.looper.attachment.open(a.path).catch((e) => void window.looper.showError((e as Error).message));
@@ -59,30 +64,38 @@ export function AttachmentList({ items, onRemove }: { items: Attachment[]; onRem
 }
 
 export function ChatRow({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
+  // The innermost row answers: a tool call inside its group, not the group.
+  const onContextMenu = ctx.onContextMenu
+    ? (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.onContextMenu!(e, row);
+      }
+    : undefined;
   switch (row.kind) {
     case 'prompt':
       return (
-        <div className="chat-msg chat-user">
+        <div className="chat-msg chat-user" onContextMenu={onContextMenu}>
           {row.text && <MessageBody text={row.text} />}
           {row.attachments && <AttachmentList items={row.attachments} />}
         </div>
       );
     case 'agent':
       return (
-        <div className="chat-msg chat-agent">
+        <div className="chat-msg chat-agent" onContextMenu={onContextMenu}>
           <MessageBody text={row.text} />
         </div>
       );
     case 'thinking':
       return (
-        <details className="chat-aside">
+        <details className="chat-aside" onContextMenu={onContextMenu}>
           <summary>Thinking</summary>
           <MessageBody text={row.text} />
         </details>
       );
     case 'tool':
       return (
-        <details className="chat-aside chat-tool">
+        <details className="chat-aside chat-tool" onContextMenu={onContextMenu}>
           <summary>
             <span className="chat-tool-name">{row.tool}</span> <span className="chat-tool-preview">{row.preview}</span>
             {row.resultError ? <span className="error-text"> failed</span> : null}

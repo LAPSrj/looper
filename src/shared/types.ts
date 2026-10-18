@@ -453,6 +453,8 @@ export const ViewSchema = z.object({
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: z.boolean().default(true),
   hideNoActionRuns: z.boolean().default(false),
+  /** Hide the runs that are chats and terminal sessions (the conversations the user started). */
+  hideChatsAndTerminals: z.boolean().default(false),
 });
 export type View = z.infer<typeof ViewSchema>;
 
@@ -641,8 +643,23 @@ export interface RestState {
   wakeAt: number | null;
 }
 
-/** `guidance`: text the user sent the running agent (sent, delivered, or undelivered when it never got there). */
-export type RunPhase = 'watcher' | 'check' | 'classify' | 'agent' | 'guidance' | 'result' | 'skip' | 'system';
+/**
+ * `guidance`: text the user sent the running agent (sent, delivered, or
+ * undelivered when it never got there). `chat` and `terminal`: a chat or
+ * terminal window opened or closed on the run (result the same as the phase,
+ * detail.event 'opened' or 'closed').
+ */
+export type RunPhase =
+  | 'watcher'
+  | 'check'
+  | 'classify'
+  | 'agent'
+  | 'guidance'
+  | 'result'
+  | 'skip'
+  | 'system'
+  | 'chat'
+  | 'terminal';
 
 export type RunResult =
   | 'act'
@@ -662,7 +679,9 @@ export type RunResult =
   | 'restarted'
   | 'sent'
   | 'delivered'
-  | 'undelivered';
+  | 'undelivered'
+  | 'chat'
+  | 'terminal';
 
 export interface RunRecord {
   ts: string;

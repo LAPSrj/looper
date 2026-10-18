@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ChatInfo, TerminalInfo } from '../../shared/chat';
 import type { RunRecord } from '../../shared/types';
-import { ensureDir } from './fsutil';
+import { ensureDir, writeJsonAtomic } from './fsutil';
+
+/** The files in a run folder that make the run a chat, or a terminal session. */
+const CHAT_FILE = 'chat.json';
+const TERMINAL_FILE = 'terminal.json';
 
 function pad(n: number, w = 2): string {
   return String(n).padStart(w, '0');
@@ -76,6 +81,42 @@ export class RunStore {
       }
     }
     return n;
+  }
+
+  /** A chat's own record in its run folder; null when the run isn't a chat (or the file is unreadable). */
+  readChatInfo(taskId: string, runId: string): ChatInfo | null {
+    return this.readInfo<ChatInfo>(taskId, runId, CHAT_FILE);
+  }
+
+  writeChatInfo(taskId: string, runId: string, info: ChatInfo): void {
+    writeJsonAtomic(path.join(this.runDir(taskId, runId), CHAT_FILE), info);
+  }
+
+  /** The task's runs that are chats, oldest first. */
+  listChatRunIds(taskId: string): string[] {
+    return this.listRunIds(taskId).filter((id) => fs.existsSync(path.join(this.runDir(taskId, id), CHAT_FILE)));
+  }
+
+  /** A terminal session's own record in its run folder; null when the run isn't one. */
+  readTerminalInfo(taskId: string, runId: string): TerminalInfo | null {
+    return this.readInfo<TerminalInfo>(taskId, runId, TERMINAL_FILE);
+  }
+
+  writeTerminalInfo(taskId: string, runId: string, info: TerminalInfo): void {
+    writeJsonAtomic(path.join(this.runDir(taskId, runId), TERMINAL_FILE), info);
+  }
+
+  /** The task's runs that are terminal sessions, oldest first. */
+  listTerminalRunIds(taskId: string): string[] {
+    return this.listRunIds(taskId).filter((id) => fs.existsSync(path.join(this.runDir(taskId, id), TERMINAL_FILE)));
+  }
+
+  private readInfo<T>(taskId: string, runId: string, file: string): T | null {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(this.runDir(taskId, runId), file), 'utf8')) as T;
+    } catch {
+      return null;
+    }
   }
 
   createRunDir(taskId: string, runId: string): string {

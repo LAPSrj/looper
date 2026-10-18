@@ -232,6 +232,16 @@ describe('TranscriptReader', () => {
     expect(r.acc.rows).toHaveLength(2);
   });
 
+  it('adds new lines once when two reads overlap', async () => {
+    const file = path.join(dir, 't.jsonl');
+    fs.writeFileSync(file, userPrompt('first') + '\n');
+    const r = new TranscriptReader(file);
+    await r.read();
+    fs.appendFileSync(file, userPrompt('second') + '\n');
+    await Promise.all([r.read(), r.read()]);
+    expect(r.acc.rows.map((row) => row.preview)).toEqual(['first', 'second']);
+  });
+
   it('throws when the file does not exist', async () => {
     const r = new TranscriptReader(path.join(dir, 'missing.jsonl'));
     await expect(r.read()).rejects.toThrow();

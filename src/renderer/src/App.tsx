@@ -349,6 +349,7 @@ export function App() {
               tab={tab}
               onTab={setTab}
               hideNoActionRuns={view?.hideNoActionRuns ?? false}
+              hideChatsAndTerminals={view?.hideChatsAndTerminals ?? false}
               focusRun={focusRun}
               terminalRun={terminalRun}
               onTerminalRun={setTerminalRun}
