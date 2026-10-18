@@ -557,24 +557,27 @@ starts.
 
 The settings window has two lists:
 
-- **Helpers** are conversations you use to open sessions elsewhere. Ask a
+- **Helpers** are conversations whose only job is to start sessions. Ask a
   helper, for example, "open a session in the looper repo", and it runs
   `looper-remote open`, which starts a new session there and answers with
-  its name and link. `looper-remote list` shows the projects and tasks it
-  knows; any other folder works by its path. Looper gives the helper these
-  instructions and the command itself, whatever its working directory. A
-  helper that has had no message for **Restart when idle for** (60 min by
-  default, the length of the prompt cache on a subscription) is replaced by a
-  fresh, empty one, so the next request doesn't pay to cache the old
-  conversation again. A helper is never replaced while it's working.
-- **Projects** are folders where a conversation is always open. **Add
-  Task…** picks a task: its session is the one Open Project in Terminal
-  starts, with the task's environment, folder, model, effort, permission
-  mode and variables. Its editor switches it to another task, and its
-  **Name** names the session in the Claude app (empty: the task's name).
-  **Add Folder…** sets these yourself. With **Keep an
-  empty conversation ready**, another empty conversation opens as soon as the
-  open one gets its first message, so there's always a fresh one waiting.
+  its name and link, even when the folder is the helper's own. `looper-remote
+  list` shows the projects and tasks set up in Looper, and `looper-remote
+  recent` the folders where Claude Code sessions ran lately (from Claude
+  Code's own record of folders), newest first; any other folder works by its
+  path. A helper runs apart from your Claude Code setup and the folder's: no
+  settings files, CLAUDE.md, skills or MCP servers, only the Bash tool, and
+  only `ls` and `looper-remote` may run (anything else is refused without a
+  prompt). Looper gives it its instructions, and **Instructions** in its
+  editor adds your own, for example how it should reply. A helper that has
+  had no message for **Restart when idle for** (10 min by default) is
+  replaced by a fresh, empty one, so the next request starts clean. A helper
+  is never replaced while it's working.
+- **Projects** are folders where a conversation is always open: once it
+  ends, another one opens. **Add Task…** picks a task: its session is the
+  one Open Project in Terminal starts, with the task's environment, folder,
+  model, effort, permission mode and variables. Its editor switches it to
+  another task, and its **Name** names the session in the Claude app (empty:
+  the task's name). **Add Folder…** sets these yourself.
 
 A project or helper that can't get a session says why under its name in the
 list, for example a task that was deleted, or Claude Code exiting right

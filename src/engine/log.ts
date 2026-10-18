@@ -13,8 +13,9 @@ export class Logger {
     if (file) this.open();
   }
 
-  private open(): void {
-    if (!this.file) return;
+  /** Open the file for appending; returns the stream (null when it can't be opened). */
+  private open(): fs.WriteStream | null {
+    if (!this.file) return null;
     try {
       this.stream = fs.createWriteStream(this.file, { flags: 'a' });
       this.stream.on('error', () => {
@@ -23,6 +24,7 @@ export class Logger {
     } catch {
       this.stream = null;
     }
+    return this.stream;
   }
 
   log(level: LogLevel, message: string): void {
@@ -79,10 +81,10 @@ export class Logger {
       }
       return dropped;
     } finally {
-      this.open();
+      const stream = this.open();
       const held = this.held ?? [];
       this.held = null;
-      for (const text of held) this.stream?.write(text + '\n');
+      for (const text of held) stream?.write(text + '\n');
     }
   }
 

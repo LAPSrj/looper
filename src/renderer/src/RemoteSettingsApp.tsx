@@ -67,7 +67,7 @@ export function RemoteSettingsApp() {
   };
 
   const addHelper = async () => {
-    const h: RemoteHelper = { id: `h-${rid()}`, name: 'Helper', environmentId: defaultEnvId(), cwd: '', permissionMode: 'auto', idleRestartMin: 60 };
+    const h: RemoteHelper = { id: `h-${rid()}`, name: 'Helper', environmentId: defaultEnvId(), cwd: '', instructions: '', idleRestartMin: 10 };
     await update({ ...r, helpers: [...helpers, h] });
     setHelper(h.id);
     void window.looper.remote.openHelperEditor(h.id, true);
@@ -86,7 +86,7 @@ export function RemoteSettingsApp() {
   };
 
   const addFolder = async () => {
-    const p: RemoteProject = { kind: 'folder', id: `p-${rid()}`, name: 'Project', environmentId: defaultEnvId(), cwd: '', permissionMode: 'auto', keepReady: false };
+    const p: RemoteProject = { kind: 'folder', id: `p-${rid()}`, name: 'Project', environmentId: defaultEnvId(), cwd: '', permissionMode: 'auto' };
     await update({ ...r, projects: [...projects, p] });
     setProject(p.id);
     void window.looper.remote.openProjectEditor(p.id, true);
@@ -115,7 +115,7 @@ export function RemoteSettingsApp() {
   };
 
   /** A row's second line: where it runs, then why it has no conversation when Remote Control can't start one. */
-  const sub = (where: string, key: string, extra?: string) => [where, extra, problems[key]].filter(Boolean).join(' · ');
+  const sub = (where: string, key: string) => [where, problems[key]].filter(Boolean).join(' · ');
 
   return (
     <div className="editor">
@@ -162,7 +162,6 @@ export function RemoteSettingsApp() {
                     ? `${envName(p.environmentId)} · ${p.cwd || 'no working directory'}`
                     : `Task${p.name && taskOf(p) ? ` ${taskOf(p)!.name}` : ''} · ${taskOf(p)?.cwd ?? ''}`,
                   `project:${p.id}`,
-                  p.keepReady ? 'keeps an empty conversation ready' : undefined,
                 )
               }
               empty="No projects"

@@ -506,7 +506,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       try {
         const rr = engine.settings.remote;
         const id = `p-${Math.random().toString(36).slice(2, 8)}`;
-        engine.updateSettings({ remote: { ...rr, projects: [...rr.projects, { kind: 'task', id, taskId: t.id, keepReady: false }] } });
+        engine.updateSettings({ remote: { ...rr, projects: [...rr.projects, { kind: 'task', id, taskId: t.id }] } });
       } catch (err) {
         void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
       }

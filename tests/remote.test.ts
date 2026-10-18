@@ -130,25 +130,75 @@ describe('Remote Control', () => {
     rc.start();
     const l = started[0].launch;
     expect(l.systemPrompt).toContain('looper-remote open');
+    expect(l.systemPrompt).toContain('looper-remote recent');
     expect(Object.keys(l.helpers ?? {})).toEqual(['looper-remote']);
     expect(l.helpers?.['looper-remote']).toContain('LOOPER_REMOTE_DIR');
     expect(l.env).toEqual({ LOOPER_REMOTE_DIR: started[0].dir });
-    expect(l.settings).toMatchObject({ permissions: { allow: ['Bash(looper-remote:*)', 'Bash(looper-remote)'] }, idleCompaction: false });
+    expect(l.settings).toMatchObject({
+      permissions: { allow: ['Bash(looper-remote:*)', 'Bash(looper-remote)', 'Bash(ls:*)', 'Bash(ls)'] },
+      idleCompaction: false,
+    });
   });
 
-  it('keeps an empty conversation ready: once the open one gets a message, another opens', async () => {
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1', keepReady: true }] }, { tasks: [task('t1')] });
+  it("runs a helper apart from the user's and the folder's setup, refusing every command but ls and looper-remote", () => {
+    const { rc, started } = setup({ helpers: [{ ...helper, instructions: 'Answer in Portuguese.' }] });
     rc.start();
-    expect(started).toHaveLength(1);
+    const s = started[0];
+    expect(s.launch.args).toEqual(['--setting-sources=', '--strict-mcp-config', '--disable-slash-commands', '--tools', 'Bash']);
+    expect(s.task.agent.permissionMode).toBe('dontAsk');
+    expect(s.launch.prelude).toBe(`printf '%s\\n%s\\n' "$HOME" "$CLAUDE_CONFIG_DIR" > '${path.join(s.dir, 'home.txt')}'`);
+    expect(s.launch.systemPrompt?.endsWith('\n\nAnswer in Portuguese.')).toBe(true);
+  });
+
+  it('looper-remote recent: the folders Claude Code knows that still exist, newest session first', async () => {
+    const { rc, root, started } = setup({ helpers: [helper] });
+    rc.start();
+    const h = started[0];
+    const home = path.join(root, 'home');
+    const claudeDir = path.join(home, '.claude', 'projects');
+    const folder = (name: string, ageMin?: number) => {
+      const f = path.join(home, name);
+      fs.mkdirSync(f, { recursive: true });
+      if (ageMin !== undefined) {
+        const t = path.join(claudeDir, f.replace(/[^A-Za-z0-9]/g, '-'));
+        fs.mkdirSync(t, { recursive: true });
+        const when = new Date(Date.now() - ageMin * 60_000);
+        fs.utimesSync(t, when, when);
+      }
+      return f;
+    };
+    const old = folder('old-site', 60);
+    const fresh = folder('fresh_repo', 1);
+    const never = folder('never');
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [old]: {}, [fresh + '/']: {}, [fresh]: {}, [never]: {}, [path.join(home, 'gone')]: {} } }),
+    );
+    fs.writeFileSync(path.join(h.dir, 'home.txt'), `${home}\n\n`);
+    fs.mkdirSync(path.join(h.dir, 'requests'), { recursive: true });
+    fs.writeFileSync(path.join(h.dir, 'requests', 'q1.req'), ['remote', home, 'recent'].join('\n') + '\n');
+    const code = path.join(h.dir, 'responses', 'q1.code');
+    for (let i = 0; i < 100 && !fs.existsSync(code); i++) await sleep(20);
+    const out = fs.readFileSync(path.join(h.dir, 'responses', 'q1.out'), 'utf8').trim().split('\n');
+    const day = new Date().toISOString().slice(0, 10);
+    expect(out[0]).toBe(`- ${fresh} (last session ${day})`);
+    expect(out[1]).toMatch(new RegExp(`^- ${old} \\(last session \\d{4}-\\d{2}-\\d{2}\\)$`));
+    expect(out[2]).toBe(`- ${never}`);
+    expect(out).toHaveLength(3);
+  });
+
+  it("a project's used conversation is its only one, and another opens once it ends", async () => {
+    let t = 0;
+    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')], now: () => t });
+    rc.start();
     touch(path.join(started[0].dir, 'prompt.json'));
     await sleep(100);
-    // The gap between two starts of one entry holds the second back for a moment.
-    await sleep(2100);
-    expect(started).toHaveLength(2);
-    const convs = rc.state().conversations;
-    expect(convs.find((c) => c.id === 'r1')?.status).toBe('working');
-    expect(convs.find((c) => c.id === 'r2')?.status).toBe('waiting');
-  }, 10_000);
+    expect(started).toHaveLength(1);
+    t += 60_000;
+    rc.exited('r1');
+    expect(started.map((s) => s.runId)).toEqual(['r1', 'r2']);
+    expect(rc.state().problems).toEqual({});
+  });
 
   it("shows the last message: the user's while its turn runs, then Claude's answer", async () => {
     const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
@@ -161,14 +211,6 @@ describe('Remote Control', () => {
     fs.writeFileSync(path.join(dir, 'stop.json'), '{"hook_event_name":"Stop","last_assistant_message":"Fixed it."}');
     expect(rc.lastMessage('r1')).toEqual({ from: 'agent', text: 'Fixed it.' });
     expect(rc.lastMessage('nope')).toBeNull();
-  });
-
-  it('without keepReady, a used conversation is the only one', async () => {
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
-    rc.start();
-    touch(path.join(started[0].dir, 'prompt.json'));
-    await sleep(100);
-    expect(started).toHaveLength(1);
   });
 
   it('records a used conversation, titled once its first turn ends, and lists it after it ends', async () => {
@@ -324,9 +366,14 @@ describe('a Remote Control launcher', () => {
       helpers: { 'looper-remote': '#!/usr/bin/env bash\n' },
       env: { LOOPER_REMOTE_DIR: root },
       settings: { idleCompaction: false },
+      args: ['--setting-sources=', '--tools', 'Bash'],
+      prelude: 'echo before',
     });
     const script = fs.readFileSync(launcherHost, 'utf8');
     expect(script).toContain(`--remote-control 'Leandro'\\''s helper'`);
+    expect(script).toMatch(/--append-system-prompt "\$\(cat '[^']+'\)" --setting-sources= --tools Bash\n/);
+    expect(script.indexOf('echo before')).toBeGreaterThan(script.indexOf('cd '));
+    expect(script.indexOf('echo before')).toBeLessThan(script.indexOf('exec claude'));
     expect(script).toContain(`--append-system-prompt "$(cat '${path.join(root, 'system.txt')}')"`);
     expect(script).toContain(`export PATH='${path.join(root, 'bin')}'":$PATH"`);
     expect(script).toContain(`export LOOPER_REMOTE_DIR='${root}'`);

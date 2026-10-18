@@ -480,17 +480,28 @@ const RemoteFolderShape = {
 
 /**
  * A helper: a conversation Looper keeps open so the user can ask it, from the
- * Claude app, to open sessions in other folders (`looper-remote`). Once it has
- * been idle this long, Looper replaces it with a fresh one, since the prompt
- * cache it would reuse has expired by then.
+ * Claude app, to open sessions in other folders (`looper-remote`). It runs
+ * apart from the user's Claude Code setup and the folder's (no settings files,
+ * CLAUDE.md, skills or MCP servers), with only `ls` and `looper-remote`
+ * allowed, so it has no permission mode of its own. Once it has been idle
+ * this long, Looper replaces it with a fresh, empty one, so the next request
+ * starts clean.
  */
-export const RemoteHelperSchema = z.object({ ...RemoteFolderShape, idleRestartMin: z.number().positive().default(60) }).strict();
+const { permissionMode: _helpersHaveNone, ...RemoteHelperShape } = RemoteFolderShape;
+export const RemoteHelperSchema = z
+  .object({
+    ...RemoteHelperShape,
+    /** Appended to Looper's own instructions for the helper. */
+    instructions: z.string().default(''),
+    idleRestartMin: z.number().positive().default(10),
+  })
+  .strict();
 export type RemoteHelper = z.infer<typeof RemoteHelperSchema>;
 
 /**
  * A project Remote Control keeps a conversation open in: a task (the session
- * Open Project in Terminal would start) or a folder. `keepReady`: once the
- * open conversation gets a message, another empty one opens.
+ * Open Project in Terminal would start) or a folder. Once its conversation
+ * ends, another one opens.
  */
 export const RemoteProjectSchema = z.discriminatedUnion('kind', [
   z
@@ -500,10 +511,9 @@ export const RemoteProjectSchema = z.discriminatedUnion('kind', [
       taskId: z.string().min(1),
       /** The session's name in the Claude app. Unset = the task's name. */
       name: z.string().min(1).optional(),
-      keepReady: z.boolean().default(false),
     })
     .strict(),
-  z.object({ kind: z.literal('folder'), ...RemoteFolderShape, keepReady: z.boolean().default(false) }).strict(),
+  z.object({ kind: z.literal('folder'), ...RemoteFolderShape }).strict(),
 ]);
 export type RemoteProject = z.infer<typeof RemoteProjectSchema>;
 export type RemoteFolderProject = Extract<RemoteProject, { kind: 'folder' }>;

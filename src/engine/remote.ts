@@ -30,6 +30,8 @@ const LINK_WAIT_MS = 30_000;
 const MAX_PAST = 200;
 const LINK_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
 const HELPER_COMMAND = 'looper-remote';
+/** In a helper's run folder: its environment's home and Claude Code config folders, written by its launcher. */
+const HOME_FILE = 'home.txt';
 
 export interface RemoteDeps {
   dataDir: string;
@@ -77,7 +79,7 @@ interface Live {
 
 /** The task-like stand-in a folder project or helper runs its sessions as. */
 export function remoteStandIn(
-  entry: Pick<RemoteHelper, 'id' | 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'>,
+  entry: Pick<RemoteFolderProject, 'id' | 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'>,
   settings: Settings,
 ): Task {
   const env = settings.environments.find((e) => e.id === entry.environmentId);
@@ -100,19 +102,29 @@ export function remoteStandIn(
   return { ...task, id: remoteTaskId(entry.id) };
 }
 
-/** What a helper's agent is told about itself and `looper-remote`. */
-export function helperSystemPrompt(idleRestartMin: number): string {
-  return [
-    "You are a Remote Control helper that Looper keeps open on the user's computer. The user talks to you from the Claude app while away from the computer, mostly to start Claude Code sessions in other folders.",
+/** A helper runs no command but these: listing folders, and asking Looper. */
+const HELPER_COMMANDS = [HELPER_COMMAND, 'ls'];
+
+/** What a helper's agent is told about itself and its commands; `extra` is the user's own instructions. */
+export function helperSystemPrompt(idleRestartMin: number, extra = ''): string {
+  const lines = [
+    "You are a Remote Control helper that Looper keeps open on the user's computer. The user talks to you from the Claude app, usually away from the computer. Your only job is to start new Claude Code sessions for them; the new session does the work.",
     '',
-    'Commands:',
-    `- \`${HELPER_COMMAND} list\` prints the projects and tasks you can open, with their folders.`,
-    `- \`${HELPER_COMMAND} open <project, task id, or folder>\` starts a new Remote Control session there and prints its name and link. A folder is a path on this computer (a relative path is resolved against your working directory).`,
+    'You can run only these commands (anything else is refused):',
+    `- \`${HELPER_COMMAND} list\` prints the projects and tasks set up in Looper, with their folders.`,
+    `- \`${HELPER_COMMAND} recent\` prints the folders where Claude Code sessions ran lately, newest first. Use it only when the user asks for recent folders, or when a folder they name isn't in the list.`,
+    `- \`${HELPER_COMMAND} open <project, task id, or folder>\` starts a new Remote Control session there and prints its name and link. A folder is a path on this computer; a relative one is resolved against your working directory.`,
+    '- `ls` shows what a folder holds, to find the one the user means.',
     '',
-    "When the user asks for a session somewhere, open it and reply with the session's name and link, so they can switch to it in the Claude app. Don't do the work in that folder yourself unless they ask you to: the new session does it.",
+    "When the user asks for a session somewhere, open it and reply with the session's name and link, so they can switch to it in the Claude app. Open it even when the folder is your own working directory: a new session is what they want. When it's unclear which folder they mean, ask, offering the closest matches. Keep replies short.",
     `Looper replaces this conversation with a fresh one after ${idleRestartMin} minutes without a message, so nothing here needs to be kept for later.`,
-  ].join('\n');
+  ];
+  if (extra.trim()) lines.push('', extra.trim());
+  return lines.join('\n');
 }
+
+/** How many folders `looper-remote recent` prints. */
+const RECENT_MAX = 25;
 
 /**
  * Remote Control: the Claude Code sessions Looper keeps open for the Claude
@@ -291,8 +303,7 @@ export class RemoteControl {
     for (const p of r.projects) {
       const key = `project:${p.id}`;
       const mine = this.sessionsOf(key);
-      const needs = p.keepReady ? !mine.some((l) => l.conv.status === 'waiting') : mine.length === 0;
-      if (!needs) continue;
+      if (mine.length > 0) continue;
       this.startEntry(key, () => (p.kind === 'task' ? this.launchTask(p.taskId, 'project', p.id, p.name) : this.launchFolder(p, 'project')));
     }
   }
@@ -317,22 +328,36 @@ export class RemoteControl {
     }
   }
 
+  /**
+   * A helper: apart from the user's and the folder's Claude Code setup (no
+   * settings files, CLAUDE.md, skills or MCP servers), with the Bash tool
+   * alone, and `ls` and `looper-remote` the only commands it may run
+   * (dontAsk refuses the rest without a prompt). Looper's own settings file
+   * still applies, so its hooks record the conversation.
+   */
   private launchHelper(h: RemoteHelper): Live {
     if (!h.cwd.trim()) throw new Error('Choose its working directory.');
-    const task = remoteStandIn(h, this.d.settings);
+    const task = remoteStandIn({ ...h, permissionMode: 'dontAsk' }, this.d.settings);
     return this.launch(task, 'helper', h.name, h.id, (dir, target) => {
       const dirT = target.toTargetPath(dir);
+      const home = joinTarget(target.kind, dirT, HOME_FILE);
       return {
         name: h.name,
-        systemPrompt: helperSystemPrompt(h.idleRestartMin),
+        systemPrompt: helperSystemPrompt(h.idleRestartMin, h.instructions),
         helpers: target.renderRequestHelpers(
           { [HELPER_COMMAND]: 'remote' },
           { dirVar: 'LOOPER_REMOTE_DIR', script: 'looper-remote-request', hint: 'is Remote Control still on?' },
         ),
         env: { LOOPER_REMOTE_DIR: dirT },
+        // The equals form survives PowerShell, which drops '' arguments.
+        args: ['--setting-sources=', '--strict-mcp-config', '--disable-slash-commands', '--tools', 'Bash'],
+        // Where `looper-remote recent` finds Claude Code's record of folders: the home and config folders, one per line.
+        prelude:
+          target.kind === 'windows'
+            ? `Set-Content -LiteralPath ${target.quote(home)} -Value @($env:USERPROFILE, $env:CLAUDE_CONFIG_DIR)`
+            : `printf '%s\\n%s\\n' "$HOME" "$CLAUDE_CONFIG_DIR" > ${target.quote(home)}`,
         settings: {
-          // The helper must never wait on a permission prompt nobody at the computer can answer.
-          permissions: { allow: [`Bash(${HELPER_COMMAND}:*)`, `Bash(${HELPER_COMMAND})`] },
+          permissions: { allow: HELPER_COMMANDS.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
           sandbox: { excludedCommands: [HELPER_COMMAND] },
           // Looper replaces an idle helper itself; compacting it first would only cost usage.
           idleCompaction: false,
@@ -531,7 +556,10 @@ export class RemoteControl {
 
   private async request(helper: Live, callerCwd: string, sub: string | undefined, arg: string): Promise<{ text: string; code: number }> {
     if (sub === 'list') return { text: this.listTargets(), code: 0 };
-    if (sub !== 'open' || !arg) return { text: `usage: ${HELPER_COMMAND} list | ${HELPER_COMMAND} open <project, task id, or folder>`, code: 2 };
+    if (sub === 'recent') return { text: this.recentFolders(helper), code: 0 };
+    if (sub !== 'open' || !arg) {
+      return { text: `usage: ${HELPER_COMMAND} list | ${HELPER_COMMAND} recent | ${HELPER_COMMAND} open <project, task id, or folder>`, code: 2 };
+    }
     const opened = this.open(helper, callerCwd, arg);
     const link = await this.waitForLink(opened.conv.id);
     const where = `"${opened.conv.name}" in ${opened.conv.cwd}`;
@@ -565,6 +593,59 @@ export class RemoteControl {
     return lines.length ? lines.join('\n') : 'No projects or tasks yet; open a folder by its path.';
   }
 
+  /**
+   * `looper-remote recent`: the folders Claude Code knows (its config's
+   * project list) that still exist, newest session first, by when a
+   * transcript in each one last changed.
+   */
+  private recentFolders(helper: Live): string {
+    let home = '';
+    let configDir = '';
+    try {
+      [home = '', configDir = ''] = fs.readFileSync(path.join(helper.dir, HOME_FILE), 'utf8').replace(/^﻿/, '').split(/\r?\n/).map((s) => s.trim());
+    } catch {
+      /* answered below */
+    }
+    if (!home) return "Looper couldn't tell this environment's home folder, so it can't read Claude Code's list of folders.";
+    const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
+    if (!entry) return 'This helper was removed from the Remote Control settings.';
+    const target = this.d.createTarget(remoteStandIn({ ...entry, permissionMode: '' }, this.d.settings));
+    const host = (p: string): string | null => {
+      try {
+        return target.toHostPath(p);
+      } catch {
+        return null;
+      }
+    };
+    const configFile = host(configDir ? joinTarget(target.kind, configDir, '.claude.json') : joinTarget(target.kind, home, '.claude.json'));
+    const projectsDir = host(joinTarget(target.kind, configDir || joinTarget(target.kind, home, '.claude'), 'projects'));
+    const config = configFile ? readJson<{ projects?: Record<string, unknown> } | null>(configFile, null) : null;
+    const folders = Object.keys(config?.projects ?? {});
+    if (folders.length === 0) return "Claude Code hasn't recorded any folders in this environment yet.";
+    const seen = new Set<string>();
+    const found: { folder: string; at: number }[] = [];
+    for (const raw of folders) {
+      const folder = raw.length > 1 ? raw.replace(/[\\/]+$/, '') : raw;
+      if (seen.has(folder)) continue;
+      seen.add(folder);
+      const hostFolder = host(folder);
+      try {
+        if (!hostFolder || !fs.statSync(hostFolder).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      // Claude Code keeps a folder's transcripts under its path with every other character turned into "-".
+      const at = projectsDir ? (mtime(path.join(projectsDir, folder.replace(/[^A-Za-z0-9]/g, '-'))) ?? 0) : 0;
+      found.push({ folder, at });
+    }
+    found.sort((a, b) => b.at - a.at);
+    const shown = found.slice(0, RECENT_MAX);
+    const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    const lines = shown.map((f) => `- ${f.folder}${f.at ? ` (last session ${day(f.at)})` : ''}`);
+    if (found.length > shown.length) lines.push(`(${found.length - shown.length} older folders not shown)`);
+    return lines.join('\n');
+  }
+
   private isClaudeTask(t: Task): boolean {
     try {
       return resolveHarness(t, resolveEnvironment(t, this.d.settings)).kind === 'claude-code';
@@ -584,8 +665,10 @@ export class RemoteControl {
     if (task) return this.launchTask(task.id, 'opened');
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
     if (!entry) throw new Error('This helper was removed from the Remote Control settings.');
-    const stand = remoteStandIn(entry, this.d.settings);
-    const target = this.d.createTarget(stand);
+    // A folder it opens runs like a folder project on the helper's harness and model: a normal session, in Auto mode.
+    const { id, name: helperName, environmentId, harnessId, cwd, model, effort } = entry;
+    const asProject: RemoteFolderProject = { kind: 'folder', id, name: helperName, environmentId, harnessId, cwd, model, effort, permissionMode: 'auto' };
+    const target = this.d.createTarget(remoteStandIn(asProject, this.d.settings));
     if (arg.startsWith('~')) throw new Error(`Give the folder's full path: ${arg} starts with ~, which Looper can't expand.`);
     const joined = isAbsolutePath(arg) ? arg : joinTarget(target.kind, callerCwd || entry.cwd, arg);
     const folder = (target.kind === 'windows' ? path.win32 : path.posix).normalize(joined).replace(/(.)[\\/]+$/, '$1');
@@ -597,7 +680,7 @@ export class RemoteControl {
     }
     if (!isDir) throw new Error(`No project or task is named "${arg}", and ${folder} isn't a folder.`);
     const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
-    return this.launchFolder({ ...entry, kind: 'folder', keepReady: false }, 'opened', { cwd: folder, name });
+    return this.launchFolder(asProject, 'opened', { cwd: folder, name });
   }
 
   private async waitForLink(runId: string): Promise<string | undefined> {

@@ -180,6 +180,10 @@ export interface RemoteLaunch {
   env?: Record<string, string>;
   /** More keys for the session's settings file, next to its hooks. */
   settings?: Record<string, unknown>;
+  /** More arguments for the harness, already quoted for the target's shell. */
+  args?: string[];
+  /** Runs in the launcher just before the harness. */
+  prelude?: string;
 }
 
 export interface OpenTerminalDeps {
@@ -238,7 +242,9 @@ export function writeTerminalLauncher(
       writeText(path.join(dir, 'system.txt'), remote.systemPrompt);
       command += ` --append-system-prompt ${target.catFile(t('system.txt'))}`;
     }
+    for (const arg of remote.args ?? []) command += ` ${arg}`;
   }
+  if (remote?.prelude) prelude = prelude ? `${prelude}\n${remote.prelude}` : remote.prelude;
   const helpers = Object.entries(remote?.helpers ?? {});
   for (const [name, content] of helpers) writeText(path.join(dir, 'bin', name), content, 0o755);
   const launcherHost = path.join(dir, 'terminal' + target.launcherExt);

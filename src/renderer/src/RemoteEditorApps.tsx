@@ -66,7 +66,7 @@ function useLiveSettings(found: (s: Settings) => boolean) {
 /** Advanced → Remote Control → Settings → Helpers → Add/Edit. */
 export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boolean }) {
   const { live, host, missing } = useLiveSettings((s) => s.remote.helpers.some((h) => h.id === id));
-  const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin'>) | null>(null);
+  const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);
   const [saving, setSaving] = useState(false);
   const savedRef = useDiscardUnsaved('helper', id, isNew);
 
@@ -74,8 +74,8 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     if (!live || draft) return;
     const h = live.remote.helpers.find((x) => x.id === id);
     if (!h) return;
-    const { name, environmentId, harnessId, cwd, model, effort, permissionMode, idleRestartMin } = h;
-    setDraft({ name, environmentId, harnessId, cwd, model, effort, permissionMode, idleRestartMin });
+    const { name, environmentId, harnessId, cwd, model, effort, idleRestartMin, instructions } = h;
+    setDraft({ name, environmentId, harnessId, cwd, model, effort, idleRestartMin, instructions });
     document.title = isNew ? 'New Helper' : h.name;
   }, [live, draft, id, isNew]);
 
@@ -91,7 +91,8 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
       void window.looper.showError(problem);
       return false;
     }
-    const helpers = live.remote.helpers.map((h) => (h.id === id ? { ...h, ...foldDraft(draft, live.environments), idleRestartMin: draft.idleRestartMin } : h));
+    const { idleRestartMin, instructions, ...fields } = draft;
+    const helpers = live.remote.helpers.map((h) => (h.id === id ? { ...h, ...foldDraft(fields, live.environments), idleRestartMin, instructions } : h));
     setSaving(true);
     const ok = await saveRemote(live, { ...live.remote, helpers });
     setSaving(false);
@@ -119,6 +120,9 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
             value={draft.idleRestartMin}
             onChange={(n) => setDraft((d) => (d ? { ...d, idleRestartMin: n } : d))}
           />
+          <Field label="Instructions">
+            <textarea rows={5} value={draft.instructions} onChange={(e) => setDraft((d) => (d ? { ...d, instructions: e.target.value } : d))} />
+          </Field>
         </div>
       </div>
       <EditorFooter
@@ -137,7 +141,6 @@ export function RemoteProjectEditorApp({ id, isNew }: { id: string; isNew?: bool
   const { live, host, missing } = useLiveSettings((s) => s.remote.projects.some((p) => p.id === id));
   const [kind, setKind] = useState<RemoteProject['kind'] | null>(null);
   const [draft, setDraft] = useState<RemoteFolderDraft | null>(null);
-  const [keepReady, setKeepReady] = useState(false);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [taskId, setTaskId] = useState('');
   /** A task project's session name; empty = the task's name. */
@@ -150,7 +153,6 @@ export function RemoteProjectEditorApp({ id, isNew }: { id: string; isNew?: bool
     const p = live.remote.projects.find((x) => x.id === id);
     if (!p) return;
     setKind(p.kind);
-    setKeepReady(p.keepReady);
     if (p.kind === 'folder') {
       const { name, environmentId, harnessId, cwd, model, effort, permissionMode } = p;
       setDraft({ name, environmentId, harnessId, cwd, model, effort, permissionMode });
@@ -184,7 +186,8 @@ export function RemoteProjectEditorApp({ id, isNew }: { id: string; isNew?: bool
         void window.looper.showError(problem);
         return false;
       }
-      const folded: Omit<RemoteFolderProject, 'id' | 'kind'> = { ...foldDraft(draft, live.environments), keepReady };
+      const fields = foldDraft(draft, live.environments);
+      const folded: Omit<RemoteFolderProject, 'id' | 'kind'> = { ...fields, permissionMode: fields.permissionMode ?? 'auto' };
       next = live.remote.projects.map((p) => (p.id === id && p.kind === 'folder' ? { ...p, ...folded } : p));
     } else {
       if (!task) {
@@ -192,7 +195,7 @@ export function RemoteProjectEditorApp({ id, isNew }: { id: string; isNew?: bool
         return false;
       }
       const name = sessionName.trim() || undefined;
-      next = live.remote.projects.map((p) => (p.id === id && p.kind === 'task' ? { kind: 'task', id, taskId, ...(name ? { name } : {}), keepReady } : p));
+      next = live.remote.projects.map((p) => (p.id === id && p.kind === 'task' ? { kind: 'task', id, taskId, ...(name ? { name } : {}) } : p));
     }
     setSaving(true);
     const ok = await saveRemote(live, { ...live.remote, projects: next });
@@ -232,10 +235,6 @@ export function RemoteProjectEditorApp({ id, isNew }: { id: string; isNew?: bool
               </Field>
             </>
           )}
-          <label className="checkbox-field">
-            <input type="checkbox" checked={keepReady} onChange={(e) => setKeepReady(e.target.checked)} />
-            Keep an empty conversation ready
-          </label>
         </div>
       </div>
       <EditorFooter

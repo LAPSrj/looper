@@ -1322,15 +1322,15 @@ function openRemoteSettingsWindow(): void {
 
 // Page sizes: every field shows without a scroll bar.
 function openRemoteHelperEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
-  openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 620, parent, {
+  openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 700, parent, {
     contentSize: true,
   });
 }
 
 function openRemoteProjectEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
-  // A task project has only the task, its session name and the checkbox.
+  // A task project has only the task and its session name.
   const task = engine?.settings.remote.projects.find((p) => p.id === id)?.kind === 'task';
-  openChildWindow(`remote-project/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Project' : 'Edit Project', 560, task ? 290 : 590, parent, {
+  openChildWindow(`remote-project/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Project' : 'Edit Project', 560, task ? 250 : 550, parent, {
     contentSize: true,
     ...(task ? { minHeight: 200 } : {}),
   });

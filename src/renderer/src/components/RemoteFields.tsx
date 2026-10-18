@@ -2,8 +2,10 @@ import type { Environment, RemoteHelper, Task } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
 import { Field } from './ui';
 
-/** What a helper or folder project runs with: the fields both editors share. */
-export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'>;
+/** What a helper or folder project runs with: the fields both editors share. A helper has no permission mode. */
+export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort'> & {
+  permissionMode?: string;
+};
 
 /** The Claude Code harnesses of an environment: the only kind Remote Control runs. */
 export const claudeHarnesses = (env: Environment | undefined) => env?.harnesses.filter((h) => h.kind === 'claude-code') ?? [];
@@ -96,15 +98,17 @@ export function RemoteFolderFields({
           </select>
         </Field>
       </div>
-      <Field label="Permission mode">
-        <select value={draft.permissionMode} onChange={(e) => onChange({ permissionMode: e.target.value })}>
-          {PERMISSION_MODES['claude-code'].map(([v, label]) => (
-            <option key={v} value={v}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </Field>
+      {draft.permissionMode !== undefined && (
+        <Field label="Permission mode">
+          <select value={draft.permissionMode} onChange={(e) => onChange({ permissionMode: e.target.value })}>
+            {PERMISSION_MODES['claude-code'].map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       <Field label="Working directory">
         <div className="browse-row">
           <input className="mono" value={draft.cwd} onChange={(e) => onChange({ cwd: e.target.value })} />
