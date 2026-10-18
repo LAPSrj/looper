@@ -311,7 +311,7 @@ describe('Remote Control', () => {
   it('looper-remote: lists what it can open, opens a task or a folder, and refuses a folder that is not there', async () => {
     const tasks = [task('site', '/home/me/site')];
     const { rc, root, started } = setup(
-      { helpers: [{ ...helper, cwd: '' }], projects: [{ kind: 'task', id: 'p1', taskId: 'site' }] },
+      { helpers: [{ ...helper, cwd: '', model: 'sonnet', effort: 'low' }], projects: [{ kind: 'task', id: 'p1', taskId: 'site' }] },
       { tasks, output: (n) => `connected https://claude.ai/code/session_${n}x` },
     );
     // The helper's folder: a real one, so an opened path can be checked.
@@ -340,6 +340,10 @@ describe('Remote Control', () => {
     const opened = started[started.length - 1];
     expect(opened.task.id).toBe('@remote-h1');
     expect(opened.launch.systemPrompt).toBeUndefined();
+    // The helper's own model is for its job; an opened folder runs on the harness's default.
+    expect(opened.task.agent.model).toBeUndefined();
+    expect(opened.task.agent.effort).toBeUndefined();
+    expect(opened.task.agent.permissionMode).toBe('auto');
     const missing = await ask('open', 'nowhere');
     expect(missing.code).toBe('1');
     expect(missing.out).toContain(`isn't a folder`);

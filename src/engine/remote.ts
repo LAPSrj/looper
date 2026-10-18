@@ -665,9 +665,10 @@ export class RemoteControl {
     if (task) return this.launchTask(task.id, 'opened');
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
     if (!entry) throw new Error('This helper was removed from the Remote Control settings.');
-    // A folder it opens runs like a folder project on the helper's harness and model: a normal session, in Auto mode.
-    const { id, name: helperName, environmentId, harnessId, cwd, model, effort } = entry;
-    const asProject: RemoteFolderProject = { kind: 'folder', id, name: helperName, environmentId, harnessId, cwd, model, effort, permissionMode: 'auto' };
+    // A folder it opens runs like a folder project on the helper's harness, with the harness's own model and
+    // effort (the helper's are for its own small job): a normal session, in Auto mode.
+    const { id, name: helperName, environmentId, harnessId, cwd } = entry;
+    const asProject: RemoteFolderProject = { kind: 'folder', id, name: helperName, environmentId, harnessId, cwd, permissionMode: 'auto' };
     const target = this.d.createTarget(remoteStandIn(asProject, this.d.settings));
     if (arg.startsWith('~')) throw new Error(`Give the folder's full path: ${arg} starts with ~, which Looper can't expand.`);
     const joined = isAbsolutePath(arg) ? arg : joinTarget(target.kind, callerCwd || entry.cwd, arg);
