@@ -5,6 +5,8 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export class Logger {
   private stream: fs.WriteStream | null = null;
   private readonly file?: string;
+  /** Lines logged while pruneOlderThan rewrites the file; written once it reopens. */
+  private held: string[] | null = null;
 
   constructor(file?: string, private readonly echo = false) {
     this.file = file;
@@ -25,7 +27,8 @@ export class Logger {
 
   log(level: LogLevel, message: string): void {
     const text = `${new Date().toISOString()} [${level}] ${message}`;
-    if (this.stream) this.stream.write(text + '\n');
+    if (this.held) this.held.push(text);
+    else if (this.stream) this.stream.write(text + '\n');
     if (this.echo) {
       if (level === 'error' || level === 'warn') console.error(text);
       else console.log(text);
@@ -52,6 +55,8 @@ export class Logger {
    */
   async pruneOlderThan(cutoffMs: number): Promise<number> {
     if (!this.file) return 0;
+    if (this.held) return 0; // a prune is already rewriting the file
+    this.held = [];
     if (this.stream) {
       const s = this.stream;
       this.stream = null;
@@ -75,6 +80,9 @@ export class Logger {
       return dropped;
     } finally {
       this.open();
+      const held = this.held ?? [];
+      this.held = null;
+      for (const text of held) this.stream?.write(text + '\n');
     }
   }
 
