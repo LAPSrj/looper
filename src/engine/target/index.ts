@@ -5,6 +5,15 @@ import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
 import { WindowsTarget } from './windows';
 
+export interface RequestHelperOpts {
+  /** Environment variable holding the target path of the folder with requests/ and responses/. */
+  dirVar: string;
+  /** File name (no extension) of the Windows round-trip script the .cmd shims call. */
+  script: string;
+  /** Said after "no answer from Looper" when the wait runs out. */
+  hint: string;
+}
+
 export interface SpawnSpec {
   command: string;
   args: string[];
@@ -99,12 +108,13 @@ export interface Target {
   /** Argv for codex's `notify` config entry: how to run the hook script at `targetPath`. */
   notifyCommand(targetPath: string): string[];
   /**
-   * The task builder's helper scripts, as file name -> content for its bin/
-   * dir: one command per entry of `ops` (command name -> request op). Each
-   * drops its request into $LOOPER_BUILDER_DIR/requests, waits for Looper's
-   * answer in responses/, prints it, and exits with its code.
+   * Helper scripts that ask Looper something (the task builder's, a Remote
+   * Control helper's), as file name -> content for a bin/ dir: one command
+   * per entry of `ops` (command name -> request op). Each drops its request
+   * into $<dirVar>/requests, waits for Looper's answer in responses/, prints
+   * it, and exits with its code.
    */
-  renderBuilderHelpers(ops: Record<string, string>): Record<string, string>;
+  renderRequestHelpers(ops: Record<string, string>, opts: RequestHelperOpts): Record<string, string>;
   /**
    * Run `command` (a codex command line) with CODEX_HOME set to `codexHome`,
    * a home of the builder's own that holds only a copy of the user's login,

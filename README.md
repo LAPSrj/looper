@@ -110,7 +110,8 @@ The full user guide lives in [docs/](docs/README.md):
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
 - [Monitoring](docs/monitoring.md) — terminal tab, chats and terminal
-  sessions, Runs tab and run window, notifications, Rest Mode, tray, settings.
+  sessions, Runs tab and run window, notifications, Rest Mode, Remote
+  Control, tray, settings.
 - [CLI and automation](docs/cli-and-automation.md) — the CLI, the inbox
   protocol, the data directory.
 - [Troubleshooting](docs/troubleshooting.md) — common problems, current

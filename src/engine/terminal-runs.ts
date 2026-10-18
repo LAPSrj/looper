@@ -113,34 +113,51 @@ export class TerminalRuns {
     this.watches.delete(runId);
     if (w.busy) w.closing = true;
     else if (w.openedAt !== undefined) this.record(w, 'closed', Date.now() - w.openedAt);
-    else if (!w.recorded) {
-      try {
-        fs.rmSync(w.dir, { recursive: true, force: true });
-      } catch (err) {
-        this.d.log.warn(`terminal ${runId}: cannot delete ${w.dir}: ${errMsg(err)}`);
-      }
-    }
+    else if (this.hasNewTurn(w)) {
+      // The first turn ended before the poll saw it: the session is still a run.
+      w.closing = true;
+      void this.recordFirstTurn(w).then((ok) => {
+        if (!ok && !w.recorded) this.remove(w);
+      });
+    } else if (!w.recorded) this.remove(w);
   }
 
   closeAll(): void {
     for (const id of [...this.watches.keys()]) this.close(id);
   }
 
+  private remove(w: Watch): void {
+    try {
+      fs.rmSync(w.dir, { recursive: true, force: true });
+    } catch (err) {
+      this.d.log.warn(`terminal ${w.runId}: cannot delete ${w.dir}: ${errMsg(err)}`);
+    }
+  }
+
+  /** A turn of this window: an earlier window's last one is the file as it was when this one opened. */
+  private hasNewTurn(w: Watch): boolean {
+    const time = turnTime(w.dir);
+    return time !== null && time !== w.initialTurn;
+  }
+
   private async poll(w: Watch): Promise<void> {
     if (w.busy || w.openedAt !== undefined) return;
-    // A turn of this window: an earlier window's last one is the file as it was when this one opened.
-    const time = turnTime(w.dir);
-    if (time === null || time === w.initialTurn) return;
+    await this.recordFirstTurn(w);
+  }
+
+  /** The window's first turn, once its hook wrote it: the session becomes a run. False when there's none to record yet. */
+  private async recordFirstTurn(w: Watch): Promise<boolean> {
+    if (!this.hasNewTurn(w)) return false;
     let payload: Record<string, unknown>;
     try {
       payload = JSON.parse(fs.readFileSync(path.join(w.dir, 'stop.json'), 'utf8').replace(/^﻿/, '')) as Record<string, unknown>;
     } catch {
-      return; // the hook is still writing
+      return false; // the hook is still writing
     }
     if (w.harnessKind === 'codex') {
-      if (isTitleThread(payload)) return;
+      if (isTitleThread(payload)) return false;
       const tid = payload['thread-id'];
-      if (typeof tid !== 'string' || !tid) return;
+      if (typeof tid !== 'string' || !tid) return false;
       writeJsonAtomic(path.join(w.dir, 'codex-session.json'), { thread_id: tid });
     }
     w.busy = true;
@@ -149,6 +166,7 @@ export class TerminalRuns {
     } finally {
       w.busy = false;
     }
+    return true;
   }
 
   /** The window's first turn: the session is a run, with a "Terminal opened" record. */

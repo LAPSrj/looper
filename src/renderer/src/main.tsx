@@ -27,6 +27,9 @@ import { MarkdownExportApp } from './MarkdownExportApp';
 import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
 import { RecycleBinApp } from './RecycleBinApp';
+import { RemoteConversationsApp } from './RemoteConversationsApp';
+import { RemoteHelperEditorApp, RemoteProjectEditorApp } from './RemoteEditorApps';
+import { RemoteSettingsApp } from './RemoteSettingsApp';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
@@ -59,11 +62,17 @@ const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
 const chatMatch = /^chat\/([^/]+)\/([^/]+)$/.exec(hash);
+const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
+const remoteProjectMatch = /^remote-project\/([^/]+)(\/new)?$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
   if (hash === 'templates') return <TemplatesApp />;
   if (hash === 'recycle-bin') return <RecycleBinApp />;
+  if (hash === 'remote-settings') return <RemoteSettingsApp />;
+  if (hash === 'remote-conversations') return <RemoteConversationsApp />;
+  if (remoteHelperMatch) return <RemoteHelperEditorApp id={decodeURIComponent(remoteHelperMatch[1])} isNew={!!remoteHelperMatch[2]} />;
+  if (remoteProjectMatch) return <RemoteProjectEditorApp id={decodeURIComponent(remoteProjectMatch[1])} isNew={!!remoteProjectMatch[2]} />;
   if (templateEditorMatch) {
     return (
       <EditorApp

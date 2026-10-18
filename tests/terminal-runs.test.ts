@@ -68,6 +68,32 @@ describe('terminal sessions as runs', () => {
     expect(fs.existsSync(d)).toBe(false);
   });
 
+  it('closed right after its first turn, before the poll saw it, is still a run', async () => {
+    const { runs, records, infos, dir } = setup();
+    const d = dir('r1');
+    runs.start({ taskId: 't', runId: 'r1', harnessKind: 'claude-code' });
+    fs.writeFileSync(path.join(d, 'stop.json'), '{"session_id":"s1"}');
+    runs.close('r1');
+    await sleep(30);
+    expect(fs.existsSync(d)).toBe(true);
+    expect(infos.r1?.title).toBe('Fix the footer');
+    expect(records.map((r) => [r.detail?.event, r.durationMs ?? null])).toEqual([
+      ['opened', null],
+      ['closed', 0],
+    ]);
+  });
+
+  it('closed while its hook still writes the first turn, leaves nothing half-recorded', async () => {
+    const { runs, records, dir } = setup();
+    const d = dir('r1');
+    runs.start({ taskId: 't', runId: 'r1', harnessKind: 'claude-code' });
+    fs.writeFileSync(path.join(d, 'stop.json'), '{"session_');
+    runs.close('r1');
+    await sleep(30);
+    expect(records).toEqual([]);
+    expect(fs.existsSync(d)).toBe(false);
+  });
+
   it("opened again, waits for a turn newer than the window and keeps the run's title and folder", async () => {
     const { runs, records, dir } = setup([]);
     open.push(runs);

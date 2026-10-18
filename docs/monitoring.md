@@ -535,6 +535,62 @@ The status bar shows the phase: "Rest Mode — waiting for tasks to finish",
 "Rest Mode — sleeping in N s" during the grace period, and "Rest Mode —
 sleeping until HH:MM" once the wake timer is set.
 
+A sleeping computer drops every [Remote Control](#remote-control) session,
+so **Start Rest Mode** is disabled while Remote Control is on, and starting
+Remote Control turns Rest Mode off.
+
+## Remote Control
+
+Remote Control keeps Claude Code sessions open on this computer for the
+Claude app (claude.ai/code or the mobile app), so you can start and steer
+work while you're away. Each session is an interactive Claude Code session
+started with `--remote-control`, and it shows in the app's session list under
+its name. Only Claude Code harnesses can run them, and you need to be signed
+in to Claude Code with a Claude subscription.
+
+**Advanced → Remote Control → Start Remote Control** turns it on for this
+run of Looper; the same item becomes **Stop Remote Control**, which ends
+every one of its sessions (it asks first while a conversation has had a
+message). Quitting Looper ends them too. Check **Start with Looper** in
+**Advanced → Remote Control → Settings…** to turn it on whenever Looper
+starts.
+
+The settings window has two lists:
+
+- **Helpers** are conversations you use to open sessions elsewhere. Ask a
+  helper, for example, "open a session in the looper repo", and it runs
+  `looper-remote open`, which starts a new session there and answers with
+  its name and link. `looper-remote list` shows the projects and tasks it
+  knows; any other folder works by its path. Looper gives the helper these
+  instructions and the command itself, whatever its working directory. A
+  helper that has had no message for **Restart when idle for** (60 min by
+  default, the length of the prompt cache on a subscription) is replaced by a
+  fresh, empty one, so the next request doesn't pay to cache the old
+  conversation again. A helper is never replaced while it's working.
+- **Projects** are folders where a conversation is always open. **Add
+  Task…** picks a task: its session is the one Open Project in Terminal
+  starts, with the task's environment, folder, model, effort, permission
+  mode and variables. Its editor switches it to another task, and its
+  **Name** names the session in the Claude app (empty: the task's name).
+  **Add Folder…** sets these yourself. With **Keep an
+  empty conversation ready**, another empty conversation opens as soon as the
+  open one gets its first message, so there's always a fresh one waiting.
+
+A project or helper that can't get a session says why under its name in the
+list, for example a task that was deleted, or Claude Code exiting right
+after it starts (Looper stops trying after three times in a row, until the
+entry changes or Remote Control starts again).
+
+**Advanced → Remote Control → Conversations…** lists the conversations, open
+ones first, with their state: waiting for a message, working, idle, or
+ended. Opening an open conversation shows it in a Looper terminal window,
+where you can go on at the computer; closing that window leaves the session
+running. Opening an ended one shows its run window. The right-click menu has
+**Open in Browser** and **Copy Link** for the session's claude.ai page, and
+**Stop** to end it. Conversations are recorded as runs, like [terminal
+sessions](#terminal-sessions), so a task project's conversations also show
+in the task's Runs tab.
+
 ## The tray icon and close-to-tray
 
 Looper keeps a tray icon running whenever the app is open. Double-clicking

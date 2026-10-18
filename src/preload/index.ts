@@ -125,6 +125,16 @@ const api: LooperApi = {
     write: (id, data) => ipcRenderer.send('terminalSession:write', id, data),
     resize: (id, cols, rows) => ipcRenderer.send('terminalSession:resize', id, cols, rows),
   },
+  remote: {
+    state: () => ipcRenderer.invoke('remote:state'),
+    lastMessage: (id) => ipcRenderer.invoke('remote:lastMessage', id),
+    open: (id) => ipcRenderer.invoke('remote:open', id),
+    showContextMenu: (id) => ipcRenderer.send('context-menu:remote-conversation', id),
+    openHelperEditor: (id, isNew) => ipcRenderer.invoke('remote:openHelperEditor', id, isNew),
+    openProjectEditor: (id, isNew) => ipcRenderer.invoke('remote:openProjectEditor', id, isNew),
+    discard: (kind, id) => ipcRenderer.send('remote:discard', kind, id),
+    showAddTaskMenu: () => ipcRenderer.send('remote:addTaskMenu'),
+  },
   // The engine's error is shown to the user; drop Electron's IPC framing.
   continueRun: (taskId, runId, guidance) =>
     ipcRenderer.invoke('run:continue', taskId, runId, guidance).catch((e: Error) => {

@@ -21,6 +21,8 @@ let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+/** Whether Remote Control was on at its last event: the menus change only when this does. */
+let remoteRunning = false;
 
 // The engine must survive anything the UI or a child process throws at it.
 process.on('uncaughtException', (err) => {
@@ -76,8 +78,15 @@ if (!app.requestSingleInstanceLock()) {
         if (event.disarmReason === 'user-wake') showRestDisarmNotification();
         tray?.setContextMenu(trayMenu());
         rebuildMenu();
+      } else if (event.type === 'remote' && event.state.running !== remoteRunning) {
+        // Start/Stop Remote Control and the Rest Mode item follow it.
+        remoteRunning = event.state.running;
+        tray?.setContextMenu(trayMenu());
+        rebuildMenu();
       }
     });
+    // Start with Looper turned it on before the listener above was there.
+    remoteRunning = engine.remoteState().running;
     registerIpc(engine, {
       getWindow: () => win,
       openMessages: openMessagesWindow,
@@ -111,6 +120,9 @@ if (!app.requestSingleInstanceLock()) {
       openChat,
       forkChat,
       chatWindow: (id) => chatWindows.get(id),
+      openRemoteConversation,
+      openRemoteHelperEditor,
+      openRemoteProjectEditor,
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
@@ -216,15 +228,20 @@ function quitWarning(): { message: string; detail: string } | null {
   // Someone is typing into a terminal session or a chat: always ask, whatever the setting says about runs.
   const terminals = engine.runningTerminalSessions();
   const chats = engine.busyChats();
+  const remote = engine.usedRemoteConversations();
   const rts = ask.runs ? engine.listRuntimes() : [];
   const running = rts.filter((rt) => rt.runs.length > 0).length;
   const watching = ask.watchers ? rts.filter((rt) => rt.runs.length === 0 && rt.watcher !== null).length : 0;
-  if (running === 0 && watching === 0 && terminals === 0 && chats === 0) return null;
+  if (running === 0 && watching === 0 && terminals === 0 && chats === 0 && remote === 0) return null;
   const message: string[] = [];
   const stops: string[] = [];
   if (terminals > 0) {
     message.push(terminals === 1 ? 'A terminal session is still open.' : `${terminals} terminal sessions are still open.`);
     stops.push(terminals === 1 ? 'the session' : 'the sessions');
+  }
+  if (remote > 0) {
+    message.push(remote === 1 ? 'A Remote Control conversation is still open.' : `${remote} Remote Control conversations are still open.`);
+    stops.push(remote === 1 ? 'the conversation' : 'the conversations');
   }
   if (chats > 0) {
     message.push(chats === 1 ? 'An agent in a chat is still working.' : `Agents in ${chats} chats are still working.`);
@@ -357,7 +374,42 @@ async function toggleRestMode(): Promise<void> {
 function restMenuItems(): Electron.MenuItemConstructorOptions[] {
   if (engine?.host !== 'windows') return [];
   const armed = engine.restState().armed;
-  return [{ label: armed ? 'Stop &Rest Mode' : 'Start &Rest Mode', click: () => void toggleRestMode() }];
+  // A sleeping computer drops Remote Control's sessions: Rest Mode waits until it stops.
+  const enabled = armed || !engine.remoteState().running;
+  return [{ label: armed ? 'Stop &Rest Mode' : 'Start &Rest Mode', enabled, click: () => void toggleRestMode() }];
+}
+
+/** Advanced → Remote Control → Start/Stop: for this run of Looper only. */
+async function toggleRemote(): Promise<void> {
+  if (!engine) return;
+  if (!engine.remoteState().running) {
+    engine.startRemote();
+    const r = engine.settings.remote;
+    if (r.helpers.length === 0 && r.projects.length === 0) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Looper',
+        message: 'Remote Control is on, but it has no helpers or projects yet.',
+        detail: 'Add them in Advanced → Remote Control → Settings.',
+        buttons: ['OK'],
+      });
+    }
+    return;
+  }
+  const used = engine.usedRemoteConversations();
+  if (used > 0) {
+    const r = await dialog.showMessageBox({
+      type: 'question',
+      title: 'Looper',
+      message: used === 1 ? 'A Remote Control conversation is still open.' : `${used} Remote Control conversations are still open.`,
+      detail: 'Stopping Remote Control ends every one of its sessions.',
+      buttons: ['Stop', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (r.response !== 0) return;
+  }
+  engine.stopRemote();
 }
 
 function showRestDisarmNotification(): void {
@@ -738,7 +790,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     ? label?.trim()
       ? `Subagent: ${label.trim().slice(0, 80)}`
       : `Subagent ${agentId}`
-    : `${task ? task.name : taskId} – ${runId}`;
+    : `${engine?.taskName(taskId) ?? taskId} – ${runId}`;
   const child = new BrowserWindow({
     width: 960,
     height: 640,
@@ -1224,14 +1276,20 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
     return;
   }
   const sessionId = engine.startTerminalSession(taskId, runId);
-  // Continue in Terminal on a conversation a window already holds: that window comes forward.
+  openTerminalWindow(sessionId, `${engine.getTask(taskId)?.name ?? taskId} – Terminal`);
+}
+
+/**
+ * A Looper terminal window on a session, or the open one brought forward.
+ * Closing it ends the session, except a Remote Control conversation's.
+ */
+function openTerminalWindow(sessionId: string, title: string): void {
   const open = terminalWindows.get(sessionId);
   if (open && !open.isDestroyed()) {
     if (open.isMinimized()) open.restore();
     open.focus();
     return;
   }
-  const title = `${engine.getTask(taskId)?.name ?? taskId} – Terminal`;
   const hash = `terminal/${encodeURIComponent(sessionId)}/${encodeURIComponent(title)}`;
   const child = openChildWindow(hash, title, 960, 600, undefined, {
     minWidth: 480,
@@ -1243,6 +1301,53 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
   child.on('closed', () => {
     terminalWindows.delete(sessionId);
     engine?.closeTerminalSession(sessionId);
+  });
+}
+
+// ---------- Remote Control ----------
+
+/** An open conversation in a Looper terminal window (it keeps running when the window closes), an ended one in its run window. */
+async function openRemoteConversation(id: string): Promise<void> {
+  if (!engine) return;
+  const conv = engine.remoteState().conversations.find((c) => c.id === id);
+  if (!conv) return;
+  if (conv.status === 'ended') openMessagesWindow(conv.taskId, conv.id);
+  else openTerminalWindow(conv.id, `${conv.title ?? conv.name} – Remote Control`);
+}
+
+/** Advanced → Remote Control → Settings: modal, like the other settings windows. */
+function openRemoteSettingsWindow(): void {
+  openChildWindow('remote-settings', 'Remote Control', 640, 600, win, { contentSize: true });
+}
+
+// Page sizes: every field shows without a scroll bar.
+function openRemoteHelperEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
+  openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 620, parent, {
+    contentSize: true,
+  });
+}
+
+function openRemoteProjectEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
+  // A task project has only the task, its session name and the checkbox.
+  const task = engine?.settings.remote.projects.find((p) => p.id === id)?.kind === 'task';
+  openChildWindow(`remote-project/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Project' : 'Edit Project', 560, task ? 290 : 590, parent, {
+    contentSize: true,
+    ...(task ? { minHeight: 200 } : {}),
+  });
+}
+
+let remoteConversationsWindow: BrowserWindow | null = null;
+
+/** One Conversations window, modeless: opening it again brings the open one forward. */
+function openRemoteConversationsWindow(): void {
+  if (remoteConversationsWindow && !remoteConversationsWindow.isDestroyed()) {
+    remoteConversationsWindow.focus();
+    return;
+  }
+  remoteConversationsWindow = openChildWindow('remote-conversations', 'Remote Control Conversations', 820, 600);
+  remoteConversationsWindow.setMaximizable(true);
+  remoteConversationsWindow.on('closed', () => {
+    remoteConversationsWindow = null;
   });
 }
 
@@ -1902,6 +2007,19 @@ function buildMenu(
     {
       label: '&Advanced',
       submenu: [
+        {
+          label: 'Remote &Control',
+          submenu: [
+            {
+              label: engine?.remoteState().running ? '&Stop Remote Control' : '&Start Remote Control',
+              click: () => void toggleRemote(),
+            },
+            { type: 'separator' },
+            { label: '&Conversations…', click: () => openRemoteConversationsWindow() },
+            { label: 'S&ettings…', click: () => openRemoteSettingsWindow() },
+          ],
+        },
+        { type: 'separator' },
         { label: 'Update &Models…', click: () => openModelUpdateWindow() },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },
         {

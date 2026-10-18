@@ -4,6 +4,7 @@ import type { MessageImage, MessagesResult } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
+import type { RemoteMessage, RemoteState } from './remote';
 import type { EngineEvent, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -193,6 +194,22 @@ export interface LooperApi {
     output(id: string): Promise<{ data: string; ended: boolean } | null>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
+  };
+  /** Advanced → Remote Control: its conversations and its helper and project editors. */
+  remote: {
+    state(): Promise<RemoteState>;
+    /** The conversation's last message; null before its first. */
+    lastMessage(id: string): Promise<RemoteMessage | null>;
+    /** An open conversation in a Looper terminal window, an ended one in its run window. */
+    open(id: string): Promise<void>;
+    /** A conversation's right-click menu: Open, Open in Browser, Copy Link, Stop. */
+    showContextMenu(id: string): void;
+    openHelperEditor(id: string, isNew?: boolean): Promise<void>;
+    openProjectEditor(id: string, isNew?: boolean): Promise<void>;
+    /** Fire-and-forget removal of a freshly created, never-saved helper or folder project. */
+    discard(kind: 'helper' | 'project', id: string): void;
+    /** Add Task…: a menu of the Claude Code tasks not in the list yet; a pick adds it. */
+    showAddTaskMenu(): void;
   };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;

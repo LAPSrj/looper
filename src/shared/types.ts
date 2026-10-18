@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
+import type { RemoteState } from './remote';
 
 // ---------- Task definition ----------
 
@@ -458,6 +459,65 @@ export const ViewSchema = z.object({
 });
 export type View = z.infer<typeof ViewSchema>;
 
+/**
+ * Where a Remote Control conversation runs when no task supplies it: a folder
+ * in an environment, on one of its Claude Code harnesses.
+ */
+const RemoteFolderShape = {
+  id: z.string().min(1),
+  /** The session's name in the Claude app's session list. */
+  name: z.string().min(1),
+  environmentId: z.string().min(1),
+  /** Empty = the environment's first Claude Code harness. */
+  harnessId: z.string().min(1).optional(),
+  /** Working directory in the environment's native form. Empty while a new entry's editor is still open: no session starts. */
+  cwd: z.string().default(''),
+  model: z.string().min(1).optional(),
+  effort: z.string().min(1).optional(),
+  /** A PERMISSION_MODES value; '' passes no mode. */
+  permissionMode: z.string().default('auto'),
+};
+
+/**
+ * A helper: a conversation Looper keeps open so the user can ask it, from the
+ * Claude app, to open sessions in other folders (`looper-remote`). Once it has
+ * been idle this long, Looper replaces it with a fresh one, since the prompt
+ * cache it would reuse has expired by then.
+ */
+export const RemoteHelperSchema = z.object({ ...RemoteFolderShape, idleRestartMin: z.number().positive().default(60) }).strict();
+export type RemoteHelper = z.infer<typeof RemoteHelperSchema>;
+
+/**
+ * A project Remote Control keeps a conversation open in: a task (the session
+ * Open Project in Terminal would start) or a folder. `keepReady`: once the
+ * open conversation gets a message, another empty one opens.
+ */
+export const RemoteProjectSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('task'),
+      id: z.string().min(1),
+      taskId: z.string().min(1),
+      /** The session's name in the Claude app. Unset = the task's name. */
+      name: z.string().min(1).optional(),
+      keepReady: z.boolean().default(false),
+    })
+    .strict(),
+  z.object({ kind: z.literal('folder'), ...RemoteFolderShape, keepReady: z.boolean().default(false) }).strict(),
+]);
+export type RemoteProject = z.infer<typeof RemoteProjectSchema>;
+export type RemoteFolderProject = Extract<RemoteProject, { kind: 'folder' }>;
+
+export const RemoteSettingsSchema = z
+  .object({
+    /** Start Remote Control when Looper starts. */
+    startWithLooper: z.boolean().default(false),
+    helpers: z.array(RemoteHelperSchema).default([]),
+    projects: z.array(RemoteProjectSchema).default([]),
+  })
+  .default({});
+export type RemoteSettings = z.infer<typeof RemoteSettingsSchema>;
+
 export const SettingsSchema = z.object({
   /** Where checks and agents can run, each with its own harness list. */
   environments: z.array(EnvironmentSchema).min(1).default(() => defaultEnvironments()),
@@ -532,6 +592,8 @@ export const SettingsSchema = z.object({
   }).default({}),
   /** Main-window view options (View menu). */
   view: ViewSchema.default({}),
+  /** Advanced → Remote Control: the conversations it keeps open for the Claude app. */
+  remote: RemoteSettingsSchema,
 }).superRefine((s, ctx) => {
   const envIds = new Set<string>();
   for (const env of s.environments) {
@@ -752,4 +814,6 @@ export type EngineEvent =
   | { type: 'terminal:data'; id: string; data: string }
   | { type: 'terminal:end'; id: string }
   | { type: 'settings'; settings: Settings }
-  | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' };
+  | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' }
+  /** Remote Control started or stopped, or one of its conversations changed. */
+  | { type: 'remote'; state: RemoteState };

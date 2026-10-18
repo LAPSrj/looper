@@ -12,6 +12,8 @@ import { MessagesService, readRunSessionId } from './messages';
 import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions } from './terminal-sessions';
+import { RemoteControl } from './remote';
+import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType } from './chat';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, TerminalInfo } from '../shared/chat';
 import { createWindowsPowerOps } from './power-win';
@@ -179,8 +181,24 @@ export interface Engine {
   terminalSessionOutput(sessionId: string): { data: string; ended: boolean } | null;
   /** End a session (its window closed). */
   closeTerminalSession(sessionId: string): void;
-  /** Sessions whose harness is still running. */
+  /** Sessions in Looper terminal windows whose harness is still running (Remote Control's not counted). */
   runningTerminalSessions(): number;
+  // remote control
+  /** Start Remote Control for this run of Looper: every helper and project gets its conversation. */
+  startRemote(): void;
+  /** Stop Remote Control: every one of its sessions ends. */
+  stopRemote(): void;
+  remoteState(): RemoteState;
+  /** A conversation's last message (the Conversations window's panel); null before its first. */
+  remoteLastMessage(id: string): RemoteMessage | null;
+  /** End one Remote Control conversation; its entry gets a new one if it keeps one open. */
+  stopRemoteConversation(id: string): void;
+  /** Whether a terminal session is a Remote Control conversation (closing its window leaves it running). */
+  isRemoteSession(id: string): boolean;
+  /** Remote Control conversations that have had a message and are still open. */
+  usedRemoteConversations(): number;
+  /** A task's name, or the name of the folder project or helper whose conversations a stand-in id records. */
+  taskName(id: string): string | undefined;
   /** Terminal window: copy the files into the task's attachments; returns their paths as the terminal pastes them. */
   attachToTerminal(sessionId: string, files: AttachmentInput[]): string;
   /**
@@ -297,8 +315,11 @@ export function createEngine(opts: EngineOptions): Engine {
     }
   };
 
+  // Declared ahead: the message reader and terminal sessions reach Remote Control, created below.
+  let remote: RemoteControl;
+
   const messages = new MessagesService({
-    getTask: (id) => tasks.get(id),
+    getTask: (id) => tasks.get(id) ?? remote.standIn(id),
     runDir: (taskId, runId) => runs.runDir(taskId, runId),
     host,
     settings,
@@ -413,7 +434,14 @@ export function createEngine(opts: EngineOptions): Engine {
     versions,
   });
 
-  const terminals = new TerminalSessions({ emit, log });
+  const terminals = new TerminalSessions({
+    emit: (e) => {
+      emit(e);
+      // A Remote Control session's harness exited: Remote Control closes it and opens another if needed.
+      if (e.type === 'terminal:end' && remote.owns(e.id)) remote.exited(e.id);
+    },
+    log,
+  });
 
   /** Continue in Terminal: the session id the run's conversation was recorded under. */
   const resumeIdOf = (task: Task, runId: string): string => {
@@ -468,6 +496,39 @@ export function createEngine(opts: EngineOptions): Engine {
     appendRecord,
     taskVersion,
     log,
+  });
+
+  remote = new RemoteControl({
+    dataDir,
+    settings,
+    log,
+    emit: (state) => emit({ type: 'remote', state }),
+    getTask: (id) => tasks.get(id),
+    listTasks: () => tasks.list(),
+    createTarget: (task) => createTarget(task, { host, settings }),
+    startSession(task, launch) {
+      const runId = newRunId();
+      const dir = runs.createRunDir(task.id, runId);
+      terminals.start(
+        task.id,
+        () => {
+          const target = createTarget(task, { host, settings });
+          const { launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, undefined, true, launch(dir, target));
+          return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
+        },
+        runId,
+      );
+      terminalRuns.start({ taskId: task.id, runId, harnessKind: 'claude-code' });
+      return { runId, dir };
+    },
+    closeSession(runId) {
+      terminals.close(runId);
+      terminalRuns.close(runId);
+    },
+    output: (runId) => terminals.output(runId),
+    write: (runId, data) => terminals.write(runId, data),
+    readTitle: (taskId, runId) => runs.readTerminalInfo(taskId, runId)?.title,
+    runDir: (taskId, runId) => runs.runDir(taskId, runId),
   });
 
   /**
@@ -756,6 +817,7 @@ export function createEngine(opts: EngineOptions): Engine {
       rest?.init();
       sweepRunLogs();
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
+      if (settings.remote.startWithLooper) remote.start();
     },
     async stop() {
       if (!started) return;
@@ -764,6 +826,7 @@ export function createEngine(opts: EngineOptions): Engine {
       retentionTimer = null;
       inbox.stop();
       rest?.dispose();
+      remote.stop();
       terminals.closeAll();
       terminalRuns.closeAll();
       await Promise.all([scheduler.stop(), builders.closeAll(), chats.closeAll()]);
@@ -810,6 +873,7 @@ export function createEngine(opts: EngineOptions): Engine {
         emit({ type: 'folders', folders: tasks.listFolders(), layout: tasks.listLayout() });
       }
       if (parsed.templatesFile !== oldTemplatesFile) emit({ type: 'templates', templates: templates.list() });
+      remote.settingsChanged();
       return { ...settings };
     },
     listTasks: () => tasks.list(),
@@ -991,16 +1055,33 @@ export function createEngine(opts: EngineOptions): Engine {
     resizeTerminalSession: (sessionId, cols, rows) => terminals.resize(sessionId, cols, rows),
     terminalSessionOutput: (sessionId) => terminals.output(sessionId),
     closeTerminalSession(sessionId: string): void {
+      // A Remote Control conversation outlives its window: Remote Control ends it.
+      if (remote.owns(sessionId)) return;
       const taskId = terminals.taskOf(sessionId);
       terminals.close(sessionId);
       if (terminalRuns.openIds().has(sessionId)) terminalRuns.close(sessionId);
       // A custom harness's session records nothing: its folder only held the launcher.
       else if (taskId) fs.rmSync(runs.runDir(taskId, sessionId), { recursive: true, force: true });
     },
-    runningTerminalSessions: () => terminals.running(),
+    runningTerminalSessions: () => terminals.running() - remote.liveCount(),
+    startRemote(): void {
+      // A sleeping computer drops every Remote Control session: Rest Mode stays off meanwhile.
+      if (rest?.state().armed) {
+        rest.disarm();
+        log.info('Rest Mode turned off: Remote Control started');
+      }
+      remote.start();
+    },
+    stopRemote: () => remote.stop(),
+    remoteState: () => remote.state(),
+    remoteLastMessage: (id) => remote.lastMessage(id),
+    stopRemoteConversation: (id) => remote.stopConversation(id),
+    isRemoteSession: (id) => remote.owns(id),
+    usedRemoteConversations: () => remote.usedCount(),
+    taskName: (id) => (tasks.get(id) ?? remote.standIn(id))?.name,
     attachToTerminal(sessionId: string, files: AttachmentInput[]): string {
       const taskId = terminals.taskOf(sessionId);
-      const task = taskId ? tasks.get(taskId) : undefined;
+      const task = taskId ? (tasks.get(taskId) ?? remote.standIn(taskId)) : undefined;
       if (!task) throw new Error('This terminal session is closed.');
       const target = createTarget(task, { host, settings });
       return saveAttachments(task.id, files)
@@ -1056,6 +1137,7 @@ export function createEngine(opts: EngineOptions): Engine {
     sendGuidance: (id, runId, text) => scheduler.sendGuidance(id, runId, text),
     armRest(): void {
       if (!rest) throw new Error('Rest Mode is only available in the Looper app on Windows.');
+      if (remote.isRunning()) throw new Error('Stop Remote Control first: a sleeping computer drops its sessions.');
       rest.arm();
     },
     disarmRest: () => rest?.disarm(),

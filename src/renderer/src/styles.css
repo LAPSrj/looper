@@ -625,6 +625,12 @@ code,
 .runlog-result-empty {
   padding: 20px 14px;
 }
+
+/* Remote Control conversations: who wrote the message the panel shows, when it's the user. */
+.runlog-result-from {
+  padding: 10px 14px 0;
+  font-size: 12px;
+}
 .runlog-table {
   width: 100%;
   border-collapse: collapse;

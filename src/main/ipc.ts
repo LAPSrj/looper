@@ -4,13 +4,14 @@ import type { Engine } from '../engine/engine';
 import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
-import { folderSubtree } from '../shared/folders';
+import { folderParents, folderSubtree } from '../shared/folders';
+import { resolveEnvironment, resolveHarness } from '../shared/environments';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import type { Attachment, AttachmentInput } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
-import type { Task, View } from '../shared/types';
+import type { Task, TaskFolder, View } from '../shared/types';
 import { paneMenuItems, singleMenuItems } from './view-menu';
 
 export interface IpcHost {
@@ -65,6 +66,10 @@ export interface IpcHost {
   forkChat: (chatId: string, index: number) => void;
   /** The window of a chat, which alone gets its events. */
   chatWindow: (chatId: string) => BrowserWindow | undefined;
+  /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
+  openRemoteConversation: (id: string) => Promise<void>;
+  openRemoteHelperEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
+  openRemoteProjectEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (
@@ -77,6 +82,26 @@ export interface IpcHost {
     taskCompleted?: boolean,
     allowComplete?: boolean,
   ) => void;
+}
+
+/** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
+const menuText = (s: string): string => s.replace(/&/g, '&&');
+
+/** Menu items for picking a task: the sidebar's folders as submenus (empty ones left out), then the top-level tasks. */
+function tasksByFolder(folders: TaskFolder[], tasks: Task[], pick: (t: Task) => void): Electron.MenuItemConstructorOptions[] {
+  const parents = folderParents(folders);
+  const containerOf = (t: Task) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
+  const build = (container: string): Electron.MenuItemConstructorOptions[] => {
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    for (const f of folders) {
+      if (parents.get(f.id) !== container) continue;
+      const sub = build(f.id);
+      if (sub.length) items.push({ label: menuText(f.name), submenu: sub });
+    }
+    for (const t of tasks) if (containerOf(t) === container) items.push({ label: menuText(t.name), click: () => pick(t) });
+    return items;
+  };
+  return build('');
 }
 
 /** Height of an attachment's thumbnail in a chat message. */
@@ -442,6 +467,68 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   // Fired from `beforeunload` when a freshly created environment/harness is
   // closed without saving, so create-on-add leaves no junk behind. `send`
   // (not invoke): the window is going away and cannot await a reply.
+  // ---------- Remote Control ----------
+
+  ipcMain.handle('remote:state', () => engine.remoteState());
+  ipcMain.handle('remote:lastMessage', (_e, id: string) => engine.remoteLastMessage(String(id)));
+  ipcMain.handle('remote:open', (_e, id: string) => host.openRemoteConversation(String(id)));
+  ipcMain.handle('remote:openHelperEditor', (e, id: string, isNew?: boolean) =>
+    host.openRemoteHelperEditor(String(id), !!isNew, BrowserWindow.fromWebContents(e.sender)),
+  );
+  ipcMain.handle('remote:openProjectEditor', (e, id: string, isNew?: boolean) =>
+    host.openRemoteProjectEditor(String(id), !!isNew, BrowserWindow.fromWebContents(e.sender)),
+  );
+  // A new helper or folder project whose window closed without Create.
+  ipcMain.on('remote:discard', (_e, kind: 'helper' | 'project', id: string) => {
+    try {
+      const r = engine.settings.remote;
+      if (kind === 'helper') engine.updateSettings({ remote: { ...r, helpers: r.helpers.filter((h) => h.id !== id) } });
+      else engine.updateSettings({ remote: { ...r, projects: r.projects.filter((p) => p.id !== id) } });
+    } catch (err) {
+      engine.log.error(`discard remote ${kind} ${id} failed: ${String(err)}`);
+    }
+  });
+  // Add Task…: the Claude Code tasks not yet in the list, by folder; a pick adds the project right away.
+  ipcMain.on('remote:addTaskMenu', (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const r = engine.settings.remote;
+    const listed = new Set(r.projects.flatMap((p) => (p.kind === 'task' ? [p.taskId] : [])));
+    const claude = (t: Task) => {
+      try {
+        return resolveHarness(t, resolveEnvironment(t, engine.settings)).kind === 'claude-code';
+      } catch {
+        return false;
+      }
+    };
+    const tasks = engine.listTasks().filter((t) => !listed.has(t.id) && claude(t));
+    const pick = (t: Task) => {
+      try {
+        const rr = engine.settings.remote;
+        const id = `p-${Math.random().toString(36).slice(2, 8)}`;
+        engine.updateSettings({ remote: { ...rr, projects: [...rr.projects, { kind: 'task', id, taskId: t.id, keepReady: false }] } });
+      } catch (err) {
+        void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+      }
+    };
+    const items = tasksByFolder(engine.listFolders(), tasks, pick);
+    Menu.buildFromTemplate(items.length ? items : [{ label: 'No other Claude Code tasks', enabled: false }]).popup({ window: sender });
+  });
+  ipcMain.on('context-menu:remote-conversation', (e, id: string) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const conv = engine.remoteState().conversations.find((c) => c.id === id);
+    if (!conv) return;
+    const open = conv.status !== 'ended';
+    Menu.buildFromTemplate([
+      { label: 'Open', click: () => void host.openRemoteConversation(id) },
+      { label: 'Open in Browser', enabled: !!conv.link, click: () => conv.link && void shell.openExternal(conv.link) },
+      { label: 'Copy Link', enabled: !!conv.link, click: () => conv.link && clipboard.writeText(conv.link) },
+      { type: 'separator' },
+      { label: 'Stop', enabled: open, click: () => engine.stopRemoteConversation(id) },
+    ]).popup({ window: sender });
+  });
+
   ipcMain.on('envEditor:discard', (_e, envId: string) => {
     try {
       const s = engine.settings;

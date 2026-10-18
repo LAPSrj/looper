@@ -180,7 +180,12 @@ class BuilderSession {
     fs.mkdirSync(path.join(this.dir, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(this.dir, 'requests'), { recursive: true });
     fs.mkdirSync(path.join(this.dir, 'responses'), { recursive: true });
-    for (const [name, content] of Object.entries(this.target.renderBuilderHelpers(HELPERS))) {
+    const helpers = this.target.renderRequestHelpers(HELPERS, {
+      dirVar: 'LOOPER_BUILDER_DIR',
+      script: 'looper-builder',
+      hint: 'is the task builder window still open?',
+    });
+    for (const [name, content] of Object.entries(helpers)) {
       writeText(path.join(this.dir, 'bin', name), content, 0o755);
     }
     const initial = this.initialDraft();
