@@ -137,17 +137,23 @@ on.
 Interactive Claude Code asks whether it can trust a directory the first time
 it runs there, and blocks until answered (Codex asks the same about a
 directory's contents). Looper answers "yes" for you
-automatically (the harness's **Folder trust dialog** setting in
-**Settings → Environments**, "Answer automatically (recommended)" by
+automatically (the harness's **Folder trust and MCP server dialogs** setting
+in **Settings → Environments**, "Answer automatically (recommended)" by
 default) — you shouldn't normally see this
-dialog at all. If you've set it to "Wait for user" for a harness, the run will
-sit waiting on it until the idle clock (below) ends or holds it.
+dialog at all. The same setting approves the folder's project MCP servers
+(its `.mcp.json`, and those of the folders above it), so Claude Code's "new
+MCP servers found in this project" dialog doesn't stop a run either; a server
+that a settings file disables (`disabledMcpjsonServers`) stays off. If you've
+set it to "Wait for user" for a harness, the run will sit waiting on these
+dialogs until the idle clock (below) ends or holds it.
 
 ## An interactive run holds on a permission prompt
 
-Any interactive prompt on screen — a permission request, a question, not
-just the trust dialog — is detected by watching for its "Esc to cancel"
-footer, and is treated as the agent waiting on a human: the idle clock
+Any interactive prompt on screen — a permission request, a question, a
+dialog — is detected by watching for its "Esc to …" footer ("Esc to
+cancel", "Esc to reject all"), and is treated as the agent waiting on a
+human. So is a Claude Code session that still hasn't started two minutes
+after launch, which only a startup dialog does: the idle clock
 starts, and after `idleGraceMin` minutes (the Settings tab's **Idle
 grace**) the run ends, or holds if the task's **When idle too long** is set
 to "Hold and wait for me" (`onIdleTimeout: hold`).

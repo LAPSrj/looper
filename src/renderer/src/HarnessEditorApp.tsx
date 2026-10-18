@@ -211,7 +211,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
             />
           )}
           {draft.kind !== 'custom' && (
-            <Field label="Folder trust dialog">
+            <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
               <select
                 value={draft.options?.autoTrustWorkspace === false ? 'manual' : 'auto'}
                 onChange={(e) =>

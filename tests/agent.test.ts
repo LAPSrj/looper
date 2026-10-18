@@ -11,6 +11,10 @@ const PERMISSION_PROMPT =
   '\x1b[39mDo you want\x1b[14Gto\x1b[17Gcreate\x1b[24G\x1b[1mhello.txt\x1b[22m?\x1b[1C\x1b[1B\x1b[38;5;153m❯\x1b[4G\x1b[38;5;246m1. \x1b[38;5;153mYes' +
   '\x1b[1B\x1b[22m\x1b[38;5;246m3. \x1b[39mNo\x1b[1C\x1b[2B\x1b[38;5;246mEsc to cancel · Tab to amend\x1b[39m';
 const WORKING = '\x1b[38;5;246m✻ Thinking… (esc to interrupt)\x1b[39m';
+// The project MCP servers dialog that held a scheduled run before its session started.
+const MCP_DIALOG =
+  '\x1b[1m\x1b[3;3H2\x1b[1Cnew\x1b[1CMCP\x1b[1Cservers\x1b[1Cfound\x1b[1Cin\x1b[1Cthis\x1b[1Cproject\x1b[38;5;246m\x1b[22m\x1b[4;3HSelect\x1b[1Cany\x1b[1Cyou\x1b[1Cwish\x1b[1Cto\x1b[1Cenable.' +
+  '\x1b[m\x1b[9;3H❯\x1b[38;5;114m\x1b[1C[✔]\x1b[38;5;153m\x1b[1Coutlook\x1b[1m\x1b[11;8HEnable\x1b[1Cselected\x1b[38;5;246m\x1b[22m\x1b[3m\x1b[12;2HSpace\x1b[1Cto\x1b[1Cselect\x1b[1C·\x1b[1CEsc\x1b[1Cto\x1b[1Creject\x1b[1Call\x1b[m';
 
 describe('prompt detection (regexes on stripped bytes)', () => {
   it('sees the trust dialog through cursor moves', () => {
@@ -35,6 +39,12 @@ describe('ScreenModel', () => {
     await screen.write('\x1b[2J\x1b[H' + WORKING);
     expect(screen.contains(WAITING_PROMPT_RE)).toBe(false);
     expect(screen.text()).toContain('Thinking');
+    screen.dispose();
+  });
+  it('sees a dialog whose footer offers something other than cancel, such as the MCP servers one', async () => {
+    const screen = new ScreenModel(120, 32);
+    await screen.write('\x1b[?1049h\x1b[2J' + MCP_DIALOG);
+    expect(screen.contains(WAITING_PROMPT_RE)).toBe(true);
     screen.dispose();
   });
   it('sees the trust dialog', async () => {

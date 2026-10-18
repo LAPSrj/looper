@@ -338,6 +338,19 @@ describe('headless agent over pipes', () => {
     const gate = path.join(ctx.runDir, 'bin', 'looper-stop-hook');
     expect(settings.hooks.Stop[0].hooks[0].command).toBe(`bash '${gate}'`);
     expect(fs.existsSync(gate)).toBe(true);
+    // Looper trusts the folder for the user, so its project MCP servers need no dialog either.
+    expect(settings.enableAllProjectMcpServers).toBe(true);
+  });
+
+  it("leaves the project MCP servers to the user when the harness waits for the trust dialog's answer", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const ctx = makeCtx(fakeHarness(root, `echo '{"type":"result","result":"ok"}'`));
+    ctx.settings.environments[0].harnesses[0].options = { autoTrustWorkspace: false };
+    const handle = await startAgent(ctx, { onData: () => {} });
+    await handle.finished;
+    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
+    expect(settings.enableAllProjectMcpServers).toBeUndefined();
   });
 
   it('appends the one-off note after everything else in the prompt', async () => {

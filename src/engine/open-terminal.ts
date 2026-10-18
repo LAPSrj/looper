@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Harness, Settings, Task } from '../shared/types';
-import { DEFAULT_SHELL, codexPermissionArgs, resolveEffort, resolveEnvironment, resolveHarness } from '../shared/environments';
+import { DEFAULT_SHELL, codexPermissionArgs, projectMcpApproval, resolveEffort, resolveEnvironment, resolveHarness } from '../shared/environments';
 import type { HostKind } from './host';
 import { wslDistroName } from './host';
 import type { Logger } from './log';
@@ -221,6 +221,8 @@ export function writeTerminalLauncher(
   if (record && harness.kind === 'claude-code') {
     const pipe = (file: string) => [{ hooks: [{ type: 'command', command: target.renderPipeHook(t(file)) }] }];
     writeJsonAtomic(path.join(dir, 'settings.json'), {
+      // A Remote Control session has nobody at the computer to answer the MCP servers dialog.
+      ...projectMcpApproval(harness),
       ...remote?.settings,
       hooks: {
         SessionStart: pipe('session.json'),

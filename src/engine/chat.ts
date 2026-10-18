@@ -16,6 +16,7 @@ import {
   codexPermissionArgs,
   harnessKindLabel,
   harnessModels,
+  projectMcpApproval,
   resolveEffort,
   resolveEnvironment,
   resolveHarness,
@@ -404,6 +405,7 @@ class ChatSession {
       const hook = path.join(this.dir, 'bin', this.target.permissionHookFile);
       writeText(hook, this.target.renderPermissionHook(this.targetFile('permissions')), 0o755);
       writeJsonAtomic(path.join(this.dir, 'settings.json'), {
+        ...projectMcpApproval(this.harness),
         hooks: {
           // As in a run: the payload names the session and its transcript, which the run window and Continue read.
           SessionStart: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('session.json')) }] }],

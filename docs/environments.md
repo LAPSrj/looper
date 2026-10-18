@@ -66,9 +66,10 @@ A harness has a Type:
 - **Claude Code** gets full integration: `--model` and `--permission-mode`
   flags built from the task's Agent tab, an injected system prompt, idle
   detection (ends or holds a run that goes quiet after a turn), rolling
-  conversations, and a per-harness "Folder trust dialog" setting — "Answer
-  automatically (recommended)" or "Wait for user" — for the first-run trust
-  prompt Claude Code shows for a new working directory.
+  conversations, and a per-harness "Folder trust and MCP server dialogs"
+  setting — "Answer automatically (recommended)" or "Wait for user" — for the
+  first-run trust prompt Claude Code shows for a new working directory and
+  its prompt to approve the folder's project MCP servers (`.mcp.json`).
 - **Codex** gets the same level of integration through its own mechanisms:
   `--model` and sandbox/approval flags from the Agent tab, headless runs
   through `codex exec --json`, idle detection and the final report through

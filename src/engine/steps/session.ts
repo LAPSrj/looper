@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
-import { autoTrustWorkspace, codexPermissionArgs } from '../../shared/environments';
+import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { guidanceMessage } from '../../shared/messages';
 import { resolveEnvironment } from '../../shared/environments';
@@ -185,10 +185,18 @@ export const TRUST_PROMPT_RE = /trust\s+this\s+folder/i;
 export const CODEX_TRUST_PROMPT_RE = /trust\s+the\s+contents\s+of\s+this\s+directory/i;
 /**
  * Footer of every interactive claude prompt (permission requests, questions,
- * dialogs). A prompt on screen means the session is waiting for a human — the
- * turn has not ended so the Stop hook will not fire; treat it as idle.
+ * dialogs): "Esc to cancel", "Esc to reject all", and so on. A working turn's
+ * "esc to interrupt" is the only one that isn't waiting. A prompt on screen
+ * means the session is waiting for a human — the turn has not ended so the
+ * Stop hook will not fire; treat it as idle.
  */
-export const WAITING_PROMPT_RE = /Esc\s+to\s+cancel/i;
+export const WAITING_PROMPT_RE = /Esc\s+to\s+(?!interrupt\b)[a-z]/i;
+/**
+ * An interactive claude whose SessionStart hook hasn't fired this long after
+ * spawning is held up by a startup dialog (trust, project MCP servers, or one
+ * Looper doesn't know yet): it waits for a human like any other prompt.
+ */
+const STARTUP_PROMPT_MS = 120_000;
 /**
  * The usage-limit banner an interactive claude shows when a request is
  * rejected, e.g. "You've hit your session limit · resets 5:50am (America/...)".
@@ -555,6 +563,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
       permissions: { allow: signalCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
       sandbox: { excludedCommands: signalCommands },
+      ...projectMcpApproval(harness),
       hooks,
     });
   }
@@ -773,6 +782,18 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   let trustHandled = headless || !autoTrustWorkspace(harness);
   let promptSince: number | null = null;
+  /** SessionStart fired for this session (its hook wrote session.json after the spawn). */
+  let sessionStarted = false;
+  const startupBlocked = (now: number): boolean => {
+    if (sessionStarted || now - started < STARTUP_PROMPT_MS) return false;
+    try {
+      // An earlier session of a continued run may have left its own session.json.
+      sessionStarted = fs.statSync(path.join(ctx.runDir, f('session.json'))).mtimeMs >= started - 1000;
+    } catch {
+      /* not written yet */
+    }
+    return !sessionStarted;
+  };
 
   // A Windows TUI reached through WSL interop blocks at startup on a
   // cursor-position query (ESC[6n) nothing answers — a native console's ConPTY
@@ -1054,11 +1075,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             void finish('error', headline, undefined, undefined, true);
             return;
           }
-          // A prompt visible on screen = the session is waiting for a human; treat as idle.
-          if (host.screenContains(WAITING_PROMPT_RE)) {
+          // A prompt visible on screen, or a session that never started = the session is waiting for a human; treat as idle.
+          const blocked = startupBlocked(now);
+          if (blocked || host.screenContains(WAITING_PROMPT_RE)) {
             if (promptSince === null) {
               promptSince = now;
-              ctx.log.info(`[${task.id}] ${opts.step} is waiting on a prompt`);
+              ctx.log.info(`[${task.id}] ${opts.step} is waiting on a ${blocked ? 'startup ' : ''}prompt`);
             }
           } else if (promptSince !== null) {
             promptSince = null;

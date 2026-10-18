@@ -151,7 +151,8 @@ export const HarnessSchema = z.object({
        * claude-code and codex. Interactive claude asks "do you trust this folder?" (codex: "do
        * you trust the contents of this directory?") the first time it runs in a directory and
        * blocks until answered. The task's cwd was chosen deliberately, so looper answers "yes"
-       * for you unless this is false.
+       * for you unless this is false. For claude it also approves the folder's project MCP
+       * servers (.mcp.json), whose dialog would block the same way.
        */
       autoTrustWorkspace: z.boolean().optional(),
     })

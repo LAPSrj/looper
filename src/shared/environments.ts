@@ -103,6 +103,17 @@ export function autoTrustWorkspace(harness: Harness): boolean {
 }
 
 /**
+ * claude-code: the settings keys that approve the folder's project MCP
+ * servers (its .mcp.json and those above it), whose dialog would otherwise
+ * stop the session before it starts. They go with the trust Looper gives the
+ * folder; a server a settings file disables stays off. Empty when the user
+ * answers the trust dialog themselves.
+ */
+export function projectMcpApproval(harness: Harness): { enableAllProjectMcpServers?: true } {
+  return harness.kind === 'claude-code' && autoTrustWorkspace(harness) ? { enableAllProjectMcpServers: true } : {};
+}
+
+/**
  * The main models of each CLI, by their unprefixed ids. Every entry carries an
  * explicit default effort, so out-of-the-box runs never inherit whatever
  * effort the user's own CLI happens to be set to.
