@@ -12,6 +12,7 @@ const runtime = (taskId: string, over: Partial<TaskRuntime> = {}): TaskRuntime =
   runs: [],
   nextRunAt: null,
   lastRunAt: null,
+  lastRunId: null,
   lastResult: null,
   lastDetail: null,
   consecutiveErrors: 0,
@@ -43,18 +44,19 @@ describe('dashboard rows', () => {
         lastResult: 'error',
         lastDetail: 'agent exited with code 1',
         lastRunAt: 100,
+        lastRunId: 'p5',
       }),
-      failed: runtime('failed', { lastResult: 'max-runtime', lastDetail: 'agent timed out', lastRunAt: 200 }),
+      failed: runtime('failed', { lastResult: 'max-runtime', lastDetail: 'agent timed out', lastRunAt: 200, lastRunId: 'f1' }),
       fine: runtime('fine', { lastResult: 'success', lastRunAt: 400 }),
     });
     const erred = attentionRows([task('erred')], {
       erred: runtime('erred', { lastResult: 'error', lastDetail: 'check error: check exited 1', lastRunAt: 50 }),
     });
     expect(erred[0].problem).toBe('Check error: check exited 1');
-    expect(rows.map((r) => [r.task.id, r.level, r.problem, r.runId])).toEqual([
-      ['failed', 'error', 'Timed out: Agent timed out', null],
-      ['paused', 'error', 'Auto-paused after 5 consecutive errors. Last error: Agent exited with code 1', null],
-      ['waits', 'warning', 'The agent is waiting for you in the Terminal tab.', 'r1'],
+    expect(rows.map((r) => [r.task.id, r.level, r.problem, r.runId, r.lastRunId])).toEqual([
+      ['failed', 'error', 'Timed out: Agent timed out', null, 'f1'],
+      ['paused', 'error', 'Auto-paused after 5 consecutive errors. Last error: Agent exited with code 1', null, 'p5'],
+      ['waits', 'warning', 'The agent is waiting for you in the Terminal tab.', 'r1', null],
     ]);
   });
 

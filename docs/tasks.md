@@ -435,8 +435,7 @@ before the first recorded change, marked "Before history".
 
 ![Compare with Current: a prompt and a script as line diffs](img/version-compare.png)
 
-The Runs tab's **Version** column shows which version each run started
-with. Deleting a task for good from the Recycle Bin deletes its history too;
+Deleting a task for good from the Recycle Bin deletes its history too;
 Clear Run History doesn't touch it.
 
 ## Prompt template variables

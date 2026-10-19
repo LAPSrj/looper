@@ -611,6 +611,7 @@ export class Scheduler extends EventEmitter {
       // Only a cron schedule has a next slot; manual and watcher tasks never do.
       nextRunAt: task.enabled && scheduleOf(task) ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
+      lastRunId: prev?.lastRunId ?? null,
       lastResult: prev?.lastResult ?? null,
       lastDetail: prev?.lastDetail ?? null,
       consecutiveErrors: 0,
@@ -1490,6 +1491,7 @@ export class Scheduler extends EventEmitter {
     const limitWait = retryAtMs !== undefined && retryAtMs > now;
     const counts = !limitWait && !network && !environment && !slept;
     if (counts) rt.consecutiveErrors = errored ? rt.consecutiveErrors + 1 : 0;
+    rt.lastRunId = runId;
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
     const at = rt.runs.findIndex((r) => r.runId === runId);

@@ -199,7 +199,7 @@ const records = () =>
     .filter((e) => e.type === 'record')
     .map(
       (e) =>
-        (e as { record: { phase: string; result: string; summary?: string; body?: string; network?: boolean; environment?: boolean; slept?: boolean } })
+        (e as { record: { runId: string; phase: string; result: string; summary?: string; body?: string; network?: boolean; environment?: boolean; slept?: boolean } })
           .record,
     );
 
@@ -217,6 +217,7 @@ describe('Scheduler', () => {
     expect(rt.state).toBe('idle');
     expect(rt.lastResult).toBe('noop');
     expect(rt.lastDetail).toBe('quiet');
+    expect(rt.lastRunId).toBe(records()[0].runId);
     expect(rt.nextRunAt).toBe(1_020_000); // next whole minute after 1_000_000
     expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:noop']);
     expect(h.agentStarted).toBe(0);
@@ -1564,6 +1565,7 @@ describe('startup overdue filtering', () => {
         runs: [],
         nextRunAt: null,
         lastRunAt: new Date('2026-01-15T10:01:00Z').getTime(),
+        lastRunId: null,
         lastResult: 'success',
         lastDetail: null,
         consecutiveErrors: 0,
@@ -1611,6 +1613,7 @@ describe('startup overdue filtering', () => {
         runs: [],
         nextRunAt: null,
         lastRunAt: now - 10 * 60_000,
+        lastRunId: null,
         lastResult: 'success',
         lastDetail: null,
         consecutiveErrors: 0,
@@ -1687,6 +1690,7 @@ describe('interrupted runs', () => {
         runs,
         nextRunAt: null,
         lastRunAt: 1,
+        lastRunId: null,
         lastResult: null,
         lastDetail: null,
         consecutiveErrors: 0,

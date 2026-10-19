@@ -18,6 +18,7 @@ function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
     runs: [],
     nextRunAt: null,
     lastRunAt: null,
+    lastRunId: null,
     lastResult: null,
     lastDetail: null,
     consecutiveErrors: 0,

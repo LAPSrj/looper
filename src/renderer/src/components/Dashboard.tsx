@@ -67,8 +67,12 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
 
   const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
-  // A waiting run opens on its terminal; a failed one on its run log.
-  const openAttention = (r: AttentionRow) => onOpen(r.task.id, r.runId ? 'terminal' : 'runs');
+  // A waiting run opens on its terminal; a failed one in its run window.
+  const openAttention = (r: AttentionRow) => {
+    if (r.runId) onOpen(r.task.id, 'terminal');
+    else if (r.lastRunId) void window.looper.openMessages(r.task.id, r.lastRunId);
+    else onOpen(r.task.id, 'runs');
+  };
   const openRunning = (r: RunningRow) => onOpen(r.task.id, 'terminal');
 
   const attentionIndex = attention.findIndex((r) => isPicked('attention', r.task.id, r.runId));

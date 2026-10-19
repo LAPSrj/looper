@@ -45,7 +45,8 @@ has been going.
 Clicking a row picks it, and the toolbar, the Task menu and the row's
 right-click menu then act on that task. Stop Task stops that row's run.
 Double-clicking a row, or pressing Enter, selects the task and opens its
-Terminal tab, or its Runs tab for a failed run.
+Terminal tab. On a row about a failed run, it opens that run's window
+instead.
 
 Tasks and folders can be reordered by dragging them; the order is saved.
 Dropping a task on another task inserts it there (joining that task's
@@ -356,8 +357,7 @@ press Stop Task (Shift+F5)."
 ![The Runs tab: a chat and a terminal session among the scheduled runs, and a run selected with its report below](img/runs-tab.png)
 
 The Runs tab lists every past run of the task as a table: Date, Start,
-End, Result, Duration, Version (the task's [version](tasks.md#version-history)
-when the run started), Details. Each row is one full run (check, classify,
+End, Result, Duration, Details. Each row is one full run (check, classify,
 and agent steps collapsed together, showing the most significant result);
 a run still in progress shows Running in the Result column. A
 [chat](#chats) or [terminal session](#terminal-sessions) you started shows as

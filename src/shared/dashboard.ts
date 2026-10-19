@@ -10,6 +10,8 @@ export interface AttentionRow {
   at: number | null;
   /** The waiting run; null for a row about the task's last result. */
   runId: string | null;
+  /** The finished run a row about the task's last result comes from. */
+  lastRunId: string | null;
 }
 
 /** A main-window dashboard row for a run in progress. */
@@ -33,13 +35,13 @@ export function attentionRows(tasks: Task[], runtimes: Record<string, TaskRuntim
     if (!rt || task.completedAt || rt.state === 'disabled') continue;
     for (const run of rt.runs) {
       if (run.held) {
-        rows.push({ task, level: 'warning', problem: 'The agent is waiting for you in the Terminal tab.', at: run.startedAt, runId: run.runId });
+        rows.push({ task, level: 'warning', problem: 'The agent is waiting for you in the Terminal tab.', at: run.startedAt, runId: run.runId, lastRunId: null });
       }
     }
     const detail = rt.lastDetail ? capFirst(rt.lastDetail) : '';
     if (rt.state === 'paused' && rt.pausedReason?.startsWith('auto-paused')) {
       const last = rt.pausedReason.startsWith('auto-paused after') && detail ? ` Last error: ${detail}` : '';
-      rows.push({ task, level: 'error', problem: `${capFirst(rt.pausedReason)}.${last}`, at: rt.lastRunAt, runId: null });
+      rows.push({ task, level: 'error', problem: `${capFirst(rt.pausedReason)}.${last}`, at: rt.lastRunAt, runId: null, lastRunId: rt.lastRunId });
     } else if (rt.lastResult && (ERROR_RESULTS.has(rt.lastResult) || rt.lastResult === 'warning')) {
       const label = resultLabel(rt.lastResult);
       // An error's detail already says what failed; other results name themselves first.
@@ -50,6 +52,7 @@ export function attentionRows(tasks: Task[], runtimes: Record<string, TaskRuntim
         problem,
         at: rt.lastRunAt,
         runId: null,
+        lastRunId: rt.lastRunId,
       });
     }
   }

@@ -689,6 +689,8 @@ export interface TaskRuntime {
   runs: ActiveRun[];
   nextRunAt: number | null;
   lastRunAt: number | null;
+  /** The run that set lastResult. */
+  lastRunId: string | null;
   /** Outcome of the last cycle (success, warning, error, noop, ...). */
   lastResult: RunResult | null;
   /** One line about the last cycle: the run's headline, the check summary, or the error. */
