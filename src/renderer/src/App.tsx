@@ -60,7 +60,7 @@ export function App() {
       : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
   const livePick =
     !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
-  // The task menus and the toolbar act on: the selected task, or the dashboard row's (a task's, not a conversation's).
+  // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's).
   const taskPick = livePick?.list === 'remote' ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
 
@@ -328,8 +328,9 @@ export function App() {
     <div className="app-shell">
       {(view?.toolbar ?? true) && (
         <TaskToolbar
-          task={targetTask}
-          runtime={targetTask ? runtimes[targetTask.id] : undefined}
+          // On the dashboard the task buttons are off; the menus still act on the picked row.
+          task={selected ? targetTask : null}
+          runtime={selected && targetTask ? runtimes[targetTask.id] : undefined}
           dashboard={!selected}
           onAction={uiAction}
         />

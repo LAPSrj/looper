@@ -42,8 +42,9 @@ step (Checking, Classifying, Running agent, or Waiting for you), what
 triggered it (Schedule, Manual, or Event), when it started, and how long it
 has been going.
 
-Clicking a row picks it, and the toolbar, the Task menu and the row's
-right-click menu then act on that task. Stop Task stops that row's run.
+While the dashboard shows, the toolbar's task buttons are off. Clicking a
+row picks it, and the Task menu and the row's right-click menu then act on
+that task. Stop Task stops that row's run.
 Double-clicking a row, or pressing Enter, selects the task and opens its
 Terminal tab. On a row about a failed run, it opens that run's window
 instead.

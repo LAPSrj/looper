@@ -6,9 +6,9 @@ import type { DetailTab } from './TaskDetail';
 import { showTaskMenu } from './TaskList';
 import { useListNav } from './hooks';
 
-/** A row the user picked on the dashboard; the toolbar and menus act on its task. */
+/** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
-  /** remote: a Remote Control conversation, which the task menus and toolbar leave alone. */
+  /** remote: a Remote Control conversation, which the task menus leave alone. */
   list: 'attention' | 'running' | 'remote';
   taskId: string;
   /** The run the row is about (a conversation's id); null for a row about the task's last result. */
