@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
-import type { RemoteState } from '@shared/remote';
+import { isRemoteTaskId, type RemoteState } from '@shared/remote';
 import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
-import { attentionRows, runningRows } from '@shared/dashboard';
+import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
 import { Dashboard, type DashboardPick } from './components/Dashboard';
 import { Sidebar } from './components/Sidebar';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
@@ -12,6 +12,7 @@ import { TaskToolbar } from './components/TaskToolbar';
 import { useDialogKeys, useDragResize } from './components/hooks';
 
 const MAX_RECORDS = 500;
+const RECENT_RUNS = 10;
 
 function restStatus(rest: RestState, now: number): string {
   if (rest.phase === 'countdown' && rest.sleepAt !== null) {
@@ -45,6 +46,10 @@ export function App() {
   // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
   const [terminalRun, setTerminalRun] = useState<string | null>(null);
   const [remote, setRemote] = useState<RemoteState | null>(null);
+  // null until the dashboard first loads them.
+  const [recent, setRecent] = useState<RecentRun[] | null>(null);
+  // Counts run records and task changes, so the dashboard reads the recent runs again.
+  const [runsChanged, setRunsChanged] = useState(0);
 
   const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
@@ -57,11 +62,13 @@ export function App() {
   const pickedRows = (list: DashboardPick['list']) =>
     list === 'remote'
       ? (remoteOpen ?? []).map((c) => ({ taskId: c.taskId, runId: c.id }))
-      : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
+      : list === 'recent'
+        ? (recent ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
+        : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
   const livePick =
     !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
-  // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's).
-  const taskPick = livePick?.list === 'remote' ? null : livePick;
+  // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
+  const taskPick = livePick?.list === 'remote' || (livePick && isRemoteTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
 
   // Menu and toolbar commands act on the target task; the ref keeps them acting on current state.
@@ -178,7 +185,10 @@ export function App() {
           if (!ok) return;
           void window.looper.runs
             .clear(t.id)
-            .then(() => setRecords((m) => ({ ...m, [t.id]: [] })))
+            .then(() => {
+              setRecords((m) => ({ ...m, [t.id]: [] }));
+              setRunsChanged((n) => n + 1);
+            })
             .catch((e) => void window.looper.showError((e as Error).message));
         });
         break;
@@ -208,6 +218,7 @@ export function App() {
           break;
         case 'tasks':
           setTasks(e.tasks);
+          setRunsChanged((n) => n + 1);
           break;
         case 'folders':
           setFolders(e.folders);
@@ -223,6 +234,7 @@ export function App() {
           setRest(e.rest);
           break;
         case 'record':
+          setRunsChanged((n) => n + 1);
           setRecords((m) => {
             const list = m[e.record.taskId];
             if (!list) return m; // not loaded yet: will be fetched on select
@@ -256,6 +268,18 @@ export function App() {
   useEffect(() => {
     if (selected && !tasks.some((t) => t.id === selected)) setSelected(null);
   }, [tasks, selected]);
+
+  const infoLoaded = info !== null;
+  const hideNoActionRuns = info?.settings.view.hideNoActionRuns ?? false;
+  const hideChatsAndTerminals = info?.settings.view.hideChatsAndTerminals ?? false;
+  useEffect(() => {
+    if (selected || !infoLoaded) return;
+    // A run writes its records in quick bursts: read once the burst is over.
+    const t = setTimeout(() => {
+      void window.looper.runs.recent(RECENT_RUNS, { hideNoAction: hideNoActionRuns, hideChatsAndTerminals }).then(setRecent);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [selected, infoLoaded, hideNoActionRuns, hideChatsAndTerminals, runsChanged]);
 
   const selectedState = target ? runtimes[target]?.state : undefined;
   const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
@@ -374,6 +398,7 @@ export function App() {
               attention={attention}
               running={running}
               remote={remoteOpen}
+              recent={recent}
               runtimes={runtimes}
               now={now}
               pick={livePick}

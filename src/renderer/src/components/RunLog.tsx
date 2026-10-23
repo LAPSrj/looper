@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { groupRuns, runShown } from '@shared/runs';
 import type { RunRecord, Task, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
@@ -24,41 +25,6 @@ interface Props {
   focusRun?: { runId: string } | null;
 }
 
-interface RunGroup {
-  runId: string;
-  startTs: string;
-  endTs: string;
-  result: string;
-  totalDurationMs: number;
-  details: string;
-  resultText: string;
-  records: RunRecord[];
-}
-
-
-function bestResult(records: RunRecord[]): string {
-  const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'started', 'noop', 'skipped', 'act'];
-  for (const p of priority) {
-    if (records.some((r) => r.phase !== 'result' && r.result === p)) return p;
-  }
-  return records[records.length - 1]?.result ?? '';
-}
-
-function lastDetail(records: RunRecord[]): string {
-  const result = records.findLast((r) => r.phase === 'result');
-  if (result) return result.summary ?? '';
-  const last = records[records.length - 1];
-  if (!last) return '';
-  const text = last.error ?? last.summary ?? '';
-  const cost = last.detail?.costUsd !== undefined ? ` ($${Number(last.detail.costUsd).toFixed(3)})` : '';
-  return text + cost;
-}
-
-function resultText(records: RunRecord[]): string {
-  const r = records.findLast((rec) => rec.phase === 'result');
-  return r?.body ?? r?.summary ?? '';
-}
-
 export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTerminals, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -68,42 +34,10 @@ export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTermi
   const [splitPct, setSplitPct] = useState(65);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, RunRecord[]>();
-    for (const r of records) {
-      let list = map.get(r.runId);
-      if (!list) {
-        list = [];
-        map.set(r.runId, list);
-      }
-      list.push(r);
-    }
-    const result: RunGroup[] = [];
-    for (const [runId, recs] of map) {
-      const sorted = [...recs].sort((a, b) => a.ts.localeCompare(b.ts));
-      // Guidance records say nothing about how the run went; they may even land after its result.
-      const steps = sorted.filter((r) => r.phase !== 'guidance');
-      const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
-      const totalMs = durations.reduce((a, b) => a + b, 0);
-      result.push({
-        runId,
-        startTs: sorted[0].ts,
-        endTs: sorted[sorted.length - 1].ts,
-        result: bestResult(steps),
-        totalDurationMs: totalMs,
-        details: lastDetail(steps),
-        resultText: resultText(steps),
-        records: sorted,
-      });
-    }
-    result.sort((a, b) => b.startTs.localeCompare(a.startTs));
-    return result.filter(
-      (g) =>
-        // "No action" to the user covers both no-action check runs and scheduler skips.
-        !(hideNoAction && (g.result === 'skipped' || g.result === 'noop')) &&
-        !(hideChatsAndTerminals && (g.result === 'chat' || g.result === 'terminal')),
-    );
-  }, [records, hideNoAction, hideChatsAndTerminals]);
+  const groups = useMemo(
+    () => groupRuns(records).filter((g) => runShown(g, { hideNoAction, hideChatsAndTerminals })),
+    [records, hideNoAction, hideChatsAndTerminals],
+  );
 
   useEffect(() => {
     // While records are still loading (groups empty) keep the selection: a

@@ -1,7 +1,7 @@
 import type { ActiveRun, Task, TaskRuntime } from '@shared/types';
-import type { AttentionRow, RunningRow } from '@shared/dashboard';
+import type { AttentionRow, RecentRun, RunningRow } from '@shared/dashboard';
 import type { RemoteConversation } from '@shared/remote';
-import { REMOTE_STATUS_LABELS, fmtClock, formatDuration } from '../format';
+import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
 import type { DetailTab } from './TaskDetail';
 import { showTaskMenu } from './TaskList';
 import { useListNav } from './hooks';
@@ -9,7 +9,7 @@ import { useListNav } from './hooks';
 /** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
   /** remote: a Remote Control conversation, which the task menus leave alone. */
-  list: 'attention' | 'running' | 'remote';
+  list: 'attention' | 'running' | 'remote' | 'recent';
   taskId: string;
   /** The run the row is about (a conversation's id); null for a row about the task's last result. */
   runId: string | null;
@@ -26,6 +26,9 @@ const TRIGGER_LABELS: Record<ActiveRun['trigger'], string> = {
   manual: 'Manual',
   watcher: 'Event',
 };
+
+/** Fits a date and time in the regional formats' short style, e.g. "22/10/2026, 18:00". */
+const STARTED_WIDTH = 150;
 
 /** Windows' standard 16 px error and warning icons. */
 function StatusIcon({ level }: { level: 'error' | 'warning' }) {
@@ -52,6 +55,8 @@ interface Props {
   running: RunningRow[];
   /** Remote Control's open conversations; null while it is stopped (no section shows). */
   remote: RemoteConversation[] | null;
+  /** The latest runs, newest first; null until they load. */
+  recent: RecentRun[] | null;
   runtimes: Record<string, TaskRuntime>;
   now: number;
   pick: DashboardPick | null;
@@ -61,7 +66,7 @@ interface Props {
 }
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, remote, runtimes, now, pick, onPick, onOpen }: Props) {
+export function Dashboard({ attention, running, remote, recent, runtimes, now, pick, onPick, onOpen }: Props) {
   const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
     pick?.list === list && pick.taskId === taskId && pick.runId === runId;
 
@@ -99,6 +104,16 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
     onIndex: (i) => onPick(remotePick(conversations[i])),
     onActivate: (i) => openRemote(conversations[i]),
   });
+  const recentRuns = recent ?? [];
+  const recentPick = (r: RecentRun): DashboardPick => ({ list: 'recent', taskId: r.taskId, runId: r.runId });
+  const openRecent = (r: RecentRun) => void window.looper.openMessages(r.taskId, r.runId);
+  const recentKeys = useListNav({
+    count: recentRuns.length,
+    index: recentRuns.findIndex((r) => isPicked('recent', r.taskId, r.runId)),
+    onIndex: (i) => onPick(recentPick(recentRuns[i])),
+    onActivate: (i) => openRecent(recentRuns[i]),
+  });
+  const isRunning = (r: RecentRun) => runtimes[r.taskId]?.runs.some((a) => a.runId === r.runId) ?? false;
 
   const menu = (task: Task, p: DashboardPick) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -122,7 +137,7 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
                 <colgroup>
                   <col style={{ width: 240 }} />
                   <col />
-                  <col style={{ width: 120 }} />
+                  <col style={{ width: STARTED_WIDTH }} />
                 </colgroup>
                 <thead>
                   <tr>
@@ -168,7 +183,7 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
                   <col style={{ width: 240 }} />
                   <col />
                   <col style={{ width: 110 }} />
-                  <col style={{ width: 120 }} />
+                  <col style={{ width: STARTED_WIDTH }} />
                   <col style={{ width: 100 }} />
                 </colgroup>
                 <thead>
@@ -217,7 +232,7 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
                     <col style={{ width: 240 }} />
                     <col style={{ width: 110 }} />
                     <col />
-                    <col style={{ width: 120 }} />
+                    <col style={{ width: STARTED_WIDTH }} />
                   </colgroup>
                   <thead>
                     <tr>
@@ -255,6 +270,58 @@ export function Dashboard({ attention, running, remote, runtimes, now, pick, onP
             )}
           </section>
         )}
+
+        <section className="dashboard-section">
+          <span className="pane-title">Recent runs</span>
+          {recent && recentRuns.length === 0 ? (
+            <div className="dashboard-empty muted">No runs yet.</div>
+          ) : (
+            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Recent runs" onKeyDown={recentKeys}>
+              <table className="runlog-table">
+                <colgroup>
+                  <col style={{ width: 240 }} />
+                  <col style={{ width: 110 }} />
+                  <col />
+                  <col style={{ width: STARTED_WIDTH }} />
+                  <col style={{ width: 100 }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Result</th>
+                    <th>Details</th>
+                    <th className="num">Started</th>
+                    <th className="num">Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentRuns.map((r) => {
+                    const p = recentPick(r);
+                    return (
+                      <tr
+                        key={`${r.taskId}-${r.runId}`}
+                        className={`result-${r.result} run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
+                        onClick={() => onPick(p)}
+                        onDoubleClick={() => openRecent(r)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          onPick(p);
+                          window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details });
+                        }}
+                      >
+                        <td title={r.taskName}>{r.taskName}</td>
+                        <td>{isRunning(r) ? 'Running' : resultLabel(r.result)}</td>
+                        <td title={r.details}>{r.details}</td>
+                        <td className="num">{fmtClock(Date.parse(r.startTs), now)}</td>
+                        <td className="num">{r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : ''}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

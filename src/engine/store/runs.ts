@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ChatInfo, TerminalInfo } from '../../shared/chat';
+import { groupRuns, type RunSummary } from '../../shared/runs';
 import type { RunRecord } from '../../shared/types';
 import { ensureDir, writeJsonAtomic } from './fsutil';
 
@@ -26,6 +27,9 @@ export function newRunId(now = new Date()): string {
 }
 
 export class RunStore {
+  /** Each task's run summaries, with the run log's size and time they were read at. */
+  private summaryCache = new Map<string, { stamp: string; runs: RunSummary[] }>();
+
   constructor(private readonly dataDir: string) {}
 
   taskDir(taskId: string): string {
@@ -153,6 +157,23 @@ export class RunStore {
       }
     }
     return out;
+  }
+
+  /** Every run in the task's log, newest first. The log is read again only once it changes. */
+  summaries(taskId: string): RunSummary[] {
+    let stamp: string;
+    try {
+      const st = fs.statSync(this.logFile(taskId));
+      stamp = `${st.size}:${st.mtimeMs}`;
+    } catch {
+      this.summaryCache.delete(taskId);
+      return [];
+    }
+    const cached = this.summaryCache.get(taskId);
+    if (cached?.stamp === stamp) return cached.runs;
+    const runs = groupRuns(this.list(taskId, Infinity)).map(({ records: _r, resultText: _t, ...s }) => s);
+    this.summaryCache.set(taskId, { stamp, runs });
+    return runs;
   }
 
   /** Read the clean log when available, falling back to the raw terminal capture. */

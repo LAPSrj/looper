@@ -42,12 +42,19 @@ step (Checking, Classifying, Running agent, or Waiting for you), what
 triggered it (Schedule, Manual, or Event), when it started, and how long it
 has been going.
 
+**Recent runs** lists the 10 latest runs across every task and Remote
+Control folder project, newest first: the task, its result (Running while
+it's in progress), its details, when it started, and how long it took. It
+follows the same Task Logs filters as the Runs tab (Hide Runs with No
+Action, Hide Chats and Terminals).
+
 While the dashboard shows, the toolbar's task buttons are off. Clicking a
 row picks it, and the Task menu and the row's right-click menu then act on
 that task. Stop Task stops that row's run.
 Double-clicking a row, or pressing Enter, selects the task and opens its
 Terminal tab. On a row about a failed run, it opens that run's window
-instead.
+instead. A row in Recent runs opens its run's window, and its right-click
+menu is the run's menu from the Runs tab.
 
 Tasks and folders can be reordered by dragging them; the order is saved.
 Dropping a task on another task inserts it there (joining that task's
@@ -75,7 +82,7 @@ list (Compact drops the status line), whether disabled, completed, scheduled,
 manual, and watcher tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
 whole subtree; unchecked, folders start closed), whether every task's Runs
-tab hides runs with no action (Task Logs → Hide Runs with No Action) and the
+tab and the dashboard's Recent runs hide runs with no action (Task Logs → Hide Runs with No Action) and the
 [chats](#chats) and [terminal sessions](#terminal-sessions) you started (Task
 Logs → Hide Chats and Terminals), and whether the toolbar and status bar
 themselves are shown.

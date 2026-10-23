@@ -88,6 +88,7 @@ const api: LooperApi = {
   },
   runs: {
     list: (id, limit) => ipcRenderer.invoke('runs:list', id, limit),
+    recent: (limit, filter) => ipcRenderer.invoke('runs:recent', limit, filter),
     output: (id, runId, raw) => ipcRenderer.invoke('runs:output', id, runId, raw),
     openDir: (id, runId) => ipcRenderer.invoke('runs:openDir', id, runId),
     clear: (id) => ipcRenderer.invoke('runs:clear', id),

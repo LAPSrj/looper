@@ -11,6 +11,7 @@ import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import type { Attachment, AttachmentInput } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
+import type { RunFilter } from '../shared/runs';
 import type { Task, TaskFolder, View } from '../shared/types';
 import { paneMenuItems, singleMenuItems } from './view-menu';
 
@@ -251,6 +252,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
 
   ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
+  ipcMain.handle('runs:recent', (_e, limit: number, filter: RunFilter) => engine.recentRuns(limit, filter));
   ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
   ipcMain.handle('runs:openDir', (_e, id: string, runId: string) => shell.openPath(engine.runDir(id, runId)));
   ipcMain.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));

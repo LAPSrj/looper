@@ -1,4 +1,5 @@
 import { capFirst, resultLabel } from './format';
+import type { RunSummary } from './runs';
 import type { ActiveRun, Task, TaskRuntime } from './types';
 
 /** A main-window dashboard row that needs the user. */
@@ -19,6 +20,12 @@ export interface RunningRow {
   task: Task;
   run: ActiveRun;
   runId: string;
+}
+
+/** A main-window dashboard row for one of the latest runs: a task's, or a Remote Control folder project's or helper's. */
+export interface RecentRun extends RunSummary {
+  taskId: string;
+  taskName: string;
 }
 
 const ERROR_RESULTS = new Set(['error', 'max-runtime', 'idle-timeout']);

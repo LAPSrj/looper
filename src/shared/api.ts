@@ -1,4 +1,6 @@
 import type { BuilderSetup, BuilderState } from './builder';
+import type { RecentRun } from './dashboard';
+import type { RunFilter } from './runs';
 import type { Attachment, ChatState } from './chat';
 import type { MessageImage, MessagesResult } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
@@ -119,6 +121,8 @@ export interface LooperApi {
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
+    /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
+    recent(limit: number, filter: RunFilter): Promise<RecentRun[]>;
     output(id: string, runId: string, raw?: boolean): Promise<string>;
     openDir(id: string, runId: string): Promise<void>;
     /** Delete a task's run history. Rejects while the task is mid-cycle. */

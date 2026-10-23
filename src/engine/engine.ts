@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { RecentRun } from '../shared/dashboard';
 import type { MessageImage, MessagesResult } from '../shared/messages';
+import { runShown, type RunFilter } from '../shared/runs';
 import type { EngineEvent, InboxCommand, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { SettingsSchema } from '../shared/types';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
@@ -247,6 +249,8 @@ export interface Engine {
   restState(): RestState;
   // history
   listRuns(id: string, limit?: number): RunRecord[];
+  /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
+  recentRuns(limit: number, filter: RunFilter): RecentRun[];
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
   /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
   readMessages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
@@ -1148,6 +1152,16 @@ export function createEngine(opts: EngineOptions): Engine {
     disarmRest: () => rest?.disarm(),
     restState: () => rest?.state() ?? { armed: false, phase: 'off', sleepAt: null, wakeAt: null },
     listRuns: (id, limit) => runs.list(id, limit),
+    recentRuns(limit: number, filter: RunFilter): RecentRun[] {
+      const out: RecentRun[] = [];
+      for (const taskId of runs.listTaskIds()) {
+        const task = tasks.get(taskId) ?? remote.standIn(taskId);
+        if (!task) continue;
+        const shown = runs.summaries(taskId).filter((r) => runShown(r, filter));
+        for (const r of shown.slice(0, limit)) out.push({ ...r, taskId, taskName: task.name });
+      }
+      return out.sort((a, b) => b.startTs.localeCompare(a.startTs)).slice(0, limit);
+    },
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
     readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),
     readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
