@@ -1,0 +1,1 @@
+Draft this week's changelog from the commits since the last draft. Group by user-visible area, translate commit-speak into plain sentences, and put breaking changes first. Write the draft to docs/changelog-draft.md; do not publish it.

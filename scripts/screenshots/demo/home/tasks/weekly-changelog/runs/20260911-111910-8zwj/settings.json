@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(looper-done:*)",
+      "Bash(looper-done)"
+    ]
+  },
+  "sandbox": {
+    "excludedCommands": [
+      "looper-done"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat > '/mnt/c/Users/leand/repos/looper-demo/demo-home/tasks/weekly-changelog/runs/20260911-111910-8zwj/session.json'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/mnt/c/Users/leand/repos/looper-demo/demo-home/tasks/weekly-changelog/runs/20260911-111910-8zwj/bin/looper-stop-hook'"
+          }
+        ]
+      }
+    ]
+  }
+}

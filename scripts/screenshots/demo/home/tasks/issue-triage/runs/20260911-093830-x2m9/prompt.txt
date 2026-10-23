@@ -1,0 +1,13 @@
+Triage the new issue-tracker items below.
+
+Summary: 3 new issues, 1 waiting reply
+
+Details:
+- #481 Date picker off by one day in negative UTC offsets
+- #482 Typo in the setup instructions
+- #483 Import fails on files over 50 MB
+- #476 Reporter answered the follow-up question
+
+For each item: reproduce it if that is quick, label it, answer the reporter, and fix anything that takes under ~20 lines. Commit fixes as you go and mention every issue number in your report.
+
+Note: Also close issues that have been waiting on the reporter for more than 30 days.

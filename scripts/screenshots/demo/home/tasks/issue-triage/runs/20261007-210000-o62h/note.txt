@@ -1,0 +1,1 @@
+Also close issues that have been waiting on the reporter for more than 30 days.

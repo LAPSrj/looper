@@ -1,0 +1,46 @@
+
+       5  ## ⚠️ Breaking changes
+       6   
+       7 -- **Config file moved.** App configuration now lives at `config/app.toml` instead of `.apprc`. If you're upgrading, copy `c
+         -onfig/app.toml.example` to `config/app.toml` before starting the app — see the updated setup guide.
+       7 +- **Config file moved.** App configuration now lives at `config/app.toml` instead of `.apprc`. If you're upgrading, move yo
+         +ur settings from `.apprc` into `config/app.toml` (it ships with a default `[server]` section, `port = 3000`) before startin
+         +g the app.                                                                                                                        
+       8                                                                                                                                    
+       9  ## Export
+      10 
+      11 +- Added CSV export.                                                                                                               
+      12  - Export now supports a `--format` flag (`csv` or `json`), replacing the old positional argument. The old form still works 
+          for now but is deprecated and will be removed in a future release.                                                                
+      13  - Fixed a bug where CSV export didn't escape fields containing commas or quotes, which could corrupt exported files or shif
+          t columns.
+      14  
+
+  Ran 1 shell command
+
+● There were no commits after the existing draft, so I corrected docs/changelog-draft.md instead of rewriting it. Nothing is published or
+  committed.
+
+  The draft already covered all 11 commits, from the project scaffold on 2026-09-03 to the sort-comparator caching on 2026-09-10. Its
+  headings, breaking-change-first order and plain wording were already right. I changed two things:
+
+  - Config move: The draft told upgraders to copy config/app.toml.example, which doesn't exist in the repo. It now says to move settings
+    from .apprc into config/app.toml, which ships with port = 3000 under [server].
+  - CSV export: I added "Added CSV export", which the draft left out even though it was a new feature in the range.
+
+  The draft's header still says "This is the first draft". That is true, since git has no earlier changelog commit.
+
+  docs/setup.md step 2 has the same bug the draft had. It says to copy config/app.toml.example, which was never added. That edit came in the
+  commit that moved the config, so a new user following the guide hits a missing file. I left it because the file is outside the changelog
+  task. The fix is to either delete step 2, because config/app.toml is already committed, or add the example file. Which should it be?
+
+✻ Brewed for 26s · done 9:04 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  leandro@lemorim.com  webapp (master ◌ 1)  Sonnet 5.5                                                                                      
+  ┌───────────────┬───────┬────────────────────────────┬──────┬───────┐
+  │ █░░░░░░░░░ 5% │ $0.25 │ ↓ ████████████████░░░░ 79% │ ↻ 5m │ Ⓦ 57% │                                                                     
+  └───────────────┴───────┴────────────────────────────┴──────┴───────┘
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

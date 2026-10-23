@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat > '/mnt/c/Users/leand/AppData/Local/Temp/looper-shots/demo-data/tasks/issue-triage/runs/20261018-001922-qq5l/session.json'"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/mnt/c/Users/leand/AppData/Local/Temp/looper-shots/demo-data/tasks/issue-triage/runs/20261018-001922-qq5l/bin/looper-permission-hook'",
+            "timeout": 86400
+          }
+        ]
+      }
+    ]
+  }
+}

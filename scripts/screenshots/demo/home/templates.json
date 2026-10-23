@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "repo-watcher",
+      "name": "Repo watcher",
+      "enabled": true,
+      "schedule": {
+        "cron": "*/15 * * * *"
+      },
+      "environmentId": "",
+      "cwd": "",
+      "check": {
+        "command": "bash scripts/check.sh",
+        "timeoutSec": 60
+      },
+      "classifier": {
+        "model": "haiku",
+        "prompt": "Decide whether the agent should act now. Say yes only if the items below represent real work.\n\nSummary: {{summary}}\n\n{{context}}"
+      },
+      "agent": {
+        "model": "sonnet",
+        "mode": "interactive",
+        "prompt": "Handle the pending items below.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nWork through them one by one and commit as you go.",
+        "maxRuntimeMin": 60
+      }
+    },
+    {
+      "id": "daily-report",
+      "name": "Daily report",
+      "enabled": true,
+      "schedule": {
+        "cron": "0 8 * * *"
+      },
+      "environmentId": "",
+      "cwd": "",
+      "agent": {
+        "model": "sonnet",
+        "mode": "headless",
+        "prompt": "Summarize what changed here in the last 24 hours and write the summary to reports/daily.md.",
+        "maxRuntimeMin": 20
+      }
+    }
+  ]
+}

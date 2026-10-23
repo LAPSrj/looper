@@ -1,0 +1,46 @@
+
+  ⎿  Wrote 32 lines to docs/changelog-draft.md
+      1 # Changelog (draft, week of 2026-10-07)
+      2 
+      3 Covers every commit from 2026-09-03 to 2026-09-10. No earlier draft or release tag exists, so this is the first draft.
+      4                                                                                                                                     
+      5 ## Breaking changes                                                                                                                 
+      6                                                                                                                                     
+      7 - **Configuration moved.** The app now reads its settings from `config/app.toml` instead of `.apprc`. Copy your existing sett       
+        ings into `config/app.toml` before upgrading, because the old file is no longer read. The setup guide is updated to match.
+      8 
+      9 ## Deprecations
+     … +24 lines
+
+  Ran 1 shell command
+ 
+● I wrote the draft to docs/changelog-draft.md. It isn't published or committed.
+
+  No baseline: I found no earlier changelog draft and no release tags, so I couldn't tell what "since the last draft" meant. The draft
+  covers all 10 commits after the project scaffold (2026-09-03 to 2026-09-10). If an earlier draft exists elsewhere, drop the entries it
+  already covered.
+     
+  Sections:
+  - Breaking changes: The config file moved from .apprc to config/app.toml, and the old file is no longer read.
+  - Deprecations: Passing the export format as a positional argument is deprecated in favor of --format.
+  - New: CSV export, and sort order that persists across page changes.
+  - Fixes: CSV fields with quotes are escaped, the date picker is no longer off by one day in negative UTC offsets, and import no longer
+    loads the whole file into memory.
+  - Performance: Table sorting is faster.
+  - Not in the changelog: The setup typo fix, the test time zone pin, and the scaffold. I left these out as not user-visible.
+
+  Open points:
+  - The commit messages for the config move and the --format flag don't describe the exact migration steps. I wrote the config entry from
+    the commit title and the docs/setup.md diff only, so check it before publishing.
+  - docs/setup.md links to docs/export.md, which doesn't exist in the repo. I didn't create it, because it's outside this task.
+
+✽ Flowing… (22s · ↓ 1.2k tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  leandro@lemorim.com  webapp (master ◌ 1)  Sonnet 5.5                                                                                      
+  ┌───────────────┬───────┬────────────────────────────┬──────┬───────┐
+  │ █░░░░░░░░░ 5% │ $0.18 │ ↓ ████████████████░░░░ 79% │ ↻ 4m │ Ⓦ 57% │                                                                     
+  └───────────────┴───────┴────────────────────────────┴──────┴───────┘
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

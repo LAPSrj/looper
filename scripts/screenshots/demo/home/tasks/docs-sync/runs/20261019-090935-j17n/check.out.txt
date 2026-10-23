@@ -1,0 +1,1 @@
+{"act": false, "summary": "No doc-relevant commits today"}

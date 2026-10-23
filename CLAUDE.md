@@ -11,6 +11,13 @@
 - **Interactive mode is the primary mode.** Design features (output viewing,
   terminal tabs, idle detection) for the interactive path first; headless is
   secondary.
+- **Interface changes update the docs.** Every change to what the user sees
+  updates the pages in `docs/` that describe it, and retakes each screenshot
+  in `docs/img/` that shows the changed screen. The app bundles those images,
+  so rebuild after replacing one. Take screenshots with `npm run screenshots`
+  in the Windows copy (`scripts/screenshots/driver.mjs`): it runs the build on
+  a fresh copy of the demo data in `scripts/screenshots/demo/`, at 2082x1342
+  for the main window (`ss <name> 2082x1342`).
 
 ## UI style
 

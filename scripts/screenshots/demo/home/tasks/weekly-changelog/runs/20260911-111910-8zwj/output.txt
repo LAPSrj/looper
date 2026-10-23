@@ -1,0 +1,108 @@
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /home/leandro/looper-demo/webapp
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from
+ your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+[rewrite ↑16]
+ ▐▛███▛█   Claude Code v2.1.268
+▝▜██████▀  Sonnet 5 with high effort · Claude Max
+  ▝▝ ▝▝    ~/looper-demo/webapp · /rc connecting…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                                          ● high · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "how do I log an error?"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+[rewrite ↑45]
+      1 # Changelog (draft)
+      2 
+      3 _Covers commits from 2026-09-03 to 2026-09-10. This is the first draft — no prior changelog draft was found in the repo._
+      4 
+      5 ## ⚠️ Breaking changes
+      6 
+      7 - **Config file moved.** App configuration now lives at `config/app.toml` instead of `.apprc`. If you're upgrading, copy `con       
+        fig/app.toml.example` to `config/app.toml` before starting the app — see the updated setup guide.                                   
+      8 
+      9 ## Export
+     … +26 lines 
+
+  Ran 1 shell command 
+
+● Report
+
+  Drafted the changelog at docs/changelog-draft.md. Since no prior changelog draft existed anywhere in the repo (checked docs/, a repo-wide
+  CHANGELOG* search, and full git history for docs/changelog-draft.md), the draft covers the entire commit history to date: 11 commits from
+  2026-09-03 to 2026-09-10.
+
+  Structure:
+  - Breaking changes first: the .apprc → config/app.toml config move (71919dd, feat!:), called out with the concrete migration step from the
+    docs update in the same commit.
+  - Grouped by user-visible area (Export, Data import, Tables, Dates, Docs), not by commit:
+    - Export: new --format flag with deprecation note for the old positional arg (c07e871), plus the CSV quoting/escaping fix (d38c115) —
+      read the actual diffs to confirm both were about src/export.js behavior.
+    - Data import: streaming fix so large files don't buffer into memory (bb1f55f).
+    - Tables: sort persistence across pages (4884423) and a sort-comparator caching perf improvement (0cc2db3).
+    - Dates: off-by-one date picker bug in negative UTC offsets (7bdc5c0).
+    - Docs: setup typo fix (#482, 3cb8f23).
+  - Excluded non-user-visible commits: a60ee11 (test: pin timezone in date tests) and 0cd96f2 (chore: project scaffold).
+
+  Commit messages were translated into plain, user-facing language rather than copied verbatim. The file is a draft only — not published,
+  not linked from anywhere else in the repo — per the task instructions.
+
+✻ Crunched for 1m 7s · done 11:20 AM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  leandro@lemorim.com  webapp (master ◌ 1)  Sonnet 5                                                                                        
+  ┌───────────────┬───────┬────────────────────────────┬──────────┬───────┐
+  │ ░░░░░░░░░░ 4% │ $0.17 │ ↓ ██████████░░░░░░░░░░ 51% │ ↻ 1h 39m │ Ⓦ 22% │                                                                 
+  └───────────────┴───────┴────────────────────────────┴──────────┴───────┘

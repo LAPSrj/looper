@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+s=
+case "$1" in success|warning|error) s="$1"; shift;; esac
+printf '%s\n%s\n' "$s" "${*:-done}" > "$LOOPER_DONE_FILE"

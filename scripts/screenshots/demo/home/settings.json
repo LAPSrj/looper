@@ -1,0 +1,75 @@
+{
+  "environments": [
+    {
+      "id": "local",
+      "name": "Local Shell",
+      "kind": "local",
+      "harnesses": [
+        {
+          "id": "claude",
+          "name": "Claude Code",
+          "kind": "claude-code",
+          "command": "claude",
+          "args": [],
+          "env": {}
+        }
+      ]
+    },
+    {
+      "id": "wsl",
+      "name": "WSL",
+      "kind": "wsl",
+      "harnesses": [
+        {
+          "id": "claude",
+          "name": "Claude Code",
+          "kind": "claude-code",
+          "command": "claude",
+          "args": [],
+          "env": {}
+        }
+      ]
+    }
+  ],
+  "defaultEnvironmentId": "wsl",
+  "tickMs": 1000,
+  "inboxPollMs": 2000,
+  "signalPollMs": 1000,
+  "staggerFirstRun": {
+    "enabled": true,
+    "minDelaySec": 60,
+    "maxDelaySec": 600,
+    "minIntervalSec": 30
+  },
+  "outputBufferBytes": 262144,
+  "runRetentionDays": 3650,
+  "engineLogRetentionDays": 10,
+  "completedTaskRetention": {
+    "enabled": true,
+    "days": 10
+  },
+  "closeToTray": false,
+  "confirmQuit": {
+    "runs": true,
+    "watchers": false
+  },
+  "notificationsEnabled": true,
+  "promptRunOptions": false,
+  "rest": {
+    "minSleepMin": 30,
+    "graceSec": 60,
+    "disarmOnUserWake": true
+  },
+  "view": {
+    "toolbar": true,
+    "statusBar": true,
+    "taskList": "standard",
+    "showDisabledTasks": true,
+    "showCompletedTasks": true,
+    "showScheduledTasks": true,
+    "showManualTasks": true,
+    "showWatcherTasks": true,
+    "autoOpenFolders": true,
+    "hideNoActionRuns": false
+  }
+}

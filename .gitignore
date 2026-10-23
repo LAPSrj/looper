@@ -2,6 +2,7 @@ node_modules/
 out/
 release/
 *.log
+!scripts/screenshots/demo/**/*.log
 .DS_Store
 .vite/
 e2e-tmp/

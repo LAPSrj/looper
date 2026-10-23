@@ -1,0 +1,1 @@
+{"act": false, "summary": "No new errors in the last 30 min"}

@@ -1,0 +1,580 @@
+{
+  "version": 2,
+  "folders": [
+    {
+      "id": "dev",
+      "name": "Development"
+    },
+    {
+      "id": "ops",
+      "name": "Operations"
+    },
+    {
+      "id": "content",
+      "name": "Content"
+    }
+  ],
+  "layout": {
+    "": [
+      "folder:dev",
+      "folder:ops",
+      "folder:content"
+    ],
+    "dev": [
+      "issue-triage",
+      "nightly-tests",
+      "deps-refresh",
+      "docs-sync"
+    ],
+    "ops": [
+      "error-log-triage",
+      "backup-verify",
+      "inbox-sweep"
+    ],
+    "content": [
+      "weekly-changelog",
+      "onboarding-guide"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "issue-triage",
+      "name": "Issue triage",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "dev",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "*/15 * * * *"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "bash scripts/check-new-issues.sh",
+        "timeoutSec": 60
+      },
+      "classifier": {
+        "enabled": true,
+        "model": "haiku",
+        "prompt": "Decide whether the agent should act now. Say yes only when the items below are real work: new issues that need triage, a label, a reply, or a fix. Ignore bot-filed items, duplicates of known issues, and anything already assigned.\n\nSummary: {{summary}}\n\n{{context}}",
+        "mode": "headless",
+        "timeoutSec": 180
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Triage the new issue-tracker items below.\n\nSummary: {{summary}}\n\nDetails:\n{{context}}\n\nFor each item: reproduce it if that is quick, label it, answer the reporter, and fix anything that takes under ~20 lines. Commit fixes as you go and mention every issue number in your report.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "acceptEdits",
+        "maxRuntimeMin": 60,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "note": {
+        "text": "Also close issues that have been waiting on the reporter for more than 30 days.",
+        "runsLeft": 1
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "nightly-tests",
+      "name": "Nightly test run",
+      "enabled": false,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "dev",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "15 3 * * *"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "env": {},
+      "agent": {
+        "model": "opus",
+        "prompt": "Run the full test suite. If everything passes, say so and stop. Otherwise fix what broke — flaky tests included — re-run until green, and commit the fixes. Report every test you touched and why.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 120,
+        "idleGraceMin": 5,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "end",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "deps-refresh",
+      "name": "Weekly dependency refresh",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "dev",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "0 6 * * 1"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/api",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "bash scripts/check-outdated-deps.sh",
+        "timeoutSec": 120
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Update the outdated dependencies listed below, one at a time.\n\n{{context}}\n\nAfter each update run the test suite; roll back anything that breaks and note it in the report. Commit each successful update separately.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 90,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "docs-sync",
+      "name": "Docs follow the code",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "dev",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "45 17 * * 1-5"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "bash scripts/check-docs-drift.sh",
+        "timeoutSec": 60
+      },
+      "classifier": {
+        "enabled": true,
+        "model": "haiku",
+        "prompt": "The check found commits that may have outdated the documentation. Answer act:true only if the changes plausibly affect documented behavior (API surface, CLI flags, configuration). Refactors and test-only changes are not documentation work.\n\nSummary: {{summary}}\n\n{{context}}",
+        "mode": "headless",
+        "timeoutSec": 180
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Today's commits changed behavior the documentation describes:\n\n{{context}}\n\nUpdate every affected page so it matches the code. Where the right wording needs a product decision, leave the page as is and flag it in your report instead of guessing.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 45,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "error-log-triage",
+      "name": "Error log triage",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "ops",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "*/30 * * * *"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/api",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "bash scripts/check-error-log.sh",
+        "timeoutSec": 60
+      },
+      "classifier": {
+        "enabled": true,
+        "model": "haiku",
+        "prompt": "New stack traces appeared in the error log. Answer act:true only for errors that are new (not a known recurring one) or that spiked sharply.\n\nSummary: {{summary}}\n\n{{context}}",
+        "mode": "headless",
+        "timeoutSec": 180
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "New errors in the aggregated log:\n\n{{context}}\n\nGroup them by root cause, file a tracker item per cause with the stack trace attached, and fix any with an obvious one-line cause. Note recurring known errors without filing duplicates.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 60,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "backup-verify",
+      "name": "Backup verification",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "ops",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "30 7 * * *"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/ops",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "bash scripts/check-backups.sh",
+        "timeoutSec": 120
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Verify last night's backups.\n\n{{context}}\n\nRestore the newest archive into a scratch directory, spot-check row counts and a few files against the live data, then delete the scratch copy. Report exactly what you verified.",
+        "extraArgs": [],
+        "mode": "headless",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 45,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "inbox-sweep",
+      "name": "Support inbox sweep",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "ops",
+      "trigger": {
+        "mode": "schedule",
+        "schedule": {
+          "cron": "*/20 * * * *",
+          "timezone": "Europe/Lisbon"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/ops",
+      "env": {},
+      "check": {
+        "enabled": true,
+        "command": "exit 1",
+        "timeoutSec": 60
+      },
+      "classifier": {
+        "enabled": true,
+        "model": "haiku",
+        "prompt": "Unread support messages are listed below. Answer act:true only for messages a draft reply would genuinely help with; newsletters and delivery notifications are noise.\n\nSummary: {{summary}}\n\n{{context}}",
+        "mode": "headless",
+        "timeoutSec": 180
+      },
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Unread support messages:\n\n{{context}}\n\nDraft a reply for every routine question (drafts only — never send). Anything contractual, angry, or ambiguous: skip it and list it in your report for a human.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 40,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z",
+      "updatedAt": "2026-10-19T17:14:38.994Z"
+    },
+    {
+      "id": "weekly-changelog",
+      "name": "Weekly changelog draft",
+      "enabled": true,
+      "completion": {
+        "allowed": false
+      },
+      "folderId": "content",
+      "trigger": {
+        "mode": "manual",
+        "schedule": {
+          "cron": "0 9 * * 5"
+        }
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "env": {},
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Draft this week's changelog from the commits since the last draft. Group by user-visible area, translate commit-speak into plain sentences, and put breaking changes first. Write the draft to docs/changelog-draft.md; do not publish it.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 30,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-08-20T17:03:30.134Z"
+    },
+    {
+      "id": "onboarding-guide",
+      "name": "Onboarding guide rewrite",
+      "enabled": false,
+      "completedAt": "2026-10-18T08:19:10.936Z",
+      "completedReason": "completed by the user",
+      "completion": {
+        "allowed": true
+      },
+      "folderId": "content",
+      "trigger": {
+        "mode": "manual"
+      },
+      "environmentId": "wsl",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "env": {},
+      "agent": {
+        "model": "sonnet",
+        "prompt": "Rewrite the onboarding guide section by section so a new contributor can set up the project in under an hour. When every section is done, mark the task completed.",
+        "extraArgs": [],
+        "mode": "interactive",
+        "session": "fresh",
+        "sessionMaxRuns": 10,
+        "maxRestarts": 3,
+        "permissionMode": "auto",
+        "maxRuntimeMin": 30,
+        "idleGraceMin": 3,
+        "onIdleTimeout": "finish"
+      },
+      "backoff": {
+        "maxConsecutiveErrors": 5
+      },
+      "maxConcurrentRuns": 1,
+      "notifications": {
+        "runStart": false,
+        "agentStart": false,
+        "end": "warning",
+        "held": false,
+        "autoPaused": false,
+        "completed": false,
+        "usageLimit": false,
+        "networkErrors": false,
+        "environmentErrors": false
+      },
+      "createdAt": "2026-10-18T08:19:10.933Z",
+      "updatedAt": "2026-10-18T08:19:10.936Z"
+    }
+  ],
+  "recycleBin": [
+    {
+      "task": {
+        "id": "onboarding-guide",
+        "name": "Onboarding guide rewrite",
+        "enabled": false,
+        "completedAt": "2026-10-08T03:58:34.599Z",
+        "completedReason": "completed by the user",
+        "completion": {
+          "allowed": true
+        },
+        "folderId": "content",
+        "trigger": {
+          "mode": "manual"
+        },
+        "environmentId": "wsl",
+        "cwd": "/home/leandro/looper-demo/webapp",
+        "env": {},
+        "agent": {
+          "model": "sonnet",
+          "prompt": "Rewrite the onboarding guide section by section so a new contributor can set up the project in under an hour. When every section is done, mark the task completed.",
+          "extraArgs": [],
+          "mode": "interactive",
+          "session": "fresh",
+          "sessionMaxRuns": 10,
+          "maxRestarts": 3,
+          "permissionMode": "auto",
+          "maxRuntimeMin": 30,
+          "idleGraceMin": 3,
+          "onIdleTimeout": "finish"
+        },
+        "backoff": {
+          "maxConsecutiveErrors": 5
+        },
+        "maxConcurrentRuns": 1,
+        "notifications": {
+          "runStart": false,
+          "agentStart": false,
+          "end": "warning",
+          "held": false,
+          "autoPaused": false,
+          "completed": false,
+          "usageLimit": false,
+          "networkErrors": false,
+          "environmentErrors": false
+        },
+        "createdAt": "2026-10-08T03:58:34.593Z",
+        "updatedAt": "2026-10-08T03:58:34.600Z"
+      },
+      "deletedAt": "2026-10-18T08:19:07.049Z"
+    }
+  ]
+}

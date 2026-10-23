@@ -1,0 +1,12 @@
+{
+  "harnessKind": "claude-code",
+  "title": "Where does the app parse dates from the date picker, and does it handle negativ…",
+  "settings": {
+    "model": "sonnet",
+    "permissionMode": "acceptEdits"
+  },
+  "context": {
+    "tokens": 47095,
+    "window": 1000000
+  }
+}
