@@ -7,6 +7,7 @@ const RESULT_LABELS: Record<string, string> = {
   noop: 'No action',
   skipped: 'Skipped',
   started: 'Started',
+  exited: 'Exited',
   error: 'Error',
   'max-runtime': 'Timed out',
   interrupted: 'Interrupted',

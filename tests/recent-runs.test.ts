@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { RunStore } from '../src/engine/store/runs';
+import { groupRuns } from '../src/shared/runs';
 import { TaskSchema, type RunRecord } from '../src/shared/types';
 
 function task(id: string, name: string) {
@@ -13,6 +14,17 @@ function task(id: string, name: string) {
 function rec(taskId: string, runId: string, ts: string, phase: RunRecord['phase'], result: RunRecord['result'], summary?: string): RunRecord {
   return { ts, taskId, runId, phase, result, summary };
 }
+
+describe('groupRuns', () => {
+  it('names a run whose agent exited by its exit, not its start', () => {
+    const [run] = groupRuns([
+      rec('t1', 'a', '2026-10-20T10:00:00Z', 'agent', 'started'),
+      rec('t1', 'a', '2026-10-20T10:00:15Z', 'agent', 'exited'),
+      rec('t1', 'a', '2026-10-20T10:00:15Z', 'result', 'exited', 'Sleeper exited 0'),
+    ]);
+    expect([run.result, run.details]).toEqual(['exited', 'Sleeper exited 0']);
+  });
+});
 
 describe('engine recent runs', () => {
   let engine: Engine | null = null;
