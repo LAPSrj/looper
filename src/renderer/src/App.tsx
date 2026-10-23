@@ -53,16 +53,24 @@ export function App() {
 
   const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
-  // A run Needs attention lists stays out of Recent runs.
-  const recentShown = useMemo(() => {
-    if (!recent) return null;
-    const listed = new Set(attention.map((r) => `${r.task.id}/${r.runId ?? r.lastRunId}`));
-    return recent.filter((r) => !listed.has(`${r.taskId}/${r.runId}`)).slice(0, RECENT_RUNS);
-  }, [recent, attention]);
   // Remote Control's open conversations while it runs; null while it's stopped.
   const remoteOpen = useMemo(
     () => (remote?.running ? remote.conversations.filter((c) => c.status !== 'ended') : null),
     [remote],
+  );
+  // Runs another dashboard list shows stay out of Recent runs: one in progress shows there once it ends.
+  const listedRuns = useMemo(
+    () =>
+      new Set([
+        ...attention.map((r) => `${r.task.id}/${r.runId ?? r.lastRunId}`),
+        ...running.map((r) => `${r.task.id}/${r.runId}`),
+        ...(remoteOpen ?? []).map((c) => `${c.taskId}/${c.id}`),
+      ]),
+    [attention, running, remoteOpen],
+  );
+  const recentShown = useMemo(
+    () => recent?.filter((r) => !listedRuns.has(`${r.taskId}/${r.runId}`)).slice(0, RECENT_RUNS) ?? null,
+    [recent, listedRuns],
   );
   // A picked row that left its list (the run ended, the problem cleared) no longer counts.
   const pickedRows = (list: DashboardPick['list']) =>
@@ -278,8 +286,8 @@ export function App() {
   const infoLoaded = info !== null;
   const hideNoActionRuns = info?.settings.view.hideNoActionRuns ?? false;
   const hideChatsAndTerminals = info?.settings.view.hideChatsAndTerminals ?? false;
-  // Each Needs attention row can hide one run from Recent runs: read that many more.
-  const recentLimit = RECENT_RUNS + attention.length;
+  // Each run another list shows can hide one from Recent runs: read that many more.
+  const recentLimit = RECENT_RUNS + listedRuns.size;
   useEffect(() => {
     if (selected || !infoLoaded) return;
     // A run writes its records in quick bursts: read once the burst is over.

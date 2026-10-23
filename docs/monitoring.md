@@ -44,12 +44,12 @@ problem and when its run started. A task is listed when:
 
 Disabled and completed tasks aren't listed.
 
-**Recent runs** lists the 10 latest runs across every task and Remote
-Control folder project, newest first: the task, its result (Running while
-it's in progress), its details, when it started, and how long it took. A
-run that Needs attention lists isn't repeated here. It follows the same
-Task Logs filters as the Runs tab (Hide Runs with No Action, Hide Chats and
-Terminals).
+**Recent runs** lists the 10 latest finished runs across every task and
+Remote Control folder project, newest first: the task, its result, its
+details, when it started, and how long it took. A run shows here once it
+ends, and a run that Needs attention lists isn't repeated here. It follows
+the same Task Logs filters as the Runs tab (Hide Runs with No Action, Hide
+Chats and Terminals).
 
 **Remote Control** shows while Remote Control is on and lists its open
 sessions: the session, its status, its last message, and when it started.

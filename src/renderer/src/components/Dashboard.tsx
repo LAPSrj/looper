@@ -55,7 +55,7 @@ interface Props {
   running: RunningRow[];
   /** Remote Control's open conversations; null while it is stopped (no section shows). */
   remote: RemoteConversation[] | null;
-  /** The latest runs, newest first; null until they load. */
+  /** The latest finished runs, newest first; null until they load. */
   recent: RecentRun[] | null;
   runtimes: Record<string, TaskRuntime>;
   now: number;
@@ -113,7 +113,6 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
     onIndex: (i) => onPick(recentPick(recentRuns[i])),
     onActivate: (i) => openRecent(recentRuns[i]),
   });
-  const isRunning = (r: RecentRun) => runtimes[r.taskId]?.runs.some((a) => a.runId === r.runId) ?? false;
 
   const menu = (task: Task, p: DashboardPick) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -259,7 +258,7 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                         }}
                       >
                         <td title={r.taskName}>{r.taskName}</td>
-                        <td>{isRunning(r) ? 'Running' : resultLabel(r.result)}</td>
+                        <td>{resultLabel(r.result)}</td>
                         <td title={r.details}>{r.details}</td>
                         <td className="num">{fmtClock(Date.parse(r.startTs), now)}</td>
                         <td className="num">{r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : ''}</td>
