@@ -25,6 +25,13 @@ window opens on, and you get back to it with the Dashboard button at the
 start of the toolbar, **View → Dashboard**, or a click on the empty space
 below the task list.
 
+![The dashboard: Running now, Needs attention, and Recent runs](img/dashboard.png)
+
+**Running now** lists every run in progress, oldest first: the task, its
+step (Checking, Classifying, Running agent, or Waiting for you), what
+triggered it (Schedule, Manual, or Event), when it started, and how long it
+has been going.
+
 **Needs attention** lists each task that needs you, errors first, with the
 problem and when its run started. A task is listed when:
 
@@ -37,16 +44,15 @@ problem and when its run started. A task is listed when:
 
 Disabled and completed tasks aren't listed.
 
-**Running now** lists every run in progress, oldest first: the task, its
-step (Checking, Classifying, Running agent, or Waiting for you), what
-triggered it (Schedule, Manual, or Event), when it started, and how long it
-has been going.
-
 **Recent runs** lists the 10 latest runs across every task and Remote
 Control folder project, newest first: the task, its result (Running while
-it's in progress), its details, when it started, and how long it took. It
-follows the same Task Logs filters as the Runs tab (Hide Runs with No
-Action, Hide Chats and Terminals).
+it's in progress), its details, when it started, and how long it took. A
+run that Needs attention lists isn't repeated here. It follows the same
+Task Logs filters as the Runs tab (Hide Runs with No Action, Hide Chats and
+Terminals).
+
+**Remote Control** shows while Remote Control is on and lists its open
+sessions: the session, its status, its last message, and when it started.
 
 While the dashboard shows, the toolbar's task buttons are off. Clicking a
 row picks it, and the Task menu and the row's right-click menu then act on

@@ -128,6 +128,54 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
       </div>
       <div className="dashboard">
         <section className="dashboard-section">
+          <span className="pane-title">Running now</span>
+          {running.length === 0 ? (
+            <div className="dashboard-empty muted">Nothing is running.</div>
+          ) : (
+            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Running now" onKeyDown={runningKeys}>
+              <table className="runlog-table">
+                <colgroup>
+                  <col style={{ width: 240 }} />
+                  <col />
+                  <col style={{ width: 110 }} />
+                  <col style={{ width: STARTED_WIDTH }} />
+                  <col style={{ width: 100 }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Step</th>
+                    <th>Trigger</th>
+                    <th className="num">Started</th>
+                    <th className="num">Elapsed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {running.map((r) => {
+                    const p = runningPick(r);
+                    return (
+                      <tr
+                        key={r.runId}
+                        className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
+                        onClick={() => onPick(p)}
+                        onDoubleClick={() => openRunning(r)}
+                        onContextMenu={menu(r.task, p)}
+                      >
+                        <td title={r.task.name}>{r.task.name}</td>
+                        <td>{r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
+                        <td>{TRIGGER_LABELS[r.run.trigger]}</td>
+                        <td className="num">{fmtClock(r.run.startedAt, now)}</td>
+                        <td className="num">{now - r.run.startedAt < 1000 ? '0s' : formatDuration(now - r.run.startedAt)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="dashboard-section">
           <span className="pane-title">Needs attention</span>
           {attention.length === 0 ? (
             <div className="dashboard-empty muted">Nothing needs attention.</div>
@@ -173,44 +221,48 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
         </section>
 
         <section className="dashboard-section">
-          <span className="pane-title">Running now</span>
-          {running.length === 0 ? (
-            <div className="dashboard-empty muted">Nothing is running.</div>
+          <span className="pane-title">Recent runs</span>
+          {recent && recentRuns.length === 0 ? (
+            <div className="dashboard-empty muted">No runs yet.</div>
           ) : (
-            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Running now" onKeyDown={runningKeys}>
+            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Recent runs" onKeyDown={recentKeys}>
               <table className="runlog-table">
                 <colgroup>
                   <col style={{ width: 240 }} />
-                  <col />
                   <col style={{ width: 110 }} />
+                  <col />
                   <col style={{ width: STARTED_WIDTH }} />
                   <col style={{ width: 100 }} />
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Task</th>
-                    <th>Step</th>
-                    <th>Trigger</th>
+                    <th>Result</th>
+                    <th>Details</th>
                     <th className="num">Started</th>
-                    <th className="num">Elapsed</th>
+                    <th className="num">Duration</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {running.map((r) => {
-                    const p = runningPick(r);
+                  {recentRuns.map((r) => {
+                    const p = recentPick(r);
                     return (
                       <tr
-                        key={r.runId}
-                        className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
+                        key={`${r.taskId}-${r.runId}`}
+                        className={`result-${r.result} run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
                         onClick={() => onPick(p)}
-                        onDoubleClick={() => openRunning(r)}
-                        onContextMenu={menu(r.task, p)}
+                        onDoubleClick={() => openRecent(r)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          onPick(p);
+                          window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details });
+                        }}
                       >
-                        <td title={r.task.name}>{r.task.name}</td>
-                        <td>{r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
-                        <td>{TRIGGER_LABELS[r.run.trigger]}</td>
-                        <td className="num">{fmtClock(r.run.startedAt, now)}</td>
-                        <td className="num">{now - r.run.startedAt < 1000 ? '0s' : formatDuration(now - r.run.startedAt)}</td>
+                        <td title={r.taskName}>{r.taskName}</td>
+                        <td>{isRunning(r) ? 'Running' : resultLabel(r.result)}</td>
+                        <td title={r.details}>{r.details}</td>
+                        <td className="num">{fmtClock(Date.parse(r.startTs), now)}</td>
+                        <td className="num">{r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : ''}</td>
                       </tr>
                     );
                   })}
@@ -270,58 +322,6 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
             )}
           </section>
         )}
-
-        <section className="dashboard-section">
-          <span className="pane-title">Recent runs</span>
-          {recent && recentRuns.length === 0 ? (
-            <div className="dashboard-empty muted">No runs yet.</div>
-          ) : (
-            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Recent runs" onKeyDown={recentKeys}>
-              <table className="runlog-table">
-                <colgroup>
-                  <col style={{ width: 240 }} />
-                  <col style={{ width: 110 }} />
-                  <col />
-                  <col style={{ width: STARTED_WIDTH }} />
-                  <col style={{ width: 100 }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th>Result</th>
-                    <th>Details</th>
-                    <th className="num">Started</th>
-                    <th className="num">Duration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRuns.map((r) => {
-                    const p = recentPick(r);
-                    return (
-                      <tr
-                        key={`${r.taskId}-${r.runId}`}
-                        className={`result-${r.result} run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
-                        onClick={() => onPick(p)}
-                        onDoubleClick={() => openRecent(r)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          onPick(p);
-                          window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details });
-                        }}
-                      >
-                        <td title={r.taskName}>{r.taskName}</td>
-                        <td>{isRunning(r) ? 'Running' : resultLabel(r.result)}</td>
-                        <td title={r.details}>{r.details}</td>
-                        <td className="num">{fmtClock(Date.parse(r.startTs), now)}</td>
-                        <td className="num">{r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
       </div>
     </div>
   );

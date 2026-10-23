@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,13 +16,15 @@ function rec(taskId: string, runId: string, ts: string, phase: RunRecord['phase'
 
 describe('engine recent runs', () => {
   let engine: Engine | null = null;
+  let dataDir = '';
   afterEach(async () => {
     await engine?.stop();
     engine = null;
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it('lists the newest shown runs across tasks, newest first', () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'looper-recent-'));
+    dataDir = mkdtempSync(join(tmpdir(), 'looper-recent-'));
     engine = createEngine({ dataDir });
     engine.start();
     engine.saveTask(task('t1', 'First'));

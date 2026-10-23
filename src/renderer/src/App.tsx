@@ -53,6 +53,12 @@ export function App() {
 
   const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
+  // A run Needs attention lists stays out of Recent runs.
+  const recentShown = useMemo(() => {
+    if (!recent) return null;
+    const listed = new Set(attention.map((r) => `${r.task.id}/${r.runId ?? r.lastRunId}`));
+    return recent.filter((r) => !listed.has(`${r.taskId}/${r.runId}`)).slice(0, RECENT_RUNS);
+  }, [recent, attention]);
   // Remote Control's open conversations while it runs; null while it's stopped.
   const remoteOpen = useMemo(
     () => (remote?.running ? remote.conversations.filter((c) => c.status !== 'ended') : null),
@@ -63,7 +69,7 @@ export function App() {
     list === 'remote'
       ? (remoteOpen ?? []).map((c) => ({ taskId: c.taskId, runId: c.id }))
       : list === 'recent'
-        ? (recent ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
+        ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
         : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
   const livePick =
     !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
@@ -272,14 +278,16 @@ export function App() {
   const infoLoaded = info !== null;
   const hideNoActionRuns = info?.settings.view.hideNoActionRuns ?? false;
   const hideChatsAndTerminals = info?.settings.view.hideChatsAndTerminals ?? false;
+  // Each Needs attention row can hide one run from Recent runs: read that many more.
+  const recentLimit = RECENT_RUNS + attention.length;
   useEffect(() => {
     if (selected || !infoLoaded) return;
     // A run writes its records in quick bursts: read once the burst is over.
     const t = setTimeout(() => {
-      void window.looper.runs.recent(RECENT_RUNS, { hideNoAction: hideNoActionRuns, hideChatsAndTerminals }).then(setRecent);
+      void window.looper.runs.recent(recentLimit, { hideNoAction: hideNoActionRuns, hideChatsAndTerminals }).then(setRecent);
     }, 200);
     return () => clearTimeout(t);
-  }, [selected, infoLoaded, hideNoActionRuns, hideChatsAndTerminals, runsChanged]);
+  }, [selected, infoLoaded, hideNoActionRuns, hideChatsAndTerminals, runsChanged, recentLimit]);
 
   const selectedState = target ? runtimes[target]?.state : undefined;
   const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
@@ -398,7 +406,7 @@ export function App() {
               attention={attention}
               running={running}
               remote={remoteOpen}
-              recent={recent}
+              recent={recentShown}
               runtimes={runtimes}
               now={now}
               pick={livePick}
