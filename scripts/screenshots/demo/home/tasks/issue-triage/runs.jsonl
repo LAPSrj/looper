@@ -7,6 +7,7 @@
 {"ts":"2026-09-11T01:30:00.000Z","taskId":"issue-triage","runId":"20260910-183000-k3f2","phase":"check","result":"act","exitCode":0,"durationMs":936,"summary":"2 updated items"}
 {"ts":"2026-09-11T01:30:02.000Z","taskId":"issue-triage","runId":"20260910-183000-k3f2","phase":"classify","result":"started","summary":"2 updated items"}
 {"ts":"2026-09-11T01:30:11.000Z","taskId":"issue-triage","runId":"20260910-183000-k3f2","phase":"classify","result":"noop","durationMs":8600,"exitCode":0,"summary":"Both items are bot-filed duplicates of an already-triaged crash","detail":{"costUsd":0.0016}}
+{"ts":"2026-09-11T01:30:11.000Z","taskId":"issue-triage","runId":"20260910-183000-k3f2","phase":"result","result":"noop","summary":"Both items are bot-filed duplicates of an already-triaged crash","body":"# Agent not started\n\nBoth items are bot-filed duplicates of an already-triaged crash"}
 {"ts":"2026-09-11T12:53:30.134Z","taskId":"issue-triage","runId":"20260911-055330-a14","phase":"check","result":"noop","exitCode":0,"durationMs":987,"summary":"No new issues"}
 {"ts":"2026-09-11T13:08:30.134Z","taskId":"issue-triage","runId":"20260911-060830-a13","phase":"check","result":"noop","exitCode":0,"durationMs":842,"summary":"No new issues"}
 {"ts":"2026-09-11T13:23:30.134Z","taskId":"issue-triage","runId":"20260911-062330-a12","phase":"check","result":"noop","exitCode":0,"durationMs":841,"summary":"No new issues"}

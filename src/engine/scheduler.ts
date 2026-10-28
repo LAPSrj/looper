@@ -1256,6 +1256,8 @@ export class Scheduler extends EventEmitter {
           } else if (cls.status === 'noop') {
             go = false;
             detail = `classifier: ${cls.reason ?? 'no'}`;
+            const why = cls.reason || 'The classifier found nothing to do.';
+            this.record(task.id, runId, 'result', 'noop', { summary: why, body: `# Agent not started\n\n${why}` });
           } else {
             passedClassify = true;
           }

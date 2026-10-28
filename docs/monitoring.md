@@ -403,7 +403,9 @@ tool's name. Run rows are the run's steps: the watcher events that started
 it, the check result ("Check found work", "Check found nothing to do"), steps
 the Run Options window skipped, the classifier and agent starting and ending
 ("Agent completed in 5m10s", with cost in dollars when the harness reports
-it), guidance being sent and delivered, and the final result; for a chat or
+it), guidance being sent and delivered, and the final result (when the
+classifier found nothing to do, the result is its reason for not starting the
+agent); for a chat or
 terminal session, each time its window opened and closed ("Chat closed after
 4m"). When the run had a classifier, its
 conversation sits between its start and end rows, with its replies typed as

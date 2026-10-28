@@ -281,6 +281,8 @@ describe('Scheduler', () => {
     expect(h.agentStarted).toBe(0);
     expect(h.sched.get('t1')!.lastResult).toBe('noop');
     expect(h.sched.get('t1')!.lastDetail).toBe('classifier: just noise');
+    expect(records().map((r) => `${r.phase}:${r.result}`)).toEqual(['check:act', 'classify:started', 'classify:noop', 'result:noop']);
+    expect(records().at(-1)).toMatchObject({ summary: 'just noise', body: '# Agent not started\n\njust noise' });
     h.clock.now += 60_000;
     await h.tickN(1);
     expect(h.agentStarted).toBe(1);

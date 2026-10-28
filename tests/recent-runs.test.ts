@@ -24,6 +24,27 @@ describe('groupRuns', () => {
     ]);
     expect([run.result, run.details]).toEqual(['exited', 'Sleeper exited 0']);
   });
+
+  it('names a run the classifier turned down as noop, and one still classifying as started', () => {
+    const classifying = [
+      rec('t1', 'a', '2026-10-20T10:00:00Z', 'watcher', 'act'),
+      rec('t1', 'a', '2026-10-20T10:00:01Z', 'check', 'act'),
+      rec('t1', 'a', '2026-10-20T10:00:01Z', 'classify', 'started'),
+    ];
+    expect(groupRuns(classifying)[0].result).toBe('started');
+    const [run] = groupRuns([...classifying, rec('t1', 'a', '2026-10-20T10:00:12Z', 'classify', 'noop', 'nothing new')]);
+    expect(run.result).toBe('noop');
+  });
+
+  it('keeps a retried run as started while its agent restarts', () => {
+    const [run] = groupRuns([
+      rec('t1', 'a', '2026-10-20T10:00:00Z', 'system', 'started', 'retry 1'),
+      rec('t1', 'a', '2026-10-20T10:00:01Z', 'check', 'act'),
+      rec('t1', 'a', '2026-10-20T10:00:02Z', 'agent', 'started'),
+      rec('t1', 'a', '2026-10-20T10:05:00Z', 'agent', 'restarted', 'restart 1 of 3'),
+    ]);
+    expect(run.result).toBe('started');
+  });
 });
 
 describe('engine recent runs', () => {

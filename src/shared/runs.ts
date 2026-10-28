@@ -21,10 +21,14 @@ export interface RunFilter {
   hideChatsAndTerminals: boolean;
 }
 
+const PRIORITY: string[] = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
+
 function bestResult(records: RunRecord[]): string {
-  const priority = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
-  for (const p of priority) {
-    if (records.some((r) => r.phase !== 'result' && r.result === p)) return p;
+  // A start means the run is in progress only until a later record ends a step, such as the classifier's noop.
+  const lastEnd = records.findLastIndex((r) => r.result !== 'started' && PRIORITY.includes(r.result));
+  const counted = records.filter((r, i) => r.phase !== 'result' && (r.result !== 'started' || i > lastEnd));
+  for (const p of PRIORITY) {
+    if (counted.some((r) => r.result === p)) return p;
   }
   return records[records.length - 1]?.result ?? '';
 }
