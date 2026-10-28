@@ -261,6 +261,18 @@ export const AgentSchema = z
     /** Minutes the agent may sit idle (turn finished, no `looper-done`) before the run ends / is held. */
     idleGraceMin: z.number().positive().default(3),
     onIdleTimeout: z.enum(['finish', 'hold']).default('finish'),
+    /**
+     * The agent may ask the user a question with `looper-ask`, as a last
+     * resort. The command waits up to `waitMin` for the answer; without one,
+     * the agent goes on and picks the run's final status itself.
+     */
+    ask: z
+      .object({
+        allowed: z.boolean().default(false),
+        waitMin: z.number().positive().default(5),
+      })
+      .strict()
+      .default({}),
   })
   .strict();
 
@@ -670,6 +682,8 @@ export interface ActiveRun {
   state: 'checking' | 'classifying' | 'running';
   /** Agent finished a turn without signalling done and the task is configured to hold. */
   held: boolean;
+  /** The question the agent asked with `looper-ask` and is waiting on an answer to. */
+  question: string | null;
   startedAt: number;
   trigger: 'timer' | 'manual' | 'watcher';
 }
@@ -680,13 +694,16 @@ export interface ActiveRun {
  * - `state` = the most advanced active run (`running` > `classifying` >
  *   `checking`), or idle/paused/disabled/completed when nothing is in flight;
  * - `currentRunId` = the newest active run, null when none;
- * - `held` = any active run is held.
+ * - `held` = any active run is held;
+ * - `asking` = any active run's agent is waiting on an answer to its question.
  */
 export interface TaskRuntime {
   taskId: string;
   state: TaskState;
   /** Any active run is holding for a human. */
   held: boolean;
+  /** Any active run's agent is waiting on an answer to its question. */
+  asking: boolean;
   /** Cycles in flight, oldest first. Empty when the task is idle/paused/disabled/completed. */
   runs: ActiveRun[];
   nextRunAt: number | null;
@@ -722,7 +739,9 @@ export interface RestState {
 
 /**
  * `guidance`: text the user sent the running agent (sent, delivered, or
- * undelivered when it never got there). `chat` and `terminal`: a chat or
+ * undelivered when it never got there). `question`: the agent asked the user
+ * something (sent), the user answered (delivered), or nobody answered in
+ * time (undelivered). `chat` and `terminal`: a chat or
  * terminal window opened or closed on the run (result the same as the phase,
  * detail.event 'opened' or 'closed').
  */
@@ -732,6 +751,7 @@ export type RunPhase =
   | 'classify'
   | 'agent'
   | 'guidance'
+  | 'question'
   | 'result'
   | 'skip'
   | 'system'
@@ -804,7 +824,7 @@ export interface InboxCommand {
 // ---------- Engine events (also the IPC contract) ----------
 
 /** What a `notify` event is about; it decides where a click on the toast lands. */
-export type NotifyKind = 'run-start' | 'agent-start' | 'held' | 'end' | 'auto-paused' | 'usage-limit' | 'completed';
+export type NotifyKind = 'run-start' | 'agent-start' | 'held' | 'question' | 'end' | 'auto-paused' | 'usage-limit' | 'completed';
 
 export type EngineEvent =
   | { type: 'runtime'; runtime: TaskRuntime }

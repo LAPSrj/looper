@@ -289,6 +289,12 @@ classifier step on or off. When on, it runs after a check that returned
   continues in a new conversation with the agent's handoff. **Max restarts**
   (default 3 per run) caps how often one run may restart. See
   [context restarts](how-a-run-works.md#context-restarts).
+- **Allow the agent to ask questions** — off by default. The agent gets a
+  `looper-ask "<question>"` command, to use only when nothing it can do would
+  settle the matter. It waits **Wait for an answer** (default 5 min) for you
+  to answer in the run window. Without an answer, the agent continues the run
+  and picks its final status itself. See [questions from the
+  agent](how-a-run-works.md#questions-from-the-agent).
 
 ## Notifications
 
@@ -307,6 +313,11 @@ a Looper window is focused):
 | Notify when the task auto-pauses | The task auto-pauses after consecutive errors |
 | Notify when the task completes | The task is finished for good — the agent completed it, its deadline passed, or you completed it yourself |
 | Notify when the usage limit is reached | A run hits a Claude Code usage limit and waits for the reset |
+
+A question from the agent (see [questions from the
+agent](how-a-run-works.md#questions-from-the-agent)) always sends a
+notification, since the agent waits only so long for your answer. It's
+skipped only while that run's window, where you answer it, is focused.
 
 "Notify when the task ends" has four levels, from narrowest to broadest:
 

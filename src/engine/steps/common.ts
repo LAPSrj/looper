@@ -102,6 +102,12 @@ export const AGENT_COMPLETE = 'looper-complete';
 /** The command an agent past its context limit calls to continue the run in a new session. */
 export const AGENT_RESTART = 'looper-restart';
 
+/** The command an agent allowed to ask the user calls with its question. */
+export const AGENT_ASK = 'looper-ask';
+
+/** The run-dir folder a session's `looper-ask` requests and Looper's responses go through. */
+export const ASK_DIR = 'ask';
+
 export interface LauncherOpts {
   /** Step file prefix ('' = agent, 'classify-' = classifier). */
   prefix?: string;
@@ -110,6 +116,8 @@ export interface LauncherOpts {
   doneStatuses?: readonly string[];
   /** Completion command written to bin/. Unset = the agent cannot complete the task. */
   completeCommand?: string;
+  /** Ask command written to bin/, and how long it waits for Looper's response. Unset = the agent cannot ask. */
+  ask?: { command: string; waitS: number };
 }
 
 /**
@@ -117,7 +125,7 @@ export interface LauncherOpts {
  * something (no note, not a watcher run), so a task or harness env var of the
  * same name is dropped instead of standing in for them.
  */
-const RUN_ONLY_VARS = ['LOOPER_TRIGGER', 'LOOPER_EVENTS_FILE', 'LOOPER_NOTE_FILE', 'LOOPER_COMPLETE_FILE'];
+const RUN_ONLY_VARS = ['LOOPER_TRIGGER', 'LOOPER_EVENTS_FILE', 'LOOPER_NOTE_FILE', 'LOOPER_COMPLETE_FILE', 'LOOPER_ASK_DIR'];
 
 /**
  * Write the done helper + a launcher script into the run dir and return how to
@@ -144,6 +152,14 @@ export function writeLauncher(
       ctx.target.renderTextHelper('LOOPER_COMPLETE_FILE', 'completed'),
       0o755,
     );
+  }
+  if (opts.ask) {
+    locked.LOOPER_ASK_DIR = targetFile(ctx, prefix + ASK_DIR);
+    const helpers = ctx.target.renderRequestHelpers(
+      { [opts.ask.command]: 'ask' },
+      { dirVar: 'LOOPER_ASK_DIR', script: `${opts.ask.command}-request`, hint: 'is Looper still running?', waitS: opts.ask.waitS },
+    );
+    for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
   }
   // A file rather than the text itself, so free-form text needs no quoting on any target.
   if (ctx.note) {

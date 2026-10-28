@@ -12,6 +12,16 @@ export interface RequestHelperOpts {
   script: string;
   /** Said after "no answer from Looper" when the wait runs out. */
   hint: string;
+  /** How long the helper waits for Looper's response before giving up, in seconds. Default 3600. */
+  waitS?: number;
+}
+
+const REQUEST_WAIT_S = 3600;
+const REQUEST_POLL_S = 0.5;
+
+/** Polls a request helper makes before it gives up. */
+export function requestPolls(opts: RequestHelperOpts): number {
+  return Math.ceil((opts.waitS ?? REQUEST_WAIT_S) / REQUEST_POLL_S);
 }
 
 export interface SpawnSpec {

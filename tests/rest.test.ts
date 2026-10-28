@@ -7,7 +7,7 @@ const MIN = 60_000;
 
 /** A run in flight; the aggregate `state`/`held` mirror it as the scheduler would. */
 function activeRun(state: ActiveRun['state'], held = false): ActiveRun {
-  return { runId: `r-${state}-${held}`, state, held, startedAt: 0, trigger: 'timer' };
+  return { runId: `r-${state}-${held}`, state, held, question: null, startedAt: 0, trigger: 'timer' };
 }
 
 function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
@@ -15,6 +15,7 @@ function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
     taskId: 't1',
     state: 'idle',
     held: false,
+    asking: false,
     runs: [],
     nextRunAt: null,
     lastRunAt: null,

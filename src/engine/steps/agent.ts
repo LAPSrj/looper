@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveEffort, resolveEnvironment, resolveHarness } from '../../shared/environments';
-import { AGENT_COMPLETE, AGENT_DONE, AGENT_RESTART, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
+import type { Task } from '../../shared/types';
+import { AGENT_ASK, AGENT_COMPLETE, AGENT_DONE, AGENT_RESTART, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
 import { NOTICE_FILE } from '../guidance';
 import { restartPrefix } from '../messages';
 import {
@@ -67,7 +68,33 @@ export function readCompleteSignal(runDir: string): string | null {
   }
 }
 
-export function systemFooter(taskName: string, runId: string, headless: boolean, canComplete = false): string {
+type AskSettings = Task['agent']['ask'];
+
+/** Minutes the way the editor shows them: "5 min", "1.5 min". */
+function minutes(n: number): string {
+  return `${Number(n.toFixed(2))} min`;
+}
+
+/** What the agent is told to do when nobody answers its question. */
+const NO_ANSWER_INSTRUCTION = `continue the run without an answer: make the most reasonable decision yourself, and pick the status you give ${AGENT_DONE.command} from what is left open, as for any run. Say in your final report which question went unanswered and what you decided`;
+
+/** What `looper-ask` prints when the wait runs out. */
+export function noAnswerText(ask: AskSettings): string {
+  return `No answer from the user within ${minutes(ask.waitMin)}. Don't ask again; ${NO_ANSWER_INSTRUCTION}.`;
+}
+
+/** The footer's part about asking the user: a last resort, with what makes a good question. */
+function askSection(ask: AskSettings): string {
+  return [
+    `As a last resort, you can ask the user one question with the shell command:`,
+    `    ${AGENT_ASK} "<question>"`,
+    'Every question interrupts the user, so needing to ask means you failed to work it out yourself. Before asking, try every other way to settle it: read the code, docs, config and history, try another approach, and make the call yourself when it is a reasonable choice. That is also how you avoid ending the run with a warning or an error: settle the things that would otherwise be left for a person to decide.',
+    "Ask only when the work can't go on correctly without the user: a decision only they can make, a credential, or access you don't have. Make the question one paragraph that stands on its own: what you need, why, what you tried, and the answer you suggest.",
+    `The command waits up to ${minutes(ask.waitMin)} for the answer and prints it. Run it so your shell tool doesn't time out first (in Claude Code, in the background with run_in_background, then wait for it to finish). If nobody answers in time, it says so, and you ${NO_ANSWER_INSTRUCTION}.`,
+  ].join('\n');
+}
+
+export function systemFooter(taskName: string, runId: string, headless: boolean, canComplete = false, ask?: AskSettings): string {
   const lines = [
     `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
@@ -82,6 +109,7 @@ export function systemFooter(taskName: string, runId: string, headless: boolean,
       `If this task is finished for good — future runs would have nothing left to do — run \`${AGENT_COMPLETE} "<why>"\` before ${AGENT_DONE.command}. Looper then stops scheduling the task. Leave it alone if the job is merely done for now.`,
     );
   }
+  if (ask?.allowed) lines.push(askSection(ask));
   if (!headless) {
     lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
   }
@@ -194,12 +222,13 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       permissionMode: a.permissionMode,
       session: ctx.agentSession,
       extraArgs: a.extraArgs,
-      footer: systemFooter(task.name, ctx.runId, headless, canComplete),
+      footer: systemFooter(task.name, ctx.runId, headless, canComplete, a.ask),
       prompt: agentPrompt(ctx),
       doneCommand: AGENT_DONE.command,
       doneStatuses: AGENT_DONE.statuses,
       completeCommand: canComplete ? AGENT_COMPLETE : undefined,
       restartCommand: limit ? AGENT_RESTART : undefined,
+      ask: a.ask.allowed ? { command: AGENT_ASK, waitMs: a.ask.waitMin * 60_000, noAnswer: noAnswerText(a.ask) } : undefined,
       context: limit ? { limit, notice: (tokens, again) => contextNotice(tokens, limit, again) } : undefined,
       continued: ctx.restart !== undefined,
       implicitDoneStatus: 'success',

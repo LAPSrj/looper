@@ -72,9 +72,10 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
 
   const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
-  // A waiting run opens on its terminal; a failed one in its run window.
+  // A waiting run opens on its terminal, or in its run window to answer its question; a failed one in its run window.
   const openAttention = (r: AttentionRow) => {
-    if (r.runId) onOpen(r.task.id, 'terminal');
+    if (r.question && r.runId) void window.looper.openMessages(r.task.id, r.runId);
+    else if (r.runId) onOpen(r.task.id, 'terminal');
     else if (r.lastRunId) void window.looper.openMessages(r.task.id, r.lastRunId);
     else onOpen(r.task.id, 'runs');
   };
@@ -161,7 +162,7 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                         onContextMenu={menu(r.task, p)}
                       >
                         <td title={r.task.name}>{r.task.name}</td>
-                        <td>{r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
+                        <td>{r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
                         <td>{TRIGGER_LABELS[r.run.trigger]}</td>
                         <td className="num">{fmtClock(r.run.startedAt, now)}</td>
                         <td className="num">{now - r.run.startedAt < 1000 ? '0s' : formatDuration(now - r.run.startedAt)}</td>

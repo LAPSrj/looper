@@ -31,8 +31,10 @@ type Draft = TaskInput & {
   agent: NonNullable<TaskInput['agent']>;
 };
 
-type NotifEndLevel = Exclude<NonNullable<NonNullable<TaskInput['notifications']>['end']>, 'off'>;
+/** The context limit a task gets when the restart option is turned on. */
+const DEFAULT_CONTEXT_LIMIT_K = 400;
 
+type NotifEndLevel =Exclude<NonNullable<NonNullable<TaskInput['notifications']>['end']>, 'off'>;
 type EditorTab = 'general' | 'trigger' | 'check' | 'classifier' | 'agent' | 'settings' | 'notifications' | 'json';
 
 const TABS: [EditorTab, string][] = [
@@ -262,8 +264,13 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     });
     if (kind !== harnessKind) setCustomModel(false);
   };
+  const contextOn = draft.agent.contextLimitK !== undefined;
+  const ask: Task['agent']['ask'] = {
+    allowed: draft.agent.ask?.allowed ?? false,
+    waitMin: draft.agent.ask?.waitMin ?? 5,
+  };
   const notif = draft.notifications ?? {};
-  const setNotif = <K extends keyof NonNullable<Draft['notifications']>>(key: K, value: NonNullable<Draft['notifications']>[K]) =>
+  const setNotif =<K extends keyof NonNullable<Draft['notifications']>>(key: K, value: NonNullable<Draft['notifications']>[K]) =>
     setDraft((d) => ({ ...d, notifications: { ...(d.notifications ?? {}), [key]: value } }));
   // The draft's end level is the source of truth while on; the remembered one shows while off.
   const endLevel: NotifEndLevel = notif.end && notif.end !== 'off' ? notif.end : rememberedEnd;
@@ -1158,30 +1165,47 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               <label className="checkbox-field">
                 <input
                   type="checkbox"
-                  checked={draft.agent.contextLimitK !== undefined}
-                  onChange={(e) => setAgent('contextLimitK', e.target.checked ? 400 : undefined)}
+                  checked={contextOn}
+                  onChange={(e) => setAgent('contextLimitK', e.target.checked ? DEFAULT_CONTEXT_LIMIT_K : undefined)}
                 />
                 Restart the agent when its context passes a limit
               </label>
             )}
-            {(isClaude || isCodex) && draft.agent.contextLimitK !== undefined && (
+            {(isClaude || isCodex) && (
+              <fieldset className={`step-fields${contextOn ? '' : ' disabled'}`} disabled={!contextOn}>
+                <div className="row">
+                  <NumberField
+                    label="Context limit"
+                    suffix="k tokens"
+                    min={1}
+                    value={draft.agent.contextLimitK ?? DEFAULT_CONTEXT_LIMIT_K}
+                    onChange={(n) => setAgent('contextLimitK', n)}
+                  />
+                  <NumberField
+                    label="Max restarts"
+                    suffix="per run"
+                    min={0}
+                    value={draft.agent.maxRestarts ?? 3}
+                    onChange={(n) => setAgent('maxRestarts', n)}
+                  />
+                </div>
+              </fieldset>
+            )}
+            <label className="checkbox-field">
+              <input type="checkbox" checked={ask.allowed} onChange={(e) => setAgent('ask', { ...ask, allowed: e.target.checked })} />
+              Allow the agent to ask questions
+            </label>
+            <fieldset className={`step-fields${ask.allowed ? '' : ' disabled'}`} disabled={!ask.allowed}>
               <div className="row">
                 <NumberField
-                  label="Context limit"
-                  suffix="k tokens"
+                  label="Wait for an answer"
+                  suffix="min"
                   min={1}
-                  value={draft.agent.contextLimitK}
-                  onChange={(n) => setAgent('contextLimitK', n)}
-                />
-                <NumberField
-                  label="Max restarts"
-                  suffix="per run"
-                  min={0}
-                  value={draft.agent.maxRestarts ?? 3}
-                  onChange={(n) => setAgent('maxRestarts', n)}
+                  value={ask.waitMin}
+                  onChange={(n) => setAgent('ask', { ...ask, waitMin: n })}
                 />
               </div>
-            )}
+            </fieldset>
           </div>
         </div>
 

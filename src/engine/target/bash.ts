@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import type { LauncherSpec, RequestHelperOpts, SpawnSpec, Target, TargetContext } from './index';
+import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
 import { guideHookJson, STOP_GUIDANCE_JSON, type GuideHookFormat, type StopHookSpec } from './stop-hook';
 import { translatePath, translateToHost } from './paths';
 import { GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
@@ -334,7 +334,7 @@ export class BashTarget implements Target {
         // argument; the rename makes the request appear whole.
         `{ printf '%s\\n' ${this.quote(op)} "$PWD"; for a in "$@"; do printf '%s\\n' "$a"; done; } > "$d/requests/$rid.tmp"`,
         'mv "$d/requests/$rid.tmp" "$d/requests/$rid.req"',
-        'for _ in $(seq 1 7200); do',
+        `for _ in $(seq 1 ${requestPolls(opts)}); do`,
         '  if [ -e "$d/responses/$rid.code" ]; then',
         '    cat "$d/responses/$rid.out" 2>/dev/null',
         '    code="$(cat "$d/responses/$rid.code")"',

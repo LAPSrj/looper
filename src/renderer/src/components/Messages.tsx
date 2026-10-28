@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MessagesShowKey } from '@shared/api';
 import type { MessageRow, MessagesResult } from '@shared/messages';
 import type { RunRecord } from '@shared/types';
@@ -60,6 +60,10 @@ function stepText(r: RunRecord): string {
       return note ? `Watcher fired: ${note}` : 'Watcher fired';
     case 'system':
       return capFirst(note ?? resultLabel(r.result));
+    case 'question':
+      if (r.result === 'sent') return `The agent asked: ${note ?? ''}`;
+      if (r.result === 'delivered') return `You answered: ${note ?? ''}`;
+      return `Question not answered: ${note ?? ''}`;
     case 'chat':
     case 'terminal': {
       const what = r.phase === 'chat' ? 'Chat' : 'Terminal';
@@ -211,6 +215,8 @@ interface ViewProps {
   refreshKey?: number;
   /** Select the run's report row (or, without one, its last step) once both have loaded. */
   focusReport?: boolean;
+  /** Shown at the top of the detail panel, scrolling with the selected row's content below it. */
+  notice?: ReactNode;
 }
 
 /**
@@ -218,7 +224,7 @@ interface ViewProps {
  * conversation in one table, full content in the panel below. A subagent's
  * window (agentId set) shows only its conversation.
  */
-export function MessagesView({ taskId, runId, agentId, running, refreshKey, focusReport }: ViewProps) {
+export function MessagesView({ taskId, runId, agentId, running, refreshKey, focusReport, notice }: ViewProps) {
   const [result, setResult] = useState<MessagesResult | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [mode, setMode] = useState<AgentMode>('interactive');
@@ -586,6 +592,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       </div>
       <div className="runlog-divider" onMouseDown={onDragStart} />
       <div className="messages-detail" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
+        {notice}
         {current === null ? <div className="messages-detail-empty muted">Select a message</div> : detail(current)}
       </div>
     </div>

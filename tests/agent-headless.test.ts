@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
-import { startAgent } from '../src/engine/steps/agent';
-import { HeadlessStream } from '../src/engine/steps/session';
+import { startAgent, type AgentHandle } from '../src/engine/steps/agent';
+import { FOCUS_REPORT_RE, HeadlessStream } from '../src/engine/steps/session';
 import type { RunContext } from '../src/engine/steps/common';
 import { writeText } from '../src/engine/store/fsutil';
 import { createTarget } from '../src/engine/target';
@@ -60,6 +60,18 @@ const OFFLINE_LINES = [
     uuid: 'w',
   }),
 ];
+
+describe('FOCUS_REPORT_RE', () => {
+  it('matches the focus reports xterm sends, and nothing a person types', () => {
+    expect(FOCUS_REPORT_RE.test('\x1b[I')).toBe(true);
+    expect(FOCUS_REPORT_RE.test('\x1b[O')).toBe(true);
+    expect(FOCUS_REPORT_RE.test('\x1b[I\x1b[O')).toBe(true);
+    expect(FOCUS_REPORT_RE.test('I')).toBe(false);
+    expect(FOCUS_REPORT_RE.test('\r')).toBe(false);
+    expect(FOCUS_REPORT_RE.test('\x1b[Ayes')).toBe(false);
+    expect(FOCUS_REPORT_RE.test('\x1b[Iyes')).toBe(false);
+  });
+});
 
 describe('HeadlessStream', () => {
   const replay = (lines: string[]): HeadlessStream => {
@@ -664,6 +676,66 @@ describe('headless agent over pipes', () => {
     const out = fs.readFileSync(path.join(ctx.runDir, 'output.txt'), 'utf8');
     expect(out.startsWith('first session output\n')).toBe(true);
     expect(out).toContain('restart helper missing');
+  });
+
+  it('ask: looper-ask prints the answer, and without one the no-answer instruction', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `a=$(looper-ask "Which branch should I deploy?")`,
+        `printf '%s' "$a" > '${path.join(root, 'answered.txt')}'`,
+        `b=$(looper-ask "Is the staging database safe to reset?")`,
+        `printf '%s' "$b" > '${path.join(root, 'unanswered.txt')}'`,
+        `echo '{"type":"result","result":"asked twice"}'`,
+      ].join('\n'),
+    );
+    // 0.02 min: the second question goes unanswered within about a second.
+    const ctx = makeCtx(harness, { agent: { ask: { allowed: true, waitMin: 0.02 } } });
+    const asked: string[] = [];
+    const unanswered: string[] = [];
+    let handle: AgentHandle | undefined;
+    handle = await startAgent(ctx, {
+      onData: () => {},
+      onQuestion: (q) => {
+        asked.push(q);
+        if (asked.length === 1) expect(handle!.answer('main, after the tests pass')).toBe(true);
+      },
+      onNoAnswer: (q) => unanswered.push(q),
+    });
+    const end = await handle.finished;
+    expect(end.body).toBe('asked twice');
+    expect(asked).toEqual(['Which branch should I deploy?', 'Is the staging database safe to reset?']);
+    expect(unanswered).toEqual(['Is the staging database safe to reset?']);
+    expect(handle.question).toBeNull();
+    expect(fs.readFileSync(path.join(root, 'answered.txt'), 'utf8')).toBe('The user answered:\n\nmain, after the tests pass');
+    const fallback = fs.readFileSync(path.join(root, 'unanswered.txt'), 'utf8');
+    expect(fallback).toContain('No answer from the user within 0.02 min');
+    expect(fallback).toContain('continue the run without an answer');
+    // The footer tells the agent how and when to ask, and what happens without an answer.
+    const footer = fs.readFileSync(path.join(ctx.runDir, 'system.txt'), 'utf8');
+    expect(footer).toContain('looper-ask "<question>"');
+    expect(footer).toContain('needing to ask means you failed to work it out yourself');
+    expect(footer).toContain('continue the run without an answer');
+    // It passes permissions and the sandbox, but a subagent may run it: it ends nothing.
+    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
+    expect(settings.permissions.allow).toContain('Bash(looper-ask:*)');
+    expect(settings.sandbox.excludedCommands).toContain('looper-ask');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-subagent-guard'), 'utf8')).not.toContain('looper-ask');
+  });
+
+  it('ask: a task that does not allow it gives the agent no looper-ask and no word about it', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [`if command -v looper-ask >/dev/null; then r=offered; else r=missing; fi`, `printf '{"type":"result","result":"ask helper %s"}\\n' "$r"`].join('\n'),
+    );
+    const ctx = makeCtx(harness);
+    const end = await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(end.body).toBe('ask helper missing');
+    expect(fs.readFileSync(path.join(ctx.runDir, 'system.txt'), 'utf8')).not.toContain('looper-ask');
   });
 
   it('codex: a failed turn keeps the error message as headline and body', async () => {

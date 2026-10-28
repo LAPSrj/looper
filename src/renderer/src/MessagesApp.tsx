@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { TaskRuntime } from '@shared/types';
 import { MessagesView } from './components/Messages';
+import { InfoBar } from './components/ui';
 import { subscribe } from './events';
 
 /**
  * A conversation in its own window: a run's messages, or a subagent's
  * (agentId set). While the run's agent is going, a box under it sends the
- * agent guidance; a subagent's window has none, since guidance goes to the
- * main session.
+ * agent guidance, or the answer to the question it is waiting on; a
+ * subagent's window has none, since guidance goes to the main session.
  */
 export function MessagesApp({
   taskId,
@@ -43,6 +44,8 @@ export function MessagesApp({
   const run = runtime?.runs.find((r) => r.runId === runId);
   const running = run?.state === 'running' || run?.state === 'classifying';
   const agentRunning = run?.state === 'running';
+  // While the agent waits on an answer, what the box sends is the answer.
+  const question = agentId ? null : (run?.question ?? null);
 
   useEffect(() => {
     if (agentId || !agentRunning) {
@@ -50,7 +53,7 @@ export function MessagesApp({
       return;
     }
     void window.looper.canGuideRun(taskId, runId).then(setCanGuide);
-  }, [taskId, runId, agentId, agentRunning]);
+  }, [taskId, runId, agentId, agentRunning, question]);
 
   const send = async () => {
     const text = guidance.trim();
@@ -69,12 +72,20 @@ export function MessagesApp({
 
   return (
     <div className="messages-app">
-      <MessagesView taskId={taskId} runId={runId} agentId={agentId} running={running} refreshKey={sent} focusReport={focusReport} />
+      <MessagesView
+        taskId={taskId}
+        runId={runId}
+        agentId={agentId}
+        running={running}
+        refreshKey={sent}
+        focusReport={focusReport}
+        notice={canGuide && question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
+      />
       {canGuide && (
         <div className="guidance-compose">
           <textarea
             rows={3}
-            placeholder="Guidance for the agent"
+            placeholder={question !== null ? 'Your answer' : 'Guidance for the agent'}
             value={guidance}
             onChange={(e) => setGuidance(e.target.value)}
             onKeyDown={(e) => {

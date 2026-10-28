@@ -352,7 +352,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
         id={rowId(t.id)}
         role="option"
         aria-selected={selected === t.id}
-        className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held ? 'held' : ''}${t.enabled ? '' : ' disabled'}${dropClass}`}
+        className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held || rt?.asking ? 'held' : ''}${t.enabled ? '' : ' disabled'}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
         // A flat list that sorts itself has nowhere to drop a task.
         draggable={options.showFolders || !sorted}

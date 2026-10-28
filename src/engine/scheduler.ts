@@ -275,18 +275,20 @@ export class Scheduler extends EventEmitter {
     return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance });
   }
 
-  /** Whether the run takes guidance now: its agent is running on Claude Code or Codex. */
+  /** Whether the run takes guidance now: its agent is running on Claude Code or Codex, or waits on an answer to its question. */
   canGuideRun(taskId: string, runId: string): boolean {
     const task = this.d.tasks.get(taskId);
     const run = this.runtimes.get(taskId)?.runs.find((r) => r.runId === runId);
-    return !!task && run?.state === 'running' && this.agents.has(runId) && this.takesGuidance(task);
+    const handle = this.agents.get(runId);
+    return !!task && run?.state === 'running' && !!handle && (handle.question !== null || this.takesGuidance(task));
   }
 
   /**
    * Send guidance to a run in flight (without a run id, the task's newest).
-   * It waits in the run dir until the agent picks it up (engine/guidance.ts);
-   * whatever the agent never got continues the conversation in a new run once
-   * this one ends (see `settleGuidance`).
+   * While the agent waits on an answer to its question, the text is the
+   * answer. Otherwise it waits in the run dir until the agent picks it up
+   * (engine/guidance.ts); whatever the agent never got continues the
+   * conversation in a new run once this one ends (see `settleGuidance`).
    */
   sendGuidance(taskId: string, runId: string | undefined, text: string): void {
     const task = this.d.tasks.get(taskId);
@@ -298,6 +300,11 @@ export class Scheduler extends EventEmitter {
     if (!run) throw new Error('This run has already ended. Use Continue with Guidance… to continue its conversation.');
     const handle = this.agents.get(run.runId);
     if (run.state !== 'running' || !handle) throw new Error('The agent of this run has not started yet.');
+    if (handle.answer(trimmed)) {
+      this.setQuestion(rt, run.runId, null);
+      this.record(taskId, run.runId, 'question', 'delivered', { summary: headlineOf(trimmed), body: trimmed });
+      return;
+    }
     if (!this.takesGuidance(task)) throw new Error('Only Claude Code and Codex runs take guidance.');
     const runDir = this.d.runs.runDir(taskId, run.runId);
     queueGuidance(runDir, trimmed);
@@ -554,6 +561,7 @@ export class Scheduler extends EventEmitter {
     if (front) rt.state = front.state;
     rt.currentRunId = newestRun(rt)?.runId ?? null;
     rt.held = rt.runs.some((r) => r.held);
+    rt.asking = rt.runs.some((r) => r.question !== null);
   }
 
   /** Move one run to its next step and republish the aggregate. */
@@ -570,6 +578,15 @@ export class Scheduler extends EventEmitter {
     const run = rt.runs.find((r) => r.runId === runId);
     if (!run) return;
     run.held = held;
+    this.recompute(rt);
+    this.emitRuntime(rt);
+  }
+
+  /** A run's agent asked the user a question (or it was settled: null); the task is asking while any run is. */
+  private setQuestion(rt: TaskRuntime, runId: string, question: string | null): void {
+    const run = rt.runs.find((r) => r.runId === runId);
+    if (!run || run.question === question) return;
+    run.question = question;
     this.recompute(rt);
     this.emitRuntime(rt);
   }
@@ -607,6 +624,7 @@ export class Scheduler extends EventEmitter {
       taskId: task.id,
       state: task.enabled ? 'idle' : parkedState(task),
       held: false,
+      asking: false,
       runs: [],
       // Only a cron schedule has a next slot; manual and watcher tasks never do.
       nextRunAt: task.enabled && scheduleOf(task) ? this.now() + delayMs : null,
@@ -1075,7 +1093,7 @@ export class Scheduler extends EventEmitter {
 
     // The task as it stood when the cycle started; what completes during it is the news.
     const wasCompleted = !!task.completedAt;
-    rt.runs.push({ runId, state: 'checking', held: false, startedAt: this.now(), trigger });
+    rt.runs.push({ runId, state: 'checking', held: false, question: null, startedAt: this.now(), trigger });
     rt.lastRunAt = this.now();
     // Advanced once, here: finishCycle only recomputes it when the task goes idle.
     rt.nextRunAt = task.enabled ? this.computeNext(task, this.now()) : null;
@@ -1711,6 +1729,17 @@ export class Scheduler extends EventEmitter {
           if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
         },
         onResume: () => this.setHeld(rt, ctx.runId, false),
+        onQuestion: (question) => {
+          this.setQuestion(rt, ctx.runId, question);
+          this.record(task.id, ctx.runId, 'question', 'sent', { summary: headlineOf(question), body: question });
+          this.notify(task, ctx.runId, 'question', question);
+        },
+        onNoAnswer: () => {
+          this.setQuestion(rt, ctx.runId, null);
+          this.record(task.id, ctx.runId, 'question', 'undelivered', {
+            summary: `no answer within ${Number(task.agent.ask.waitMin.toFixed(2))} min`,
+          });
+        },
         onContext: (tokens, limit) =>
           this.record(task.id, ctx.runId, 'agent', 'sent', {
             summary: `context at ${Math.round(tokens / 1000)}k tokens, past the limit of ${Math.round(limit / 1000)}k: asked the agent to restart`,
@@ -1721,6 +1750,8 @@ export class Scheduler extends EventEmitter {
       // to end and aborts the cycle signal instead: honor it now.
       if (ctx.signal?.aborted) void handle.stop('stopped', stopReason());
       const end = await handle.finished;
+      // A question still waiting has nobody left to read the answer.
+      this.setQuestion(rt, ctx.runId, null);
       this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
       elapsedMs += end.durationMs;
       wasHeld ||= end.wasHeld;

@@ -86,7 +86,10 @@ to run inside an agent session started by Looper — it is the same signal an
 agent gives by running `looper-done` there. An agent whose task allows it
 finishes the task for good with `looper-complete "<why>"` instead, which is
 only on its PATH when the task's **Allow this task to be marked completed**
-option is on.
+option is on. Likewise, `looper-ask "<question>"` is only on its PATH when
+the task lets the agent ask you a question (see [questions from the
+agent](how-a-run-works.md#questions-from-the-agent)); `guide` answers a
+question the agent is waiting on.
 
 `looper list` and `looper logs` read `tasks.json`, `state.json`, and
 `tasks/<id>/runs.jsonl` directly, so they work even if no app is currently
@@ -280,6 +283,10 @@ tasks/<id>/runs/<runId>/
   session.json            the SessionStart-hook payload (names the transcript)
   bin/looper-done         the helper script the agent's PATH exposes
   bin/looper-restart      tasks with a context limit: the restart helper
+  bin/looper-ask          tasks that let the agent ask: the question helper
+                       (looper-ask.cmd and looper-ask-request.ps1 on Windows)
+  ask/                    the questions looper-ask sends (requests/) and
+                       Looper's answers to them (responses/)
   bin/looper-stop-hook    the Stop-hook gate script (.ps1 on Windows)
   bin/looper-subagent-guard  the PreToolUse hook that keeps subagents from
                        running the helpers (.ps1 on Windows)

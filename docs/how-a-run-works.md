@@ -209,6 +209,45 @@ idle clock resets. There's no separate "resume" button for this; it's driven
 by the same terminal you'd use to watch the run. You can still **Stop Task**
 a held run if you'd rather abandon it.
 
+## Questions from the agent
+
+A task whose **Allow the agent to ask questions** option is on (Settings tab)
+gives its agent a
+`looper-ask "<question>"` command, and the system footer tells it when it may
+use it. Asking is a last resort, and the footer says so: every question
+interrupts you, so needing one means the agent failed to work it out itself.
+It must first try every other way to settle the matter, including the things
+that would otherwise end the run with a warning or an error, and ask only
+about what it can't settle: a decision only you can make, a credential, or
+access it doesn't have. A question is one paragraph that says what it needs,
+why, what it tried, and the answer it suggests.
+
+When the agent asks:
+
+- You get a notification with the question, unless the run window is the
+  focused window. Clicking it opens the run window.
+- The task shows **Needs attention**, the dashboard lists it with the
+  question, and for an interactive run the Terminal tab shows the question
+  with an **Answer…** link to the run window.
+- The run window shows the question at the top of its lower panel, and its
+  send box takes the answer. The other ways to send guidance (Send Guidance… on the
+  run's context menu, the inbox `guide` command, `looper guide`) answer it
+  too.
+
+The command waits up to **Wait for an answer** (default 5 min) and prints your
+answer. If you don't answer in time, it tells the agent to continue the run
+without an answer: make the most reasonable decision itself, pick the run's
+final status from what that leaves open, and say in its report which question
+went unanswered and what it decided. The idle clock stops while a question waits, but the max runtime
+keeps counting. The agent asks one question at a time, and the run log
+records each question, your answer, or that nobody answered.
+
+Any harness can ask, since `looper-ask` is a shell command, and the run window
+takes the answer even for a custom harness, which otherwise takes no guidance.
+Claude Code's Bash tool gives up on a command after 2 minutes by default, so
+the footer tells the agent to run `looper-ask` in the background and wait for
+it to finish.
+
 ## Skipped, deferred, and manual runs
 
 - **A task allows as many runs in flight at once as its "Simultaneous runs"
@@ -310,7 +349,8 @@ without stopping it: the send box under the run window's conversation
 (Ctrl+Enter sends), **Send Guidance…** on a run's context menu in the Runs
 tab, the inbox `guide`
 command, or `looper guide <taskId> <text>`. Text sent before the agent picked
-up the previous one is appended to it.
+up the previous one is appended to it. While the agent waits on an answer to
+[its question](#questions-from-the-agent), what you send is the answer instead.
 
 The guidance waits as `guidance.json` in the run directory until the agent
 gets it:

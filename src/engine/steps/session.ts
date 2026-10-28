@@ -16,7 +16,7 @@ import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
 import { stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
-import { childEnv, runDirTarget, stripShellNoise, targetFile, writeLauncher, type RunContext } from './common';
+import { ASK_DIR, childEnv, runDirTarget, stripShellNoise, targetFile, writeLauncher, type RunContext } from './common';
 
 /**
  * A harness session: one spawned CLI conversation, interactive (pty + terminal
@@ -66,6 +66,10 @@ export interface SessionHandle {
    * has ended gets it typed in; otherwise the hooks hand it over mid-turn.
    */
   deliverGuidance(): void;
+  /** The question the agent is waiting on an answer to, or null. */
+  readonly question: string | null;
+  /** Hand the user's answer to the waiting question; false when none waits. */
+  answer(text: string): boolean;
   stop(reason?: SessionEndReason, headline?: string): Promise<void>;
   finished: Promise<SessionEnd>;
   readonly held: boolean;
@@ -77,6 +81,10 @@ export interface SessionCallbacks {
   onResume?: () => void;
   /** The context passed the session's limit (or a further step past it) and the notice was left for the agent. */
   onContext?: (tokens: number, limit: number) => void;
+  /** The agent asked the user a question. */
+  onQuestion?: (question: string) => void;
+  /** Nobody answered the question in time, and the agent got the session's no-answer text. */
+  onNoAnswer?: (question: string) => void;
 }
 
 /** The done-file status of a session that ended for a context restart (written by the restart helper). */
@@ -128,6 +136,13 @@ export interface SessionOpts {
    * at every further tenth of the limit.
    */
   context?: { limit: number; notice: (tokens: number, again: boolean) => string };
+  /**
+   * The ask command on the session's PATH. Its requests come in through the
+   * run dir's ask folder, one question at a time; the user's answer goes back,
+   * or `noAnswer` once `waitMs` passes. The idle clock stops while a question
+   * waits. Unset = the session cannot ask.
+   */
+  ask?: { command: string; waitMs: number; noAnswer: string };
   /** The session continues a run an earlier session started (a context restart): the logs keep the earlier output. */
   continued?: boolean;
   /** Status assumed when the done file has no recognized status line (agent: success; classify: none). */
@@ -335,6 +350,13 @@ export class HeadlessStream {
 const PTY_COLS = 120;
 const PTY_ROWS = 32;
 
+/**
+ * What xterm sends when the terminal gains (CSI I) or loses (CSI O) focus,
+ * once the session turned focus reporting on (DECSET 1004, which ConPTY sends
+ * at the start of a session).
+ */
+export const FOCUS_REPORT_RE = /^(?:\x1b\[[IO])+$/;
+
 /** Bytes of recent output kept to explain an exit or a timer that fired. */
 const RECENT_OUT_BYTES = 4096;
 
@@ -490,6 +512,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const codex = harness.kind === 'codex';
   const f = (name: string): string => opts.prefix + name;
   const signalCommands = [doneCommand, opts.completeCommand, opts.restartCommand].filter((c): c is string => !!c);
+  // The ask command must pass permissions and the sandbox too, but it doesn't end the session: a subagent may run it.
+  const helperCommands = opts.ask ? [...signalCommands, opts.ask.command] : signalCommands;
   // The restart helper ends the session through the done file, under its own status.
   const parseStatuses = opts.restartCommand ? [...doneStatuses, RESTART_STATUS] : doneStatuses;
   if (opts.restartCommand) {
@@ -558,11 +582,11 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       },
     ];
     writeJsonAtomic(path.join(ctx.runDir, f('settings.json')), {
-      // A signal command must never be blocked by a permission prompt, and the
+      // A helper command must never be blocked by a permission prompt, and the
       // Bash sandbox must never confine it: the run dir sits outside the
       // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
-      permissions: { allow: signalCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
-      sandbox: { excludedCommands: signalCommands },
+      permissions: { allow: helperCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
+      sandbox: { excludedCommands: helperCommands },
       ...projectMcpApproval(harness),
       hooks,
     });
@@ -649,7 +673,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     doneCommand,
     doneStatuses,
     completeCommand: opts.completeCommand,
+    // The helper outwaits Looper's own deadline, so the no-answer text is what it prints.
+    ask: opts.ask ? { command: opts.ask.command, waitS: Math.ceil(opts.ask.waitMs / 1000) + 120 } : undefined,
   });
+  const askDir = path.join(ctx.runDir, f(ASK_DIR));
+  // A question an earlier session of the run left behind has nobody waiting on it.
+  fs.rmSync(askDir, { recursive: true, force: true });
 
   if (opts.continued) {
     // A restarted session writes after the earlier one; a line in the logs marks where.
@@ -825,6 +854,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     watcher.stop();
     clearTimeout(maxTimer);
     if (contextTimer) clearInterval(contextTimer);
+    if (askTimer) clearInterval(askTimer);
     if (doneTimer) clearTimeout(doneTimer);
     if (!exited) await killTree();
     out.end();
@@ -903,6 +933,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   /** The context watch's poll (see below); unset without a context limit. */
   let contextTimer: NodeJS.Timeout | null = null;
+  /** The ask poll (see below); unset when the session cannot ask. */
+  let askTimer: NodeJS.Timeout | null = null;
+  /** The question waiting on an answer: its request id, its text, and when Looper took it. */
+  let pendingAsk: { rid: string; question: string; at: number } | null = null;
   const maxTimer = setTimeout(
     () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
     opts.maxRuntimeMs,
@@ -1087,7 +1121,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             ctx.log.info(`[${task.id}] prompt resolved; ${opts.step} continues`);
           }
         }
-        if (held) return;
+        if (held || pendingAsk) return;
         const since = idleSince ?? promptSince;
         if (since === null) return;
         if (now - since < opts.idleGraceMs) return;
@@ -1101,15 +1135,21 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     });
   }
 
-  /** Keyboard input from the user (terminal tab) or from looper itself: the session is busy again. */
+  /**
+   * Keyboard input from the user (terminal tab) or from looper itself: the
+   * session is busy again. A focus report is the terminal tab gaining or
+   * losing focus, not anyone acting on the session.
+   */
   function input(data: string): void {
     if (ended) return;
-    lastInputAt = Date.now();
-    idleSince = null;
-    promptSince = null;
-    if (held) {
-      held = false;
-      cb.onResume?.();
+    if (!FOCUS_REPORT_RE.test(data)) {
+      lastInputAt = Date.now();
+      idleSince = null;
+      promptSince = null;
+      if (held) {
+        held = false;
+        cb.onResume?.();
+      }
     }
     proc.write(data);
   }
@@ -1172,11 +1212,79 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }, ctx.settings.signalPollMs * CONTEXT_POLLS);
   }
 
+  /** The waiting helper prints `text` and exits with `code`; the code file appears last, by rename, so the response is whole. */
+  const respond = (rid: string, text: string, code: number): void => {
+    const res = path.join(askDir, 'responses');
+    try {
+      fs.mkdirSync(res, { recursive: true });
+      fs.writeFileSync(path.join(res, `${rid}.out`), text.endsWith('\n') ? text : text + '\n');
+      fs.writeFileSync(path.join(res, `${rid}.code.tmp`), String(code));
+      fs.renameSync(path.join(res, `${rid}.code.tmp`), path.join(res, `${rid}.code`));
+    } catch (e) {
+      ctx.log.warn(`[${task.id}] cannot answer ${opts.ask?.command}: ${(e as Error).message}`);
+    }
+  };
+
+  /**
+   * The ask poll: takes the oldest question the agent asked, and once its
+   * wait runs out unanswered, sends the no-answer text back. One question at
+   * a time; a second one waits in requests/ until the first is settled.
+   */
+  if (opts.ask) {
+    const { command, waitMs, noAnswer } = opts.ask;
+    const reqDir = path.join(askDir, 'requests');
+    askTimer = setInterval(() => {
+      if (ended) return;
+      if (pendingAsk) {
+        if (Date.now() - pendingAsk.at < waitMs) return;
+        const { rid, question } = pendingAsk;
+        pendingAsk = null;
+        respond(rid, noAnswer, 0);
+        ctx.log.info(`[${task.id}] nobody answered the agent's question in time`);
+        cb.onNoAnswer?.(question);
+        return;
+      }
+      let name: string | undefined;
+      try {
+        name = fs.readdirSync(reqDir).filter((n) => n.endsWith('.req')).sort()[0];
+      } catch {
+        return; // no question yet
+      }
+      if (!name) return;
+      let lines: string[];
+      try {
+        lines = fs.readFileSync(path.join(reqDir, name), 'utf8').replace(/^﻿/, '').split(/\r?\n/);
+        fs.rmSync(path.join(reqDir, name), { force: true });
+      } catch {
+        return;
+      }
+      const rid = name.slice(0, -'.req'.length);
+      // The op, the caller's folder, then one line per argument.
+      const question = lines.slice(2).join(' ').trim();
+      if (!question) {
+        respond(rid, `usage: ${command} "<question>"`, 2);
+        return;
+      }
+      pendingAsk = { rid, question, at: Date.now() };
+      ctx.log.info(`[${task.id}] the agent asks the user: ${question}`);
+      cb.onQuestion?.(question);
+    }, ctx.settings.signalPollMs);
+  }
+
   return {
     runId: ctx.runId,
     pid: proc.pid,
     get held() {
       return held;
+    },
+    get question() {
+      return pendingAsk?.question ?? null;
+    },
+    answer(text: string) {
+      if (!pendingAsk || ended) return false;
+      respond(pendingAsk.rid, `The user answered:\n\n${text}`, 0);
+      pendingAsk = null;
+      return true;
     },
     write: input,
     deliverGuidance: deliverIdleGuidance,

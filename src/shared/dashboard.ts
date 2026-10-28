@@ -13,6 +13,8 @@ export interface AttentionRow {
   runId: string | null;
   /** The finished run a row about the task's last result comes from. */
   lastRunId: string | null;
+  /** The waiting run's agent asked a question: the row opens its run window, where the answer goes. */
+  question?: true;
 }
 
 /** A main-window dashboard row for a run in progress. */
@@ -41,7 +43,9 @@ export function attentionRows(tasks: Task[], runtimes: Record<string, TaskRuntim
     const rt = runtimes[task.id];
     if (!rt || task.completedAt || rt.state === 'disabled') continue;
     for (const run of rt.runs) {
-      if (run.held) {
+      if (run.question !== null) {
+        rows.push({ task, level: 'warning', problem: `The agent asks: ${run.question}`, at: run.startedAt, runId: run.runId, lastRunId: null, question: true });
+      } else if (run.held) {
         rows.push({ task, level: 'warning', problem: 'The agent is waiting for you in the Terminal tab.', at: run.startedAt, runId: run.runId, lastRunId: null });
       }
     }

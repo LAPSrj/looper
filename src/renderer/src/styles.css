@@ -988,18 +988,77 @@ code,
   min-height: 0;
   position: relative;
 }
+/* Padding, not an inset: the fit addon subtracts only this padding from the parent's size, so an inset makes the last row spill out. */
 .terminal .xterm {
   position: absolute;
-  inset: 6px;
+  inset: 0;
+  padding: 6px;
 }
 .banner {
   padding: 6px 14px;
   font-size: 12px;
   border-bottom: 1px solid var(--border);
 }
-.banner.warn {
-  background: var(--yellow-bg);
-  color: var(--yellow);
+/* WinUI's InfoBar, informational severity (InfoBar_themeresources.xaml and Common_themeresources_any.xaml). */
+.infobar {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 48px;
+  margin: 8px 10px;
+  padding: 0 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  background: rgba(246, 246, 246, 0.5);
+  color: var(--fg);
+}
+.infobar-icon {
+  flex: none;
+  margin-top: 16px;
+}
+.infobar-icon-bg {
+  fill: var(--accent);
+}
+.infobar-icon-fg {
+  fill: var(--accent-fg);
+}
+.infobar-icon-stroke {
+  stroke: var(--accent-fg);
+}
+.infobar-text {
+  padding: 14px 0;
+  line-height: 20px;
+  user-select: text;
+}
+.infobar-title {
+  font-weight: 600;
+  margin-right: 12px;
+}
+.infobar-action {
+  margin-left: 16px;
+}
+.infobar-stacked .infobar-text {
+  padding: 14px 0 18px;
+}
+.infobar-stacked .infobar-title {
+  display: block;
+  margin: 0 0 4px;
+}
+.infobar-stacked .infobar-action {
+  display: block;
+  margin: 12px 0 0;
+}
+/* The terminal stays dark in both themes; its bars sit on the window's own background. */
+.terminal-infobars {
+  flex: none;
+  background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  .infobar {
+    border-color: rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+  }
 }
 .banner.muted {
   background: var(--bg-2);
@@ -1145,6 +1204,10 @@ fieldset.step-fields {
   min-inline-size: 0;
 }
 
+/* A fieldset keeps its children's margins inside: the fields' own margins already space the row. */
+fieldset.step-fields > .row {
+  margin: 0;
+}
 .step-fields.disabled {
   opacity: 0.4;
 }

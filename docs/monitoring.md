@@ -6,7 +6,7 @@
 
 The sidebar lists your tasks by name, with a status line under each one:
 what it's doing right now if active ("Needs attention" while a run is held
-for you), otherwise a next-run countdown, "Not scheduled", "Manual", its
+for you or its agent waits on an answer to its question), otherwise a next-run countdown, "Not scheduled", "Manual", its
 paused reason, "Disabled", or "Completed" with the date it finished for good.
 A watcher task reads "Watching" while its watcher command is up, "Watcher
 restarting" while Looper waits to restart it, and "Idle" outside its active
@@ -28,7 +28,8 @@ below the task list.
 ![The dashboard: Running now, Needs attention, and Recent runs](img/dashboard.png)
 
 **Running now** lists every run in progress, oldest first: the task, its
-step (Checking, Classifying, Running agent, or Waiting for you), what
+step (Checking, Classifying, Running agent, Waiting for you, or Waiting for
+your answer), what
 triggered it (Schedule, Manual, or Event), when it started, and how long it
 has been going.
 
@@ -37,6 +38,9 @@ problem and when its run started. A task is listed when:
 
 - a run is waiting for you (warning icon), until you answer it in the
   Terminal tab;
+- a run's agent [asked you a question](how-a-run-works.md#questions-from-the-agent)
+  (warning icon), until you answer it in the run window, which the row opens,
+  or the agent's wait runs out;
 - it was auto-paused after too many consecutive errors, or because its
   watcher kept crashing (error icon);
 - its last run ended in an error, a time-out or an idle time-out (error

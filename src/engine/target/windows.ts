@@ -1,4 +1,4 @@
-import type { LauncherSpec, RequestHelperOpts, SpawnSpec, Target, TargetContext } from './index';
+import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
 import { guideHookJson, STOP_GUIDANCE_JSON, type GuideHookFormat, type StopHookSpec } from './stop-hook';
 import { translatePath, translateToHost } from './paths';
 import { GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
@@ -156,7 +156,7 @@ export class WindowsTarget implements Target {
         'Move-Item -LiteralPath $tmp -Destination (Join-Path $req "$rid.req")',
         '$codeFile = Join-Path $res "$rid.code"',
         '$outFile = Join-Path $res "$rid.out"',
-        'for ($i = 0; $i -lt 7200; $i++) {',
+        `for ($i = 0; $i -lt ${requestPolls(opts)}; $i++) {`,
         '  if (Test-Path -LiteralPath $codeFile) {',
         '    if (Test-Path -LiteralPath $outFile) { [Console]::Out.Write([IO.File]::ReadAllText($outFile)) }',
         '    $code = [int]([IO.File]::ReadAllText($codeFile).Trim())',

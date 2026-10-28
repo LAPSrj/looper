@@ -479,7 +479,7 @@ function createTray(): void {
 interface ToastTarget {
   taskId: string;
   runId: string;
-  view: 'terminal' | 'runs' | 'run-window';
+  view: 'terminal' | 'runs' | 'run-window' | 'question';
 }
 
 /**
@@ -492,14 +492,18 @@ const MAX_LIVE_TOASTS = 100;
 
 function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void {
   if (!engine?.settings.notificationsEnabled || !Notification.isSupported()) return;
-  // The user is already looking at the app: no toast.
-  if (BrowserWindow.getFocusedWindow()) return;
-  // A run that ended badly opens its run window on the report; another
-  // finished one lands on the Runs tab with the run selected; a live run on
-  // the terminal.
+  // The user is already looking at the app: no toast. A question waits only so
+  // long, so it is skipped only while its run window, where it's answered, is focused.
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && (e.kind !== 'question' || focused.webContents.getURL().includes(`#${runWindowHash(e.taskId, e.runId)}/`))) return;
+  // A run that ended badly opens its run window on the report, and a question
+  // opens it where the answer is typed; another finished run lands on the
+  // Runs tab with the run selected; a live run on the terminal.
   const hasRun = e.runId !== '-';
   const view: ToastTarget['view'] =
-    e.problem && hasRun
+    e.kind === 'question'
+      ? 'question'
+      : e.problem && hasRun
       ? 'run-window'
       : e.kind === 'end' || e.kind === 'auto-paused' || e.kind === 'usage-limit' || e.kind === 'completed'
         ? 'runs'
@@ -516,8 +520,8 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
 }
 
 function openToastTarget(t: ToastTarget): void {
-  if (t.view === 'run-window') {
-    openMessagesWindow(t.taskId, t.runId, undefined, undefined, true);
+  if (t.view === 'run-window' || t.view === 'question') {
+    openMessagesWindow(t.taskId, t.runId, undefined, undefined, t.view === 'run-window');
     return;
   }
   openTaskView(t.taskId, t.runId, t.view);
@@ -784,6 +788,11 @@ async function openHostPath(p: string): Promise<void> {
 }
 
 /** focusReport: select the run's report row (or its last step) once it loads. */
+/** The start of a run window's renderer hash (a subagent's window has its agent id where this has "-"). */
+function runWindowHash(taskId: string, runId: string): string {
+  return `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/-`;
+}
+
 function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string, focusReport = false): void {
   const task = engine?.getTask(taskId);
   const title = agentId
@@ -994,7 +1003,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     return { action: 'deny' };
   });
   const hash =
-    `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
+    (agentId ? `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${encodeURIComponent(agentId)}` : runWindowHash(taskId, runId)) +
     `/${encodeURIComponent(title)}` +
     (focusReport ? '/report' : '');
   loadRenderer(child, hash);

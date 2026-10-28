@@ -28,6 +28,38 @@ export function RadioField<T extends string>({
   );
 }
 
+/**
+ * A WinUI InfoBar at its informational severity: a status that needs the
+ * user, shown inline until it's resolved, with no close button. `stacked`
+ * puts the title on its own line, as WinUI does when the text doesn't fit one.
+ */
+export function InfoBar({
+  title,
+  message,
+  action,
+  stacked,
+}: {
+  title: string;
+  message: ReactNode;
+  action?: ReactNode;
+  stacked?: boolean;
+}) {
+  return (
+    <div className={`infobar${stacked ? ' infobar-stacked' : ''}`} role="status">
+      <svg className="infobar-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="8" className="infobar-icon-bg" />
+        <circle cx="8" cy="4.9" r="1" className="infobar-icon-fg" />
+        <path d="M8 7.3v4.4" strokeWidth="1.6" strokeLinecap="round" className="infobar-icon-stroke" />
+      </svg>
+      <div className="infobar-text">
+        <span className="infobar-title">{title}</span>
+        <span className="infobar-message">{message}</span>
+        {action && <span className="infobar-action">{action}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
   return (
     <div className="field">

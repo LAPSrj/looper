@@ -29,6 +29,12 @@ interface LiveAgent {
   hold: () => void;
   /** Push output as the agent would, into that run's terminal buffer. */
   out: (data: string) => void;
+  /** Ask the user a question, as looper-ask would. */
+  ask: (question: string) => void;
+  /** The wait ran out with nobody answering. */
+  noAnswer: () => void;
+  /** The answers the agent got, in order. */
+  answers: string[];
 }
 
 interface Harness {
@@ -143,10 +149,21 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
         const scripted = h.agentEnds!.shift();
         let resolve!: (e: AgentEnd) => void;
         const finished = new Promise<AgentEnd>((r) => (resolve = r));
+        let question: string | null = null;
+        const answers: string[] = [];
         const handle: AgentHandle = {
           runId: ctx.runId,
           pid: 1,
           held: false,
+          get question() {
+            return question;
+          },
+          answer: (text) => {
+            if (question === null) return false;
+            answers.push(text);
+            question = null;
+            return true;
+          },
           write: () => undefined,
           resize: () => undefined,
           deliverGuidance: () => undefined,
@@ -161,6 +178,16 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
             end: resolve,
             hold: () => cb.onHold?.(),
             out: (data) => cb.onData(data),
+            ask: (q) => {
+              question = q;
+              cb.onQuestion?.(q);
+            },
+            noAnswer: () => {
+              const q = question!;
+              question = null;
+              cb.onNoAnswer?.(q);
+            },
+            answers,
           };
           h.liveAgent = live;
           h.liveAgents!.push(live);
@@ -706,6 +733,50 @@ describe('guidance for a run in flight', () => {
     expect(records().find((r) => r.phase === 'guidance' && r.result === 'undelivered')!.summary).toBe(
       'not delivered: the run ended without the agent finishing (timed out)',
     );
+  });
+
+  it("a question puts the run in Needs attention, and the next guidance is its answer", async () => {
+    const { live, dir } = await liveRun();
+    live.ask('Which branch should I deploy?');
+    await flush();
+    const rt = h.sched.get('t1')!;
+    expect(rt.asking).toBe(true);
+    expect(rt.runs[0].question).toBe('Which branch should I deploy?');
+    expect(notifies().at(-1)).toMatchObject({ kind: 'question', runId: live.runId, body: 'Which branch should I deploy?' });
+    h.sched.sendGuidance('t1', live.runId, '  main  ');
+    expect(live.answers).toEqual(['main']);
+    expect(readPendingGuidance(dir)).toBeNull();
+    expect(h.sched.get('t1')!.asking).toBe(false);
+    // Unanswered: the run goes back to plain running, and the log says why.
+    live.ask('Is staging safe to reset?');
+    await flush();
+    live.noAnswer();
+    await flush();
+    expect(h.sched.get('t1')!.runs[0].question).toBeNull();
+    // With no question waiting, guidance is guidance again.
+    h.sched.sendGuidance('t1', live.runId, 'skip staging');
+    expect(readPendingGuidance(dir)).toBe('skip staging');
+    expect(live.answers).toEqual(['main']);
+    live.end(agentEnd('done', 'ok'));
+    await flush();
+    expect(records().filter((r) => r.phase === 'question').map((r) => `${r.result}: ${r.summary}`)).toEqual([
+      'sent: Which branch should I deploy?',
+      'delivered: main',
+      'sent: Is staging safe to reset?',
+      'undelivered: no answer within 5 min',
+    ]);
+    // Question records don't decide how the run went.
+    expect(h.sched.get('t1')!.lastResult).toBe('done');
+  });
+
+  it('a question still waiting when the run ends is dropped with it', async () => {
+    const { live } = await liveRun();
+    live.ask('Which branch?');
+    await flush();
+    live.end(agentEnd('done', 'ok'));
+    await flush();
+    expect(h.sched.get('t1')!.asking).toBe(false);
+    expect(h.sched.get('t1')!.runs).toEqual([]);
   });
 
   it('appends guidance sent before the agent took the earlier one', async () => {
@@ -1564,6 +1635,7 @@ describe('startup overdue filtering', () => {
         taskId: 't1',
         state: 'idle',
         held: false,
+        asking: false,
         runs: [],
         nextRunAt: null,
         lastRunAt: new Date('2026-01-15T10:01:00Z').getTime(),
@@ -1612,6 +1684,7 @@ describe('startup overdue filtering', () => {
         taskId: 't1',
         state: 'idle',
         held: false,
+        asking: false,
         runs: [],
         nextRunAt: null,
         lastRunAt: now - 10 * 60_000,
@@ -1689,6 +1762,7 @@ describe('interrupted runs', () => {
         taskId: 't1',
         state: 'running',
         held: false,
+        asking: false,
         runs,
         nextRunAt: null,
         lastRunAt: 1,
@@ -1722,6 +1796,7 @@ describe('interrupted runs', () => {
     runId,
     state,
     held: false,
+    question: null,
     startedAt: 1,
     trigger: 'timer',
   });

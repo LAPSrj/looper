@@ -90,6 +90,7 @@ function describeCron(cron: string): string {
 
 function statusDetail(runtime: TaskRuntime | undefined): string {
   if (!runtime) return '';
+  if (runtime.asking) return 'The agent is waiting for your answer in the run window';
   if (runtime.held) return 'The agent is waiting for you in the Terminal tab';
   if (runtime.runs.length > 1) return `${runtime.runs.length} runs active`;
   switch (runtime.state) {
@@ -257,7 +258,13 @@ export function TaskDetail({
           />
         )}
         {tab === 'terminal' && (
-          <Terminal taskId={task.id} runtime={runtime} selectedRun={terminalRun} onSelectRun={onTerminalRun} />
+          <Terminal
+            taskId={task.id}
+            runtime={runtime}
+            headless={task.agent.mode === 'headless'}
+            selectedRun={terminalRun}
+            onSelectRun={onTerminalRun}
+          />
         )}
       </section>
     </div>

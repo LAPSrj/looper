@@ -42,7 +42,7 @@ export const REMOTE_STATUS_LABELS: Record<RemoteConversation['status'], string> 
 
 export function stateLabel(rt: TaskRuntime | undefined): string {
   if (!rt) return 'Idle';
-  if (rt.held) return 'Needs attention';
+  if (rt.held || rt.asking) return 'Needs attention';
   return STATE_LABELS[rt.state] ?? rt.state;
 }
 

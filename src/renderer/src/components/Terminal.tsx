@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ActiveRun, TaskRuntime } from '@shared/types';
 import { subscribe } from '../events';
+import { InfoBar } from './ui';
 import { openXterm } from './xterm';
 
 interface Props {
   taskId: string;
   runtime: TaskRuntime | undefined;
+  /** The agent runs headless: the console only shows its stream, so the question is left to the run window. */
+  headless: boolean;
   /** The run the user picked while several were in flight; null = the newest. */
   selectedRun: string | null;
   onSelectRun: (runId: string | null) => void;
@@ -21,11 +24,11 @@ const RUN_STATE_LABELS: Record<ActiveRun['state'], string> = {
 };
 
 function runOptionLabel(run: ActiveRun): string {
-  const state = run.held ? 'Needs attention' : RUN_STATE_LABELS[run.state];
+  const state = run.held || run.question !== null ? 'Needs attention' : RUN_STATE_LABELS[run.state];
   return `Run ${run.runId} · ${state}`;
 }
 
-export function Terminal({ taskId, runtime, selectedRun, onSelectRun }: Props) {
+export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   /** The run whose output is on screen (from the buffer replay or the live stream). */
   const [attachedRun, setAttachedRun] = useState<string | null>(null);
@@ -111,6 +114,9 @@ export function Terminal({ taskId, runtime, selectedRun, onSelectRun }: Props) {
 
   const attachedActiveRun = runs.find((r) => r.runId === attachedRun);
   const held = attachedActiveRun ? attachedActiveRun.held : !!runtime?.held;
+  // The question of the run on screen, or with no run attached yet, the newest run's.
+  const asking = attachedActiveRun ?? runsNewestFirst[0];
+  const question = headless ? null : (asking?.question ?? null);
 
   return (
     <div className="terminal-wrap">
@@ -123,10 +129,30 @@ export function Terminal({ taskId, runtime, selectedRun, onSelectRun }: Props) {
           ))}
         </select>
       )}
-      {held && (
-        <div className="banner warn">
-          The agent finished a turn without calling <code>looper-done</code> and this task is set to hold. Type into the
-          terminal to continue it, or press <b>Stop Task</b> (Shift+F5).
+      {(question !== null || held) && (
+        <div className="terminal-infobars">
+          {question !== null && (
+            <InfoBar
+              title="The agent has a question"
+              message={question}
+              action={
+                <button className="link" onClick={() => void window.looper.openMessages(taskId, asking!.runId)}>
+                  Answer…
+                </button>
+              }
+            />
+          )}
+          {held && (
+            <InfoBar
+              title="The agent is waiting for you"
+              message={
+                <>
+                  It finished a turn without calling <code>looper-done</code>, and this task is set to hold. Type into the
+                  terminal to continue it, or press <b>Stop Task</b> (Shift+F5).
+                </>
+              }
+            />
+          )}
         </div>
       )}
       <div className="terminal" ref={ref} />
