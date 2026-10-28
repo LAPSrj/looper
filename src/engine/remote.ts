@@ -12,7 +12,7 @@ import {
 } from '../shared/remote';
 import { TaskSchema, type RemoteFolderProject, type RemoteHelper, type RemoteProject, type Settings, type Task } from '../shared/types';
 import { errMsg, type Logger } from './log';
-import { readRunSessionId } from './messages';
+import { readRunSessionId, readTranscriptRef } from './messages';
 import type { RemoteLaunch } from './open-terminal';
 import { readJson, writeJsonAtomic } from './store/fsutil';
 import type { Target } from './target';
@@ -35,6 +35,13 @@ const LINK_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
 const HELPER_COMMAND = 'looper-remote';
 /** In a helper's run folder: its environment's home and Claude Code config folders, written by its launcher. */
 const HOME_FILE = 'home.txt';
+/** The prompt cache's two lifetimes; a conversation whose transcript doesn't say is given the long one. */
+const CACHE_LONG_MS = 60 * 60_000;
+const CACHE_SHORT_MS = 5 * 60_000;
+/** How much of a transcript's end is read for its last request. */
+const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+/** Conversations `looper-remote conversations` prints. */
+const CONVERSATIONS_MAX = 25;
 
 export interface RemoteDeps {
   dataDir: string;
@@ -85,6 +92,9 @@ interface Live {
   saved?: string;
   /** The hook files' times `conv.lastMessage` was read at. */
   messageOf?: string;
+  /** When its prompt cache expires (epoch ms), worked out for the turn that ended at `expiryOf`. */
+  expiresAt?: number;
+  expiryOf?: number | null;
 }
 
 /** The task-like stand-in a folder project or helper runs its sessions as. */
@@ -123,10 +133,12 @@ export function helperSystemPrompt(idleRestartMin: number, extra = ''): string {
     'You can run only these commands (anything else is refused):',
     `- \`${HELPER_COMMAND} list\` prints the projects and tasks set up in Looper, with their folders.`,
     `- \`${HELPER_COMMAND} recent\` prints the folders where Claude Code sessions ran lately, newest first. Use it only when the user asks for recent folders, or when a folder they name isn't in the list.`,
-    `- \`${HELPER_COMMAND} open <project, task id, or folder>\` starts a new Remote Control session there and prints its name and link. A folder is a path on this computer; a relative one is resolved against your working directory.`,
+    `- \`${HELPER_COMMAND} open <project, task id, or folder> [prompt]\` starts a new Remote Control session there and prints its name and link. A folder is a path on this computer; a relative one is resolved against your working directory. With a prompt, the new session starts working on it right away. Quote the folder and the prompt, each as one argument.`,
+    `- \`${HELPER_COMMAND} conversations\` prints the conversations Looper recorded, open ones first, then ended ones, newest first, each with its id.`,
+    `- \`${HELPER_COMMAND} resume <conversation id> [prompt]\` reopens an ended conversation where it left off, going on with the prompt right away when one is given, and prints its link. For a conversation that's still open it only prints the link.`,
     '- `ls` shows what a folder holds, to find the one the user means.',
     '',
-    "When the user asks for a session somewhere, open it and reply with the session's name and link, so they can switch to it in the Claude app. Open it even when the folder is your own working directory: a new session is what they want. When it's unclear which folder they mean, ask, offering the closest matches. Keep replies short.",
+    "When the user asks for a session somewhere, open it and reply with the session's name and link, so they can switch to it in the Claude app. Open it even when the folder is your own working directory: a new session is what they want. When the user says what the session should do, pass that as its prompt. When they ask to go back to an earlier conversation, find it with conversations and resume it. When it's unclear which folder or conversation they mean, ask, offering the closest matches. Keep replies short.",
     `Looper replaces this conversation with a fresh one after ${idleRestartMin} minutes without a message, so nothing here needs to be kept for later.`,
   ];
   if (extra.trim()) lines.push('', extra.trim());
@@ -140,7 +152,9 @@ const RECENT_MAX = 25;
  * Remote Control: the Claude Code sessions Looper keeps open for the Claude
  * app. Each helper and project entry in the settings gets a session; a project
  * that keeps a conversation ready gets another once its empty one is used; a
- * helper idle past its restart time is replaced by a fresh one. Every session
+ * helper idle past its restart time is replaced by a fresh one; any other
+ * conversation idle until its prompt cache expires ends (closeWhenCacheExpires),
+ * and a helper can resume it. Every session
  * is a terminal session of a task (a folder project's or helper's stand-in
  * task when no task supplies it), so its conversation is recorded as a run.
  * Remote Control runs only while this Looper does: Stop and quitting end
@@ -279,6 +293,13 @@ export class RemoteControl {
    */
   restartConversation(id: string): void {
     if (!this.running) throw new Error('Start Remote Control first.');
+    this.resume(id);
+    this.reconcile();
+    this.emitState();
+  }
+
+  /** A new session in the conversation's own run goes on with it; an open one ends first. `prompt` is its next message. */
+  private resume(id: string, prompt?: string): Live {
     const old = this.live.get(id);
     const conv = old?.conv ?? this.pastList().find((c) => c.id === id);
     if (!conv) throw new Error('This conversation no longer exists.');
@@ -290,14 +311,13 @@ export class RemoteControl {
     const entryKey = old?.entryKey;
     if (old) this.end(id);
     // Claude Code keeps a conversation under its folder: the same one resumes it.
-    const l = this.launch({ ...task, cwd: conv.cwd }, conv.source, conv.name, conv.entryId, () => ({ name: conv.name }), { runId: id, sessionId });
+    const l = this.launch({ ...task, cwd: conv.cwd }, conv.source, conv.name, conv.entryId, () => ({ name: conv.name, prompt }), { runId: id, sessionId });
     l.conv.startedAt = conv.startedAt;
     if (conv.title) l.conv.title = conv.title;
     if (entryKey) l.entryKey = entryKey;
     // Its turns so far: it's a used conversation from the start, never an empty one.
     this.watchTurns(l);
-    this.reconcile();
-    this.emitState();
+    return l;
   }
 
   /** The stand-in task a folder project's or helper's conversations were recorded under, from its run history. */
@@ -389,19 +409,23 @@ export class RemoteControl {
     });
   }
 
-  private launchFolder(p: RemoteFolderProject, source: RemoteSource, overrides?: { cwd: string; name: string; entryId?: string }): Live {
+  private launchFolder(
+    p: RemoteFolderProject,
+    source: RemoteSource,
+    overrides?: { cwd: string; name: string; entryId?: string; prompt?: string },
+  ): Live {
     const entry = overrides ? { ...p, cwd: overrides.cwd, name: overrides.name } : p;
     if (!entry.cwd.trim()) throw new Error('Choose its working directory.');
     const task = remoteStandIn({ ...entry, id: p.id }, this.d.settings);
-    return this.launch(task, source, entry.name, overrides ? overrides.entryId : p.id, () => ({ name: entry.name }));
+    return this.launch(task, source, entry.name, overrides ? overrides.entryId : p.id, () => ({ name: entry.name, prompt: overrides?.prompt }));
   }
 
-  /** `name`: the session's own name, instead of the task's. */
-  private launchTask(taskId: string, source: RemoteSource, entryId?: string, name?: string): Live {
+  /** `name`: the session's own name, instead of the task's. `prompt`: its first message. */
+  private launchTask(taskId: string, source: RemoteSource, entryId?: string, name?: string, prompt?: string): Live {
     const task = this.d.getTask(taskId);
     if (!task) throw new Error('The task no longer exists.');
     const shown = name ?? task.name;
-    return this.launch(task, source, shown, entryId, () => ({ name: shown }));
+    return this.launch(task, source, shown, entryId, () => ({ name: shown, prompt }));
   }
 
   /** A project's session name: its own, or for a task project without one, the task's. */
@@ -475,7 +499,7 @@ export class RemoteControl {
       if (l.conv.source === 'helper') {
         void this.answerRequests(l);
         this.recycle(runId, l);
-      }
+      } else this.closeExpired(runId, l);
     }
     this.reconcile();
     this.emitState();
@@ -544,6 +568,37 @@ export class RemoteControl {
     this.end(runId);
   }
 
+  /** A conversation idle until its prompt cache expired ends; the helper or the Conversations window can resume it. */
+  private closeExpired(runId: string, l: Live): void {
+    if (!this.d.settings.remote.closeWhenCacheExpires || l.conv.status !== 'idle') return;
+    if (l.expiresAt === undefined || l.expiryOf !== l.stopAt) {
+      l.expiryOf = l.stopAt;
+      l.expiresAt = this.cacheExpiry(l);
+    }
+    if (this.now() < l.expiresAt) return;
+    this.d.log.info(`remote control: closing ${runId} "${l.conv.name}": idle until its prompt cache expired`);
+    this.end(runId);
+  }
+
+  /**
+   * When the conversation's prompt cache expires: its last request plus the
+   * cache's lifetime, from the end of its transcript. A resumed conversation
+   * counts from its new session's start, since nothing reached the cache yet.
+   */
+  private cacheExpiry(l: Live): number {
+    let last: { at?: number; ttlMs?: number } = {};
+    const ref = readTranscriptRef(l.dir);
+    const task = this.d.getTask(l.conv.taskId) ?? this.standIn(l.conv.taskId);
+    if (ref && task) {
+      try {
+        last = lastCacheUse(readTail(this.d.createTarget(task).toHostPath(ref), TRANSCRIPT_TAIL_BYTES));
+      } catch {
+        /* unreadable: the turn's end and the long lifetime below */
+      }
+    }
+    return Math.max(last.at ?? l.stopAt ?? 0, l.startedAt) + (last.ttlMs ?? CACHE_LONG_MS);
+  }
+
   // ---------- a helper's requests ----------
 
   private async answerRequests(l: Live): Promise<void> {
@@ -569,7 +624,7 @@ export class RemoteControl {
       const [, callerCwd, sub, ...args] = lines;
       let out: { text: string; code: number };
       try {
-        out = await this.request(l, callerCwd ?? '', sub, args.join(' ').trim());
+        out = await this.request(l, callerCwd ?? '', sub, args);
       } catch (err) {
         out = { text: `looper: ${errMsg(err)}`, code: 1 };
       }
@@ -587,21 +642,66 @@ export class RemoteControl {
     }
   }
 
-  private async request(helper: Live, callerCwd: string, sub: string | undefined, arg: string): Promise<{ text: string; code: number }> {
+  /** `args`: one per line of the request; a prompt's own line breaks arrive as more of them. */
+  private async request(helper: Live, callerCwd: string, sub: string | undefined, args: string[]): Promise<{ text: string; code: number }> {
+    const arg = args[0]?.trim() ?? '';
+    // Everything after the first argument is the prompt, its lines put back together.
+    const prompt = args.slice(1).join('\n').trim() || undefined;
     if (sub === 'list') return { text: this.listTargets(), code: 0 };
     if (sub === 'recent') return { text: this.recentFolders(helper), code: 0 };
+    if (sub === 'conversations') return { text: this.listConversations(), code: 0 };
+    if (sub === 'resume' && arg) return this.resumeFor(arg, prompt);
     if (sub !== 'open' || !arg) {
-      return { text: `usage: ${HELPER_COMMAND} list | ${HELPER_COMMAND} recent | ${HELPER_COMMAND} open <project, task id, or folder>`, code: 2 };
+      return {
+        text: [
+          `usage: ${HELPER_COMMAND} list`,
+          `       ${HELPER_COMMAND} recent`,
+          `       ${HELPER_COMMAND} open <project, task id, or folder> [prompt]`,
+          `       ${HELPER_COMMAND} conversations`,
+          `       ${HELPER_COMMAND} resume <conversation id> [prompt]`,
+        ].join('\n'),
+        code: 2,
+      };
     }
-    const opened = this.open(helper, callerCwd, arg);
-    const link = await this.waitForLink(opened.conv.id);
-    const where = `"${opened.conv.name}" in ${opened.conv.cwd}`;
-    return {
-      text: link
-        ? `Opened ${where}.\nLink: ${link}`
-        : `Opened ${where}. It shows in the Claude app's session list under that name (Claude Code hasn't printed its link yet).`,
-      code: 0,
-    };
+    const opened = this.open(helper, callerCwd, arg, prompt);
+    return { text: await this.linkReply(opened, 'Opened'), code: 0 };
+  }
+
+  /** `looper-remote resume`: an open conversation's link, or an ended one reopened. */
+  private async resumeFor(id: string, prompt?: string): Promise<{ text: string; code: number }> {
+    const open = this.live.get(id);
+    if (open?.conv.source === 'helper' || (!open && this.pastList().find((c) => c.id === id)?.source === 'helper')) {
+      throw new Error("That's a helper's conversation; only other conversations can be resumed.");
+    }
+    if (open) {
+      const reply = await this.linkReply(open, 'Already open:');
+      return { text: prompt ? `${reply}\nThe prompt wasn't sent: the user can send it there.` : reply, code: 0 };
+    }
+    const l = this.resume(id, prompt);
+    this.reconcile();
+    this.emitState();
+    return { text: await this.linkReply(l, 'Resumed'), code: 0 };
+  }
+
+  private async linkReply(l: Live, verb: string): Promise<string> {
+    const link = l.conv.link ?? (await this.waitForLink(l.conv.id));
+    const where = `"${l.conv.name}" in ${l.conv.cwd}`;
+    return link
+      ? `${verb} ${where}.\nLink: ${link}`
+      : `${verb} ${where}. It shows in the Claude app's session list under that name (Claude Code hasn't printed its link yet).`;
+  }
+
+  /** `looper-remote conversations`: the used conversations (not helpers'), open ones first, newest first. */
+  private listConversations(): string {
+    const all = this.state().conversations.filter((c) => c.source !== 'helper' && c.status !== 'waiting');
+    if (all.length === 0) return 'No conversations yet.';
+    const lines = all.slice(0, CONVERSATIONS_MAX).map((c) => {
+      const state = c.status === 'ended' ? 'ended' : `open, ${c.status}`;
+      const about = c.title ? `: ${c.title}` : '';
+      return `- ${c.id} "${c.name}" (${state}, started ${localStamp(Date.parse(c.startedAt))}, in ${c.cwd})${about}`;
+    });
+    if (all.length > lines.length) lines.push(`(${all.length - lines.length} older conversations not shown)`);
+    return lines.join('\n');
   }
 
   private listTargets(): string {
@@ -688,14 +788,14 @@ export class RemoteControl {
   }
 
   /** `looper-remote open`: a project (by name), a task (by id or name), or a folder in the helper's environment. */
-  private open(helper: Live, callerCwd: string, arg: string): Live {
+  private open(helper: Live, callerCwd: string, arg: string, prompt?: string): Live {
     const r = this.d.settings.remote;
     const want = arg.toLowerCase();
     const project = r.projects.find((p) => p.id === arg || this.projectName(p)?.toLowerCase() === want);
-    if (project?.kind === 'folder') return this.launchFolder(project, 'opened', { cwd: project.cwd, name: project.name });
-    if (project?.kind === 'task') return this.launchTask(project.taskId, 'opened', undefined, project.name);
+    if (project?.kind === 'folder') return this.launchFolder(project, 'opened', { cwd: project.cwd, name: project.name, prompt });
+    if (project?.kind === 'task') return this.launchTask(project.taskId, 'opened', undefined, project.name, prompt);
     const task = this.d.listTasks().find((t) => t.id === arg || t.name.toLowerCase() === want);
-    if (task) return this.launchTask(task.id, 'opened');
+    if (task) return this.launchTask(task.id, 'opened', undefined, undefined, prompt);
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
     if (!entry) throw new Error('This helper was removed from the Remote Control settings.');
     // A folder it opens runs like a folder project on the helper's harness, with the harness's own model and
@@ -714,7 +814,7 @@ export class RemoteControl {
     }
     if (!isDir) throw new Error(`No project or task is named "${arg}", and ${folder} isn't a folder.`);
     const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
-    return this.launchFolder(asProject, 'opened', { cwd: folder, name });
+    return this.launchFolder(asProject, 'opened', { cwd: folder, name, prompt });
   }
 
   private async waitForLink(runId: string): Promise<string | undefined> {
@@ -810,6 +910,54 @@ function mtime(file: string): number | null {
   } catch {
     return null;
   }
+}
+
+/** The last `max` bytes of a file, as text (its first line may be cut). */
+function readTail(file: string, max: number): string {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - max);
+    const buf = Buffer.alloc(size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    return buf.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * From a Claude Code transcript's end: when its last API request answered, and
+ * the lifetime of the cache it writes to (the last request that wrote any).
+ */
+export function lastCacheUse(text: string): { at?: number; ttlMs?: number } {
+  let at: number | undefined;
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let rec: { type?: unknown; timestamp?: unknown; message?: { usage?: { cache_creation?: Record<string, unknown> } } };
+    try {
+      rec = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const usage = rec?.type === 'assistant' ? rec.message?.usage : undefined;
+    if (!usage) continue;
+    if (at === undefined && typeof rec.timestamp === 'string') {
+      const t = Date.parse(rec.timestamp);
+      if (!Number.isNaN(t)) at = t;
+    }
+    const cc = usage.cache_creation;
+    if (Number(cc?.ephemeral_1h_input_tokens) > 0) return { at, ttlMs: CACHE_LONG_MS };
+    if (Number(cc?.ephemeral_5m_input_tokens) > 0) return { at, ttlMs: CACHE_SHORT_MS };
+  }
+  return { at };
+}
+
+/** YYYY-MM-DD HH:MM in local time. */
+function localStamp(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function isAbsolutePath(p: string): boolean {

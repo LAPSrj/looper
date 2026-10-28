@@ -571,16 +571,29 @@ message). Quitting Looper ends them too. Check **Start with Looper** in
 **Advanced → Remote Control → Settings…** to turn it on whenever Looper
 starts.
 
+**Close idle conversations once their prompt cache expires** (on by
+default) ends a conversation that has had no message since Claude's prompt
+cache for it expired: an hour after its last answer, or five minutes when
+Claude Code used the short cache (Looper reads which one from the
+conversation's transcript). A project then gets a fresh conversation, and
+the ended one can be resumed from a helper or the Conversations window.
+Helpers are never closed this way.
+
 The settings window has two lists:
 
 - **Helpers** are conversations whose only job is to start sessions. Ask a
   helper, for example, "open a session in the looper repo", and it runs
   `looper-remote open`, which starts a new session there and answers with
-  its name and link, even when the folder is the helper's own. `looper-remote
+  its name and link, even when the folder is the helper's own. Tell it what
+  the session should do ("open the looper repo and fix the footer") and the
+  new session starts on that right away. `looper-remote
   list` shows the projects and tasks set up in Looper, and `looper-remote
   recent` the folders where Claude Code sessions ran lately (from Claude
   Code's own record of folders), newest first; any other folder works by its
-  path. A helper runs apart from your Claude Code setup and the folder's: no
+  path. Ask it to go back to an earlier conversation and it finds it with
+  `looper-remote conversations` and reopens it where it left off with
+  `looper-remote resume`, optionally with your next message; for a
+  conversation that's still open it answers with the link. A helper runs apart from your Claude Code setup and the folder's: no
   settings files, CLAUDE.md, skills or MCP servers, only the Bash tool, and
   only `ls` and `looper-remote` may run (anything else is refused without a
   prompt). Looper gives it its instructions, and **Instructions** in its

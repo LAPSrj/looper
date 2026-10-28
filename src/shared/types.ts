@@ -523,6 +523,8 @@ export const RemoteSettingsSchema = z
   .object({
     /** Start Remote Control when Looper starts. */
     startWithLooper: z.boolean().default(false),
+    /** End a conversation (not a helper) that sits idle until its prompt cache expires; it can be resumed. */
+    closeWhenCacheExpires: z.boolean().default(true),
     helpers: z.array(RemoteHelperSchema).default([]),
     projects: z.array(RemoteProjectSchema).default([]),
   })

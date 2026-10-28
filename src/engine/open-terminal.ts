@@ -184,6 +184,8 @@ export interface RemoteLaunch {
   args?: string[];
   /** Runs in the launcher just before the harness. */
   prelude?: string;
+  /** A first message the session starts working on. */
+  prompt?: string;
 }
 
 export interface OpenTerminalDeps {
@@ -245,6 +247,11 @@ export function writeTerminalLauncher(
       command += ` --append-system-prompt ${target.catFile(t('system.txt'))}`;
     }
     for (const arg of remote.args ?? []) command += ` ${arg}`;
+    if (remote.prompt) {
+      writeText(path.join(dir, 'initial-prompt.txt'), remote.prompt);
+      // After `--`: a variadic option (--tools) would swallow the prompt.
+      command += ` -- ${target.catFile(t('initial-prompt.txt'))}`;
+    }
   }
   if (remote?.prelude) prelude = prelude ? `${prelude}\n${remote.prelude}` : remote.prelude;
   const helpers = Object.entries(remote?.helpers ?? {});

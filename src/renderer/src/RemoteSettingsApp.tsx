@@ -9,7 +9,7 @@ const rid = () => Math.random().toString(36).slice(2, 8);
 
 /**
  * Advanced → Remote Control → Settings. The helper and project lists are
- * managed live through their own editor windows; Start with Looper is a
+ * managed live through their own editor windows; the checkboxes are a
  * draft saved with Save or Apply.
  */
 export function RemoteSettingsApp() {
@@ -17,6 +17,7 @@ export function RemoteSettingsApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [startWithLooper, setStartWithLooper] = useState<boolean | null>(null);
+  const [closeExpired, setCloseExpired] = useState<boolean | null>(null);
   const [helper, setHelper] = useState<string | null>(null);
   const [project, setProject] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -26,6 +27,7 @@ export function RemoteSettingsApp() {
     void window.looper.info().then((info) => {
       setLive(info.settings);
       setStartWithLooper((v) => v ?? info.settings.remote.startWithLooper);
+      setCloseExpired((v) => v ?? info.settings.remote.closeWhenCacheExpires);
       setHelper((s) => s ?? info.settings.remote.helpers[0]?.id ?? null);
       setProject((s) => s ?? info.settings.remote.projects[0]?.id ?? null);
     });
@@ -41,7 +43,7 @@ export function RemoteSettingsApp() {
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
 
-  if (!live || startWithLooper === null) return <div className="empty">Loading…</div>;
+  if (!live || startWithLooper === null || closeExpired === null) return <div className="empty">Loading…</div>;
 
   const r = live.remote;
   const helpers = r.helpers;
@@ -101,7 +103,7 @@ export function RemoteSettingsApp() {
   const doSave = async (): Promise<boolean> => {
     setSaving(true);
     try {
-      await window.looper.updateSettings({ remote: { ...live.remote, startWithLooper } });
+      await window.looper.updateSettings({ remote: { ...live.remote, startWithLooper, closeWhenCacheExpires: closeExpired } });
       return true;
     } catch (e) {
       void window.looper.showError((e as Error).message);
@@ -124,6 +126,10 @@ export function RemoteSettingsApp() {
           <label className="checkbox-field">
             <input type="checkbox" autoFocus checked={startWithLooper} onChange={(e) => setStartWithLooper(e.target.checked)} />
             Start with Looper
+          </label>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={closeExpired} onChange={(e) => setCloseExpired(e.target.checked)} />
+            Close idle conversations once their prompt cache expires
           </label>
           <Field label="Helpers">
             <SelectList

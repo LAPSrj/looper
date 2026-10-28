@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
 import { writeTerminalLauncher, type RemoteLaunch } from '../src/engine/open-terminal';
-import { RemoteControl, remoteStandIn } from '../src/engine/remote';
+import { RemoteControl, lastCacheUse, remoteStandIn } from '../src/engine/remote';
 import { createTarget } from '../src/engine/target';
 import type { RemoteState } from '../src/shared/remote';
 import { SettingsSchema, TaskSchema, type Settings, type Task } from '../src/shared/types';
@@ -78,6 +78,35 @@ function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; outp
 
 const touch = (file: string) => fs.writeFileSync(file, '{}');
 
+/** Send a helper's `looper-remote` request (one line per argument) and wait for Looper's answer. */
+async function ask(dir: string, cwd: string, ...lines: string[]): Promise<{ out: string; code: string }> {
+  const rid = `q${Math.random().toString(36).slice(2, 6)}`;
+  fs.mkdirSync(path.join(dir, 'requests'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'requests', `${rid}.req`), ['remote', cwd, ...lines].join('\n') + '\n');
+  for (let i = 0; i < 100; i++) {
+    const code = path.join(dir, 'responses', `${rid}.code`);
+    if (fs.existsSync(code)) return { out: fs.readFileSync(path.join(dir, 'responses', `${rid}.out`), 'utf8'), code: fs.readFileSync(code, 'utf8') };
+    await sleep(30);
+  }
+  throw new Error('no answer');
+}
+
+/** A transcript line for one API request. */
+const request = (at: number, cache: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } | null) =>
+  JSON.stringify({
+    type: 'assistant',
+    timestamp: new Date(at).toISOString(),
+    message: { usage: { cache_read_input_tokens: 900, ...(cache ? { cache_creation: cache } : {}) } },
+  });
+
+/** A conversation's turn: its message, then its end. */
+async function turn(dir: string): Promise<void> {
+  touch(path.join(dir, 'prompt.json'));
+  await sleep(30);
+  touch(path.join(dir, 'stop.json'));
+  await sleep(80);
+}
+
 let open: RemoteControl[] = [];
 afterEach(() => {
   for (const rc of open) rc.stop();
@@ -132,6 +161,8 @@ describe('Remote Control', () => {
     const l = started[0].launch;
     expect(l.systemPrompt).toContain('looper-remote open');
     expect(l.systemPrompt).toContain('looper-remote recent');
+    expect(l.systemPrompt).toContain('looper-remote conversations');
+    expect(l.systemPrompt).toContain('looper-remote resume <conversation id> [prompt]');
     expect(Object.keys(l.helpers ?? {})).toEqual(['looper-remote']);
     expect(l.helpers?.['looper-remote']).toContain('LOOPER_REMOTE_DIR');
     expect(l.env).toEqual({ LOOPER_REMOTE_DIR: started[0].dir });
@@ -400,11 +431,94 @@ describe('Remote Control', () => {
     void root;
   });
 
+  it('ends an idle conversation once its prompt cache expires, opening a fresh one for its project, but never a helper', async () => {
+    const t0 = Date.now();
+    let t = t0;
+    const { rc, started, closed } = setup(
+      { helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] },
+      { tasks: [task('t1')], now: () => t },
+    );
+    rc.start();
+    const [h, p] = started;
+    const transcript = path.join(p.dir, 'transcript.jsonl');
+    fs.writeFileSync(transcript, [request(t0, { ephemeral_5m_input_tokens: 900 }), request(t0, null)].join('\n') + '\n');
+    fs.writeFileSync(path.join(p.dir, 'session.json'), JSON.stringify({ transcript_path: transcript }));
+    await Promise.all([turn(h.dir), turn(p.dir)]);
+    t = t0 + 4 * 60_000;
+    await sleep(80);
+    expect(closed).toEqual([]);
+    t = t0 + 6 * 60_000;
+    await sleep(80);
+    expect(closed).toEqual([p.runId]);
+    expect(started.map((s) => s.runId)).toEqual([h.runId, p.runId, 'r3']);
+    expect(rc.state().conversations.find((c) => c.id === p.runId)?.status).toBe('ended');
+  });
+
+  it('gives a conversation whose transcript names no cache the long lifetime, and keeps it open while the option is off', async () => {
+    const t0 = Date.now();
+    let t = t0;
+    const { rc, settings, started, closed } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')], now: () => t });
+    rc.start();
+    await turn(started[0].dir);
+    t = t0 + 30 * 60_000;
+    await sleep(80);
+    expect(closed).toEqual([]);
+    settings.remote.closeWhenCacheExpires = false;
+    t = t0 + 2 * 60 * 60_000;
+    await sleep(80);
+    expect(closed).toEqual([]);
+    settings.remote.closeWhenCacheExpires = true;
+    await sleep(80);
+    expect(closed).toEqual(['r1']);
+  });
+
+  it('looper-remote: opens with a prompt, lists the conversations, and resumes an ended one where it left off', async () => {
+    const { rc, started } = setup(
+      { helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 'site' }] },
+      { tasks: [task('site', '/home/me/site')], output: (n) => `connected https://claude.ai/code/session_${n}x` },
+    );
+    rc.start();
+    const h = started[0];
+    const opened = await ask(h.dir, '/home/me', 'open', 'site', 'Fix the footer', 'on every page');
+    expect(opened.out).toMatch(/^Opened "Task site" in \/home\/me\/site\.\nLink: https:\/\/claude\.ai\/code\/session_\d+x/);
+    const s = started.at(-1)!;
+    expect(s.launch.prompt).toBe('Fix the footer\non every page');
+    fs.writeFileSync(path.join(s.dir, 'session.json'), '{"session_id":"abc-123"}');
+    await turn(s.dir);
+    // Only used conversations, and no helper's.
+    expect((await ask(h.dir, '/home/me', 'conversations')).out).toMatch(
+      new RegExp(`^- ${s.runId} "Task site" \\(open, idle, started \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}, in /home/me/site\\): Fix the footer\\n$`),
+    );
+    expect((await ask(h.dir, '/home/me', 'resume', s.runId)).out).toMatch(/^Already open: "Task site" in \/home\/me\/site\.\nLink: /);
+    rc.stopConversation(s.runId);
+    expect((await ask(h.dir, '/home/me', 'conversations')).out).toContain(`- ${s.runId} "Task site" (ended, started `);
+    const resumed = await ask(h.dir, '/home/me', 'resume', s.runId, 'Now the header');
+    expect(resumed.out).toMatch(/^Resumed "Task site" in \/home\/me\/site\.\nLink: /);
+    expect(started.at(-1)).toMatchObject({ runId: s.runId, resume: 'abc-123' });
+    expect(started.at(-1)!.launch.prompt).toBe('Now the header');
+    const own = await ask(h.dir, '/home/me', 'resume', h.runId);
+    expect([own.code, own.out]).toEqual(['1', "looper: That's a helper's conversation; only other conversations can be resumed.\n"]);
+  });
+
   it("keeps a folder project's or helper's stand-in task, so its conversations stay readable", () => {
     const { rc } = setup({ projects: [{ kind: 'folder', id: 'p2', name: 'Site', environmentId: 'local', cwd: '/home/me/site' }] });
     rc.start();
     expect(rc.standIn('@remote-p2')).toMatchObject({ id: '@remote-p2', name: 'Site', environmentId: 'local', cwd: '/home/me/site' });
     expect(rc.standIn('t1')).toBeUndefined();
+  });
+});
+
+describe('lastCacheUse', () => {
+  it("finds the last request's time and the lifetime of the last cache it wrote, past a cut first line", () => {
+    const t = Date.parse('2026-10-27T23:06:31.400Z');
+    const tail = (lines: string[]) => ['ype":"assistant"}', ...lines, ''].join('\n');
+    expect(lastCacheUse(tail([request(t - 9000, { ephemeral_1h_input_tokens: 5 }), request(t, { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 })]))).toEqual({
+      at: t,
+      ttlMs: 60 * 60_000,
+    });
+    expect(lastCacheUse(tail([request(t, { ephemeral_5m_input_tokens: 5 })]))).toEqual({ at: t, ttlMs: 5 * 60_000 });
+    expect(lastCacheUse(tail([request(t, null), '{"type":"user","timestamp":"2026-10-28T00:00:00.000Z"}']))).toEqual({ at: t });
+    expect(lastCacheUse('')).toEqual({});
   });
 });
 
@@ -435,6 +549,18 @@ describe('a Remote Control launcher', () => {
     const s = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
     expect(s.idleCompaction).toBe(false);
     expect(Object.keys(s.hooks)).toEqual(['SessionStart', 'Stop', 'UserPromptSubmit']);
+  });
+
+  it('passes a first message after --, so a variadic option before it cannot take it', () => {
+    const settings = settingsWith({});
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-remote-launch-'));
+    const { launcherHost } = writeTerminalLauncher(task('t1'), { host: 'linux', settings }, root, undefined, true, {
+      name: 'Site',
+      args: ['--tools', 'Bash'],
+      prompt: 'Fix the footer',
+    });
+    expect(fs.readFileSync(launcherHost, 'utf8')).toContain(`--tools Bash -- "$(cat '${path.join(root, 'initial-prompt.txt')}')"\n`);
+    expect(fs.readFileSync(path.join(root, 'initial-prompt.txt'), 'utf8')).toBe('Fix the footer');
   });
 
   it('a plain terminal session records no messages and has no remote flags', () => {
