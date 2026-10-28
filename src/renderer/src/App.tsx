@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
 import { isRemoteTaskId, type RemoteState } from '@shared/remote';
 import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
 import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
+import { addonPaneKey } from '@shared/addons';
+import { useAddons, type AddonSelection } from './components/AddonPane';
+import { AddonScreenView, AddonToolbarButtons } from './components/AddonScreen';
 import { Dashboard, type DashboardPick } from './components/Dashboard';
 import { Sidebar } from './components/Sidebar';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
@@ -50,6 +53,12 @@ export function App() {
   const [recent, setRecent] = useState<RecentRun[] | null>(null);
   // Counts run records and task changes, so the dashboard reads the recent runs again.
   const [runsChanged, setRunsChanged] = useState(0);
+  const { addons, panes: addonPanes, reload: reloadAddon } = useAddons();
+  // The addon pane item whose screen shows; picking a task clears it.
+  const [addonSel, setAddonSel] = useState<AddonSelection | null>(null);
+  // The main toolbar's end, where the shown addon screen puts its buttons.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
+  const runningAddons = addons.filter((a) => a.status === 'running').length;
 
   const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
@@ -191,6 +200,7 @@ export function App() {
         break;
       case 'show-dashboard':
         setSelected(null);
+        setAddonSel(null);
         break;
       case 'clear-runs': {
         const t = ts.find((x) => x.id === sel);
@@ -262,13 +272,23 @@ export function App() {
       if (e.type === 'open-task') openTask(e);
       else uiAction(e.type);
     });
+    const unsubAddons = window.looper.addons.onEvent((e) => {
+      if (e.type !== 'select') return;
+      setSelected(null);
+      setAddonSel({ addonId: e.addonId, pane: e.pane, item: e.item });
+    });
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       unsub();
       unsubUi();
+      unsubAddons();
       clearInterval(t);
     };
   }, []);
+
+  useEffect(() => {
+    if (selected) setAddonSel(null);
+  }, [selected]);
 
   useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: setTab });
 
@@ -330,6 +350,13 @@ export function App() {
   }, []);
 
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
+  const addonShown = useMemo(() => {
+    if (!addonSel) return null;
+    const addon = addons.find((a) => a.id === addonSel.addonId);
+    const pane = addonPanes[addonPaneKey(addonSel.addonId, addonSel.pane)];
+    const item = pane?.status === 'ready' ? pane.content.items.find((it) => it.id === addonSel.item) : undefined;
+    return addon?.enabled && item ? { addon, item } : null;
+  }, [addonSel, addons, addonPanes]);
   const targetTask = useMemo(() => tasks.find((t) => t.id === target) ?? null, [tasks, target]);
   const view = info?.settings.view;
 
@@ -373,6 +400,22 @@ export function App() {
           runtime={selected && targetTask ? runtimes[targetTask.id] : undefined}
           dashboard={!selected}
           onAction={uiAction}
+          addonButtons={addons
+            .filter((a) => a.enabled && a.toolbar.length && !view?.hiddenAddonToolbars.includes(a.id))
+            .map((a) => (
+              <Fragment key={a.id}>
+                <span className="toolbar-sep" />
+                <AddonToolbarButtons
+                  items={a.toolbar.map((b) => ({ ...b, disabled: a.status !== 'running' }))}
+                  onClick={(id) => {
+                    const b = a.toolbar.find((x) => x.id === id);
+                    if (b?.tool) void window.looper.addons.openTool(a.id, b.tool);
+                    else void window.looper.addons.event(a.id, { source: { toolbar: 'main' }, kind: 'click', id });
+                  }}
+                />
+              </Fragment>
+            ))}
+          addonSlot={setToolbarSlot}
         />
       )}
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
@@ -387,6 +430,14 @@ export function App() {
             onSelect={select}
             view={view}
             onView={changeView}
+            addons={addons}
+            addonPanes={addonPanes}
+            addonSelected={addonSel}
+            onAddonSelect={(sel) => {
+              setSelected(null);
+              setAddonSel(sel);
+            }}
+            onAddonRetry={reloadAddon}
           />
         ) : (
           <aside className="sidebar" />
@@ -408,6 +459,16 @@ export function App() {
               focusRun={focusRun}
               terminalRun={terminalRun}
               onTerminalRun={setTerminalRun}
+            />
+          ) : addonShown ? (
+            <AddonScreenView
+              key={`${addonShown.addon.id}/${addonShown.item.view}/${JSON.stringify(addonShown.item.params ?? {})}`}
+              addonId={addonShown.addon.id}
+              addonName={addonShown.addon.name}
+              view={addonShown.item.view}
+              params={addonShown.item.params ?? {}}
+              mode="main"
+              toolbarSlot={view?.hiddenAddonToolbars.includes(addonShown.addon.id) ? null : toolbarSlot}
             />
           ) : (
             <Dashboard
@@ -432,6 +493,7 @@ export function App() {
             {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}
             {counts.running} running
             {remoteOpen && ` · ${remoteOpen.length} Remote Control session${remoteOpen.length === 1 ? '' : 's'}`}
+            {addons.length > 0 && ` · ${runningAddons} addon${runningAddons === 1 ? '' : 's'} running`}
           </span>
         </div>
       )}

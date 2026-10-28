@@ -31,6 +31,9 @@ polling inside the agent, no context buildup, at most one agent per task.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a
   tour of the `~/looper` data directory.
+- **[Addons](addons.md)**: installing addons, their sidebar panes, the
+  Tools menu and the Addons window, and the manifest and protocol for writing
+  one.
 - **[Troubleshooting](troubleshooting.md)**: fixes for auto-pause, usage
   limits, permission prompts, restart artifacts, and Windows notification
   setup, plus the current known limitations.

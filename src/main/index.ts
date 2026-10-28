@@ -11,14 +11,18 @@ import type { ChatSettings, ChatState } from '../shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
-import { FILE_KINDS, isLooperFileName, readLooperFile } from '../shared/files';
+import { FILE_KINDS, isAddonFileName, isLooperFileName, readLooperFile } from '../shared/files';
 import { messagesToMarkdown } from '../shared/messages-md';
 import { adjustImportedTaskPaths } from './import-paths';
+import { AddonHost } from './addon-host';
+import { addonPanesMenu, addonToolbarsMenu, addonToolsMenu, installAddonFile, registerAddonIpc, sendAddonEvent, type AddonUiDeps } from './addons';
+import { ENGINE_LOG_LOOPER, engineLogAddonSource, type EngineLogLevel } from '../shared/addons';
 import { registerIpc } from './ipc';
 import { taskListMenu } from './view-menu';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
+let addons: AddonHost | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 /** Whether Remote Control was on at its last event: the menus change only when this does. */
@@ -127,6 +131,21 @@ if (!app.requestSingleInstanceLock()) {
       openLooperFile,
       updateTaskMenu,
     });
+    addons = new AddonHost({
+      dir: path.join(engine.dataDir, 'addons'),
+      host: engine.host,
+      appVersion: app.getVersion(),
+      log: engine.log,
+      onChange: (list) => {
+        sendAddonEvent({ type: 'addons', addons: list });
+        rebuildMenu();
+      },
+      onRefresh: (addonId) => sendAddonEvent({ type: 'refresh', addonId }),
+      disabled: () => engine?.settings.disabledAddons ?? [],
+      setDisabled: (ids) => engine?.updateSettings({ disabledAddons: ids }),
+    });
+    registerAddonIpc(addonDeps());
+    addons.start();
     // macOS keeps one global menu bar; elsewhere each window carries its own.
     if (process.platform === 'darwin') buildMenu();
     else Menu.setApplicationMenu(null);
@@ -162,6 +181,7 @@ if (!app.requestSingleInstanceLock()) {
     void confirmQuit().then((ok) => {
       if (!ok || quitting || !engine) return;
       quitting = true;
+      addons?.dispose();
       engine
         .stop()
         .catch(() => undefined)
@@ -1036,7 +1056,7 @@ function openImageWindow(taskId: string, runId: string, rowId: string, agentId?:
 export function openEditorWindow(taskId?: string): void {
   openChildWindow(
     taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor',
-    taskId ? 'Edit Task — Looper' : 'New Task — Looper',
+    taskId ? 'Edit Task' : 'New Task',
     780,
     700,
   );
@@ -1046,7 +1066,7 @@ export function openEditorWindow(taskId?: string): void {
 function openNoteEditorWindow(taskId: string): void {
   openChildWindow(
     `note-editor/${encodeURIComponent(taskId)}`,
-    'Guidance for Next Run — Looper',
+    'Guidance for Next Run',
     520,
     400,
     undefined,
@@ -1085,7 +1105,7 @@ function openSendGuidanceWindow(taskId: string, runId: string): void {
 function openFolderNoteEditorWindow(folderId: string): void {
   openChildWindow(
     `note-editor-folder/${encodeURIComponent(folderId)}`,
-    'Guidance for Next Runs — Looper',
+    'Guidance for Next Runs',
     520,
     400,
     undefined,
@@ -1094,12 +1114,12 @@ function openFolderNoteEditorWindow(folderId: string): void {
 }
 
 function openMoveToFolderWindow(taskId: string): void {
-  openChildWindow(`move-to-folder/${encodeURIComponent(taskId)}`, 'Move to Folder — Looper', 460, 440, win);
+  openChildWindow(`move-to-folder/${encodeURIComponent(taskId)}`, 'Move to Folder', 460, 440, win);
 }
 
 function openNewFolderWindow(parentId?: string): void {
   const hash = parentId ? `folder-new/${encodeURIComponent(parentId)}` : 'folder-new';
-  openChildWindow(hash, 'New Folder — Looper', 420, 300, win, {
+  openChildWindow(hash, 'New Folder', 420, 300, win, {
     minWidth: 420,
     minHeight: 300,
     resizable: false,
@@ -1107,7 +1127,7 @@ function openNewFolderWindow(parentId?: string): void {
 }
 
 function openRenameFolderWindow(folderId: string): void {
-  openChildWindow(`folder-rename/${encodeURIComponent(folderId)}`, 'Rename Folder — Looper', 420, 240, win, {
+  openChildWindow(`folder-rename/${encodeURIComponent(folderId)}`, 'Rename Folder', 420, 240, win, {
     minWidth: 420,
     minHeight: 240,
     resizable: false,
@@ -1120,7 +1140,7 @@ function openSettingsWindow(): void {
 }
 
 function openTemplatesWindow(): void {
-  openChildWindow('templates', 'Templates — Looper', 560, 520);
+  openChildWindow('templates', 'Templates', 560, 520);
 }
 
 let recycleBinWindow: BrowserWindow | null = null;
@@ -1135,6 +1155,31 @@ function openRecycleBinWindow(): void {
   recycleBinWindow.on('closed', () => {
     recycleBinWindow = null;
   });
+}
+
+let addonsWindow: BrowserWindow | null = null;
+
+/** One Addons window: opening it again brings the open one forward. */
+function openAddonsWindow(): void {
+  if (addonsWindow && !addonsWindow.isDestroyed()) {
+    addonsWindow.focus();
+    return;
+  }
+  addonsWindow = openChildWindow('addons', 'Addons', 560, 560);
+  addonsWindow.on('closed', () => {
+    addonsWindow = null;
+  });
+}
+
+function addonDeps(): AddonUiDeps {
+  return {
+    host: addons!,
+    hostKind: engine!.host,
+    mainWindow: () => win,
+    openWindow: openChildWindow,
+    view: () => engine?.settings.view ?? ViewSchema.parse({}),
+    updateView,
+  };
 }
 
 function openInstructionsWindow(): void {
@@ -1153,7 +1198,42 @@ function openEngineLogWindow(): void {
     maximizable: true,
     webPreferences: webPreferences(),
   });
-  child.removeMenu();
+  // View: which sources (Looper itself, each addon) and levels the window lists.
+  const hiddenSources = new Set<string>();
+  const hiddenLevels = new Set<EngineLogLevel>();
+  const send = () => {
+    if (child.isDestroyed()) return;
+    child.webContents.send('ui:event', { type: 'engine-log-view', hiddenSources: [...hiddenSources], hiddenLevels: [...hiddenLevels] });
+  };
+  const toggle =
+    <T,>(set: Set<T>, key: T) =>
+    (item: Electron.MenuItem) => {
+      if (item.checked) set.delete(key);
+      else set.add(key);
+      send();
+    };
+  const check = <T,>(label: string, set: Set<T>, key: T): Electron.MenuItemConstructorOptions => ({
+    label,
+    type: 'checkbox',
+    checked: true,
+    click: toggle(set, key),
+  });
+  child.setMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '&View',
+        submenu: [
+          check('&Looper', hiddenSources, ENGINE_LOG_LOOPER),
+          ...(addons?.list() ?? []).map((a) => check(menuText(a.name), hiddenSources, engineLogAddonSource(a.id))),
+          { type: 'separator' },
+          check('&Debug', hiddenLevels, 'debug'),
+          check('&Info', hiddenLevels, 'info'),
+          check('&Warn', hiddenLevels, 'warn'),
+          check('&Error', hiddenLevels, 'error'),
+        ],
+      },
+    ]),
+  );
   child.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
@@ -1168,7 +1248,7 @@ function openAboutWindow(): void {
 function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: BrowserWindow | null): void {
   openChildWindow(
     `env-editor/${encodeURIComponent(envId)}${isNew ? '/new' : ''}`,
-    isNew ? 'New Environment — Looper' : 'Edit Environment — Looper',
+    isNew ? 'New Environment' : 'Edit Environment',
     700,
     560,
     parent,
@@ -1183,7 +1263,7 @@ function openHarnessEditorWindow(
 ): void {
   openChildWindow(
     `harness-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}${isNew ? '/new' : ''}`,
-    isNew ? 'New Harness — Looper' : 'Edit Harness — Looper',
+    isNew ? 'New Harness' : 'Edit Harness',
     640,
     620,
     parent,
@@ -1212,26 +1292,26 @@ function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: Brow
     envId && harnessId
       ? `model-update/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}`
       : 'model-update';
-  openChildWindow(hash, 'Update Models — Looper', 560, 560, parent ?? win);
+  openChildWindow(hash, 'Update Models', 560, 560, parent ?? win);
 }
 
 function openTemplateEditorWindow(templateId?: string, _parent?: BrowserWindow | null): void {
   openChildWindow(
     templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
-    templateId ? 'Edit Template — Looper' : 'New Template — Looper',
+    templateId ? 'Edit Template' : 'New Template',
     780,
     700,
   );
 }
 
 function openTemplatePickerWindow(): void {
-  openChildWindow('template-picker', 'New Task from Template — Looper', 480, 420, win);
+  openChildWindow('template-picker', 'New Task from Template', 480, 420, win);
 }
 
 function openEditorFromTemplateWindow(templateId: string): void {
   const child = openChildWindow(
     `editor-from-template/${encodeURIComponent(templateId)}`,
-    'New Task — Looper',
+    'New Task',
     780,
     700,
   );
@@ -1809,6 +1889,10 @@ function looperFileFromArgv(argv: string[]): string | undefined {
  */
 async function openLooperFile(file: string): Promise<void> {
   if (!isLooperFileName(file)) return;
+  if (isAddonFileName(file)) {
+    if (addons) await installAddonFile(addonDeps(), file, win);
+    return;
+  }
   let input: unknown;
   try {
     input = readJson<unknown>(file, undefined);
@@ -1870,7 +1954,7 @@ async function openLooperFile(file: string): Promise<void> {
   importDrafts.set(key, payload);
   const route = doc.kind === 'task' ? 'editor-import' : 'template-import';
   const noun = doc.kind === 'task' ? 'Task' : 'Template';
-  openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun} — Looper`, 780, 700);
+  openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun}`, 780, 700);
 }
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
@@ -1940,6 +2024,9 @@ function buildMenu(
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
   const runNow = canRunNow ?? !active;
   const view: Settings['view'] = engine?.settings.view ?? ViewSchema.parse({});
+  const addonPanes = addons ? addonPanesMenu(addons.list(), view, updateView) : [];
+  const tools = addons ? addonToolsMenu(addonDeps(), addons.list()) : [];
+  const addonToolbars = addons ? addonToolbarsMenu(addons.list(), view, updateView) : [];
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '&File',
@@ -1954,6 +2041,7 @@ function buildMenu(
         { type: 'separator' },
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
         { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
+        { label: 'A&ddons…', click: () => openAddonsWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         // macOS: Quit lives in the app menu that macTemplate prepends.
         ...(process.platform === 'darwin'
@@ -1996,6 +2084,7 @@ function buildMenu(
         { label: '&Dashboard', click: () => sendUi('show-dashboard') },
         { type: 'separator' },
         { label: 'Task &List', submenu: taskListMenu(view, updateView) },
+        ...(addonPanes.length ? [{ label: '&Addon Panes', submenu: addonPanes }] : []),
         {
           label: 'Task Lo&gs',
           submenu: [
@@ -2010,9 +2099,11 @@ function buildMenu(
         },
         { type: 'separator' },
         { label: '&Toolbar', type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
+        ...addonToolbars,
         { label: 'Status &Bar', type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
       ],
     },
+    ...(tools.length ? [{ label: 'T&ools', submenu: tools }] : []),
     {
       label: '&Advanced',
       submenu: [

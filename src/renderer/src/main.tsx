@@ -4,6 +4,9 @@ import { isLooperFileName } from '@shared/files';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
+import { AddonsApp } from './AddonsApp';
+import { AddonPaneWindowApp } from './components/AddonPane';
+import { AddonWindowApp } from './components/AddonScreen';
 import { App } from './App';
 import { BuilderApp } from './BuilderApp';
 import { BuilderSetupApp } from './BuilderSetupApp';
@@ -64,8 +67,30 @@ const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
 const chatMatch = /^chat\/([^/]+)\/([^/]+)$/.exec(hash);
 const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const remoteProjectMatch = /^remote-project\/([^/]+)(\/new)?$/.exec(hash);
+const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
+const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
+  if (hash === 'addons') return <AddonsApp />;
+  if (addonPaneWindowMatch) {
+    return (
+      <AddonPaneWindowApp
+        addonId={decodeURIComponent(addonPaneWindowMatch[1])}
+        pane={decodeURIComponent(addonPaneWindowMatch[2])}
+        title={decodeURIComponent(addonPaneWindowMatch[3])}
+      />
+    );
+  }
+  if (addonWindowMatch) {
+    return (
+      <AddonWindowApp
+        addonId={decodeURIComponent(addonWindowMatch[1])}
+        view={decodeURIComponent(addonWindowMatch[2])}
+        params={JSON.parse(decodeURIComponent(addonWindowMatch[3])) as Record<string, unknown>}
+        title={decodeURIComponent(addonWindowMatch[4])}
+      />
+    );
+  }
   if (hash === 'template-picker') return <TemplatePickerApp />;
   if (hash === 'templates') return <TemplatesApp />;
   if (hash === 'recycle-bin') return <RecycleBinApp />;
@@ -200,7 +225,7 @@ function pickRoot() {
 }
 
 // A file dropped on any window must never navigate it; a Looper document
-// (.loopertask/.loopertpl) imports instead, as if it had been double-clicked.
+// (.loopertask/.loopertpl/.looperaddon) opens instead, as if it had been double-clicked.
 // In-app drags (list reordering) carry no files and fall through untouched.
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => {

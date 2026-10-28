@@ -14,6 +14,7 @@
  * up on read (shared/migrate.ts), so a newer Looper opens every older file.
  */
 
+import { ADDON_EXT } from './addons';
 import { DEFINITION_VERSION, migrateDefinition } from './migrate';
 
 export type LooperFileKind = 'task' | 'template';
@@ -26,15 +27,17 @@ export const FILE_KINDS: Record<LooperFileKind, { ext: string; type: string; fil
 export const FILE_VERSION = DEFINITION_VERSION;
 
 const EXT_RE = new RegExp(
-  `\\.(${Object.values(FILE_KINDS)
-    .map((k) => k.ext)
-    .join('|')})$`,
+  `\\.(${[...Object.values(FILE_KINDS).map((k) => k.ext), ADDON_EXT].join('|')})$`,
   'i',
 );
 
-/** Whether a path/filename carries one of Looper's document extensions. */
+/** Whether a path/filename carries one of Looper's document extensions (an addon manifest's included). */
 export function isLooperFileName(name: string): boolean {
   return EXT_RE.test(name);
+}
+
+export function isAddonFileName(name: string): boolean {
+  return name.toLowerCase().endsWith(`.${ADDON_EXT}`);
 }
 
 /**

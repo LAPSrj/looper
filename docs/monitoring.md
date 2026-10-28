@@ -13,10 +13,14 @@ restarting" while Looper waits to restart it, and "Idle" outside its active
 hours. Disabled and completed tasks are
 shown faded. Selecting a task opens its detail pane with three tabs — Status,
 Runs, Terminal — plus a status bar at the bottom counting
-enabled, disabled, completed, paused, and running tasks. While Rest Mode is
+enabled, disabled, completed, paused, and running tasks, and, once an addon is
+installed, the running [addons](addons.md). While Rest Mode is
 on, the status bar also shows what it's doing (see [Rest Mode](#rest-mode)).
 
 Double-clicking a task opens its Edit Task window.
+
+Installed [addons](addons.md) can add panes below the task list. Selecting
+one of their items shows the addon's screen for it in the detail pane.
 
 ## The dashboard
 
@@ -481,7 +485,10 @@ reasoning summaries; see [Harnesses](environments.md#harnesses).
 
 **Advanced → Engine Log** opens a window listing the engine's own
 diagnostic log as a table (Date, Time, Level, Message), refreshed every two
-seconds; selecting a row shows its full message below. Entries older than
+seconds; selecting a row shows its full message below. Its **View** menu
+chooses which entries are listed: **Looper**'s own, each installed
+[addon](addons.md)'s, and each level (**Debug**, **Info**, **Warn**,
+**Error**). Entries older than
 **Settings → Advanced → Engine log retention** (default 10 days) are pruned
 automatically. This is separate from the tasks' run history, which
 **Settings → General → Run log retention** prunes (default 30 days).

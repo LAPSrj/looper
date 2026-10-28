@@ -247,6 +247,7 @@ state.json             runtime snapshot: current state, next run time, last
 engine.lock            the running Looper's heartbeat: one Looper per data dir
 engine.log             diagnostics; entries older than Settings -> Engine
                        log retention (default 10 days) are pruned
+addons/<id>.looperaddon  the installed addons' manifests (see addons.md)
 inbox/                 JSON drop folder for the CLI and scripts
 inbox/processed/       handled files, timestamp-prefixed
 inbox/rejected/        failed files, plus a matching .error.txt each

@@ -1,0 +1,15 @@
+{
+  "$type": "looper/addon",
+  "$version": 1,
+  "id": "servers",
+  "name": "Servers",
+  "version": "1.0.0",
+  "description": "A made-up addon for the docs screenshots",
+  "run": {
+    "on": "wsl",
+    "command": ["node", "/home/leandro/repos/looper/scripts/screenshots/demo/addon/servers.mjs"]
+  },
+  "panes": [{ "id": "servers", "title": "Servers" }],
+  "tools": [{ "id": "servers", "label": "Servers", "pane": "servers" }],
+  "toolbar": [{ "id": "servers", "label": "Servers", "icon": "terminal", "tool": "servers" }]
+}

@@ -16,8 +16,9 @@
   in `docs/img/` that shows the changed screen. The app bundles those images,
   so rebuild after replacing one. Take screenshots with `npm run screenshots`
   in the Windows copy (`scripts/screenshots/driver.mjs`): it runs the build on
-  a fresh copy of the demo data in `scripts/screenshots/demo/`, at 2082x1342
-  for the main window (`ss <name> 2082x1342`).
+  a fresh copy of the demo data in `scripts/screenshots/demo/`, at 1388x895
+  for the main window (`ss <name> 1388x895`). The displays run at 100%
+  scaling, so a larger size only adds empty space around the same content.
 
 ## UI style
 

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { AddonUiEvent } from '../shared/addons';
 import type { LooperApi, UiEvent } from '../shared/api';
 import type { EngineEvent } from '../shared/types';
 
@@ -205,6 +206,27 @@ const api: LooperApi = {
   applyMessagesFilter: (value) => ipcRenderer.send('messages:filter-apply', value),
   applyMarkdownExport: (opts) => ipcRenderer.send('markdown-export:apply', opts),
   applyRunOptions: (opts) => ipcRenderer.send('run-options:apply', opts),
+  addons: {
+    list: () => ipcRenderer.invoke('addons:list'),
+    pane: (id, pane) => ipcRenderer.invoke('addons:pane', id, pane).catch(plainError),
+    render: (id, view, params) => ipcRenderer.invoke('addons:render', id, view, params).catch(plainError),
+    reportSlowDraw: (id, view, ms) => ipcRenderer.send('addons:slowDraw', id, view, ms),
+    event: (id, ev, confirm) => ipcRenderer.invoke('addons:event', id, ev, confirm),
+    restart: (id) => ipcRenderer.invoke('addons:restart', id),
+    pickFile: (id, accept) => ipcRenderer.invoke('addons:pickFile', id, accept),
+    setEnabled: (id, enabled) => ipcRenderer.invoke('addons:setEnabled', id, enabled),
+    openTool: (id, toolId) => ipcRenderer.invoke('addons:openTool', id, toolId),
+    showToolbarMenu: () => ipcRenderer.send('addons:toolbarMenu'),
+    remove: (id) => ipcRenderer.invoke('addons:remove', id),
+    install: () => ipcRenderer.invoke('addons:install'),
+    showMenu: (id, pane, menu, opts) => ipcRenderer.send('addons:menu', id, pane, menu, opts),
+    setMenuBar: (id, source, menuBar, item) => ipcRenderer.send('addons:menuBar', id, source, menuBar, item),
+    onEvent: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: AddonUiEvent) => cb(ev);
+      ipcRenderer.on('addon:event', listener);
+      return () => ipcRenderer.removeListener('addon:event', listener);
+    },
+  },
   onEvent: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: EngineEvent) => cb(ev);
     ipcRenderer.on('engine:event', listener);

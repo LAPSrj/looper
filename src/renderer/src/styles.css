@@ -1121,10 +1121,12 @@ code,
   width: 100%;
   margin: 0 auto;
 }
-.form section {
+.form section,
+.addon-screen section {
   margin: 22px 0 6px;
 }
-.form section h3 {
+.form section h3,
+.addon-screen section h3 {
   margin: 0 0 4px;
   font-size: 11.5px;
   font-weight: 600;
@@ -2306,4 +2308,182 @@ button:focus-visible,
 
 .image-missing {
   padding: 20px 14px;
+}
+
+/* Addon screens and panes (components/AddonScreen, AddonPane). */
+.addon-screen .props {
+  row-gap: 8px;
+}
+
+.addon-prop {
+  display: contents;
+}
+
+/* Every row is as tall as one with buttons, so rows with and without them line up evenly. */
+.addon-screen .props {
+  align-items: center;
+}
+
+.addon-screen .props dd {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.addon-prop-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.addon-prop-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  flex: none;
+}
+
+/* Lightweight command buttons at the standard size: the frame shows only on hover. */
+.addon-prop-actions .btn {
+  background: transparent;
+  border-color: transparent;
+}
+
+.addon-prop-actions .btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--border);
+}
+
+.addon-prop-actions .addon-reveal {
+  margin: 0 0 0 8px;
+  align-self: center;
+}
+
+.addon-prop-note {
+  margin-left: 8px;
+  flex: none;
+}
+
+.toolbar-slot {
+  display: contents;
+}
+
+.toolbar button.labeled {
+  width: auto;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.addon-text {
+  margin: 10px 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.addon-file {
+  display: flex;
+  gap: 6px;
+}
+
+.addon-file input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The Windows instant Search box: a prompt inside, the search symbol (or the clear "x") at the right. */
+.addon-search {
+  position: relative;
+  margin: 6px 6px 0;
+  flex: none;
+}
+
+.toolbar .addon-search {
+  margin: 0 0 0 auto;
+  width: 240px;
+}
+
+.addon-search input {
+  width: 100%;
+  height: 28px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 28px 0 8px;
+  color: var(--fg);
+}
+
+.addon-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.addon-search input::placeholder {
+  font-style: italic;
+  color: var(--fg-muted);
+}
+
+.addon-search-icon {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+
+/* Two classes, so the toolbar's own button size and corners don't apply. */
+.addon-search .addon-search-clear {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.addon-search .addon-search-clear:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+.addon-search .addon-search-clear:active {
+  background: var(--border);
+}
+
+.addon-markdown {
+  margin: 12px 0;
+}
+
+.addon-markdown .markdown {
+  height: auto;
+  overflow: visible;
+  padding: 0;
+  margin: 0;
+}
+
+.addon-screen .status-pane .env-actions {
+  margin-top: 16px;
+}
+
+.addon-pane-note {
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+.addon-details {
+  margin-top: 16px;
+  flex: none;
+}
+
+.props dd.addon-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

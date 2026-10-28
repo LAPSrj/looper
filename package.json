@@ -93,6 +93,13 @@
           "description": "Looper Template",
           "icon": "assets/loopertpl.ico",
           "role": "Editor"
+        },
+        {
+          "ext": "looperaddon",
+          "name": "Looper Addon",
+          "description": "Looper Addon",
+          "icon": "assets/looperaddon.ico",
+          "role": "Viewer"
         }
       ]
     },
@@ -115,6 +122,12 @@
           "name": "Looper Template",
           "description": "Looper Template",
           "role": "Editor"
+        },
+        {
+          "ext": "looperaddon",
+          "name": "Looper Addon",
+          "description": "Looper Addon",
+          "role": "Viewer"
         }
       ]
     },
@@ -139,6 +152,12 @@
           "name": "Looper Template",
           "description": "Looper Template",
           "role": "Editor"
+        },
+        {
+          "ext": "looperaddon",
+          "name": "Looper Addon",
+          "description": "Looper Addon",
+          "role": "Viewer"
         }
       ]
     }

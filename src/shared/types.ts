@@ -464,6 +464,21 @@ export const ViewSchema = z.object({
       watchers: SidebarPaneSchema.default({}),
     })
     .default({}),
+  /** Addon panes by addonPaneKey (shared/addons); a pane missing here shows, open. */
+  addonPanes: z
+    .record(
+      z.string(),
+      z.object({
+        visible: z.boolean().default(true),
+        collapsed: z.boolean().default(false),
+        weight: z.number().positive().default(1),
+      }),
+    )
+    .default({}),
+  /** Addons whose buttons the main toolbar leaves out (View → "<Addon> Toolbar"), by addon id. */
+  hiddenAddonToolbars: z.array(z.string()).default([]),
+  /** The single task list's share of the sidebar's height, against the addon panes below it. */
+  singleWeight: z.number().positive().default(2),
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: z.boolean().default(true),
   hideNoActionRuns: z.boolean().default(false),
@@ -617,6 +632,8 @@ export const SettingsSchema = z.object({
   }).default({}),
   /** Main-window view options (View menu). */
   view: ViewSchema.default({}),
+  /** Addons stopped in File → Addons…, by id: they don't start with Looper and show nothing. */
+  disabledAddons: z.array(z.string()).default([]),
   /** Advanced → Remote Control: the conversations it keeps open for the Claude app. */
   remote: RemoteSettingsSchema,
 }).superRefine((s, ctx) => {

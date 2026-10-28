@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { engineLogSource } from '@shared/addons';
 import { capFirst, fmtDate, fmtTime } from './format';
 import { useDragResize, useListNav } from './components/hooks';
 import { ResizableColumns, type TableCol } from './components/ui';
@@ -31,14 +32,24 @@ function parseLog(text: string): LogEntry[] {
 
 const POLL_MS = 2000;
 
+interface Hidden {
+  sources: string[];
+  levels: string[];
+}
+
+const shown = (h: Hidden) => (en: LogEntry) => !h.levels.includes(en.level) && !h.sources.includes(engineLogSource(en.message));
+
 export function EngineLogApp() {
-  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [all, setAll] = useState<LogEntry[]>([]);
+  // The View menu's choices: everything shows until it hides something.
+  const [hidden, setHidden] = useState<Hidden>({ sources: [], levels: [] });
+  const entries = useMemo(() => all.filter(shown(hidden)), [all, hidden]);
   const [selected, setSelected] = useState<number | null>(null);
   const [splitPct, setSplitPct] = useState(65);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastTextRef = useRef<string | null>(null);
-  const stateRef = useRef({ count: 0, selected: null as number | null });
-  stateRef.current = { count: entries.length, selected };
+  const stateRef = useRef({ count: 0, selected: null as number | null, hidden });
+  stateRef.current = { count: entries.length, selected, hidden };
 
   useEffect(() => {
     let cancelled = false;
@@ -47,11 +58,12 @@ export function EngineLogApp() {
       if (cancelled || text === lastTextRef.current) return;
       lastTextRef.current = text;
       const next = parseLog(text);
-      const { count, selected: sel } = stateRef.current;
-      setEntries(next);
+      const { count, selected: sel, hidden: h } = stateRef.current;
+      const visible = next.filter(shown(h)).length;
+      setAll(next);
       // Follow the tail unless the user moved off the last entry.
-      if (sel === null || sel === count - 1 || sel >= next.length) {
-        setSelected(next.length > 0 ? next.length - 1 : null);
+      if (sel === null || sel === count - 1 || sel >= visible) {
+        setSelected(visible > 0 ? visible - 1 : null);
       }
     };
     void load();
@@ -61,6 +73,19 @@ export function EngineLogApp() {
       clearInterval(timer);
     };
   }, []);
+
+  // A change in the View menu lists a different set of entries: select its last one.
+  useEffect(
+    () =>
+      window.looper.onUi((e) => {
+        if (e.type !== 'engine-log-view') return;
+        const h = { sources: e.hiddenSources, levels: e.hiddenLevels };
+        const visible = parseLog(lastTextRef.current ?? '').filter(shown(h)).length;
+        setHidden(h);
+        setSelected(visible > 0 ? visible - 1 : null);
+      }),
+    [],
+  );
 
   const current = selected === null ? null : (entries[selected] ?? null);
   const nav = useListNav({

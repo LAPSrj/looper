@@ -1,3 +1,14 @@
+import type {
+  AddonEvent,
+  AddonEventSource,
+  AddonInfo,
+  AddonMenuBar,
+  AddonMenuItem,
+  AddonPaneContent,
+  AddonScreen,
+  AddonUiEvent,
+  EngineLogLevel,
+} from './addons';
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
@@ -324,6 +335,43 @@ export interface LooperApi {
   applyMarkdownExport(opts: { includeThinking: boolean; includeTools: boolean; plain: boolean }): void;
   /** Run-options window only: start the manual run with these steps (true = run the step) and close. */
   applyRunOptions(opts: { check: boolean; classifier: boolean; agent: boolean }): void;
+  /** Installed addons and their screens (docs/addons.md). */
+  addons: {
+    list(): Promise<AddonInfo[]>;
+    /** A pane's items; rejects with the reason when the addon can't give them. */
+    pane(id: string, pane: string): Promise<AddonPaneContent>;
+    render(id: string, view: string, params: Record<string, unknown>): Promise<AddonScreen>;
+    /** Log a screen that took `ms` from being asked for to being drawn. */
+    reportSlowDraw(id: string, view: string, ms: number): void;
+    /**
+     * Send an event and carry out the actions it answers with (an error the
+     * addon reports shows in a dialog). `confirm` is asked first. Returns a
+     * revealed secret and new field values; a copied secret never comes back.
+     */
+    event(
+      id: string,
+      ev: AddonEvent,
+      confirm?: string,
+    ): Promise<{ value?: string; values?: Record<string, string | number | boolean> }>;
+    restart(id: string): Promise<void>;
+    /** A file field's Browse…: the picked file's path as the addon sees it (WSL or Windows), or null. */
+    pickFile(id: string, accept?: { label: string; extensions: string[] }[]): Promise<string | null>;
+    /** Start (true) or stop (false) an addon; Looper remembers it, and a stopped addon's windows close. */
+    setEnabled(id: string, enabled: boolean): Promise<void>;
+    /** The main toolbar's right-click menu: a check box per addon for whether its buttons show. */
+    showToolbarMenu(): void;
+    /** One of the addon's Tools windows, or the open one brought forward. */
+    openTool(id: string, toolId: string): Promise<void>;
+    /** Asks first. */
+    remove(id: string): Promise<void>;
+    /** Pick a .looperaddon file, then confirm and install it. */
+    install(): Promise<void>;
+    /** A pane item's or pane header's right-click menu; a pick goes to the addon. */
+    showMenu(id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }): void;
+    /** This window's menu bar (null: none). `item`: the selected pane item, for `needsItem` items and the events. */
+    setMenuBar(id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: string): void;
+    onEvent(cb: (e: AddonUiEvent) => void): () => void;
+  };
   onEvent(cb: (e: EngineEvent) => void): () => void;
   /** UI commands pushed from the application menu. */
   onUi(cb: (e: UiEvent) => void): () => void;
@@ -373,6 +421,8 @@ export type UiEvent =
   | { type: 'messages-auto-scroll'; checked: boolean }
   /** The filter window applied a filter (empty = cleared). */
   | { type: 'messages-filter'; value: string }
+  /** Engine Log window View menu: the sources (engineLogSource keys) and levels it hides. */
+  | { type: 'engine-log-view'; hiddenSources: string[]; hiddenLevels: EngineLogLevel[] }
   /** Terminal window right-click menu: copy the selection, paste the clipboard. */
   | { type: 'terminal-copy' | 'terminal-paste' }
   /** Terminal window: Attach Files… copied the files; paste their paths. */

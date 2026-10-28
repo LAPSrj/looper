@@ -1,6 +1,7 @@
 // Drives the Looper build in this repo on Windows for docs screenshots: `npm run screenshots` in the
-// Windows copy, then type commands (or pipe them in). Each launch runs on a fresh copy of demo/home
-// with its own profile, so the installed Looper is untouched. Shots land in %TEMP%\looper-shots\shots.
+// Windows copy, then type commands (or pipe them in, or pass them as arguments: `node driver.mjs
+// launch`). Each launch runs on a fresh copy of demo/home with its own profile, so the installed
+// Looper is untouched. Shots land in %TEMP%\looper-shots\shots.
 import { _electron as electron } from 'playwright-core';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -11,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(HERE, '..', '..');
-const ROOT = path.join(os.tmpdir(), 'looper-shots');
+// SHOT_ROOT: a second driver, with its own data and profile, next to one already running.
+const ROOT = process.env.SHOT_ROOT || path.join(os.tmpdir(), 'looper-shots');
 const SHOT_DIR = path.join(ROOT, 'shots');
 fs.mkdirSync(SHOT_DIR, { recursive: true });
 
@@ -28,6 +30,21 @@ async function hwndOf(url) {
   }, url);
 }
 
+/** A page zoom left in the profile (Ctrl+scroll, Ctrl+=) would come back on every launch: drop it. */
+function clearSavedZoom() {
+  const prefs = path.join(ROOT, 'profile', 'Preferences');
+  let p;
+  try {
+    p = JSON.parse(fs.readFileSync(prefs, 'utf8'));
+  } catch {
+    return; // no profile yet
+  }
+  if (!p.partition?.per_host_zoom_levels) return;
+  delete p.partition.per_host_zoom_levels;
+  fs.writeFileSync(prefs, JSON.stringify(p));
+  console.log('cleared a saved page zoom');
+}
+
 const ps = (script, args) =>
   execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, script), ...args], { encoding: 'utf8' }).trim();
 
@@ -42,6 +59,7 @@ const COMMANDS = {
       fs.rmSync(data, { recursive: true, force: true });
       fs.cpSync(path.join(HERE, 'demo', 'home'), data, { recursive: true });
     }
+    clearSavedZoom();
     app = await electron.launch({
       executablePath: path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe'),
       // Chromium keeps painting while covered, so captures never need the window in front.
@@ -115,6 +133,10 @@ const COMMANDS = {
     }, text);
     console.log('click-text', text, '->', r);
   },
+  async hover(sel) {
+    await page.hover(sel);
+    console.log('hovered', sel);
+  },
   async fill(arg) {
     const [sel, ...rest] = arg.split(' ');
     await page.fill(sel, rest.join(' '));
@@ -176,7 +198,7 @@ const COMMANDS = {
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'driver> ' });
 let chain = Promise.resolve();
-rl.on('line', (line) => {
+const run = (line) => {
   chain = chain.then(async () => {
     const t = line.trim();
     const sp = t.indexOf(' ');
@@ -195,8 +217,11 @@ rl.on('line', (line) => {
     }
     rl.prompt();
   });
-});
+};
+rl.on('line', run);
 // Piped commands: close the app once the last one is done.
 rl.on('close', () => void chain.then(() => COMMANDS.quit()));
 console.log('looper screenshot driver ready');
+// Each argument is a command run first: `node driver.mjs launch` opens the app at once.
+for (const arg of process.argv.slice(2)) run(arg);
 rl.prompt();

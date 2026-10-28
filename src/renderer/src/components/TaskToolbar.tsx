@@ -1,6 +1,7 @@
 import type { Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
 import { Icon } from './Icon';
+import { ICONS } from './icons';
 
 interface Props {
   task: Task | null;
@@ -8,45 +9,13 @@ interface Props {
   /** The dashboard is showing: its button stays pressed. */
   dashboard: boolean;
   onAction: (type: UiEvent['type']) => void;
+  /** The installed addons' own buttons, after Looper's. */
+  addonButtons?: React.ReactNode;
+  /** Where the shown addon screen puts its toolbar buttons, at the end. */
+  addonSlot?: (el: HTMLSpanElement | null) => void;
 }
 
-const ICONS = {
-  dashboard: (
-    <>
-      <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
-      <rect x="9.5" y="2.5" width="4" height="4" rx="0.5" />
-      <rect x="2.5" y="9.5" width="4" height="4" rx="0.5" />
-      <rect x="9.5" y="9.5" width="4" height="4" rx="0.5" />
-    </>
-  ),
-  run: <path d="M4.5 2.8v10.4L13 8Z" />,
-  stop: <rect x="3.5" y="3.5" width="9" height="9" rx="1" />,
-  pause: <path d="M5.5 3.5v9M10.5 3.5v9" />,
-  resume: <path d="M3.5 3.5v9M6.5 3.2 13.5 8l-7 4.8Z" />,
-  power: (
-    <>
-      <path d="M8 2v5.5" />
-      <path d="M11.5 4.2a5 5 0 1 1-7 0" />
-    </>
-  ),
-  complete: (
-    <>
-      <path d="M8 14.5A6.5 6.5 0 1 1 8 1.5a6.5 6.5 0 0 1 0 13Z" />
-      <path d="m5 8 2.2 2.2L11 6" />
-    </>
-  ),
-  guidance: <path d="M2.5 3.5h11v7.5H7l-3 2.5v-2.5H2.5Z" />,
-  edit: <path d="m11.3 2.7 2 2L5.5 12.5l-2.8.8.8-2.8Z" />,
-  terminal: (
-    <>
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
-      <path d="m4 6 2.5 2L4 10M8.5 10.5h3.5" />
-    </>
-  ),
-  folder: <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" />,
-};
-
-export function TaskToolbar({ task, runtime, dashboard, onAction }: Props) {
+export function TaskToolbar({ task, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
@@ -68,7 +37,13 @@ export function TaskToolbar({ task, runtime, dashboard, onAction }: Props) {
   );
 
   return (
-    <div className="toolbar">
+    <div
+      className="toolbar"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        window.looper.addons.showToolbarMenu();
+      }}
+    >
       <button
         className={dashboard ? 'pressed' : undefined}
         title="Dashboard"
@@ -105,6 +80,8 @@ export function TaskToolbar({ task, runtime, dashboard, onAction }: Props) {
       <span className="toolbar-sep" />
       {button(ICONS.terminal, 'Open Project in Terminal (Ctrl+T)', 'open-terminal', hasTask)}
       {button(ICONS.folder, 'Open Working Directory', 'open-work-folder', hasTask)}
+      {addonButtons}
+      <span className="toolbar-slot" ref={addonSlot} />
     </div>
   );
 }
