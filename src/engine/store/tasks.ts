@@ -1,10 +1,15 @@
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { validateTask } from '../../shared/validate';
 import { folderParents } from '../../shared/folders';
 import { DEFINITION_VERSION, migrateDefinition, type Definition } from '../../shared/migrate';
+import { agentDiffers, deriveTask, normalizeFolder, projectAgentIn, sameFolder } from '../../shared/projects';
 import { TaskFolderSchema } from '../../shared/types';
-import type { Environment, RecycleBinEntry, Task, TaskFolder, TaskInput } from '../../shared/types';
+import type { Environment, Project, RecycleBinEntry, Task, TaskFolder, TaskInput } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
+import { ProjectStore } from './projects';
+
+type Placed = { ok: true; task: Task; create?: Project } | { ok: false; errors: string[] };
 
 /**
  * Sibling display order per container ('' = top level, otherwise a folder
@@ -58,6 +63,8 @@ export class TaskStore extends EventEmitter {
   private bin = new Map<string, RecycleBinEntry>();
   private folders: TaskFolder[] = [];
   private layout: FolderLayout = {};
+  readonly projects: ProjectStore;
+  private readonly ownsProjects: boolean;
 
   constructor(
     private file: string,
@@ -66,8 +73,12 @@ export class TaskStore extends EventEmitter {
     private readonly host?: string,
     /** The global folder completing tasks are moved into (Settings → General). */
     private readonly completedFolderId?: () => string | undefined,
+    /** The projects tasks belong to; without one, the store keeps its own next to the tasks file. */
+    projects?: ProjectStore,
   ) {
     super();
+    this.ownsProjects = !projects;
+    this.projects = projects ?? new ProjectStore(path.join(path.dirname(file), 'projects.json'), () => this.environments?.(), host);
   }
 
   setFile(file: string): void {
@@ -75,7 +86,79 @@ export class TaskStore extends EventEmitter {
     this.load();
   }
 
+  /**
+   * The task filed under its project, with the project's folder, and its
+   * environment and agent settings unless the task overrides them. A task
+   * without a known project goes to the project of its folder in its
+   * environment: an existing one (keeping agent settings that differ from the
+   * project's as an override), or a new one made from the task's values
+   * (`create`, for the caller to store once the task is saved). `move`: a
+   * folder other than its project's moves the task to that folder's project,
+   * as a save does; on load the project's folder wins.
+   */
+  private place(input: unknown, move: boolean): Placed {
+    const parsed = validateTask(input);
+    if (!parsed.ok) return parsed;
+    let t = parsed.task;
+    const envs = this.environments?.();
+    let project = t.projectId ? this.projects.get(t.projectId) : undefined;
+    if (project && move && !sameFolder(t.cwd, project.cwd)) project = undefined;
+    let create: Project | undefined;
+    if (!project) {
+      const found = this.projects.find(t.environmentId, t.cwd);
+      const env = envs?.find((e) => e.id === t.environmentId);
+      const differs = !!found && agentDiffers(t.agent, projectAgentIn(found, t.environmentId, envs ?? []), env);
+      // A new project names the harness the task runs on, so moving it to another environment keeps the kind.
+      const { model, effort, permissionMode, mode } = t.agent;
+      project =
+        found ??
+        (create = this.projects.draft(t.environmentId, normalizeFolder(t.cwd), {
+          harnessId: t.agent.harnessId ?? env?.harnesses[0]?.id,
+          model: model || undefined,
+          effort,
+          permissionMode,
+          mode,
+        }));
+      t = { ...t, overrideEnvironment: false, overrideAgent: !!found && (t.overrideAgent || differs) };
+    }
+    const v = validateTask(deriveTask(t, project, envs ?? []), envs, this.host);
+    return v.ok ? { ok: true, task: v.task, ...(create ? { create } : {}) } : v;
+  }
+
+  /**
+   * A project changed: its tasks take its new values. An override that its
+   * new environment can't run (a harness it doesn't have) is dropped, so the
+   * task keeps running. Returns the tasks that changed.
+   */
+  rederive(projectId: string): Task[] {
+    const project = this.projects.get(projectId);
+    if (!project) return [];
+    const envs = this.environments?.() ?? [];
+    const changed: [Task, Task][] = [];
+    for (const t of this.tasks.values()) {
+      if (t.projectId !== projectId) continue;
+      let next = deriveTask(t, project, envs);
+      const env = envs.find((e) => e.id === next.environmentId);
+      if (env) {
+        const has = (id?: string) => !id || env.harnesses.some((h) => h.id === id);
+        if (next.overrideAgent && !has(next.agent.harnessId)) next = deriveTask({ ...next, overrideAgent: false }, project, envs);
+        if (next.classifier?.harnessId && !has(next.classifier.harnessId)) {
+          const { harnessId: _gone, ...classifier } = next.classifier;
+          next = { ...next, classifier };
+        }
+      }
+      if (JSON.stringify(next) === JSON.stringify(t)) continue;
+      this.tasks.set(t.id, next);
+      changed.push([next, t]);
+    }
+    if (!changed.length) return [];
+    this.save();
+    for (const [next, previous] of changed) this.emit('change', next, 'update', previous);
+    return changed.map(([next]) => next);
+  }
+
   load(): void {
+    if (this.ownsProjects) this.projects.load();
     const data = readJson<TasksFile>(this.file, { version: DEFINITION_VERSION, tasks: [] });
     const version = storeVersion(data, this.file);
     this.tasks.clear();
@@ -89,9 +172,13 @@ export class TaskStore extends EventEmitter {
       if (version < DEFINITION_VERSION && raw && typeof raw === 'object') {
         raw = migrateDefinition(raw as unknown as Definition, version) as unknown as Task;
       }
-      const v = validateTask(raw, this.environments?.(), this.host);
-      if (v.ok) this.tasks.set(v.task.id, v.task);
-      else this.emit('invalid', raw, v.errors);
+      const v = this.place(raw, false);
+      if (!v.ok) {
+        this.emit('invalid', raw, v.errors);
+        continue;
+      }
+      if (v.create) this.projects.upsert(v.create);
+      this.tasks.set(v.task.id, v.task);
     }
     this.bin.clear();
     for (const entry of data.recycleBin ?? []) {
@@ -141,10 +228,11 @@ export class TaskStore extends EventEmitter {
     return this.tasks.get(id);
   }
 
-  /** Validate + persist. Throws with the joined error list on invalid input. */
+  /** Validate + persist, creating the task's project when its folder has none. Throws with the joined error list on invalid input. */
   upsert(input: unknown): Task {
-    const v = validateTask(input, this.environments?.(), this.host);
+    const v = this.place(input, true);
     if (!v.ok) throw new Error(v.errors.join('; '));
+    if (v.create) this.projects.upsert(v.create);
     const now = new Date().toISOString();
     const existing = this.tasks.get(v.task.id);
     const task: Task = {
@@ -227,8 +315,9 @@ export class TaskStore extends EventEmitter {
     const entry = this.bin.get(id);
     if (!entry) throw new Error('The task is no longer in the Recycle Bin.');
     if (this.tasks.has(id)) throw new Error(`A task with the id "${id}" already exists. Rename or delete it first.`);
-    const v = validateTask(entry.task, this.environments?.(), this.host);
+    const v = this.place(entry.task, false);
     if (!v.ok) throw new Error(`The task can't be restored: ${v.errors.join('; ')}`);
+    if (v.create) this.projects.upsert(v.create);
     // A folder deleted meanwhile: the task comes back at the top level.
     const folderGone = v.task.folderId && !this.folders.some((f) => f.id === v.task.folderId);
     const task: Task = { ...v.task, ...(folderGone ? { folderId: undefined } : {}), updatedAt: new Date().toISOString() };

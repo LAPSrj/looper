@@ -74,7 +74,8 @@ On first launch Looper creates a Local Shell environment pointed at the
 `claude` CLI (plus a WSL bridge on Windows). Then:
 
 1. **File → New Task…** (Ctrl+N).
-2. On the **General** tab, name the task and pick its working directory; on
+2. On the **General** tab, name the task and pick its project, or its
+   working directory for a new project; on
    the **Agent** tab, write the prompt. Optionally add a check command on the
    **Check** tab. Save.
 3. Select the task and press **F5** (Run Now). Watch the agent work in the
@@ -105,6 +106,8 @@ The full user guide lives in [docs/](docs/README.md):
 - [Getting started](docs/getting-started.md) — install, first launch, first task.
 - [The task editor](docs/tasks.md) — every tab and field, templates,
   import/export, prompt template variables.
+- [Projects](docs/projects.md) — the folders tasks run in and chats open in,
+  the Projects pane, and new chats from the tray.
 - [How a run works](docs/how-a-run-works.md) — the check → classify → agent
   cycle and every way a run ends.
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,

@@ -241,7 +241,7 @@ export const AgentSchema = z
     prompt: z.string().min(1),
     /** Replaces the harness's command for the agent (e.g. a wrapper script). Unset = the harness's command. */
     command: z.string().min(1).optional(),
-    /** Appended verbatim to the harness command line. */
+    /** Appended verbatim to the harness command line, after the project's (`projectArgs`). */
     extraArgs: z.array(z.string()).default([]),
     mode: z.enum(['interactive', 'headless']).default('interactive'),
     /** claude-code and codex: continue one conversation across runs instead of starting fresh each run. */
@@ -373,12 +373,26 @@ export const TaskSchema = z.object({
   /** Sidebar folder the task is filed under. Unset = top level. */
   folderId: z.string().min(1).optional(),
   trigger: TriggerSchema,
-  /** Environment (from Settings) the task runs in. */
+  /**
+   * The project the task belongs to. Unset, unknown, or with `cwd` set to
+   * another folder: the store files the task under the project of `cwd` in
+   * `environmentId`, creating it when there is none.
+   */
+  projectId: z.string().min(1).optional(),
+  /** Off: `environmentId` follows the project's environment. */
+  overrideEnvironment: z.boolean().default(false),
+  /** Off: the agent's harness, session type, model, effort and permission mode follow the project's. */
+  overrideAgent: z.boolean().default(false),
+  /** Environment (from Settings) the task runs in: the project's unless `overrideEnvironment`. */
   environmentId: z.string().min(1),
-  /** Working directory in the environment's native form (/home/... or C:\...). */
+  /** Working directory in the environment's native form (/home/... or C:\...): always the project's folder. */
   cwd: z.string().min(1),
-  /** Extra environment variables for every step of this task (check, classifier, agent). Override the harness's. */
+  /** Extra environment variables for every step of this task (check, classifier, agent), on top of the project's (`projectEnv`). Override the harness's. */
   env: EnvVarsSchema.default({}),
+  /** The project's environment variables, copied in by the store; the task's own `env` wins on the same name. */
+  projectEnv: EnvVarsSchema.default({}),
+  /** The project's extra command-line arguments, copied in by the store; the agent's own `extraArgs` follow them. */
+  projectArgs: z.array(z.string()).default([]),
   /** Unset or disabled = no check step: every scheduled slot goes straight to the agent. */
   check: CheckSchema.optional(),
   classifier: ClassifierSchema.optional(),
@@ -476,6 +490,14 @@ export const ViewSchema = z.object({
       }),
     )
     .default({}),
+  /** The Projects pane, above the task list. */
+  projectsPane: z
+    .object({
+      visible: z.boolean().default(true),
+      collapsed: z.boolean().default(false),
+      weight: z.number().positive().default(1),
+    })
+    .default({}),
   /** Addons whose buttons the main toolbar leaves out (View → "<Addon> Toolbar"), by addon id. */
   hiddenAddonToolbars: z.array(z.string()).default([]),
   /** The single task list's share of the sidebar's height, against the addon panes below it. */
@@ -488,24 +510,46 @@ export const ViewSchema = z.object({
 });
 export type View = z.infer<typeof ViewSchema>;
 
-/**
- * Where a Remote Control conversation runs when no task supplies it: a folder
- * in an environment, on one of its Claude Code harnesses.
- */
-const RemoteFolderShape = {
+/** A folder in an environment, and the harness and settings sessions there start with. */
+const SessionPlaceShape = {
   id: z.string().min(1),
-  /** The session's name in the Claude app's session list. */
   name: z.string().min(1),
   environmentId: z.string().min(1),
-  /** Empty = the environment's first Claude Code harness. */
+  /** Unset = the environment's first harness (a helper: its first Claude Code one). */
   harnessId: z.string().min(1).optional(),
-  /** Working directory in the environment's native form. Empty while a new entry's editor is still open: no session starts. */
+  /** Working directory in the environment's native form. */
   cwd: z.string().default(''),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   /** A PERMISSION_MODES value; '' passes no mode. */
   permissionMode: z.string().default('auto'),
 };
+
+/**
+ * A project: a folder that tasks run in and sessions open in. Its environment
+ * and its agent settings (harness, session type, model, effort, permission
+ * mode) are the defaults of its tasks, which can override them; its chats,
+ * terminals and Remote Control conversations start with the same harness,
+ * model, effort and permission mode.
+ */
+export const ProjectSchema = z
+  .object({
+    ...SessionPlaceShape,
+    cwd: z.string().min(1),
+    /** Its tasks' session type; sessions are always interactive. */
+    mode: z.enum(['interactive', 'headless']).default('interactive'),
+    /** Appended to the harness command line of its tasks' agents and its sessions; a task's own follow them. */
+    extraArgs: z.array(z.string()).default([]),
+    /** Environment variables for its tasks' steps and its sessions; a task's own win on the same name. */
+    env: EnvVarsSchema.default({}),
+    /** Remote Control keeps a conversation open here while it runs. */
+    remote: z.boolean().default(false),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .strict();
+export type Project = z.infer<typeof ProjectSchema>;
+export type ProjectInput = z.input<typeof ProjectSchema>;
 
 /**
  * A helper: a conversation Looper keeps open so the user can ask it, from the
@@ -516,7 +560,7 @@ const RemoteFolderShape = {
  * this long, Looper replaces it with a fresh, empty one, so the next request
  * starts clean.
  */
-const { permissionMode: _helpersHaveNone, ...RemoteHelperShape } = RemoteFolderShape;
+const { permissionMode: _helpersHaveNone, ...RemoteHelperShape } = SessionPlaceShape;
 export const RemoteHelperSchema = z
   .object({
     ...RemoteHelperShape,
@@ -527,26 +571,6 @@ export const RemoteHelperSchema = z
   .strict();
 export type RemoteHelper = z.infer<typeof RemoteHelperSchema>;
 
-/**
- * A project Remote Control keeps a conversation open in: a task (the session
- * Open Project in Terminal would start) or a folder. Once its conversation
- * ends, another one opens.
- */
-export const RemoteProjectSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('task'),
-      id: z.string().min(1),
-      taskId: z.string().min(1),
-      /** The session's name in the Claude app. Unset = the task's name. */
-      name: z.string().min(1).optional(),
-    })
-    .strict(),
-  z.object({ kind: z.literal('folder'), ...RemoteFolderShape }).strict(),
-]);
-export type RemoteProject = z.infer<typeof RemoteProjectSchema>;
-export type RemoteFolderProject = Extract<RemoteProject, { kind: 'folder' }>;
-
 export const RemoteSettingsSchema = z
   .object({
     /** Start Remote Control when Looper starts. */
@@ -554,7 +578,6 @@ export const RemoteSettingsSchema = z
     /** End a conversation (not a helper) that sits idle until its prompt cache expires; it can be resumed. */
     closeWhenCacheExpires: z.boolean().default(true),
     helpers: z.array(RemoteHelperSchema).default([]),
-    projects: z.array(RemoteProjectSchema).default([]),
   })
   .default({});
 export type RemoteSettings = z.infer<typeof RemoteSettingsSchema>;
@@ -854,6 +877,7 @@ export type EngineEvent =
   /** problem: the run ended with an error or warning; a click opens its run window on the report. */
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }
+  | { type: 'projects'; projects: Project[] }
   | { type: 'recycleBin'; entries: RecycleBinEntry[] }
   | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }

@@ -31,7 +31,8 @@ import { MessagesApp } from './MessagesApp';
 import { NoteEditorApp } from './NoteEditorApp';
 import { RecycleBinApp } from './RecycleBinApp';
 import { RemoteConversationsApp } from './RemoteConversationsApp';
-import { RemoteHelperEditorApp, RemoteProjectEditorApp } from './RemoteEditorApps';
+import { RemoteHelperEditorApp } from './RemoteEditorApps';
+import { ProjectEditorApp } from './ProjectEditorApp';
 import { RemoteSettingsApp } from './RemoteSettingsApp';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SettingsApp } from './SettingsApp';
@@ -41,6 +42,8 @@ import { TerminalSessionApp } from './TerminalSessionApp';
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
+const editorInMatch = /^editor-in\/([^/]+)$/.exec(hash);
+const projectMatch = /^project\/([^/]+)$/.exec(hash);
 const templateEditorMatch = /^template-editor(?:\/(.+))?$/.exec(hash);
 const fromTemplateMatch = /^editor-from-template\/(.+)$/.exec(hash);
 const importMatch = /^editor-import\/([^/]+)(\/update)?(?:\/builder\/([^/]+))?$/.exec(hash);
@@ -66,7 +69,6 @@ const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
 const chatMatch = /^chat\/([^/]+)\/([^/]+)$/.exec(hash);
 const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
-const remoteProjectMatch = /^remote-project\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
@@ -100,7 +102,9 @@ function pickRoot() {
   if (hash === 'remote-settings') return <RemoteSettingsApp />;
   if (hash === 'remote-conversations') return <RemoteConversationsApp />;
   if (remoteHelperMatch) return <RemoteHelperEditorApp id={decodeURIComponent(remoteHelperMatch[1])} isNew={!!remoteHelperMatch[2]} />;
-  if (remoteProjectMatch) return <RemoteProjectEditorApp id={decodeURIComponent(remoteProjectMatch[1])} isNew={!!remoteProjectMatch[2]} />;
+  if (hash === 'project-new') return <ProjectEditorApp />;
+  if (projectMatch) return <ProjectEditorApp id={decodeURIComponent(projectMatch[1])} />;
+  if (editorInMatch) return <EditorApp projectId={decodeURIComponent(editorInMatch[1])} />;
   if (templateEditorMatch) {
     return (
       <EditorApp

@@ -1,10 +1,14 @@
-import type { Task, TaskRuntime } from '@shared/types';
+import type { Project, Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
 
 interface Props {
   task: Task | null;
+  /** The selected project: the edit, chat, terminal and folder buttons act on it. */
+  project: Project | null;
+  /** The project New Task puts the task in: the selected project's, or the selected task's. */
+  newTaskProject: Project | null;
   runtime: TaskRuntime | undefined;
   /** The dashboard is showing: its button stays pressed. */
   dashboard: boolean;
@@ -15,7 +19,7 @@ interface Props {
   addonSlot?: (el: HTMLSpanElement | null) => void;
 }
 
-export function TaskToolbar({ task, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
+export function TaskToolbar({ task, project, newTaskProject, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
@@ -54,6 +58,8 @@ export function TaskToolbar({ task, runtime, dashboard, onAction, addonButtons, 
         <Icon>{ICONS.dashboard}</Icon>
       </button>
       <span className="toolbar-sep" />
+      {button(ICONS.add, newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', 'new-task', true)}
+      <span className="toolbar-sep" />
       {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && canRunNow)}
       {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}
       {button(
@@ -69,7 +75,7 @@ export function TaskToolbar({ task, runtime, dashboard, onAction, addonButtons, 
         'complete-reopen',
         hasTask && (completed || !!task?.completion.allowed),
       )}
-      {button(ICONS.edit, 'Edit Task (Ctrl+E)', 'edit-task', hasTask)}
+      {button(ICONS.edit, project ? 'Edit Project' : 'Edit Task (Ctrl+E)', 'edit-task', hasTask || !!project)}
       <span className="toolbar-sep" />
       {button(
         ICONS.guidance,
@@ -78,8 +84,9 @@ export function TaskToolbar({ task, runtime, dashboard, onAction, addonButtons, 
         hasTask,
       )}
       <span className="toolbar-sep" />
-      {button(ICONS.terminal, 'Open Project in Terminal (Ctrl+T)', 'open-terminal', hasTask)}
-      {button(ICONS.folder, 'Open Working Directory', 'open-work-folder', hasTask)}
+      {button(ICONS.chat, project ? 'New Chat' : 'Open Project in Chat', 'open-chat', hasTask || !!project)}
+      {button(ICONS.terminal, project ? 'New Terminal' : 'Open Project in Terminal (Ctrl+T)', 'open-terminal', hasTask || !!project)}
+      {button(ICONS.folder, 'Open Working Directory', 'open-work-folder', hasTask || !!project)}
       {addonButtons}
       <span className="toolbar-slot" ref={addonSlot} />
     </div>

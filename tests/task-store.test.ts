@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TaskStore } from '../src/engine/store/tasks';
+import { DEFINITION_VERSION } from '../src/shared/migrate';
 
 function taskInput(id: string, folderId?: string) {
   return {
@@ -137,7 +138,7 @@ describe('TaskStore nested folders', () => {
     expect(store.get('old')!.trigger).toMatchObject({ mode: 'schedule', schedule: { cron: '*/10 * * * *' } });
     store.upsert(taskInput('fresh'));
     const written = JSON.parse(readFileSync(file, 'utf8')) as { version: number };
-    expect(written.version).toBe(2);
+    expect(written.version).toBe(DEFINITION_VERSION);
   });
 
   it('refuses a store file written by a newer Looper instead of loading nothing', () => {

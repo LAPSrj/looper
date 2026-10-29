@@ -57,7 +57,7 @@ What starts a run is the trigger: manual, schedule (a cron expression), or watch
 ## The draft
 - The task's definition is the JSON file ${o.draftFile}. Change it with your file tools. It must stay one JSON object that follows the field reference below.
 ${draftRules}
-- Keep environmentId "${o.environmentId}" and cwd "${o.cwd}" unless the user asks to move the task.
+- Keep environmentId "${o.environmentId}" and cwd "${o.cwd}" unless the user asks to move the task. A task belongs to the project of its folder (projectId): its cwd is the project's, its environmentId is the project's unless overrideEnvironment is true, and its agent.harnessId, agent.mode, agent.model, agent.effort and agent.permissionMode are the project's unless overrideAgent is true. To move the task to another folder, change cwd; Looper puts it in that folder's project and creates the project if there's none. To give the task its own environment or agent settings, set the override to true along with the values. projectEnv and projectArgs are the project's variables and arguments, which Looper copies in; put the task's own in env and agent.extraArgs, which are added to them.
 - After every change, run \`looper-validate\` and fix each error it prints.
 - The panel next to this conversation shows the draft's main fields, its validation errors, your tests and the files you changed.
 

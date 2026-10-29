@@ -36,6 +36,11 @@ describe('terminalHarnessCommand', () => {
     expect(cmd).toBe('bun run claude');
   });
 
+  it("the project's arguments come before the task's own", () => {
+    const t = { ...task({ extraArgs: ['--allowedTools', 'Bash'], model: undefined, permissionMode: '' }), projectArgs: ['--strict-mcp-config'] };
+    expect(terminalHarnessCommand(t, bash, harness())).toBe("claude '--strict-mcp-config' '--allowedTools' 'Bash'");
+  });
+
   it('rejects env names that are not plain variable names', () => {
     expect(() => task({}, { 'A; touch /tmp/x; B': '1' })).toThrow(/variable names/);
     expect(task({}, { LOOPER_X_1: 'a b' }).env).toEqual({ LOOPER_X_1: 'a b' });

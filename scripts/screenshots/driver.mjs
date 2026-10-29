@@ -49,8 +49,11 @@ const ps = (script, args) =>
   execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, script), ...args], { encoding: 'utf8' }).trim();
 
 const COMMANDS = {
-  /** Start the app on a fresh copy of the demo data (SHOT_DATA: use that folder as it is instead). */
-  async launch() {
+  /**
+   * Start the app on a fresh copy of the demo data, without its addon: `launch addons` keeps it, for
+   * shots about addons (SHOT_DATA: use that folder as it is instead).
+   */
+  async launch(arg) {
     // The demo tasks' working folders and transcripts live in WSL.
     console.log(execFileSync('wsl.exe', ['-e', 'bash', '-c', 'bash "$(wslpath -a "$1")"', '_', path.join(HERE, 'setup-wsl.sh')], { encoding: 'utf8' }).trim());
     let data = process.env.SHOT_DATA;
@@ -58,6 +61,7 @@ const COMMANDS = {
       data = path.join(ROOT, 'home');
       fs.rmSync(data, { recursive: true, force: true });
       fs.cpSync(path.join(HERE, 'demo', 'home'), data, { recursive: true });
+      if (arg !== 'addons') fs.rmSync(path.join(data, 'addons'), { recursive: true, force: true });
     }
     clearSavedZoom();
     app = await electron.launch({

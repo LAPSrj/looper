@@ -2,6 +2,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Settings, Task } from '../shared/types';
 import { watcherOf } from '../shared/types';
+import { taskEnv } from '../shared/projects';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { looksLikeEnvironmentError } from './network';
@@ -415,5 +416,5 @@ export class WatcherPool {
 
 /** What the watcher was spawned with; a change respawns it, anything else does not. */
 function spawnKey(task: Task): string {
-  return JSON.stringify([watcherOf(task)?.command ?? '', task.environmentId, task.cwd, task.env]);
+  return JSON.stringify([watcherOf(task)?.command ?? '', task.environmentId, task.cwd, taskEnv(task)]);
 }

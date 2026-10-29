@@ -1,6 +1,6 @@
 import { Cron } from 'croner';
 import { z } from 'zod';
-import { TaskSchema, TemplateSchema, type Environment, type Harness, type Task, type TaskInput } from './types';
+import { ProjectSchema, TaskSchema, TemplateSchema, type Environment, type Harness, type Project, type Task, type TaskInput } from './types';
 import { cronTz } from './cron';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from './environments';
 
@@ -33,6 +33,9 @@ const FIELD_LABELS: Record<string, string> = {
   completion: 'Completion',
   'completion.allowed': 'Allow this task to be marked completed',
   folderId: 'Folder',
+  projectId: 'Project',
+  overrideEnvironment: "Override the project's environment",
+  overrideAgent: "Override the project's agent settings",
   trigger: 'Trigger',
   'trigger.mode': 'Run this task',
   'trigger.schedule': 'Schedule',
@@ -51,6 +54,8 @@ const FIELD_LABELS: Record<string, string> = {
   environmentId: 'Environment',
   cwd: 'Working directory',
   env: 'Extra environment variables',
+  projectEnv: "Project's environment variables",
+  projectArgs: "Project's command-line arguments",
   check: 'Check',
   'check.command': 'Check command',
   'check.timeoutSec': 'Check timeout',
@@ -248,6 +253,63 @@ export function validateTask(input: unknown, environments?: Environment[], host?
   const effError = effortError(task.agent.effort, harnessKind);
   if (effError) errors.push(effError);
   return errors.length ? { ok: false, errors, warnings } : { ok: true, task, warnings };
+}
+
+const PROJECT_LABELS: Record<string, string> = {
+  id: 'Project id',
+  name: 'Name',
+  environmentId: 'Environment',
+  harnessId: 'Harness',
+  cwd: 'Working directory',
+  model: 'Model',
+  effort: 'Effort',
+  permissionMode: 'Permission mode',
+  mode: 'Session type',
+  extraArgs: 'Extra command-line arguments',
+  env: 'Extra environment variables',
+  remote: 'Keep a Remote Control conversation open',
+};
+
+export type ProjectValidation = { ok: true; project: Project } | { ok: false; errors: string[] };
+
+/** Schema validation plus the environment, harness, folder style, permission mode and effort checks a task gets (those need `environments`). */
+export function validateProject(input: unknown, environments?: Environment[], host?: string): ProjectValidation {
+  const parsed = ProjectSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `${PROJECT_LABELS[String(i.path[0])] ?? (i.path.join('.') || 'Project')}: ${issueMessage(i)}`),
+    };
+  }
+  const project = parsed.data;
+  const errors: string[] = [];
+  const env = environments?.find((e) => e.id === project.environmentId);
+  let kind: Harness['kind'] | undefined;
+  if (environments && !env) errors.push(`Environment: unknown environment "${project.environmentId}"`);
+  else if (env) {
+    const harness = project.harnessId ? env.harnesses.find((h) => h.id === project.harnessId) : env.harnesses[0];
+    if (project.harnessId && !harness) errors.push(`Harness: environment "${env.name}" has no harness "${project.harnessId}"`);
+    kind = harness?.kind;
+    // A pinned effort must be one the selected model entry offers, as for a task.
+    if (harness && harness.kind !== 'custom' && project.effort && project.model) {
+      const entry = harnessModels(harness).find((m) => m.id === project.model);
+      if (entry?.efforts && !entry.efforts.includes(project.effort)) {
+        errors.push(`Effort: model "${entry.name}" does not offer "${project.effort}" (valid: ${entry.efforts.join(', ')})`);
+      }
+    }
+    const flavor = pathFlavor(env, host);
+    if (flavor === 'windows' && /^\//.test(project.cwd)) {
+      errors.push(`Working directory: environment "${env.name}" expects a Windows path (C:\\...)`);
+    }
+    if (flavor === 'posix' && /^[A-Za-z]:[\\/]/.test(project.cwd)) {
+      errors.push(`Working directory: environment "${env.name}" expects a POSIX path (/home/...)`);
+    }
+  }
+  const permError = permissionModeError(project.permissionMode, kind);
+  if (permError) errors.push(permError);
+  const effError = effortError(project.effort, kind);
+  if (effError) errors.push(effError);
+  return errors.length ? { ok: false, errors } : { ok: true, project };
 }
 
 export interface ImportDraftOpts {

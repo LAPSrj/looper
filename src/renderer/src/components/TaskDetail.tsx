@@ -1,4 +1,4 @@
-import type { Environment, RunRecord, Task, TaskRuntime } from '@shared/types';
+import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { watcherOf } from '@shared/types';
 import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort } from '@shared/environments';
 import { cronToForm, nextWindowOpen } from '@shared/cron';
@@ -17,6 +17,7 @@ const TABS: [DetailTab, string][] = [
 
 interface Props {
   task: Task;
+  project: Project | undefined;
   environments: Environment[];
   runtime: TaskRuntime | undefined;
   records: RunRecord[];
@@ -123,6 +124,7 @@ function describeNextWatch(task: Task, runtime: TaskRuntime | undefined, now: nu
 
 export function TaskDetail({
   task,
+  project,
   environments,
   runtime,
   records,
@@ -234,6 +236,8 @@ export function TaskDetail({
               </dd>
               <dt>Session type</dt>
               <dd>{capFirst(task.agent.mode)}</dd>
+              <dt>Project</dt>
+              <dd>{project?.name ?? task.projectId ?? 'None'}</dd>
               <dt>Environment</dt>
               <dd>
                 {env ? (
@@ -249,7 +253,7 @@ export function TaskDetail({
         )}
         {tab === 'runs' && (
           <RunLog
-            task={task}
+            taskId={task.id}
             records={records}
             runtime={runtime}
             hideNoAction={hideNoActionRuns}

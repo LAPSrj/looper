@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RemoteHelper, RemoteProject, Settings, Task } from '@shared/types';
+import type { RemoteHelper, Settings } from '@shared/types';
 import { EditorFooter, Field } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { ListActions, SelectList } from './components/SelectList';
@@ -8,18 +8,16 @@ import { claudeHarnesses } from './components/RemoteFields';
 const rid = () => Math.random().toString(36).slice(2, 8);
 
 /**
- * Advanced → Remote Control → Settings. The helper and project lists are
- * managed live through their own editor windows; the checkboxes are a
- * draft saved with Save or Apply.
+ * Advanced → Remote Control → Settings. The helper list is managed live
+ * through its editor windows; the checkboxes are a draft saved with Save or
+ * Apply. Projects keep conversations open through their own Edit Project window.
  */
 export function RemoteSettingsApp() {
   const [live, setLive] = useState<Settings | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [startWithLooper, setStartWithLooper] = useState<boolean | null>(null);
   const [closeExpired, setCloseExpired] = useState<boolean | null>(null);
   const [helper, setHelper] = useState<string | null>(null);
-  const [project, setProject] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -29,13 +27,10 @@ export function RemoteSettingsApp() {
       setStartWithLooper((v) => v ?? info.settings.remote.startWithLooper);
       setCloseExpired((v) => v ?? info.settings.remote.closeWhenCacheExpires);
       setHelper((s) => s ?? info.settings.remote.helpers[0]?.id ?? null);
-      setProject((s) => s ?? info.settings.remote.projects[0]?.id ?? null);
     });
-    void window.looper.tasks.list().then(setTasks);
     void window.looper.remote.state().then((s) => setProblems(s.problems));
     return window.looper.onEvent((e) => {
       if (e.type === 'settings') setLive(e.settings);
-      else if (e.type === 'tasks') setTasks(e.tasks);
       else if (e.type === 'remote') setProblems(e.state.problems);
     });
   }, []);
@@ -47,11 +42,7 @@ export function RemoteSettingsApp() {
 
   const r = live.remote;
   const helpers = r.helpers;
-  const projects = r.projects;
   const selHelper = helpers.find((h) => h.id === helper);
-  const selProject = projects.find((p) => p.id === project);
-  const taskOf = (p: RemoteProject) => (p.kind === 'task' ? tasks.find((t) => t.id === p.taskId) : undefined);
-  const projectName = (p: RemoteProject) => (p.kind === 'folder' ? p.name : (p.name ?? taskOf(p)?.name ?? `Task ${p.taskId} (deleted)`));
   const envName = (id: string) => live.environments.find((e) => e.id === id)?.name ?? id;
 
   const update = async (remote: Settings['remote']) => {
@@ -62,7 +53,7 @@ export function RemoteSettingsApp() {
     }
   };
 
-  /** Where a new helper or folder project starts: the default environment, or the first with a Claude Code harness. */
+  /** Where a new helper starts: the default environment, or the first with a Claude Code harness. */
   const defaultEnvId = () => {
     const def = live.environments.find((e) => e.id === live.defaultEnvironmentId);
     return (claudeHarnesses(def).length ? def : live.environments.find((e) => claudeHarnesses(e).length))?.id ?? live.defaultEnvironmentId;
@@ -85,19 +76,6 @@ export function RemoteSettingsApp() {
     if (!(await window.looper.confirm(`Remove helper "${selHelper.name}"?`))) return;
     await update({ ...r, helpers: helpers.filter((h) => h.id !== selHelper.id) });
     setHelper(helpers.find((h) => h.id !== selHelper.id)?.id ?? null);
-  };
-
-  const addFolder = async () => {
-    const p: RemoteProject = { kind: 'folder', id: `p-${rid()}`, name: 'Project', environmentId: defaultEnvId(), cwd: '', permissionMode: 'auto' };
-    await update({ ...r, projects: [...projects, p] });
-    setProject(p.id);
-    void window.looper.remote.openProjectEditor(p.id, true);
-  };
-  const removeProject = async () => {
-    if (!selProject) return;
-    if (!(await window.looper.confirm(`Remove project "${projectName(selProject)}"?`))) return;
-    await update({ ...r, projects: projects.filter((p) => p.id !== selProject.id) });
-    setProject(projects.find((p) => p.id !== selProject.id)?.id ?? null);
   };
 
   const doSave = async (): Promise<boolean> => {
@@ -154,41 +132,6 @@ export function RemoteSettingsApp() {
             onRemove={() => void removeHelper()}
             removeDisabled={!selHelper}
           />
-          <Field label="Projects">
-            <SelectList
-              items={projects}
-              label="Projects"
-              idPrefix="project"
-              selectedKey={project}
-              itemKey={(p) => p.id}
-              itemName={(p) => projectName(p)}
-              itemSub={(p) =>
-                sub(
-                  p.kind === 'folder'
-                    ? `${envName(p.environmentId)} · ${p.cwd || 'no working directory'}`
-                    : `Task${p.name && taskOf(p) ? ` ${taskOf(p)!.name}` : ''} · ${taskOf(p)?.cwd ?? ''}`,
-                  `project:${p.id}`,
-                )
-              }
-              empty="No projects"
-              onSelect={(p) => setProject(p.id)}
-              onOpen={(p) => void window.looper.remote.openProjectEditor(p.id)}
-            />
-          </Field>
-          <div className="env-actions">
-            <button className="btn" onClick={() => window.looper.remote.showAddTaskMenu()}>
-              Add Task…
-            </button>
-            <button className="btn" onClick={() => void addFolder()}>
-              Add Folder…
-            </button>
-            <button className="btn" disabled={!selProject} onClick={() => selProject && void window.looper.remote.openProjectEditor(selProject.id)}>
-              Edit…
-            </button>
-            <button className="btn danger" disabled={!selProject} onClick={() => void removeProject()}>
-              Remove
-            </button>
-          </div>
         </div>
       </div>
       <EditorFooter onPrimary={() => void saveRef.current()} onCancel={() => window.close()} onApply={() => void doSave()} saving={saving} />

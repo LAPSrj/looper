@@ -1,0 +1,43 @@
+{
+  "projects": [
+    {
+      "id": "webapp",
+      "name": "Web app",
+      "environmentId": "wsl",
+      "harnessId": "claude",
+      "model": "sonnet",
+      "cwd": "/home/leandro/looper-demo/webapp",
+      "permissionMode": "auto",
+      "mode": "interactive",
+      "remote": false,
+      "createdAt": "2026-09-01T09:00:00.000Z",
+      "updatedAt": "2026-09-01T09:00:00.000Z"
+    },
+    {
+      "id": "api",
+      "name": "API",
+      "environmentId": "wsl",
+      "harnessId": "claude",
+      "model": "sonnet",
+      "cwd": "/home/leandro/looper-demo/api",
+      "permissionMode": "auto",
+      "mode": "interactive",
+      "remote": false,
+      "createdAt": "2026-09-01T09:00:00.000Z",
+      "updatedAt": "2026-09-01T09:00:00.000Z"
+    },
+    {
+      "id": "ops",
+      "name": "Operations",
+      "environmentId": "wsl",
+      "harnessId": "claude",
+      "model": "sonnet",
+      "cwd": "/home/leandro/looper-demo/ops",
+      "permissionMode": "auto",
+      "mode": "interactive",
+      "remote": true,
+      "createdAt": "2026-09-01T09:00:00.000Z",
+      "updatedAt": "2026-09-01T09:00:00.000Z"
+    }
+  ]
+}

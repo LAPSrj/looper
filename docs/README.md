@@ -14,6 +14,9 @@ polling inside the agent, no context buildup, at most one agent per task.
 - **[The task editor](tasks.md)**: every tab and field of the task editor,
   plus task templates, import/export, version history, and the prompt
   template variables.
+- **[Projects](projects.md)**: the folders your tasks run in and your
+  chats and terminals open in, the Projects pane, project settings and
+  overrides, and starting a chat from the tray.
 - **[Building a task with an agent](task-builder.md)**: New Task with Agent
   and Edit with Agent, the draft panel, saving with Undo and Redo, and how
   the agent tests a task's check and access.

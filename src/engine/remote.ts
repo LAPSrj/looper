@@ -10,7 +10,8 @@ import {
   type RemoteSource,
   type RemoteState,
 } from '../shared/remote';
-import { TaskSchema, type RemoteFolderProject, type RemoteHelper, type RemoteProject, type Settings, type Task } from '../shared/types';
+import { projectSessionTask, sameFolder, sessionTask, type SessionPlace } from '../shared/projects';
+import { TaskSchema, type Project, type RemoteHelper, type Settings, type Task } from '../shared/types';
 import { errMsg, type Logger } from './log';
 import { readRunSessionId, readTranscriptRef } from './messages';
 import type { RemoteLaunch } from './open-terminal';
@@ -48,8 +49,10 @@ export interface RemoteDeps {
   settings: Settings;
   log: Logger;
   emit: (state: RemoteState) => void;
+  /** A task, or a project's stand-in by its stand-in id. */
   getTask: (id: string) => Task | undefined;
   listTasks: () => Task[];
+  listProjects: () => Project[];
   createTarget: (task: Task) => Target;
   /**
    * Start a recorded Remote Control session of the task in a new run folder
@@ -97,29 +100,9 @@ interface Live {
   expiryOf?: number | null;
 }
 
-/** The task-like stand-in a folder project or helper runs its sessions as. */
-export function remoteStandIn(
-  entry: Pick<RemoteFolderProject, 'id' | 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'>,
-  settings: Settings,
-): Task {
-  const env = settings.environments.find((e) => e.id === entry.environmentId);
-  // No harness named: the environment's first Claude Code one.
-  const harnessId = entry.harnessId ?? env?.harnesses.find((h) => h.kind === 'claude-code')?.id;
-  const task = TaskSchema.parse({
-    id: 'remote',
-    name: entry.name,
-    environmentId: entry.environmentId,
-    cwd: entry.cwd,
-    trigger: { mode: 'manual' },
-    agent: {
-      ...(harnessId ? { harnessId } : {}),
-      ...(entry.model ? { model: entry.model } : {}),
-      ...(entry.effort ? { effort: entry.effort } : {}),
-      permissionMode: entry.permissionMode,
-      prompt: '-',
-    },
-  });
-  return { ...task, id: remoteTaskId(entry.id) };
+/** The task-like stand-in a helper, and a folder it opens, run their sessions as. */
+export function remoteStandIn(entry: SessionPlace & { id: string }, settings: Settings): Task {
+  return sessionTask(entry, settings, remoteTaskId(entry.id), true);
 }
 
 /** A helper runs no command but these: listing folders, and asking Looper. */
@@ -330,24 +313,25 @@ export class RemoteControl {
 
   // ---------- starting sessions ----------
 
+  private remoteProjects(): Project[] {
+    return this.d.listProjects().filter((p) => p.remote);
+  }
+
   private entryKeys(): Set<string> {
-    const r = this.d.settings.remote;
-    return new Set([...r.helpers.map((h) => `helper:${h.id}`), ...r.projects.map((p) => `project:${p.id}`)]);
+    return new Set([...this.d.settings.remote.helpers.map((h) => `helper:${h.id}`), ...this.remoteProjects().map((p) => `project:${p.id}`)]);
   }
 
   /** Give every entry the sessions it needs. */
   private reconcile(): void {
     if (!this.running) return;
-    const r = this.d.settings.remote;
-    for (const h of r.helpers) {
+    for (const h of this.d.settings.remote.helpers) {
       const mine = this.sessionsOf(`helper:${h.id}`);
       if (mine.length === 0) this.startEntry(`helper:${h.id}`, () => this.launchHelper(h));
     }
-    for (const p of r.projects) {
+    for (const p of this.remoteProjects()) {
       const key = `project:${p.id}`;
-      const mine = this.sessionsOf(key);
-      if (mine.length > 0) continue;
-      this.startEntry(key, () => (p.kind === 'task' ? this.launchTask(p.taskId, 'project', p.id, p.name) : this.launchFolder(p, 'project')));
+      if (this.sessionsOf(key).length > 0) continue;
+      this.startEntry(key, () => this.launchProject(p, 'project'));
     }
   }
 
@@ -409,28 +393,17 @@ export class RemoteControl {
     });
   }
 
-  private launchFolder(
-    p: RemoteFolderProject,
-    source: RemoteSource,
-    overrides?: { cwd: string; name: string; entryId?: string; prompt?: string },
-  ): Live {
-    const entry = overrides ? { ...p, cwd: overrides.cwd, name: overrides.name } : p;
-    if (!entry.cwd.trim()) throw new Error('Choose its working directory.');
-    const task = remoteStandIn({ ...entry, id: p.id }, this.d.settings);
-    return this.launch(task, source, entry.name, overrides ? overrides.entryId : p.id, () => ({ name: entry.name, prompt: overrides?.prompt }));
+  /** A project's session, on its harness when that's Claude Code. `prompt`: its first message. */
+  private launchProject(p: Project, source: RemoteSource, prompt?: string): Live {
+    const task = projectSessionTask(p, this.d.settings, true);
+    return this.launch(task, source, p.name, source === 'project' ? p.id : undefined, () => ({ name: p.name, prompt }));
   }
 
-  /** `name`: the session's own name, instead of the task's. `prompt`: its first message. */
-  private launchTask(taskId: string, source: RemoteSource, entryId?: string, name?: string, prompt?: string): Live {
+  /** A task's session, under the task's name. `prompt`: its first message. */
+  private launchTask(taskId: string, prompt?: string): Live {
     const task = this.d.getTask(taskId);
     if (!task) throw new Error('The task no longer exists.');
-    const shown = name ?? task.name;
-    return this.launch(task, source, shown, entryId, () => ({ name: shown, prompt }));
-  }
-
-  /** A project's session name: its own, or for a task project without one, the task's. */
-  private projectName(p: RemoteProject): string | undefined {
-    return p.kind === 'folder' ? p.name : (p.name ?? this.d.getTask(p.taskId)?.name);
+    return this.launch(task, 'opened', task.name, undefined, () => ({ name: task.name, prompt }));
   }
 
   private launch(
@@ -705,18 +678,12 @@ export class RemoteControl {
   }
 
   private listTargets(): string {
-    const r = this.d.settings.remote;
     const lines: string[] = [];
     const tasks = this.d.listTasks().filter((t) => this.isClaudeTask(t));
-    if (r.projects.length) {
+    const projects = this.d.listProjects();
+    if (projects.length) {
       lines.push('Projects:');
-      for (const p of r.projects) {
-        if (p.kind === 'folder') lines.push(`- ${p.name}: ${p.cwd}`);
-        else {
-          const t = this.d.getTask(p.taskId);
-          if (t) lines.push(`- ${this.projectName(p)} (task ${t.id}): ${t.cwd}`);
-        }
-      }
+      for (const p of projects) lines.push(`- ${p.name}: ${p.cwd}`);
     }
     if (tasks.length) {
       if (lines.length) lines.push('');
@@ -786,22 +753,21 @@ export class RemoteControl {
     }
   }
 
-  /** `looper-remote open`: a project (by name), a task (by id or name), or a folder in the helper's environment. */
+  /** `looper-remote open`: a project (by name or id), a task (by id or name), or a folder in the helper's environment. */
   private open(helper: Live, callerCwd: string, arg: string, prompt?: string): Live {
-    const r = this.d.settings.remote;
     const want = arg.toLowerCase();
-    const project = r.projects.find((p) => p.id === arg || this.projectName(p)?.toLowerCase() === want);
-    if (project?.kind === 'folder') return this.launchFolder(project, 'opened', { cwd: project.cwd, name: project.name, prompt });
-    if (project?.kind === 'task') return this.launchTask(project.taskId, 'opened', undefined, project.name, prompt);
+    const projects = this.d.listProjects();
+    const project = projects.find((p) => p.id === arg || p.name.toLowerCase() === want);
+    if (project) return this.launchProject(project, 'opened', prompt);
     const task = this.d.listTasks().find((t) => t.id === arg || t.name.toLowerCase() === want);
-    if (task) return this.launchTask(task.id, 'opened', undefined, undefined, prompt);
+    if (task) return this.launchTask(task.id, prompt);
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
     if (!entry) throw new Error('This helper was removed from the Remote Control settings.');
-    // A folder it opens runs like a folder project on the helper's harness, with the harness's own model and
-    // effort (the helper's are for its own small job): a normal session, in Auto mode.
+    // A folder it opens runs on the helper's harness, with the harness's own model and effort (the
+    // helper's are for its own small job): a normal session, in Auto mode.
     const { id, name: helperName, environmentId, harnessId, cwd } = entry;
-    const asProject: RemoteFolderProject = { kind: 'folder', id, name: helperName, environmentId, harnessId, cwd, permissionMode: 'auto' };
-    const target = this.d.createTarget(remoteStandIn(asProject, this.d.settings));
+    const asPlace = { id, name: helperName, environmentId, harnessId, cwd, permissionMode: 'auto' };
+    const target = this.d.createTarget(remoteStandIn(asPlace, this.d.settings));
     if (arg.startsWith('~')) throw new Error(`Give the folder's full path: ${arg} starts with ~, which Looper can't expand.`);
     const joined = isAbsolutePath(arg) ? arg : joinTarget(target.kind, callerCwd || entry.cwd, arg);
     const folder = (target.kind === 'windows' ? path.win32 : path.posix).normalize(joined).replace(/(.)[\\/]+$/, '$1');
@@ -812,8 +778,10 @@ export class RemoteControl {
       /* not reachable */
     }
     if (!isDir) throw new Error(`No project or task is named "${arg}", and ${folder} isn't a folder.`);
+    const own = projects.find((p) => p.environmentId === environmentId && sameFolder(p.cwd, folder));
+    if (own) return this.launchProject(own, 'opened', prompt);
     const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
-    return this.launchFolder(asProject, 'opened', { cwd: folder, name, prompt });
+    return this.launch(remoteStandIn({ ...asPlace, cwd: folder, name }, this.d.settings), 'opened', name, undefined, () => ({ name, prompt }));
   }
 
   private async waitForLink(runId: string): Promise<string | undefined> {

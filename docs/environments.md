@@ -194,7 +194,7 @@ if the host is WSL. Each starts with one harness, "Claude Code", running the
 
 No environment or harness setting changes this: every run starts a brand
 new agent session, with no memory of previous runs, unless the task's
-Agent tab sets Conversation to "Continue previous across runs" (Claude Code
+Agent tab has "Continue one conversation across runs" checked (Claude Code
 and Codex only; see [the task editor](tasks.md#agent)). Otherwise, put
 anything the agent needs to remember between runs in the project's
 `CLAUDE.md`. See [how a run works](how-a-run-works.md) for the full run

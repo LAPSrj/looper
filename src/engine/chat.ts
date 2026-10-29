@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { agentArgs } from '../shared/projects';
 import {
   chatTitle,
   forkPoint,
@@ -530,7 +531,6 @@ class ChatSession {
   /** The chat's model, effort and permission mode, as a run would pass the task's. */
   private startClaude(): void {
     const q = (s: string) => this.target.quote(s);
-    const a = this.task.agent;
     const s = this.settings;
     const parts = [this.harness.command];
     if (s.model) parts.push('--model', q(s.model));
@@ -547,7 +547,7 @@ class ChatSession {
     parts.push('--disallowedTools', 'AskUserQuestion');
     parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose');
     for (const arg of this.harness.args) parts.push(q(arg));
-    for (const extra of a.extraArgs) parts.push(q(extra));
+    for (const extra of agentArgs(this.task)) parts.push(q(extra));
     this.launched = { model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
     this.spawnProc(this.launcher('chat', parts.join(' ')), (_code, stderr) => {
       // The one process is the whole conversation: once it is gone, so is the chat.
@@ -564,7 +564,6 @@ class ChatSession {
     }
     this.codexTurns += 1;
     const q = (s: string) => this.target.quote(s);
-    const a = this.task.agent;
     const s = this.settings;
     const images = p.attachments.filter((x) => x.image && imageMediaType(x.path));
     const files = p.attachments.filter((x) => !images.includes(x)).map((x) => this.target.toTargetPath(x.path));
@@ -579,7 +578,7 @@ class ChatSession {
     // The equals form: `exec`'s --image takes several values and would swallow the prompt.
     for (const img of images) parts.push(q(`--image=${this.target.toTargetPath(img.path)}`));
     for (const arg of this.harness.args) parts.push(q(arg));
-    for (const extra of a.extraArgs) parts.push(q(extra));
+    for (const extra of agentArgs(this.task)) parts.push(q(extra));
     parts.push(this.target.catFile(this.targetFile(promptFile)));
     // The rollout behind the context size lives under codex's home, which only the target knows.
     const prelude = recordCodexHome(this.target.kind, q(this.targetFile('codex-home')));

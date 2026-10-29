@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Environment, Task, TaskInput } from '@shared/types';
+import type { Environment, Project, Task, TaskInput } from '@shared/types';
 import { importTaskDraft } from '@shared/validate';
 
 import { TaskEditor } from './components/TaskEditor';
@@ -15,14 +15,17 @@ interface EditorAppProps {
   /** The draft came from a task builder's Create/Update: saving records the agent's version. */
   builderId?: string;
   mode?: 'task' | 'template';
+  /** A new task in this project (a project's New Task…). */
+  projectId?: string;
 }
 
 /** Standalone editor window (opened from the menu or the + New button). */
-export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task' }: EditorAppProps) {
+export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task', projectId }: EditorAppProps) {
   const editId = mode === 'template' ? templateId : taskId;
   // undefined = still loading; null = new task/template
   const [task, setTask] = useState<Task | null | undefined>(editId ? undefined : null);
   const [environments, setEnvironments] = useState<Environment[] | null>(null);
+  const [projects, setProjects] = useState<Project[] | null>(null);
   const [defaultEnvironmentId, setDefaultEnvironmentId] = useState<string | undefined>(undefined);
   const [host, setHost] = useState<string | undefined>(undefined);
   const [initial, setInitial] = useState<TaskInput | undefined>(undefined);
@@ -36,6 +39,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
     } else {
       document.title = taskId || importUpdate ? 'Edit Task' : 'New Task';
     }
+    void window.looper.projects.list().then(setProjects);
     const info = window.looper.info().then((i) => {
       setEnvironments(i.settings.environments);
       setDefaultEnvironmentId(i.settings.defaultEnvironmentId);
@@ -88,13 +92,15 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
     }
   }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode]);
 
-  if (task === undefined || !environments || !initialReady) return <div className="empty">Loading…</div>;
+  if (task === undefined || !environments || !projects || !initialReady) return <div className="empty">Loading…</div>;
   return (
     <div className="editor-window">
       <TaskEditor
         task={task}
         initial={initial}
         environments={environments}
+        projects={projects}
+        projectId={projectId}
         defaultEnvironmentId={defaultEnvironmentId}
         host={host}
         mode={mode}

@@ -1,8 +1,8 @@
-import type { Environment, RemoteHelper, Task } from '@shared/types';
+import type { Environment, RemoteHelper } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
 import { Field } from './ui';
 
-/** What a helper or folder project runs with: the fields both editors share. A helper has no permission mode. */
+/** What a helper runs with. A helper has no permission mode. */
 export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort'> & {
   permissionMode?: string;
 };
@@ -10,14 +10,7 @@ export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'h
 /** The Claude Code harnesses of an environment: the only kind Remote Control runs. */
 export const claudeHarnesses = (env: Environment | undefined) => env?.harnesses.filter((h) => h.kind === 'claude-code') ?? [];
 
-/** Whether a task's agent runs on Claude Code (its harness, or its environment's first). */
-export function isClaudeTask(task: Task, environments: Environment[]): boolean {
-  const env = environments.find((e) => e.id === task.environmentId);
-  const harness = task.agent.harnessId ? env?.harnesses.find((h) => h.id === task.agent.harnessId) : env?.harnesses[0];
-  return harness?.kind === 'claude-code';
-}
-
-/** Name, environment, harness, model, effort, permission mode and folder of a helper or folder project. */
+/** Name, environment, harness, model, effort and folder of a helper. */
 export function RemoteFolderFields({
   draft,
   environments,

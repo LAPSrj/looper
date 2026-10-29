@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
-import { isRemoteTaskId, type RemoteState } from '@shared/remote';
-import type { RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { RemoteState } from '@shared/remote';
+import { isStandInTaskId, projectTaskId } from '@shared/projects';
+import type { Project, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
 import { setAppLocale } from './format';
 import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
@@ -9,6 +10,7 @@ import { addonPaneKey } from '@shared/addons';
 import { useAddons, type AddonSelection } from './components/AddonPane';
 import { AddonScreenView, AddonToolbarButtons } from './components/AddonScreen';
 import { Dashboard, type DashboardPick } from './components/Dashboard';
+import { ProjectDetail } from './components/ProjectDetail';
 import { Sidebar } from './components/Sidebar';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
 import { TaskToolbar } from './components/TaskToolbar';
@@ -33,6 +35,9 @@ function restStatus(rest: RestState, now: number): string {
 export function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  // The project whose view shows; picking a task or an addon item clears it.
+  const [projectSel, setProjectSel] = useState<string | null>(null);
   const [folders, setFolders] = useState<TaskFolder[]>([]);
   const [layout, setLayout] = useState<Record<string, string[]>>({});
   const [runtimes, setRuntimes] = useState<Record<string, TaskRuntime>>({});
@@ -91,13 +96,15 @@ export function App() {
   const livePick =
     !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
   // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
-  const taskPick = livePick?.list === 'remote' || (livePick && isRemoteTaskId(livePick.taskId)) ? null : livePick;
+  const taskPick = livePick?.list === 'remote' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
 
   // Menu and toolbar commands act on the target task; the ref keeps them acting on current state.
   // On the dashboard, Stop Task stops the picked row's run.
-  const uiRef = useRef({ selected: target, tasks, runtimes, terminalRun });
-  uiRef.current = { selected: target, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
+  // The selected project, while no task is: the toolbar's edit, chat, terminal and folder buttons act on it.
+  const projectTarget = selected ? null : projectSel;
+  const uiRef = useRef({ selected: target, project: projectTarget, tasks, runtimes, terminalRun });
+  uiRef.current = { selected: target, project: projectTarget, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
     setSelected(e.taskId);
@@ -106,8 +113,33 @@ export function App() {
   }, []);
 
   const uiAction = useCallback((type: UiEvent['type']) => {
-    const { selected: sel, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
+    const { selected: sel, project: proj, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
+    if (proj) {
+      switch (type) {
+        case 'edit-task':
+          void window.looper.projects.openEditor(proj);
+          return;
+        case 'open-chat':
+          void window.looper.projects.newChat(proj);
+          return;
+        case 'open-terminal':
+          void window.looper.projects.newTerminal(proj);
+          return;
+        case 'open-work-folder':
+          void window.looper.openTaskWorkFolder(projectTaskId(proj)).catch((e) => void window.looper.showError((e as Error).message));
+          return;
+        case 'new-task':
+          void window.looper.projects.newTask(proj);
+          return;
+      }
+    }
     switch (type) {
+      case 'new-task': {
+        const t = ts.find((x) => x.id === sel);
+        if (t?.projectId) void window.looper.projects.newTask(t.projectId);
+        else void window.looper.openEditor();
+        break;
+      }
       case 'run-now':
         if (sel) {
           const rt = rts[sel];
@@ -189,18 +221,24 @@ export function App() {
         }
         break;
       }
-      case 'open-terminal':
-        if (sel) void window.looper.openTaskTerminal(sel).catch((e) => void window.looper.showError((e as Error).message));
+      // A task's project: a new session there, on the project's harness and settings.
+      case 'open-terminal': {
+        const t = ts.find((x) => x.id === sel);
+        if (t?.projectId) void window.looper.projects.newTerminal(t.projectId);
         break;
-      case 'open-chat':
-        if (sel) void window.looper.openTaskChat(sel).catch((e) => void window.looper.showError((e as Error).message));
+      }
+      case 'open-chat': {
+        const t = ts.find((x) => x.id === sel);
+        if (t?.projectId) void window.looper.projects.newChat(t.projectId);
         break;
+      }
       case 'open-work-folder':
         if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
         break;
       case 'show-dashboard':
         setSelected(null);
         setAddonSel(null);
+        setProjectSel(null);
         break;
       case 'clear-runs': {
         const t = ts.find((x) => x.id === sel);
@@ -226,6 +264,7 @@ export function App() {
       setInfo(i);
     });
     void window.looper.tasks.list().then(setTasks);
+    void window.looper.projects.list().then(setProjects);
     void window.looper.folders.list().then(setFolders);
     void window.looper.folders.layout().then(setLayout);
     void window.looper.runtime.list().then((list) => {
@@ -243,6 +282,9 @@ export function App() {
         case 'tasks':
           setTasks(e.tasks);
           setRunsChanged((n) => n + 1);
+          break;
+        case 'projects':
+          setProjects(e.projects);
           break;
         case 'folders':
           setFolders(e.folders);
@@ -275,6 +317,7 @@ export function App() {
     const unsubAddons = window.looper.addons.onEvent((e) => {
       if (e.type !== 'select') return;
       setSelected(null);
+      setProjectSel(null);
       setAddonSel({ addonId: e.addonId, pane: e.pane, item: e.item });
     });
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -287,8 +330,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (selected) setAddonSel(null);
+    if (!selected) return;
+    setAddonSel(null);
+    setProjectSel(null);
   }, [selected]);
+
+  useEffect(() => {
+    if (projectSel && !projects.some((p) => p.id === projectSel)) setProjectSel(null);
+  }, [projects, projectSel]);
 
   useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: setTab });
 
@@ -350,6 +399,7 @@ export function App() {
   }, []);
 
   const task = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
+  const project = useMemo(() => (task ? null : (projects.find((p) => p.id === projectSel) ?? null)), [task, projects, projectSel]);
   const addonShown = useMemo(() => {
     if (!addonSel) return null;
     const addon = addons.find((a) => a.id === addonSel.addonId);
@@ -397,8 +447,10 @@ export function App() {
         <TaskToolbar
           // On the dashboard the task buttons are off; the menus still act on the picked row.
           task={selected ? targetTask : null}
+          project={project}
+          newTaskProject={project ?? projects.find((p) => p.id === targetTask?.projectId) ?? null}
           runtime={selected && targetTask ? runtimes[targetTask.id] : undefined}
-          dashboard={!selected}
+          dashboard={!selected && !project && !addonShown}
           onAction={uiAction}
           addonButtons={addons
             .filter((a) => a.enabled && a.toolbar.length && !view?.hiddenAddonToolbars.includes(a.id))
@@ -421,6 +473,13 @@ export function App() {
       <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
         {view ? (
           <Sidebar
+            projects={projects}
+            projectSelected={project ? project.id : null}
+            onProjectSelect={(id) => {
+              setSelected(null);
+              setAddonSel(null);
+              setProjectSel(id);
+            }}
             tasks={tasks}
             folders={folders}
             layout={layout}
@@ -435,6 +494,7 @@ export function App() {
             addonSelected={addonSel}
             onAddonSelect={(sel) => {
               setSelected(null);
+              setProjectSel(null);
               setAddonSel(sel);
             }}
             onAddonRetry={reloadAddon}
@@ -448,6 +508,7 @@ export function App() {
             <TaskDetail
               key={task.id}
               task={task}
+              project={projects.find((p) => p.id === task.projectId)}
               environments={info?.settings.environments ?? []}
               runtime={runtimes[task.id]}
               records={records[task.id] ?? []}
@@ -459,6 +520,17 @@ export function App() {
               focusRun={focusRun}
               terminalRun={terminalRun}
               onTerminalRun={setTerminalRun}
+            />
+          ) : project ? (
+            <ProjectDetail
+              key={project.id}
+              project={project}
+              tasks={tasks}
+              runtimes={runtimes}
+              environments={info?.settings.environments ?? []}
+              remote={remote}
+              now={now}
+              onSelectTask={select}
             />
           ) : addonShown ? (
             <AddonScreenView

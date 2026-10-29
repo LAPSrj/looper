@@ -411,6 +411,20 @@ describe('headless agent over pipes', () => {
     expect(launcher).not.toContain('/nonexistent/claude');
   });
 
+  it("passes the project's arguments, then the task's, and the project's variables under the task's", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
+    const ctx = makeCtx(harness);
+    ctx.task = { ...ctx.task, projectArgs: ['--from-project'], projectEnv: { SHARED: 'project', ONLY_PROJECT: '1' }, env: { SHARED: 'task' } };
+    ctx.task.agent.extraArgs = ['--from-task'];
+    await (await startAgent(ctx, { onData: () => {} })).finished;
+    const launcher = fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8');
+    expect(launcher).toMatch(/'--from-project' '--from-task'/);
+    expect(launcher).toContain("export SHARED='task'");
+    expect(launcher).toContain("export ONLY_PROJECT='1'");
+  });
+
   it("without a task pin, the model entry's default effort is emitted", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);

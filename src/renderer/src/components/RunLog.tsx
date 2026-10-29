@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { groupRuns, runShown } from '@shared/runs';
-import type { RunRecord, Task, TaskRuntime } from '@shared/types';
+import type { RunRecord, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
@@ -16,7 +16,8 @@ const RUN_COLS: readonly TableCol[] = [
 ];
 
 interface Props {
-  task: Task;
+  /** The task's id, or a project's stand-in id for its sessions. */
+  taskId: string;
   records: RunRecord[];
   runtime: TaskRuntime | undefined;
   hideNoAction: boolean;
@@ -25,7 +26,7 @@ interface Props {
   focusRun?: { runId: string } | null;
 }
 
-export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTerminals, focusRun }: Props) {
+export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTerminals, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,7 +54,7 @@ export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTermi
     count: groups.length,
     index: idx,
     onIndex: (i) => setSelected(groups[i].runId),
-    onActivate: (i) => void window.looper.openMessages(task.id, groups[i].runId),
+    onActivate: (i) => void window.looper.openMessages(taskId, groups[i].runId),
     scrollToId: selected ? `run-${selected}` : null,
   });
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -85,11 +86,11 @@ export function RunLog({ task, records, runtime, hideNoAction, hideChatsAndTermi
                 id={`run-${g.runId}`}
                 className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
                 onClick={() => setSelected(g.runId)}
-                onDoubleClick={() => void window.looper.openMessages(task.id, g.runId)}
+                onDoubleClick={() => void window.looper.openMessages(taskId, g.runId)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setSelected(g.runId);
-                  window.looper.showRunContextMenu({ taskId: task.id, runId: g.runId, details: g.details });
+                  window.looper.showRunContextMenu({ taskId: taskId, runId: g.runId, details: g.details });
                 }}
               >
                 <td>{fmtDate(g.startTs)}</td>

@@ -27,6 +27,17 @@ const api: LooperApi = {
     export: (id) => ipcRenderer.invoke('tasks:export', id),
     reorder: (ids, folders, layout, parents) => ipcRenderer.invoke('tasks:reorder', ids, folders, layout, parents),
   },
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    save: (input) => ipcRenderer.invoke('projects:save', input).catch(plainError),
+    remove: (id) => ipcRenderer.invoke('projects:remove', id),
+    reorder: (ids) => ipcRenderer.invoke('projects:reorder', ids),
+    openEditor: (id) => ipcRenderer.invoke('projects:openEditor', id),
+    newTask: (id) => ipcRenderer.invoke('projects:newTask', id),
+    newChat: (id) => ipcRenderer.invoke('projects:newChat', id),
+    newTerminal: (id) => ipcRenderer.invoke('projects:newTerminal', id),
+    showContextMenu: (id) => ipcRenderer.send('context-menu:project', id),
+  },
   versions: {
     list: (taskId) => ipcRenderer.invoke('versions:list', taskId),
     detail: (taskId, n, compare) => ipcRenderer.invoke('versions:detail', taskId, n, compare).catch(plainError),
@@ -133,9 +144,7 @@ const api: LooperApi = {
     open: (id) => ipcRenderer.invoke('remote:open', id),
     showContextMenu: (id) => ipcRenderer.send('context-menu:remote-conversation', id),
     openHelperEditor: (id, isNew) => ipcRenderer.invoke('remote:openHelperEditor', id, isNew),
-    openProjectEditor: (id, isNew) => ipcRenderer.invoke('remote:openProjectEditor', id, isNew),
-    discard: (kind, id) => ipcRenderer.send('remote:discard', kind, id),
-    showAddTaskMenu: () => ipcRenderer.send('remote:addTaskMenu'),
+    discard: (id) => ipcRenderer.send('remote:discard', id),
   },
   // The engine's error is shown to the user; drop Electron's IPC framing.
   continueRun: (taskId, runId, guidance) =>

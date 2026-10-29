@@ -3,7 +3,9 @@ import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import type { MessageImage, MessagesResult } from '../shared/messages';
 import { runShown, type RunFilter } from '../shared/runs';
-import type { EngineEvent, InboxCommand, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, InboxCommand, Project, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import { projectIdOf, projectSessionTask } from '../shared/projects';
+import { ProjectStore } from './store/projects';
 import { SettingsSchema } from '../shared/types';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind } from './host';
@@ -67,9 +69,22 @@ export interface Engine {
   /** Move the current tasks/templates store file to a new path. Call before updateSettings. */
   moveStoreFile(store: 'tasks' | 'templates', targetFile: string): void;
   on(listener: (e: EngineEvent) => void): () => void;
+  // projects
+  listProjects(): Project[];
+  getProject(id: string): Project | undefined;
+  /**
+   * Validate and persist a project; its tasks take its new values. Without an
+   * id it's a new project, whose id comes from its folder. Throws with the reason.
+   */
+  saveProject(input: unknown): Project;
+  /** Delete a project. Throws while tasks belong to it. */
+  removeProject(id: string): void;
+  reorderProjects(ids: string[]): void;
   // tasks
   listTasks(): Task[];
   getTask(id: string): Task | undefined;
+  /** A task, or the stand-in a project's or Remote Control helper's sessions run as, by its stand-in id. */
+  findSessionTask(id: string): Task | undefined;
   /**
    * Validate and persist a task the user saved. `builderId`: the save came
    * from a task builder's draft, so the version is the agent's and records
@@ -286,7 +301,8 @@ export function createEngine(opts: EngineOptions): Engine {
     const custom = store === 'tasks' ? settings.tasksFile : settings.templatesFile;
     return custom ?? path.join(dataDir, `${store}.json`);
   };
-  const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host, () => settings.completedFolderId);
+  const projects = new ProjectStore(path.join(dataDir, 'projects.json'), () => settings.environments, host);
+  const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host, () => settings.completedFolderId, projects);
   const templates = new TemplateStore(storeFile('templates'));
   const runs = new RunStore(dataDir);
   const versions = new VersionStore(dataDir);
@@ -321,11 +337,27 @@ export function createEngine(opts: EngineOptions): Engine {
     }
   };
 
+  projects.on('invalid', (raw: unknown, errors: string[]) => {
+    const id = (raw as { id?: string })?.id ?? '?';
+    log.error(`projects.json: skipping invalid project ${id}: ${errors.join('; ')}`);
+  });
+
   // Declared ahead: the message reader and terminal sessions reach Remote Control, created below.
   let remote: RemoteControl;
 
+  /** A task, or a project's stand-in by its stand-in id. */
+  const taskOrProject = (id: string): Task | undefined => {
+    const task = tasks.get(id);
+    if (task) return task;
+    const projectId = projectIdOf(id);
+    const project = projectId ? projects.get(projectId) : undefined;
+    return project ? projectSessionTask(project, settings) : undefined;
+  };
+  /** Also a Remote Control helper's stand-in, from its run history. */
+  const lookup = (id: string): Task | undefined => taskOrProject(id) ?? remote.standIn(id);
+
   const messages = new MessagesService({
-    getTask: (id) => tasks.get(id) ?? remote.standIn(id),
+    getTask: lookup,
     runDir: (taskId, runId) => runs.runDir(taskId, runId),
     host,
     settings,
@@ -509,8 +541,9 @@ export function createEngine(opts: EngineOptions): Engine {
     settings,
     log,
     emit: (state) => emit({ type: 'remote', state }),
-    getTask: (id) => tasks.get(id),
+    getTask: taskOrProject,
     listTasks: () => tasks.list(),
+    listProjects: () => projects.list(),
     createTarget: (task) => createTarget(task, { host, settings }),
     startSession(task, launch, resume) {
       const runId = resume?.runId ?? newRunId();
@@ -811,8 +844,17 @@ export function createEngine(opts: EngineOptions): Engine {
       log.info(`looper engine starting (host=${host}, dataDir=${dataDir})`);
       warmMountPrefixes();
       builders.sweep();
+      projects.load();
       tasks.load();
       templates.load();
+      const emitProjects = () => emit({ type: 'projects', projects: projects.list() });
+      // A changed project's tasks take its values; Remote Control opens or ends its conversation.
+      projects.on('change', (project: Project, kind: 'create' | 'update' | 'remove') => {
+        if (kind !== 'remove') tasks.rederive(project.id);
+        emitProjects();
+        remote.settingsChanged();
+      });
+      projects.on('reorder', emitProjects);
       tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) => {
         if (kind !== 'remove') recordVersion(task, previous);
       });
@@ -884,8 +926,28 @@ export function createEngine(opts: EngineOptions): Engine {
       remote.settingsChanged();
       return { ...settings };
     },
+    listProjects: () => projects.list(),
+    getProject: (id) => projects.get(id),
+    saveProject(input: unknown): Project {
+      const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+      if (raw.id) return projects.upsert(raw);
+      const { id } = projects.draft(String(raw.environmentId ?? ''), String(raw.cwd ?? ''));
+      return projects.upsert({ ...raw, id });
+    },
+    removeProject(id: string): void {
+      const using = tasks.list().filter((t) => t.projectId === id);
+      if (using.length) {
+        const names = using.slice(0, 5).map((t) => `"${t.name}"`).join(', ');
+        throw new Error(
+          `${using.length === 1 ? 'A task belongs' : `${using.length} tasks belong`} to this project (${names}${using.length > 5 ? ', …' : ''}). Move ${using.length === 1 ? 'it' : 'them'} to another project or delete ${using.length === 1 ? 'it' : 'them'} first.`,
+        );
+      }
+      projects.remove(id);
+    },
+    reorderProjects: (ids) => projects.reorder(ids),
     listTasks: () => tasks.list(),
     getTask: (id) => tasks.get(id),
+    findSessionTask: lookup,
     saveTask(input: unknown, saveOpts?: { builderId?: string }): Task {
       const files = saveOpts?.builderId ? builders.filesOf(saveOpts.builderId) : undefined;
       const meta: SaveMeta = files
@@ -1032,13 +1094,13 @@ export function createEngine(opts: EngineOptions): Engine {
     resizeAgent: (id, c, r, runId) => scheduler.resizeAgent(id, c, r, runId),
     agentBuffer: (id, runId) => scheduler.getBuffer(id, runId),
     openTaskTerminal(id: string, runId?: string): Promise<void> {
-      const task = tasks.get(id);
+      const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
       const resumeSessionId = runId ? resumeIdOf(task, runId) : undefined;
       return openTaskTerminal(task, { host, settings, log }, runs.taskDir(id), resumeSessionId);
     },
     startTerminalSession(id: string, runId?: string): string {
-      const task = tasks.get(id);
+      const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
       const kind = recordedKind(task);
       const to = kind ? terminalRunFor(task, runId) : { runId: newRunId() };
@@ -1087,10 +1149,10 @@ export function createEngine(opts: EngineOptions): Engine {
     restartRemoteConversation: (id) => remote.restartConversation(id),
     isRemoteSession: (id) => remote.owns(id),
     usedRemoteConversations: () => remote.usedCount(),
-    taskName: (id) => (tasks.get(id) ?? remote.standIn(id))?.name,
+    taskName: (id) => lookup(id)?.name,
     attachToTerminal(sessionId: string, files: AttachmentInput[]): string {
       const taskId = terminals.taskOf(sessionId);
-      const task = taskId ? (tasks.get(taskId) ?? remote.standIn(taskId)) : undefined;
+      const task = taskId ? lookup(taskId) : undefined;
       if (!task) throw new Error('This terminal session is closed.');
       const target = createTarget(task, { host, settings });
       return saveAttachments(task.id, files)
@@ -1099,13 +1161,13 @@ export function createEngine(opts: EngineOptions): Engine {
         .join(' ');
     },
     startChat(id: string, runId?: string): ChatState {
-      const task = tasks.get(id);
+      const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
       return runId ? continueInChat(task, runId) : chats.start(task, { kind: 'new' });
     },
     forkChat(chatId: string, index: number): ChatState {
       const taskId = chats.taskOf(chatId);
-      const task = taskId ? tasks.get(taskId) : undefined;
+      const task = taskId ? taskOrProject(taskId) : undefined;
       if (!task) throw new Error('This chat is closed.');
       return chats.fork(task, chatId, index);
     },
@@ -1128,7 +1190,7 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     canContinueRun(id: string, runId: string): { chat: boolean; terminal: boolean; guidance: boolean } {
       const none = { chat: false, terminal: false, guidance: false };
-      const task = tasks.get(id);
+      const task = taskOrProject(id);
       if (!task) return none;
       if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return none;
       try {
@@ -1136,7 +1198,8 @@ export function createEngine(opts: EngineOptions): Engine {
         if (!kind) return none;
         if (readRunSessionId(runs.runDir(id, runId), kind) === null) return none;
         const open = openHolder(task, runId);
-        return { chat: !open.terminal, terminal: !open.chat, guidance: !open.chat && !open.terminal };
+        // Continue with Guidance starts a run of a task: a project's sessions have none.
+        return { chat: !open.terminal, terminal: !open.chat, guidance: !!tasks.get(id) && !open.chat && !open.terminal };
       } catch {
         return none;
       }
@@ -1155,7 +1218,7 @@ export function createEngine(opts: EngineOptions): Engine {
     recentRuns(limit: number, filter: RunFilter): RecentRun[] {
       const out: RecentRun[] = [];
       for (const taskId of runs.listTaskIds()) {
-        const task = tasks.get(taskId) ?? remote.standIn(taskId);
+        const task = lookup(taskId);
         if (!task) continue;
         const shown = runs.summaries(taskId).filter((r) => runShown(r, filter));
         for (const r of shown.slice(0, limit)) out.push({ ...r, taskId, taskName: task.name });

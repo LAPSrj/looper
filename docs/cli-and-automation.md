@@ -99,7 +99,10 @@ running — they just show whatever was last written to disk.
 
 `.loopertask`/`.loopertpl` documents carry a `$version`; `tasks.json` and
 `templates.json` carry a `version`. Both are the same integer — the
-definition-format version, currently 2. A newer Looper migrates an older
+definition-format version, currently 3. Version 3 added a task's project
+(`projectId`, `overrideEnvironment`, `overrideAgent`); a task without a
+project is filed under the [project](projects.md) of its `cwd` when it's
+stored, so a version 2 task needs no change. A newer Looper migrates an older
 file's `$version`/`version` up automatically the moment it reads it (`looper
 add`, `looper validate`, and the app itself all do this transparently); an
 older Looper refuses a file written by a newer one, with a message naming
@@ -242,6 +245,7 @@ settings.json         environments (each with its harnesses), default
                        environment, timing settings
 tasks.json             every task definition, and the deleted tasks in the
                        Recycle Bin
+projects.json          the projects, in the Projects pane's order
 state.json             runtime snapshot: current state, next run time, last
                        result — what `looper list` reads
 engine.lock            the running Looper's heartbeat: one Looper per data dir

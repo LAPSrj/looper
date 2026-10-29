@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveEffort, resolveEnvironment, resolveHarness } from '../../shared/environments';
 import type { Task } from '../../shared/types';
+import { agentArgs } from '../../shared/projects';
 import { AGENT_ASK, AGENT_COMPLETE, AGENT_DONE, AGENT_RESTART, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
 import { NOTICE_FILE } from '../guidance';
 import { restartPrefix } from '../messages';
@@ -221,7 +222,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       effort: resolveEffort(a, harness),
       permissionMode: a.permissionMode,
       session: ctx.agentSession,
-      extraArgs: a.extraArgs,
+      extraArgs: agentArgs(task),
       footer: systemFooter(task.name, ctx.runId, headless, canComplete, a.ask),
       prompt: agentPrompt(ctx),
       doneCommand: AGENT_DONE.command,

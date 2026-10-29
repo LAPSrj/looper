@@ -9,7 +9,7 @@
  * Nothing migrates downward — an older Looper refuses newer files.
  */
 
-export const DEFINITION_VERSION = 2;
+export const DEFINITION_VERSION = 3;
 
 export type Definition = Record<string, unknown>;
 
@@ -35,9 +35,17 @@ function v1ToV2(def: Definition): Definition {
   return { ...rest, trigger };
 }
 
+/**
+ * v2 -> v3: tasks belong to projects (`projectId`, `overrideEnvironment`,
+ * `overrideAgent`). A v2 definition needs no change, because a task with a
+ * folder and no project is filed under that folder's project when it's saved.
+ */
+const v2ToV3 = (def: Definition): Definition => def;
+
 /** Each step lifts a definition FROM its key's version to the next one. */
 const STEPS: Record<number, (def: Definition) => Definition> = {
   1: v1ToV2,
+  2: v2ToV3,
 };
 
 /**

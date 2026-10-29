@@ -19,6 +19,13 @@
   a fresh copy of the demo data in `scripts/screenshots/demo/`, at 1388x895
   for the main window (`ss <name> 1388x895`). The displays run at 100%
   scaling, so a larger size only adds empty space around the same content.
+- **Screenshots show no addons unless they're about addons.** `launch` starts
+  the demo without its example addon (the Servers pane, toolbar button, Tools
+  menu and status bar count), and `launch addons` keeps it. Use `launch
+  addons` only for the screenshots in `docs/addons.md`.
+- **Screenshots never show a full email address.** When one appears (for
+  example in a Claude Code status line in a terminal), edit the image so it
+  shows only the part before the @, with the rest of the line moved left.
 
 ## UI style
 

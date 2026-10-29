@@ -19,7 +19,7 @@ import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
-import type { EngineEvent, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
+import type { EngineEvent, Project, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -53,6 +53,23 @@ export interface LooperApi {
       layout?: Record<string, string[]>,
       parents?: Record<string, string | null>,
     ): Promise<void>;
+  };
+  projects: {
+    list(): Promise<Project[]>;
+    /** Validate and persist (no id = a new project); rejects with the reason. */
+    save(input: unknown): Promise<Project>;
+    /** Asks first; shows why when tasks still belong to it. */
+    remove(id: string): Promise<void>;
+    reorder(ids: string[]): Promise<void>;
+    /** The Edit Project window (no id = New Project). */
+    openEditor(id?: string): Promise<void>;
+    /** The New Task editor with the project picked. */
+    newTask(id: string): Promise<void>;
+    /** A new chat or terminal session in the project, on its harness and settings; shows why when it can't start. */
+    newChat(id: string): Promise<void>;
+    newTerminal(id: string): Promise<void>;
+    /** A project row's right-click menu; '' = the pane's (New Project…). */
+    showContextMenu(id: string): void;
   };
   versions: {
     /** A task's versions, oldest first. */
@@ -221,11 +238,8 @@ export interface LooperApi {
     /** A conversation's right-click menu: Open, Open in Browser, Copy Link, Restart, Stop. */
     showContextMenu(id: string): void;
     openHelperEditor(id: string, isNew?: boolean): Promise<void>;
-    openProjectEditor(id: string, isNew?: boolean): Promise<void>;
-    /** Fire-and-forget removal of a freshly created, never-saved helper or folder project. */
-    discard(kind: 'helper' | 'project', id: string): void;
-    /** Add Task…: a menu of the Claude Code tasks not in the list yet; a pick adds it. */
-    showAddTaskMenu(): void;
+    /** Fire-and-forget removal of a freshly created, never-saved helper. */
+    discard(id: string): void;
   };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
@@ -399,6 +413,8 @@ export type UiEvent =
         | 'open-terminal'
         | 'open-chat'
         | 'open-work-folder'
+        /** Main toolbar: a new task, in the selected project or the selected task's project. */
+        | 'new-task'
         /** Chat window: Edit → Find…. */
         | 'chat-find'
         | 'clear-runs'

@@ -19,6 +19,10 @@ on, the status bar also shows what it's doing (see [Rest Mode](#rest-mode)).
 
 Double-clicking a task opens its Edit Task window.
 
+The **Projects** pane above the task list lists your
+[projects](projects.md). Selecting one shows the project's view in the
+detail pane, and **View → Projects** shows or hides the pane.
+
 Installed [addons](addons.md) can add panes below the task list. Selecting
 one of their items shows the addon's screen for it in the detail pane.
 
@@ -53,7 +57,7 @@ problem and when its run started. A task is listed when:
 Disabled and completed tasks aren't listed.
 
 **Recent runs** lists the 10 latest finished runs across every task and
-Remote Control folder project, newest first: the task, its result, its
+project, newest first: the task or project, its result, its
 details, when it started, and how long it took. A run shows here once it
 ends, and a run that Needs attention lists isn't repeated here. It follows
 the same Task Logs filters as the Runs tab (Hide Runs with No Action, Hide
@@ -110,19 +114,23 @@ guide in its own window, and Help → About Looper shows the version.
 ## The toolbar
 
 The toolbar acts on the selected task, or on the row picked on the
-dashboard. Buttons, left to right, with their tooltips:
+dashboard. With a [project](projects.md) selected, its Edit, Chat, Terminal
+and Folder buttons act on the project instead, and the task buttons are
+greyed out. Buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
 | Grid | Dashboard (stays pressed while the dashboard shows) | — |
+| Plus | New Task, or New Task in &lt;project&gt; while a project or a task is selected | — |
 | Run | Run Now | F5 |
 | Stop | Stop Task | Shift+F5 |
 | Pause/Resume | Pause / Resume | Ctrl+P |
 | Power | Enable / Disable | — |
 | Check | Complete / Reopen | — |
-| Edit | Edit Task | Ctrl+E |
+| Edit | Edit Task (Ctrl+E), or Edit Project | Ctrl+E |
 | Guidance | Add Guidance for Next Run / Edit Guidance for Next Run | — |
-| Terminal | Open Project in Terminal | Ctrl+T |
+| Chat | Open Project in Chat, or New Chat | — |
+| Terminal | Open Project in Terminal (Ctrl+T), or New Terminal | Ctrl+T |
 | Folder | Open Working Directory | — |
 
 Running Now on a disabled or completed task asks '"<task name>" is disabled.
@@ -139,20 +147,20 @@ out for a completed task, which is parked until you reopen it. Complete is
 greyed out unless the task's **Allow this task to be marked completed**
 option is on (Reopen always works), and asks for confirmation, since the task
 moves to the [Recycle Bin](#the-recycle-bin) once its retention runs out.
-"Open Project in Terminal" opens a terminal session with the task's
-environment, working directory, and harness ready to go (model and
-permission mode included, no prompt) — a different thing from the in-app
-Terminal tab described below. See [terminal sessions](#terminal-sessions)
-for where it opens.
+"Open Project in Terminal" opens a terminal session in the task's
+[project](projects.md), with the project's environment, working directory,
+harness, model and permission mode ready to go, and no prompt. It's a
+different thing from the in-app Terminal tab described below. See [terminal
+sessions](#terminal-sessions) for where it opens.
 
 ## Terminal sessions
 
-Open Project in Terminal and Continue in Terminal (see [continuing a
-run](how-a-run-works.md)) open a terminal session where
-**Settings → General → Open terminal sessions in** says:
+Open Project in Terminal, a project's New Terminal, and Continue in
+Terminal (see [continuing a run](how-a-run-works.md)) open a terminal
+session where **Settings → General → Open terminal sessions in** says:
 
 - **Looper** (the default) opens a Looper terminal window titled with the
-  task's name. When the harness exits, the window shows "session ended".
+  project's or task's name. When the harness exits, the window shows "session ended".
   Closing the window ends the session, and so does quitting Looper, which
   asks first while a session is still running, whatever **Ask before
   quitting while tasks are running** is set to.
@@ -163,8 +171,10 @@ run](how-a-run-works.md)) open a terminal session where
   Looper and stays open when Looper quits.
 
 With Claude Code or Codex, a session in a Looper terminal window becomes a
-run of the task when the agent finishes its first turn. It shows in the Runs
-tab with **Terminal** as its result and its first message as the details,
+run when the agent finishes its first turn: a run of the project for a new
+session, which shows in the project's Sessions tab, or of the task for
+Continue in Terminal on a task's run, which shows in the task's Runs tab. It
+shows with **Terminal** as its result and its first message as the details,
 and it has no time limits and no dashboard row. Each time a window on it
 opens and closes adds a line to the run's records ("Terminal opened",
 "Terminal closed after 12m"). A session closed before the agent's first turn
@@ -195,15 +205,18 @@ attachment; any other file is a path the agent can read.
 
 ![A chat window: a question, the agent's tool uses collapsed into one line, its answer, and the status bar](img/chat.png)
 
-**Open Project in Chat** (Task menu, or right-click a task) and **Continue
-in Chat** (right-click a run in the Runs tab, or the run window's File menu)
-open the task's harness in a Looper chat window, as messages instead of a
-terminal. It starts with the task's own harness, model, effort, permission
-mode and arguments. Continue in Chat shows the run's conversation above the
-new messages and goes on from where the run left off.
+**Open Project in Chat** (Task menu, or right-click a task), a project's
+**New Chat** (its right-click menu, its view, or the tray icon's menu) and
+**Continue in Chat** (right-click a run in the Runs tab, or the run window's
+File menu) open a harness in a Looper chat window, as messages instead of a
+terminal. A new chat starts in the [project](projects.md) with the project's
+harness, model, effort and permission mode. Continue in Chat starts with the
+run's own harness and settings, shows the run's conversation above the new
+messages, and goes on from where the run left off.
 
-Once you send the first message, the chat is a run of the task: it shows in
-the Runs tab with **Chat** as its result and its first message as the
+Once you send the first message, the chat is a run of the project (or, for
+Continue in Chat on a task's run, of the task): it shows in the project's
+Sessions tab or the task's Runs tab with **Chat** as its result and its first message as the
 details, and each time its window opens and closes adds a line to the run's
 records. It has no time limits and no dashboard row. Double-click it for the
 run window, and right-click it for the same Continue items as any run.
@@ -590,14 +603,22 @@ conversation's transcript). A project then gets a fresh conversation, and
 the ended one can be resumed from a helper or the Conversations window.
 Helpers are never closed this way.
 
-The settings window has two lists:
+Two kinds of entries keep a conversation open:
 
-- **Helpers** are conversations whose only job is to start sessions. Ask a
+- **Projects** whose **Keep a Remote Control conversation open** box is
+  checked in their Edit Project window (see [projects](projects.md)). Once a
+  project's conversation is used and ends, another one opens. The session is
+  named after the project and runs with its folder, environment, model,
+  effort and permission mode, on its harness when that's Claude Code, and
+  otherwise on the environment's first Claude Code harness.
+- **Helpers**, listed in the settings window, are conversations whose only job is to start sessions. Ask a
   helper, for example, "open a session in the looper repo", and it runs
   `looper-remote open`, which starts a new session there and answers with
   its name and link, even when the folder is the helper's own. Tell it what
   the session should do ("open the looper repo and fix the footer") and the
-  new session starts on that right away. `looper-remote
+  new session starts on that right away. A project's name, or its folder,
+  opens a session of that project, and a task's name or id one with the
+  task's settings. `looper-remote
   list` shows the projects and tasks set up in Looper, and `looper-remote
   recent` the folders where Claude Code sessions ran lately (from Claude
   Code's own record of folders), newest first; any other folder works by its
@@ -612,15 +633,10 @@ The settings window has two lists:
   had no message for **Restart when idle for** (10 min by default) is
   replaced by a fresh, empty one, so the next request starts clean. A helper
   is never replaced while it's working.
-- **Projects** are folders where a conversation is always open: once it
-  ends, another one opens. **Add Task…** picks a task: its session is the
-  one Open Project in Terminal starts, with the task's environment, folder,
-  model, effort, permission mode and variables. Its editor switches it to
-  another task, and its **Name** names the session in the Claude app (empty:
-  the task's name). **Add Folder…** sets these yourself.
 
-A project or helper that can't get a session says why under its name in the
-list, for example a task that was deleted, or Claude Code exiting right
+A helper that can't get a session says why under its name in the settings
+window's list, and a project says so on the Remote Control line of its view,
+for example an environment that was removed, or Claude Code exiting right
 after it starts (Looper stops trying after three times in a row, until the
 entry changes or Remote Control starts again).
 
@@ -631,14 +647,16 @@ where you can go on at the computer; closing that window leaves the session
 running. Opening an ended one shows its run window. The right-click menu has
 **Open in Browser** and **Copy Link** for the session's claude.ai page, and
 **Stop** to end it. Conversations are recorded as runs, like [terminal
-sessions](#terminal-sessions), so a task project's conversations also show
-in the task's Runs tab.
+sessions](#terminal-sessions), so a project's conversations also show in its
+Sessions tab, and those of a task a helper opened in the task's Runs tab.
 
 ## The tray icon and close-to-tray
 
 Looper keeps a tray icon running whenever the app is open. Double-clicking
-it shows the main window; right-clicking it opens a menu with Show Looper,
-Enable/Disable Notifications, Start/Stop Rest Mode (Windows only), and Quit.
+it shows the main window. Right-clicking it opens a menu that starts with
+your [projects](projects.md), in the Projects pane's order: clicking one
+opens a new chat in it. Below them are Show Looper, Enable/Disable
+Notifications, Start/Stop Rest Mode (Windows only), and Quit.
 
 By default, closing the main window quits Looper — and stops any running
 agents. Turning on **Settings → General → Close to system tray** changes

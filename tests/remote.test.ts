@@ -7,7 +7,8 @@ import { writeTerminalLauncher, type RemoteLaunch } from '../src/engine/open-ter
 import { RemoteControl, lastCacheUse, remoteStandIn } from '../src/engine/remote';
 import { createTarget } from '../src/engine/target';
 import type { RemoteState } from '../src/shared/remote';
-import { SettingsSchema, TaskSchema, type Settings, type Task } from '../src/shared/types';
+import { projectSessionTask, projectTaskId } from '../src/shared/projects';
+import { ProjectSchema, SettingsSchema, TaskSchema, type Project, type Settings, type Task } from '../src/shared/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +29,13 @@ function settingsWith(remote: unknown): Settings {
 const task = (id: string, cwd = '/home/me/proj'): Task =>
   TaskSchema.parse({ id, name: `Task ${id}`, environmentId: 'local', cwd, trigger: { mode: 'manual' }, agent: { prompt: '-' } });
 
+/** A project that keeps a Remote Control conversation open, unless `extra` says otherwise. */
+const project = (id: string, name: string, cwd: string, extra: Partial<Project> = {}): Project =>
+  ProjectSchema.parse({ id, name, environmentId: 'local', cwd, remote: true, ...extra });
+
+/** The project the tests mostly use: the folder of task t1, under that task's name. */
+const p1 = () => project('p1', 'Task t1', '/home/me/proj');
+
 interface Started {
   runId: string;
   task: Task;
@@ -36,9 +44,13 @@ interface Started {
   resume?: string;
 }
 
-function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; output?: (n: number) => string } = {}) {
+function setup(
+  remote: unknown,
+  opts: { tasks?: Task[]; projects?: Project[]; now?: () => number; output?: (n: number) => string } = {},
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-remote-'));
   const settings = settingsWith(remote);
+  const projects = opts.projects ?? [];
   const started: Started[] = [];
   const closed: string[] = [];
   const writes: string[] = [];
@@ -50,8 +62,12 @@ function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; outp
     settings,
     log: new Logger(),
     emit: (s) => states.push(s),
-    getTask: (id) => opts.tasks?.find((t) => t.id === id),
+    getTask: (id) => {
+      const p = projects.find((x) => projectTaskId(x.id) === id);
+      return opts.tasks?.find((t) => t.id === id) ?? (p ? projectSessionTask(p, settings) : undefined);
+    },
     listTasks: () => opts.tasks ?? [],
+    listProjects: () => projects,
     createTarget: (t) => createTarget(t, { host: 'linux', settings }),
     startSession(t, launch, resume) {
       const runId = resume?.runId ?? `r${++n}`;
@@ -73,7 +89,7 @@ function setup(remote: unknown, opts: { tasks?: Task[]; now?: () => number; outp
     now: opts.now,
   });
   open.push(rc);
-  return { rc, root, settings, started, closed, writes, outputs, states };
+  return { rc, root, settings, projects, started, closed, writes, outputs, states };
 }
 
 const touch = (file: string) => fs.writeFileSync(file, '{}');
@@ -116,22 +132,19 @@ afterEach(() => {
 const helper = { id: 'h1', name: 'Helper', environmentId: 'local', cwd: '/home/me' };
 
 describe('Remote Control', () => {
-  it('gives every helper and project a session when it starts, and ends them all when it stops', () => {
+  it('gives every helper and Remote Control project a session when it starts, and ends them all when it stops', () => {
     const { rc, started, closed } = setup(
+      { helpers: [helper] },
       {
-        helpers: [helper],
-        projects: [
-          { kind: 'task', id: 'p1', taskId: 't1' },
-          { kind: 'folder', id: 'p2', name: 'Site', environmentId: 'local', cwd: '/home/me/site', model: 'opus' },
-        ],
+        tasks: [task('t1')],
+        projects: [p1(), project('p2', 'Site', '/home/me/site', { model: 'opus' }), project('p3', 'Off', '/home/me/off', { remote: false })],
       },
-      { tasks: [task('t1')] },
     );
     rc.start();
     expect(started.map((s) => [s.task.id, s.launch.name, s.task.cwd])).toEqual([
       ['@remote-h1', 'Helper', '/home/me'],
-      ['t1', 'Task t1', '/home/me/proj'],
-      ['@remote-p2', 'Site', '/home/me/site'],
+      ['@project-p1', 'Task t1', '/home/me/proj'],
+      ['@project-p2', 'Site', '/home/me/site'],
     ]);
     expect(started[2].task.agent.model).toBe('opus');
     expect(rc.state().conversations.map((c) => [c.id, c.source, c.status]).sort()).toEqual([
@@ -145,14 +158,12 @@ describe('Remote Control', () => {
     expect(rc.liveCount()).toBe(0);
   });
 
-  it("a task project's own name names its sessions instead of the task's", () => {
-    const { rc, started } = setup(
-      { projects: [{ kind: 'task', id: 'p1', taskId: 't1', name: 'Site work' }] },
-      { tasks: [task('t1')], output: (n) => `https://claude.ai/code/session_${n}z` },
-    );
+  it('runs a project on its first Claude Code harness when its own is another kind', () => {
+    const { rc, started } = setup({}, { projects: [p1()] });
+    const settings = (rc as unknown as { d: { settings: Settings } }).d.settings;
+    settings.environments[0].harnesses.unshift({ ...settings.environments[0].harnesses[0], id: 'codex', name: 'Codex', kind: 'codex' });
     rc.start();
-    expect(started[0].launch.name).toBe('Site work');
-    expect(rc.state().conversations[0].name).toBe('Site work');
+    expect(started[0].task.agent.harnessId).toBe('claude');
   });
 
   it("a helper gets Looper's instructions, the looper-remote command and settings that let it run unasked", () => {
@@ -223,7 +234,7 @@ describe('Remote Control', () => {
 
   it("a project's used conversation is its only one, and another opens once it ends", async () => {
     let t = 0;
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')], now: () => t });
+    const { rc, started } = setup({}, { tasks: [task('t1')], projects: [p1()], now: () => t });
     rc.start();
     touch(path.join(started[0].dir, 'prompt.json'));
     await sleep(100);
@@ -235,7 +246,7 @@ describe('Remote Control', () => {
   });
 
   it("shows the last message: the user's while its turn runs, then Claude's answer", async () => {
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    const { rc, started } = setup({}, { tasks: [task('t1')], projects: [p1()] });
     rc.start();
     const dir = started[0].dir;
     expect(rc.lastMessage('r1')).toBeNull();
@@ -248,7 +259,7 @@ describe('Remote Control', () => {
   });
 
   it('records a used conversation, titled once its first turn ends, and lists it after it ends', async () => {
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    const { rc, started } = setup({}, { tasks: [task('t1')], projects: [p1()] });
     rc.start();
     touch(path.join(started[0].dir, 'prompt.json'));
     await sleep(30);
@@ -257,7 +268,7 @@ describe('Remote Control', () => {
     expect(rc.state().conversations[0]).toMatchObject({ id: 'r1', status: 'idle', title: 'Fix the footer' });
     rc.stopConversation('r1');
     const listed = rc.state().conversations.find((c) => c.id === 'r1');
-    expect(listed).toMatchObject({ status: 'ended', title: 'Fix the footer', taskId: 't1' });
+    expect(listed).toMatchObject({ status: 'ended', title: 'Fix the footer', taskId: '@project-p1' });
     // An empty conversation leaves no trace.
     const waiting = rc.state().conversations.find((c) => c.status === 'waiting');
     rc.stop();
@@ -265,7 +276,7 @@ describe('Remote Control', () => {
   });
 
   it("lists each conversation's last message on one line, and keeps it once the conversation ends", async () => {
-    const { rc, started } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    const { rc, started } = setup({}, { tasks: [task('t1')], projects: [p1()] });
     rc.start();
     const dir = started[0].dir;
     fs.writeFileSync(path.join(dir, 'prompt.json'), '{"prompt":"Fix the\\nfooter"}');
@@ -279,7 +290,7 @@ describe('Remote Control', () => {
   });
 
   it('restarts a conversation in its own run, resuming it in the same folder; an open one ends first', async () => {
-    const { rc, started, closed } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    const { rc, started, closed } = setup({}, { tasks: [task('t1')], projects: [p1()] });
     rc.start();
     const dir = started[0].dir;
     fs.writeFileSync(path.join(dir, 'session.json'), '{"session_id":"abc-123"}');
@@ -304,7 +315,7 @@ describe('Remote Control', () => {
   });
 
   it("won't restart a helper, a conversation with nothing recorded, or one while Remote Control is off", async () => {
-    const { rc, started } = setup({ helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')] });
+    const { rc, started } = setup({ helpers: [helper] }, { tasks: [task('t1')], projects: [p1()] });
     expect(() => rc.restartConversation('r1')).toThrow('Start Remote Control first.');
     rc.start();
     expect(() => rc.restartConversation('r1')).toThrow(/replaces a helper/);
@@ -334,7 +345,7 @@ describe('Remote Control', () => {
 
   it('stops trying an entry whose session keeps exiting right after it starts, and says why', () => {
     let t = 0;
-    const { rc, started, outputs } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')], now: () => t });
+    const { rc, started, outputs } = setup({}, { tasks: [task('t1')], projects: [p1()], now: () => t });
     rc.start();
     for (let i = 0; i < 3; i++) {
       const runId = started[started.length - 1].runId;
@@ -350,17 +361,12 @@ describe('Remote Control', () => {
     expect(started).toHaveLength(4);
   });
 
-  it("says why an entry can't start: a deleted task, no working directory, a harness that isn't Claude Code", () => {
-    const { rc, started } = setup({
-      helpers: [{ ...helper, cwd: '' }],
-      projects: [{ kind: 'task', id: 'p1', taskId: 'gone' }],
-    });
+  it("says why an entry can't start: no working directory, an environment that's gone", () => {
+    const { rc, started } = setup({ helpers: [{ ...helper, cwd: '' }] }, { projects: [project('p1', 'Lost', '/home/me/lost', { environmentId: 'gone' })] });
     rc.start();
     expect(started).toHaveLength(0);
-    expect(rc.state().problems).toEqual({
-      'helper:h1': 'Choose its working directory.',
-      'project:p1': 'The task no longer exists.',
-    });
+    expect(rc.state().problems['helper:h1']).toBe('Choose its working directory.');
+    expect(rc.state().problems['project:p1']).toMatch(/unknown environment "gone"/);
   });
 
   it("answers the folder trust dialog and picks up the session's link from its output", async () => {
@@ -375,31 +381,30 @@ describe('Remote Control', () => {
   });
 
   it('a removed entry loses its empty session, and a used one goes on', async () => {
-    const { rc, settings, started, closed } = setup({
-      projects: [
-        { kind: 'task', id: 'p1', taskId: 't1' },
-        { kind: 'task', id: 'p2', taskId: 't2' },
-      ],
-    }, { tasks: [task('t1'), task('t2')] });
+    const { rc, projects, started, closed } = setup({}, { projects: [p1(), project('p2', 'Task t2', '/home/me/two')] });
     rc.start();
     touch(path.join(started[1].dir, 'prompt.json'));
     await sleep(60);
-    settings.remote.projects = [];
+    projects.splice(0);
     rc.settingsChanged();
     expect(closed).toEqual(['r1']);
     expect(rc.liveCount()).toBe(1);
   });
 
-  it('looper-remote: lists what it can open, opens a task or a folder, and refuses a folder that is not there', async () => {
+  it('looper-remote: lists what it can open, opens a project, a task or a folder, and refuses a folder that is not there', async () => {
     const tasks = [task('site', '/home/me/site')];
-    const { rc, root, started } = setup(
-      { helpers: [{ ...helper, cwd: '', model: 'sonnet', effort: 'low' }], projects: [{ kind: 'task', id: 'p1', taskId: 'site' }] },
-      { tasks, output: (n) => `connected https://claude.ai/code/session_${n}x` },
-    );
     // The helper's folder: a real one, so an opened path can be checked.
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-remote-home-'));
     fs.mkdirSync(path.join(home, 'repo'));
-    (rc as unknown as { d: { settings: Settings } }).d.settings.remote.helpers[0].cwd = home;
+    fs.mkdirSync(path.join(home, 'blog'));
+    const { rc, root, started } = setup(
+      { helpers: [{ ...helper, cwd: home, model: 'sonnet', effort: 'low' }] },
+      {
+        tasks,
+        projects: [project('p1', 'Website', '/home/me/site', { remote: false }), project('blog', 'Blog', path.join(home, 'blog'), { remote: false })],
+        output: (n) => `connected https://claude.ai/code/session_${n}x`,
+      },
+    );
     rc.start();
     const h = started.find((s) => s.launch.name === 'Helper')!;
     const ask = async (...lines: string[]): Promise<{ out: string; code: string }> => {
@@ -413,10 +418,19 @@ describe('Remote Control', () => {
       }
       throw new Error('no answer');
     };
-    expect((await ask('list')).out).toContain('- Task site (task site): /home/me/site');
+    const listed = (await ask('list')).out;
+    expect(listed).toContain('Projects:\n- Website: /home/me/site\n');
+    expect(listed).toContain('Tasks:\n- site (Task site): /home/me/site');
+    const byProject = await ask('open', 'website');
+    expect(byProject.out).toMatch(/^Opened "Website" in \/home\/me\/site\./);
+    expect(started.at(-1)!.task.id).toBe('@project-p1');
     const byTask = await ask('open', 'site');
     expect(byTask.code).toBe('0');
     expect(byTask.out).toMatch(/^Opened "Task site" in \/home\/me\/site\.\nLink: https:\/\/claude\.ai\/code\/session_\d+x/);
+    expect(started.at(-1)!.task.id).toBe('site');
+    // A project's folder opens as that project.
+    await ask('open', 'blog/');
+    expect(started.at(-1)!.task.id).toBe('@project-blog');
     const byFolder = await ask('open', '../' + path.basename(home) + '/repo/');
     expect(byFolder.out).toContain(`Opened "repo" in ${path.join(home, 'repo')}.`);
     const opened = started[started.length - 1];
@@ -429,7 +443,7 @@ describe('Remote Control', () => {
     const missing = await ask('open', 'nowhere');
     expect(missing.code).toBe('1');
     expect(missing.out).toContain(`isn't a folder`);
-    expect(rc.state().conversations.filter((c) => c.source === 'opened')).toHaveLength(2);
+    expect(rc.state().conversations.filter((c) => c.source === 'opened')).toHaveLength(4);
     void root;
   });
 
@@ -437,8 +451,8 @@ describe('Remote Control', () => {
     const t0 = Date.now();
     let t = t0;
     const { rc, started, closed } = setup(
-      { helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] },
-      { tasks: [task('t1')], now: () => t },
+      { helpers: [helper] },
+      { tasks: [task('t1')], projects: [p1()], now: () => t },
     );
     rc.start();
     const [h, p] = started;
@@ -459,7 +473,7 @@ describe('Remote Control', () => {
   it('gives a conversation whose transcript names no cache the long lifetime, and keeps it open while the option is off', async () => {
     const t0 = Date.now();
     let t = t0;
-    const { rc, settings, started, closed } = setup({ projects: [{ kind: 'task', id: 'p1', taskId: 't1' }] }, { tasks: [task('t1')], now: () => t });
+    const { rc, settings, started, closed } = setup({}, { tasks: [task('t1')], projects: [p1()], now: () => t });
     rc.start();
     await turn(started[0].dir);
     t = t0 + 30 * 60_000;
@@ -476,8 +490,8 @@ describe('Remote Control', () => {
 
   it('looper-remote: opens with a prompt, lists the conversations, and resumes an ended one where it left off', async () => {
     const { rc, started } = setup(
-      { helpers: [helper], projects: [{ kind: 'task', id: 'p1', taskId: 'site' }] },
-      { tasks: [task('site', '/home/me/site')], output: (n) => `connected https://claude.ai/code/session_${n}x` },
+      { helpers: [helper] },
+      { tasks: [task('site', '/home/me/site')], projects: [project('p1', 'Website', '/home/me/site')], output: (n) => `connected https://claude.ai/code/session_${n}x` },
     );
     rc.start();
     const h = started[0];
@@ -502,10 +516,10 @@ describe('Remote Control', () => {
     expect([own.code, own.out]).toEqual(['1', "looper: That's a helper's conversation; only other conversations can be resumed.\n"]);
   });
 
-  it("keeps a folder project's or helper's stand-in task, so its conversations stay readable", () => {
-    const { rc } = setup({ projects: [{ kind: 'folder', id: 'p2', name: 'Site', environmentId: 'local', cwd: '/home/me/site' }] });
+  it("keeps a helper's stand-in task, so its conversations stay readable", () => {
+    const { rc } = setup({ helpers: [helper] });
     rc.start();
-    expect(rc.standIn('@remote-p2')).toMatchObject({ id: '@remote-p2', name: 'Site', environmentId: 'local', cwd: '/home/me/site' });
+    expect(rc.standIn('@remote-h1')).toMatchObject({ id: '@remote-h1', name: 'Helper', environmentId: 'local', cwd: '/home/me' });
     expect(rc.standIn('t1')).toBeUndefined();
   });
 });

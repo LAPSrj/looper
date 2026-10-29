@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { agentArgs } from '../../shared/projects';
 import type { BuilderDraft, BuilderSetup, BuilderState, BuilderTest, ProbeOperation } from '../../shared/builder';
 import { EXAMPLE_TASK } from '../../shared/example-task';
 import { stripAnsi } from '../../shared/ansi';
@@ -1208,7 +1209,7 @@ class BuilderSession {
           model: a.model,
           effort: resolveEffort(a, harness),
           permissionMode: a.permissionMode,
-          extraArgs: a.extraArgs,
+          extraArgs: agentArgs(task),
           footer: PROBE_SYSTEM_PROMPT,
           prompt: `Check these operations:\n\n${probe}`,
           jsonSchema: PROBE_SCHEMA,

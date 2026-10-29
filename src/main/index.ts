@@ -7,6 +7,7 @@ import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
+import { projectTaskId } from '../shared/projects';
 import type { ChatSettings, ChatState } from '../shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
@@ -73,6 +74,7 @@ if (!app.requestSingleInstanceLock()) {
     engine.start();
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
+      else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
       else if (event.type === 'settings') {
         tray?.setContextMenu(trayMenu());
         // The View menu follows the view settings, which a pane header's context menu also changes.
@@ -126,7 +128,8 @@ if (!app.requestSingleInstanceLock()) {
       chatWindow: (id) => chatWindows.get(id),
       openRemoteConversation,
       openRemoteHelperEditor,
-      openRemoteProjectEditor,
+      openProjectEditor,
+      openNewTaskIn,
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
@@ -410,13 +413,13 @@ async function toggleRemote(): Promise<void> {
   if (!engine) return;
   if (!engine.remoteState().running) {
     engine.startRemote();
-    const r = engine.settings.remote;
-    if (r.helpers.length === 0 && r.projects.length === 0) {
+    if (engine.settings.remote.helpers.length === 0 && !engine.listProjects().some((p) => p.remote)) {
       await dialog.showMessageBox({
         type: 'info',
         title: 'Looper',
-        message: 'Remote Control is on, but it has no helpers or projects yet.',
-        detail: 'Add them in Advanced → Remote Control → Settings.',
+        message: 'Remote Control is on, but no helper or project keeps a conversation open yet.',
+        detail:
+          'Add a helper in Advanced → Remote Control → Settings, or check "Keep a Remote Control conversation open" in a project\'s Edit Project window.',
         buttons: ['OK'],
       });
     }
@@ -471,7 +474,13 @@ function showWindow(): void {
 
 function trayMenu(): Menu {
   const notifOn = engine?.settings.notificationsEnabled ?? true;
+  // A project opens a new chat there: right-click, then the project.
+  const projects: Electron.MenuItemConstructorOptions[] = (engine?.listProjects() ?? []).map((p) => ({
+    label: menuText(p.name),
+    click: () => openProjectChat(p.id),
+  }));
   return Menu.buildFromTemplate([
+    ...(projects.length ? [...projects, { type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
     { label: 'Show Looper', click: showWindow },
     { type: 'separator' },
     {
@@ -820,7 +829,7 @@ function runWindowHash(taskId: string, runId: string): string {
 }
 
 function openMessagesWindow(taskId: string, runId: string, agentId?: string, label?: string, focusReport = false): void {
-  const task = engine?.getTask(taskId);
+  const task = engine?.findSessionTask(taskId);
   const title = agentId
     ? label?.trim()
       ? `Subagent: ${label.trim().slice(0, 80)}`
@@ -1064,7 +1073,7 @@ export function openEditorWindow(taskId?: string): void {
     taskId ? `editor/${encodeURIComponent(taskId)}` : 'editor',
     taskId ? 'Edit Task' : 'New Task',
     780,
-    700,
+    800,
   );
 }
 
@@ -1306,7 +1315,7 @@ function openTemplateEditorWindow(templateId?: string, _parent?: BrowserWindow |
     templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
     templateId ? 'Edit Template' : 'New Template',
     780,
-    700,
+    800,
   );
 }
 
@@ -1319,7 +1328,7 @@ function openEditorFromTemplateWindow(templateId: string): void {
     `editor-from-template/${encodeURIComponent(templateId)}`,
     'New Task',
     780,
-    700,
+    800,
   );
   // The picker is modal to main; closing it auto-focuses main.
   // Intercept that focus event and redirect to the editor.
@@ -1371,7 +1380,7 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
     return;
   }
   const sessionId = engine.startTerminalSession(taskId, runId);
-  openTerminalWindow(sessionId, `${engine.getTask(taskId)?.name ?? taskId} – Terminal`);
+  openTerminalWindow(sessionId, `${engine.taskName(taskId) ?? taskId} – Terminal`);
 }
 
 /**
@@ -1412,7 +1421,7 @@ async function openRemoteConversation(id: string): Promise<void> {
 
 /** Advanced → Remote Control → Settings: modal, like the other settings windows. */
 function openRemoteSettingsWindow(): void {
-  openChildWindow('remote-settings', 'Remote Control', 640, 600, win, { contentSize: true });
+  openChildWindow('remote-settings', 'Remote Control', 640, 360, win, { contentSize: true });
 }
 
 // Page sizes: every field shows without a scroll bar.
@@ -1422,12 +1431,36 @@ function openRemoteHelperEditor(id: string, isNew: boolean, parent: BrowserWindo
   });
 }
 
-function openRemoteProjectEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
-  // A task project has only the task and its session name.
-  const task = engine?.settings.remote.projects.find((p) => p.id === id)?.kind === 'task';
-  openChildWindow(`remote-project/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Project' : 'Edit Project', 560, task ? 250 : 550, parent, {
+// ---------- projects ----------
+
+/** Open Edit Project windows by project id ('' = New Project): opening one again brings it forward. */
+const projectWindows = new Map<string, BrowserWindow>();
+
+/** The Edit Project window, modeless like the task editor (no id = New Project). */
+function openProjectEditor(id?: string): void {
+  const key = id ?? '';
+  const open = projectWindows.get(key);
+  if (open && !open.isDestroyed()) {
+    if (open.isMinimized()) open.restore();
+    open.focus();
+    return;
+  }
+  const child = openChildWindow(id ? `project/${encodeURIComponent(id)}` : 'project-new', id ? 'Edit Project' : 'New Project', 560, 545, undefined, {
     contentSize: true,
-    ...(task ? { minHeight: 200 } : {}),
+  });
+  projectWindows.set(key, child);
+  child.on('closed', () => projectWindows.delete(key));
+}
+
+/** File → New Task with a project picked (a project's New Task…). */
+function openNewTaskIn(projectId: string): void {
+  openChildWindow(`editor-in/${encodeURIComponent(projectId)}`, 'New Task', 780, 800);
+}
+
+/** A new chat in a project, from the tray: Looper's main window stays as it is. */
+function openProjectChat(projectId: string): void {
+  void openChat(projectTaskId(projectId)).catch((err: unknown) => {
+    void dialog.showMessageBox({ type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   });
 }
 
@@ -1586,7 +1619,7 @@ function openChatWindow(state: ChatState): BrowserWindow {
     fs.writeFileSync(picked.filePath, messagesToMarkdown(rows, { title, ...chosen }), 'utf8');
   };
   const openWorkingDirectory = () => {
-    const cwd = engine?.getTask(state.taskId)?.cwd;
+    const cwd = engine?.findSessionTask(state.taskId)?.cwd;
     if (cwd) void openHostPath(cwd);
   };
   const find: Electron.MenuItemConstructorOptions = { label: '&Find…', accelerator: 'CmdOrCtrl+F', click: () => send({ type: 'chat-find' }) };
@@ -1846,7 +1879,7 @@ function reviewBuilder(builderId: string): void {
     `editor-import/${key}${update ? '/update' : ''}/builder/${encodeURIComponent(builderId)}`,
     update ? 'Edit Task' : 'New Task',
     780,
-    700,
+    800,
   );
 }
 
@@ -1960,7 +1993,7 @@ async function openLooperFile(file: string): Promise<void> {
   importDrafts.set(key, payload);
   const route = doc.kind === 'task' ? 'editor-import' : 'template-import';
   const noun = doc.kind === 'task' ? 'Task' : 'Template';
-  openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun}`, 780, 700);
+  openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun}`, 780, 800);
 }
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
@@ -2041,6 +2074,7 @@ function buildMenu(
         { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
         { label: 'New Task with A&gent…', click: () => openBuilderSetupWindow() },
         { label: 'New &Folder…', click: () => openNewFolderWindow() },
+        { label: 'New P&roject…', click: () => openProjectEditor() },
         { type: 'separator' },
         { label: '&Import Task…', click: () => void importTask() },
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
@@ -2088,6 +2122,12 @@ function buildMenu(
       submenu: [
         { label: '&Dashboard', click: () => sendUi('show-dashboard') },
         { type: 'separator' },
+        {
+          label: '&Projects',
+          type: 'checkbox',
+          checked: view.projectsPane.visible,
+          click: (item) => updateView({ projectsPane: { ...view.projectsPane, visible: item.checked } }),
+        },
         { label: 'Task &List', submenu: taskListMenu(view, updateView) },
         ...(addonPanes.length ? [{ label: '&Addon Panes', submenu: addonPanes }] : []),
         {

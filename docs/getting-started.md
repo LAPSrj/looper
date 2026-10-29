@@ -83,9 +83,12 @@ agent](task-builder.md)).
 
 At minimum, fill in:
 
-- **General tab** — Task name, and Working directory (the folder the check
-  and agent run in; use Browse… to pick it). Environment defaults to your
-  default environment, but confirm it points where you want the task to run.
+- **General tab** — Task name, and its project. Your first task has no
+  project to pick yet, so leave Project on New project and fill in Working
+  directory (the folder the check and agent run in; use Browse… to pick it).
+  Saving the task creates a [project](projects.md) for that folder.
+  Environment defaults to your default environment, but confirm it points
+  where you want the task to run.
 - **Agent tab** — Agent prompt. This is the only field the agent step
   strictly requires.
 - **Check tab** — either fill in Command, or turn off "Run a command to

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { taskEnv } from '../../shared/projects';
 import type { Settings, Task } from '../../shared/types';
 import { hasPlaceholder, renderTemplate } from '../../shared/template';
 import type { HostKind } from '../host';
@@ -166,7 +167,7 @@ export function writeLauncher(
     writeText(path.join(ctx.runDir, 'note.txt'), ctx.note + '\n');
     locked.LOOPER_NOTE_FILE = targetFile(ctx, 'note.txt');
   }
-  const env = { ...extraEnv, ...ctx.task.env };
+  const env = { ...extraEnv, ...taskEnv(ctx.task) };
   for (const k of RUN_ONLY_VARS) delete env[k];
   const hostPath = path.join(ctx.runDir, name + ctx.target.launcherExt);
   writeText(

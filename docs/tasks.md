@@ -30,11 +30,23 @@ description instead, see [building a task with an agent](task-builder.md).
   A schedule or watcher trigger that reaches its **Stop running on** date
   completes the task either way — that date is itself the instruction to
   stop.
-- **Environment** — which configured environment (Settings → Environments)
-  the task's check, classifier, and agent run in.
+- **Project** — the [project](projects.md) the task belongs to. The task
+  runs in the project's folder, and in its environment and with its agent
+  settings unless the task overrides them. Pick **New project** to type or browse to
+  a folder no project has yet: saving the task creates a project for it,
+  named after the folder. A task saved with the folder of an existing
+  project joins that project instead.
 - **Working directory** — the folder the check command and the agent both
-  run in, in the path style the environment expects. Browse… opens a picker
-  scoped to that environment.
+  run in, in the path style the environment expects. It's the project's
+  folder, so you can only change it for a new project; Browse… opens a
+  picker scoped to the environment.
+- **Override the project's environment** — off, the task follows
+  the project's environment, and **Environment** shows it greyed out. On,
+  **Environment** picks the task's own, from the environments that use the
+  same kind of path as the project's (WSL and local shell environments on
+  Linux use `/home/...` paths, Windows ones `C:\...`). Unless the task has
+  its own agent settings, its harness then becomes the project's harness in
+  that environment, or one of the same kind (Claude Code for Claude Code).
 
 A completed task keeps its whole definition and its run history until it is
 deleted, so the final report stays readable in the Runs tab and the run window.
@@ -209,6 +221,22 @@ classifier step on or off. When on, it runs after a check that returned
 
 ![The task editor's Agent tab](img/task-editor-agent.png)
 
+- **Agent prompt** — the instructions the agent starts with. `{{summary}}`
+  and `{{context}}` insert the check's output where you place them; if the
+  prompt references none of `{{summary}}`, `{{context}}` or `{{events}}`,
+  they're appended under a "## Check output" heading automatically. See
+  [prompt template variables](#prompt-template-variables) below for the
+  full set.
+- **Override the project's agent settings** — off, the agent runs
+  with the project's **Harness**, **Session type**, **Permission mode**,
+  **Model** and **Effort**, which show greyed out. On, the task keeps the
+  ones you pick, even when the project changes its own. If the project later
+  moves to an environment that doesn't have the task's harness, the task goes
+  back to the project's settings. A task that runs in another environment
+  than its project (see the General tab) gets the project's harness there;
+  when that environment has no harness of the same kind, it gets the
+  environment's first harness with its default model, effort and permission
+  mode.
 - **Harness** — which harness in the task's environment runs the agent.
 - **Session type** — Interactive terminal (default): a real pty shown in the
   task's Terminal tab, which you can type into. Headless: no terminal; the
@@ -235,10 +263,9 @@ classifier step on or off. When on, it runs after a check that returned
   (`--dangerously-bypass-approvals-and-sandbox`), or None. Sandboxed codex
   runs also get `--add-dir` for the run directory, so `looper-done` can
   write its signal files there.
-- **Conversation** — Claude Code and Codex. Start new on each run (the
-  default) starts every run as a fresh session. Continue previous across
-  runs keeps one rolling
-  conversation: with Claude Code the first run starts it (`--session-id`) and
+- **Continue one conversation across runs** — Claude Code and Codex. Off
+  (the default), every run starts as a fresh session. On, the task keeps
+  one rolling conversation: with Claude Code the first run starts it (`--session-id`) and
   later runs resume it (`--resume`); with Codex the first run's thread id is
   captured and later runs `codex … resume` it. Either way the agent remembers
   what it already saw and reported.
@@ -246,21 +273,23 @@ classifier step on or off. When on, it runs after a check that returned
   conversation can't be shared by overlapping runs.
   **Start a new conversation after** (default 10 runs) caps the roll — after
   that many runs the next run starts a new conversation (a cap of 1 behaves
-  like Start new on each run).
+  like leaving the box off).
   If the conversation to resume no longer exists (e.g. its transcript was
   cleaned up), that run ends as an error saying so and the next run starts a
-  new one. Editing the task's working directory, environment, or harness
-  also starts a new one, since a conversation can't move.
-- **Agent prompt** — the instructions the agent starts with. `{{summary}}`
-  and `{{context}}` insert the check's output where you place them; if the
-  prompt references none of `{{summary}}`, `{{context}}` or `{{events}}`,
-  they're appended under a "## Check output" heading automatically. See
-  [prompt template variables](#prompt-template-variables) below for the
-  full set.
+  new one. A change to the task's working directory, environment, or harness
+  also starts a new one, since a conversation can't move, and that includes
+  a change made in the task's project.
+- **Command** — replaces the harness's command for this task's agent, for
+  example with a wrapper script; Looper still adds the flags it builds.
+  Empty, the agent runs the harness's own command, which the field shows
+  greyed out.
 - **Extra command-line arguments** — appended verbatim to the harness
-  command line.
+  command line, after the project's own (see [projects](projects.md)).
 - **Extra environment variables** — set for every step of this task (check,
-  classifier, agent); these override the same variable on the harness.
+  classifier, agent), along with the project's. A task's variable replaces
+  the project's variable of the same name, and both replace the same
+  variable on the harness. When the project has arguments or variables, they
+  show under the field.
 
 ## Settings
 
@@ -281,7 +310,7 @@ classifier step on or off. When on, it runs after a check that returned
   At the default of 1, a slot due while a run is active is
   skipped. Above 1, a due slot starts another run alongside the ones already
   going instead of being skipped, up to the cap. Incompatible with the
-  agent's "Continue previous across runs" — the editor refuses to save that
+  agent's "Continue one conversation across runs" — the editor refuses to save that
   combination.
 - **Restart the agent when its context passes a limit** — Claude Code and
   Codex, off by default. Once the agent's conversation passes **Context

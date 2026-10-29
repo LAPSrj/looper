@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
-import type { Environment, Task, TaskInput } from '@shared/types';
+import type { Environment, Project, Task, TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
+import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
 import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
@@ -15,6 +16,9 @@ interface Props {
   initial?: TaskInput;
   /** The configured environments (File → Settings → Environments). */
   environments: Environment[];
+  projects: Project[];
+  /** A new task's project (a project's New Task…). */
+  projectId?: string;
   /** Environment preselected for new tasks (from global settings). */
   defaultEnvironmentId?: string;
   /** Host kind, deciding the path style of `local` environments. */
@@ -63,6 +67,49 @@ function blankDraft(environmentId?: string): Draft {
 
 function toDraft(t: Task): Draft {
   return JSON.parse(JSON.stringify(t)) as Draft;
+}
+
+/**
+ * The agent for another harness: a harness of another kind doesn't share
+ * model ids, and a permission mode or effort it doesn't know goes back to the default.
+ */
+function fitAgent(agent: Draft['agent'], harnessId: string | undefined, env: Environment | undefined): Draft['agent'] {
+  const kindOf = (id?: string) => (id ? env?.harnesses.find((h) => h.id === id) : env?.harnesses[0])?.kind ?? 'claude-code';
+  const from = kindOf(agent.harnessId);
+  const to = kindOf(harnessId);
+  const next = { ...agent, harnessId };
+  if (to === from) return next;
+  next.model = undefined;
+  if (to !== 'custom') {
+    if (!PERMISSION_MODES[to].some(([v]) => v === (next.permissionMode ?? 'auto'))) next.permissionMode = 'auto';
+    if (next.effort && !EFFORT_LEVELS[to].some(([v]) => v === next.effort)) next.effort = undefined;
+  }
+  return next;
+}
+
+/** The draft in its project: the project's folder, and its environment and agent settings unless the task overrides them. */
+function withProject(d: Draft, p: Project, environments: Environment[]): Draft {
+  const environmentId = d.overrideEnvironment ? (d.environmentId ?? p.environmentId) : p.environmentId;
+  const agent = d.overrideAgent
+    ? fitAgent(d.agent, d.agent.harnessId, environments.find((e) => e.id === environmentId))
+    : (withProjectAgent(d.agent as Task['agent'], projectAgentIn(p, environmentId, environments)) as Draft['agent']);
+  return { ...d, projectId: p.id, cwd: p.cwd, environmentId, agent };
+}
+
+/**
+ * Where a draft that comes in (a task, an import, a template) belongs: its own
+ * project, else the project of its folder (agent settings other than the
+ * project's stay as an override), else a new project for its folder.
+ */
+function placeDraft(d: Draft, projects: Project[], environments: Environment[]): Draft {
+  const own = projects.find((p) => p.id === d.projectId);
+  if (own) return withProject(d, own, environments);
+  const byFolder = d.cwd && d.environmentId ? projects.find((p) => p.environmentId === d.environmentId && sameFolder(p.cwd, d.cwd!)) : undefined;
+  if (!byFolder) return { ...d, projectId: undefined, overrideEnvironment: false, overrideAgent: false };
+  const env = environments.find((e) => e.id === byFolder.environmentId);
+  const pa = projectAgentIn(byFolder, byFolder.environmentId, environments);
+  const differs = agentDiffers({ mode: 'interactive', permissionMode: 'auto', ...d.agent } as Task['agent'], pa, env);
+  return withProject({ ...d, overrideEnvironment: false, overrideAgent: differs }, byFolder, environments);
 }
 
 const TIMEZONES = [...Intl.supportedValuesOf('timeZone'), ...Object.keys(TIMEZONE_ALIASES)].sort();
@@ -120,10 +167,11 @@ function TimezoneSelect({ value, onChange }: { value?: string; onChange: (tz?: s
 }
 
 
-export function TaskEditor({ task, initial, environments, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {
-  const [draft, setDraft] = useState<Draft>(() =>
-    task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId),
-  );
+export function TaskEditor({ task, initial, environments, projects, projectId, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {
+  const [draft, setDraft] = useState<Draft>(() => {
+    const d = task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId);
+    return placeDraft(!task && !initial && projectId ? { ...d, projectId } : d, projects, environments);
+  });
   const [tab, setTab] = useState<EditorTab>('general');
   const [jsonText, setJsonText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -247,23 +295,30 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
     setDraft((d) => ({ ...d, agent: { ...d.agent, [key]: value } }));
   /** Switching to another harness kind: its model ids and permission modes don't carry over. */
   const setHarness = (id: string) => {
-    const next = harnesses.find((h) => h.id === id);
-    const kind = next?.kind ?? 'claude-code';
-    setDraft((d) => {
-      const agent = { ...d.agent, harnessId: id };
-      if (kind !== harnessKind) {
-        agent.model = undefined;
-        if (kind !== 'custom') {
-          if (!PERMISSION_MODES[kind].some(([v]) => v === (agent.permissionMode ?? 'auto'))) {
-            agent.permissionMode = 'auto';
-          }
-          if (agent.effort && !EFFORT_LEVELS[kind].some(([v]) => v === agent.effort)) agent.effort = undefined;
-        }
-      }
-      return { ...d, agent };
-    });
-    if (kind !== harnessKind) setCustomModel(false);
+    if ((harnesses.find((h) => h.id === id)?.kind ?? 'claude-code') !== harnessKind) setCustomModel(false);
+    setDraft((d) => ({ ...d, agent: fitAgent(d.agent, id, env) }));
   };
+  const project = projects.find((p) => p.id === draft.projectId);
+  // The agent settings follow the project until the task overrides them.
+  const agentLocked = !!project && !draft.overrideAgent;
+  const continueOn = (draft.agent.session ?? 'fresh') === 'continue';
+  const projectEnv = project ? environments.find((e) => e.id === project.environmentId) : undefined;
+  // A project's folder is written for one kind of environment: an override can only pick one of that kind.
+  const envChoices = projectEnv ? environments.filter((e) => e.id === draft.environmentId || pathFlavor(e, host) === pathFlavor(projectEnv, host)) : environments;
+  /** '' = a new project for the folder typed below. */
+  const pickProject = (id: string) => {
+    setCustomModel(false);
+    setDraft((d) => {
+      const p = projects.find((x) => x.id === id);
+      if (p) return withProject(d, p, environments);
+      return { ...d, projectId: undefined, overrideEnvironment: false, overrideAgent: false, cwd: '' };
+    });
+  };
+  const setOverride = (key: 'overrideEnvironment' | 'overrideAgent', on: boolean) =>
+    setDraft((d) => {
+      const p = projects.find((x) => x.id === d.projectId);
+      return p ? withProject({ ...d, [key]: on }, p, environments) : d;
+    });
   const contextOn = draft.agent.contextLimitK !== undefined;
   const ask: Task['agent']['ask'] = {
     allowed: draft.agent.ask?.allowed ?? false,
@@ -300,6 +355,8 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
   const setEnvironment = (id: string) =>
     setDraft((d) => {
       const next = environments.find((e) => e.id === id);
+      const p = projects.find((x) => x.id === d.projectId);
+      if (p && !d.overrideAgent) return withProject({ ...d, environmentId: id }, p, environments);
       const keepHarness = d.agent.harnessId && next?.harnesses.some((h) => h.id === d.agent.harnessId);
       return { ...d, environmentId: id, agent: { ...d.agent, harnessId: keepHarness ? d.agent.harnessId : undefined } };
     });
@@ -427,27 +484,43 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
               />
               Allow this task to be marked completed
             </label>
+            <Field label="Project">
+              <select value={project?.id ?? ''} onChange={(e) => pickProject(e.target.value)}>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+                <option value="">New project</option>
+              </select>
+            </Field>
+            <Field label="Working directory">
+              <div className="browse-row">
+                <input className="mono" value={draft.cwd} disabled={!!project} onChange={(e) => set('cwd', e.target.value)} />
+                <button className="btn" disabled={!!project} onClick={() => void browseCwd()}>
+                  Browse…
+                </button>
+              </div>
+            </Field>
+            {project && (
+              <label className="checkbox-field">
+                <input type="checkbox" checked={!!draft.overrideEnvironment} onChange={(e) => setOverride('overrideEnvironment', e.target.checked)} />
+                Override the project's environment
+              </label>
+            )}
             <Field label="Environment">
-                <select value={env?.id ?? draft.environmentId ?? ''} onChange={(e) => setEnvironment(e.target.value)}>
-                  {!env && <option value={draft.environmentId ?? ''}>Unknown environment ({draft.environmentId || 'none'})</option>}
-                  {environments.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Working directory">
-                <div className="browse-row">
-                  <input
-                    className="mono"
-                    value={draft.cwd}
-                    onChange={(e) => set('cwd', e.target.value)}
-                  />
-                  <button className="btn" onClick={() => void browseCwd()}>
-                    Browse…
-                  </button>
-                </div>
+              <select
+                value={env?.id ?? draft.environmentId ?? ''}
+                disabled={!!project && !draft.overrideEnvironment}
+                onChange={(e) => setEnvironment(e.target.value)}
+              >
+                {!env && <option value={draft.environmentId ?? ''}>Unknown environment ({draft.environmentId || 'none'})</option>}
+                {envChoices.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
         </div>
@@ -971,11 +1044,29 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
 
         <div className={`editor-panel${tab !== 'agent' ? ' hidden' : ''}`}>
           <div className="form">
+            <Field
+              label="Agent prompt"
+              help={
+                <>
+                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output,{' '}
+                  <code>{'{{events}}'}</code> the watcher events (appended automatically if you use none).{' '}
+                  <code>{'{{file:path}}'}</code> inserts that file's contents.
+                </>
+              }
+            >
+              <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
+            </Field>
+            {project && (
+              <label className="checkbox-field">
+                <input type="checkbox" checked={!!draft.overrideAgent} onChange={(e) => setOverride('overrideAgent', e.target.checked)} />
+                Override the project's agent settings
+              </label>
+            )}
             <div className="row">
               <Field label="Harness">
                 <select
                   value={harness?.id ?? ''}
-                  disabled={!harnesses.length}
+                  disabled={!harnesses.length || agentLocked}
                   onChange={(e) => setHarness(e.target.value)}
                 >
                   {!harnesses.length && <option value="">No harnesses in this environment</option>}
@@ -987,14 +1078,14 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 </select>
               </Field>
               <Field label="Session type">
-                <select value={draft.agent.mode ?? 'interactive'} onChange={(e) => setAgent('mode', e.target.value as 'interactive' | 'headless')}>
+                <select value={draft.agent.mode ?? 'interactive'} disabled={agentLocked} onChange={(e) => setAgent('mode', e.target.value as 'interactive' | 'headless')}>
                   <option value="interactive">Interactive terminal (default)</option>
                   <option value="headless">Headless{isCodex ? ' (codex exec)' : ''}</option>
                 </select>
               </Field>
               {permissionModes.length > 0 && (
                 <Field label="Permission mode">
-                  <select value={draft.agent.permissionMode ?? 'auto'} onChange={(e) => setAgent('permissionMode', e.target.value)}>
+                  <select value={draft.agent.permissionMode ?? 'auto'} disabled={agentLocked} onChange={(e) => setAgent('permissionMode', e.target.value)}>
                     {permissionModes.map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
@@ -1009,6 +1100,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 <Field label="Model">
                   <select
                     value={modelIsCustom ? 'custom' : draft.agent.model ?? ''}
+                    disabled={agentLocked}
                     onChange={(e) => {
                       if (e.target.value === 'custom') {
                         setCustomModel(true);
@@ -1044,6 +1136,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                     <input
                       className="mono"
                       value={draft.agent.model ?? ''}
+                      disabled={agentLocked}
                       placeholder="model id"
                       onChange={(e) => setAgent('model', e.target.value || undefined)}
                     />
@@ -1051,7 +1144,7 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 )}
                 {effortLevels.length > 0 && (
                   <Field label="Effort">
-                    <select value={draft.agent.effort ?? ''} onChange={(e) => setAgent('effort', e.target.value || undefined)}>
+                    <select value={draft.agent.effort ?? ''} disabled={agentLocked} onChange={(e) => setAgent('effort', e.target.value || undefined)}>
                       <option value="">{defaultEffortLabel ? `Default (${defaultEffortLabel})` : 'Default'}</option>
                       {draft.agent.effort && !effortLevels.some(([v]) => v === draft.agent.effort) && (
                         <option value={draft.agent.effort}>{draft.agent.effort}</option>
@@ -1066,39 +1159,30 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                 )}
               </div>
             )}
-            <Field
-              label="Agent prompt"
-              help={
-                <>
-                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output,{' '}
-                  <code>{'{{events}}'}</code> the watcher events (appended automatically if you use none).{' '}
-                  <code>{'{{file:path}}'}</code> inserts that file's contents.
-                </>
-              }
-            >
-              <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
-            </Field>
+            {(isClaude || isCodex) && (
+              <>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={continueOn}
+                    onChange={(e) => setAgent('session', e.target.checked ? 'continue' : 'fresh')}
+                  />
+                  Continue one conversation across runs
+                </label>
+                <fieldset className={`step-fields${continueOn ? '' : ' disabled'}`} disabled={!continueOn}>
+                  <div className="row">
+                    <NumberField
+                      label="Start a new conversation after"
+                      suffix="runs"
+                      min={1}
+                      value={draft.agent.sessionMaxRuns ?? 10}
+                      onChange={(n) => setAgent('sessionMaxRuns', n)}
+                    />
+                  </div>
+                </fieldset>
+              </>
+            )}
             <div className="row">
-              {(isClaude || isCodex) && (
-                <Field label="Conversation">
-                  <select
-                    value={draft.agent.session ?? 'fresh'}
-                    onChange={(e) => setAgent('session', e.target.value as 'fresh' | 'continue')}
-                  >
-                    <option value="fresh">Start new on each run</option>
-                    <option value="continue">Continue previous across runs</option>
-                  </select>
-                </Field>
-              )}
-              {(isClaude || isCodex) && (draft.agent.session ?? 'fresh') === 'continue' && (
-                <NumberField
-                  label="Start a new conversation after"
-                  suffix="runs"
-                  min={1}
-                  value={draft.agent.sessionMaxRuns ?? 10}
-                  onChange={(n) => setAgent('sessionMaxRuns', n)}
-                />
-              )}
               <Field label="Command">
                 <input
                   className="mono"
@@ -1107,12 +1191,16 @@ export function TaskEditor({ task, initial, environments, defaultEnvironmentId, 
                   onChange={(e) => setAgent('command', e.target.value || undefined)}
                 />
               </Field>
-            </div>
-            <div className="row">
-              <Field label="Extra command-line arguments">
+              <Field
+                label="Extra command-line arguments"
+                help={project?.extraArgs.length ? `After the project's: ${joinTokens(project.extraArgs)}` : undefined}
+              >
                 <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
               </Field>
-              <Field label="Extra environment variables">
+              <Field
+                label="Extra environment variables"
+                help={Object.keys(project?.env ?? {}).length ? `Added to the project's: ${envToLine(project!.env)}` : undefined}
+              >
                 <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
               </Field>
             </div>

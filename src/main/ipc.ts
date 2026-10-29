@@ -4,15 +4,15 @@ import type { Engine } from '../engine/engine';
 import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
-import { folderParents, folderSubtree } from '../shared/folders';
-import { resolveEnvironment, resolveHarness } from '../shared/environments';
+import { folderSubtree } from '../shared/folders';
+import { projectTaskId } from '../shared/projects';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import type { Attachment, AttachmentInput } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
-import type { Task, TaskFolder, View } from '../shared/types';
+import type { Task, View } from '../shared/types';
 import { paneMenuItems, singleMenuItems } from './view-menu';
 
 export interface IpcHost {
@@ -70,7 +70,10 @@ export interface IpcHost {
   /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
   openRemoteHelperEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
-  openRemoteProjectEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
+  /** The Edit Project window (no id = New Project). */
+  openProjectEditor: (id?: string) => void;
+  /** The New Task editor with the project picked. */
+  openNewTaskIn: (projectId: string) => void;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (
@@ -83,26 +86,6 @@ export interface IpcHost {
     taskCompleted?: boolean,
     allowComplete?: boolean,
   ) => void;
-}
-
-/** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
-const menuText = (s: string): string => s.replace(/&/g, '&&');
-
-/** Menu items for picking a task: the sidebar's folders as submenus (empty ones left out), then the top-level tasks. */
-function tasksByFolder(folders: TaskFolder[], tasks: Task[], pick: (t: Task) => void): Electron.MenuItemConstructorOptions[] {
-  const parents = folderParents(folders);
-  const containerOf = (t: Task) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
-  const build = (container: string): Electron.MenuItemConstructorOptions[] => {
-    const items: Electron.MenuItemConstructorOptions[] = [];
-    for (const f of folders) {
-      if (parents.get(f.id) !== container) continue;
-      const sub = build(f.id);
-      if (sub.length) items.push({ label: menuText(f.name), submenu: sub });
-    }
-    for (const t of tasks) if (containerOf(t) === container) items.push({ label: menuText(t.name), click: () => pick(t) });
-    return items;
-  };
-  return build('');
 }
 
 /** Height of an attachment's thumbnail in a chat message. */
@@ -409,7 +392,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
   const openTargetPath = async (taskId: string, p: string): Promise<void> => {
-    const task = engine.getTask(taskId);
+    const task = engine.findSessionTask(taskId);
     const env = task ? engine.settings.environments.find((x) => x.id === task.environmentId) : undefined;
     const distro = env?.kind === 'wsl' ? env.distro : undefined;
     let hostPath = p;
@@ -423,9 +406,59 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   };
 
   ipcMain.handle('task:openWorkFolder', async (_e, id: string) => {
-    const task = engine.getTask(id);
+    const task = engine.findSessionTask(id);
     if (!task) return;
     await openTargetPath(id, task.cwd);
+  });
+
+  // ---------- projects ----------
+
+  /** A failure shown over the window that asked. */
+  const fail = (sender: BrowserWindow | null, err: unknown) => {
+    const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
+    void (sender ? dialog.showMessageBox(sender, opts) : dialog.showMessageBox(opts));
+  };
+  const projectChat = (id: string, sender: BrowserWindow | null) => host.openChat(projectTaskId(id)).catch((err) => fail(sender, err));
+  const projectTerminal = (id: string, sender: BrowserWindow | null) => host.openTerminal(projectTaskId(id)).catch((err) => fail(sender, err));
+  const removeProject = async (id: string, sender: BrowserWindow | null) => {
+    const project = engine.getProject(id);
+    if (!project) return;
+    const msg = { type: 'question' as const, title: 'Looper', message: `Delete the project "${project.name}"?`, detail: 'Its folder and files stay as they are.', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 };
+    const { response } = sender ? await dialog.showMessageBox(sender, msg) : await dialog.showMessageBox(msg);
+    if (response !== 0) return;
+    try {
+      engine.removeProject(id);
+    } catch (err) {
+      fail(sender, err);
+    }
+  };
+  ipcMain.handle('projects:list', () => engine.listProjects());
+  ipcMain.handle('projects:save', (_e, input: unknown) => engine.saveProject(input));
+  ipcMain.handle('projects:remove', (e, id: string) => removeProject(String(id), BrowserWindow.fromWebContents(e.sender)));
+  ipcMain.handle('projects:reorder', (_e, ids: string[]) => engine.reorderProjects(Array.isArray(ids) ? ids.map(String) : []));
+  ipcMain.handle('projects:openEditor', (_e, id?: string) => host.openProjectEditor(id ? String(id) : undefined));
+  ipcMain.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
+  ipcMain.handle('projects:newChat', (e, id: string) => projectChat(String(id), BrowserWindow.fromWebContents(e.sender)));
+  ipcMain.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), BrowserWindow.fromWebContents(e.sender)));
+  // A project's menu; with no id, the Projects pane header's or empty space's.
+  ipcMain.on('context-menu:project', (e, id: string) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const pid = String(id ?? '');
+    if (!pid || !engine.getProject(pid)) {
+      Menu.buildFromTemplate([{ label: 'New P&roject…', click: () => host.openProjectEditor() }]).popup({ window: sender });
+      return;
+    }
+    Menu.buildFromTemplate([
+      { label: 'New &Chat', click: () => void projectChat(pid, sender) },
+      { label: 'New Ter&minal', click: () => void projectTerminal(pid, sender) },
+      { type: 'separator' },
+      { label: 'New &Task…', click: () => host.openNewTaskIn(pid) },
+      { type: 'separator' },
+      { label: '&Edit Project…', click: () => host.openProjectEditor(pid) },
+      { label: 'Open &Working Directory', click: () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)) },
+      { label: '&Delete Project', click: () => void removeProject(pid, sender) },
+    ]).popup({ window: sender });
   });
 
   ipcMain.handle('agent:buffer', (_e, id: string, runId?: string) => engine.agentBuffer(id, runId));
@@ -477,44 +510,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('remote:openHelperEditor', (e, id: string, isNew?: boolean) =>
     host.openRemoteHelperEditor(String(id), !!isNew, BrowserWindow.fromWebContents(e.sender)),
   );
-  ipcMain.handle('remote:openProjectEditor', (e, id: string, isNew?: boolean) =>
-    host.openRemoteProjectEditor(String(id), !!isNew, BrowserWindow.fromWebContents(e.sender)),
-  );
-  // A new helper or folder project whose window closed without Create.
-  ipcMain.on('remote:discard', (_e, kind: 'helper' | 'project', id: string) => {
+  // A new helper whose window closed without Create.
+  ipcMain.on('remote:discard', (_e, id: string) => {
     try {
       const r = engine.settings.remote;
-      if (kind === 'helper') engine.updateSettings({ remote: { ...r, helpers: r.helpers.filter((h) => h.id !== id) } });
-      else engine.updateSettings({ remote: { ...r, projects: r.projects.filter((p) => p.id !== id) } });
+      engine.updateSettings({ remote: { ...r, helpers: r.helpers.filter((h) => h.id !== id) } });
     } catch (err) {
-      engine.log.error(`discard remote ${kind} ${id} failed: ${String(err)}`);
+      engine.log.error(`discard remote helper ${id} failed: ${String(err)}`);
     }
-  });
-  // Add Task…: the Claude Code tasks not yet in the list, by folder; a pick adds the project right away.
-  ipcMain.on('remote:addTaskMenu', (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
-    if (!sender) return;
-    const r = engine.settings.remote;
-    const listed = new Set(r.projects.flatMap((p) => (p.kind === 'task' ? [p.taskId] : [])));
-    const claude = (t: Task) => {
-      try {
-        return resolveHarness(t, resolveEnvironment(t, engine.settings)).kind === 'claude-code';
-      } catch {
-        return false;
-      }
-    };
-    const tasks = engine.listTasks().filter((t) => !listed.has(t.id) && claude(t));
-    const pick = (t: Task) => {
-      try {
-        const rr = engine.settings.remote;
-        const id = `p-${Math.random().toString(36).slice(2, 8)}`;
-        engine.updateSettings({ remote: { ...rr, projects: [...rr.projects, { kind: 'task', id, taskId: t.id }] } });
-      } catch (err) {
-        void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
-      }
-    };
-    const items = tasksByFolder(engine.listFolders(), tasks, pick);
-    Menu.buildFromTemplate(items.length ? items : [{ label: 'No other Claude Code tasks', enabled: false }]).popup({ window: sender });
   });
   ipcMain.on('context-menu:remote-conversation', (e, id: string) => {
     const sender = BrowserWindow.fromWebContents(e.sender);

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { AddonIconName } from '@shared/addons';
 
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
-export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance', ReactNode> = {
+export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat', ReactNode> = {
   dashboard: (
     <>
       <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
@@ -28,6 +28,13 @@ export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'c
     </>
   ),
   guidance: <path d="M2.5 3.5h11v7.5H7l-3 2.5v-2.5H2.5Z" />,
+  // Two speech bubbles: a conversation, unlike guidance's single one.
+  chat: (
+    <>
+      <path d="M1.5 2.5h8.5v5.5H5L2.8 9.8V8H1.5Z" />
+      <path d="M12 5.5h2.5v6h-1.2v1.8L11 11.5H6.5V10" />
+    </>
+  ),
   edit: <path d="m11.3 2.7 2 2L5.5 12.5l-2.8.8.8-2.8Z" />,
   terminal: (
     <>

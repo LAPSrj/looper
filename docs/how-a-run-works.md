@@ -186,7 +186,7 @@ as its text), and the run's result is the last session's.
 - **Max restarts** (default 3) caps the restarts per run. The last session
   allowed gets neither the notice nor the `looper-restart` command, so it
   works on until it finishes.
-- With **Continue previous across runs**, the next run resumes the newest
+- With **Continue one conversation across runs**, the next run resumes the newest
   session's conversation.
 - The Terminal tab, `output.txt`, and `output.log` keep every session, with a
   line marking each restart, and the conversation window shows every

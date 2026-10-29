@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Harness, Settings, Task } from '../shared/types';
+import { agentArgs, taskEnv } from '../shared/projects';
 import { DEFAULT_SHELL, codexPermissionArgs, projectMcpApproval, resolveEffort, resolveEnvironment, resolveHarness } from '../shared/environments';
 import type { HostKind } from './host';
 import { wslDistroName } from './host';
@@ -50,7 +51,7 @@ export function terminalHarnessCommand(
     if (resumeSessionId) parts.push('resume', q(resumeSessionId));
   }
   for (const arg of harness.args) parts.push(q(arg));
-  for (const extra of a.extraArgs) parts.push(q(extra));
+  for (const extra of agentArgs(task)) parts.push(q(extra));
   return parts.join(' ');
 }
 
@@ -257,7 +258,7 @@ export function writeTerminalLauncher(
   const helpers = Object.entries(remote?.helpers ?? {});
   for (const [name, content] of helpers) writeText(path.join(dir, 'bin', name), content, 0o755);
   const launcherHost = path.join(dir, 'terminal' + target.launcherExt);
-  const vars = { ...harness.env, ...task.env, ...remote?.env };
+  const vars = { ...harness.env, ...taskEnv(task), ...remote?.env };
   writeText(launcherHost, renderTerminalScript(target, task, vars, command, prelude, helpers.length ? t('bin') : undefined), 0o755);
   return { target, launcherHost };
 }
