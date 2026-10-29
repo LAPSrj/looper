@@ -212,7 +212,9 @@ describe('Remote Control', () => {
     const code = path.join(h.dir, 'responses', 'q1.code');
     for (let i = 0; i < 100 && !fs.existsSync(code); i++) await sleep(20);
     const out = fs.readFileSync(path.join(h.dir, 'responses', 'q1.out'), 'utf8').trim().split('\n');
-    const day = new Date().toISOString().slice(0, 10);
+    // The local day of the fresh folder's own time (a minute ago), which isn't today just after midnight.
+    const d = new Date(Date.now() - 60_000);
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     expect(out[0]).toBe(`- ${fresh} (last session ${day})`);
     expect(out[1]).toMatch(new RegExp(`^- ${old} \\(last session \\d{4}-\\d{2}-\\d{2}\\)$`));
     expect(out[2]).toBe(`- ${never}`);

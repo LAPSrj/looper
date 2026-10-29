@@ -72,6 +72,7 @@
       "out/**",
       "assets/icon.png",
       "assets/icon.ico",
+      "assets/looperaddon.ico",
       "package.json"
     ],
     "win": {

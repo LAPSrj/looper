@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { commandOn } from '@shared/addons';
 import type {
   AddonButton,
   AddonEventKind,
   AddonField,
+  AddonMenuItem,
   AddonNode,
   AddonProp,
   AddonScreen,
@@ -13,7 +15,7 @@ import { useDialogKeys } from './hooks';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
 import { Markdown } from './Markdown';
-import { EditorFooter, Field, InfoBar, NumberInput } from './ui';
+import { EditorFooter, Field, InfoBar, NumberInput, TabBar } from './ui';
 
 type Value = string | number | boolean;
 type Values = Record<string, Value>;
@@ -21,7 +23,15 @@ type Values = Record<string, Value>;
 /** Every field of a screen, inside rows and sections too. */
 function fieldsOf(nodes: AddonNode[]): AddonField[] {
   return nodes.flatMap((n) =>
-    n.type === 'field' ? [n] : n.type === 'row' ? n.items : n.type === 'section' ? fieldsOf(n.body) : [],
+    n.type === 'field'
+      ? [n]
+      : n.type === 'row'
+        ? n.items
+        : n.type === 'section'
+          ? fieldsOf(n.body)
+          : n.type === 'tabs'
+            ? n.items.flatMap((t) => fieldsOf(t.body))
+            : [],
   );
 }
 
@@ -90,11 +100,14 @@ export function AddonScreenView({
 
   // When a new screen was asked for, until it's drawn: a slow one is logged.
   const asked = useRef<{ at: number; addonId: string; view: string } | null>(null);
+  // The selected tab of each tabs node, by its id: kept across redraws of the same screen.
+  const [tabSel, setTabSel] = useState<Record<string, string>>({});
   useEffect(() => {
     setScreen(null);
     setError(null);
     setValues({});
     setRevealed({});
+    setTabSel({});
     asked.current = { at: performance.now(), addonId, view };
     load();
   }, [load, addonId, view]);
@@ -151,9 +164,18 @@ export function AddonScreenView({
   const footer = mode === 'window' ? screen?.body.find((n) => n.type === 'footer') : undefined;
   const primary = footer?.type === 'footer' ? footer.primary : undefined;
 
+  type TabsNode = Extract<AddonNode, { type: 'tabs' }>;
+  const activeTab = (n: TabsNode) => (n.items.some((t) => t.id === tabSel[n.id]) ? tabSel[n.id] : n.items[0].id);
+  const selectTab = (n: TabsNode) => (id: string) => setTabSel((m) => ({ ...m, [n.id]: id }));
+  // A window's top-level tabs go across the top of the window, as in Looper's own editors.
+  const windowTabs = mode === 'window' ? (screen?.body.find((n) => n.type === 'tabs') as TabsNode | undefined) : undefined;
+
   useDialogKeys({
     onSave: mode === 'window' && primary && !missing && !busy ? () => void send('click', primary.id, primary.confirm) : undefined,
     onCancel: mode === 'window' ? () => window.close() : undefined,
+    tabs: windowTabs?.items.map((t) => t.id),
+    tab: windowTabs ? activeTab(windowTabs) : undefined,
+    onTab: windowTabs ? selectTab(windowTabs) : undefined,
   });
 
   const button = (b: AddonButton) => (
@@ -354,6 +376,17 @@ export function AddonScreenView({
             {n.body.map(node)}
           </section>
         );
+      case 'tabs': {
+        const active = activeTab(n);
+        const body = <div key={`${n.id}:${active}`}>{n.items.find((t) => t.id === active)!.body.map(node)}</div>;
+        if (n === windowTabs) return body;
+        return (
+          <div key={i} className="addon-tabs">
+            <TabBar tabs={n.items.map((t) => [t.id, t.title] as const)} active={active} onSelect={selectTab(n)} />
+            {body}
+          </div>
+        );
+      }
       case 'footer':
         // In the main window a footer is an ordinary button row.
         return mode === 'window' ? null : (
@@ -395,6 +428,14 @@ export function AddonScreenView({
   return (
     <div className="editor addon-screen">
       {buttons && <div className="toolbar addon-toolbar">{buttons}</div>}
+      {windowTabs && (
+        <TabBar
+          tabs={windowTabs.items.map((t) => [t.id, t.title] as const)}
+          active={activeTab(windowTabs)}
+          onSelect={selectTab(windowTabs)}
+          className="editor-tabs"
+        />
+      )}
       <div className="editor-body">
         <div className="form">{failed || screen?.body.map(node)}</div>
       </div>
@@ -415,17 +456,17 @@ export function AddonScreenView({
 
 /**
  * An addon toolbar, drawn like Looper's. Its buttons show their label next to
- * the icon: addon toolbars are short, and their icons aren't ones users know.
+ * the icon, unless the addon asks for the icon alone (the label is then the tooltip).
  */
 export function AddonToolbarButtons({
   items,
-  hasItem = true,
+  selected,
   busy,
   onClick,
 }: {
   items: AddonToolbarItem[];
-  /** Whether a pane item is selected, for `needsItem` buttons. */
-  hasItem?: boolean;
+  /** In a pane window: the selected item (null for none), which decides its `needsItem` buttons (commandOn). */
+  selected?: { menu?: AddonMenuItem[] } | null;
   busy?: boolean;
   onClick: (id: string, confirm?: string) => void;
 }) {
@@ -437,12 +478,14 @@ export function AddonToolbarButtons({
         ) : (
           <button
             key={t.id}
-            className="labeled"
-            disabled={busy || t.disabled || (t.needsItem && !hasItem)}
+            className={t.iconOnly ? undefined : 'labeled'}
+            title={t.iconOnly ? t.label : undefined}
+            aria-label={t.iconOnly ? t.label : undefined}
+            disabled={busy || t.disabled || (selected !== undefined && !commandOn(t, selected ?? undefined))}
             onClick={() => onClick(t.id, t.confirm)}
           >
             {t.icon && <Icon>{ICONS[t.icon]}</Icon>}
-            {t.label}
+            {!t.iconOnly && t.label}
           </button>
         ),
       )}

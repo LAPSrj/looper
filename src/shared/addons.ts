@@ -24,11 +24,34 @@ const RunBase = {
   env: z.record(z.string(), z.string()).optional(),
 };
 
-export const AddonRunSchema = z.discriminatedUnion('on', [
-  z.object({ on: z.literal('wsl'), distro: z.string().min(1).optional(), ...RunBase }).strict(),
-  z.object({ on: z.literal('windows'), ...RunBase }).strict(),
-]);
+/**
+ * How the addon's file says to run it. `on` is the side its program is for;
+ * which WSL distro or shell runs it is the user's environment's business.
+ */
+export const AddonRunSchema = z.object({ on: z.enum(['wsl', 'windows']), ...RunBase }).strict();
 export type AddonRun = z.infer<typeof AddonRunSchema>;
+export type AddonSide = AddonRun['on'];
+
+/** How this user runs the addon (Advanced → Addons… → Edit…): an environment from Settings → Environments, and the command. */
+export const AddonLocalRunSchema = z.object({ environmentId: z.string().min(1), ...RunBase }).strict();
+export type AddonLocalRun = z.infer<typeof AddonLocalRunSchema>;
+
+type EnvironmentKind = 'local' | 'wsl' | 'windows';
+
+/** The side a Looper environment runs programs on, from where Looper itself runs. */
+export function environmentSide(kind: EnvironmentKind, host: string): AddonSide {
+  if (kind === 'local') return host === 'windows' ? 'windows' : 'wsl';
+  return kind;
+}
+
+/**
+ * The environments (Settings → Environments) that can run an addon whose
+ * program is for `side`: WSL bridges work from Windows, Windows bridges from WSL.
+ */
+export function environmentsFor<E extends { kind: EnvironmentKind }>(side: AddonSide, environments: E[], host: string): E[] {
+  const reachable = (e: E) => e.kind === 'local' || (e.kind === 'wsl' && host === 'windows') || (e.kind === 'windows' && host === 'wsl');
+  return environments.filter((e) => reachable(e) && environmentSide(e.kind, host) === side);
+}
 
 export const AddonPaneDefSchema = z.object({ id, title: z.string().min(1) }).strict();
 
@@ -76,6 +99,8 @@ export const AddonManifestSchema = z
     tools: z.array(AddonToolSchema).default([]),
     /** Buttons on the main toolbar, there at all times. */
     toolbar: z.array(AddonMainButtonSchema).default([]),
+    /** Names the toolbar buttons in "<toolbarName> Toolbar" (View menu); the addon's name otherwise. */
+    toolbarName: z.string().min(1).optional(),
   })
   .strict();
 export type AddonManifest = z.infer<typeof AddonManifestSchema>;
@@ -121,11 +146,45 @@ export function zodSummary(err: z.ZodError): string {
     .join('\n');
 }
 
-/** How the manifest's command reads to a person: what the install confirmation shows. */
-export function describeRun(run: AddonRun): string {
-  const where = run.on === 'windows' ? 'Windows' : run.distro ? `WSL (${run.distro})` : 'WSL';
-  const cmd = run.command.map((a) => (/[\s"]/.test(a) ? JSON.stringify(a) : a)).join(' ');
-  return `${cmd}\nin ${where}`;
+/** In `run.command`, `run.cwd` and `run.env`: the folder the `.looperaddon` file was installed from. */
+export const ADDON_DIR_VAR = '${addonDir}';
+
+export const usesAddonDir = (run: AddonRun): boolean => JSON.stringify(run).includes(ADDON_DIR_VAR);
+
+/** `run` with ADDON_DIR_VAR replaced by `dir`, a path in the form the side the addon runs on uses. */
+export function withAddonDir(run: AddonRun, dir: string): AddonRun {
+  const sub = (s: string) => s.split(ADDON_DIR_VAR).join(dir);
+  return {
+    ...run,
+    command: run.command.map(sub),
+    ...(run.cwd ? { cwd: sub(run.cwd) } : {}),
+    ...(run.env ? { env: Object.fromEntries(Object.entries(run.env).map(([k, v]) => [k, sub(v)])) } : {}),
+  };
+}
+
+/** A command as one line, quoting the arguments that need it. */
+export function runCommand(run: { command: string[] }): string {
+  return run.command.map((a) => (/[\s"]/.test(a) ? JSON.stringify(a) : a)).join(' ');
+}
+
+/** "WSL" or "Windows": the side an addon's program is for, as the UI names it. */
+export const sideName = (side: AddonSide): string => (side === 'wsl' ? 'WSL' : 'Windows');
+
+/** "a", "a and b", "a, b and c". */
+function listText(items: string[]): string {
+  return items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** What installing the addon adds to Looper, one line per place, for the install confirmation. */
+export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'>): string[] {
+  const lines: string[] = [];
+  const panes = m.panes.map((p) => p.title);
+  if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} in the sidebar`);
+  const buttons = m.toolbar.map((b) => b.label);
+  if (buttons.length) lines.push(`${buttons.length === 1 ? 'A ' : ''}${listText(buttons)} button${buttons.length === 1 ? '' : 's'} on the toolbar`);
+  const tools = m.tools.map((t) => `${t.label}…`);
+  if (tools.length) lines.push(`${listText(tools)} in the Tools menu`);
+  return lines;
 }
 
 // ---------- Screens ----------
@@ -193,6 +252,8 @@ export type AddonNode =
   | AddonField
   | { type: 'row'; items: AddonField[] }
   | { type: 'section'; title: string; body: AddonNode[] }
+  /** Looper's tab control: one tab's body shows at a time, and the selected tab outlasts redraws. */
+  | { type: 'tabs'; id: string; items: { id: string; title: string; body: AddonNode[] }[] }
   | { type: 'footer'; primary: AddonButton; apply?: AddonButton };
 
 export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
@@ -207,6 +268,16 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
     FieldSchema,
     z.object({ type: z.literal('row'), items: z.array(FieldSchema) }).strict(),
     z.object({ type: z.literal('section'), title: z.string().min(1), body: z.array(AddonNodeSchema) }).strict(),
+    z
+      .object({
+        type: z.literal('tabs'),
+        id,
+        items: z
+          .array(z.object({ id, title: z.string().min(1), body: z.array(AddonNodeSchema) }).strict())
+          .min(1)
+          .refine((items) => new Set(items.map((t) => t.id)).size === items.length, 'tab ids must differ'),
+      })
+      .strict(),
     z.object({ type: z.literal('footer'), primary: ButtonSchema, apply: ButtonSchema.optional() }).strict(),
   ]),
 ) as z.ZodType<AddonNode>;
@@ -250,6 +321,20 @@ const MenuItemSchema = z.union([
 ]);
 export type AddonMenuItem = z.infer<typeof MenuItemSchema>;
 
+/**
+ * Whether a menu-bar item or pane-window toolbar button is available for the
+ * selected pane item. One with `needsItem` follows the item's own menu: the
+ * entry with its id gives its `enabled`, and with no such entry it's off. An
+ * item without a menu leaves it on.
+ */
+export function commandOn(command: { id: string; needsItem?: boolean }, item: { menu?: AddonMenuItem[] } | undefined): boolean {
+  if (!command.needsItem) return true;
+  if (!item) return false;
+  if (!item.menu) return true;
+  const own = item.menu.find((m) => 'id' in m && m.id === command.id);
+  return own !== undefined && 'id' in own && (own.enabled ?? true);
+}
+
 /** A window's menu bar: its menus, left to right. `&` in a label marks its access key. */
 const MenuBarSchema = z.array(z.object({ label: z.string().min(1), items: z.array(MenuItemSchema) }).strict());
 export type AddonMenuBar = z.infer<typeof MenuBarSchema>;
@@ -258,14 +343,17 @@ const ToolbarItemSchema = z.union([
   z
     .object({
       id,
-      /** Shown after the icon. */
+      /** Shown after the icon; with `iconOnly`, the button's tooltip and accessible name. */
       label: z.string().min(1),
       icon: z.enum(ADDON_ICONS).optional(),
+      /** Show only the icon, for commands users know by it (Refresh, Settings). */
+      iconOnly: z.boolean().optional(),
       disabled: z.boolean().optional(),
       confirm: z.string().min(1).optional(),
       needsItem: z.boolean().optional(),
     })
-    .strict(),
+    .strict()
+    .refine((t) => !t.iconOnly || t.icon, { message: '"iconOnly" needs an "icon"', path: ['iconOnly'] }),
   z.object({ separator: z.literal(true) }).strict(),
 ]);
 export type AddonToolbarItem = z.infer<typeof ToolbarItemSchema>;
@@ -417,6 +505,15 @@ export interface AddonInfo {
   panes: { id: string; title: string }[];
   tools: AddonTool[];
   toolbar: AddonMainButton[];
+  toolbarName?: string;
+  /** How its manifest says to run it. */
+  ownRun: AddonRun;
+  /** How this user changed that (Advanced → Addons… → Edit…), if they did. */
+  localRun?: AddonLocalRun;
+  /** The environment it runs in; unset while no environment runs programs on its side. */
+  environmentId?: string;
+  /** The environment it runs in without the user's change. */
+  defaultEnvironmentId?: string;
   /** Off: stopped in the Addons window; it stays stopped and shows nothing until started there. */
   enabled: boolean;
   status: AddonStatus;

@@ -60,7 +60,8 @@ function makeCtx(): RunContext {
   });
   return {
     task,
-    runId: 'r1',
+    // Unique: a session's cleanup kills every process with its run id, other test files' too.
+    runId: `r-${path.basename(root)}`,
     runDir,
     target: createTarget(task, { host: 'linux', settings }),
     settings,

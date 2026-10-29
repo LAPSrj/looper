@@ -3,15 +3,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
-import { AddonHost, addonEnv, addonSpawnLine } from '../src/main/addon-host';
+import { AddonHost, addonEnv, addonLaunch, addonSpawnLine } from '../src/main/addon-host';
+import type { Environment } from '../src/shared/types';
 import {
+  addonAdditions,
   AddonPaneContentSchema,
   AddonScreenSchema,
+  commandOn,
   engineLogSource,
   matchesSearch,
   readAddonManifest,
+  withAddonDir,
   type AddonInfo,
   type AddonManifest,
+  type AddonLocalRun,
+  type AddonRun,
 } from '../src/shared/addons';
 import { isAddonFileName, isLooperFileName } from '../src/shared/files';
 
@@ -67,6 +73,93 @@ describe('addon file names', () => {
   });
 });
 
+describe('tabs, icon-only buttons and a toolbar name', () => {
+  it('takes tabs with fields inside, and refuses no tabs or two tabs with one id', () => {
+    const tabs = (items: unknown[]) => AddonScreenSchema.safeParse({ body: [{ type: 'tabs', id: 'settings', items }] }).success;
+    expect(
+      tabs([
+        { id: 'general', title: 'General', body: [{ type: 'field', id: 'folder', label: 'Vault folder', input: 'text' }] },
+        { id: 'import', title: 'Import', body: [] },
+      ]),
+    ).toBe(true);
+    expect(tabs([])).toBe(false);
+    expect(
+      tabs([
+        { id: 'a', title: 'A', body: [] },
+        { id: 'a', title: 'B', body: [] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('shows a toolbar button as its icon only when it has one', () => {
+    const toolbar = (item: unknown) => AddonScreenSchema.safeParse({ body: [], toolbar: [item] }).success;
+    expect(toolbar({ id: 'r', label: 'Refresh', icon: 'refresh', iconOnly: true })).toBe(true);
+    expect(toolbar({ id: 'r', label: 'Refresh', iconOnly: true })).toBe(false);
+  });
+
+  it('takes a name for the toolbar', () => {
+    const r = readAddonManifest({ ...MANIFEST, toolbarName: 'Password' });
+    expect(r.ok && r.manifest.toolbarName).toBe('Password');
+  });
+});
+
+describe('commandOn', () => {
+  it("follows the selected item's own menu for commands that need an item", () => {
+    const copyTotp = { id: 'copy-totp', needsItem: true };
+    const withTotp = { menu: [{ id: 'copy-totp', label: 'Copy 2FA Code' }, { id: 'edit', label: 'Edit…', enabled: false }] };
+    expect(commandOn(copyTotp, withTotp)).toBe(true);
+    expect(commandOn({ id: 'edit', needsItem: true }, withTotp)).toBe(false);
+    expect(commandOn(copyTotp, { menu: [{ id: 'edit', label: 'Edit…' }] })).toBe(false);
+    expect(commandOn(copyTotp, {})).toBe(true);
+    expect(commandOn(copyTotp, undefined)).toBe(false);
+    expect(commandOn({ id: 'new' }, undefined)).toBe(true);
+  });
+});
+
+describe('withAddonDir', () => {
+  it('puts the folder the file was installed from into the command, working folder and environment', () => {
+    const run: AddonRun = {
+      on: 'wsl',
+      command: ['node', '${addonDir}/addon.mjs'],
+      cwd: '${addonDir}',
+      env: { TOOL: '${addonDir}/../../tool.js', OTHER: 'x' },
+    };
+    expect(withAddonDir(run, '/home/sam/tools/demo')).toEqual({
+      on: 'wsl',
+      command: ['node', '/home/sam/tools/demo/addon.mjs'],
+      cwd: '/home/sam/tools/demo',
+      env: { TOOL: '/home/sam/tools/demo/../../tool.js', OTHER: 'x' },
+    });
+  });
+});
+
+describe('addonAdditions', () => {
+  it('says in plain words where each thing the addon adds appears', () => {
+    expect(
+      addonAdditions({
+        panes: [{ id: 'a', title: 'Passwords' }],
+        toolbar: [{ id: 'p', label: 'Passwords' }],
+        tools: [
+          { id: 'p', label: 'Passwords', pane: 'a' },
+          { id: 's', label: 'LAPM Settings', view: 'settings' },
+        ],
+      }),
+    ).toEqual(['A Passwords pane in the sidebar', 'A Passwords button on the toolbar', 'Passwords… and LAPM Settings… in the Tools menu']);
+    expect(
+      addonAdditions({
+        panes: [
+          { id: 'a', title: 'Servers' },
+          { id: 'b', title: 'Keys' },
+          { id: 'c', title: 'Logs' },
+        ],
+        toolbar: [],
+        tools: [],
+      }),
+    ).toEqual(['Servers, Keys and Logs panes in the sidebar']);
+    expect(addonAdditions({ panes: [], toolbar: [], tools: [] })).toEqual([]);
+  });
+});
+
 describe('engineLogSource', () => {
   it("tells an addon's lines, stderr included, from Looper's own", () => {
     expect(engineLogSource('addon lapm: #4 render account 300 ms')).toBe('addon:lapm');
@@ -76,28 +169,57 @@ describe('engineLogSource', () => {
   });
 });
 
+const ENV = (e: Partial<Environment> & Pick<Environment, 'id' | 'kind'>): Environment => ({ name: e.id, harnesses: [], ...e });
+
 describe('addonSpawnLine', () => {
   const wsl = MANIFEST.run as AddonManifest['run'];
 
-  it('crosses into WSL through a login bash from Windows', () => {
-    expect(addonSpawnLine({ ...wsl, distro: 'Ubuntu', cwd: '/opt/demo' } as AddonManifest['run'], 'windows')).toEqual({
+  it("crosses into WSL from Windows through the environment's distro and shell", () => {
+    expect(addonSpawnLine({ ...wsl, cwd: '/opt/demo' }, 'windows', ENV({ id: 'u', kind: 'wsl', distro: 'Ubuntu' }))).toEqual({
       command: 'wsl.exe',
       args: ['-d', 'Ubuntu', '--cd', '/opt/demo', '-e', 'bash', '-lic', 'exec "$@"', 'looper-addon', 'node', '/opt/demo/addon.mjs'],
     });
+    expect(addonSpawnLine(wsl, 'windows', ENV({ id: 'z', kind: 'wsl', shell: 'zsh -lc' })).args).toEqual([
+      '-e', 'zsh', '-lc', 'exec "$@"', 'looper-addon', 'node', '/opt/demo/addon.mjs',
+    ]);
   });
 
-  it('runs a WSL command locally when Looper itself is in WSL', () => {
-    expect(addonSpawnLine(wsl, 'wsl')).toEqual({
+  it('runs a WSL command in the local shell when Looper itself is in WSL', () => {
+    expect(addonSpawnLine(wsl, 'wsl', ENV({ id: 'local', kind: 'local' }))).toEqual({
       command: 'bash',
       args: ['-lic', 'exec "$@"', 'looper-addon', 'node', '/opt/demo/addon.mjs'],
     });
   });
 
-  it('starts a Windows command directly, and refuses it where there is no Windows', () => {
+  it('starts a Windows command directly, and refuses an environment on the other side', () => {
     const win: AddonManifest['run'] = { on: 'windows', command: ['node.exe', 'C:\\demo\\addon.mjs'], cwd: 'C:\\demo' };
-    expect(addonSpawnLine(win, 'windows')).toEqual({ command: 'node.exe', args: ['C:\\demo\\addon.mjs'], cwd: 'C:\\demo' });
-    expect(addonSpawnLine(win, 'wsl')).toEqual({ command: 'node.exe', args: ['C:\\demo\\addon.mjs'] });
-    expect(() => addonSpawnLine(win, 'mac')).toThrow('this addon runs on Windows');
+    expect(addonSpawnLine(win, 'windows', ENV({ id: 'local', kind: 'local' }))).toEqual({
+      command: 'node.exe',
+      args: ['C:\\demo\\addon.mjs'],
+      cwd: 'C:\\demo',
+    });
+    expect(addonSpawnLine(win, 'wsl', ENV({ id: 'w', kind: 'windows' }))).toEqual({ command: 'node.exe', args: ['C:\\demo\\addon.mjs'] });
+    expect(() => addonSpawnLine(win, 'wsl', ENV({ id: 'local', name: 'Local', kind: 'local' }))).toThrow(
+      `the "Local" environment can't run Windows programs`,
+    );
+  });
+});
+
+describe('addonLaunch', () => {
+  const envs = [ENV({ id: 'local', kind: 'local' }), ENV({ id: 'ubuntu', kind: 'wsl' }), ENV({ id: 'debian', kind: 'wsl' })];
+  const own = MANIFEST.run as AddonManifest['run'];
+
+  it('runs in the default environment when it fits, else the first that does, else nowhere', () => {
+    expect(addonLaunch(own, undefined, { environments: envs, defaultEnvironmentId: 'debian' }, 'windows').environment?.id).toBe('debian');
+    expect(addonLaunch(own, undefined, { environments: envs, defaultEnvironmentId: 'local' }, 'windows').environment?.id).toBe('ubuntu');
+    expect(addonLaunch(own, undefined, { environments: [envs[0]], defaultEnvironmentId: 'local' }, 'windows').environment).toBeUndefined();
+  });
+
+  it("uses the user's environment and command, and the default environment when theirs is gone", () => {
+    const local = { environmentId: 'debian', command: ['node', '/home/sam/addon.mjs'] };
+    const l = addonLaunch(own, local, { environments: envs, defaultEnvironmentId: 'local' }, 'windows');
+    expect(l).toMatchObject({ run: { on: 'wsl', command: ['node', '/home/sam/addon.mjs'] }, environment: { id: 'debian' }, defaultEnvironment: { id: 'ubuntu' } });
+    expect(addonLaunch(own, { ...local, environmentId: 'gone' }, { environments: envs, defaultEnvironmentId: 'local' }, 'windows').environment?.id).toBe('ubuntu');
   });
 });
 
@@ -199,7 +321,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const msg = JSON.parse(line);
   const p = msg.params;
   if (msg.method === 'initialize') return send({ id: msg.id, result: {} });
-  if (msg.method === 'pane') return send({ id: msg.id, result: { items: [{ id: 'a', label: 'A', view: 'thing', params: { n: ++n } }] } });
+  if (msg.method === 'pane') return send({ id: msg.id, result: { items: [{ id: process.env.DEMO_ITEM || 'a', label: 'A', view: 'thing', params: { n: ++n } }] } });
   if (msg.method === 'render') {
     if (p.view === 'bad') return send({ id: msg.id, result: { body: [{ type: 'video' }] } });
     return send({ id: msg.id, result: { title: 'Thing ' + p.params.n, body: [{ type: 'text', text: 'hi' }] } });
@@ -224,6 +346,9 @@ afterEach(() => {
   for (const c of cleanups.splice(0).reverse()) c();
 });
 
+/** The test host (Linux) runs WSL-side addons in its local environment. */
+const LOCAL_ENVS = () => ({ environments: [ENV({ id: 'local', kind: 'local' })], defaultEnvironmentId: 'local' });
+
 /** Keeps what's logged, as "[level] message". */
 class MemoryLogger extends Logger {
   lines: string[] = [];
@@ -239,7 +364,7 @@ function setup() {
   const changes: AddonInfo[][] = [];
   const refreshes: string[] = [];
   // Stands in for settings.disabledAddons.
-  const store = { disabled: [] as string[] };
+  const store = { disabled: [] as string[], runs: {} as Record<string, AddonLocalRun> };
   const log = new MemoryLogger();
   const host = new AddonHost({
     dir: path.join(root, 'addons'),
@@ -252,6 +377,11 @@ function setup() {
     setDisabled: (ids) => {
       store.disabled = ids;
     },
+    runs: () => store.runs,
+    setRuns: (runs) => {
+      store.runs = runs;
+    },
+    environments: LOCAL_ENVS,
   });
   cleanups.push(() => {
     host.dispose();
@@ -324,6 +454,32 @@ describe('AddonHost', () => {
     expect(log.lines.join('\n')).not.toMatch(/hunter2|secret-value/);
   }, 20_000);
 
+  it("runs the addon the way the user changed it, keeps that over a reinstall, and forgets it on remove", async () => {
+    const { host, store, manifest } = setup();
+    host.install(manifest);
+    await until(() => host.list()[0]?.status === 'running');
+    expect(host.list()[0]).toMatchObject({ localRun: undefined, environmentId: 'local', ownRun: manifest.run });
+
+    const changed: AddonLocalRun = { environmentId: 'local', command: manifest.run.command, env: { DEMO_ITEM: 'mine' } };
+    host.setRun('demo', changed);
+    expect(store.runs).toEqual({ demo: changed });
+    await until(() => host.list()[0]?.status === 'running');
+    expect((await host.pane('demo', 'things')).items[0].id).toBe('mine');
+    expect(host.list()[0]).toMatchObject({ localRun: changed, environmentId: 'local', ownRun: manifest.run });
+
+    host.install(manifest);
+    await until(() => host.list()[0]?.status === 'running');
+    expect((await host.pane('demo', 'things')).items[0].id).toBe('mine');
+
+    host.setRun('demo', undefined);
+    await until(() => host.list()[0]?.status === 'running');
+    expect((await host.pane('demo', 'things')).items[0].id).toBe('a');
+
+    host.setRun('demo', changed);
+    host.remove('demo');
+    expect(store.runs).toEqual({});
+  }, 20_000);
+
   it('reports why an addon stopped and restarts it', async () => {
     const { host, manifest } = setup();
     host.install(manifest);
@@ -351,6 +507,9 @@ describe('AddonHost', () => {
       onRefresh: () => undefined,
       disabled: () => [],
       setDisabled: () => undefined,
+      runs: () => ({}),
+      setRuns: () => undefined,
+      environments: LOCAL_ENVS,
     });
     cleanups.push(() => again.dispose());
     again.start();
@@ -385,6 +544,11 @@ describe('AddonHost', () => {
       setDisabled: (ids) => {
         store.disabled = ids;
       },
+      runs: () => store.runs,
+      setRuns: (runs) => {
+        store.runs = runs;
+      },
+      environments: LOCAL_ENVS,
     });
     cleanups.push(() => again.dispose());
     again.start();

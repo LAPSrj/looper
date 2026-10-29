@@ -143,6 +143,12 @@ if (!app.requestSingleInstanceLock()) {
       onRefresh: (addonId) => sendAddonEvent({ type: 'refresh', addonId }),
       disabled: () => engine?.settings.disabledAddons ?? [],
       setDisabled: (ids) => engine?.updateSettings({ disabledAddons: ids }),
+      runs: () => engine?.settings.addonRuns ?? {},
+      setRuns: (runs) => engine?.updateSettings({ addonRuns: runs }),
+      environments: () => ({
+        environments: engine?.settings.environments ?? [],
+        defaultEnvironmentId: engine?.settings.defaultEnvironmentId ?? '',
+      }),
     });
     registerAddonIpc(addonDeps());
     addons.start();
@@ -2041,7 +2047,6 @@ function buildMenu(
         { type: 'separator' },
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
         { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
-        { label: 'A&ddons…', click: () => openAddonsWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         // macOS: Quit lives in the app menu that macTemplate prepends.
         ...(process.platform === 'darwin'
@@ -2119,6 +2124,7 @@ function buildMenu(
             { label: 'S&ettings…', click: () => openRemoteSettingsWindow() },
           ],
         },
+        { label: '&Addons…', click: () => openAddonsWindow() },
         { type: 'separator' },
         { label: 'Update &Models…', click: () => openModelUpdateWindow() },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },

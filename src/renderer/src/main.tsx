@@ -4,7 +4,7 @@ import { isLooperFileName } from '@shared/files';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
-import { AddonsApp } from './AddonsApp';
+import { AddonEditApp, AddonsApp } from './AddonsApp';
 import { AddonPaneWindowApp } from './components/AddonPane';
 import { AddonWindowApp } from './components/AddonScreen';
 import { App } from './App';
@@ -70,8 +70,11 @@ const remoteProjectMatch = /^remote-project\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
+const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
+
 function pickRoot() {
   if (hash === 'addons') return <AddonsApp />;
+  if (addonEditMatch) return <AddonEditApp addonId={decodeURIComponent(addonEditMatch[1])} />;
   if (addonPaneWindowMatch) {
     return (
       <AddonPaneWindowApp

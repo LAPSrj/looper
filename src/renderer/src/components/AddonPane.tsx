@@ -362,9 +362,11 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
   const item = content?.items.find((it) => it.id === selected);
 
   const menuBarKey = JSON.stringify(content?.menuBar ?? null);
+  // The selected item's own menu decides which of its commands the menu bar and toolbar offer.
+  const itemKey = JSON.stringify(item ? { id: item.id, menu: item.menu } : null);
   useEffect(() => {
-    window.looper.addons.setMenuBar(addonId, { pane }, JSON.parse(menuBarKey), item?.id);
-  }, [addonId, pane, menuBarKey, item?.id]);
+    window.looper.addons.setMenuBar(addonId, { pane }, JSON.parse(menuBarKey), JSON.parse(itemKey) ?? undefined);
+  }, [addonId, pane, menuBarKey, itemKey]);
 
   const paneButtons = content?.toolbar ?? [];
 
@@ -388,7 +390,7 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
         <div className="toolbar addon-toolbar">
           <AddonToolbarButtons
             items={paneButtons}
-            hasItem={!!item}
+            selected={item ?? null}
             onClick={(id, confirm) =>
               void window.looper.addons.event(addonId, { source: { pane }, kind: 'click', id, item: item?.id }, confirm)
             }

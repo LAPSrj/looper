@@ -4,6 +4,7 @@ import type {
   AddonInfo,
   AddonMenuBar,
   AddonMenuItem,
+  AddonLocalRun,
   AddonPaneContent,
   AddonScreen,
   AddonUiEvent,
@@ -354,6 +355,10 @@ export interface LooperApi {
       confirm?: string,
     ): Promise<{ value?: string; values?: Record<string, string | number | boolean> }>;
     restart(id: string): Promise<void>;
+    /** Open the Edit Addon window, over the calling window. */
+    edit(id: string): Promise<void>;
+    /** Change how the addon runs and restart it; null goes back to its own file's settings and the default environment. Rejects with the reason when `run` isn't valid. */
+    setRun(id: string, run: AddonLocalRun | null): Promise<void>;
     /** A file field's Browse…: the picked file's path as the addon sees it (WSL or Windows), or null. */
     pickFile(id: string, accept?: { label: string; extensions: string[] }[]): Promise<string | null>;
     /** Start (true) or stop (false) an addon; Looper remembers it, and a stopped addon's windows close. */
@@ -368,8 +373,8 @@ export interface LooperApi {
     install(): Promise<void>;
     /** A pane item's or pane header's right-click menu; a pick goes to the addon. */
     showMenu(id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }): void;
-    /** This window's menu bar (null: none). `item`: the selected pane item, for `needsItem` items and the events. */
-    setMenuBar(id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: string): void;
+    /** This window's menu bar (null: none). `item`: the selected pane item and its menu, for `needsItem` items (commandOn) and the events. */
+    setMenuBar(id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: { id: string; menu?: AddonMenuItem[] }): void;
     onEvent(cb: (e: AddonUiEvent) => void): () => void;
   };
   onEvent(cb: (e: EngineEvent) => void): () => void;

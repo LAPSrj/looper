@@ -2462,6 +2462,12 @@ button:focus-visible,
   margin: 12px 0;
 }
 
+/* Tabs inside a screen line up with its other content. */
+.addon-tabs > .tabs {
+  padding: 0;
+  margin: 12px 0 4px;
+}
+
 .addon-markdown .markdown {
   height: auto;
   overflow: visible;

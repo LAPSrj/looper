@@ -64,10 +64,11 @@ export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'c
       <path d="m10.3 10.3 3.2 3.2" />
     </>
   ),
+  // A gear with eight teeth, as Windows draws Settings.
   settings: (
     <>
       <circle cx="8" cy="8" r="2" />
-      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+      <path d="M7 3.2L7.2 1.3L8.8 1.3L9 3.2L10.7 3.9L12.1 2.7L13.3 3.9L12.1 5.3L12.8 7L14.7 7.2L14.7 8.8L12.8 9L12.1 10.7L13.3 12.1L12.1 13.3L10.7 12.1L9 12.8L8.8 14.7L7.2 14.7L7 12.8L5.3 12.1L3.9 13.3L2.7 12.1L3.9 10.7L3.2 9L1.3 8.8L1.3 7.2L3.2 7L3.9 5.3L2.7 3.9L3.9 2.7L5.3 3.9Z" />
     </>
   ),
 };

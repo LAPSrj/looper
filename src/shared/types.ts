@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AddonLocalRunSchema } from './addons';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
 import type { RemoteState } from './remote';
@@ -632,8 +633,10 @@ export const SettingsSchema = z.object({
   }).default({}),
   /** Main-window view options (View menu). */
   view: ViewSchema.default({}),
-  /** Addons stopped in File → Addons…, by id: they don't start with Looper and show nothing. */
+  /** Addons stopped in Advanced → Addons…, by id: they don't start with Looper and show nothing. */
   disabledAddons: z.array(z.string()).default([]),
+  /** How the user changed where and how an addon runs (Advanced → Addons… → Edit…), by id. */
+  addonRuns: z.record(z.string(), AddonLocalRunSchema).default({}),
   /** Advanced → Remote Control: the conversations it keeps open for the Claude app. */
   remote: RemoteSettingsSchema,
 }).superRefine((s, ctx) => {

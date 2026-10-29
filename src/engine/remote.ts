@@ -773,8 +773,7 @@ export class RemoteControl {
     }
     found.sort((a, b) => b.at - a.at);
     const shown = found.slice(0, RECENT_MAX);
-    const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-    const lines = shown.map((f) => `- ${f.folder}${f.at ? ` (last session ${day(f.at)})` : ''}`);
+    const lines = shown.map((f) => `- ${f.folder}${f.at ? ` (last session ${localStamp(f.at).slice(0, 10)})` : ''}`);
     if (found.length > shown.length) lines.push(`(${found.length - shown.length} older folders not shown)`);
     return lines.join('\n');
   }

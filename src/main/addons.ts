@@ -1,12 +1,19 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, Menu } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage } from 'electron';
 import fs from 'node:fs';
+import path from 'node:path';
 import { convertWslPath, type HostKind } from '../engine/host';
 import { errMsg } from '../engine/log';
 import {
   ADDON_EXT,
+  addonAdditions,
   addonPaneKey,
-  describeRun,
+  commandOn,
+  AddonLocalRunSchema,
   readAddonManifest,
+  runCommand,
+  sideName,
+  usesAddonDir,
+  withAddonDir,
   type AddonAction,
   type AddonEvent,
   type AddonEventSource,
@@ -17,7 +24,7 @@ import {
   type AddonUiEvent,
 } from '../shared/addons';
 import type { View } from '../shared/types';
-import type { AddonHost } from './addon-host';
+import type { AddonHost, AddonLaunch } from './addon-host';
 
 export interface AddonUiDeps {
   host: AddonHost;
@@ -188,28 +195,45 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
     else await errorBox(parent, 'Could not install the file.', 'The file does not contain a Looper addon.');
     return;
   }
-  const m = r.manifest;
+  // ${addonDir} becomes the folder the file is installed from, so the addon runs wherever its program is.
+  const m = usesAddonDir(r.manifest.run)
+    ? {
+        ...r.manifest,
+        run: withAddonDir(r.manifest.run, await forAddonSide(deps.host.launchOf(r.manifest), deps.hostKind, path.dirname(file))),
+      }
+    : r.manifest;
   const existing = deps.host.get(m.id);
-  const panes = m.panes.map((p) => `"${p.title}"`);
+  const changed = deps.host.runOf(m.id) !== undefined;
+  const { run, environment } = deps.host.launchOf(m);
+  const adds = addonAdditions(m);
+  const where = environment
+    ? `${m.name} is a program that Looper starts in your "${environment.name}" environment, and it can do anything you can do on this computer:\n${runCommand(run)}`
+    : `${m.name} is a ${sideName(run.on)} program, and no environment in Settings → Environments runs ${sideName(run.on)} programs yet, so it won’t start until you add one. It runs:\n${runCommand(run)}`;
   const detail = [
-    `It runs:\n${describeRun(m.run)}`,
-    panes.length ? `It adds the ${panes.join(', ')} pane${panes.length === 1 ? '' : 's'} to the sidebar.` : '',
-    m.toolbar.length ? `It adds ${m.toolbar.map((b) => `"${b.label}"`).join(', ')} to the toolbar.` : '',
-    m.tools.length ? `It adds ${m.tools.map((t) => `"${t.label}…"`).join(', ')} to the Tools menu.` : '',
-    'The command runs with your user account, so install only addons you trust.',
+    m.description ?? '',
+    adds.length ? `It adds:\n${adds.map((a) => `•  ${a}`).join('\n')}` : '',
+    where,
+    changed ? 'This is how you set it to run in Advanced → Addons… → Edit…, which installing doesn’t change.' : '',
+    'Install it only if you trust where it came from.',
   ]
     .filter(Boolean)
     .join('\n\n');
+  const [message, verb] = !existing
+    ? [`Install ${m.name} ${m.version}?`, 'Install']
+    : existing.version === m.version
+      ? [`Reinstall ${m.name} ${m.version}?`, 'Reinstall']
+      : [`Replace ${existing.name} ${existing.version} with version ${m.version}?`, 'Replace'];
   const response = await messageBox(parent, {
-    type: 'question',
+    // A routine question gets no standard icon; the addon file icon shows what is being installed.
+    type: 'none',
+    icon: nativeImage.createFromPath(path.join(__dirname, '../../assets/looperaddon.ico')),
     title: 'Looper',
-    message: existing
-      ? `Replace ${existing.name} ${existing.version} with version ${m.version}?`
-      : `Install the addon "${m.name}" ${m.version}?`,
+    message,
     detail,
-    buttons: [existing ? 'Replace' : 'Install', 'Cancel'],
+    buttons: [verb, 'Cancel'],
     defaultId: 0,
     cancelId: 1,
+    noLink: true,
   });
   if (response !== 0) return;
   try {
@@ -243,7 +267,7 @@ export function addonPanesMenu(addons: AddonInfo[], view: View, update: (patch: 
 /** "<Addon> Toolbar" in the View menu and the main toolbar's right-click menu: whether each addon's buttons show there. */
 export function addonToolbarsMenu(addons: AddonInfo[], view: View, update: (patch: Partial<View>) => void): Electron.MenuItemConstructorOptions[] {
   return addons.filter((a) => a.enabled).map((a) => ({
-    label: `${menuText(a.name)} Toolbar`,
+    label: `${menuText(a.toolbarName ?? a.name)} Toolbar`,
     type: 'checkbox',
     checked: !view.hiddenAddonToolbars.includes(a.id),
     click: (item) =>
@@ -265,6 +289,22 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     runEvent(deps, BrowserWindow.fromWebContents(e.sender), id, ev, confirm),
   );
   ipcMain.handle('addons:restart', (_e, id: string) => host.restart(id));
+  ipcMain.handle('addons:edit', (e, id: string) => {
+    const addon = host.get(id);
+    if (!addon) return;
+    deps.openWindow(`addon-edit/${encodeURIComponent(id)}`, 'Edit Addon', 560, 440, BrowserWindow.fromWebContents(e.sender), {
+      minWidth: 460,
+      minHeight: 400,
+      contentSize: true,
+    });
+  });
+  // null goes back to how the addon's own file runs it.
+  ipcMain.handle('addons:setRun', (_e, id: string, run: unknown) => {
+    if (run === null) return host.setRun(id, undefined);
+    const parsed = AddonLocalRunSchema.safeParse(run);
+    if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+    host.setRun(id, parsed.data);
+  });
   ipcMain.handle('addons:pickFile', async (e, id: string, accept?: { label: string; extensions: string[] }[]) => {
     const sender = BrowserWindow.fromWebContents(e.sender);
     const opts: Electron.OpenDialogOptions = {
@@ -326,7 +366,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     (e, id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }) => {
       const sender = BrowserWindow.fromWebContents(e.sender);
       if (!sender) return;
-      const items = menuItems(deps, sender, id, { pane }, menu, opts.item);
+      const items = menuItems(deps, sender, id, { pane }, menu, opts.item ? { id: opts.item } : undefined);
       if (opts.header) {
         const key = addonPaneKey(id, pane);
         if (items.length) items.push({ type: 'separator' });
@@ -349,7 +389,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
    */
   ipcMain.on(
     'addons:menuBar',
-    (e, id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: string) => {
+    (e, id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: { id: string; menu?: AddonMenuItem[] }) => {
       const sender = BrowserWindow.fromWebContents(e.sender);
       if (!sender || sender === deps.mainWindow() || process.platform === 'darwin') return;
       if (!menuBar?.length) {
@@ -371,12 +411,16 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
  * addon on Windows. Unchanged when both are on the same side, or when wslpath
  * can't convert it.
  */
+/** A path on Looper's side, in the form the addon's side uses (in its environment's distro). */
+async function forAddonSide(launch: AddonLaunch, hostKind: HostKind, p: string): Promise<string> {
+  if (launch.run.on === 'wsl' && hostKind === 'windows') return (await convertWslPath(p, 'posix', launch.environment?.distro || undefined)) ?? p;
+  if (launch.run.on === 'windows' && hostKind === 'wsl') return (await convertWslPath(p, 'windows')) ?? p;
+  return p;
+}
+
 async function addonPath(deps: AddonUiDeps, addonId: string, file: string): Promise<string> {
-  const run = deps.host.get(addonId)?.run;
-  if (!run) return file;
-  if (run.on === 'wsl' && deps.hostKind === 'windows') return (await convertWslPath(file, 'posix', run.distro)) ?? file;
-  if (run.on === 'windows' && deps.hostKind === 'wsl') return (await convertWslPath(file, 'windows')) ?? file;
-  return file;
+  const m = deps.host.get(addonId);
+  return m ? forAddonSide(deps.host.launchOf(m), deps.hostKind, file) : file;
 }
 
 /** An addon's menu items as Electron's; a pick goes to the addon as a `menu` event. `&` marks an access key. */
@@ -386,7 +430,7 @@ function menuItems(
   addonId: string,
   source: AddonEventSource,
   menu: AddonMenuItem[],
-  item: string | undefined,
+  item: { id: string; menu?: AddonMenuItem[] } | undefined,
 ): Electron.MenuItemConstructorOptions[] {
   return menu.map((m) =>
     'separator' in m
@@ -394,8 +438,8 @@ function menuItems(
       : {
           label: m.label,
           ...(m.checked !== undefined ? { type: m.radio ? 'radio' : 'checkbox', checked: m.checked } : {}),
-          enabled: (m.enabled ?? true) && (!m.needsItem || item !== undefined),
-          click: () => void runEvent(deps, sender, addonId, { source, kind: 'menu', id: m.id, item }, m.confirm),
+          enabled: (m.enabled ?? true) && commandOn(m, item),
+          click: () => void runEvent(deps, sender, addonId, { source, kind: 'menu', id: m.id, item: item?.id }, m.confirm),
         },
   );
 }

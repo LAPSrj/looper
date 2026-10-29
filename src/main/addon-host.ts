@@ -11,18 +11,24 @@ import {
   AddonEventResultSchema,
   AddonPaneContentSchema,
   AddonScreenSchema,
-  describeRun,
+  environmentsFor,
   readAddonManifest,
+  runCommand,
+  sideName,
   zodSummary,
   type AddonEvent,
   type AddonEventResult,
   type AddonInfo,
+  type AddonLocalRun,
   type AddonManifest,
   type AddonPaneContent,
   type AddonRun,
   type AddonScreen,
   type AddonStatus,
 } from '../shared/addons';
+import { tokenize } from '../shared/cmdline';
+import { DEFAULT_SHELL } from '../shared/environments';
+import type { Environment } from '../shared/types';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 /** After stdin closes, how long an addon gets to exit before it is killed. */
@@ -39,23 +45,51 @@ export interface SpawnLine {
   cwd?: string;
 }
 
+export interface AddonLaunch {
+  /** The command, working folder and variables: the user's when they changed them, the manifest's otherwise. */
+  run: AddonRun;
+  /** The environment that runs it: the user's choice, else the default environment, else the first that fits. Unset when none fits. */
+  environment?: Environment;
+  defaultEnvironment?: Environment;
+}
+
+/** How the addon runs for this user, from its manifest, the user's changes and their environments. */
+export function addonLaunch(
+  own: AddonRun,
+  local: AddonLocalRun | undefined,
+  settings: { environments: Environment[]; defaultEnvironmentId: string },
+  host: HostKind,
+): AddonLaunch {
+  const fits = environmentsFor(own.on, settings.environments, host);
+  const defaultEnvironment = fits.find((e) => e.id === settings.defaultEnvironmentId) ?? fits[0];
+  const chosen = local && fits.find((e) => e.id === local.environmentId);
+  const run: AddonRun = local
+    ? { on: own.on, command: local.command, ...(local.cwd ? { cwd: local.cwd } : {}), ...(local.env ? { env: local.env } : {}) }
+    : own;
+  return { run, environment: chosen ?? defaultEnvironment, defaultEnvironment };
+}
+
 /**
- * The process to start for a manifest's `run`. A WSL command goes through an
- * interactive login bash, as tasks do, so PATH has what ~/.bashrc adds (nvm,
- * bun); `exec "$@"` then replaces the shell with the command, unquoted args
- * and all. A Windows command starts directly.
+ * The process to start for an addon in its environment. A WSL command goes
+ * through the environment's shell (by default an interactive login bash, as
+ * tasks do, so PATH has what ~/.bashrc adds: nvm, bun); `exec "$@"` then
+ * replaces the shell with the command, unquoted args and all. A Windows
+ * command starts directly.
  */
-export function addonSpawnLine(run: AddonRun, host: HostKind): SpawnLine {
+export function addonSpawnLine(run: AddonRun, host: HostKind, environment: Environment): SpawnLine {
+  if (!environmentsFor(run.on, [environment], host).length) {
+    throw new Error(`the "${environment.name}" environment can't run ${sideName(run.on)} programs`);
+  }
   if (run.on === 'windows') {
-    if (host !== 'windows' && host !== 'wsl') throw new Error('this addon runs on Windows');
     // From WSL, interop starts the .exe; a Windows cwd means nothing on this side.
     return { command: run.command[0], args: run.command.slice(1), ...(host === 'windows' && run.cwd ? { cwd: run.cwd } : {}) };
   }
-  const inner = ['bash', '-lic', 'exec "$@"', 'looper-addon', ...run.command];
+  const shell = tokenize(environment.shell ?? DEFAULT_SHELL);
+  const inner = [...(shell.ok && shell.tokens.length ? shell.tokens : ['bash', '-lic']), 'exec "$@"', 'looper-addon', ...run.command];
   if (host === 'windows') {
     return {
       command: 'wsl.exe',
-      args: [...(run.distro ? ['-d', run.distro] : []), ...(run.cwd ? ['--cd', run.cwd] : []), '-e', ...inner],
+      args: [...(environment.distro ? ['-d', environment.distro] : []), ...(run.cwd ? ['--cd', run.cwd] : []), '-e', ...inner],
     };
   }
   return { command: inner[0], args: inner.slice(1), ...(run.cwd ? { cwd: run.cwd } : {}) };
@@ -99,6 +133,8 @@ class AddonProcess {
       host: HostKind;
       appVersion: string;
       log: Logger;
+      /** How to run it right now (addonLaunch). */
+      launch: () => AddonLaunch;
       onStatus: () => void;
       onRefresh: () => void;
     },
@@ -113,9 +149,16 @@ class AddonProcess {
     this.stderrBuf = '';
     this.stderrMinute = { start: 0, lines: 0 };
     const m = this.manifest;
+    const { run, environment } = this.d.launch();
+    if (!environment) {
+      this.stopped(
+        `It's a ${sideName(run.on)} program, and no environment in Settings → Environments runs ${sideName(run.on)} programs. Add one, then start the addon again.`,
+      );
+      return;
+    }
     let line: SpawnLine;
     try {
-      line = addonSpawnLine(m.run, this.d.host);
+      line = addonSpawnLine(run, this.d.host, environment);
     } catch (e) {
       this.stopped(errMsg(e));
       return;
@@ -125,7 +168,7 @@ class AddonProcess {
     try {
       child = spawn(line.command, line.args, {
         cwd: line.cwd,
-        env: addonEnv(m.run, this.d.host, childEnv()),
+        env: addonEnv(run, this.d.host, childEnv()),
         windowsHide: true,
         stdio: 'pipe',
       });
@@ -345,6 +388,11 @@ export interface AddonHostDeps {
   /** The ids of the addons stopped in the Addons window, and where a change to them is saved. */
   disabled: () => string[];
   setDisabled: (ids: string[]) => void;
+  /** The user's changes to how addons run, by id, and where a change to them is saved. */
+  runs: () => Record<string, AddonLocalRun>;
+  setRuns: (runs: Record<string, AddonLocalRun>) => void;
+  /** Settings → Environments, which run the addons. */
+  environments: () => { environments: Environment[]; defaultEnvironmentId: string };
 }
 
 /** The installed addons: their manifests on disk and their processes. */
@@ -379,23 +427,54 @@ export class AddonHost {
   }
 
   list(): AddonInfo[] {
-    return [...this.procs.values()].map((p) => ({
-      id: p.manifest.id,
-      name: p.manifest.name,
-      version: p.manifest.version,
-      description: p.manifest.description,
-      run: describeRun(p.manifest.run),
-      panes: p.manifest.panes,
-      tools: p.manifest.tools,
-      toolbar: p.manifest.toolbar,
-      enabled: this.enabled(p.manifest.id),
-      status: p.status,
-      error: p.error,
-    }));
+    return [...this.procs.values()].map((p) => {
+      const l = this.launchOf(p.manifest);
+      return {
+        id: p.manifest.id,
+        name: p.manifest.name,
+        version: p.manifest.version,
+        description: p.manifest.description,
+        run: `${runCommand(l.run)}\n${l.environment ? `in ${l.environment.name}` : `(no ${sideName(l.run.on)} environment)`}`,
+        ownRun: p.manifest.run,
+        localRun: this.runOf(p.manifest.id),
+        environmentId: l.environment?.id,
+        defaultEnvironmentId: l.defaultEnvironment?.id,
+        panes: p.manifest.panes,
+        tools: p.manifest.tools,
+        toolbar: p.manifest.toolbar,
+        toolbarName: p.manifest.toolbarName,
+        enabled: this.enabled(p.manifest.id),
+        status: p.status,
+        error: p.error,
+      };
+    });
+  }
+
+  /** How the addon runs for this user (addonLaunch). */
+  launchOf(manifest: Pick<AddonManifest, 'id' | 'run'>): AddonLaunch {
+    return addonLaunch(manifest.run, this.runOf(manifest.id), this.d.environments(), this.d.host);
   }
 
   get(id: string): AddonManifest | undefined {
     return this.procs.get(id)?.manifest;
+  }
+
+  /** The user's changes to how the addon runs, if any. */
+  runOf(id: string): AddonLocalRun | undefined {
+    return this.d.runs()[id];
+  }
+
+  /** Save the user's changes to how the addon runs (undefined goes back to the manifest's and the default environment), and restart it. */
+  setRun(id: string, run: AddonLocalRun | undefined): void {
+    const p = this.procs.get(id);
+    if (!p) return;
+    const { [id]: _, ...rest } = this.d.runs();
+    this.d.setRuns(run ? { ...rest, [id]: run } : rest);
+    if (this.enabled(id)) {
+      p.stop();
+      p.start();
+    }
+    this.changed();
   }
 
   /** Save the manifest and start it, replacing an installed addon with the same id. Installing enables it. */
@@ -413,6 +492,10 @@ export class AddonHost {
     this.procs.delete(id);
     fs.rmSync(this.file(id), { force: true });
     this.setDisabledId(id, false);
+    if (this.runOf(id)) {
+      const { [id]: _, ...rest } = this.d.runs();
+      this.d.setRuns(rest);
+    }
     this.changed();
   }
 
@@ -471,6 +554,7 @@ export class AddonHost {
       host: this.d.host,
       appVersion: this.d.appVersion,
       log: this.d.log,
+      launch: () => this.launchOf(manifest),
       onStatus: () => this.changed(),
       onRefresh: () => this.d.onRefresh(manifest.id),
     });

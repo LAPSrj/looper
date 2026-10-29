@@ -1,7 +1,8 @@
 # Environments
 
-**Settings → Environments** defines where Looper runs your checks and agents,
-and which agent CLIs are available there.
+**Settings → Environments** defines where Looper runs your checks, agents and
+[addons](addons.md#changing-how-an-addon-runs), and which agent CLIs are
+available there.
 
 ## What an environment is
 

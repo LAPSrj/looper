@@ -10,9 +10,11 @@ Looper's interface changes.
 ## Installing an addon
 
 An addon comes with a `.looperaddon` file. Double-click it, drop it on the
-Looper window, or use **File → Addons… → Install…**. Looper shows the command
-the addon runs and the panes, toolbar buttons and Tools menu items it adds,
-and installs it when you click Install. Installing a file whose addon is already installed replaces it.
+Looper window, or use **Advanced → Addons… → Install…**. Looper asks first,
+showing the addon's description, the panes, toolbar buttons and Tools menu
+items it adds, and the command it runs, and installs it when you click
+**Install**. For an addon that's already installed, the button says
+**Replace** (another version) or **Reinstall** (the same version).
 
 The command runs with your user account, the way a task's check does, so
 install only addons you trust.
@@ -45,8 +47,8 @@ addon's screens shows in the main window, that screen's buttons follow them,
 such as **Edit Server…** for the selected server.
 
 The View menu has a check box for each installed addon after **Toolbar**,
-such as **Servers Toolbar**, and right-clicking the toolbar lists the same check
-boxes. Clearing one leaves all of that addon's buttons out of the main
+such as **Servers Toolbar** (the addon can give it another name), and
+right-clicking the toolbar lists the same check boxes. Clearing one leaves all of that addon's buttons out of the main
 toolbar. Its commands stay in its menus and its own windows.
 
 ## The Tools menu
@@ -65,12 +67,32 @@ window forward.
 
 ## The Addons window
 
-**File → Addons…** lists the installed addons with their status (Starting,
+**Advanced → Addons…** lists the installed addons with their status (Starting,
 Running, or Stopped). Under the list, **Install…** picks a `.looperaddon`
-file, **Stop** stops the selected addon, **Start** starts it again, **Restart**
-stops and starts it, and **Remove** uninstalls it after asking. Below the
-buttons are the selected addon's command, its panes, and why it stopped, if
-it stopped on its own.
+file, **Edit…** changes how the selected addon runs (below), **Stop** stops
+it, **Start** starts it again, **Restart** stops and starts it, and
+**Remove** uninstalls it after asking. Below the buttons are the selected
+addon's command, its panes, and why it stopped, if it stopped on its own.
+
+### Changing how an addon runs
+
+An addon runs in one of your environments from **Settings → Environments**,
+the way tasks do, with that environment's WSL distro and shell. Its file says
+whether its program is a WSL or a Windows program, and Looper starts it in
+your default environment when that one runs programs of that kind, or else in
+the first environment that does. When none does, the addon stays stopped and
+says so.
+
+**Edit…**, or double-clicking an addon, opens a window where you change how
+your Looper runs it: the **Environment** (only the ones that run its kind of
+program are listed), the **Command**, the **Working folder**, and the
+**Environment variables** (`NAME=value`, separated by spaces). Use it when the
+addon's program is in a different place on your computer, or when it needs a
+setting of yours. **Save** restarts the addon with your settings. Looper keeps
+them apart from the addon's file, so installing a new version doesn't undo
+them, and **Restore Defaults** goes back to the file's own and the default
+environment. The install dialog shows your settings when you have changed
+them.
 
 Looper remembers a stopped addon: it doesn't start the next time Looper
 starts, and its panes, toolbar buttons and Tools menu items stay hidden, and
@@ -114,13 +136,14 @@ noted in the engine log.
 | `$type`, `$version` | Always `looper/addon` and `1`. `$version` covers the manifest and the protocol. A Looper that doesn't know the version refuses the file and asks to be updated. |
 | `id` | Letters, digits, `.`, `_`, `-`. Installing another file with the same id replaces the addon. |
 | `name`, `version`, `description` | What the install dialog and the Addons window show. |
-| `run.on` | `wsl` or `windows`: where the command runs. |
-| `run.distro` | `wsl` only: the distro. Unset means the default one. |
-| `run.command` | The program and its arguments. A WSL command runs through `bash -lic`, as tasks do, so the PATH includes what `~/.bashrc` adds (nvm, bun). A Windows command must be an `.exe`. |
+| `run.on` | `wsl` or `windows`: whether the program is a WSL or a Windows program. The user's environment decides the distro and shell. |
+| `run.command` | The program and its arguments. A WSL command runs through the environment's shell, `bash -lic` unless the user changed it, as tasks do, so the PATH includes what `~/.bashrc` adds (nvm, bun). A Windows command must be an `.exe`. |
 | `run.cwd`, `run.env` | Working directory and extra environment variables. |
+| `${addonDir}` | In `run.command`, `run.cwd` and `run.env` values: the folder the `.looperaddon` file is installed from, as the side the addon runs on sees it (`/home/…` or `/mnt/c/…` in WSL). Ship the file next to your program and write `"command": ["node", "${addonDir}/addon.mjs"]`, and the addon runs wherever the user keeps your program. |
 | `panes` | The sidebar panes, by id and title. |
 | `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
 | `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool? }`. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
+| `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
 
 ### Requests from Looper
 
@@ -209,14 +232,21 @@ radio? }` or `{ separator: true }`. `&` in a label marks its access key, and
 `checked` draws a check mark next to the item while it's true, and with
 `radio: true` a bullet instead, for one choice among the items around it.
 Picking one sends the usual `menu` event, and the addon answers with a
-`refresh` so the marks follow. `needsItem`
-makes the item unavailable in a pane window while no item is selected, and
-the event's `item` is the selected one. A menu bar is a list of
-`{ label, items }`.
+`refresh` so the marks follow. A menu bar is a list of `{ label, items }`.
 
-A toolbar is a list of buttons `{ id, label, icon?, disabled?, confirm?,
-needsItem? }` and `{ separator: true }`. Each button shows its `label`, after
-its `icon` when it has one. The icons are Looper's own: `add`, `edit`, `delete`, `copy`,
+In a pane window, a menu-bar item or toolbar button with `needsItem` acts on
+the selected item, and the event's `item` is that item. It's unavailable while
+nothing is selected. When the selected item has a `menu`, the command follows
+it: the entry with the same `id` gives its `enabled`, and with no such entry
+the command is unavailable. So an item that leaves Copy 2FA Code out of its
+menu also leaves it off in the menu bar. An item without a `menu` leaves every
+`needsItem` command available.
+
+A toolbar is a list of buttons `{ id, label, icon?, iconOnly?, disabled?,
+confirm?, needsItem? }` and `{ separator: true }`. Each button shows its
+`label`, after its `icon` when it has one. With `iconOnly`, it shows only its
+icon, and the `label` is its tooltip. Keep it for commands people know by
+their icon, such as Refresh. The icons are Looper's own: `add`, `edit`, `delete`, `copy`,
 `refresh`, `open`, `folder`, `terminal`, `run`, `stop`, `pause`, `key`,
 `lock`, `search` and `settings`. A click sends a `click` event with the
 button's `id`.
@@ -257,6 +287,7 @@ Tools item with a `view`).
 | `field` | `id`, `label`, `input`, `value?`, `options?`, `accept?`, `placeholder?`, `suffix?`, `required?`, `autofocus?` | An input. `input` is `text`, `password`, `textarea`, `number`, `checkbox`, `select` (with `options: [{ value, label }]`) or `file`. `suffix` is a unit shown inside the input. A `file` field is a path box with a **Browse…** button, and `accept: [{ label, extensions }]` (such as `{ "label": "CSV files", "extensions": ["csv"] }`) sets the kinds of file Browse… offers. Its value is the path as the addon sees it: a file picked on Windows reaches an addon in WSL as a `/mnt/c/...` path. |
 | `row` | `items`: fields | Fields side by side. |
 | `section` | `title`, `body` | A titled group of nodes. |
+| `tabs` | `id`, `items`: `{ id, title, body }` | Looper's tabs, showing one tab's `body` at a time. In a window, top-level tabs go across the top of the window, and Ctrl+Tab moves between them. The selected tab stays selected when the screen is drawn again, and the fields on every tab keep their values. |
 | `footer` | `primary`, `apply?` | In a window, its bottom bar: the primary button, Cancel (which closes the window), and the apply button. Enter clicks the primary button and Esc cancels. The primary button stays off while a `required` field is empty. |
 
 A button is `{ id, label, primary?, danger?, disabled?, confirm? }`. With
@@ -374,7 +405,7 @@ printf '%s\n' \
   | node addon.mjs
 ```
 
-In Looper, install the manifest, then use **File → Addons… → Restart** after
+In Looper, install the manifest, then use **Advanced → Addons… → Restart** after
 each change to the addon's code, because Looper keeps the process it started.
 Reinstalling the manifest is only needed when the manifest itself changes.
 **Advanced → Engine Log** shows when each addon starts and how long that took,

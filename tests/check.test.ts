@@ -69,7 +69,8 @@ function makeCtx(command: string): RunContext {
   const task = TaskSchema.parse({ ...EXAMPLE_TASK, cwd: root, check: { command, timeoutSec: 30 } });
   return {
     task,
-    runId: 'r1',
+    // Unique: a session's cleanup kills every process with its run id, other test files' too.
+    runId: `r-${path.basename(root)}`,
     runDir,
     target: createTarget(task, { host: 'linux', settings }),
     settings,
