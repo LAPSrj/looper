@@ -328,6 +328,25 @@ describe('shell window stack', () => {
     expect(isBlocked(s, 'main')).toBe(false);
   });
 
+  it('a minimized window leaves the front; a minimized modal one still blocks, and focusing restores it', () => {
+    let s = run(open('main'), open('editor'), open('templates'));
+    s = reduceShell(s, { t: 'minimize', w: 'templates' });
+    expect(s.minimized).toEqual(['templates']);
+    expect(frontWindow(s)?.w).toBe('editor');
+    s = reduceShell(s, { t: 'restore', w: 'templates' });
+    expect([s.minimized, frontWindow(s)?.w]).toEqual([[], 'templates']);
+
+    s = reduceShell(s, open('settings', { modal: true, parent: 'main' }));
+    s = reduceShell(s, { t: 'minimize', w: 'settings' });
+    expect(frontWindow(s)).toBeUndefined();
+    expect(isBlocked(s, 'main')).toBe(true);
+    s = reduceShell(s, { t: 'window-focus', w: 'settings' });
+    expect([s.minimized, frontWindow(s)?.w]).toEqual([[], 'settings']);
+    s = reduceShell(s, { t: 'minimize', w: 'settings' });
+    s = reduceShell(s, { t: 'window-close', w: 'settings' });
+    expect(s.minimized).toEqual([]);
+  });
+
   it('a new route reloads the iframe, and a re-sent spec keeps its menu', () => {
     let s = run(open('main'), open('builder-setup'), { t: 'window-menu', w: 'builder-setup', menu: [] });
     s = reduceShell(s, open('builder-setup', { width: 1180, height: 760, hash: 'builder-setup' }));

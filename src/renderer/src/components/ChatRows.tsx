@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Attachment } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import { MessageBody } from './Markdown';
+import { MessageBody, PromptBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 
 export type RowCtx = {
@@ -76,7 +76,7 @@ export function ChatRow({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
     case 'prompt':
       return (
         <div className="chat-msg chat-user" onContextMenu={onContextMenu}>
-          {row.text && <MessageBody text={row.text} />}
+          {row.text && <PromptBody text={row.text} />}
           {row.attachments && <AttachmentList items={row.attachments} />}
         </div>
       );

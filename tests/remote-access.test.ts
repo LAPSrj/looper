@@ -16,11 +16,12 @@ import {
   PROXY_SECRET_HEADER,
   REQUEST_HEADER,
   REQUEST_HEADER_VALUE,
+  type MeResponse,
   type RemoteAccessProviderId,
   type RemoteAccessState,
   type ServerMessage,
 } from '../src/shared/remote-access';
-import { RemoteAccessSettingsSchema } from '../src/shared/types';
+import { RemoteAccessSettingsSchema, type RemoteAccessSettings } from '../src/shared/types';
 
 const TS_HOST = 'looper.example.ts.net';
 const TS_ACCOUNT = 'me@example.com';
@@ -85,6 +86,8 @@ interface Setup {
   clock: { t: number };
   fake?: FakeTailscale;
   states: RemoteAccessState[];
+  /** The settings RemoteAccess reads; tests may change them. */
+  settings: RemoteAccessSettings;
 }
 
 async function setup(
@@ -119,7 +122,7 @@ async function setup(
   await ra.apply(settings);
   const port = ra.state().port!;
   expect(port).toBeGreaterThan(0);
-  return { ra, port, dataDir, staticDir, log, clock, fake, states };
+  return { ra, port, dataDir, staticDir, log, clock, fake, states, settings };
 }
 
 interface Res {
@@ -300,6 +303,53 @@ describe('device cookie', () => {
     const forged = await request(s.port, { path: '/api/me', headers: { ...h, Cookie: `${cookie}x` } });
     expect(JSON.parse(String(forged.body))).toEqual({ paired: false });
   });
+
+  it("names the computer: the Name setting, else the OS computer name", async () => {
+    const s = await setup('local');
+    const h = localHeaders(s.port);
+    const { cookie } = await pair(s, h);
+    const me = async () => JSON.parse(String((await request(s.port, { path: '/api/me', headers: { ...h, Cookie: cookie } })).body)) as MeResponse;
+    expect((await me()).computer).toBe(os.hostname());
+    expect(s.ra.state().defaultName).toBe(os.hostname());
+    s.settings.name = '  Office PC ';
+    expect((await me()).computer).toBe('Office PC');
+  });
+
+  it('tells connected tabs when the computer gets a new name', async () => {
+    const s = await setup('local');
+    const { cookie } = await pair(s, localHeaders(s.port));
+    const { ws } = await openWs(s.port, { Origin: `http://localhost:${s.port}`, Host: `localhost:${s.port}`, Cookie: cookie });
+    cleanups.push(() => ws.terminate());
+    const got: { t: string; name?: string }[] = [];
+    ws.on('message', (d) => got.push(JSON.parse(String(d))));
+    ws.send(JSON.stringify({ t: 'hello', platform: 'web' }));
+    await waitFor(() => s.ra.clients.list().length === 1);
+    await s.ra.apply(s.settings);
+    expect(got.some((m) => m.t === 'computer')).toBe(false);
+    s.settings.name = 'Office PC';
+    await s.ra.apply(s.settings);
+    await waitFor(() => got.some((m) => m.t === 'computer'));
+    expect(got.filter((m) => m.t === 'computer')).toEqual([{ t: 'computer', name: 'Office PC' }]);
+  });
+
+  it('a device renames itself, and the Paired Devices list follows', async () => {
+    const s = await setup('local');
+    const h = localHeaders(s.port, { 'Content-Type': 'application/json' });
+    const { cookie } = await pair(s, h);
+    const rename = (body: string, headers: Record<string, string> = { ...h, Cookie: cookie }) => request(s.port, { method: 'POST', path: '/api/rename', headers, body });
+    const before = s.states.length;
+    const res = await rename(JSON.stringify({ name: '  Work\nLaptop ' }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(String(res.body))).toMatchObject({ paired: true, device: { name: 'Work Laptop' }, computer: os.hostname() });
+    expect(s.ra.state().devices.map((d) => d.name)).toEqual(['Work Laptop']);
+    expect(s.states.slice(before).at(-1)?.devices.map((d) => d.name)).toEqual(['Work Laptop']);
+    expect((await rename(JSON.stringify({ name: '   ' }))).status).toBe(400);
+    expect((await rename('{ torn')).status).toBe(400);
+    expect((await rename('x'.repeat(5000))).status).toBe(413);
+    expect((await rename(JSON.stringify({ name: 'Other' }), h)).status).toBe(401);
+    expect((await request(s.port, { path: '/api/rename', headers: { ...h, Cookie: cookie } })).status).toBe(405);
+    expect(s.ra.state().devices.map((d) => d.name)).toEqual(['Work Laptop']);
+  });
 });
 
 describe('local mode', () => {
@@ -321,6 +371,25 @@ describe('local mode', () => {
     s.clock.t += 61_000;
     await request(s.port, { path: '/', headers: { Host: 'evil.example' } });
     expect(s.log.lines.some((l) => l.includes('refused 15 more requests'))).toBe(true);
+  });
+
+  it('suggests the port it listens on, and saving that port keeps it running', async () => {
+    const s = await setup('local');
+    expect(await s.ra.suggestPort()).toBe(s.port);
+    const before = s.states.length;
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'local', port: s.port }));
+    expect(s.states.slice(before).map((st) => st.phase)).not.toContain('starting');
+    expect(s.ra.state()).toMatchObject({ phase: 'running', port: s.port });
+  });
+
+  it('while off, suggests a port nothing listens on', async () => {
+    const s = await setup('local');
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, provider: 'local' }));
+    const port = await s.ra.suggestPort();
+    expect(port).toBeGreaterThan(0);
+    const probe = http.createServer();
+    await new Promise<void>((resolve, reject) => probe.once('error', reject).listen(port, '127.0.0.1', resolve));
+    await new Promise((r) => probe.close(r));
   });
 });
 
@@ -513,11 +582,11 @@ describe('cross-site requests', () => {
     const { cookie } = await pair(s, localHeaders(s.port));
     const h = noHeader(s.port, { Cookie: cookie, 'Content-Type': 'text/plain' });
     const sub = JSON.stringify({ endpoint: 'https://push.example/x', keys: { p256dh: 'a', auth: 'b' } });
-    for (const p of ['/api/push/subscribe', '/api/push/unsubscribe', '/api/upload?name=a.txt', '/api/unpair', '/api/pair']) {
-      const r = await request(s.port, { method: 'POST', path: p, headers: h, body: sub });
+    for (const p of ['/api/push/subscribe', '/api/push/unsubscribe', '/api/upload?name=a.txt', '/api/unpair', '/api/rename', '/api/pair']) {
+      const r = await request(s.port, { method: 'POST', path: p, headers: h, body: p === '/api/rename' ? JSON.stringify({ name: 'Evil' }) : sub });
       expect(r.status, p).toBe(403);
     }
-    expect(s.ra.state().devices).toHaveLength(1);
+    expect(s.ra.state().devices.map((d) => d.name)).toEqual(['Phone']);
     expect(fs.existsSync(path.join(s.dataDir, 'remote-access', 'uploads'))).toBe(false);
     expect(s.log.lines.some((l) => l.includes('refused POST /api/upload') && l.includes('missing X-Looper-Request'))).toBe(true);
   });

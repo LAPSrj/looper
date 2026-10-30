@@ -142,6 +142,7 @@ function DesktopMain({ m }: { m: MainWindow }) {
       {(view?.statusBar ?? true) && (
         <div className="statusbar">
           {rest?.armed && <span>{restStatus(rest, now)}</span>}
+          {m.info?.settings.remoteAccess.enabled && <span>Remote Access enabled</span>}
           <span className="spacer" />
           <span>
             {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}

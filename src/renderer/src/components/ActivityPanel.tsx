@@ -6,15 +6,17 @@ import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { waitedText } from '@shared/sessions';
 import { stripAnsi } from '../format';
 import { AttachmentList } from './ChatRows';
+import { changeLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { ToolButton } from './ToolButton';
-import { ToolInputView, ToolResultView } from './ToolContent';
+import { ToolInputView, ToolResultView, gutterLines } from './ToolContent';
 import { TabBar } from './ui';
 
-type Tab = 'now' | 'subagents' | 'files' | 'git';
+type Tab = 'now' | 'background' | 'subagents' | 'files' | 'git';
 
-const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+/** Tools that change a file (Delete and Patch are Codex's). */
+const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
 
 /** The Now tab's toolbar icons. */
 const NAV_ICONS = {
@@ -27,17 +29,99 @@ const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
 const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length)).replace(/[\\/]$/, '');
 
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+const inputOf = (row: MessageRow): Record<string, unknown> =>
+  row.input !== null && typeof row.input === 'object' && !Array.isArray(row.input) ? (row.input as Record<string, unknown>) : {};
+
+/** The file in an editor: its name on a tab, then its lines with their numbers, added and removed ones colored. */
+function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[]; note?: string }) {
+  return (
+    <div className="now-editor">
+      {file && (
+        <div className="now-editor-tabs">
+          <div className="now-editor-tab" title={file}>
+            {baseName(file)}
+          </div>
+        </div>
+      )}
+      <div className="now-editor-lines">
+        {lines.map((l, i) =>
+          l.kind === 'gap' ? (
+            <div key={i} className="now-editor-gap">
+              ⋯
+            </div>
+          ) : (
+            <div key={i} className={`now-editor-line${l.kind === 'ctx' ? '' : ` diff-${l.kind}`}`}>
+              <span className="now-editor-gutter">{l.n}</span>
+              <span className="now-editor-mark">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ''}</span>
+              <span className="now-editor-text">{l.text || ' '}</span>
+            </div>
+          ),
+        )}
+        {note && <div className="now-editor-note">{note}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** A command in a terminal: the prompt and the command line, then its output; a cursor while it runs. */
+function TerminalScreen({ row }: { row: MessageRow }) {
+  const input = inputOf(row);
+  const command = str(input.command) ?? row.text;
+  const description = str(input.description);
+  const prompt = row.tool === 'PowerShell' ? 'PS> ' : '$ ';
+  const output = row.result === undefined ? undefined : stripAnsi(row.result).replace(/\n+$/, '');
+  return (
+    <div className="now-terminal">
+      {description && <div className="now-term-comment"># {description}</div>}
+      <div>
+        <span className="now-term-prompt">{prompt}</span>
+        {command}
+      </div>
+      {output === undefined ? (
+        row.background ? (
+          <div className="now-term-comment">Running in the background…</div>
+        ) : (
+          <span className="now-term-cursor" />
+        )
+      ) : (
+        <>
+          {output && <div>{output}</div>}
+          <div>
+            <span className="now-term-prompt">{prompt}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const TERMINALS = new Set(['Bash', 'PowerShell']);
+
 /** One tool call as the agent's screen: the file it read, the change it made, the command and its output. */
 function NowScreen({ row, taskId, runId }: { row: MessageRow; taskId: string; runId: string }) {
   const ctx = { taskId, runId };
   const running = row.result === undefined;
   const subject = row.file ?? row.preview;
+  const lines = row.tool === 'Read' && !running && !row.image ? gutterLines(row.result ?? '') : null;
+  const changed = row.tool && CHANGES.has(row.tool) ? changeLines(row) : null;
   let body;
-  if (row.tool === 'Read') {
-    body = running ? <div className="muted">Reading…</div> : <ToolResultView row={row} ctx={ctx} />;
-  } else if (row.tool && CHANGES.has(row.tool)) {
-    body = <ToolInputView row={row} />;
+  let screen = true;
+  if (row.tool && TERMINALS.has(row.tool)) {
+    body = <TerminalScreen row={row} />;
+  } else if (row.tool === 'Read' && running) {
+    body = <EditorScreen file={row.file} lines={[]} note="Reading…" />;
+  } else if (lines) {
+    body = <EditorScreen file={row.file} lines={lines.map((l) => ({ ...l, kind: 'ctx' }))} />;
+  } else if (changed) {
+    body = <EditorScreen file={row.file} lines={changed} />;
+  } else if (row.tool === 'Delete') {
+    body = <EditorScreen file={row.file} lines={[]} note="Deleted." />;
+  } else if (row.tool === 'Read' || (row.tool && CHANGES.has(row.tool))) {
+    screen = false;
+    body = row.tool === 'Read' ? <ToolResultView row={row} ctx={ctx} /> : <ToolInputView row={row} />;
   } else {
+    screen = false;
     body = (
       <>
         <ToolInputView row={row} />
@@ -58,7 +142,7 @@ function NowScreen({ row, taskId, runId }: { row: MessageRow; taskId: string; ru
         <span className="mono now-subject">{subject}</span>
         {row.resultError && <span className="error-text">Failed</span>}
       </div>
-      <div className="now-body">{body}</div>
+      <div className={`now-body${screen ? ' now-body-screen' : ''}`}>{body}</div>
     </div>
   );
 }
@@ -143,8 +227,8 @@ export function nowIndex(count: number, pos: number | null): number {
  * The Sessions window's right panel: Now shows the agent's latest tool call
  * like its screen (the toolbar goes back through earlier ones, and the last
  * one follows new calls), Subagents lists each one's agent, model, effort and
- * context, Files lists what it worked on, and Background always shows what
- * runs in the background.
+ * context, Files lists what it worked on, and Background shows what runs in
+ * the background.
  */
 export function ActivityPanel({
   sessionId,
@@ -204,6 +288,7 @@ export function ActivityPanel({
       <TabBar
         tabs={[
           ['now', 'Now'],
+          ['background', running.length ? `Background (${running.length})` : 'Background'],
           ['subagents', subagents.length ? `Subagents (${subagents.length})` : 'Subagents'],
           ['files', 'Files'],
           ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
@@ -229,6 +314,14 @@ export function ActivityPanel({
           ) : (
             <div className="empty">The agent hasn't used a tool yet.</div>
           ))}
+        {tab === 'background' && (
+          <div className="background-tab">
+            {running.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
+            {[...running, ...finished].map((b) => (
+              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} now={now} />
+            ))}
+          </div>
+        )}
         {tab === 'subagents' && (
           <div className="subagent-list">
             {subagents.map((a) => (
@@ -284,13 +377,6 @@ export function ActivityPanel({
           </div>
         )}
         {tab === 'git' && gitProject && <GitView projectId={gitProject} watch={git} narrow />}
-      </div>
-      <div className="background-pane">
-        <div className="pane-title background-title">Background</div>
-        {running.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
-        {[...running, ...finished].map((b) => (
-          <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} now={now} />
-        ))}
       </div>
     </aside>
   );

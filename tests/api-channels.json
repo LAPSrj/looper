@@ -1420,6 +1420,19 @@
   ],
   "result": {}
  },
+ "sessions.showCards": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "sessions:cards",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "sessions.seen": {
   "arity": 1,
   "calls": [
@@ -1464,13 +1477,14 @@
   }
  },
  "sessions.showContextMenu": {
-  "arity": 1,
+  "arity": 2,
   "calls": [
    [
     "send",
     "context-menu:session",
     [
-     "a0"
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -1834,30 +1848,17 @@
    "err": "boom remoteAccess:renameDevice"
   }
  },
- "remoteAccess.signOut": {
+ "remoteAccess.suggestPort": {
   "arity": 0,
   "calls": [
    [
     "invoke",
-    "remoteAccess:signOut",
+    "remoteAccess:suggestPort",
     []
    ]
   ],
   "result": {
-   "err": "boom remoteAccess:signOut"
-  }
- },
- "remoteAccess.openLogin": {
-  "arity": 0,
-  "calls": [
-   [
-    "invoke",
-    "remoteAccess:openLogin",
-    []
-   ]
-  ],
-  "result": {
-   "err": "boom remoteAccess:openLogin"
+   "err": "boom remoteAccess:suggestPort"
   }
  },
  "remoteAccess.openPair": {
@@ -2353,7 +2354,7 @@
   }
  },
  "reportSelection": {
-  "arity": 8,
+  "arity": 9,
   "calls": [
    [
     "send",
@@ -2366,7 +2367,8 @@
      "a4",
      "a5",
      "a6",
-     "a7"
+     "a7",
+     "a8"
     ]
    ]
   ],

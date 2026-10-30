@@ -7,7 +7,7 @@ export const PHONE_TABS: readonly (readonly [PhoneTab, string])[] = [
   ['dashboard', 'Dashboard'],
   ['projects', 'Projects'],
   ['tasks', 'Tasks'],
-  ['sessions', 'Sessions'],
+  ['sessions', 'Chats'],
 ];
 
 /** A screen pushed over a tab's list: what the desktop shows in the main pane. */

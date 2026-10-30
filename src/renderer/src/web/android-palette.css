@@ -6,8 +6,11 @@ html[data-platform='android'] {
   --md-on-primary: #ffffff;
   --md-primary-container: #d1e4ff;
   --md-on-primary-container: #001d36;
+  --md-secondary: #535f70;
   --md-secondary-container: #d7e3f7;
   --md-on-secondary-container: #101c2b;
+  --md-tertiary-container: #f3daff;
+  --md-on-tertiary-container: #251431;
   --md-surface: #f8f9ff;
   --md-on-surface: #191c20;
   --md-on-surface-variant: #43474e;
@@ -28,8 +31,11 @@ html[data-platform='android'] {
     --md-on-primary: #003258;
     --md-primary-container: #00497d;
     --md-on-primary-container: #d1e4ff;
+    --md-secondary: #bbc7db;
     --md-secondary-container: #3b4858;
     --md-on-secondary-container: #d7e3f7;
+    --md-tertiary-container: #523f5f;
+    --md-on-tertiary-container: #f3daff;
     --md-surface: #111418;
     --md-on-surface: #e1e2e8;
     --md-on-surface-variant: #c3c7cf;

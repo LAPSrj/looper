@@ -98,6 +98,22 @@ function resultText(content: unknown): string {
 
 type Rec = Record<string, unknown>;
 
+/**
+ * "/name args" from the record Claude Code writes when the user runs a slash
+ * command or skill: only command-message, command-name and command-args tags
+ * ("<command-message>pick-up</command-message>\n<command-name>/pick-up</command-name>",
+ * seen in claude 2.1.x transcripts and stream-json replays). Null for any other text.
+ */
+export function slashCommandText(text: string): string | null {
+  const t = text.trim();
+  if (!/^(?:<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>\s*)+$/.test(t)) return null;
+  const found = /<command-name>([\s\S]*?)<\/command-name>/.exec(t)?.[1].trim();
+  if (!found) return null;
+  const name = found.startsWith('/') ? found : `/${found}`;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t)?.[1].trim();
+  return args ? `${name} ${args}` : name;
+}
+
 /** Diff-line budget across a row's hunks; a patch past it is cut off. */
 const MAX_PATCH_LINES = 2000;
 
@@ -306,6 +322,13 @@ export class TranscriptAccumulator {
       const only = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 ? (content[0] as Rec)?.text : undefined;
       if (typeof only === 'string' && only.trimStart().startsWith('<task-notification>')) {
         this.takeNotification(only);
+        return;
+      }
+      // A slash command or skill the user ran: the user's turn is "/name args"; the skill's
+      // content follows as a meta record, which stays hidden.
+      const command = typeof only === 'string' ? slashCommandText(only) : null;
+      if (command !== null) {
+        this.push({ kind: 'prompt', ts, text: command });
         return;
       }
       if (typeof content === 'string') {

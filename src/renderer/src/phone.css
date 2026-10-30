@@ -18,12 +18,17 @@ html.phone-window[data-platform='ios'] {
   --pg-label-2: rgba(60, 60, 67, 0.6);
   --pg-label-3: rgba(60, 60, 67, 0.3);
   --pg-sep: rgba(60, 60, 67, 0.29);
-  --pg-tint: #007aff;
+  --pg-tint: #0088ff;
   --pg-on-tint: #ffffff;
   --pg-press: #d1d1d6;
   --pg-bar: rgba(249, 249, 249, 0.94);
+  --pg-glass: rgba(255, 255, 255, 0.9);
+  --pg-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.8), 0 0 0 0.5px rgba(0, 0, 0, 0.07);
+  --pg-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --pg-tab-on: rgba(120, 120, 128, 0.14);
+  --pg-switch-off: rgba(120, 120, 128, 0.16);
   --pg-seg-on: #ffffff;
-  --pg-red: #ff3b30;
+  --pg-red: #ff383c;
   --pg-orange: #ff9500;
   --pg-green: #34c759;
   --pg-key: #ffffff;
@@ -34,11 +39,11 @@ html.phone-window[data-platform='ios'] {
   --border: #c6c6c8;
   --fg: #000000;
   --fg-muted: rgba(60, 60, 67, 0.6);
-  --accent: #007aff;
+  --accent: #0088ff;
   --accent-fg: #ffffff;
   --green: #248a3d;
   --yellow: #c93400;
-  --red: #ff3b30;
+  --red: #ff383c;
   --info-bg: #e5f1ff;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
   font-size: 17px;
@@ -92,11 +97,17 @@ html.phone-window[data-platform='android'] {
     --pg-label-2: rgba(235, 235, 245, 0.6);
     --pg-label-3: rgba(235, 235, 245, 0.3);
     --pg-sep: rgba(84, 84, 88, 0.6);
-    --pg-tint: #0a84ff;
+    --pg-tint: #0091ff;
     --pg-press: #3a3a3c;
     --pg-bar: rgba(22, 22, 23, 0.94);
+    --pg-glass: rgba(64, 64, 68, 0.9);
+    --pg-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+    --pg-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    /* iOS 27: on the lighter dark glass, the selected tab's pill is darker, not lighter. */
+    --pg-tab-on: rgba(0, 0, 0, 0.28);
+    --pg-switch-off: rgba(120, 120, 128, 0.36);
     --pg-seg-on: #636366;
-    --pg-red: #ff453a;
+    --pg-red: #ff4245;
     --pg-orange: #ff9f0a;
     --pg-green: #30d158;
     --pg-key: #6b6b6b;
@@ -107,11 +118,11 @@ html.phone-window[data-platform='android'] {
     --border: #38383a;
     --fg: #ffffff;
     --fg-muted: rgba(235, 235, 245, 0.6);
-    --accent: #0a84ff;
+    --accent: #0091ff;
     --accent-fg: #ffffff;
     --green: #30d158;
     --yellow: #ffd60a;
-    --red: #ff453a;
+    --red: #ff4245;
     --info-bg: #0a2a4d;
   }
   /* Everything else follows the --md-* tokens' dark values; only what Material has no token for is set here. */
@@ -240,26 +251,38 @@ html.phone-window .pg-chevron {
   color: var(--pg-label-3);
 }
 
-/* iOS: inset grouped sections, 16 pt from the edges, rounded, hairlines inset under the text. */
+/* iOS: inset grouped sections, 16 pt from the edges, rounded, 52 pt rows, hairlines inset on both sides. */
 html.phone-window[data-platform='ios'] .pg-group-title {
-  padding: 0 32px 7px;
+  padding: 0 32px 8px;
   font-size: 13px;
   line-height: 18px;
-  font-weight: 400;
-  text-transform: uppercase;
+  font-weight: 600;
   letter-spacing: -0.08px;
 }
 html.phone-window[data-platform='ios'] .pg-list {
   margin: 0 16px;
-  border-radius: 10px;
+  border-radius: 26px;
   overflow: hidden;
   background: var(--pg-cell);
 }
 html.phone-window[data-platform='ios'] .pg-group-footer {
   margin: 7px 32px 0;
 }
-html.phone-window[data-platform='ios'] .pg-row + .pg-row {
-  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+html.phone-window[data-platform='ios'] .pg-row {
+  position: relative;
+  min-height: 52px;
+  padding: 13px 16px;
+}
+/* A hairline between rows, from the text's start to as far from the right edge. */
+html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .pg-tasks .task-item + .task-item, .pg-addon-pane .task-item + .task-item, .pg-sessions .session-row + .session-row, .env-item + .env-item)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 0.5px;
+  background: var(--pg-sep);
+  pointer-events: none;
 }
 html.phone-window[data-platform='ios'] .pg-row-sub {
   font-size: 15px;
@@ -269,12 +292,22 @@ html.phone-window[data-platform='ios'] .pg-row-value {
   font-size: 17px;
 }
 
-/* Material 3: full-width lists under a subhead, 56 dp one-line and 72 dp two-line items. */
+/* Material 3 Expressive: segmented lists under a subhead. Items sit 16 dp in from the sides, 2 dp apart, 4 dp corners
+   inside and 16 dp at the ends of a run; 56 dp one-line and 72 dp two-line items. */
 html.phone-window[data-platform='android'] .pg-group {
   margin-bottom: 8px;
 }
+html.phone-window[data-platform='android'] .pg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 16px;
+}
+html.phone-window[data-platform='android'] .pg-group-footer {
+  margin: 7px 32px 0;
+}
 html.phone-window[data-platform='android'] .pg-group-title {
-  padding: 16px 16px 8px;
+  padding: 16px 32px 8px;
   font-size: 14px;
   line-height: 20px;
   font-weight: 500;
@@ -283,8 +316,21 @@ html.phone-window[data-platform='android'] .pg-group-title {
 }
 html.phone-window[data-platform='android'] .pg-row {
   min-height: 56px;
-  padding: 8px 24px 8px 16px;
+  padding: 10px 16px;
   gap: 16px;
+  border-radius: 4px;
+  background: var(--pg-container);
+}
+html.phone-window[data-platform='android'] .pg-row.tappable:active {
+  background: color-mix(in srgb, var(--md-on-surface) 10%, var(--pg-container));
+}
+html.phone-window[data-platform='android'] .pg-list > .pg-row:first-child {
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+html.phone-window[data-platform='android'] .pg-list > .pg-row:last-child {
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
 }
 html.phone-window[data-platform='android'] .pg-row-title {
   font-size: 16px;
@@ -316,7 +362,7 @@ html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
   gap: 0;
   padding: 2px;
   border: none;
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--pg-fill);
 }
 html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
@@ -330,7 +376,7 @@ html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
   height: 32px;
   padding: 0 6px;
   border: none;
-  border-radius: 7px;
+  border-radius: 999px;
   background: transparent;
   color: var(--pg-label);
   font-size: 13px;
@@ -411,42 +457,62 @@ html.phone-window .phone-tab-icon {
   align-items: center;
   justify-content: center;
 }
+/* iOS 26: the tab bar floats as a glass capsule over the content, just inside the home indicator's
+   band; the selected tab sits on a pill of its own. */
+html.phone-window[data-platform='ios'] .phone-main {
+  position: relative;
+}
 html.phone-window[data-platform='ios'] .phone-tabbar {
-  height: calc(49px + var(--looper-safe-bottom, 0px));
-  background: var(--pg-bar);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: inset 0 0.5px 0 var(--pg-sep);
+  position: absolute;
+  z-index: 5;
+  left: 16px;
+  right: 16px;
+  bottom: max(8px, calc(var(--looper-safe-bottom, 0px) - 12px));
+  height: 62px;
+  padding: 4px;
+  border-radius: 31px;
+  background: var(--pg-glass);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
+}
+/* What scrolls under it can still scroll clear of it; a pushed screen stops above it. */
+html.phone-window[data-platform='ios'] .phone-main:not(.pushed) .pg-scroll {
+  padding-bottom: calc(62px + max(8px, calc(var(--looper-safe-bottom, 0px) - 12px)) + 24px);
+}
+html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen {
+  padding-bottom: calc(62px + max(8px, calc(var(--looper-safe-bottom, 0px) - 12px)) + 8px);
 }
 html.phone-window[data-platform='ios'] .phone-tab {
-  justify-content: flex-start;
+  justify-content: center;
   gap: 1px;
-  padding-top: 5px;
-  color: #8e8e93;
+  border-radius: 27px;
+  color: var(--pg-label);
 }
 html.phone-window[data-platform='ios'] .phone-tab-label {
   font-size: 10px;
   line-height: 12px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.1px;
 }
 html.phone-window[data-platform='ios'] .phone-tab.active {
+  background: var(--pg-tab-on);
   color: var(--pg-tint);
 }
 html.phone-window[data-platform='ios'] .phone-tab.active svg {
   stroke-width: 2.1;
 }
 html.phone-window[data-platform='android'] .phone-tabbar {
-  height: calc(80px + var(--looper-safe-bottom, 0px));
+  height: calc(64px + var(--looper-safe-bottom, 0px));
   background: var(--pg-bar);
 }
 html.phone-window[data-platform='android'] .phone-tab {
-  justify-content: flex-start;
+  justify-content: center;
   gap: 4px;
-  padding-top: 12px;
+  padding-top: 0;
 }
 html.phone-window[data-platform='android'] .phone-tab-icon {
-  width: 64px;
+  width: 56px;
   height: 32px;
   border-radius: 16px;
 }
@@ -461,8 +527,7 @@ html.phone-window[data-platform='android'] .phone-tab-label {
   letter-spacing: 0.5px;
 }
 html.phone-window[data-platform='android'] .phone-tab.active .phone-tab-label {
-  color: var(--pg-label);
-  font-weight: 700;
+  color: var(--md-secondary);
 }
 
 /* ---------- a pushed screen: the desktop's main pane ---------- */
@@ -509,8 +574,17 @@ html.phone-window .props dd {
   overflow-wrap: anywhere;
   color: var(--pg-label, var(--fg));
 }
-html.phone-window .props dd + dt {
-  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell, var(--bg)), inset 0 0.5px 0 0 var(--pg-sep, var(--border));
+html.phone-window .props dt {
+  position: relative;
+}
+html.phone-window .props dd + dt::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 0.5px;
+  background: var(--pg-sep, var(--border));
 }
 html.phone-window .props dd.mono,
 html.phone-window .props dd .mono {
@@ -518,12 +592,18 @@ html.phone-window .props dd .mono {
 }
 html.phone-window[data-platform='ios'] .status-pane > .props,
 html.phone-window[data-platform='ios'] .addon-screen .props {
-  border-radius: 10px;
+  border-radius: 26px;
   background: var(--pg-cell);
 }
 html.phone-window[data-platform='android'] .status-pane {
   padding-left: 0;
   padding-right: 0;
+}
+html.phone-window[data-platform='android'] .status-pane > .props,
+html.phone-window[data-platform='android'] .addon-screen .props {
+  margin: 0 16px;
+  border-radius: 16px;
+  background: var(--pg-container);
 }
 
 /* ---------- tables become lists ---------- */
@@ -592,6 +672,14 @@ html.phone-window .runlog-table tr.run-row.selected {
 }
 html.phone-window .runlog-table tr.selected td {
   color: var(--pg-label, var(--fg));
+}
+html.phone-window[data-platform='android'] .runlog-table tr.selected,
+html.phone-window[data-platform='android'] .runlog-table tr.run-row.selected {
+  border-radius: 16px;
+  background: var(--md-secondary-container);
+}
+html.phone-window[data-platform='android'] .runlog-table tr.selected td {
+  color: var(--md-on-secondary-container);
 }
 
 /* ---------- split panes stack ---------- */
@@ -713,6 +801,7 @@ html.phone-window .pg-addon-pane .task-folder {
   font-size: 13px;
   font-weight: 400;
   letter-spacing: 0;
+  text-transform: none;
   color: var(--pg-label-2);
 }
 html.phone-window .pg-sessions .session-row {
@@ -727,64 +816,133 @@ html.phone-window .pg-sessions .session-empty {
   padding: 16px;
   background: var(--pg-cell);
 }
+html.phone-window[data-platform='ios'] .pg-sessions .session-empty {
+  min-height: 52px;
+  padding: 13px 16px;
+  border-radius: 26px;
+}
 /* iOS: each run of rows between group headers is one rounded inset card, hairlines between rows. */
+/* An addon pane's list is already inside a Group's inset card. */
 html.phone-window[data-platform='ios'] .pg-tasks .task-list,
-html.phone-window[data-platform='ios'] .pg-sessions .session-list,
-html.phone-window[data-platform='ios'] .pg-addon-pane .task-list {
+html.phone-window[data-platform='ios'] .pg-sessions .session-list {
   margin: 0 16px;
 }
 html.phone-window[data-platform='ios'] .pg-tasks .task-folder,
 html.phone-window[data-platform='ios'] .pg-sessions .session-group,
 html.phone-window[data-platform='ios'] .pg-addon-pane .task-folder {
   padding-left: 16px;
-  text-transform: uppercase;
+  font-weight: 600;
 }
-html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item + .task-item,
-html.phone-window[data-platform='ios'] .pg-sessions .session-row + .session-row {
-  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item,
+html.phone-window[data-platform='ios'] .pg-sessions .session-row {
+  position: relative;
+  min-height: 52px;
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
 html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-list > .task-item:first-child,
 html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-folder + .task-item,
 html.phone-window[data-platform='ios'] .pg-sessions .session-group + .session-row,
 html.phone-window[data-platform='ios'] .pg-sessions .session-list > .session-row:first-child {
-  border-top-left-radius: 10px;
-  border-top-right-radius: 10px;
+  border-top-left-radius: 26px;
+  border-top-right-radius: 26px;
 }
 html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item:last-child,
 html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item:has(+ .task-folder),
 html.phone-window[data-platform='ios'] .pg-sessions .session-row:last-child,
 html.phone-window[data-platform='ios'] .pg-sessions .session-row:has(+ .session-group) {
-  border-bottom-left-radius: 10px;
-  border-bottom-right-radius: 10px;
+  border-bottom-left-radius: 26px;
+  border-bottom-right-radius: 26px;
 }
 html.phone-window[data-platform='ios'] .pg-sessions .session-list > div:not(:last-child) {
   margin-bottom: 0;
 }
+/* Material 3 Expressive: each run of items between group headers is a segmented list, 16 dp in from the sides. */
+html.phone-window[data-platform='android'] .pg-tasks .task-list,
+html.phone-window[data-platform='android'] .pg-sessions .session-list {
+  margin: 0 16px;
+}
 html.phone-window[data-platform='android'] .pg-tasks .task-item,
+html.phone-window[data-platform='android'] .pg-tasks .task-item.selected,
 html.phone-window[data-platform='android'] .pg-sessions .session-row,
 html.phone-window[data-platform='android'] .pg-addon-pane .task-item {
   min-height: 56px;
-  padding: 8px 24px 8px 16px;
+  padding: 10px 16px;
+  border-radius: 4px;
+  background: var(--pg-container);
   font-size: 16px;
+  line-height: 24px;
+}
+html.phone-window[data-platform='android'] .pg-tasks .task-item:active,
+html.phone-window[data-platform='android'] .pg-sessions .session-row:active,
+html.phone-window[data-platform='android'] .pg-addon-pane .task-item:active {
+  background: color-mix(in srgb, var(--md-on-surface) 10%, var(--pg-container));
+}
+html.phone-window[data-platform='android'] :is(.pg-tasks, .pg-addon-pane) .task-item + .task-item,
+html.phone-window[data-platform='android'] .pg-sessions .session-row + .session-row {
+  margin-top: 2px !important;
+}
+html.phone-window[data-platform='android'] :is(.pg-tasks, .pg-addon-pane) .task-list > .task-item:first-child,
+html.phone-window[data-platform='android'] :is(.pg-tasks, .pg-addon-pane) .task-folder + .task-item,
+html.phone-window[data-platform='android'] .pg-sessions .session-group + .session-row,
+html.phone-window[data-platform='android'] .pg-sessions .session-list > .session-row:first-child {
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+html.phone-window[data-platform='android'] :is(.pg-tasks, .pg-addon-pane) .task-item:last-child,
+html.phone-window[data-platform='android'] :is(.pg-tasks, .pg-addon-pane) .task-item:has(+ .task-folder),
+html.phone-window[data-platform='android'] .pg-sessions .session-row:last-child,
+html.phone-window[data-platform='android'] .pg-sessions .session-row:has(+ :is(.session-group, div)) {
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+html.phone-window[data-platform='android'] .pg-sessions .session-list > div:not(:last-child) {
+  margin-bottom: 0;
+}
+/* The addon pane sits in a .pg-list, which already insets it. */
+html.phone-window[data-platform='android'] .pg-addon-pane .task-list {
+  margin: 0;
 }
 html.phone-window[data-platform='android'] .pg-tasks .task-item-sub,
-html.phone-window[data-platform='android'] .pg-sessions .session-sub {
+html.phone-window[data-platform='android'] .pg-sessions .session-sub,
+html.phone-window[data-platform='android'] .pg-addon-pane .task-item-sub {
   font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
 }
 html.phone-window[data-platform='android'] .pg-tasks .task-folder,
-html.phone-window[data-platform='android'] .pg-sessions .session-group {
+html.phone-window[data-platform='android'] .pg-sessions .session-group,
+html.phone-window[data-platform='android'] .pg-addon-pane .task-folder {
+  padding: 16px 16px 8px;
   font-size: 14px;
+  line-height: 20px;
   font-weight: 500;
+  letter-spacing: 0.1px;
   color: var(--pg-tint);
+}
+html.phone-window[data-platform='android'] .pg-sessions .session-empty {
+  border-radius: 16px;
+  background: var(--pg-container);
+}
+html.phone-window[data-platform='android'] .pg-addon-toolbar {
+  border-radius: 16px;
+  background: var(--pg-container);
+}
+html.phone-window[data-platform='android'] .phone-detail > .pg-addon-toolbar {
+  border-radius: 0;
 }
 html.phone-window .pg-addon-toolbar {
   margin: 0 16px;
-  border-radius: 10px;
+  border-radius: 26px;
   background: var(--pg-cell);
 }
 html.phone-window .phone-detail > .pg-addon-toolbar {
   margin: 0;
   border-radius: 0;
+}
+/* In a Group, the list around it is already inset. */
+html.phone-window .pg-list > .pg-addon-toolbar {
+  margin: 0;
 }
 html.phone-window .pg-addon-toolbar:empty {
   display: none;
@@ -802,8 +960,8 @@ html.phone-window .phone-sessions .overview-card {
   height: auto;
   max-height: none;
   border: none;
-  border-radius: 10px;
-  padding: 12px 16px;
+  border-radius: 26px;
+  padding: 14px 18px;
   background: var(--pg-cell);
   gap: 8px;
 }
@@ -831,7 +989,7 @@ html.phone-window .phone-sessions .overview-meta {
   white-space: normal;
 }
 html.phone-window[data-platform='android'] .phone-sessions .overview-card {
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--pg-container);
 }
 html.phone-window .phone-sessions .empty {
@@ -950,7 +1108,7 @@ html.phone-window .pg-sheet {
   animation: pg-rise 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 html.phone-window[data-platform='ios'] .pg-sheet {
-  border-radius: 10px 10px 0 0;
+  border-radius: 38px 38px 0 0;
 }
 html.phone-window[data-platform='android'] .pg-sheet {
   border-radius: 28px 28px 0 0;
@@ -985,7 +1143,7 @@ html.phone-window .pg-sheet-title {
 }
 html.phone-window[data-platform='ios'] .pg-sheet-title {
   text-align: center;
-  padding-left: 44px;
+  padding-left: 74px;
 }
 html.phone-window[data-platform='android'] .pg-sheet-title {
   font-size: 22px;
@@ -999,6 +1157,16 @@ html.phone-window .pg-sheet-done {
   color: var(--pg-tint);
   font-size: 17px;
   font-weight: 600;
+}
+/* iOS: Done is the sheet's prominent button, a tinted capsule. */
+html.phone-window[data-platform='ios'] .pg-sheet-done {
+  padding: 0 18px;
+  border-radius: 22px;
+  background: var(--pg-tint);
+  color: var(--pg-on-tint);
+}
+html.phone-window[data-platform='ios'] .pg-sheet-head {
+  padding: 10px 16px;
 }
 html.phone-window .pg-sheet .statusbar {
   flex-wrap: wrap;
@@ -1158,8 +1326,8 @@ html.phone-window[data-platform='ios'] .field textarea,
 html.phone-window[data-platform='ios'] .guidance-compose textarea,
 html.phone-window[data-platform='ios'] .overview-actions input {
   border: none;
-  border-radius: 10px;
-  padding: 11px 16px;
+  border-radius: 26px;
+  padding: 14px 16px;
   font-size: 17px;
 }
 html.phone-window[data-platform='android'] .field input,
@@ -1239,6 +1407,25 @@ html.phone-window .checkbox-field input[type='checkbox']:checked::after {
 }
 html.phone-window .checkbox-field input[type='checkbox']:disabled {
   opacity: 0.4;
+}
+/* iOS 26: a 64 × 28 track and a pill-shaped knob. */
+html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox'] {
+  width: 64px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--pg-switch-off);
+}
+html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']:checked {
+  background: var(--pg-green);
+}
+html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']::after {
+  width: 39px;
+  height: 24px;
+  border-radius: 12px;
+  transition: transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']:checked::after {
+  transform: translateX(21px);
 }
 html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox'] {
   width: 52px;
@@ -1326,6 +1513,7 @@ html.phone-window .btn.small {
 }
 html.phone-window[data-platform='ios'] .btn {
   border: none;
+  border-radius: 999px;
   background: var(--pg-fill);
   color: var(--pg-tint);
 }
@@ -1340,7 +1528,7 @@ html.phone-window[data-platform='android'] .btn {
   position: relative;
   min-height: 40px;
   margin: 4px 0;
-  padding: 0 24px;
+  padding: 0 16px;
   border: 1px solid var(--pg-label-3);
   border-radius: 20px;
   background: transparent;
@@ -1408,6 +1596,13 @@ html.phone-window[data-platform='android'] .editor-footer {
 html.phone-window[data-platform='android'] .editor-footer .btn {
   margin: 0;
 }
+/* iOS 27 draws no edge above a bottom bar by default: the capsules sit on the page. */
+html.phone-window[data-platform='ios'] .editor-footer {
+  border-top: none;
+}
+html.phone-window[data-platform='ios'] .editor-footer .btn {
+  min-height: 50px;
+}
 /* The editor's panels share one grid cell: never wider than the screen, whatever a panel holds. */
 html.phone-window .editor-body {
   min-height: 0;
@@ -1438,7 +1633,8 @@ html.phone-window .statusbar {
 html.phone-window .env-list.boxed,
 html.phone-window .mu-list {
   border: none;
-  border-radius: 10px;
+  border-radius: 26px;
+  overflow: hidden;
   background: var(--pg-cell);
   padding: 0;
 }
@@ -1451,11 +1647,25 @@ html.phone-window .mu-group {
   border-radius: 0;
   font-size: 17px;
 }
-html.phone-window .env-item + .env-item {
-  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+html.phone-window[data-platform='ios'] .env-item {
+  position: relative;
+  min-height: 52px;
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
 html.phone-window .env-item.selected {
   background: var(--info-bg);
+}
+html.phone-window[data-platform='android'] .env-list.boxed,
+html.phone-window[data-platform='android'] .mu-list {
+  border-radius: 16px;
+  background: var(--pg-container);
+  overflow: hidden;
+}
+html.phone-window[data-platform='android'] .env-item.selected {
+  border-radius: 16px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
 }
 html.phone-window .env-item-sub,
 html.phone-window .mu-item-sub,
@@ -1520,9 +1730,6 @@ html.phone-window .image-viewport {
 html.phone-window .pair-qr img {
   max-width: 100%;
   height: auto;
-}
-html.phone-window .remote-access-status {
-  flex-wrap: wrap;
 }
 /* The Remote Access and other dialog bodies: no fixed widths wider than the screen. */
 html.phone-window .form *,

@@ -4,16 +4,23 @@
   min-width: 0;
   margin-left: auto;
 }
+.ws-thisdevice-form {
+  display: contents;
+}
 .ws-thisdevice-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px 18px 10px;
+  gap: 12px;
+  padding: 16px 18px 12px;
 }
-.ws-thisdevice-name {
-  font-size: 15px;
-  font-weight: 600;
-}
+.ws-thisdevice-body .field,
 .ws-thisdevice-body .checkbox-field {
-  margin-top: 10px;
+  margin: 0;
+}
+.ws-thisdevice-value {
+  font-size: 13px;
+}
+.ws-thisdevice-commands {
+  display: flex;
+  margin-top: 4px;
 }

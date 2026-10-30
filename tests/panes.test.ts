@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, it } from 'vitest';
-import { paneMenuItems, singleMenuItems, taskListMenu } from '../src/main/view-menu';
+import { paneMenuItems, paneVisibilityItems, singleMenuItems, taskListMenu } from '../src/main/view-menu';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { ALL_FILTERS, PANES, passesFilter } from '../src/shared/panes';
 import { TaskFilterSchema, TaskSchema, ViewSchema, type TaskInput, type View } from '../src/shared/types';
@@ -33,7 +33,7 @@ describe('sidebar panes', () => {
     expect(passesFilter(task({ trigger: watcher }), filter, ['showDisabled', 'showCompleted'])).toBe(true);
   });
 
-  it('builds the View > Task List menu for the current mode', () => {
+  it('builds the View > Task List Options menu for the current mode', () => {
     const single = ViewSchema.parse({});
     const labels = (items: MenuItemConstructorOptions[]) => items.map((i) => i.label ?? '-');
     expect(labels(taskListMenu(single, () => undefined))).toContain('Show &Watcher Tasks');
@@ -41,16 +41,37 @@ describe('sidebar panes', () => {
     const multiple = ViewSchema.parse({ sidebar: 'multiple' });
     const menu = taskListMenu(multiple, () => undefined);
     expect(labels(menu)).toEqual(expect.arrayContaining(['&Tasks Pane', '&Goals Pane', '&Watchers Pane']));
+    expect(labels(menu)).not.toContain('Show &Pane');
     expect(labels(menu)).not.toContain('Show &Watcher Tasks');
     const goals = menu.find((i) => i.label === '&Goals Pane')!.submenu as MenuItemConstructorOptions[];
     expect(labels(goals)).toEqual([
-      'Show &Pane',
-      '-',
       ...['Disabled', 'Comp&leted', 'S&cheduled', '&Manual', '&Watcher'].map((k) => expect.stringContaining(k)),
       '-',
       'Show &Folders',
       'Hide &Empty Folders',
     ]);
+  });
+
+  it('lists every pane in one View group, in the sidebar order', () => {
+    const labels = (items: MenuItemConstructorOptions[]) => items.map((i) => i.label);
+    const addon: MenuItemConstructorOptions[] = [{ label: 'Servers', type: 'checkbox' }];
+    expect(labels(paneVisibilityItems(ViewSchema.parse({}), () => undefined, addon))).toEqual(['&Projects', 'Ta&sks', 'Servers']);
+    const multiple = ViewSchema.parse({ sidebar: 'multiple' });
+    expect(labels(paneVisibilityItems(multiple, () => undefined, addon))).toEqual(['&Projects', 'Ta&sks', 'Go&als', '&Watchers', 'Servers']);
+  });
+
+  it('keeps the single task list showing, and changes only the pane it names', () => {
+    const single = paneVisibilityItems(ViewSchema.parse({}), () => undefined);
+    expect(single[1]).toMatchObject({ checked: true, enabled: false });
+
+    let patch: Partial<View> = {};
+    const view = ViewSchema.parse({ sidebar: 'multiple' });
+    const items = paneVisibilityItems(view, (p) => (patch = p));
+    items[0].click!({ checked: false } as never, undefined as never, undefined as never);
+    expect(patch.projectsPane?.visible).toBe(false);
+    items[2].click!({ checked: false } as never, undefined as never, undefined as never);
+    expect(patch.panes?.goals.visible).toBe(false);
+    expect(patch.panes?.tasks).toEqual(view.panes.tasks);
   });
 
   it('offers Hide Empty Folders only while the list shows folders', () => {
@@ -65,6 +86,7 @@ describe('sidebar panes', () => {
     const view = ViewSchema.parse({ sidebar: 'multiple', panes: { tasks: { visible: false }, goals: { visible: false } } });
     const items = paneMenuItems(view, 'watchers', (p) => (patch = p));
     expect(items[0].enabled).toBe(false);
+    expect(paneVisibilityItems(view, () => undefined)[3].enabled).toBe(false);
     const disabled = items.find((i) => i.label === 'Show &Disabled Tasks')!;
     disabled.click!({ checked: false } as never, undefined as never, undefined as never);
     expect(patch.panes?.watchers.showDisabled).toBe(false);

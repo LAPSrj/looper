@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AddonSearchBox } from './AddonPane';
 import { forkPoint, type Attachment, type ChatPermissionRequest, type ChatState } from '@shared/chat';
-import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
 import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList, ChatRow, ToolGroup, groupRows, type ChatItem, type RowCtx } from './ChatRows';
+import { commandAt, insertCommand, matchCommands, quoteText } from './composer';
 import { ICONS } from './icons';
-import { MessageBody } from './Markdown';
+import { PromptBody } from './Markdown';
 import { ToolButton } from './ToolButton';
 import { ToolInputView } from './ToolContent';
 
@@ -60,7 +62,7 @@ export function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissi
   };
   return (
     <div className="chat-card chat-permission">
-      <div>{requestText(state.harnessName, p)}</div>
+      <div>{requestText(harnessKindLabel(state.harnessKind), p)}</div>
       <div className="chat-tool-body">
         <ToolInputView row={row} />
       </div>
@@ -78,9 +80,9 @@ export function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissi
 
 /** One line above the input: what the agent is doing, or why the chat ended. */
 function ChatStatus({ state }: { state: ChatState }) {
-  if (state.permissions.length > 0) return <div className="chat-status chat-working muted">{state.harnessName} is waiting for your answer.</div>;
-  if (state.status === 'working') return <div className="chat-status chat-working muted">{state.harnessName} is working…</div>;
-  if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {state.harnessName}…</div>;
+  if (state.permissions.length > 0) return <div className="chat-status chat-working muted">{harnessKindLabel(state.harnessKind)} is waiting for your answer.</div>;
+  if (state.status === 'working') return <div className="chat-status chat-working muted">{harnessKindLabel(state.harnessKind)} is working…</div>;
+  if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {harnessKindLabel(state.harnessKind)}…</div>;
   if (state.status === 'ended') return <div className="chat-status chat-working error-text">{state.error ?? 'The session ended.'}</div>;
   return null;
 }
@@ -162,29 +164,57 @@ function findRanges(root: HTMLElement, query: string): Range[] {
 /** Each chat's unsent message and files, kept while the window shows another session. */
 const drafts = new Map<string, { text: string; pending: Attachment[] }>();
 
-/** The "/" list's matches: the commands whose name starts with what follows the "/", then those that contain it. */
-export function matchCommands(commands: SlashCommand[], typed: string, limit = 50): SlashCommand[] {
-  const q = typed.toLowerCase();
-  const starts = commands.filter((c) => c.name.toLowerCase().startsWith(q));
-  const contains = commands.filter((c) => !starts.includes(c) && c.name.toLowerCase().includes(q));
-  return [...starts, ...contains].slice(0, limit);
-}
-
-/** A chat in the Sessions window: the conversation, its queue, and the message box. */
-export function ChatView({ state }: { state: ChatState }) {
+/**
+ * A chat in the Sessions window: the conversation, its queue, and the message box.
+ * `embedded`: one of several on the dashboard, so it doesn't take the focus when it
+ * opens, and Esc stops its agent only while the focus is in it.
+ */
+export function ChatView({ state, embedded = false }: { state: ChatState; embedded?: boolean }) {
   const id = state.id;
   const [text, setTextState] = useState(() => drafts.get(id)?.text ?? state.draft?.text ?? '');
   const [pending, setPendingState] = useState<Attachment[]>(() => drafts.get(id)?.pending ?? state.draft?.attachments ?? []);
   const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  /** Ctrl+F counts up: the find box takes the focus and selects what it holds, once it shows. */
+  const [findFocus, setFindFocus] = useState(0);
+  useEffect(() => {
+    if (!findFocus) return;
+    findRef.current?.focus();
+    findRef.current?.select();
+  }, [findFocus]);
+  // A drag that ends anywhere else (dropped outside, cancelled, left the window) clears the border.
+  useEffect(() => {
+    const end = () => {
+      dragDepth.current = 0;
+      setDragging(false);
+    };
+    // Leaving the window gives a dragleave at its edge (relatedTarget is unreliable in drag events).
+    const leaveWindow = (e: DragEvent) => {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) end();
+    };
+    window.addEventListener('dragend', end);
+    window.addEventListener('drop', end);
+    window.addEventListener('dragleave', leaveWindow);
+    return () => {
+      window.removeEventListener('dragend', end);
+      window.removeEventListener('drop', end);
+      window.removeEventListener('dragleave', leaveWindow);
+    };
+  }, []);
   const [find, setFind] = useState<{ query: string; index: number } | null>(null);
   const [matches, setMatches] = useState(0);
   const [pick, setPick] = useState(0);
-  const [slashClosed, setSlashClosed] = useState(false);
+  /** Where the cursor is in the message box: the "/" list follows the word it's in. */
+  const [caret, setCaret] = useState(0);
+  /** Esc closed the "/" list for the word starting here. */
+  const [closedAt, setClosedAt] = useState<number | null>(null);
+  const [focused, setFocused] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
   // The command bar's skill button: the whole list, whatever the box holds.
   const [picker, setPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const findRef = useRef<HTMLInputElement>(null);
+  const findRef = useRef<HTMLInputElement | null>(null);
   const atBottom = useRef(true);
   /** Up/Down in the message box: which sent message is shown, and the draft to go back to. */
   const recall = useRef<{ index: number; draft: string } | null>(null);
@@ -200,21 +230,52 @@ export function ChatView({ state }: { state: ChatState }) {
       return next;
     });
 
+  /** Text put in the box by code: the box takes the focus with its cursor here once it shows the text. */
+  const caretTo = useRef<number | null>(null);
+  const putText = (t: string, at: number) => {
+    setText(t);
+    setCaret(at);
+    caretTo.current = at;
+  };
+  useLayoutEffect(() => {
+    const ta = composerRef.current;
+    const at = caretTo.current;
+    if (at === null || !ta) return;
+    caretTo.current = null;
+    ta.focus();
+    ta.setSelectionRange(at, at);
+    if (at === ta.value.length) ta.scrollTop = ta.scrollHeight;
+  }, [text]);
+
+  // Quote: the selection goes after what the box holds, and the cursor after the quote.
+  const quoteIntoBox = (selection: string) => {
+    const quote = quoteText(selection);
+    if (!quote || state.status === 'ended') return;
+    recall.current = null;
+    const next = text.trim() ? `${text.replace(/\s+$/, '')}\n\n${quote}` : quote;
+    putText(next, next.length);
+  };
+  const quoteRef = useRef(quoteIntoBox);
+  quoteRef.current = quoteIntoBox;
+
   useEffect(() => {
     const unsubUi = window.looper.onUi((e) => {
       // File → Attach Files…: the files wait under the message box like dropped ones.
       if (e.type === 'chat-attached') setPending((p) => [...p, ...e.attachments]);
+      else if (e.type === 'chat-quote') {
+        if (e.chatId === id) quoteRef.current(e.text);
+      }
       else if (e.type === 'chat-find') {
         setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
-        setTimeout(() => findRef.current?.select());
-      } else if (e.type === 'chat-edit') {
+        setFindFocus((n) => n + 1);
+      } else if (e.type === 'chat-edit' && e.chatId === id) {
         recall.current = null;
         setText(e.text);
         setPending(() => e.attachments);
         composerRef.current?.focus();
       }
     });
-    composerRef.current?.focus();
+    if (!embedded) composerRef.current?.focus();
     return unsubUi;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -267,15 +328,22 @@ export function ChatView({ state }: { state: ChatState }) {
   };
 
   // Esc closes the find bar, else stops the agent's turn (the Chat menu shows it as Stop's key);
-  // F3 and Shift+F3 step through the matches.
+  // F3 and Shift+F3 step through the matches; Ctrl+Shift+Q quotes the text selected in the messages.
   const keys = useRef({ find, status: state.status });
   keys.current = { find, status: state.status };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (e.key === 'Escape') {
+      if (e.code === 'KeyQ' && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey) {
+        const sel = window.getSelection();
+        const root = scrollRef.current;
+        if (!sel || !root || !sel.anchorNode || !root.contains(sel.anchorNode)) return;
+        e.preventDefault();
+        quoteRef.current(sel.toString());
+      } else if (e.key === 'Escape') {
+        const mine = !embedded || !!scrollRef.current?.closest('.chat-app')?.contains(document.activeElement);
         if (keys.current.find) closeFind();
-        else if (keys.current.status === 'working') void window.looper.chat.stop(id);
+        else if (keys.current.status === 'working' && mine) void window.looper.chat.stop(id);
         else return;
         e.preventDefault();
       } else if (e.key === 'F3' && keys.current.find) {
@@ -285,7 +353,7 @@ export function ChatView({ state }: { state: ChatState }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [id]);
+  }, [id, embedded]);
 
   const ended = state.status === 'ended';
   const all = [...state.history, ...state.rows];
@@ -293,7 +361,7 @@ export function ChatView({ state }: { state: ChatState }) {
     const selection = window.getSelection()?.toString() || undefined;
     const index = all.indexOf(row);
     const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
-    const base = { chatId: id, taskId: state.taskId, selection, fork };
+    const base = { chatId: id, taskId: state.taskId, selection, quote: !ended, fork };
     switch (row.kind) {
       case 'prompt':
         window.looper.chat.showContextMenu({
@@ -335,16 +403,24 @@ export function ChatView({ state }: { state: ChatState }) {
     atBottom.current = true;
   };
 
-  // "/" at the start of an empty-looking message opens the harness's commands and skills.
-  const slash = /^\/(\S*)$/.exec(text);
-  const typedList = !!slash && !slashClosed;
-  const options = typedList ? matchCommands(state.commands, slash[1]) : picker ? matchCommands(state.commands, '', Infinity) : [];
+  // "/" at the start of the box or of a word lists the harness's commands and skills (Codex's "$" too).
+  const typed = commandAt(text, caret, [...new Set(['/', state.commandPrefix])]);
+  const typedList = !!typed && typed.start !== closedAt && focused && !ended;
+  const options = typedList ? matchCommands(state.commands, typed.query) : picker ? matchCommands(state.commands, '', Infinity) : [];
+  const picked = Math.min(pick, options.length - 1);
+  useLayoutEffect(() => {
+    listRef.current?.querySelector('.slash-item.selected')?.scrollIntoView({ block: 'nearest' });
+  }, [picked, options.length]);
   const choose = (c: SlashCommand) => {
-    // From the skill button, the command goes in front of what's already typed.
-    setText(typedList ? `${state.commandPrefix}${c.name} ` : `${state.commandPrefix}${c.name} ${text.replace(/^\s+/, '')}`);
-    setSlashClosed(true);
+    const command = `${state.commandPrefix}${c.name}`;
     setPicker(false);
-    composerRef.current?.focus();
+    if (typedList) {
+      const next = insertCommand(text, typed.start, caret, command);
+      putText(next.text, next.caret);
+    } else {
+      // From the skill button, the command goes in front of what's already typed.
+      putText(`${command} ${text.replace(/^\s+/, '')}`, command.length + 1);
+    }
   };
   const openPicker = () => {
     setPicker(true);
@@ -376,7 +452,7 @@ export function ChatView({ state }: { state: ChatState }) {
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        setSlashClosed(true);
+        if (typed) setClosedAt(typed.start);
         setPicker(false);
         return;
       }
@@ -415,18 +491,26 @@ export function ChatView({ state }: { state: ChatState }) {
   return (
     <div
       className={`chat-app${dragging ? ' dragging' : ''}`}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        dragDepth.current++;
+        setDragging(true);
+      }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
         e.stopPropagation();
-        setDragging(true);
       }}
       onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
+        if (!e.dataTransfer.types.includes('Files')) return;
+        // Every child fires its own enter and leave: only the last leave ends the drag.
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
       }}
       onDrop={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        dragDepth.current = 0;
         setDragging(false);
         attach([...e.dataTransfer.files]);
       }}
@@ -439,19 +523,24 @@ export function ChatView({ state }: { state: ChatState }) {
       )}
       {find && (
         <div className="chat-find">
-          <input
-            ref={findRef}
-            value={find.query}
-            placeholder="Find"
-            autoFocus
-            onChange={(e) => setFind({ query: e.target.value, index: 0 })}
+          <div
+            style={{ display: 'contents' }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 stepFind(e.shiftKey ? -1 : 1);
               }
             }}
-          />
+          >
+            <AddonSearchBox
+              value={find.query}
+              placeholder="Find"
+              inputRef={(el) => {
+                findRef.current = el;
+              }}
+              onChange={(query) => setFind({ query, index: 0 })}
+            />
+          </div>
           <span className="muted">
             {!find.query ? '' : matches ? `${(((find.index % matches) + matches) % matches) + 1} of ${matches}` : 'No matches'}
           </span>
@@ -478,7 +567,7 @@ export function ChatView({ state }: { state: ChatState }) {
             const selection = window.getSelection()?.toString();
             if (!selection) return;
             e.preventDefault();
-            window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection });
+            window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection, quote: !ended });
           }}
         >
           {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
@@ -492,7 +581,7 @@ export function ChatView({ state }: { state: ChatState }) {
           {state.queued.map((m) => (
             <div key={m.id} className="chat-queued">
               <div className="chat-msg chat-user">
-                {m.text && <MessageBody text={m.text} />}
+                {m.text && <PromptBody text={m.text} />}
                 {m.attachments.length > 0 && <AttachmentList items={m.attachments} />}
               </div>
               {!m.sent && (
@@ -510,30 +599,6 @@ export function ChatView({ state }: { state: ChatState }) {
         </div>
         <ChatStatus state={state} />
         <div className="chat-composer">
-          {options.length > 0 && (
-            <div className="slash-list" role="listbox">
-              {options.map((c, i) => (
-                <div
-                  key={c.name}
-                  role="option"
-                  aria-selected={i === Math.min(pick, options.length - 1)}
-                  className={`slash-item${i === Math.min(pick, options.length - 1) ? ' selected' : ''}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    choose(c);
-                  }}
-                  onMouseEnter={() => setPick(i)}
-                >
-                  <span className="slash-name">
-                    {state.commandPrefix}
-                    {c.name}
-                    {c.argumentHint ? <span className="muted"> {c.argumentHint}</span> : null}
-                  </span>
-                  <span className="slash-desc muted">{c.description}</span>
-                </div>
-              ))}
-            </div>
-          )}
           <div className="composer-main">
             <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
             {pending.length > 0 && (
@@ -541,27 +606,67 @@ export function ChatView({ state }: { state: ChatState }) {
                 <AttachmentList items={pending} onRemove={(a) => setPending((p) => p.filter((x) => x !== a))} />
               </div>
             )}
-            <textarea
-              ref={composerRef}
-              value={text}
-              placeholder={`Message ${state.harnessName}`}
-              rows={3}
-              disabled={ended}
-              onChange={(e) => {
-                recall.current = null;
-                setText(e.target.value);
-                setPick(0);
-                if (!e.target.value.startsWith('/')) setSlashClosed(false);
-              }}
-              onPaste={(e) => {
-                const files = [...e.clipboardData.files];
-                if (files.length === 0) return;
-                e.preventDefault();
-                attach(files);
-              }}
-              onKeyDown={onComposerKey}
-              onBlur={() => setPicker(false)}
-            />
+            {/* The "/" list drops from the message box's top edge, like a combo box's list. */}
+            <div className="composer-input">
+              {options.length > 0 && (
+                <div className="slash-list" role="listbox" id={`slash-list-${id}`} ref={listRef}>
+                  {options.map((c, i) => (
+                    <div
+                      key={c.name}
+                      id={`slash-${id}-${i}`}
+                      role="option"
+                      aria-selected={i === picked}
+                      className={`slash-item${i === picked ? ' selected' : ''}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        choose(c);
+                      }}
+                      onMouseEnter={() => setPick(i)}
+                    >
+                      <span className="slash-name">
+                        {state.commandPrefix}
+                        {c.name}
+                        {c.argumentHint ? <span className="slash-hint"> {c.argumentHint}</span> : null}
+                      </span>
+                      <span className="slash-desc">{c.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                ref={composerRef}
+                value={text}
+                placeholder={`Message ${harnessKindLabel(state.harnessKind)}`}
+                rows={3}
+                disabled={ended}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={options.length > 0}
+                aria-controls={options.length > 0 ? `slash-list-${id}` : undefined}
+                aria-activedescendant={options.length > 0 ? `slash-${id}-${picked}` : undefined}
+                onChange={(e) => {
+                  recall.current = null;
+                  const at = e.target.selectionStart;
+                  setText(e.target.value);
+                  setCaret(at);
+                  setPick(0);
+                  if (commandAt(e.target.value, at, ['/', state.commandPrefix])?.start !== closedAt) setClosedAt(null);
+                }}
+                onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+                onPaste={(e) => {
+                  const files = [...e.clipboardData.files];
+                  if (files.length === 0) return;
+                  e.preventDefault();
+                  attach(files);
+                }}
+                onKeyDown={onComposerKey}
+                onFocus={() => setFocused(true)}
+                onBlur={() => {
+                  setFocused(false);
+                  setPicker(false);
+                }}
+              />
+            </div>
           </div>
           <div className="composer-actions">
             <button className="btn primary" disabled={ended || (!text.trim() && pending.length === 0)} onClick={send}>

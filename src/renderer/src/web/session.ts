@@ -6,6 +6,7 @@ import {
   type ClientMessage,
   type DialogResult,
   type EncodedBytes,
+  type EncodedUndefined,
   type ServerMessage,
   type UploadResponse,
 } from '../../../shared/remote-access';
@@ -38,23 +39,25 @@ const isPlain = (v: object): boolean => {
   return proto === Object.prototype || proto === null;
 };
 
-/** Uint8Array → `{ $bytes }`, anywhere in the value. */
+/** Uint8Array → `{ $bytes }` anywhere in the value, undefined → `{ $undefined }` in an array. */
 export function encodeBytes(v: unknown): unknown {
   if (v instanceof Uint8Array) return { $bytes: bytesToBase64(v) } satisfies EncodedBytes;
-  if (Array.isArray(v)) return v.map(encodeBytes);
+  // Array.from, not map: map skips holes, which JSON would also turn into null.
+  if (Array.isArray(v)) return Array.from(v, (x: unknown) => (x === undefined ? ({ $undefined: true } satisfies EncodedUndefined) : encodeBytes(x)));
   if (v && typeof v === 'object' && isPlain(v)) {
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encodeBytes(x)]));
   }
   return v;
 }
 
-/** `{ $bytes }` → Uint8Array, anywhere in the value. */
+/** `{ $bytes }` → Uint8Array and `{ $undefined }` → undefined, anywhere in the value. */
 export function decodeBytes(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(decodeBytes);
   if (v && typeof v === 'object' && isPlain(v)) {
     const o = v as Record<string, unknown>;
     const keys = Object.keys(o);
     if (keys.length === 1 && keys[0] === '$bytes' && typeof o.$bytes === 'string') return base64ToBytes(o.$bytes);
+    if (keys.length === 1 && keys[0] === '$undefined' && o.$undefined === true) return undefined;
     return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, decodeBytes(x)]));
   }
   return v;
@@ -151,7 +154,7 @@ export class Session {
     if (!this.connected) return Promise.reject(new Error(NOT_CONNECTED));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      if (!this.post({ t: 'invoke', id, w, channel, args: args.map(encodeBytes) })) {
+      if (!this.post({ t: 'invoke', id, w, channel, args: encodeBytes(args) as unknown[] })) {
         reject(new Error(`The request to Looper is too large (${channel}).`));
         return;
       }
@@ -160,7 +163,7 @@ export class Session {
   }
 
   send(w: string, channel: string, args: unknown[]): void {
-    if (this.connected) this.post({ t: 'send', w, channel, args: args.map(encodeBytes) });
+    if (this.connected) this.post({ t: 'send', w, channel, args: encodeBytes(args) as unknown[] });
   }
 
   on(w: string, channel: string, cb: (...args: any[]) => void): () => void {

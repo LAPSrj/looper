@@ -67,7 +67,7 @@ function OldNewDiff({ oldText, newText }: { oldText: string; newText: string }) 
 /** Claude Code numbers a Read result's lines as "12→text", or as "12\ttext" in newer versions. */
 const GUTTER_RE = /^\s*(\d+)(?:→|\t)(.*)$/;
 
-function gutterLines(text: string): { n: string; text: string }[] | null {
+export function gutterLines(text: string): { n: string; text: string }[] | null {
   const lines = text.split('\n');
   const parsed: { n: string; text: string }[] = [];
   let matched = 0;

@@ -58,6 +58,19 @@ export function MessageBody({ text }: { text: string }) {
   return sections ? <TagSections sections={sections} /> : <Markdown text={text} />;
 }
 
+/** A one-line "/name args": a slash command or skill the user ran. */
+export const isSlashCommand = (text: string): boolean => /^\/[\w:.-]+(?:[ \t][^\n]*)?$/.test(text.trim());
+
+/** The user's message: a slash command as the plain text it was typed, anything else as MessageBody. */
+export function PromptBody({ text }: { text: string }) {
+  if (!isSlashCommand(text)) return <MessageBody text={text} />;
+  return (
+    <div className="markdown">
+      <p>{text.trim()}</p>
+    </div>
+  );
+}
+
 /** `breaks`: render single newlines as line breaks (right for agent reports,
  * wrong for hard-wrapped documents like the user guide).
  * `onNavigate`: relative links (no scheme) call it instead of opening a browser.

@@ -1,8 +1,9 @@
-/* iOS and iPadOS: system font and colors, 44 pt targets, translucent bars, sheets and alerts as UIKit draws them. */
+/* iOS and iPadOS 26/27: system font and colors, Liquid Glass controls floating over the content, 44 pt
+   targets, sheets and alerts as UIKit draws them. */
 
 html[data-platform='ios'] {
-  --ios-tint: #007aff;
-  --ios-red: #ff3b30;
+  --ios-tint: #0088ff;
+  --ios-red: #ff383c;
   --ios-green: #34c759;
   --ios-bg: #ffffff;
   --ios-grouped: #f2f2f7;
@@ -11,21 +12,28 @@ html[data-platform='ios'] {
   --ios-label2: rgba(60, 60, 67, 0.6);
   --ios-label3: rgba(60, 60, 67, 0.3);
   --ios-sep: rgba(60, 60, 67, 0.29);
-  --ios-bar: rgba(249, 249, 249, 0.78);
+  /* The hard scroll edge under the bars (iOS 27's default): nearly opaque, with a hairline. */
+  --ios-bar: rgba(249, 249, 249, 0.9);
   --ios-fill: rgba(118, 118, 128, 0.12);
-  /* A light material over a blur. WebKit builds that take backdrop-filter without drawing it (and the
-     @supports check passes there) show the page through the material, so it stays dense enough that
-     what's behind never competes with the text, blur or not. */
-  --ios-menu: rgba(245, 245, 245, 0.98);
-  --ios-alert: rgba(242, 242, 242, 0.95);
-  --ios-gap: rgba(0, 0, 0, 0.08);
+  --ios-fill2: rgba(120, 120, 128, 0.16);
+  /* Liquid Glass, regular: the small controls (bar buttons, the tab bar) and the larger, denser
+     surfaces with text on them (menus, alerts). WebKit builds that take backdrop-filter without drawing it
+     show the page through, so neither is thin enough for what's behind to compete with the text. */
+  --ios-glass: rgba(255, 255, 255, 0.9);
+  --ios-glass-dense: rgba(250, 250, 250, 0.97);
+  --ios-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.8), 0 0 0 0.5px rgba(0, 0, 0, 0.07);
+  --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   --ios-folder: #1a9cf0;
   --ios-seg-on: #ffffff;
+  --ios-switch-off: rgba(120, 120, 128, 0.16);
+  /* A sheet's own background and its groups' (dark mode raises both, so a sheet stands off what's under it). */
+  --ios-sheet: #f2f2f7;
+  --ios-sheet-cell: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
-    --ios-tint: #0a84ff;
-    --ios-red: #ff453a;
+    --ios-tint: #0091ff;
+    --ios-red: #ff4245;
     --ios-green: #30d158;
     --ios-bg: #000000;
     --ios-grouped: #000000;
@@ -34,13 +42,19 @@ html[data-platform='ios'] {
     --ios-label2: rgba(235, 235, 245, 0.6);
     --ios-label3: rgba(235, 235, 245, 0.3);
     --ios-sep: rgba(84, 84, 88, 0.65);
-    --ios-bar: rgba(29, 29, 31, 0.78);
+    --ios-bar: rgba(22, 22, 23, 0.9);
     --ios-fill: rgba(118, 118, 128, 0.24);
-    --ios-menu: rgba(40, 40, 42, 0.98);
-    --ios-alert: rgba(40, 40, 42, 0.95);
-    --ios-gap: rgba(0, 0, 0, 0.3);
+    --ios-fill2: rgba(120, 120, 128, 0.32);
+    /* iOS 27 draws dark glass lighter than 26 did. */
+    --ios-glass: rgba(64, 64, 68, 0.9);
+    --ios-glass-dense: rgba(44, 44, 46, 0.97);
+    --ios-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+    --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     --ios-folder: #39a8f0;
     --ios-seg-on: #636366;
+    --ios-switch-off: rgba(120, 120, 128, 0.36);
+    --ios-sheet: #1c1c1e;
+    --ios-sheet-cell: #2c2c2e;
   }
 }
 
@@ -78,23 +92,30 @@ html[data-platform='ios'] {
 .ios .pres-form-sheet .ios-bar,
 .ios-own-sheet .ios-bar {
   padding-top: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 0;
 }
 .ios-bar-row {
   display: grid;
   grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
   align-items: center;
-  height: 44px;
-  padding: 0 8px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 6px 16px;
 }
 .ios-bar-lead {
   display: flex;
   justify-self: start;
+  gap: 8px;
   min-width: 0;
 }
 .ios-bar-trail {
   display: flex;
   justify-self: end;
   align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 .ios-bar-title {
@@ -112,46 +133,80 @@ html[data-platform='ios'] {
 .ios-bar-title.faded {
   opacity: 0;
 }
+
+/* Bar and toolbar buttons: a glass circle around a symbol, a glass capsule around text, and the
+   prominent one (Done, the confirming action) tinted. */
 .ios-back,
 .ios-text-btn,
 .ios-icon-btn {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
+  height: 44px;
   border: 0;
-  background: none;
-  color: var(--ios-tint);
+  border-radius: 22px;
+  background: var(--ios-glass);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
+  color: var(--ios-label);
   font: inherit;
   font-size: 17px;
   cursor: pointer;
+  transition:
+    transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1),
+    background 0.2s;
 }
-.ios-back {
-  gap: 5px;
-  padding: 0 8px 0 0;
-  max-width: 32vw;
+.ios-back,
+.ios-icon-btn {
+  width: 44px;
+  padding: 0;
 }
-.ios-back span {
+.ios-text-btn {
+  max-width: 40vw;
+  padding: 0 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ios-text-btn {
-  padding: 0 8px;
-  white-space: nowrap;
-}
-.ios-text-btn.bold {
+.ios-text-btn.bold,
+.ios-icon-btn.prominent {
+  background: var(--ios-tint);
+  color: #fff;
   font-weight: 600;
 }
-.ios-back:active,
-.ios-text-btn:active,
-.ios-icon-btn:active {
-  opacity: 0.3;
+.ios-text-btn.destructive {
+  color: var(--ios-red);
+}
+.ios-back:active:not(:disabled),
+.ios-text-btn:active:not(:disabled),
+.ios-icon-btn:active:not(:disabled) {
+  transform: scale(1.08);
 }
 .ios-text-btn:disabled,
 .ios-icon-btn:disabled {
   color: var(--ios-label3);
+}
+.ios-text-btn.bold:disabled,
+.ios-icon-btn.prominent:disabled {
+  background: var(--ios-glass);
+  color: var(--ios-label3);
+}
+/* Several buttons on one side share one capsule. */
+.ios-bar-trail:has(> :nth-child(2)) {
+  gap: 0;
+  border-radius: 22px;
+  background: var(--ios-glass);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
+}
+.ios-bar-trail:has(> :nth-child(2)) > :is(.ios-icon-btn, .ios-text-btn):not(.bold) {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 .ios-grabber {
   width: 36px;
@@ -174,7 +229,7 @@ html[data-platform='ios'] {
 }
 .ios .pres-page-sheet > .ph-card {
   top: calc(env(safe-area-inset-top) + 10px);
-  border-radius: 10px 10px 0 0;
+  border-radius: 38px 38px 0 0;
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 .ios .pres-page-sheet.leaving > .ph-card,
@@ -185,19 +240,19 @@ html[data-platform='ios'] {
 .ios .ph-win.behind > .ph-card {
   transform: translateY(calc(env(safe-area-inset-top) - 4px)) scale(0.92);
   transform-origin: 50% 0;
-  border-radius: 10px;
+  border-radius: 38px;
 }
 .ios.tablet .pres-page-sheet > .ph-card {
   top: calc(env(safe-area-inset-top) + 32px);
   margin: 0 auto;
   width: min(704px, calc(100% - 48px));
-  border-radius: 12px 12px 0 0;
+  border-radius: 28px 28px 0 0;
 }
 .ios .pres-form-sheet > .ph-card {
   margin: auto;
   width: min(var(--win-w, 540px), 540px, calc(100% - 40px));
   height: min(calc(var(--win-h, 620px) + 56px), 620px, calc(100% - 80px));
-  border-radius: 12px;
+  border-radius: 28px;
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 .ios .pres-form-sheet .ph-body {
@@ -212,21 +267,31 @@ html[data-platform='ios'] {
 }
 .ios-own-sheet .ph-card {
   top: calc(env(safe-area-inset-top) + 10px);
-  border-radius: 10px 10px 0 0;
-  background: var(--ios-grouped);
+  border-radius: 38px 38px 0 0;
+  background: var(--ios-sheet);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
+.ph-root .ios-own-sheet :is(.ios-group, .ph-files) {
+  background: var(--ios-sheet-cell);
+}
+/* A sheet that doesn't need the full height floats inset from the screen's edges (a medium detent). */
 .ios-own-sheet.small .ph-card {
   top: auto;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
   height: min(440px, 75%);
+  border-radius: 36px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
 }
-.ios-own-sheet.form .ph-card {
+.ios-own-sheet.tablet-sheet .ph-card {
+  inset: 0;
   margin: auto;
   width: min(540px, calc(100% - 40px));
   height: min(620px, calc(100% - 80px));
-  border-radius: 12px;
+  border-radius: 28px;
 }
-.ios-own-sheet.form.small .ph-card {
+.ios-own-sheet.tablet-sheet.small .ph-card {
   height: min(440px, calc(100% - 80px));
 }
 .ios-sheet-body {
@@ -236,7 +301,10 @@ html[data-platform='ios'] {
   min-height: 0;
   padding-bottom: env(safe-area-inset-bottom);
 }
-.ios-own-sheet.form .ios-sheet-body {
+.ios-own-sheet.small .ios-sheet-body {
+  padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 8px));
+}
+.ios-own-sheet.tablet-sheet .ios-sheet-body {
   padding-bottom: 0;
 }
 
@@ -248,7 +316,7 @@ html[data-platform='ios'] {
 }
 .ios-group {
   margin: 20px 16px 0;
-  border-radius: 10px;
+  border-radius: 26px;
   overflow: hidden;
   background: var(--ios-cell);
 }
@@ -258,7 +326,7 @@ html[data-platform='ios'] {
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 44px;
+  min-height: 52px;
   padding: 0 16px;
   border: 0;
   background: none;
@@ -271,7 +339,7 @@ html[data-platform='ios'] {
   position: absolute;
   top: 0;
   left: 16px;
-  right: 0;
+  right: 16px;
   height: 0.5px;
   background: var(--ios-sep);
 }
@@ -284,6 +352,18 @@ html[data-platform='ios'] {
 }
 .ios-cell-label.secondary {
   color: var(--ios-label2);
+}
+.ios-cell-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ios-label2);
+}
+.ios-field input:disabled {
+  color: var(--ios-label2);
+  opacity: 1;
 }
 .ios-cell-button {
   justify-content: center;
@@ -303,7 +383,7 @@ html[data-platform='ios'] {
 .ios-field input {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: 52px;
   border: 0;
   outline: none;
   background: none;
@@ -323,15 +403,16 @@ html[data-platform='ios'] {
 .ios-group-footer.error {
   color: var(--ios-red);
 }
+/* The switch: a 64 × 28 track and a pill-shaped knob. */
 .ios-switch {
   position: relative;
   flex: none;
-  width: 51px;
-  height: 31px;
+  width: 64px;
+  height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 16px;
-  background: rgba(120, 120, 128, 0.16);
+  border-radius: 14px;
+  background: var(--ios-switch-off);
   transition: background 0.25s;
   cursor: pointer;
 }
@@ -345,28 +426,30 @@ html[data-platform='ios'] {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
+  width: 39px;
+  height: 24px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
-  transition: transform 0.25s;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.15),
+    0 1px 1px rgba(0, 0, 0, 0.16);
+  transition: transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1);
 }
 .ios-switch.on .ios-switch-knob {
-  transform: translateX(20px);
+  transform: translateX(21px);
 }
 .ios-segmented {
   display: flex;
   margin: 10px 16px 6px;
   padding: 2px;
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--ios-fill);
 }
 .ios-segmented button {
   flex: 1;
-  height: 30px;
+  height: 32px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   background: none;
   font: inherit;
   font-size: 13px;
@@ -376,13 +459,15 @@ html[data-platform='ios'] {
 .ios-segmented button.on {
   background: var(--ios-seg-on);
   font-weight: 600;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.12),
+    0 3px 1px rgba(0, 0, 0, 0.04);
 }
 .ios-filled-btn {
   min-height: 50px;
   padding: 0 24px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 999px;
   background: var(--ios-tint);
   color: #fff;
   font: inherit;
@@ -415,8 +500,9 @@ html[data-platform='ios'] {
   display: grid;
   grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
   align-items: center;
-  height: 44px;
-  padding: 0 8px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 6px 16px;
 }
 .ios-folder-title {
   min-width: 0;
@@ -467,14 +553,12 @@ html[data-platform='ios'] {
 .ios .ph-files-empty {
   color: var(--ios-label2);
 }
+/* A bottom toolbar: its buttons float as glass capsules over the list. */
 .ios-toolbar {
   display: flex;
   justify-content: space-between;
-  padding: 0 8px;
-  background: var(--ios-bar);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  border-top: 0.5px solid var(--ios-sep);
+  gap: 8px;
+  padding: 8px 16px;
 }
 
 /* ---------- menus ---------- */
@@ -492,19 +576,26 @@ html[data-platform='ios'] {
   display: flex;
   max-height: 70%;
   overflow: hidden;
-  border-radius: 13px;
-  background: var(--ios-menu);
+  border-radius: 24px;
+  background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--ios-glass-edge), 0 12px 40px rgba(0, 0, 0, 0.2);
   animation: ph-pop-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .ios-menu-scroll {
   flex: 1;
   min-width: 0;
+  padding: 6px;
 }
-.ios-menu-group + .ios-menu-group {
-  border-top: 8px solid var(--ios-gap);
+/* Groups split by a hairline; no lines between the items of a group. */
+.ios-menu-group + .ios-menu-group::before,
+.ios-menu-up + .ios-menu-group::before {
+  content: '';
+  display: block;
+  height: 0.5px;
+  margin: 6px 12px;
+  background: var(--ios-sep);
 }
 .ios-menu-item {
   display: flex;
@@ -512,25 +603,22 @@ html[data-platform='ios'] {
   gap: 8px;
   width: 100%;
   min-height: 44px;
-  padding: 0 16px;
+  padding: 0 12px;
   border: 0;
+  border-radius: 18px;
   background: none;
   font: inherit;
   font-size: 17px;
   color: var(--ios-label);
   text-align: left;
 }
-.ios-menu-group .ios-menu-item + .ios-menu-item {
-  border-top: 0.5px solid var(--ios-sep);
-}
 .ios-menu-item:active:not(:disabled) {
-  background: var(--ios-fill);
+  background: var(--ios-fill2);
 }
 .ios-menu-item:disabled {
   color: var(--ios-label3);
 }
 .ios-menu-up {
-  border-bottom: 0.5px solid var(--ios-sep);
   font-weight: 600;
 }
 .ios-menu-check {
@@ -554,7 +642,7 @@ html[data-platform='ios'] {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 8px 8px calc(env(safe-area-inset-bottom) + 8px);
+  padding: 8px 8px max(8px, calc(env(safe-area-inset-bottom) - 8px));
   background: rgba(0, 0, 0, 0.3);
 }
 .ios-action-sheet {
@@ -569,19 +657,23 @@ html[data-platform='ios'] {
   display: flex;
   min-height: 0;
   overflow: hidden;
-  border-radius: 13px;
-  background: var(--ios-menu);
+  border-radius: 32px;
+  background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: var(--ios-glass-edge);
 }
 .ios-action-cancel {
-  min-height: 57px;
+  min-height: 56px;
   border: 0;
-  border-radius: 13px;
-  background: var(--ios-cell);
+  border-radius: 28px;
+  background: var(--ios-glass-dense);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: var(--ios-glass-edge);
   color: var(--ios-tint);
   font: inherit;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 600;
 }
 
@@ -601,19 +693,22 @@ html[data-platform='ios'] {
   -webkit-user-select: none;
   user-select: none;
 }
+/* The title and message ranged left over capsule buttons. */
 .ios-alert {
-  width: 270px;
+  width: min(300px, calc(100% - 48px));
   max-height: 90%;
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--ios-alert);
+  overflow: auto;
+  padding: 22px 16px 16px;
+  border-radius: 34px;
+  background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
-  text-align: center;
+  box-shadow: var(--ios-glass-edge), 0 16px 48px rgba(0, 0, 0, 0.18);
+  text-align: left;
   animation: ph-pop-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 .ios-alert-text {
-  padding: 19px 16px;
+  padding: 0 6px 20px;
 }
 .ios-alert-title {
   font-size: 17px;
@@ -622,18 +717,19 @@ html[data-platform='ios'] {
   overflow-wrap: anywhere;
 }
 .ios-alert-message {
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 6px;
+  font-size: 15px;
   line-height: 1.35;
+  color: var(--ios-label2);
   overflow-wrap: anywhere;
 }
 .ios-alert-input {
   width: 100%;
-  margin-top: 14px;
-  padding: 5px 7px;
-  border: 0.5px solid var(--ios-sep);
-  border-radius: 7px;
-  background: var(--ios-cell);
+  margin-top: 16px;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--ios-fill);
   font: inherit;
   font-size: 16px;
   color: var(--ios-label);
@@ -642,18 +738,21 @@ html[data-platform='ios'] {
   user-select: text;
 }
 .ios-alert-check {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 14px;
+  padding: 0;
   border: 0;
   background: none;
   font: inherit;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--ios-label);
+  text-align: left;
 }
 .ios-checkcircle {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 22px;
@@ -669,32 +768,38 @@ html[data-platform='ios'] {
 .ios-alert-buttons {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 .ios-alert-buttons.row {
   flex-direction: row;
 }
 .ios-alert-btn {
   flex: 1;
-  min-height: 44px;
-  padding: 0 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 12px;
   border: 0;
-  border-top: 0.5px solid var(--ios-sep);
-  background: none;
+  border-radius: 24px;
+  background: var(--ios-fill2);
   font: inherit;
   font-size: 17px;
-  color: var(--ios-tint);
-}
-.ios-alert-buttons.row .ios-alert-btn + .ios-alert-btn {
-  border-left: 0.5px solid var(--ios-sep);
+  font-weight: 500;
+  color: var(--ios-label);
 }
 .ios-alert-btn:active {
-  background: var(--ios-fill);
-}
-.ios-alert-btn.bold {
-  font-weight: 600;
+  filter: brightness(0.92);
 }
 .ios-alert-btn.destructive {
   color: var(--ios-red);
+}
+.ios-alert-btn.bold {
+  background: var(--ios-tint);
+  color: #fff;
+  font-weight: 600;
+}
+.ios-alert-btn.bold.destructive {
+  background: var(--ios-red);
+  color: #fff;
 }
 
 /* ---------- banners and the connection ---------- */
@@ -716,11 +821,11 @@ html[data-platform='ios'] {
   gap: 10px;
   width: min(100%, 420px);
   padding: 12px 14px;
-  border-radius: 22px;
-  background: var(--ios-menu);
+  border-radius: 26px;
+  background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--ios-glass-edge), 0 8px 30px rgba(0, 0, 0, 0.18);
   pointer-events: auto;
   touch-action: none;
   animation: ph-banner-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
@@ -730,7 +835,7 @@ html[data-platform='ios'] {
   flex: none;
   width: 38px;
   height: 38px;
-  border-radius: 9px;
+  border-radius: 10px;
 }
 .ios-banner-text {
   flex: 1;
@@ -750,10 +855,19 @@ html[data-platform='ios'] {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* The connection: a small glass capsule under the status bar. */
 .ios .ph-connection {
-  background: var(--ios-bar);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
+  left: 50%;
+  right: auto;
+  top: calc(env(safe-area-inset-top) + 6px);
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--ios-glass-dense);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
   color: var(--ios-label2);
 }
 
@@ -773,17 +887,17 @@ html[data-platform='ios'] {
 /* Without backdrop blur (some WebKit builds), the materials go nearly opaque so text over content stays legible. */
 @supports not (backdrop-filter: blur(1px)) {
   html[data-platform='ios'] {
-    --ios-bar: rgba(249, 249, 249, 0.97);
-    --ios-menu: rgba(245, 245, 245, 1);
-    --ios-alert: rgba(242, 242, 242, 0.99);
+    --ios-bar: rgba(249, 249, 249, 0.98);
+    --ios-glass: rgba(246, 246, 246, 0.97);
+    --ios-glass-dense: rgba(245, 245, 245, 1);
   }
 }
 @media (prefers-color-scheme: dark) {
   @supports not (backdrop-filter: blur(1px)) {
     html[data-platform='ios'] {
-      --ios-bar: rgba(29, 29, 31, 0.97);
-      --ios-menu: rgba(40, 40, 42, 1);
-      --ios-alert: rgba(40, 40, 42, 0.99);
+      --ios-bar: rgba(22, 22, 23, 0.98);
+      --ios-glass: rgba(58, 58, 60, 0.97);
+      --ios-glass-dense: rgba(44, 44, 46, 1);
     }
   }
 }

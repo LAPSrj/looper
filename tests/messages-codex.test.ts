@@ -35,6 +35,18 @@ describe('CodexAccumulator guidance', () => {
   });
 });
 
+describe('CodexAccumulator skills', () => {
+  it("shows a $skill turn as the user typed it, not the skill's content", () => {
+    // As codex-cli 0.163.0 records `$hello world`: the user's text, then the skill as a <skill> block of its own.
+    const acc = new CodexAccumulator();
+    acc.addLine(userText('$hello world'));
+    acc.addLine(
+      userText('<skill>\n<name>hello</name>\n<path>/tmp/p/.agents/skills/hello/SKILL.md</path>\n---\nname: hello\n---\n\nReply with "ok".\n\n</skill>'),
+    );
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([['prompt', '$hello world']]);
+  });
+});
+
 describe('CodexAccumulator', () => {
   it('renders prompts, agent messages and executed commands', () => {
     const acc = new CodexAccumulator();

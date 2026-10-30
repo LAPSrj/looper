@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   autoTrustWorkspace,
   availableEnvironmentKinds,
+  harnessKindLabel,
   harnessModels,
   pathFlavor,
   resolveClassifierHarness,
@@ -133,6 +134,17 @@ describe('resolution', () => {
       { id: 'gpt-5.1', name: 'gpt-5.1' },
       { id: 'x', name: 'X' },
     ]);
+  });
+
+  it('requires a harness name and trims it', () => {
+    expect(HarnessSchema.parse({ ...claude2, kind: 'custom', name: '  My agent ' }).name).toBe('My agent');
+    expect(HarnessSchema.safeParse({ ...claude2, kind: 'custom', name: '   ' }).success).toBe(false);
+    expect(HarnessSchema.safeParse({ ...claude2, kind: 'custom', name: '' }).success).toBe(false);
+  });
+
+  it('labels a harness by its type, not its name', () => {
+    expect(harnessKindLabel('claude-code')).toBe('Claude Code');
+    expect(harnessKindLabel('codex')).toBe('Codex');
   });
 
   it('keeps a model entry effort configuration through the schema', () => {

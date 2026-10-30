@@ -9,7 +9,7 @@ const BUBBLE_LOW = 'M3 5h8a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6.5L3
 
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
 export const ICONS: Record<
-  AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat' | 'newChat' | 'bullhorn' | 'sendNow' | 'stopChat' | 'closeChat' | 'attach' | 'skills',
+  AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat' | 'newChat' | 'bullhorn' | 'sendNow' | 'stopChat' | 'closeChat' | 'attach' | 'skills' | 'newTask' | 'newProject' | 'doubleSize' | 'normalSize',
   ReactNode
 > = {
   dashboard: (
@@ -110,6 +110,31 @@ export const ICONS: Record<
   ),
   folder: <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" />,
   add: <path d="M8 3v10M3 8h10" />,
+  // A page with a folded corner and two text lines, a plus at its bottom-right corner with a gap cut around it.
+  newTask: (
+    <>
+      <mask id="ico-cut-plus-task" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
+      </mask>
+      <path d="M2.5 1.5h6l3 3v9h-9ZM8.5 1.5v3h3M5 7h4M5 9.5h2.5" mask="url(#ico-cut-plus-task)" />
+      <path d="M12 9.2v5.6M9.2 12h5.6" />
+    </>
+  ),
+  // The folder icon with a plus at its bottom-right corner, a gap cut around it.
+  newProject: (
+    <>
+      <mask id="ico-cut-plus-project" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
+      </mask>
+      <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" mask="url(#ico-cut-plus-project)" />
+      <path d="M12 9.2v5.6M9.2 12h5.6" />
+    </>
+  ),
+  // Arrows out to two corners, and back in: a dashboard card at twice its size, and at its normal size.
+  doubleSize: <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />,
+  normalSize: <path d="M13 7H9V3M9 7l4.5-4.5M3 9h4v4M7 9l-4.5 4.5" />,
   delete: <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9" />,
   copy: (
     <>

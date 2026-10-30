@@ -30,10 +30,24 @@ export interface TerminalEntry {
   ended: boolean;
 }
 
+/** A task run whose agent step is in flight: the Chats window lists it while Show Task Runs is on. */
+export interface RunEntry {
+  /** The run id. */
+  id: string;
+  taskId: string;
+  startedAt: number;
+  /** The agent finished a turn without signalling done, and the task holds for the user. */
+  held: boolean;
+  /** The question the agent asked with looper-ask, while it waits for the answer. */
+  question: string | null;
+}
+
 export interface SessionHubDeps {
   chats: () => ChatState[];
-  /** Terminal sessions shown in the Sessions window (Remote Control's aren't). */
+  /** Terminal sessions shown in the Chats window (Remote Control's aren't). */
   terminals: () => TerminalEntry[];
+  /** Task runs whose agent is running; empty while Show Task Runs is off. */
+  runs: () => RunEntry[];
   findTask: (taskId: string) => Task | undefined;
   projects: () => Project[];
   harnessOf: (task: Task) => { kind: 'claude-code' | 'codex' | 'custom'; name: string };
@@ -91,13 +105,12 @@ function oneLine(text: string): string {
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;
 }
 
-/** What a session's latest rows say it's doing: the tool it's using while it works, else its last message. */
-export function latestLine(rows: MessageRow[], working: boolean): string | undefined {
+/** A list row's preview: the agent's latest text message since the user's last one, never a tool call or its result. */
+export function latestLine(rows: MessageRow[]): string | undefined {
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i];
-    if (r.kind === 'tool' && working) return `${r.tool ?? 'Tool'} ${r.preview}`.trim();
-    if (r.kind === 'agent') return oneLine(r.text);
-    if (r.kind === 'prompt' && !working) return undefined;
+    if (r.kind === 'prompt') return undefined;
+    if (r.kind === 'agent' && r.text.trim()) return oneLine(r.text);
   }
   return undefined;
 }
@@ -197,11 +210,12 @@ function permissionText(tool: string): string {
 }
 
 /**
- * The Sessions window's model: every open chat and Looper terminal session as
- * a list row (status, why it waits for the user, its latest line, context),
- * and for the session the window shows, its background work and subagents.
- * Chats report their state themselves; terminal sessions are read from the
- * files their hooks write and from their transcripts.
+ * The Chats window's model: every open chat and Looper terminal session (and,
+ * with Show Task Runs on, each task run's agent) as a list row (status, why it
+ * waits for the user, its latest line, context), and for the session the
+ * window shows, its background work and subagents. Chats report their state
+ * themselves; terminal sessions are read from the files their hooks write and
+ * from their transcripts; task runs from the scheduler and their transcripts.
  */
 export class SessionHub {
   private readonly tracks = new Map<string, Track>();
@@ -261,7 +275,7 @@ export class SessionHub {
     this.changed();
   }
 
-  /** The sessions the Sessions windows show (on any device): their activity is read and sent. */
+  /** The sessions the Chats windows show (on any device): their activity is read and sent. */
   watch(ids: Iterable<string>): void {
     const next = new Set(ids);
     for (const id of next) {
@@ -284,7 +298,7 @@ export class SessionHub {
     if (!t || !entry) return null;
     return {
       id,
-      ...(entry.kind === 'terminal' ? { rows: t.rows } : {}),
+      ...(entry.kind !== 'chat' ? { rows: t.rows } : {}),
       background: backgroundOf(t.rows),
       subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats),
     };
@@ -296,10 +310,20 @@ export class SessionHub {
     return t ? backgroundOf(t.rows).find((b) => b.id === taskId)?.outputFile : undefined;
   }
 
-  private entries(): ({ kind: 'chat'; chat: ChatState; id: string; taskId: string; startedAt: number } | ({ kind: 'terminal' } & TerminalEntry))[] {
+  /** A listed task run's task; undefined when the list has no such run (Show Task Runs off, or the run is over). */
+  runTask(id: string): string | undefined {
+    return this.d.runs().find((r) => r.id === id)?.taskId;
+  }
+
+  private entries(): (
+    | { kind: 'chat'; chat: ChatState; id: string; taskId: string; startedAt: number }
+    | ({ kind: 'terminal' } & TerminalEntry)
+    | ({ kind: 'run' } & RunEntry)
+  )[] {
     return [
       ...this.d.chats().map((chat) => ({ kind: 'chat' as const, chat, id: chat.id, taskId: chat.taskId, startedAt: chat.startedAt })),
       ...this.d.terminals().map((t) => ({ kind: 'terminal' as const, ...t })),
+      ...this.d.runs().map((r) => ({ kind: 'run' as const, ...r })),
     ];
   }
 
@@ -373,7 +397,7 @@ export class SessionHub {
       }
       const now = force || this.watched.has(id) || this.polls % CONTEXT_POLLS === 0;
       if (kind === 'claude-code' && now) t.cache = await this.d.cacheUse(e.taskId, e.id);
-      if (e.kind === 'terminal' && (force || this.polls % CONTEXT_POLLS === 0)) {
+      if (e.kind !== 'chat' && (force || this.polls % CONTEXT_POLLS === 0)) {
         const tokens = await this.d.contextTokens(e.taskId, e.id);
         t.context = tokens === null ? undefined : { tokens, window: t.context?.window };
       }
@@ -405,7 +429,9 @@ export class SessionHub {
   private summaries(): SessionSummary[] {
     const projects = this.d.projects();
     const order = new Map(projects.map((p, i) => [p.id, i]));
-    const out = this.entries().map((e) => (e.kind === 'chat' ? this.chatSummary(e.chat, projects) : this.terminalSummary(e, projects)));
+    const out = this.entries().map((e) =>
+      e.kind === 'chat' ? this.chatSummary(e.chat, projects) : e.kind === 'terminal' ? this.terminalSummary(e, projects) : this.runSummary(e, projects),
+    );
     const rank = (s: SessionSummary) => (s.projectId !== undefined ? (order.get(s.projectId) ?? projects.length) : projects.length);
     return out.sort((a, b) => rank(a) - rank(b) || a.groupName.localeCompare(b.groupName) || a.startedAt - b.startedAt);
   }
@@ -433,7 +459,7 @@ export class SessionHub {
     const { projectId, groupName } = this.place(c.taskId, projects);
     const rows = [...c.history, ...c.rows];
     const recent = recentMessages(rows);
-    const working = c.status === 'working';
+    const latest = latestLine(rows);
     t.permissionAt = c.permissions.length > 0 ? (t.permissionAt ?? this.now()) : undefined;
     if (c.status === 'ended') t.endedAt ??= this.now();
     let waiting: SessionSummary['waiting'];
@@ -457,7 +483,7 @@ export class SessionHub {
       status: c.status,
       ...(waiting ? { waiting } : {}),
       ...(c.permissions.length > 0 ? { permissionId: c.permissions[0].id } : {}),
-      ...((latestLine(c.rows, working) ?? latestLine(c.history, false)) ? { latest: latestLine(c.rows, working) ?? latestLine(c.history, false) } : {}),
+      ...(latest ? { latest } : {}),
       ...(recent.length ? { recent } : {}),
       ...(c.context ? { context: c.context } : {}),
       startedAt: c.startedAt,
@@ -483,7 +509,7 @@ export class SessionHub {
     } else waiting = this.notification(t, Math.max(prompt, stop));
     if (!waiting && status === 'ready' && stop > t.seenAt) waiting = { reason: 'turn', text: 'Finished its turn', since: stop };
     const lastMessage = stopHook?.payload?.last_assistant_message ?? stopHook?.payload?.['last-assistant-message'];
-    const latest = status === 'working' ? latestLine(t.rows, true) : typeof lastMessage === 'string' ? oneLine(lastMessage) : latestLine(t.rows, false);
+    const latest = status !== 'working' && typeof lastMessage === 'string' && lastMessage.trim() ? oneLine(lastMessage) : latestLine(t.rows);
     const recent = recentMessages(t.rows);
     const title = this.d.terminalTitle(e.taskId, e.id) ?? (t.rows.some((r) => r.kind === 'prompt') ? chatTitle(t.rows) : 'Terminal');
     return {
@@ -503,6 +529,38 @@ export class SessionHub {
       startedAt: e.startedAt,
       background: backgroundOf(t.rows).filter((b) => b.status === 'running').length,
       ...replyTimes(t.cache, stopHook?.at),
+    };
+  }
+
+  /** A task run's agent: working until it holds for the user or asks a question, which waits until the run goes on. */
+  private runSummary(e: RunEntry, projects: Project[]): SessionSummary {
+    const t = this.track(e.id, e.startedAt);
+    const { task, projectId, groupName } = this.place(e.taskId, projects);
+    const harness = task ? this.d.harnessOf(task) : { kind: 'custom' as const, name: 'Agent' };
+    const waits = e.question !== null || e.held;
+    t.permissionAt = waits ? (t.permissionAt ?? this.now()) : undefined;
+    const waiting: SessionSummary['waiting'] = waits
+      ? { reason: 'notification', text: e.question !== null ? 'Waiting for your answer' : 'Waiting for you', since: t.permissionAt! }
+      : undefined;
+    const latest = latestLine(t.rows);
+    const recent = recentMessages(t.rows);
+    return {
+      id: e.id,
+      kind: 'run',
+      taskId: e.taskId,
+      ...(projectId ? { projectId } : {}),
+      groupName,
+      title: task?.name ?? e.taskId,
+      harnessKind: harness.kind,
+      harnessName: harness.name,
+      status: waits ? 'ready' : 'working',
+      ...(waiting ? { waiting } : {}),
+      ...(latest ? { latest } : {}),
+      ...(recent.length ? { recent } : {}),
+      ...(t.context ? { context: t.context } : {}),
+      startedAt: e.startedAt,
+      background: backgroundOf(t.rows).filter((b) => b.status === 'running').length,
+      ...replyTimes(t.cache, undefined),
     };
   }
 }

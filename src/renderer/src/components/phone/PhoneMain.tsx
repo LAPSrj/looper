@@ -15,6 +15,7 @@ import {
   type PhoneTab,
 } from '../../phone-nav';
 import type { MainWindow } from '../../useMainWindow';
+import { DEFAULT_SHOWN } from '../../useSessionsWindow';
 import { usePageNav, type PageNavAction } from '../../web/page-nav';
 import { AddonPaneList } from '../AddonPane';
 import { AddonScreenView, AddonToolbarButtons } from '../AddonScreen';
@@ -52,7 +53,7 @@ const TAB_ICONS: Record<PhoneTab, React.ReactNode> = {
 
 /**
  * The main window on a phone: a bottom tab bar (Dashboard, Projects, Tasks,
- * Sessions), each tab a list that pushes its items' screens. What a screen
+ * Chats), each tab a list that pushes its items' screens. What a screen
  * shows is the window's selection, so the menus and notifications act on it
  * as on the desktop.
  */
@@ -204,7 +205,7 @@ function screenFor(m: MainWindow, tab: PhoneTab): { title: string; actions: Page
       };
     case 'sessions':
       return {
-        title: 'Sessions',
+        title: 'Chats',
         actions: [
           { id: 'chat', label: 'New Chat', icon: 'newChat', run: () => window.looper.sessions.showNewMenu('chat', 0, 0) },
           { id: 'terminal', label: 'New Terminal', icon: 'terminal', run: () => window.looper.sessions.showNewMenu('terminal', 0, 0) },
@@ -360,9 +361,9 @@ function PhoneAddonScreen({ m }: { m: MainWindow }) {
 }
 
 /**
- * The Sessions tab: every chat and terminal session, grouped by project with
- * the ones waiting for you first, as the Sessions window lists them. A tapped
- * one opens in the Sessions window, which pushes over this one.
+ * The Chats tab: every chat and terminal session, grouped by project with
+ * the ones waiting for you first, as the Chats window lists them. A tapped
+ * one opens in the Chats window, which pushes over this one.
  */
 function PhoneSessionsTab({ m }: { m: MainWindow }) {
   const [state, setState] = useState<SessionsState | null>(null);
@@ -373,7 +374,7 @@ function PhoneSessionsTab({ m }: { m: MainWindow }) {
     });
   }, []);
   const view = m.view;
-  const shown = view?.sessions ?? { toolbar: true, activityPane: true, statusBar: true, collapsed: [] };
+  const shown = view?.sessions ?? DEFAULT_SHOWN;
   const toggleGroup = (key: string) => {
     if (!view) return;
     const collapsed = shown.collapsed.includes(key) ? shown.collapsed.filter((k) => k !== key) : [...shown.collapsed, key];
@@ -381,7 +382,7 @@ function PhoneSessionsTab({ m }: { m: MainWindow }) {
   };
   return (
     <div className="pg-scroll">
-      <LargeTitle>Sessions</LargeTitle>
+      <LargeTitle>Chats</LargeTitle>
       <Group>
         <Row title="Overview" chevron onOpen={() => window.looper.sessions.openWindow()} />
       </Group>

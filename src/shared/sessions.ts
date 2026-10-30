@@ -1,15 +1,15 @@
 import type { ChatContext } from './chat';
 import type { MessageRow } from './messages';
 
-/** A chat, or a terminal session in the Sessions window. */
-export type SessionKind = 'chat' | 'terminal';
+/** A chat, a terminal session, or (with Show Task Runs on) a task run's agent, in the Chats window. */
+export type SessionKind = 'chat' | 'terminal' | 'run';
 
 /** Why a session waits for the user: a tool call to allow, a finished turn not looked at, the agent's notification, or an error. */
 export type WaitReason = 'permission' | 'turn' | 'notification' | 'error';
 
 /** One row of the Sessions window's list. */
 export interface SessionSummary {
-  /** The chat's or terminal session's id, which is its run id. */
+  /** The chat's, terminal session's or task run's id, which is its run id. */
   id: string;
   kind: SessionKind;
   taskId: string;
@@ -25,7 +25,7 @@ export interface SessionSummary {
   waiting?: { reason: WaitReason; text: string; since: number };
   /** A chat's oldest permission request, which the Overview can answer. */
   permissionId?: string;
-  /** One line: the agent's latest message, or the tool it's using. */
+  /** One line: the agent's latest text message since the user's last one (never a tool call). */
   latest?: string;
   /** The agent's messages since the user's last one, as plain text, the newest last (the dashboard's cards). */
   recent?: string[];
@@ -92,7 +92,7 @@ export interface SubagentInfo {
 /** What the Sessions window's right panel shows for a session. */
 export interface SessionActivity {
   id: string;
-  /** A terminal session's conversation, from its transcript (a chat's comes with the chat). */
+  /** A terminal session's or task run's conversation, from its transcript (a chat's comes with the chat). */
   rows?: MessageRow[];
   background: BackgroundTask[];
   subagents: SubagentInfo[];

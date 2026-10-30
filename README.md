@@ -26,7 +26,7 @@ started. No idle burn, no context rot, at most one agent per task, ever.
   run window with each run's steps and full conversation, live status, and a
   real terminal tab you can watch *and type into* mid-run.
 - **Chats and terminals on demand** — open a project's agent in a chat or a
-  terminal, all in one Sessions window that lists them by project, puts the
+  terminal, all in one Chats window that lists them by project, puts the
   ones waiting for you first, and shows what each agent is doing; pick up a
   finished run's conversation in either, and fork a chat from any message.
   Each one you start is kept in the Runs tab with the task's runs.

@@ -89,6 +89,29 @@ describe('TranscriptAccumulator', () => {
     ]);
   });
 
+  it("shows a slash command or skill as the user's /name and arguments, without the skill's content", () => {
+    // As claude 2.1.x records `/edit-block Hero`: the command, then the skill's content as a meta record.
+    const acc = new TranscriptAccumulator();
+    acc.addLine(userPrompt('<command-message>edit-block</command-message>\n<command-name>/edit-block</command-name>\n<command-args>Hero</command-args>'));
+    acc.addLine(
+      rec({
+        type: 'user',
+        isMeta: true,
+        message: { role: 'user', content: [{ type: 'text', text: 'Base directory for this skill: /p/.claude/skills/edit-block\n\n# Edit Block' }] },
+      }),
+    );
+    acc.addLine(userPrompt('<command-message>pick-up</command-message>\n<command-name>/pick-up</command-name>'));
+    acc.addLine(userPrompt('<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>'));
+    // Text that only mentions the tags stays as the user wrote it.
+    acc.addLine(userPrompt('What does <command-name>/x</command-name> mean?'));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['prompt', '/edit-block Hero'],
+      ['prompt', '/pick-up'],
+      ['prompt', '/clear'],
+      ['prompt', 'What does <command-name>/x</command-name> mean?'],
+    ]);
+  });
+
   it('skips bookkeeping types, sidechain and meta records, and torn lines', () => {
     const acc = new TranscriptAccumulator();
     acc.addLine(rec({ type: 'ai-title', title: 'x' }));

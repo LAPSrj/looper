@@ -1,4 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type { HostDirEntry, MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
 import { Icon } from '../components/Icon';
@@ -138,8 +148,8 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
   const rectOf = (win: WebWindow): Placed => {
     const old = placed.current.get(win.w);
     if (old && old.specW === win.width && old.specH === win.height) {
-      const inside = keepInside(old, area);
-      const next = { ...old, ...inside };
+      // A maximized window follows the page's size.
+      const next = old.restore ? { ...old, x: 0, y: 0, width: area.width, height: area.height } : { ...old, ...keepInside(old, area) };
       placed.current.set(win.w, next);
       return next;
     }
@@ -159,6 +169,38 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
     if (!old || !win.resizable) return;
     placed.current.set(win.w, old.restore ? { ...old, ...old.restore, restore: undefined } : { ...old, x: 0, y: 0, width: area.width, height: area.height, restore: { x: old.x, y: old.y, width: old.width, height: old.height } });
     redraw((n) => n + 1);
+  };
+  const minimized = new Set(s.minimized);
+  const minimize = (w: string) => {
+    controller.store.dispatch({ t: 'minimize', w });
+    const next = frontWindow(controller.state);
+    if (next) controller.activate(next.w);
+  };
+  const restore = (w: string) => {
+    controller.store.dispatch({ t: 'restore', w });
+    controller.session.focusWindow(w);
+  };
+  /** A click on what the modal window blocks: the main window minimizes it (it still blocks), another window flashes it. */
+  const blockedClick = (onMain: boolean) => {
+    if (!modal) return;
+    if (minimized.has(modal.w)) restore(modal.w);
+    else if (onMain) minimize(modal.w);
+    else controller.flashFront();
+  };
+  const onBackdrop = (e: ReactPointerEvent) => {
+    const box = areaRef.current?.getBoundingClientRect();
+    const x = e.clientX - (box?.left ?? 0);
+    const y = e.clientY - (box?.top ?? 0);
+    const onChild = stack.some((win) => {
+      const r = placed.current.get(win.w);
+      return win.w !== modal?.w && !minimized.has(win.w) && !!r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+    });
+    blockedClick(!onChild);
+  };
+  const taskClick = (win: WebWindow) => {
+    if (minimized.has(win.w)) restore(win.w);
+    else if (modal && modal.w !== win.w) blockedClick(win.w === main?.w);
+    else controller.activate(win.w);
   };
 
   return (
@@ -180,21 +222,23 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
             z={10 + i * 2}
             active={front?.w === win.w}
             blocked={isBlocked(s, win.w) || shellModal}
+            minimized={minimized.has(win.w)}
             flash={flash === win.w}
             backdrop={modal?.w === win.w}
+            onBackdrop={onBackdrop}
             onMove={(r) => move(win.w, r)}
             onToggleMax={() => toggleMax(win)}
+            onMinimize={() => minimize(win.w)}
             onDragging={setDragging}
           />
         ))}
       </div>
       <div className="ws-taskbar" role="toolbar" aria-label="Windows" inert={shellModal}>
-        {s.windows.length > 1 &&
-          s.windows.map((win) => (
-            <button key={win.w} className={`ws-task${front?.w === win.w ? ' active' : ''}`} onClick={() => controller.activate(win.w)}>
-              {win.title || 'Looper'}
-            </button>
-          ))}
+        {s.windows.map((win) => (
+          <button key={win.w} className={`ws-task${front?.w === win.w ? ' active' : ''}`} onClick={() => taskClick(win)}>
+            {win.title || 'Looper'}
+          </button>
+        ))}
         <button className={`ws-task ws-device-btn${device ? ' active' : ''}`} onClick={() => setDevice(true)}>
           This Device
         </button>
@@ -258,25 +302,49 @@ function CloseButton({ onClick, className = 'ws-close' }: { onClick: (e: React.M
   );
 }
 
+/** Minimize or Maximize/Restore in a title bar, drawn like Windows' own. */
+function CaptionButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button className="ws-caption" aria-label={label} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onClick={onClick}>
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1">
+        {children}
+      </svg>
+    </button>
+  );
+}
+
+const MINIMIZE_GLYPH = <path d="M0 5.5h10" />;
+const MAXIMIZE_GLYPH = <rect x="0.5" y="0.5" width="9" height="9" />;
+const RESTORE_GLYPH = (
+  <>
+    <rect x="0.5" y="2.5" width="7" height="7" />
+    <path d="M2.5 2.5v-2h7v7h-2" />
+  </>
+);
+
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 interface ChildWindowProps {
   controller: ShellController;
   win: WebWindow;
-  rect: Rect;
+  rect: Placed;
   area: Area;
   z: number;
   active: boolean;
   blocked: boolean;
+  /** In the window list only: hidden, its page kept. */
+  minimized: boolean;
   flash: boolean;
   /** The modal window in front: it dims and blocks what's behind it. */
   backdrop: boolean;
+  onBackdrop: (e: ReactPointerEvent) => void;
   onMove: (r: Rect) => void;
   onToggleMax: () => void;
+  onMinimize: () => void;
   onDragging: (on: boolean) => void;
 }
 
-function ChildWindow({ controller, win, rect, area, z, active, blocked, flash, backdrop, onMove, onToggleMax, onDragging }: ChildWindowProps) {
+function ChildWindow({ controller, win, rect, area, z, active, blocked, minimized, flash, backdrop, onBackdrop, onMove, onToggleMax, onMinimize, onDragging }: ChildWindowProps) {
   const drag = (e: ReactPointerEvent<HTMLElement>, mode: 'move' | Edge) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -299,18 +367,27 @@ function ChildWindow({ controller, win, rect, area, z, active, blocked, flash, b
   };
   return (
     <>
-      {backdrop && <div className="ws-backdrop" style={{ zIndex: z - 1 }} onPointerDown={() => controller.flashFront()} />}
+      {backdrop && <div className={`ws-backdrop${minimized ? ' minimized' : ''}`} style={{ zIndex: z - 1 }} onPointerDown={onBackdrop} />}
       <div
-        className={`ws-window${active ? ' active' : ''}${flash ? ' flash' : ''}`}
+        className={`ws-window${active ? ' active' : ''}${flash ? ' flash' : ''}${minimized ? ' minimized' : ''}`}
         style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height, zIndex: z }}
         role="dialog"
         aria-modal={win.modal || undefined}
         aria-label={win.title}
-        inert={blocked}
+        aria-hidden={minimized || undefined}
+        inert={blocked || minimized}
         onPointerDown={() => controller.activate(win.w)}
       >
         <div className="ws-titlebar" onPointerDown={(e) => drag(e, 'move')} onDoubleClick={onToggleMax}>
           <span className="ws-title">{win.title}</span>
+          <CaptionButton label="Minimize" onClick={onMinimize}>
+            {MINIMIZE_GLYPH}
+          </CaptionButton>
+          {win.resizable && (
+            <CaptionButton label={rect.restore ? 'Restore Down' : 'Maximize'} onClick={onToggleMax}>
+              {rect.restore ? RESTORE_GLYPH : MAXIMIZE_GLYPH}
+            </CaptionButton>
+          )}
           <CloseButton onClick={() => controller.close(win.w)} />
         </div>
         {win.menu && <MenuBar controller={controller} win={win} />}
@@ -429,8 +506,11 @@ function MenuBar({ controller, win }: { controller: ShellController; win: WebWin
     if (!top?.enabled || !top.submenu?.length) return;
     setOpen(i);
     menu.open(top.submenu, byKeyboard);
-    buttons.current[i]?.focus();
   };
+  // Focus once `open` is on the button, so its focus ring (hidden while open) never paints.
+  useLayoutEffect(() => {
+    if (open !== null) buttons.current[open]?.focus();
+  }, [open]);
   const menu = useMenuState({
     pick: (item) => {
       close();
@@ -839,28 +919,58 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
   );
 }
 
-/** This Device: the name it was paired as, the computer, notifications, and Unpair. */
+/**
+ * This Device: its name and notifications, saved with Save (Cancel leaves no change), the computer
+ * it's paired with, and Unpair, a command of its own apart from the commit buttons.
+ */
 function ThisDeviceWindow({ controller, onClose }: { controller: ShellController; onClose: () => void }) {
   const d = useThisDevice(controller);
+  const [name, setName] = useState<string | null>(null);
+  const [notify, setNotify] = useState<boolean | null>(null);
   const usable = d.push === 'on' || d.push === 'off';
+  const nameValue = name ?? d.name;
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (!nameValue.trim() || d.busy) return;
+    // Notifications first, still inside the click: turning them on asks for permission.
+    const pushing = notify !== null && notify !== (d.push === 'on') ? d.setNotifications(notify) : Promise.resolve(true);
+    void (async () => {
+      if (!(await pushing)) return;
+      if (nameValue.trim() !== d.name && !(await d.rename(nameValue))) return;
+      onClose();
+    })();
+  };
   return (
-    <ShellDialog title="This Device" width={380} className="ws-thisdevice" onClose={onClose}>
-      <div className="ws-thisdevice-body">
-        <div className="ws-thisdevice-name">{d.name || '\u00a0'}</div>
-        <div className="muted">Paired with {d.computer}</div>
-        <label className="checkbox-field">
-          <input type="checkbox" checked={d.push === 'on'} disabled={!usable || d.busy} onChange={(e) => d.setNotifications(e.target.checked)} />
-          Notifications
-        </label>
-      </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={d.unpair}>
-          Unpair This Device
-        </button>
-        <button className="btn primary" autoFocus onClick={onClose}>
-          Close
-        </button>
-      </div>
+    <ShellDialog title="This Device" width={400} className="ws-thisdevice" onClose={onClose}>
+      <form className="ws-thisdevice-form" onSubmit={save}>
+        <div className="ws-thisdevice-body">
+          <label className="field">
+            <span className="field-label">Name</span>
+            <input autoFocus value={nameValue} maxLength={64} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <div className="field">
+            <span className="field-label">Computer</span>
+            <span className="ws-thisdevice-value">{d.computer || '\u00a0'}</span>
+          </div>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={notify ?? d.push === 'on'} disabled={!usable || d.busy} onChange={(e) => setNotify(e.target.checked)} />
+            Notifications
+          </label>
+          <div className="ws-thisdevice-commands">
+            <button type="button" className="btn" onClick={d.unpair}>
+              Unpair This Device
+            </button>
+          </div>
+        </div>
+        <div className="editor-footer">
+          <button type="submit" className="btn primary" disabled={!nameValue.trim() || d.busy}>
+            Save
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
       <LocalMessageBox msg={d.message} />
     </ShellDialog>
   );

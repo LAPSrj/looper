@@ -5,7 +5,7 @@ import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
 import { useDragResize, useListNav } from './hooks';
-import { Markdown, MessageBody } from './Markdown';
+import { Markdown, MessageBody, PromptBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 
@@ -528,6 +528,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     if (row.kind === 'tool') return toolDetail(row);
     if (row.image) return imagePane(row);
     if (row.kind === 'thinking' || row.kind === 'raw') return <pre className="output">{row.text}</pre>;
+    if (row.kind === 'prompt') return <PromptBody text={row.text} />;
     return <MessageBody text={row.text} />;
   };
 

@@ -291,7 +291,6 @@ export function SettingsApp() {
               <NumberField label="Maximum delay" suffix="s" min={1} disabled={!staggerEnabled} value={staggerMax} onChange={setStaggerMax} />
               <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
             </div>
-            <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
             <RadioField
               label="Open terminal sessions in"
               name="terminal"
@@ -402,6 +401,7 @@ export function SettingsApp() {
                 {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
               </div>
             </Field>
+            <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
             <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
             <label className="checkbox-field">
               <input type="checkbox" checked={deleteCompleted} onChange={(e) => setDeleteCompleted(e.target.checked)} />

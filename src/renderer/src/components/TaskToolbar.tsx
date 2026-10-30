@@ -60,9 +60,10 @@ export function TaskToolbar({ task, project, newTaskProject, sessionProject, run
       >
         <Icon>{ICONS.dashboard}</Icon>
       </button>
-      <ToolButton icon={ICONS.chat} title="Sessions" enabled onClick={() => window.looper.sessions.openWindow()} />
+      <ToolButton icon={ICONS.chat} title="Chats" enabled onClick={() => window.looper.sessions.openWindow()} />
       <span className="toolbar-sep" />
-      {button(ICONS.add, newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', 'new-task', true)}
+      {button(ICONS.newTask, newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', 'new-task', true)}
+      <ToolButton icon={ICONS.newProject} title="New Project" enabled onClick={() => void window.looper.projects.openEditor()} />
       <span className="toolbar-sep" />
       {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && canRunNow)}
       {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}

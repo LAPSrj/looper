@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { isLooperFileName } from '../../../shared/files';
-import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type MenuItemSpec, type OpenTarget } from '../../../shared/remote-access';
+import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type MeResponse, type MenuItemSpec, type OpenTarget } from '../../../shared/remote-access';
 import { ClipboardBridge } from './clipboard';
 import { runEditRole } from './edit-roles';
 import { findAccelerator, pickChecked } from './menu-model';
@@ -36,6 +36,8 @@ export class ShellController {
   private lastOverlay = false;
   private readonly toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private pairedTimer: ReturnType<typeof setInterval> | null = null;
+  /** The computer's name, for the page title ('' until known). */
+  private computer = '';
   /** A notification tapped while this tab wasn't open: opened once connected. */
   private pendingOpen: OpenTarget | null = takeOpenParam();
   /** A window that should flash: a click hit what its modal window blocks. */
@@ -73,10 +75,15 @@ export class ShellController {
           // With push on, the computer sends a hidden tab's notification itself.
           if (document.hidden && !pushOnHere() && typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification(m.title, { body: m.body });
           break;
+        case 'computer':
+          this.computer = m.name;
+          this.stateChanged();
+          break;
       }
     });
     const offConn = this.session.onConnection((connected) => {
       this.watchPairing(!connected);
+      if (connected) this.loadComputer();
       if (connected && this.pendingOpen) {
         const open = this.pendingOpen;
         this.pendingOpen = null;
@@ -186,7 +193,8 @@ export class ShellController {
   private stateChanged(): void {
     const s = this.state;
     const front = this.front();
-    document.title = front?.title || 'Looper';
+    const title = front?.title || 'Looper';
+    document.title = this.computer ? `${title} – ${this.computer}` : title;
     const overlay = this.overlayOpen();
     if (front?.w !== this.lastFront || (this.lastOverlay && !overlay)) requestAnimationFrame(() => this.focusFront());
     this.lastFront = front?.w;
@@ -323,6 +331,18 @@ export class ShellController {
     const file = e.dataTransfer?.files?.[0];
     const w = this.anyWindow();
     if (file && w && isLooperFileName(file.name)) void this.session.apiFor(w).openLooperFile(file).catch(() => undefined);
+  }
+
+  /** The computer's name, asked again on every connection (it may have changed meanwhile). */
+  private loadComputer(): void {
+    void fetch('/api/me')
+      .then((r) => (r.ok ? (r.json() as Promise<MeResponse>) : null))
+      .then((me) => {
+        if (!me?.computer || me.computer === this.computer) return;
+        this.computer = me.computer;
+        this.stateChanged();
+      })
+      .catch(() => undefined);
   }
 
   /** While disconnected: when the computer says this device isn't paired any more, the pairing page. */

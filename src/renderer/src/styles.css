@@ -859,7 +859,7 @@ code,
   flex-direction: column;
   overflow: hidden;
 }
-.chat-app.dragging .chat-composer {
+.chat-app.dragging .chat-composer textarea {
   outline: 2px dashed var(--accent);
   outline-offset: -4px;
 }
@@ -882,7 +882,8 @@ code,
   background: var(--bg-2);
   font-size: 12px;
 }
-.chat-find input {
+.chat-find .addon-search {
+  margin: 0;
   width: 240px;
 }
 ::highlight(chat-find) {
@@ -2727,6 +2728,68 @@ button:focus-visible,
   flex: 1;
   min-width: 0;
 }
+/* The desktop dashboard: two rows to the view (a doubled card fills its height); a doubled card spans two columns and two rows. */
+.sessions-dashboard {
+  flex: 1;
+  min-height: 0;
+  container-type: inline-size;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-auto-rows: max(320px, calc(50% - 6px));
+}
+.sessions-dashboard .overview-card {
+  height: auto;
+}
+.sessions-dashboard .overview-card.big {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+/* Room for one column only: a doubled card is just twice as tall. */
+@container (max-width: 691px) {
+  .sessions-dashboard .overview-card.big {
+    grid-column: auto;
+  }
+}
+.toolbar.overview-tools {
+  margin: -4px -6px -4px auto;
+  padding: 0;
+  background: none;
+}
+.overview-tools button {
+  width: 24px;
+  height: 24px;
+}
+/* A chat's card: the title bar opens the chat; below it, the chat edge to edge. */
+.overview-chat {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.overview-chat:hover:not(.waiting) {
+  border-color: var(--border);
+}
+.overview-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.overview-chat > .chat-app {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  margin: 2px -12px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.overview-chat .chat-scroll {
+  padding: 10px 12px;
+}
+.overview-chat .chat-status,
+.overview-chat .chat-status.chat-working {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.overview-chat .chat-composer {
+  padding: 8px 12px 10px;
+}
 
 /* A followed subagent's conversation. */
 
@@ -2796,6 +2859,106 @@ button:focus-visible,
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+/* Now as the agent's screen: a command in a terminal (the Terminal tab's colors), a file in an editor. */
+.now-body.now-body-screen {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.now-terminal {
+  flex: 1;
+  background: #0f1115;
+  color: #d7dae0;
+  padding: 8px 10px;
+  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  font-size: 12px;
+  line-height: 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.now-term-comment {
+  color: #8b919c;
+}
+.now-term-prompt {
+  color: #4cc38a;
+}
+.now-term-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: #d7dae0;
+  vertical-align: text-bottom;
+  animation: now-cursor 1s steps(1) infinite;
+}
+@keyframes now-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+.now-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+}
+.now-editor-tabs {
+  display: flex;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--border);
+}
+.now-editor-tab {
+  padding: 5px 14px;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  box-shadow: inset 0 2px 0 var(--accent);
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.now-editor-lines {
+  padding: 6px 0;
+  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  user-select: text;
+}
+.now-editor-line {
+  display: flex;
+}
+.now-editor-gutter {
+  flex: none;
+  min-width: 44px;
+  padding: 0 8px 0 6px;
+  text-align: right;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.now-editor-mark {
+  flex: none;
+  width: 14px;
+  user-select: none;
+}
+.now-editor-line.diff-add .now-editor-mark {
+  color: var(--green);
+}
+.now-editor-line.diff-del .now-editor-mark {
+  color: var(--red);
+}
+.now-editor-text {
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.now-editor-gap,
+.now-editor-note {
+  padding-left: 58px;
+  color: var(--fg-muted);
+}
 .subagent-list,
 .files-tab {
   padding: 6px;
@@ -2855,16 +3018,8 @@ button:focus-visible,
   border: 1px solid var(--border);
   border-radius: 3px;
 }
-.background-pane {
-  flex: none;
-  max-height: 40%;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
+.background-tab {
   padding: 8px 12px 10px;
-}
-.background-title {
-  display: block;
-  margin-bottom: 6px;
 }
 .background-none {
   font-size: 12px;
@@ -2925,36 +3080,45 @@ button:focus-visible,
   font-size: 12px;
 }
 
-/* The "/" list over the message box. */
+/* The "/" list: a combo box's drop-down list on the message box's top edge, as wide as the box. */
 .chat-composer {
   position: relative;
 }
+.composer-input {
+  position: relative;
+  display: flex;
+}
 .slash-list {
   position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: calc(100% - 4px);
+  left: 0;
+  right: 0;
+  bottom: calc(100% - 1px);
   max-height: 280px;
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-  padding: 4px;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.14);
   z-index: 5;
-  overflow-x: hidden;
 }
 .slash-item {
   display: flex;
   gap: 12px;
-  padding: 5px 8px;
-  border-radius: 4px;
+  padding: 3px 8px;
   font-size: 12.5px;
+  line-height: 18px;
   cursor: default;
   min-width: 0;
 }
-.slash-item.selected {
-  background: var(--bg-3);
+.slash-hint,
+.slash-desc {
+  color: var(--fg-muted);
+}
+.slash-item.selected,
+.slash-item.selected .slash-hint,
+.slash-item.selected .slash-desc {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 .slash-name {
   flex: 0 1 auto;
@@ -3174,45 +3338,67 @@ button:focus-visible,
 .git-foot .git-branch {
   margin-left: 0;
 }
-.git-view.narrow .git-columns.two {
-  grid-template-columns: 1fr;
-  grid-template-rows: minmax(90px, 35%) 1fr;
-}
-.git-view.narrow .git-columns.three {
-  grid-template-columns: 1fr;
-  grid-template-rows: minmax(90px, 30%) minmax(90px, 30%) 1fr;
-}
-.git-view.narrow .git-columns > * {
-  border-right: none;
-  border-bottom: 1px solid var(--border);
-}
-.git-view.narrow .git-columns > :last-child {
-  border-bottom: none;
-}
 .git-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.git-columns {
+.git-split {
   flex: 1;
   min-height: 0;
-  display: grid;
+  min-width: 0;
+  display: flex;
 }
-.git-columns.two {
-  grid-template-columns: 360px 1fr;
+.git-split.y {
+  flex-direction: column;
 }
-.git-columns.three {
-  grid-template-columns: 360px 300px 1fr;
-}
-.git-columns > * {
+.git-pane {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--border);
+  overflow: hidden;
 }
-.git-columns > :last-child {
-  border-right: none;
+.git-pane > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.git-divider {
+  flex: none;
+  background: var(--border);
+}
+.git-divider.x {
+  width: 5px;
+  cursor: col-resize;
+}
+.git-divider.y {
+  height: 5px;
+  cursor: row-resize;
+}
+.git-files-changes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.git-subtabs {
+  flex: none;
+  padding: 0 8px;
+}
+.git-tabbody {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.git-tabbody > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 .git-list {
   overflow: auto;
@@ -3261,16 +3447,9 @@ button:focus-visible,
   white-space: nowrap;
   font-size: 11.5px;
 }
-.git-commit-detail {
-  display: flex;
-  flex-direction: column;
-}
 .git-commit-head {
-  flex: none;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
   font-size: 12.5px;
-  max-height: 45%;
   overflow: auto;
 }
 .git-commit-subject {
@@ -3280,14 +3459,6 @@ button:focus-visible,
 .git-commit-body {
   white-space: pre-wrap;
   margin-bottom: 8px;
-}
-.git-files-title {
-  flex: none;
-  padding: 8px 12px 2px;
-}
-.git-commit-detail .git-list {
-  flex: 1;
-  min-height: 0;
 }
 .git-diff {
   display: flex;
@@ -3319,14 +3490,6 @@ button:focus-visible,
 }
 
 /* ---------- Remote Access ---------- */
-.remote-access-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
-}
 .pair-body {
   display: flex;
   flex-direction: column;
@@ -3441,6 +3604,13 @@ button:focus-visible,
   inset: 0;
   background: var(--backdrop);
 }
+/* Minimized: hidden, its page kept at its size; a minimized modal window's backdrop still catches clicks. */
+.ws-window.minimized {
+  visibility: hidden;
+}
+.ws-backdrop.minimized {
+  background: transparent;
+}
 
 .ws-titlebar {
   display: flex;
@@ -3465,6 +3635,7 @@ button:focus-visible,
 .ws-dialog .ws-title {
   color: var(--fg);
 }
+.ws-caption,
 .ws-close {
   display: flex;
   align-items: center;
@@ -3475,6 +3646,9 @@ button:focus-visible,
   border: 0;
   background: transparent;
   color: var(--fg);
+}
+.ws-caption:hover {
+  background: var(--bg-3);
 }
 .ws-close:hover {
   background: #c42b1c;
@@ -3554,7 +3728,7 @@ button:focus-visible,
   flex: 0 1 200px;
   min-width: 72px;
   padding: 0 10px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: var(--fg);
@@ -3567,9 +3741,10 @@ button:focus-visible,
 .ws-task:hover {
   background: var(--bg-3);
 }
+/* As the selected item in the side panel (.task-item.selected). */
 .ws-task.active {
   background: var(--bg-3);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-color: var(--border);
 }
 
 .ws-connection {

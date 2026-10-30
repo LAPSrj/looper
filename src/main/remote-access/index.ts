@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import type { Logger } from '../../engine/log';
 import type { PairingCode, PushPayload, PwaIconName, RemoteAccessProviderId, RemoteAccessState, RemoteAccessStatus } from '../../shared/remote-access';
@@ -9,7 +10,7 @@ import { IpcTable } from '../platform/ipc-table';
 import { DeviceStore, Pairing, type Clock } from './devices';
 import { LocalProvider, TailscaleProvider, type AccessProvider, type ProviderStatus } from './providers';
 import { PushSender, PushStore, WaitWatcher, waitingPayload, webPushSend, type PushSend } from './push';
-import { RemoteServer, type RemoteConnection } from './server';
+import { RemoteServer, freePort, type RemoteConnection } from './server';
 
 export type { RemoteConnection } from './server';
 export type { AccessProvider, ProviderStartOptions, ProviderStatus } from './providers';
@@ -43,8 +44,10 @@ const WAITING_TTL_S = 15 * 60;
 
 type Applied = Pick<RemoteAccessSettings, 'provider' | 'hostname' | 'port'>;
 
-const sameConfig = (a: Applied | null, b: Applied | null): boolean =>
-  a === b || (!!a && !!b && a.provider === b.provider && a.hostname === b.hostname && a.port === b.port);
+/** A wanted port that is the one already listened on counts as unchanged (saving the port 0 picked). */
+const sameConfig = (want: Applied | null, applied: Applied | null, listening: number): boolean =>
+  want === applied ||
+  (!!want && !!applied && want.provider === applied.provider && want.hostname === applied.hostname && (want.port === applied.port || want.port === listening));
 
 /**
  * Remote Access: the server, its provider, paired devices and the pairing
@@ -66,6 +69,10 @@ export class RemoteAccess {
   private unsubscribe: (() => void) | null = null;
   private secret = '';
   private applied: Applied | null = null;
+  /** The port the server listens on; 0 while it's off. */
+  private listening = 0;
+  /** The computer's name at the last apply, to tell open tabs when it changes. */
+  private computer = '';
   private status: RemoteAccessStatus;
   private pairedWith: RemoteAccessState['pairedWith'];
   /** The code the Pair Device window shows, to match `pairedWith` to it. */
@@ -106,6 +113,8 @@ export class RemoteAccess {
       },
       ...(opts.icon ? { icon: opts.icon } : {}),
       onUnpair: (id) => this.removeDevice(id),
+      onRenamed: () => this.changed(),
+      computerName: () => opts.settings().name.trim() || os.hostname(),
     });
     this.clients = new RemoteClients({
       ipc: opts.ipc ?? new IpcTable(),
@@ -120,18 +129,27 @@ export class RemoteAccess {
 
   /** Start, stop or restart to match the settings. */
   apply(settings: RemoteAccessSettings): Promise<void> {
+    const computer = settings.name.trim() || os.hostname();
+    if (this.computer && computer !== this.computer) this.clients.broadcast({ t: 'computer', name: computer });
+    this.computer = computer;
     return this.enqueue(async () => {
       const want: Applied | null = settings.enabled ? { provider: settings.provider, hostname: settings.hostname, port: settings.port } : null;
-      if (sameConfig(want, this.applied)) return;
+      if (sameConfig(want, this.applied, this.listening)) return;
       await this.stopAll();
       if (want) await this.startAll(want);
       else this.opts.log.info('remote access: turned off');
     });
   }
 
+  /** The port the server listens on now, or else a free one: what the Settings window fills in while the port isn't set. */
+  suggestPort(): Promise<number> {
+    return this.listening ? Promise.resolve(this.listening) : freePort();
+  }
+
   state(): RemoteAccessState {
     return {
       ...this.status,
+      defaultName: os.hostname(),
       devices: this.devices.list().map((d) => ({
         id: d.id,
         name: d.name,
@@ -280,10 +298,11 @@ export class RemoteAccess {
       port = await this.server.listen(want.port);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      const message = e.code === 'EADDRINUSE' ? `Port ${want.port} is in use. Choose another port, or 0 for any free port.` : `Can't start the server: ${e.message}`;
+      const message = e.code === 'EADDRINUSE' ? `Port ${want.port} is in use. Choose another port.` : `Can't start the server: ${e.message}`;
       this.setStatus({ phase: 'error', provider: want.provider, message });
       return;
     }
+    this.listening = port;
     this.secret = crypto.randomBytes(32).toString('base64url');
     const provider = this.opts.createProvider?.(want.provider) ?? (want.provider === 'tailscale' ? new TailscaleProvider(this.opts.log) : new LocalProvider());
     this.provider = provider;
@@ -306,6 +325,7 @@ export class RemoteAccess {
     const wasOn = this.applied !== null;
     this.provider = null;
     this.applied = null;
+    this.listening = 0;
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.cancelPairing();

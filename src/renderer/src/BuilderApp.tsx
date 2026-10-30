@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BuilderState, BuilderTest } from '@shared/builder';
 import { describeCron } from '@shared/cron';
-import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels } from '@shared/environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels } from '@shared/environments';
 import type { Environment, Harness, Task } from '@shared/types';
 import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
 import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
@@ -262,8 +262,8 @@ function BuilderToolbar({ state }: { state: BuilderState }) {
 
 /** One line above the input: what the session is doing, or why it ended. */
 function ChatStatus({ state }: { state: BuilderState }) {
-  if (state.status === 'working') return <div className="chat-status muted">{state.harnessName} is working…</div>;
-  if (state.status === 'starting') return <div className="chat-status muted">Starting {state.harnessName}…</div>;
+  if (state.status === 'working') return <div className="chat-status muted">{harnessKindLabel(state.harnessKind)} is working…</div>;
+  if (state.status === 'starting') return <div className="chat-status muted">Starting {harnessKindLabel(state.harnessKind)}…</div>;
   if (state.status === 'ended') return <div className="chat-status error-text">{state.error ?? 'The session ended.'}</div>;
   return null;
 }

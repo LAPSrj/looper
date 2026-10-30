@@ -29,6 +29,8 @@
     "src/renderer/src/web/dialog-flows.ts",
     "src/renderer/src/phone-nav.ts",
     "src/renderer/src/components/terminal-keys.ts",
+    "src/renderer/src/components/composer.ts",
+    "src/renderer/src/components/editor-lines.ts",
     "src/renderer/src/web/nav-stack.ts",
     "src/renderer/src/web/gestures.ts",
     "tests/**/*"

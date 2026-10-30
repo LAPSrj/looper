@@ -41,6 +41,8 @@ export interface ShellState {
   order: string[];
   /** The window the server or the user last focused. */
   focused: string | null;
+  /** Windows minimized into the window list (desktop browsers only). */
+  minimized: string[];
   menus: OpenMenu[];
   dialogs: OpenDialog[];
   toasts: Toast[];
@@ -58,12 +60,16 @@ export type ShellAction =
   | { t: 'menu-done'; menuId: string }
   | { t: 'dialog-done'; dialogId: string }
   | { t: 'toast-done'; id: number }
-  | { t: 'path-done'; id: number };
+  | { t: 'path-done'; id: number }
+  | { t: 'minimize'; w: string }
+  /** Back from the window list, to the front. */
+  | { t: 'restore'; w: string };
 
 export const initialShellState: ShellState = {
   windows: [],
   order: [],
   focused: null,
+  minimized: [],
   menus: [],
   dialogs: [],
   toasts: [],
@@ -95,6 +101,7 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
         ...s,
         windows: s.windows.filter((x) => x.w !== a.w),
         order: s.order.filter((x) => x !== a.w),
+        minimized: s.minimized.filter((x) => x !== a.w),
         menus: s.menus.filter((m) => m.w !== a.w),
         dialogs: s.dialogs.filter((d) => d.w !== a.w),
         focused: s.focused === a.w ? null : s.focused,
@@ -104,7 +111,13 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
     case 'window-menu':
       return { ...s, windows: patch(s.windows, a.w, { menu: a.menu }) };
     case 'window-focus':
-      return s.windows.some((x) => x.w === a.w) ? { ...s, focused: a.w, order: toFront(s.order, a.w) } : s;
+    case 'restore':
+      // Focusing a minimized window (the server bringing an open window forward) restores it.
+      return s.windows.some((x) => x.w === a.w) ? { ...s, focused: a.w, order: toFront(s.order, a.w), minimized: s.minimized.filter((x) => x !== a.w) } : s;
+    case 'minimize':
+      return s.windows.some((x) => x.w === a.w) && !s.minimized.includes(a.w)
+        ? { ...s, minimized: [...s.minimized, a.w], focused: s.focused === a.w ? null : s.focused }
+        : s;
     case 'window-load': {
       const win = s.windows.find((x) => x.w === a.w);
       return win ? { ...s, windows: patch(s.windows, a.w, { hash: a.hash, nonce: win.nonce + 1 }) } : s;
@@ -114,7 +127,7 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
       return win ? { ...s, windows: patch(s.windows, a.w, { nonce: win.nonce + 1 }) } : s;
     }
     case 'reset':
-      return { ...s, windows: [], order: [], focused: null, menus: [], dialogs: [], paths: [] };
+      return { ...s, windows: [], order: [], focused: null, minimized: [], menus: [], dialogs: [], paths: [] };
     case 'resumed':
       return { ...s, windows: s.windows.map((x) => ({ ...x, nonce: x.nonce + 1 })) };
     case 'menu': {
@@ -197,12 +210,13 @@ export function childStack(s: ShellState): WebWindow[] {
 /** The modal window in front, which blocks every window behind it. */
 export const topModal = (s: ShellState): WebWindow | undefined => childStack(s).filter((x) => x.modal).pop();
 
-/** The window keyboard input and accelerators go to. */
+/** The window keyboard input and accelerators go to; none while the modal window in front is minimized. */
 export function frontWindow(s: ShellState): WebWindow | undefined {
+  const shown = (x: WebWindow | undefined) => !!x && !s.minimized.includes(x.w);
   const modal = topModal(s);
-  if (modal) return modal;
+  if (modal) return shown(modal) ? modal : undefined;
   const focused = s.windows.find((x) => x.w === s.focused);
-  return focused ?? childStack(s).pop() ?? mainWindow(s);
+  return (shown(focused) ? focused : undefined) ?? childStack(s).filter(shown).pop() ?? mainWindow(s);
 }
 
 /** Whether the window takes input now: nothing modal is in front of it. */

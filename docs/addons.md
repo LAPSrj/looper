@@ -34,7 +34,7 @@ click to collapse; collapsed groups stay collapsed the next time.
 Selecting an item shows its screen in the main window, and selecting a task
 goes back to the task's detail. Right-clicking an item opens its menu, and
 right-clicking the pane's header opens the pane's menu, which ends with
-**Hide Pane**. **View → Addon Panes** shows a hidden pane again.
+**Hide Pane**. Its check box in the **View** menu shows a hidden pane again.
 
 When an addon stops on its own, its panes say so and show the end of what it
 printed as it stopped, with a **Restart** button.

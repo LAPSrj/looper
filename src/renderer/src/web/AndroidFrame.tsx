@@ -10,6 +10,7 @@ import { CHECK, FileRows } from './phone-files';
 import {
   deviceNoun,
   isLongMenu,
+  menuGroups,
   NavIcon,
   PhoneWindows,
   plainLabel,
@@ -169,33 +170,36 @@ const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'ra
 
 function MenuItems({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
   const checks = items.some(isChoice);
+  const groups = menuGroups(items);
+  // The up row heads the first group, even when the level has no items of its own.
+  if (title !== null && !groups.length) groups.push([]);
   return (
     <div className="md-menu-list ph-scroll" role="menu">
-      {title !== null && (
-        <button className="md-menu-item md-menu-up" onClick={onUp}>
-          <span className="md-menu-lead">{ARROW_BACK}</span>
-          <span className="md-menu-label">{title}</span>
-        </button>
-      )}
-      {items.map((it) =>
-        it.type === 'separator' ? (
-          <div key={it.id} className="md-divider" role="separator" />
-        ) : (
-          <button
-            key={it.id}
-            role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
-            aria-checked={isChoice(it) ? !!it.checked : undefined}
-            aria-haspopup={it.type === 'submenu' || undefined}
-            className="md-menu-item"
-            disabled={!it.enabled}
-            onClick={() => onItem(it)}
-          >
-            {checks && <span className="md-menu-lead">{it.checked ? (it.type === 'radio' ? <span className="md-radio-dot" /> : CHECK) : null}</span>}
-            <span className="md-menu-label">{plainLabel(it.label)}</span>
-            {it.type === 'submenu' && <span className="md-menu-trail">{ARROW_RIGHT}</span>}
-          </button>
-        ),
-      )}
+      {groups.map((group, gi) => (
+        <div key={gi} className="md-menu-group" role="group">
+          {gi === 0 && title !== null && (
+            <button className="md-menu-item md-menu-up" onClick={onUp}>
+              <span className="md-menu-lead">{ARROW_BACK}</span>
+              <span className="md-menu-label">{title}</span>
+            </button>
+          )}
+          {group.map((it) => (
+            <button
+              key={it.id}
+              role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
+              aria-checked={isChoice(it) ? !!it.checked : undefined}
+              aria-haspopup={it.type === 'submenu' || undefined}
+              className={`md-menu-item${isChoice(it) && it.checked ? ' checked' : ''}`}
+              disabled={!it.enabled}
+              onClick={() => onItem(it)}
+            >
+              {checks && <span className="md-menu-lead">{it.checked ? CHECK : null}</span>}
+              <span className="md-menu-label">{plainLabel(it.label)}</span>
+              {it.type === 'submenu' && <span className="md-menu-trail">{ARROW_RIGHT}</span>}
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -226,7 +230,10 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
     );
   }
   const width = 220;
-  const height = sub.level.length * 48 + 16;
+  // 44 dp items, 4 dp padding in each group, 2 dp between groups.
+  const groups = menuGroups(sub.level);
+  const rows = groups.reduce((n, g) => n + g.length, 0) + (sub.title !== null ? 1 : 0);
+  const height = rows * 44 + Math.max(1, groups.length) * 8 + Math.max(0, groups.length - 1) * 2;
   const left = Math.max(8, Math.min(at.x, shell.vp.width - width - 8));
   const top = at.y + height + 8 <= shell.vp.height ? at.y : Math.max(8, at.y - height);
   return <Menu items={m.items} style={{ left, top, minWidth: width }} onPick={(it) => controller.pick(m.menuId, m.w, it)} onClose={dismiss} />;
@@ -492,17 +499,40 @@ function Switch({ on, disabled, label, onChange }: { on: boolean; disabled?: boo
   );
 }
 
+/** Rename this device: a dialog with the name's field, as Android's own Settings rename the phone. */
+function RenameDialog({ current, onRename, onDone }: { current: string; onRename: (name: string) => void; onDone: () => void }) {
+  const [name, setName] = useState(current);
+  return (
+    <Dialog
+      spec={{ message: 'Device name', buttons: ['Cancel', 'Rename'], cancelId: 0, defaultId: 1 }}
+      input={{ value: name, onChange: setName }}
+      onAnswer={(r) => {
+        const next = name.trim();
+        if (r === 1 && next && next !== current) onRename(next);
+        onDone();
+      }}
+    />
+  );
+}
+
 function DeviceSheet({ controller, onClose }: { controller: ShellController; onClose: () => void }) {
   const d = useThisDevice(controller);
   const usable = d.push === 'on' || d.push === 'off';
+  const [renaming, setRenaming] = useState(false);
   return (
     <BottomSheet label="This device" onClose={onClose}>
       <h2 className="md-sheet-title">This device</h2>
       <div className="md-list">
+        <button className="md-list-item tappable" disabled={d.busy || !d.name} onClick={() => setRenaming(true)}>
+          <div className="md-list-text">
+            <div className="md-list-headline">Device name</div>
+            <div className="md-list-supporting">{d.name || ' '}</div>
+          </div>
+        </button>
         <div className="md-list-item">
           <div className="md-list-text">
-            <div className="md-list-headline">{d.name || ' '}</div>
-            <div className="md-list-supporting">Paired with {d.computer}</div>
+            <div className="md-list-headline">Paired with</div>
+            <div className="md-list-supporting">{d.computer || ' '}</div>
           </div>
         </div>
         <div className="md-list-item">
@@ -517,6 +547,7 @@ function DeviceSheet({ controller, onClose }: { controller: ShellController; onC
           Unpair this device
         </button>
       </div>
+      {renaming && <RenameDialog current={d.name} onRename={(name) => void d.rename(name)} onDone={() => setRenaming(false)} />}
       <LocalDialog msg={d.message} />
     </BottomSheet>
   );

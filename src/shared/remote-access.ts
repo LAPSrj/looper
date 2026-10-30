@@ -51,6 +51,8 @@ export interface PairingCode {
 
 /** What the desktop windows show: the status, the paired devices, and whom the current code paired. */
 export type RemoteAccessState = RemoteAccessStatus & {
+  /** The OS computer name: what devices call this computer while the Name setting is empty. */
+  defaultName: string;
   devices: PairedDevice[];
   /** The device the last pairing code paired, until a new code replaces it or pairing is canceled. */
   pairedWith?: { code: string; device: { id: string; name: string } };
@@ -101,6 +103,7 @@ export const REQUEST_HEADER_VALUE = '1';
  *   GET  /api/me                → MeResponse
  *   POST /api/pair              PairRequest → 200 MeResponse + cookie | 401 wrong or expired code | 429 too many tries
  *   POST /api/unpair            → 204 + the cookie cleared: this device unpairs itself (its push subscriptions go too)
+ *   POST /api/rename            RenameRequest → 200 MeResponse | 400 no name: this device renames itself
  *   POST /api/upload?name=<n>   raw bytes → UploadResponse (a file on the computer, for open dialogs and attachments)
  *   GET  /api/download/<token>  a file the computer offered with a `download` message (works once)
  *   GET  /api/push/key          → PushKeyResponse
@@ -116,6 +119,12 @@ export const REQUEST_HEADER_VALUE = '1';
 export interface MeResponse {
   paired: boolean;
   device?: { id: string; name: string };
+  /** Paired: the computer's name (Remote Access's Name setting, or the OS computer name). */
+  computer?: string;
+}
+
+export interface RenameRequest {
+  name: string;
 }
 
 export interface PairRequest {
@@ -249,6 +258,16 @@ export interface EncodedBytes {
   $bytes: string;
 }
 
+/**
+ * An `undefined` in an array (an argument left out, as in `runs.list(id)`)
+ * travels as `{ $undefined: true }`, because JSON would turn it into null and
+ * a handler's default parameter would then not apply. Electron's IPC keeps
+ * undefined, so both sides convert it back.
+ */
+export interface EncodedUndefined {
+  $undefined: true;
+}
+
 export type ClientMessage =
   /**
    * First message: the client's platform, for its menus and layout. With the
@@ -312,6 +331,8 @@ export type ServerMessage =
   | { t: 'download'; token: string; name: string }
   /** A desktop notification, shown on the device too; tapping it opens the task's run. */
   | { t: 'notify'; title: string; body: string; taskId?: string; runId?: string }
+  /** The computer's name changed (Remote Access's Name setting); a new connection reads it from /api/me. */
+  | { t: 'computer'; name: string }
   | { t: 'reload'; w: string }
   | { t: 'pong' };
 

@@ -21,7 +21,7 @@ import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType } from './chat';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
-import type { SessionActivity, SessionsState } from '../shared/sessions';
+import type { SessionActivity, SessionKind, SessionsState } from '../shared/sessions';
 import { SessionHub } from './sessions';
 import { GitService } from './git';
 import { createWindowsPowerOps } from './power-win';
@@ -258,8 +258,10 @@ export interface Engine {
   watchSessions(ids: Iterable<string>): void;
   /** The user looked at a session: a finished turn or notification stops waiting for them. */
   seenSession(id: string): void;
-  /** Whether a session is a chat or a terminal session; undefined once it's closed. */
-  sessionKind(id: string): 'chat' | 'terminal' | undefined;
+  /** Whether a session is a chat, a terminal session, or a task run the Chats window lists; undefined once it's closed (or gone from the list). */
+  sessionKind(id: string): SessionKind | undefined;
+  /** The harness's own id for a listed session's conversation (Claude Code's session id, Codex's thread id); null before it has one. */
+  harnessSessionId(id: string): string | null;
   /**
    * Stop: end the agent's turn in a chat or terminal session. A chat asks
    * Claude to stop, or ends Codex's turn; a terminal session gets Esc, as if
@@ -615,6 +617,14 @@ export function createEngine(opts: EngineOptions): Engine {
   const sessionHub = new SessionHub({
     chats: () => chats.list(),
     terminals: () => terminals.list().filter((t) => !remote.owns(t.id)),
+    runs: () =>
+      settings.view.sessions.showRuns
+        ? scheduler.list().flatMap((rt) =>
+            rt.runs
+              .filter((r) => r.state === 'running')
+              .map((r) => ({ id: r.runId, taskId: rt.taskId, startedAt: r.startedAt, held: r.held, question: r.question })),
+          )
+        : [],
     findTask: lookup,
     projects: () => projects.list(),
     harnessOf(task) {
@@ -1015,6 +1025,8 @@ export function createEngine(opts: EngineOptions): Engine {
       log.info('settings updated');
       warmMountPrefixes();
       emit({ type: 'settings', settings: { ...settings } });
+      // Show Task Runs adds or takes away the task runs in the Chats window's list.
+      sessionHub.changed();
       if (parsed.tasksFile !== oldTasksFile) {
         emit({ type: 'tasks', tasks: tasks.list() });
         emit({ type: 'recycleBin', entries: tasks.listBin() });
@@ -1279,10 +1291,21 @@ export function createEngine(opts: EngineOptions): Engine {
     sessionActivity: (id) => sessionHub.activity(id),
     watchSessions: (ids) => sessionHub.watch(ids),
     seenSession: (id) => sessionHub.seen(id),
-    sessionKind(id: string): 'chat' | 'terminal' | undefined {
+    sessionKind(id: string): SessionKind | undefined {
       if (chats.taskOf(id)) return 'chat';
       if (terminals.taskOf(id) && !remote.owns(id)) return 'terminal';
-      return undefined;
+      return sessionHub.runTask(id) ? 'run' : undefined;
+    },
+    harnessSessionId(id: string): string | null {
+      const taskId = chats.taskOf(id) ?? (remote.owns(id) ? undefined : terminals.taskOf(id)) ?? sessionHub.runTask(id);
+      const task = taskId ? lookup(taskId) : undefined;
+      if (!taskId || !task) return null;
+      try {
+        const kind = recordedKind(task);
+        return kind ? readRunSessionId(runs.runDir(taskId, id), kind) : null;
+      } catch {
+        return null; // the task's environment or harness is gone
+      }
     },
     async stopSession(id: string): Promise<void> {
       if (chats.taskOf(id)) await chats.stop(id);
@@ -1302,7 +1325,8 @@ export function createEngine(opts: EngineOptions): Engine {
       sessionHub.changed();
     },
     async backgroundOutput(sessionId: string, taskId: string): Promise<string | null> {
-      const owner = chats.taskOf(sessionId) ?? terminals.taskOf(sessionId);
+      const owner =
+        chats.taskOf(sessionId) ?? terminals.taskOf(sessionId) ?? sessionHub.runTask(sessionId);
       const file = owner ? sessionHub.backgroundFile(sessionId, taskId) : undefined;
       return owner && file ? messages.readTail(owner, file) : null;
     },

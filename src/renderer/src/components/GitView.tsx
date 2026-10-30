@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Children, Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   CHANGE_LABELS,
   branchText,
@@ -12,7 +12,7 @@ import {
   type GitStatusResult,
 } from '@shared/git';
 import { fmtDateTime } from '../format';
-import { useListNav } from './hooks';
+import { useDragResize, useListNav } from './hooks';
 import { DiffView } from './ToolContent';
 import { TabBar } from './ui';
 
@@ -24,6 +24,113 @@ const POLL_MS = 5000;
 const baseName = (p: string) => p.split('/').pop() || p;
 const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length - 1));
 const fail = (e: unknown) => void window.looper.showError((e as Error).message);
+
+const DIVIDER = 5;
+const MIN_PANE = 60;
+/** A stacked list-over-diff area shorter than this (px) splits into tabs instead. */
+const SHORT = 260;
+
+/** The drag handle between two panes of a Split; `index` is the pane before it. */
+function SplitDivider({
+  axis,
+  index,
+  containerRef,
+  sizes,
+  count,
+  onSize,
+}: {
+  axis: 'x' | 'y';
+  index: number;
+  containerRef: RefObject<HTMLDivElement | null>;
+  sizes: number[];
+  count: number;
+  onSize: (index: number, size: number) => void;
+}) {
+  const onMouseDown = useDragResize({
+    axis,
+    containerRef,
+    onDrag: (pos, rect) => {
+      const total = axis === 'x' ? rect.width : rect.height;
+      let start = index * DIVIDER;
+      for (let i = 0; i < index; i++) start += sizes[i];
+      let after = (count - 1 - index) * DIVIDER + MIN_PANE;
+      for (let i = index + 1; i < count - 1; i++) after += sizes[i];
+      const max = Math.max(MIN_PANE, total - start - DIVIDER - after);
+      onSize(index, Math.round(Math.max(MIN_PANE, Math.min(max, pos - start - DIVIDER / 2))));
+    },
+  });
+  return <div className={`git-divider ${axis}`} onMouseDown={onMouseDown} />;
+}
+
+/**
+ * Panes in a row (`x`) or a column (`y`) with a drag handle between each pair.
+ * `initial` sizes every pane but the last, which takes the rest.
+ */
+function Split({ axis, initial, children }: { axis: 'x' | 'y'; initial: number[]; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [sizes, setSizes] = useState(initial);
+  const panes = Children.toArray(children);
+  const onSize = (i: number, size: number) => setSizes((prev) => prev.map((s, j) => (j === i ? size : s)));
+  return (
+    <div ref={ref} className={`git-split ${axis}`}>
+      {panes.map((pane, i) => (
+        <Fragment key={i}>
+          {i > 0 && <SplitDivider axis={axis} index={i - 1} containerRef={ref} sizes={sizes} count={panes.length} onSize={onSize} />}
+          <div className="git-pane" style={i < panes.length - 1 ? { flex: `0 1 ${sizes[i]}px` } : { flex: '1 1 0' }}>
+            {pane}
+          </div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+type PaneId = 'message' | 'files' | 'changes';
+
+/**
+ * A file list with the selected file's changes beside it (`x`) or below it
+ * (`y`), a drag handle between them. When a stacked area is too short for
+ * both, they become two tabs, Files and Diff. `message`, when given, is a
+ * first tab of its own (the commit message).
+ */
+function FilesChanges({ axis, message, files, changes }: { axis: 'x' | 'y'; message?: ReactNode; files: ReactNode; changes: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [short, setShort] = useState(false);
+  const [pane, setPane] = useState<PaneId>(message ? 'message' : 'files');
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setShort(axis === 'y' && el.clientHeight < SHORT);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [axis]);
+
+  const together = !short;
+  const tabs: [PaneId, string][] = [];
+  if (message) tabs.push(['message', 'Commit Message']);
+  tabs.push(['files', 'Files']);
+  if (!together) tabs.push(['changes', 'Diff']);
+  // The Diff tab goes away once there's room for both again.
+  const active = together && pane === 'changes' ? 'files' : pane;
+  let body: ReactNode;
+  if (active === 'message') body = message;
+  else if (together) {
+    body = (
+      <Split axis={axis} initial={[axis === 'x' ? 360 : 160]}>
+        {files}
+        {changes}
+      </Split>
+    );
+  } else body = active === 'files' ? files : changes;
+  return (
+    <div ref={ref} className="git-files-changes">
+      {tabs.length > 1 && <TabBar tabs={tabs} active={active} onSelect={setPane} className="git-subtabs" />}
+      <div className="git-tabbody">{body}</div>
+    </div>
+  );
+}
 
 /** One file in a list: its name, its folder, and what happened to it. */
 function FileRow({
@@ -87,8 +194,8 @@ function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle
   );
 }
 
-/** Uncommitted changes: the files on the left, the selected one's diff against HEAD on the right. */
-function ChangesView({ projectId, status }: { projectId: string; status: GitStatus }) {
+/** Uncommitted changes: the files, and the selected one's diff against HEAD beside or below them. */
+function ChangesView({ projectId, status, narrow }: { projectId: string; status: GitStatus; narrow: boolean }) {
   const [sel, setSel] = useState<string | null>(null);
   const [diff, setDiff] = useState<{ key: string; diff: GitFileDiff } | null>(null);
   const changes = status.changes;
@@ -119,33 +226,54 @@ function ChangesView({ projectId, status }: { projectId: string; status: GitStat
   const menu = (c: GitChange) =>
     window.looper.git.showFileMenu({ projectId, root: status.root, path: c.path, exists: c.kind !== 'deleted' });
   return (
-    <div className="git-columns two">
-      <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Changes">
-        {changes.map((c, i) => (
-          <FileRow
-            key={c.path}
-            id={`change-${i}`}
-            path={c.path}
-            origPath={c.origPath}
-            status={changeText(c)}
-            selected={c === current}
-            onSelect={() => setSel(c.path)}
-            onMenu={() => menu(c)}
-          />
-        ))}
+    <FilesChanges
+      axis={narrow ? 'y' : 'x'}
+      files={
+        <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Changes">
+          {changes.map((c, i) => (
+            <FileRow
+              key={c.path}
+              id={`change-${i}`}
+              path={c.path}
+              origPath={c.origPath}
+              status={changeText(c)}
+              selected={c === current}
+              onSelect={() => setSel(c.path)}
+              onMenu={() => menu(c)}
+            />
+          ))}
+        </div>
+      }
+      changes={
+        <DiffPane
+          title={current?.path}
+          subtitle={current ? changeText(current) : undefined}
+          diff={diff && diff.key === key ? diff.diff : null}
+          loading={!!current}
+        />
+      }
+    />
+  );
+}
+
+/** The commit's message, author, date and id. */
+function CommitMessage({ detail }: { detail: GitCommitDetail }) {
+  return (
+    <div className="git-commit-head">
+      <div className="git-commit-subject">{detail.subject}</div>
+      {detail.body && <div className="git-commit-body">{detail.body}</div>}
+      <div className="muted">
+        {detail.author} &lt;{detail.email}&gt;
       </div>
-      <DiffPane
-        title={current?.path}
-        subtitle={current ? changeText(current) : undefined}
-        diff={diff && diff.key === key ? diff.diff : null}
-        loading={!!current}
-      />
+      <div className="muted">{fmtDateTime(detail.at)}</div>
+      <div className="muted mono">{detail.hash}</div>
+      {detail.refs.length > 0 && <div className="muted">{detail.refs.join(', ')}</div>}
     </div>
   );
 }
 
-/** The commit's message, author and date, and the files it changed. */
-function CommitDetail({
+/** The files a commit changed. */
+function CommitFiles({
   projectId,
   root,
   detail,
@@ -166,39 +294,26 @@ function CommitDetail({
     scrollToId: index >= 0 ? `commit-file-${index}` : null,
   });
   return (
-    <div className="git-commit-detail">
-      <div className="git-commit-head">
-        <div className="git-commit-subject">{detail.subject}</div>
-        {detail.body && <div className="git-commit-body">{detail.body}</div>}
-        <div className="muted">
-          {detail.author} &lt;{detail.email}&gt;
-        </div>
-        <div className="muted">{fmtDateTime(detail.at)}</div>
-        <div className="muted mono">{detail.hash}</div>
-        {detail.refs.length > 0 && <div className="muted">{detail.refs.join(', ')}</div>}
-      </div>
-      <div className="pane-title git-files-title">{detail.files.length === 1 ? '1 file' : `${detail.files.length} files`}</div>
-      <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Files">
-        {detail.files.map((f, i) => (
-          <FileRow
-            key={`${f.path}\n${f.origPath ?? ''}`}
-            id={`commit-file-${i}`}
-            path={f.path}
-            origPath={f.origPath}
-            status={CHANGE_LABELS[f.kind]}
-            selected={f === file}
-            onSelect={() => onFile(f.path)}
-            // The file as the working tree has it now, which may differ from the commit's.
-            onMenu={() => window.looper.git.showFileMenu({ projectId, root, path: f.path, exists: f.kind !== 'deleted' })}
-          />
-        ))}
-      </div>
+    <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Files">
+      {detail.files.map((f, i) => (
+        <FileRow
+          key={`${f.path}\n${f.origPath ?? ''}`}
+          id={`commit-file-${i}`}
+          path={f.path}
+          origPath={f.origPath}
+          status={CHANGE_LABELS[f.kind]}
+          selected={f === file}
+          onSelect={() => onFile(f.path)}
+          // The file as the working tree has it now, which may differ from the commit's.
+          onMenu={() => window.looper.git.showFileMenu({ projectId, root, path: f.path, exists: f.kind !== 'deleted' })}
+        />
+      ))}
     </div>
   );
 }
 
-/** The branch's history: the commits, the selected one's details and files, and the selected file's diff. */
-function HistoryView({ projectId, root, refreshKey }: { projectId: string; root: string; refreshKey: number }) {
+/** The branch's history: the commits, and beside or below them the selected one's message, files and the selected file's diff. */
+function HistoryView({ projectId, root, refreshKey, narrow }: { projectId: string; root: string; refreshKey: number; narrow: boolean }) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [more, setMore] = useState(true);
@@ -283,8 +398,9 @@ function HistoryView({ projectId, root, refreshKey }: { projectId: string; root:
   });
 
   if (loaded && commits.length === 0) return <div className="empty">The branch has no commits yet.</div>;
+  const pending = <div className="empty">{current ? 'Loading…' : ''}</div>;
   return (
-    <div className="git-columns three">
+    <Split axis={narrow ? 'y' : 'x'} initial={[narrow ? 150 : 360]}>
       <div
         className="git-list"
         role="listbox"
@@ -318,18 +434,24 @@ function HistoryView({ projectId, root, refreshKey }: { projectId: string; root:
           </div>
         ))}
       </div>
-      {detail ? (
-        <CommitDetail projectId={projectId} root={root} detail={detail} file={file} onFile={setFilePath} />
-      ) : (
-        <div className="empty">{current ? 'Loading…' : ''}</div>
-      )}
-      <DiffPane
-        title={file?.path}
-        subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
-        diff={diff && diff.key === diffKey ? diff.diff : null}
-        loading={!!file}
+      <FilesChanges
+        axis="y"
+        message={detail ? <CommitMessage detail={detail} /> : pending}
+        files={detail ? <CommitFiles projectId={projectId} root={root} detail={detail} file={file} onFile={setFilePath} /> : pending}
+        changes={
+          detail ? (
+            <DiffPane
+              title={file?.path}
+              subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
+              diff={diff && diff.key === diffKey ? diff.diff : null}
+              loading={!!file}
+            />
+          ) : (
+            pending
+          )
+        }
       />
-    </div>
+    </Split>
   );
 }
 
@@ -388,9 +510,9 @@ export function useGitStatus(projectId: string | undefined): GitWatch {
 
 /**
  * A project's git repository, read-only: the uncommitted changes and the
- * branch's history. `narrow` stacks the lists over the diff and puts the
+ * branch's history. `narrow` stacks the panes and puts the
  * branch at the bottom, for the Sessions window's activity pane; wide puts
- * the lists side by side and the branch beside the tabs.
+ * the panes side by side and the branch beside the tabs.
  */
 export function GitView({ projectId, watch, narrow = false }: { projectId: string; watch: GitWatch; narrow?: boolean }) {
   const [tab, setTab] = useState<Tab>('changes');
@@ -420,7 +542,7 @@ export function GitView({ projectId, watch, narrow = false }: { projectId: strin
         {!narrow && branch}
       </div>
       <div className="git-body">
-        {tab === 'changes' ? <ChangesView projectId={projectId} status={status} /> : <HistoryView projectId={projectId} root={status.root} refreshKey={refreshKey} />}
+        {tab === 'changes' ? <ChangesView projectId={projectId} status={status} narrow={narrow} /> : <HistoryView projectId={projectId} root={status.root} refreshKey={refreshKey} narrow={narrow} />}
       </div>
       {narrow && <div className="git-foot">{branch}</div>}
     </div>

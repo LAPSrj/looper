@@ -99,7 +99,7 @@ function GroupHeader({ name, open, count, onToggle }: { name: string; open: bool
 }
 
 /**
- * The Sessions window's list: Waiting for you, then each project's sessions,
+ * The Chats window's list: Waiting for you, then each project's sessions,
  * each group closable. Up and Down move through the sessions shown, and a
  * click on the empty space below shows the dashboard.
  */
@@ -141,7 +141,7 @@ export function SessionList({
       e.key === 'Home' ? 0 : e.key === 'End' ? visible.length - 1 : e.key === 'ArrowDown' ? Math.min(visible.length - 1, at + 1) : Math.max(0, at - 1);
     onSelect(visible[next].id);
   };
-  const terminal = (s: SessionSummary) => (s.kind === 'terminal' ? 'Terminal · ' : '');
+  const kindText = (s: SessionSummary) => (s.kind === 'terminal' ? 'Terminal · ' : s.kind === 'run' ? 'Task run · ' : '');
   return (
     <div
       className="session-list"
@@ -172,11 +172,11 @@ export function SessionList({
           <GroupHeader name={g.name} open={isOpen(g.key)} count={g.items.length} onToggle={() => onToggle(g.key)} />
           {isOpen(g.key) &&
             g.items.map((s) => (
-              <Row key={s.id} s={s} selected={selected === s.id} sub={terminal(s) + (s.latest ?? statusText(s))} onSelect={onSelect} selectOnMenu={selectOnMenu} />
+              <Row key={s.id} s={s} selected={selected === s.id} sub={kindText(s) + (s.latest ?? statusText(s))} onSelect={onSelect} selectOnMenu={selectOnMenu} />
             ))}
         </div>
       ))}
-      {sessions.length === 0 && <div className="empty session-empty">No sessions are open.</div>}
+      {sessions.length === 0 && <div className="empty session-empty">No chats are open.</div>}
     </div>
   );
 }

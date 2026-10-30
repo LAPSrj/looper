@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo, Socket } from 'node:net';
+import net, { type AddressInfo, type Socket } from 'node:net';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -20,6 +20,7 @@ import {
   type PushKeyResponse,
   type PushSubscribeRequest,
   type PwaIconName,
+  type RenameRequest,
   type ServerMessage,
   type UploadResponse,
 } from '../../shared/remote-access';
@@ -28,6 +29,18 @@ import { manifest, SERVICE_WORKER, withMobileHead } from './pwa';
 import { parseSubscription } from './push';
 
 export const MAX_PAIR_BODY_BYTES = 4 * 1024;
+
+/** A port nothing listens on at 127.0.0.1 right now. */
+export function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
 export const MAX_PUSH_BODY_BYTES = 8 * 1024;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 export const UPLOAD_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -127,6 +140,10 @@ export interface RemoteServerOptions {
   icon?: (name: PwaIconName) => Buffer | null;
   /** A device unpaired itself (POST /api/unpair). */
   onUnpair?: (deviceId: string) => void;
+  /** A device renamed itself (POST /api/rename); stored by the time this runs. */
+  onRenamed?: (deviceId: string) => void;
+  /** The computer's name, as paired devices show it. */
+  computerName: () => string;
 }
 
 /** What /api/push/* reach. */
@@ -544,15 +561,15 @@ export class RemoteServer {
       return this.pair(req, res);
     }
     if (p === '/api/ws') return this.text(res, 426, 'Upgrade Required');
-    const known = p === '/api/me' || p === '/api/upload' || p === '/api/unpair' || p.startsWith('/api/download/') || (!!this.opts.push && p.startsWith('/api/push/'));
+    const known =
+      p === '/api/me' || p === '/api/upload' || p === '/api/unpair' || p === '/api/rename' || p.startsWith('/api/download/') || (!!this.opts.push && p.startsWith('/api/push/'));
     if (!known) return this.text(res, 404, 'Not Found');
 
     const device = this.device(req);
     if (p === '/api/me') {
       if (req.method !== 'GET') return this.text(res, 405, 'Method Not Allowed');
       if (device) this.opts.devices.touch(device.id);
-      const me: MeResponse = device ? { paired: true, device: { id: device.id, name: device.name } } : { paired: false };
-      return this.json(res, 200, me);
+      return this.json(res, 200, device ? this.me(device) : { paired: false });
     }
     if (!device) return this.text(res, 401, 'Unauthorized');
     this.opts.devices.touch(device.id);
@@ -566,6 +583,10 @@ export class RemoteServer {
       res.end();
       this.opts.onUnpair?.(device.id);
       return;
+    }
+    if (p === '/api/rename') {
+      if (req.method !== 'POST') return this.text(res, 405, 'Method Not Allowed');
+      return this.rename(req, res, device);
     }
     if (p.startsWith('/api/push/') && this.opts.push) return this.pushApi(req, res, p, device, this.opts.push);
     if (req.method !== 'GET') return this.text(res, 405, 'Method Not Allowed');
@@ -645,9 +666,28 @@ export class RemoteServer {
     if (!provider) return this.text(res, 403, 'Forbidden');
     const { device, cookie } = this.opts.devices.add(cleanDeviceName(input.name), provider);
     const flags = `HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${this.secure(req) ? '; Secure' : ''}`;
-    const me: MeResponse = { paired: true, device: { id: device.id, name: device.name } };
-    this.json(res, 200, me, { 'Set-Cookie': `${DEVICE_COOKIE}=${cookie}; ${flags}` });
+    this.json(res, 200, this.me(device), { 'Set-Cookie': `${DEVICE_COOKIE}=${cookie}; ${flags}` });
     this.opts.onPaired?.(device);
+  }
+
+  private me(device: StoredDevice): MeResponse {
+    return { paired: true, device: { id: device.id, name: device.name }, computer: this.opts.computerName() };
+  }
+
+  /** The device renames itself (This Device's Name). */
+  private async rename(req: http.IncomingMessage, res: http.ServerResponse, device: StoredDevice): Promise<void> {
+    const body = await this.readBody(req, MAX_PAIR_BODY_BYTES);
+    if (!body) return this.text(res, 413, 'Payload Too Large');
+    let name: unknown;
+    try {
+      name = (JSON.parse(body.toString('utf8')) as Partial<RenameRequest> | null)?.name;
+    } catch {
+      return this.text(res, 400, 'Bad Request');
+    }
+    if (typeof name !== 'string' || !name.trim()) return this.text(res, 400, 'Type a name for this device.');
+    this.opts.devices.rename(device.id, name);
+    this.opts.onRenamed?.(device.id);
+    return this.json(res, 200, this.me(this.opts.devices.get(device.id) ?? device));
   }
 
   private async upload(req: http.IncomingMessage, res: http.ServerResponse, name: string): Promise<void> {

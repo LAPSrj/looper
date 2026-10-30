@@ -36,7 +36,7 @@ import { RemoteConversationsApp } from './RemoteConversationsApp';
 import { RemoteHelperEditorApp } from './RemoteEditorApps';
 import { ProjectEditorApp } from './ProjectEditorApp';
 import { RemoteSettingsApp } from './RemoteSettingsApp';
-import { RemoteAccessPairApp, RemoteAccessRenameApp, RemoteAccessSettingsApp } from './RemoteAccessApps';
+import { RemoteAccessDevicesApp, RemoteAccessPairApp, RemoteAccessRenameApp, RemoteAccessSettingsApp } from './RemoteAccessApps';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SendToSessionsApp } from './SendToSessionsApp';
 import { SessionsApp } from './SessionsApp';
@@ -76,7 +76,8 @@ const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
-const sessionsMatch = /^sessions(?:\/([^/]+))?$/.exec(hash);const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
+const sessionsMatch = /^sessions(?:\/([^/]+)(\/window)?)?$/.exec(hash);
+const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
@@ -111,6 +112,7 @@ function pickRoot() {
   if (hash === 'remote-settings') return <RemoteSettingsApp />;
   if (hash === 'remote-conversations') return <RemoteConversationsApp />;
   if (hash === 'remote-access-settings') return <RemoteAccessSettingsApp />;
+  if (hash === 'remote-access-devices') return <RemoteAccessDevicesApp />;
   if (hash === 'remote-access-pair') return <RemoteAccessPairApp />;
   if (remoteAccessRenameMatch) return <RemoteAccessRenameApp id={decodeURIComponent(remoteAccessRenameMatch[1])} />;
   if (remoteHelperMatch) return <RemoteHelperEditorApp id={decodeURIComponent(remoteHelperMatch[1])} isNew={!!remoteHelperMatch[2]} />;
@@ -136,7 +138,7 @@ function pickRoot() {
     );
   }
   if (hash === 'builder-setup') return <BuilderSetupApp />;
-  if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} />;
+  if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} single={!!sessionsMatch[2]} />;
   if (hash === 'send-to-sessions') return <SendToSessionsApp />;  if (terminalMatch) {
     return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
   }

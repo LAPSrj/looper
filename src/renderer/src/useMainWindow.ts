@@ -103,8 +103,11 @@ export function useMainWindow() {
   // On the dashboard, Stop Task stops the picked row's run.
   // The selected project, while no task is: the toolbar's edit, chat, terminal and folder buttons act on it.
   const projectTarget = selected ? null : projectSel;
-  const uiRef = useRef({ selected: target, project: projectTarget, tasks, runtimes, terminalRun });
-  uiRef.current = { selected: target, project: projectTarget, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
+  // The project the Project menu acts on: the selected project, else the target task's.
+  const taskProject = tasks.find((t) => t.id === target)?.projectId;
+  const menuProject = projectSel ?? (taskProject && projects.some((p) => p.id === taskProject) ? taskProject : null);
+  const uiRef = useRef({ selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun });
+  uiRef.current = { selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
     setSelected(e.taskId);
@@ -113,7 +116,18 @@ export function useMainWindow() {
   }, []);
 
   const uiAction = useCallback((type: UiEvent['type']) => {
-    const { selected: sel, project: proj, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
+    const { selected: sel, project: proj, menuProject: menuProj, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
+    switch (type) {
+      case 'edit-project':
+        if (menuProj) void window.looper.projects.openEditor(menuProj);
+        return;
+      case 'open-project-folder':
+        if (menuProj) void window.looper.openTaskWorkFolder(projectTaskId(menuProj)).catch((e) => void window.looper.showError((e as Error).message));
+        return;
+      case 'delete-project':
+        if (menuProj) void window.looper.projects.remove(menuProj);
+        return;
+    }
     if (proj) {
       switch (type) {
         case 'edit-task':
@@ -380,8 +394,9 @@ export function useMainWindow() {
       canRunNow,
       !!t?.completedAt,
       !!t?.completion.allowed,
+      !!menuProject,
     );
-  }, [target, tasks, selectedState, selectedActiveRuns]);
+  }, [target, tasks, selectedState, selectedActiveRuns, menuProject]);
 
   // A terminal pick belongs to one task.
   useEffect(() => setTerminalRun(null), [selected]);

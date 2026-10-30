@@ -4,8 +4,11 @@ import { subscribe } from './events';
 import { useDialogKeys } from './components/hooks';
 import { EditorFooter } from './components/ui';
 
+/** The chats and terminal sessions a message can go to: open ones, and no task runs. */
+const sendable = (sessions: SessionSummary[]) => sessions.filter((x) => x.status !== 'ended' && x.kind !== 'run');
+
 /**
- * Send to Sessions: one message to the sessions picked here. A chat that's
+ * Send to Chats: one message to the chats picked here. A chat that's
  * working gets it in its queue; a terminal session gets it typed in, then Enter.
  */
 export function SendToSessionsApp() {
@@ -14,11 +17,11 @@ export function SendToSessionsApp() {
   const [text, setText] = useState('');
 
   useEffect(() => {
-    document.title = 'Send to Sessions';
-    void window.looper.sessions.state().then((s) => setSessions(s.sessions.filter((x) => x.status !== 'ended')));
+    document.title = 'Send to Chats';
+    void window.looper.sessions.state().then((s) => setSessions(sendable(s.sessions)));
     return subscribe((e) => {
       if (e.type !== 'sessions') return;
-      const open = e.state.sessions.filter((x) => x.status !== 'ended');
+      const open = sendable(e.state.sessions);
       setSessions(open);
       // A session that closed can't be sent to.
       setPicked((p) => new Set([...p].filter((id) => open.some((s) => s.id === id))));
@@ -66,7 +69,7 @@ export function SendToSessionsApp() {
       <div className="send-sessions-pick">
         <label className="checkbox-field">
           {groupBox(sessions)}
-          Every session
+          Every chat
         </label>
         {harnesses.length > 1 &&
           harnesses.map((h) => {
@@ -74,7 +77,7 @@ export function SendToSessionsApp() {
             return (
               <label key={h} className="checkbox-field">
                 {groupBox(items)}
-                Every {h} session
+                Every {h} chat
               </label>
             );
           })}
@@ -98,7 +101,7 @@ export function SendToSessionsApp() {
             ))}
           </div>
         ))}
-        {sessions.length === 0 && <div className="empty">No sessions are open.</div>}
+        {sessions.length === 0 && <div className="empty">No chats are open.</div>}
       </div>
       <textarea className="send-sessions-text" value={text} placeholder="Message" rows={6} autoFocus onChange={(e) => setText(e.target.value)} />
       <EditorFooter primaryLabel="Send" onPrimary={send} onCancel={() => window.close()} primaryDisabled={!text.trim() || picked.size === 0} />

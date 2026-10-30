@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { codexListSkills, isInterruptedRecord } from '../src/engine/chat';
 import { ClaudeStreamAccumulator } from '../src/engine/builder/stream';
 import { TranscriptAccumulator, type SubagentMeta } from '../src/engine/messages';
-import { backgroundOf, latestLine, recentMessages, SessionHub, subagentsOf, type TerminalEntry } from '../src/engine/sessions';
+import { backgroundOf, latestLine, recentMessages, SessionHub, subagentsOf, type RunEntry, type TerminalEntry } from '../src/engine/sessions';
 import { Logger } from '../src/engine/log';
 import { slashCommandsOf, usageLimitsOf, type ChatState } from '../src/shared/chat';
 import type { MessageRow } from '../src/shared/messages';
@@ -126,15 +126,15 @@ describe('subagents and the latest line', () => {
     ]);
   });
 
-  it("names the tool while the agent works, and its last message once it's done", () => {
+  it("previews the agent's last text message since the user's, never a tool call", () => {
     const rows = [
       row({ kind: 'prompt', text: 'Fix it' }),
       row({ kind: 'agent', text: '**Looking** at it\nmore' }),
-      row({ tool: 'Bash', preview: 'npm test' }),
+      row({ tool: 'Bash', preview: 'npm test', result: 'ok' }),
     ];
-    expect(latestLine(rows, true)).toBe('Bash npm test');
-    expect(latestLine(rows, false)).toBe('Looking at it');
-    expect(latestLine([row({ kind: 'prompt', text: 'Fix it' })], false)).toBeUndefined();
+    expect(latestLine(rows)).toBe('Looking at it');
+    expect(latestLine([row({ kind: 'agent', text: 'Old reply' }), row({ kind: 'prompt', text: 'Fix it' }), row({ tool: 'Read', preview: 'a.ts' })])).toBeUndefined();
+    expect(latestLine([row({ kind: 'prompt', text: 'Fix it' })])).toBeUndefined();
   });
 
   it('says how long something waited', () => {
@@ -253,6 +253,7 @@ describe('the session hub', () => {
   function hub(opts: {
     chats?: ChatState[];
     terminals?: TerminalEntry[];
+    runs?: RunEntry[];
     dir?: string;
     now?: () => number;
     rows?: MessageRow[];
@@ -262,6 +263,7 @@ describe('the session hub', () => {
     const h = new SessionHub({
       chats: () => opts.chats ?? [],
       terminals: () => opts.terminals ?? [],
+      runs: () => opts.runs ?? [],
       findTask: (id) => task(id, 'p1'),
       projects: () => [project('p1', 'Website')],
       harnessOf: () => ({ kind: 'claude-code', name: 'Claude Code' }),
@@ -356,6 +358,22 @@ describe('the session hub', () => {
     expect(h.state().sessions[0]).toMatchObject({ lastReplyAt: 4000 });
     await (h as unknown as { readSession: (id: string, force: boolean) => Promise<void> }).readSession('c1', true);
     expect(h.state().sessions[0]).toMatchObject({ lastReplyAt: 3000, cacheUntil: 303_000 });
+  });
+
+  it("lists a task run's agent under its project, with its conversation as the activity, waiting while it holds", async () => {
+    const run: RunEntry = { id: 'r9', taskId: 't1', startedAt: 1000, held: false, question: null };
+    const rows: MessageRow[] = [
+      { id: '0', kind: 'prompt', text: 'Do the task', preview: '' },
+      { id: '1', kind: 'agent', text: 'Checking the logs', preview: '' },
+      { id: '2', kind: 'tool', tool: 'Bash', text: '', preview: 'tail log' },
+    ];
+    const { h } = hub({ runs: [run], rows, now: () => 5000 });
+    await (h as unknown as { readSession: (id: string, force: boolean) => Promise<void> }).readSession('r9', true);
+    expect(h.state().sessions[0]).toMatchObject({ kind: 'run', title: 't1', groupName: 'Website', status: 'working', latest: 'Checking the logs' });
+    expect(h.runTask('r9')).toBe('t1');
+    expect(h.activity('r9')?.rows).toHaveLength(3);
+    run.question = 'Which branch?';
+    expect(h.state().sessions[0]).toMatchObject({ status: 'ready', waiting: { reason: 'notification', text: 'Waiting for your answer', since: 5000 } });
   });
 
   it('records the usage limits Claude reports', () => {

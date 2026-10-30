@@ -17,7 +17,7 @@ type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
 const TABS: [ProjectTab, string][] = [
   ['status', 'Status'],
   ['tasks', 'Tasks'],
-  ['sessions', 'Sessions'],
+  ['sessions', 'Chats'],
 ];
 
 const MAX_RECORDS = 500;

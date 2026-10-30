@@ -205,16 +205,18 @@ export interface LooperApi {
     /** Copy pasted or dropped files into the task's attachments, ready to send. */
     attachFiles(id: string, files: File[]): Promise<Attachment[]>;
     /**
-     * A message's right-click menu: Copy (the selection), the copy items for
-     * the message, Open File and Copy Path for a file, Edit as New Message
-     * for the user's own message (it comes back as a chat-edit ui event), and
-     * Fork from Here when `fork` gives the message's index in the chat's
-     * history and rows.
+     * A message's right-click menu: Copy and Quote (the selection; Quote
+     * comes back as a chat-quote ui event), the copy items for the message,
+     * Open File and Copy Path for a file, Edit as New Message for the user's
+     * own message (it comes back as a chat-edit ui event), and Fork from Here
+     * when `fork` gives the message's index in the chat's history and rows.
      */
     showContextMenu(info: {
       chatId: string;
       taskId: string;
       selection?: string;
+      /** The message box takes a quote of the selection (the chat hasn't ended). */
+      quote?: boolean;
       text?: string;
       /** The text's copy item, e.g. "Copy Input"; default "Copy Message". */
       textLabel?: string;
@@ -230,13 +232,16 @@ export interface LooperApi {
     activity(id: string): Promise<SessionActivity | null>;
     /** The window shows this session now (null: the Overview): its conversation and activity come as events. */
     show(id: string | null): void;
+    /** The chats the window's dashboard shows as cards now (none once it leaves the dashboard): their conversations come as events too. */
+    showCards(ids: string[]): void;
     /** The user looked at the session: a finished turn or a notification stops waiting. */
     seen(id: string): void;
     /** Close Conversation, asking first when the agent is working. */
     close(id: string): Promise<void>;
     /** Stop: end the agent's turn (Claude's interrupt in a chat, Esc in a terminal session). */
     stop(id: string): Promise<void>;
-    showContextMenu(id: string): void;
+    /** A session's right-click menu; `card`: on its dashboard card, which adds Double Size or Normal Size. */
+    showContextMenu(id: string, card?: boolean): void;
     /** The Send to Sessions window. */
     openSend(): void;
     /** The Sessions window, opened or brought forward; `id` shows that session in it. */
@@ -304,9 +309,8 @@ export interface LooperApi {
     /** Unpair it: its open connections close. */
     removeDevice(id: string): Promise<void>;
     renameDevice(id: string, name: string): Promise<void>;
-    signOut(): Promise<void>;
-    /** Tailscale's sign-in page, in the system browser. */
-    openLogin(): Promise<void>;
+    /** The port the server listens on now, or else a free one. */
+    suggestPort(): Promise<number>;
     openPair(): Promise<void>;
     openRename(id: string): Promise<void>;
   };
@@ -385,6 +389,8 @@ export interface LooperApi {
     taskCompleted?: boolean,
     /** The task's "Allow this task to be marked completed" option. */
     allowComplete?: boolean,
+    /** A project is selected, or the selected task has one: enables the Project menu. */
+    hasProject?: boolean,
   ): void;
   showTaskContextMenu(info: {
     enabled: boolean;
@@ -482,6 +488,10 @@ export type UiEvent =
         | 'open-terminal'
         | 'open-chat'
         | 'open-work-folder'
+        /** Project menu: the selected project, or the selected task's. */
+        | 'edit-project'
+        | 'open-project-folder'
+        | 'delete-project'
         /** Main toolbar: a new task, in the selected project or the selected task's project. */
         | 'new-task'
         /** Chat window: Edit → Find…. */
@@ -519,8 +529,10 @@ export type UiEvent =
   | { type: 'terminal-attached'; text: string }
   /** Chat window: File → Attach Files… copied the files; they wait to be sent. */
   | { type: 'chat-attached'; attachments: Attachment[] }
-  /** Chat window: Edit as New Message put a sent message back in the message box. */
-  | { type: 'chat-edit'; text: string; attachments: Attachment[] }
+  /** Chat window: Edit as New Message put a sent message back in this chat's message box. */
+  | { type: 'chat-edit'; chatId: string; text: string; attachments: Attachment[] }
+  /** Chat window: Quote put the selected text in this chat's message box as a Markdown quote. */
+  | { type: 'chat-quote'; chatId: string; text: string }
   /** Sessions window: show this session (a chat or terminal opened elsewhere). */
   | { type: 'sessions-select'; id: string }
   /** Sessions window View menu: the next or previous session, or waiting session. */

@@ -86,15 +86,19 @@ export interface IpcHost {
   openChat: (taskId: string, runId?: string) => Promise<void>;
   /** Fork from Here: a new chat with the conversation up to the row at `index`. Throws with the reason. */
   forkChat: (chatId: string, index: number) => void;
-  /** The Sessions windows showing the session, which alone get its chat and activity events. */
+  /** The Chats windows and single chat's windows showing the session, which alone get its chat and activity events. */
   sessionWindow: (sessionId: string) => AppWindow[];
-  /** That Sessions window now shows this session (null: the Overview). */
+  /** That Chats window now shows this session (null: the Overview). */
   showSession: (window: AppWindow | null, sessionId: string | null) => void;
-  /** Close Conversation: ends the session, asking first when it's working. */
-  closeSession: (sessionId: string) => Promise<void>;
+  /** The chats that Chats window's dashboard shows as cards (none once it leaves the dashboard). */
+  showCards: (window: AppWindow | null, chatIds: string[]) => void;
+  /** Close Conversation: ends the chat or terminal session, asking first (over `from`) when it's working. */
+  closeSession: (sessionId: string, from: AppWindow | null) => Promise<void>;
   openSendToSessions: () => void;
-  /** The Sessions window, opened or brought forward; `select` shows that session in it. */
+  /** The Chats window, opened or brought forward; `select` shows that session in it. */
   openSessions: (select?: string) => void;
+  /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
+  openChatWindow: (sessionId: string) => void;
   /** A chat's Model, Effort or Permission Mode menu, as the Chat menu has them. */
   chatSettingMenu: (chatId: string, which: 'model' | 'effort' | 'permission') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
@@ -121,6 +125,7 @@ export interface IpcHost {
     canRunNow?: boolean,
     taskCompleted?: boolean,
     allowComplete?: boolean,
+    hasProject?: boolean,
   ) => void;
 }
 
@@ -333,7 +338,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
   ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
-  // A chat message's right-click menu; Edit as New Message hands the message back to the window's message box.
+  // A chat message's right-click menu; Quote and Edit as New Message hand text back to the window's message box.
   ipc.on(
     'context-menu:chat',
     (
@@ -342,6 +347,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         chatId: string;
         taskId: string;
         selection?: string;
+        quote?: boolean;
         text?: string;
         textLabel?: string;
         result?: string;
@@ -353,7 +359,20 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const sender = windowOf(e);
       if (!sender) return;
       const groups: Electron.MenuItemConstructorOptions[][] = [];
-      if (info.selection) groups.push([{ label: 'Copy', click: () => writeClipboard(info.selection!) }]);
+      if (info.selection) {
+        const selection = info.selection;
+        groups.push([
+          { label: 'Copy', click: () => writeClipboard(selection) },
+          {
+            label: 'Quote',
+            // The chat window handles the key itself (ChatView), so a selection is quoted without the menu.
+            accelerator: 'CmdOrCtrl+Shift+Q',
+            registerAccelerator: false,
+            enabled: !!info.quote,
+            click: () => sender.webContents.send('ui:event', { type: 'chat-quote', chatId: String(info.chatId), text: selection }),
+          },
+        ]);
+      }
       const copies: Electron.MenuItemConstructorOptions[] = [];
       if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => writeClipboard(info.text!) });
       if (info.result) copies.push({ label: 'Copy Result', click: () => writeClipboard(info.result!) });
@@ -380,7 +399,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const again: Electron.MenuItemConstructorOptions[] = [];
       if (info.resend) {
         const resend = info.resend;
-        again.push({ label: 'Edit as New Message', click: () => sender.webContents.send('ui:event', { type: 'chat-edit', ...resend }) });
+        again.push({ label: 'Edit as New Message', click: () => sender.webContents.send('ui:event', { type: 'chat-edit', chatId: String(info.chatId), ...resend }) });
       }
       if (typeof info.fork === 'number') {
         const index = info.fork;
@@ -417,13 +436,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
   ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
 
-  // ---------- the Sessions window ----------
+  // ---------- the Chats window ----------
 
   ipc.handle('sessions:state', () => engine.sessionsState());
   ipc.handle('sessions:activity', (_e, id: string) => engine.sessionActivity(String(id)));
   ipc.on('sessions:show', (e, id: string | null) => host.showSession(windowOf(e), typeof id === 'string' ? id : null));
   ipc.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
-  ipc.handle('sessions:close', (_e, id: string) => host.closeSession(String(id)));
+  ipc.handle('sessions:close', (e, id: string) => host.closeSession(String(id), windowOf(e)));
   ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
@@ -450,17 +469,36 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''));
   });
   ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
-  // A session's right-click menu in the list.
-  ipc.on('context-menu:session', (e, id: string) => {
+  ipc.on('sessions:cards', (e, ids: unknown) => host.showCards(windowOf(e), Array.isArray(ids) ? ids.map(String) : []));
+  // A session's right-click menu in the list, or on its dashboard card (`card`). A task run's agent can't be stopped or closed from here.
+  ipc.on('context-menu:session', (e, id: string, card?: unknown) => {
     const sender = windowOf(e);
-    const s = engine.sessionsState().sessions.find((x) => x.id === id);
+    const listed = engine.sessionsState().sessions;
+    const s = listed.find((x) => x.id === id);
     if (!sender || !s) return;
-    popupMenu(Menu.buildFromTemplate([
-      { label: 'Stop', enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
-      { type: 'separator' },
-      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },      { type: 'separator' },
-      { label: 'Close Conversation', click: () => void host.closeSession(id) },
-    ]), { window: sender });
+    const run = s.kind === 'run';
+    const harnessSession = engine.harnessSessionId(s.id);
+    // A card's size stays across the window's reopenings; the closed sessions' ids go when one changes.
+    const view = engine.settings.view;
+    const big = view.sessions.bigCards.includes(s.id);
+    const resize = () => {
+      const bigCards = view.sessions.bigCards.filter((x) => x !== s.id && listed.some((l) => l.id === x));
+      engine.updateSettings({ view: { ...view, sessions: { ...view.sessions, bigCards: big ? bigCards : [...bigCards, s.id] } } });
+    };
+    const items: Electron.MenuItemConstructorOptions[] = [
+      ...(run
+        ? []
+        : [
+            { label: 'Stop', enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
+            { type: 'separator' } as const,
+          ]),
+      ...(card === true ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { type: 'separator' } as const] : []),
+      ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', click: () => host.openChatWindow(id) }]),
+      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
+      { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
+      ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
+    ];
+    popupMenu(Menu.buildFromTemplate(items), { window: sender });
   });
   /** An image the agent read or wrote, as a thumbnail; only image files are read. */
   ipc.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
@@ -685,11 +723,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('remoteAccess:cancelPairing', () => remoteAccess().cancelPairing());
   ipc.handle('remoteAccess:removeDevice', (_e, id: string) => remoteAccess().removeDevice(String(id)));
   ipc.handle('remoteAccess:renameDevice', (_e, id: string, name: string) => remoteAccess().renameDevice(String(id), String(name)));
-  ipc.handle('remoteAccess:signOut', () => remoteAccess().signOut());
-  ipc.handle('remoteAccess:openLogin', async () => {
-    const url = remoteAccess().state().loginUrl;
-    if (url && /^https:\/\//i.test(url)) await openExternal(url);
-  });
+  ipc.handle('remoteAccess:suggestPort', () => remoteAccess().suggestPort());
   // The host side of a remote client's file browser, Open on Computer and Download.
   const hostFiles: HostFilesDeps = {
     host: process.platform === 'win32' ? 'windows' : 'posix',
@@ -825,8 +859,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       canRunNow?: boolean,
       taskCompleted?: boolean,
       allowComplete?: boolean,
+      hasProject?: boolean,
     ) =>
-      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete),
+      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject),
   );
 
   ipc.handle('dialog:error', async (e, message: string) => {

@@ -136,7 +136,7 @@ export const EnvVarsSchema = z.record(
 
 export const HarnessSchema = z.object({
   id: z.string().min(1),
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   kind: z.enum(['claude-code', 'codex', 'custom']).default('claude-code'),
   /** Command or full path inside the environment. Quote it yourself if it contains spaces. */
   command: z.string().min(1),
@@ -510,13 +510,19 @@ export const ViewSchema = z.object({
   hideNoActionRuns: z.boolean().default(false),
   /** Hide the runs that are chats and terminal sessions (the conversations the user started). */
   hideChatsAndTerminals: z.boolean().default(false),
-  /** The Sessions window's View menu, and the project groups closed in its list (by project id or group name). */
+  /** The Chats window's View menu, and the project groups closed in its list (by project id or group name). */
   sessions: z
     .object({
       toolbar: z.boolean().default(true),
       activityPane: z.boolean().default(true),
       statusBar: z.boolean().default(true),
+      /** The list also shows the agents of task runs in flight. */
+      showRuns: z.boolean().default(false),
+      /** A single chat's window (Open in New Window) shows the activity pane. */
+      windowActivityPane: z.boolean().default(false),
       collapsed: z.array(z.string()).default([]),
+      /** The dashboard's cards shown at twice their size, by session id. */
+      bigCards: z.array(z.string()).default([]),
     })
     .prefault({}),
 });
@@ -604,7 +610,9 @@ export const RemoteAccessSettingsSchema = z
     /** Turned on: it starts with Looper too. */
     enabled: z.boolean().default(false),
     provider: z.enum(['tailscale', 'local']).default('tailscale'),
-    /** The computer's name on the tailnet: the start of its ts.net address. */
+    /** The name paired devices show for this computer; '' = the OS computer name. */
+    name: z.string().max(64, 'use at most 64 characters').default(''),
+    /** The machine name on the tailnet: the start of its ts.net address. */
     hostname: z
       .string()
       .regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/, 'use lowercase letters, digits and hyphens')

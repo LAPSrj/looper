@@ -12,6 +12,7 @@ import { IpcTable, type IpcMainLike } from '../src/main/platform/ipc-table';
 import { pickItem, serializeMenu, stripMnemonic, type MenuItemLike } from '../src/main/platform/menus';
 import { RemoteClient, RemoteWindow } from '../src/main/platform/remote-window';
 import { WindowSlots } from '../src/main/platform/slots';
+import { decodeBytes as webDecode, encodeBytes as webEncode } from '../src/renderer/src/web/session';
 
 const tmpDirs: string[] = [];
 afterEach(() => {
@@ -154,6 +155,23 @@ describe('IPC table', () => {
     });
     expect(await ipc.invoke({ client, window: win }, 'boom', [])).toEqual({ ok: false, error: 'The task is gone.' });
     expect((await ipc.invoke({ client, window: win }, 'nope', [])).ok).toBe(false);
+  });
+
+  it('delivers an argument the web page left out as undefined, as Electron does, so default parameters apply', async () => {
+    const ipc = new IpcTable();
+    const { client, win } = lone();
+    // Like runs:list and runs:messages: `runs.list(id)` and `runs.messages(id, runId, undefined, raw)`.
+    ipc.handle('runs:list', (_e, id: string, limit = 200) => ({ id, limit }));
+    ipc.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) => [id, runId, agentId, raw]);
+    // What the web client's Session puts on the wire, through JSON.
+    const wire = (args: unknown[]) => JSON.parse(JSON.stringify(webEncode(args))) as unknown[];
+    expect(await ipc.invoke({ client, window: win }, 'runs:list', wire(['t1', undefined]))).toEqual({ ok: true, value: { id: 't1', limit: 200 } });
+    expect(await ipc.invoke({ client, window: win }, 'runs:list', wire(['t1', 50]))).toEqual({ ok: true, value: { id: 't1', limit: 50 } });
+    const r = await ipc.invoke({ client, window: win }, 'runs:messages', wire(['t1', 'r1', undefined, false]));
+    // And back: the answer's undefined reaches the page as undefined, a null stays null.
+    expect(r.ok).toBe(true);
+    expect(webDecode(JSON.parse(JSON.stringify(r.ok && r.value)))).toEqual(['t1', 'r1', undefined, false]);
+    expect(webDecode(JSON.parse(JSON.stringify(encodeBytes([null, undefined]))))).toEqual([null, undefined]);
   });
 
   it('sends to every listener, even after one throws; removeListener takes one off', () => {

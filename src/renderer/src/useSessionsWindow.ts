@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SessionActivity, SessionsState, SessionSummary } from '@shared/sessions';
-import type { View } from '@shared/types';
+import { ViewSchema, type View } from '@shared/types';
 import { useGitRepo } from './components/hooks';
 import { waitingOf } from './components/SessionList';
 import { subscribe } from './events';
@@ -36,6 +36,9 @@ function focusPane(dir: 1 | -1): void {
   }
 }
 
+/** The Chats window's View menu before the settings arrive. */
+export const DEFAULT_SHOWN: View['sessions'] = ViewSchema.parse({}).sessions;
+
 /** The session list's order, for F8/F9 and the other keys that step through it. */
 function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1, waiting: boolean): string | null {
   const list = waiting ? waitingOf(sessions) : sessions;
@@ -46,11 +49,13 @@ function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1
 }
 
 /**
- * The Sessions window's state and commands, shared by its desktop and phone
+ * The Chats window's state and commands, shared by its desktop and phone
  * views: every session, the one shown (null: the Overview), its chat or
- * activity, the followed subagent, and the window's keys.
+ * activity, the followed subagent, and the window's keys. `single`: a single
+ * chat's window (Open in New Window), which shows `initial` only and takes no
+ * keys that move through the list.
  */
-export function useSessionsWindow(initial?: string) {
+export function useSessionsWindow(initial?: string, single = false) {
   const [state, setState] = useState<SessionsState>({ sessions: [], limits: {} });
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(initial ?? null);
@@ -69,7 +74,7 @@ export function useSessionsWindow(initial?: string) {
   stateRef.current = state;
 
   useEffect(() => {
-    document.title = 'Sessions';
+    if (!single) document.title = 'Chats';
     void window.looper.sessions.state().then((s) => {
       setState(s);
       setLoaded(true);
@@ -96,6 +101,17 @@ export function useSessionsWindow(initial?: string) {
         e.stopPropagation();
       };
       if (e.altKey || e.metaKey) return;
+      if (single) {
+        // The window's own chat: F6 between its panes, and Close Conversation.
+        if (e.key === 'F6' && !e.ctrlKey) {
+          take();
+          focusPane(e.shiftKey ? -1 : 1);
+        } else if (e.ctrlKey && !e.shiftKey && (e.key === 'F4' || (e.key === 'w' && shown?.kind !== 'terminal'))) {
+          take();
+          if (shown) void window.looper.sessions.close(shown.id);
+        }
+        return;
+      }
       // The keys without Fn: Ctrl+PageUp/PageDown, and with Shift for the waiting sessions.
       if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
         take();
@@ -132,13 +148,18 @@ export function useSessionsWindow(initial?: string) {
   const summary = state.sessions.find((s) => s.id === selected);
   const gitRepo = useGitRepo(summary?.projectId);
 
-  // A closed session leaves the window on the Overview. A new one isn't in the list
-  // for a moment after it opens, so only one that was in it counts as closed.
+  // A single chat's window is titled with the chat's name, which its first message gives it.
+  useEffect(() => {
+    if (single && summary) document.title = summary.title;
+  }, [single, summary?.title]);
+
+  // A closed session leaves the window on the Overview (a single chat's window closes with it).
+  // A new one isn't in the list for a moment after it opens, so only one that was in it counts as closed.
   const listed = useRef(new Set<string>());
   useEffect(() => {
     for (const s of state.sessions) listed.current.add(s.id);
-    if (loaded && selected && !summary && listed.current.has(selected)) setSelected(null);
-  }, [loaded, selected, summary, state.sessions]);
+    if (!single && loaded && selected && !summary && listed.current.has(selected)) setSelected(null);
+  }, [single, loaded, selected, summary, state.sessions]);
 
   useEffect(() => {
     window.looper.sessions.show(selected);
@@ -192,17 +213,25 @@ export function useSessionsWindow(initial?: string) {
   const attachments = rows.flatMap((r) => r.attachments ?? []);
   const followed = activity?.subagents.find((a) => a.agentId === follow);
   const watchedRows = follow ? subRows : rows;
-  const shown = view?.sessions ?? { toolbar: true, activityPane: true, statusBar: true, collapsed: [] };
+  const shown = view?.sessions ?? DEFAULT_SHOWN;
   const toggleGroup = (key: string) => {
     if (!view) return;
     const collapsed = shown.collapsed.includes(key) ? shown.collapsed.filter((k) => k !== key) : [...shown.collapsed, key];
     void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, collapsed } } });
   };
+  /** A dashboard card at twice its size, or back; the closed sessions' ids go when one changes. */
+  const toggleBig = (id: string) => {
+    if (!view) return;
+    const big = shown.bigCards.includes(id);
+    const bigCards = shown.bigCards.filter((x) => x !== id && state.sessions.some((s) => s.id === x));
+    void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, bigCards: big ? bigCards : [...bigCards, id] } } });
+  };
   const subagents = activity?.subagents ?? [];
-  // Stop ends the agent's turn: while it works, or while it waits for a permission.
-  const stoppable = summary?.status === 'working' || summary?.waiting?.reason === 'permission';
+  // Stop ends the agent's turn: while it works, or while it waits for a permission. A task run's agent isn't stopped here.
+  const stoppable = summary?.kind !== 'run' && (summary?.status === 'working' || summary?.waiting?.reason === 'permission');
 
   return {
+    single,
     state,
     selected,
     setSelected,
@@ -220,6 +249,7 @@ export function useSessionsWindow(initial?: string) {
     view,
     shown,
     toggleGroup,
+    toggleBig,
     gitRepo,
     attachments,
     watchedRows,

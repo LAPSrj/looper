@@ -201,6 +201,12 @@ export function contextText(c: ChatContext): string {
   return `${formatTokens(c.tokens)} of ${formatTokens(c.window)} context (${Math.round((c.tokens / c.window) * 100)}%)`;
 }
 
+/** Whether nothing has been said in the chat yet: no user or agent message in its history or rows, and none queued. */
+export function chatIsEmpty(chat: Pick<ChatState, 'history' | 'rows' | 'queued'>): boolean {
+  const said = (r: MessageRow) => r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent';
+  return chat.queued.length === 0 && !chat.history.some(said) && !chat.rows.some(said);
+}
+
 /** A chat's title: the first line of its first message, without Markdown markers. */
 export function chatTitle(rows: MessageRow[]): string {
   const first = rows.find((r) => r.kind === 'prompt');

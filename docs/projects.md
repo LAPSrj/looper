@@ -32,7 +32,7 @@ Selecting a project shows its view in the main window, and the
 Working Directory**. The **Status** tab shows the project's settings and
 whether it keeps a Remote Control conversation open. The **Tasks** tab lists
 the tasks that run in the project, in the same kind of table as a task's
-Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to select it. The **Sessions** tab lists the
+Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to select it. The **Chats** tab lists the
 project's chats, terminal sessions and Remote Control conversations, like a
 task's Runs tab: double-click one for its run window, or right-click it to
 go on with it in a chat or a terminal. When the project's folder is in a git
@@ -40,12 +40,15 @@ repository, a **Git** tab shows it (see [below](#the-git-tab)).
 
 Right-clicking a project opens a menu with New Chat, New Terminal, New Task…,
 Edit Project…, Open Working Directory and Delete Project. Double-clicking it
-opens Edit Project.
+opens Edit Project. The **Project** menu in the menu bar has the same actions
+(New Task in Project…, New Chat, New Terminal, Edit Project…, Open Folder,
+Delete Project…) for the selected project, or the selected task's project. It's
+greyed out while neither is selected.
 
 ## The Git tab
 
 When a project's folder is in a git repository, the project's view has a
-**Git** tab, and so does the [Sessions window's activity
+**Git** tab, and so does the [Chats window's activity
 pane](monitoring.md#the-activity-pane) for the project's sessions. It shows the
 repository and doesn't change it.
 
@@ -56,14 +59,20 @@ repository and doesn't change it.
   it's staged. Selecting one shows its changes against the last commit.
 - **History** lists the branch's commits, newest first, with their author,
   date, short id and the branches and tags on them. Selecting one shows its
-  message, author, date and full id, and the files it changed. Selecting a
-  file shows what the commit changed in it. A merge shows what it brought into
+  details in two tabs: **Commit Message** has the message, author, date and
+  full id, and **Files** lists the files it changed, with what the selected
+  file changed in the commit below the list. A merge shows what it brought into
   the branch.
+
+Drag the divider between any two sections to resize them: the commits and the
+selected commit, or a list of files and its changes. When the Files tab is too
+short to show both, the changes move to a third tab, **Diff**, beside Files.
+The same goes for the uncommitted files in the Chats window.
 
 The tab's title counts the uncommitted files: "Git (+2 ~3 −1)" means 2 new, 3
 changed (renamed and conflicted files included) and 1 deleted, and a count of
 zero is left out. Beside the Changes and History tabs (at the bottom in the
-Sessions window), a line shows the branch and how far it is ahead of or behind
+Chats window), a line shows the branch and how far it is ahead of or behind
 the remote branch it tracks, or "no remote" when it doesn't track one. The tab reads the changes again every few seconds while Looper
 has the focus, and the history when the changes do or when you come back to
 the window. Right-click a file for Open File, Show in Folder and Copy Path, or
@@ -78,7 +87,7 @@ lock, so an agent's own git commands never wait on it.
 ![The Edit Project window](img/project-editor.png)
 
 - **Name** — how the project shows in the Projects pane, the tray menu, the
-  Sessions window, and the Claude app for a Remote Control conversation. Left
+  Chats window, and the Claude app for a Remote Control conversation. Left
   empty, it's the folder's name.
 - **Working directory** — the project's folder, in the path style its
   environment expects. Browse… opens a picker scoped to the environment.
@@ -122,7 +131,7 @@ To move a task to another project, pick that project on its General tab.
 ## Starting a chat from the tray
 
 Right-click the tray icon and click a project: a new chat opens in it in the
-[Sessions window](monitoring.md#the-sessions-window), with the project's
+[Chats window](monitoring.md#the-chats-window), with the project's
 harness, model and permission mode, without bringing up the main window.
 Double-clicking the tray icon still shows the main window.
 

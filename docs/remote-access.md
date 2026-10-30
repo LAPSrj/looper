@@ -15,25 +15,28 @@ running on the computer.
 
 **Advanced → Remote Access → Turn On Remote Access** starts it (the item then
 reads **Turn Off Remote Access**) and keeps it on whenever Looper starts.
+While it's on, the main window's status bar says **Remote Access enabled**.
 **Advanced → Remote Access → Settings…** opens its window:
 
-![The Remote Access window, running, with one paired device](img/remote-access-settings.png)
+![The Remote Access window](img/remote-access-settings.png)
 
 - **Turn on Remote Access** — the same switch as the menu item.
+- **Name** — what paired devices call this computer: in **This Device**, in
+  the browser tab's title and wherever Looper names the computer there. Left
+  empty, it's the computer's own name in the operating system, which the field
+  shows in grey.
 - **Provider** — how other devices reach the computer: **Tailscale** or **This
   computer only** (see [below](#providers)).
-- **Computer name** — Tailscale only. The start of the address, `looper` by
-  default.
-- **Port** — the port on this computer that Looper's server listens on.
-  Leave it at 0 for any free port. If another program has the port, the status
-  says so; choose another.
-- **Status** — **Off**, **Starting…**, **Sign in to Tailscale to finish**,
-  **On at** the address (with **as** the Tailscale account, for Tailscale), or
-  what went wrong. **Sign In…** and **Sign Out** show here when they apply.
-- **Paired devices** — see [Paired devices](#paired-devices).
+- **Machine name** — Tailscale only. The computer's name on your tailnet and
+  the start of the address, `looper` by default.
+- **Port** — the port on this computer that Looper's server listens on. Until
+  you save one, the window fills in a free port (the one in use, while Remote
+  Access is on).
 
-Changes to the provider, name and port apply when you save them, and restart
-Remote Access if it's on.
+Changes to the provider, machine name and port apply when you save them, and
+restart Remote Access if it's on. A new **Name** doesn't restart it, and
+connected devices show it at once. If Remote Access
+can't start, or stops working, a dialog says why.
 
 ## Providers
 
@@ -41,21 +44,26 @@ Remote Access if it's on.
 
 Looper includes its own Tailscale client: the computer doesn't need the
 Tailscale app, and Looper joins your tailnet as a device of its own, named by
-**Computer name**. The phone or other device does need the Tailscale app,
+**Machine name**. The phone or other device does need the Tailscale app,
 signed in to the same tailnet.
 
-1. In Settings, choose **Tailscale**, check **Turn on Remote Access** and save.
-2. The first time, the status asks you to **Sign in to Tailscale to finish**.
-   Click **Sign In…** and sign in with your Tailscale account in the browser.
-   Looper remembers it. **Sign Out** forgets it and asks you to sign in again.
+1. In the Remote Access window, choose **Tailscale**, check **Turn on Remote
+   Access** and save.
+2. The first time, a dialog asks you to sign in to Tailscale. Click **Sign
+   In…** and sign in with your Tailscale account in the browser. Looper
+   remembers it. If you cancel the dialog, **Advanced → Remote Access → Sign In
+   to Tailscale…** opens the same page.
 3. Turn on HTTPS certificates for your tailnet, once: in the Tailscale admin
-   console, on the **DNS** page. Without them the status shows an error that
-   says so; turn Remote Access off and on again after.
+   console, on the **DNS** page. Without them an error dialog says so; turn
+   Remote Access off and on again after.
 
-Then the status reads **On at** `https://<computer name>.<tailnet>.ts.net`,
-**as** the account that signed in. That address is reachable only from your
-tailnet, and only that Tailscale account may connect, so another person on the
-tailnet is refused.
+The address is then `https://<machine name>.<tailnet>.ts.net`, which the Pair
+Device window shows. It's reachable only from your tailnet, and only the
+Tailscale account that signed in may connect, so another person on the tailnet
+is refused.
+
+**Advanced → Remote Access → Sign Out of Tailscale…** asks first, then forgets
+the account, and Looper asks you to sign in again.
 
 ### This computer only
 
@@ -65,9 +73,9 @@ For trying Remote Access without Tailscale. The address is
 ## Pairing a device
 
 A device must be paired before it can open Looper. **Advanced → Remote Access
-→ Pair Device…** (or **Pair Device…** in the Remote Access window) opens a
-window with a QR code and an 8-character code. It's available while the
-status is **On**.
+→ Pair Device…** (or **Pair Device…** in the Paired Devices window) opens a
+window with a QR code and an 8-character code. It's available while Remote
+Access is running.
 
 ![The Pair Device window: a QR code, the code, the address, and its countdown](img/remote-access-pair.png)
 
@@ -85,23 +93,41 @@ clear the site's data.
 
 ## Paired devices
 
-The Remote Access window lists the paired devices, each with whether it's
-connected now or when it was last used, and the provider it was paired under.
-A device paired under one provider works only while that provider is on.
+**Advanced → Remote Access → Paired Devices…** lists the paired devices, each
+with whether it's connected now or when it was last used, and the provider it
+was paired under. A device paired under one provider works only while that
+provider is on.
+
+![The Paired Devices window with one device](img/remote-access-devices.png)
+
+- **Pair Device…** opens the Pair Device window.
 
 - **Rename…** (or double-click) changes a device's name.
 - **Remove** asks first, then cuts the device off at once. It needs a new
   pairing code to connect again.
 
-A device can also unpair itself: **This Device → Unpair This Device**.
+A device can also rename itself, with **Name** in **This Device** (**Device
+name** on Android), and unpair itself: **This Device → Unpair This Device**. The Paired Devices window follows
+either change at once.
 
 ## In a desktop browser
 
 In a browser on another computer, the main window fills the page, with its
 menu bar. Every other window opens as a dialog over it: drag it by its title
-bar, resize it by its edges, double-click the title bar to maximize it. A modal
-window blocks the window it opened over, as it does at the computer. A bar
-along the bottom lists the open windows, and **This Device** at its end.
+bar, resize it by its edges, and use the buttons on its title bar to minimize
+it, maximize it (a window you can resize) or close it. Double-clicking the
+title bar also maximizes it. A modal window blocks the window it opened over,
+as it does at the computer.
+
+A bar along the bottom lists the open windows, **Looper** (the main window)
+first, with the one in front marked, and **This Device** at its end. Clicking
+a window there brings it to the front, and brings back a minimized one.
+Clicking the main window while a modal window is open minimizes the modal
+window, which still blocks the main window; clicking the main window again, or
+the modal window in the bar, brings it back.
+
+The browser tab's title is the window in front and the computer's
+[name](#turning-it-on).
 
 Right-click opens context menus, and menu shortcuts work as at the computer,
 shown next to each item. The browser keeps a few for itself (for example
@@ -112,6 +138,19 @@ Ctrl+N, Ctrl+T, Ctrl+W and Ctrl+Tab); choose those from the menu instead.
 Each browser tab is its own connection with its own windows. If the connection
 drops, the page says **Reconnecting…**, and a tab that comes back within two
 minutes finds its windows as it left them.
+
+### This Device
+
+**This Device** at the end of the bar opens a window with:
+
+- **Name** — this device's name, as the computer's Paired Devices window lists
+  it.
+- **Computer** — the computer it's paired with.
+- **Notifications** — see [Notifications](#notifications).
+- **Unpair This Device** — asks first, then unpairs it at once.
+
+**Save** keeps the new name and the Notifications choice; **Cancel** leaves
+both as they were.
 
 ### Files
 
@@ -144,13 +183,14 @@ Android's, with one window on screen at a time.
 | **Android** | ![The Dashboard on an Android phone](img/remote-access-pixel-dashboard.png) | ![A task on an Android phone](img/remote-access-pixel-task.png) | ![The More menu on an Android phone](img/remote-access-pixel-more.png) |
 
 - The main window has tabs along the bottom: **Dashboard**, **Projects**,
-  **Tasks** and **Sessions**. Selecting a task or a project opens its screen
+  **Tasks** and **Chats**. Selecting a task or a project opens its screen
   over the list; each tab keeps its own screens, and tapping the tab you're on
   goes back to its list.
 - The menu bar is behind **More** (**⋯** on an iPhone, **⋮** on Android): File,
   Task, View, Advanced and Help, and **This Device**.
-- Other windows open as full screens that you leave with **Back**, or as sheets
-  that you close or, on an iPhone, drag down.
+- Other windows open as full screens that you leave with **Back** (**‹** on an
+  iPhone, **←** on Android), or as sheets. On an iPhone you close a sheet with
+  **✕** or drag it down; on Android, **✕** or a tap outside it closes it.
 - **Back** also answers the back gesture or button of the phone, and on an
   iPhone a swipe from the left edge.
 - A long press (half a second) opens the context menu.
@@ -181,7 +221,7 @@ decide which ones come: **Show notifications** in Settings and each task's
 when no Looper window has the focus on the computer, and a device with a
 Looper tab on screen gets just the toast. A session waiting for you (a
 question, or a finished turn) sends a system notification as well, and tapping
-it opens the session in the Sessions window; turning **Show notifications** off
+it opens the session in the Chats window; turning **Show notifications** off
 silences these too.
 
 On an iPhone, system notifications need Looper added to the Home Screen first;
@@ -203,13 +243,13 @@ where you blocked them for Looper, the switch stays disabled.
 
 ## Troubleshooting
 
-- **The status shows an error about HTTPS certificates.** Turn on HTTPS
-  certificates for your tailnet in the Tailscale admin console, on the DNS
-  page, then turn Remote Access off and on again.
-- **The status says the port is in use.** Another program has the port. Set
-  **Port** to another number, or to 0 for any free port.
-- **The status asks to sign in to Tailscale again.** Click **Sign In…**. It
-  asks again after **Sign Out**.
+- **An error dialog about HTTPS certificates.** Turn on HTTPS certificates for
+  your tailnet in the Tailscale admin console, on the DNS page, then turn
+  Remote Access off and on again.
+- **An error dialog says the port is in use.** Another program has the port.
+  Set **Port** to another number.
+- **Looper asks to sign in to Tailscale again.** Click **Sign In…**. It asks
+  again after **Sign Out of Tailscale…**.
 - **A device says it isn't paired.** Its pairing was removed, or it was paired
   under the other provider, or the browser lost its cookie. Pair it again with a
   new code. Open the same address it was paired at: another name, or the

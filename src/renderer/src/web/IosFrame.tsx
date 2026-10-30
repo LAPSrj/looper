@@ -30,12 +30,26 @@ const CHEVRON_LEFT = (
     <path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
+const BACK = (
+  <svg width="11" height="19" viewBox="0 0 11 19" aria-hidden="true">
+    <path d="M9 1.5L1.5 9.5 9 17.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 const ELLIPSIS = (
   <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-    <circle cx="12" cy="12" r="10.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="7.5" cy="12" r="1.4" fill="currentColor" />
-    <circle cx="12" cy="12" r="1.4" fill="currentColor" />
-    <circle cx="16.5" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="5.5" cy="12" r="1.9" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.9" fill="currentColor" />
+    <circle cx="18.5" cy="12" r="1.9" fill="currentColor" />
+  </svg>
+);
+const XMARK = (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M2 2l12 12M14 2L2 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+const CHECKMARK = (
+  <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden="true">
+    <path d="M2 8.5l5.5 5.5L18 2" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 const NEW_FOLDER = (
@@ -124,8 +138,6 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
   const title = plainLabel(nav?.title ?? sc.win.title);
   const sheet = sc.pres === 'page-sheet' || sc.pres === 'form-sheet';
   const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
-  const belowTitle = sc.below ? plainLabel(shell.screens.find((x) => x.win.w === sc.below?.w)?.nav?.title ?? sc.below.title) : '';
-  const backLabel = nav?.back ? 'Back' : belowTitle && belowTitle.length <= 12 ? belowTitle : 'Back';
   const hasMore = sc.pres === 'root' || !!sc.win.menu?.length;
   return (
     <header className="ios-bar">
@@ -133,13 +145,12 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
       <div className="ios-bar-row">
         <div className="ios-bar-lead">
           {nav?.back || sc.pres === 'push' ? (
-            <button className="ios-back" onClick={() => shell.goBack()}>
-              {CHEVRON_LEFT}
-              <span>{backLabel}</span>
+            <button className="ios-back" aria-label="Back" onClick={() => shell.goBack()}>
+              {BACK}
             </button>
           ) : sheet ? (
-            <button className="ios-text-btn" onClick={() => controller.close(sc.win.w)}>
-              Close
+            <button className="ios-icon-btn" aria-label="Close" onClick={() => controller.close(sc.win.w)}>
+              {XMARK}
             </button>
           ) : null}
         </div>
@@ -244,7 +255,7 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
   const rows = sub.level.length + (sub.title ? 1 : 0);
   return (
     <div className="ios-menu-layer dim" onPointerDown={(e) => e.target === e.currentTarget && dismiss()} onContextMenu={(e) => e.preventDefault()}>
-      <div className="ios-menu" style={placeMenu(at.x - 20, at.y + 12, 250, rows * 44, shell.vp.width, shell.vp.height)}>
+      <div className="ios-menu" style={placeMenu(at.x - 20, at.y + 12, 250, rows * 44 + 24, shell.vp.width, shell.vp.height)}>
         <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={pick} />
       </div>
     </div>
@@ -258,15 +269,16 @@ const DESTRUCTIVE = /^(delete|remove|discard|don.t save|unpair|end|stop|clear|ov
 /**
  * UIAlertController's look: the message as the bold title, the detail under
  * it; two buttons side by side with Cancel on the left, more stacked with
- * Cancel last. The preferred button (the default, when it isn't Cancel) is
- * bold, else Cancel is.
+ * Cancel last. The default button, when it isn't Cancel, is the tinted one.
  */
 export function Alert({ spec, onAnswer, input }: { spec: MessageBoxSpec; onAnswer: (response: number, checked: boolean) => void; input?: { value: string; onChange: (v: string) => void } }) {
   const [checked, setChecked] = useState(!!spec.checkboxChecked);
   const cancel = messageCancelId(spec);
   const preferred = spec.defaultId !== undefined && spec.defaultId !== cancel ? spec.defaultId : cancel;
   const idx = spec.buttons.map((_, i) => i);
-  const order = spec.buttons.length === 2 ? [cancel, ...idx.filter((i) => i !== cancel)] : [...idx.filter((i) => i !== cancel), ...(spec.buttons.length > cancel ? [cancel] : [])];
+  // Two capsules share a row while both labels fit in half the alert's width.
+  const row = spec.buttons.length === 2 && spec.buttons.every((b) => plainLabel(b).length <= 11);
+  const order = row ? [cancel, ...idx.filter((i) => i !== cancel)] : [...idx.filter((i) => i !== cancel), ...(spec.buttons.length > cancel ? [cancel] : [])];
   // On <body>: an alert inside a sheet would otherwise be caught in the sheet's moving card.
   return createPortal(
     <div className="ios-alert-layer">
@@ -291,9 +303,9 @@ export function Alert({ spec, onAnswer, input }: { spec: MessageBoxSpec; onAnswe
             </button>
           )}
         </div>
-        <div className={`ios-alert-buttons${spec.buttons.length === 2 ? ' row' : ''}`}>
+        <div className={`ios-alert-buttons${row ? ' row' : ''}`}>
           {order.map((i) => (
-            <button key={i} className={`ios-alert-btn${i === preferred ? ' bold' : ''}${DESTRUCTIVE.test(spec.buttons[i]) && i !== cancel ? ' destructive' : ''}`} onClick={() => onAnswer(i, checked)}>
+            <button key={i} className={`ios-alert-btn${i === preferred && (i !== cancel || spec.buttons.length === 1) ? ' bold' : ''}${DESTRUCTIVE.test(spec.buttons[i]) && i !== cancel ? ' destructive' : ''}`} onClick={() => onAnswer(i, checked)}>
               {plainLabel(spec.buttons[i])}
             </button>
           ))}
@@ -352,7 +364,7 @@ function Sheet({
     el.style.transform = offset === null ? '' : `translateY(${offset}px)`;
   };
   return (
-    <div className={`ios-own-sheet${shell.tablet ? ' form' : ''}${small ? ' small' : ''}`}>
+    <div className={`ios-own-sheet${shell.tablet ? ' tablet-sheet' : ''}${small ? ' small' : ''}`}>
       <div className="ph-scrim" />
       <div ref={card} className="ph-card" role="dialog" aria-modal="true" aria-label={label}>
         <header
@@ -398,9 +410,8 @@ function FolderBar({ browser, onNewFolder }: { browser: HostBrowser; onNewFolder
     <div className="ios-folder-bar">
       <div className="ios-bar-lead">
         {parent && (
-          <button className="ios-back" onClick={browser.up}>
-            {CHEVRON_LEFT}
-            <span>{parent.label.length <= 14 ? parent.label : 'Back'}</span>
+          <button className="ios-back" aria-label={`Back to ${parent.label}`} onClick={browser.up}>
+            {BACK}
           </button>
         )}
       </div>
@@ -441,8 +452,8 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
       label={f.title}
       onClose={f.cancel}
       lead={
-        <button className="ios-text-btn" onClick={f.cancel}>
-          Cancel
+        <button className="ios-icon-btn" aria-label="Cancel" onClick={f.cancel}>
+          {XMARK}
         </button>
       }
       trail={
@@ -522,8 +533,8 @@ function PathSheet({ controller, shell, req }: { controller: ShellController; sh
       label={p.name}
       onClose={p.close}
       lead={
-        <button className="ios-text-btn" onClick={p.close}>
-          Close
+        <button className="ios-icon-btn" aria-label="Close" onClick={p.close}>
+          {XMARK}
         </button>
       }
     >
@@ -550,10 +561,18 @@ function Switch({ on, disabled, label, onChange }: { on: boolean; disabled?: boo
   );
 }
 
-/** This Device: its name, the computer it's paired with, notifications, and Unpair. */
+/** This Device: its name (edited in place, saved on Return or when the field is left), the computer it's paired with, notifications, and Unpair. */
 function DeviceSheet({ controller, shell, onClose }: { controller: ShellController; shell: PhoneShell; onClose: () => void }) {
   const d = useThisDevice(controller);
   const usable = d.push === 'on' || d.push === 'off';
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const next = draft.trim();
+    // The typed name stays in the field until the computer answers; a failure puts the old one back.
+    if (next && next !== d.name) void d.rename(next).then(() => setDraft(null));
+    else setDraft(null);
+  };
   return (
     <Sheet
       shell={shell}
@@ -562,18 +581,28 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
       onClose={onClose}
       lead={null}
       trail={
-        <button className="ios-text-btn bold" onClick={onClose}>
-          Done
+        <button className="ios-icon-btn prominent" aria-label="Done" onClick={onClose}>
+          {CHECKMARK}
         </button>
       }
     >
       <div className="ios-grouped ph-scroll">
         <div className="ios-group">
+          <label className="ios-cell ios-field">
+            <span className="ios-cell-label">Name</span>
+            <input
+              value={draft ?? d.name}
+              disabled={d.busy}
+              enterKeyHint="done"
+              autoCorrect="off"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={commit}
+            />
+          </label>
           <div className="ios-cell">
-            <span className="ios-cell-label">{d.name || ' '}</span>
-          </div>
-          <div className="ios-cell">
-            <span className="ios-cell-label secondary">Paired with {d.computer}</span>
+            <span className="ios-cell-label">Paired with</span>
+            <span className="ios-cell-value">{d.computer}</span>
           </div>
         </div>
         <div className="ios-group">

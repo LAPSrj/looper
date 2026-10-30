@@ -1,9 +1,17 @@
-import type { EncodedBytes } from '../../shared/remote-access';
+import type { EncodedBytes, EncodedUndefined } from '../../shared/remote-access';
 
 const isEncoded = (v: object): v is EncodedBytes =>
   typeof (v as EncodedBytes).$bytes === 'string' && Object.keys(v).length === 1;
 
-/** Turn every `{ $bytes }` in a client's arguments back into a Uint8Array, as Electron's IPC delivers them. */
+const isUndefinedMark = (v: object): v is EncodedUndefined =>
+  (v as EncodedUndefined).$undefined === true && Object.keys(v).length === 1;
+
+const UNDEFINED: EncodedUndefined = { $undefined: true };
+
+/**
+ * Turn every `{ $bytes }` in a client's arguments back into a Uint8Array and
+ * every `{ $undefined }` back into undefined, as Electron's IPC delivers them.
+ */
 export function decodeBytes(v: unknown): unknown {
   if (!v || typeof v !== 'object') return v;
   if (Array.isArray(v)) return v.map(decodeBytes);
@@ -11,14 +19,16 @@ export function decodeBytes(v: unknown): unknown {
     const b = Buffer.from(v.$bytes, 'base64');
     return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
   }
+  if (isUndefinedMark(v)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) out[k] = decodeBytes(x);
   return out;
 }
 
 /**
- * Turn every Uint8Array in a value for a client into `{ $bytes }`. Objects
- * without any are passed back as they are, so a large engine event isn't copied.
+ * Turn every Uint8Array in a value for a client into `{ $bytes }`, and every
+ * undefined in an array into `{ $undefined }`. Objects without any are passed
+ * back as they are, so a large engine event isn't copied.
  * An object met again (referenced twice) gets the same encoding; one inside
  * itself (a cycle) is left as it is, and JSON refuses it later.
  */
@@ -29,10 +39,12 @@ export function encodeBytes(v: unknown, done = new WeakMap<object, unknown>()): 
   done.set(v, v);
   if (Array.isArray(v)) {
     let out: unknown[] | null = null;
-    v.forEach((x, i) => {
-      const e = encodeBytes(x, done);
+    // A plain loop, not forEach: forEach skips holes, which JSON would also turn into null.
+    for (let i = 0; i < v.length; i++) {
+      const x: unknown = v[i];
+      const e = x === undefined ? UNDEFINED : encodeBytes(x, done);
       if (e !== x) (out ??= v.slice())[i] = e;
-    });
+    }
     done.set(v, out ?? v);
     return out ?? v;
   }
