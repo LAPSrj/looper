@@ -202,6 +202,21 @@ matching toast registry entries. This is a one-time, per-machine setup step;
 the packaged installer's own shortcut does this automatically, so installed
 copies of Looper never need it.
 
+## Remote Access won't start or a device can't connect
+
+The status in **Advanced → Remote Access → Settings…** says what's wrong:
+
+- **An error about HTTPS certificates:** turn on HTTPS certificates for your
+  tailnet in the Tailscale admin console (DNS page), then turn Remote Access
+  off and on again.
+- **The port is in use:** set **Port** to another number, or to 0 for any free
+  port.
+- **Sign in to Tailscale to finish:** click **Sign In…**.
+- **A device says it isn't paired:** pair it again with a new code, at the
+  address it was paired at, under the provider that's on now.
+
+See [Remote Access](remote-access.md#troubleshooting) for the rest.
+
 ## Known limitations
 
 - **`custom` harnesses have no idle detection and no detailed interactive

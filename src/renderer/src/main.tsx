@@ -1,4 +1,7 @@
+// First: it must see whether the preload provided `window.looper` before the web boot below sets one.
+import { platform } from './platform';
 import React from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isLooperFileName } from '@shared/files';
 import { setAppLocale } from './format';
@@ -33,6 +36,7 @@ import { RemoteConversationsApp } from './RemoteConversationsApp';
 import { RemoteHelperEditorApp } from './RemoteEditorApps';
 import { ProjectEditorApp } from './ProjectEditorApp';
 import { RemoteSettingsApp } from './RemoteSettingsApp';
+import { RemoteAccessPairApp, RemoteAccessRenameApp, RemoteAccessSettingsApp } from './RemoteAccessApps';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SendToSessionsApp } from './SendToSessionsApp';
 import { SessionsApp } from './SessionsApp';
@@ -40,6 +44,10 @@ import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
 import { TemplatesApp } from './TemplatesApp';
 import { TerminalSessionApp } from './TerminalSessionApp';
+import type { MeResponse } from '@shared/remote-access';
+import { PairPage } from './web/PairPage';
+import { Shell } from './web/Shell';
+import { attachFrame, startSession } from './web/start';
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
@@ -73,6 +81,7 @@ const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
+const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'addons') return <AddonsApp />;
@@ -101,6 +110,9 @@ function pickRoot() {
   if (hash === 'recycle-bin') return <RecycleBinApp />;
   if (hash === 'remote-settings') return <RemoteSettingsApp />;
   if (hash === 'remote-conversations') return <RemoteConversationsApp />;
+  if (hash === 'remote-access-settings') return <RemoteAccessSettingsApp />;
+  if (hash === 'remote-access-pair') return <RemoteAccessPairApp />;
+  if (remoteAccessRenameMatch) return <RemoteAccessRenameApp id={decodeURIComponent(remoteAccessRenameMatch[1])} />;
   if (remoteHelperMatch) return <RemoteHelperEditorApp id={decodeURIComponent(remoteHelperMatch[1])} isNew={!!remoteHelperMatch[2]} />;
   if (hash === 'project-new') return <ProjectEditorApp />;
   if (projectMatch) return <ProjectEditorApp id={decodeURIComponent(projectMatch[1])} />;
@@ -234,16 +246,52 @@ function pickRoot() {
 // A file dropped on any window must never navigate it; a Looper document
 // (.loopertask/.loopertpl/.looperaddon) opens instead, as if it had been double-clicked.
 // In-app drags (list reordering) carry no files and fall through untouched.
-window.addEventListener('dragover', (e) => e.preventDefault());
-window.addEventListener('drop', (e) => {
-  e.preventDefault();
-  const file = e.dataTransfer?.files?.[0];
-  if (file && isLooperFileName(file.name)) void window.looper.openLooperFile(file);
-});
+// A browser's top frame has no `window.looper`: its shell handles drops itself.
+if (platform === 'electron' || window !== window.top) {
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (!file || !isLooperFileName(file.name)) return;
+    const opening = window.looper.openLooperFile(file);
+    // In a browser the file is sent to the computer first, which can fail (too large, connection lost).
+    if (platform !== 'electron') opening.catch((err: Error) => void window.looper.showError(err.message));
+  });
+}
 
-// Every window formats dates in the machine's regional format, so it's known before the first paint.
-void window.looper
-  .info()
-  .then((i) => setAppLocale(i.locale))
-  .catch(() => undefined)
-  .finally(() => createRoot(document.getElementById('root')!).render(<React.StrictMode>{pickRoot()}</React.StrictMode>));
+/** A browser's top frame: the pairing page until this device is paired, then the shell that shows the windows. */
+async function bootWebTop() {
+  const root = createRoot(document.getElementById('root')!);
+  const me = (await fetch('/api/me')
+    .then((r) => r.json())
+    .catch(() => null)) as MeResponse | null;
+  if (!me?.paired) {
+    root.render(<PairPage />);
+    return;
+  }
+  root.render(<Shell session={startSession()} />);
+}
+
+/** Every window formats dates in the machine's regional format, so it's known before the first paint. */
+function bootWindow(onRendered?: () => void) {
+  void window.looper
+    .info()
+    .then((i) => setAppLocale(i.locale))
+    .catch(() => undefined)
+    .finally(() => {
+      const root = createRoot(document.getElementById('root')!);
+      const render = () => root.render(<React.StrictMode>{pickRoot()}</React.StrictMode>);
+      if (!onRendered) return render();
+      flushSync(render);
+      onRendered();
+    });
+}
+
+if (platform !== 'electron' && window === window.top) {
+  void bootWebTop();
+} else if (platform !== 'electron') {
+  const frame = attachFrame();
+  bootWindow(frame.ready);
+} else {
+  bootWindow();
+}

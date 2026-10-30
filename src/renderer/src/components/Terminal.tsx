@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ActiveRun, TaskRuntime } from '@shared/types';
 import { subscribe } from '../events';
+import { usePhoneTerminal } from './phone/TerminalKeys';
 import { InfoBar } from './ui';
 import { openXterm } from './xterm';
 
@@ -30,6 +31,9 @@ function runOptionLabel(run: ActiveRun): string {
 
 export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  /** Where the phone's key row sends: the attached run's terminal. */
+  const sendTo = useRef<(data: string) => void>(() => undefined);
+  const phone = usePhoneTerminal((d) => sendTo.current(d));
   /** The run whose output is on screen (from the buffer replay or the live stream). */
   const [attachedRun, setAttachedRun] = useState<string | null>(null);
 
@@ -58,6 +62,16 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
     // Pinned: the run is known up front, even before it has printed anything
     // (still in its check step), so its first bytes are not dropped.
     let currentRun: string | null = attachTo;
+    sendTo.current = (d) => window.looper.agent.write(taskId, d, currentRun ?? undefined);
+    const refit = () => {
+      try {
+        fit.fit();
+        window.looper.agent.resize(taskId, term.cols, term.rows, currentRun ?? undefined);
+      } catch {
+        /* element hidden */
+      }
+    };
+    const detachPhone = phone.attach(term, el, refit);
     setAttachedRun(currentRun);
 
     void window.looper.agent.buffer(taskId, attachTo ?? undefined).then((buf) => {
@@ -92,19 +106,13 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
       }
     });
 
-    const onData = term.onData((d) => window.looper.agent.write(taskId, d, currentRun ?? undefined));
-    const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        window.looper.agent.resize(taskId, term.cols, term.rows, currentRun ?? undefined);
-      } catch {
-        /* element hidden */
-      }
-    });
+    const onData = term.onData((d) => window.looper.agent.write(taskId, phone.typed(d), currentRun ?? undefined));
+    const ro = new ResizeObserver(refit);
     ro.observe(el);
     term.focus();
 
     return () => {
+      detachPhone();
       unsub();
       onData.dispose();
       ro.disconnect();
@@ -156,6 +164,7 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
         </div>
       )}
       <div className="terminal" ref={ref} />
+      {phone.row}
     </div>
   );
 }

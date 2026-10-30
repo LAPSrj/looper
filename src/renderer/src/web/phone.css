@@ -1,0 +1,225 @@
+/* The phone and tablet frames (IosFrame, AndroidFrame): what both share. Everything is scoped to the
+   frame's own elements; the windows' pages load this bundle too and must not be touched by it. */
+
+/* The top document of a phone tab never scrolls or bounces, and never zooms on a double tap. */
+html.ph-top,
+html.ph-top body {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ph-root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-h, 100%);
+  overflow: hidden;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  isolation: isolate;
+}
+.ph-root input,
+.ph-root textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.ph-probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.ph-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+/* ---------- windows ---------- */
+.ph-win {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ph-win.hidden {
+  visibility: hidden;
+}
+.ph-win > * {
+  pointer-events: auto;
+}
+.ph-win.leaving,
+.ph-win.leaving * {
+  pointer-events: none !important;
+}
+.ph-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  animation: ph-fade-in 0.3s ease-out;
+}
+.ph-win.leaving .ph-scrim {
+  animation: ph-fade-out 0.3s ease-in forwards;
+}
+.ph-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition:
+    transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-radius 0.35s,
+    filter 0.35s;
+}
+.ph-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  /* No bottom inset here: the iframe runs to the card's edge and its page keeps its own bottom controls
+     above the home indicator (--looper-safe-bottom). An inset here showed the card's color as an empty band
+     under a page's pinned buttons. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+.ph-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.ph-drag {
+  touch-action: none;
+}
+
+/* The connection: one plain line under the status bar. */
+.ph-connection {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: env(safe-area-inset-top);
+  z-index: 950;
+  padding: 4px 12px;
+  text-align: center;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---------- the host file lists ---------- */
+.ph-files {
+  flex: 1;
+  min-height: 0;
+}
+.ph-files.slide-fwd {
+  animation: ph-in-right 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ph-files.slide-back {
+  animation: ph-in-left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ph-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.ph-file-icon {
+  display: flex;
+  flex: none;
+}
+.ph-file-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.ph-file-name,
+.ph-file-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-file-end {
+  display: flex;
+  flex: none;
+}
+.ph-files-empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+
+@keyframes ph-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ph-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ph-in-right {
+  from {
+    transform: translateX(40%);
+    opacity: 0;
+  }
+}
+@keyframes ph-in-left {
+  from {
+    transform: translateX(-30%);
+    opacity: 0;
+  }
+}
+@keyframes ph-push-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes ph-push-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes ph-up-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes ph-up-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes ph-pop-in {
+  from {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+@keyframes ph-banner-in {
+  from {
+    transform: translateY(-120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ph-root *,
+  .ph-root *::before,
+  .ph-root *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

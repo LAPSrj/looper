@@ -1,19 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { contextText, type ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import type { SessionActivity, SessionsState, SessionSummary, SubagentInfo, UsageLimits } from '@shared/sessions';
+import type { SessionSummary, SubagentInfo, UsageLimits } from '@shared/sessions';
 import { waitedText } from '@shared/sessions';
-import type { View } from '@shared/types';
 import { ActivityPanel } from './components/ActivityPanel';
 import { fmtClock } from './format';
 import { ICONS } from './components/icons';
 import { SplitToolButton, ToolButton } from './components/ToolButton';
 import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
 import { ChatView } from './components/ChatView';
-import { useDragResize, useGitRepo } from './components/hooks';
+import { useDragResize } from './components/hooks';
+import { LargeTitle, Segmented } from './components/phone/PhoneList';
 import { SessionIcon, SessionList, statusText, waitingOf } from './components/SessionList';
 import { TerminalView } from './components/TerminalView';
-import { subscribe } from './events';
+import { platform } from './platform';
+import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
+import { isPhone, usePageNav, type PageNavAction } from './web/page-nav';
 
 const WIDTHS_KEY = 'sessions.widths';
 
@@ -286,60 +288,26 @@ function SessionsToolbar({ summary, chat, onDashboard }: { summary?: SessionSumm
 }
 
 /**
- * F6 and Shift+F6, as in Windows apps: the focus moves to the next or
- * previous pane (the session list, the conversation, the activity pane),
- * into its message box, terminal or selected tab.
- */
-function focusPane(dir: 1 | -1): void {
-  const panes = [
-    { el: document.querySelector<HTMLElement>('.session-list'), target: (el: HTMLElement) => el },
-    {
-      el: document.querySelector<HTMLElement>('.sessions-center'),
-      target: (el: HTMLElement) => el.querySelector<HTMLElement>('textarea:not(:disabled), input:not(:disabled), [tabindex="0"]'),
-    },
-    {
-      el: document.querySelector<HTMLElement>('.activity-panel'),
-      target: (el: HTMLElement) => el.querySelector<HTMLElement>('.tab.active') ?? el.querySelector<HTMLElement>('button'),
-    },
-  ].filter((p): p is { el: HTMLElement; target: (el: HTMLElement) => HTMLElement | null } => !!p.el);
-  if (panes.length === 0) return;
-  const at = panes.findIndex((p) => p.el.contains(document.activeElement));
-  for (let n = 1; n <= panes.length; n++) {
-    const p = panes[(((at === -1 ? (dir === 1 ? -1 : 0) : at) + dir * n) % panes.length + panes.length) % panes.length];
-    const target = p.target(p.el);
-    if (target) {
-      target.focus();
-      return;
-    }
-  }
-}
-
-/** The session list's order, for F8/F9 and the other keys that step through it. */
-function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1, waiting: boolean): string | null {
-  const list = waiting ? waitingOf(sessions) : sessions;
-  if (list.length === 0) return selected;
-  const at = list.findIndex((s) => s.id === selected);
-  if (at === -1) return list[dir === 1 ? 0 : list.length - 1].id;
-  return list[(at + dir + list.length) % list.length].id;
-}
-
-/**
  * The Sessions window: every chat and Looper terminal session, grouped by
  * project, with the ones waiting for the user first; the selected one in the
  * middle; and what its agent is doing on the right.
  */
 export function SessionsApp({ initial }: { initial?: string }) {
-  const [state, setState] = useState<SessionsState>({ sessions: [], limits: {} });
-  const [loaded, setLoaded] = useState(false);
-  const [selected, setSelected] = useState<string | null>(initial ?? null);
-  const [chat, setChat] = useState<ChatState | null>(null);
-  const [activity, setActivity] = useState<SessionActivity | null>(null);
-  const [follow, setFollow] = useState<string | null>(null);
-  const [subRows, setSubRows] = useState<MessageRow[]>([]);
-  // The tool call Now shows; null follows the latest.
-  const [nowPos, setNowPos] = useState<number | null>(null);
-  useEffect(() => setNowPos(null), [selected, follow]);
-  const [now, setNow] = useState(Date.now());
+  const s = useSessionsWindow(initial);
+  return isPhone ? <PhoneSessions s={s} /> : <DesktopSessions s={s} />;
+}
+
+/** The session shown: its chat, terminal, or followed subagent; the Overview when none is. */
+function SessionCenter({ s }: { s: SessionsWindow }) {
+  const { summary, follow, followed, chat } = s;
+  if (!summary) return <Dashboard sessions={s.state.sessions} now={s.now} onOpen={s.setSelected} />;
+  if (follow && followed) return <SubagentView summary={summary} rows={s.subRows} />;
+  if (summary.kind === 'terminal') return <TerminalView key={summary.id} id={summary.id} />;
+  return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
+}
+
+function DesktopSessions({ s }: { s: SessionsWindow }) {
+  const { state, selected, summary, chat, activity, shown, subagents } = s;
   const [widths, setWidths] = useState<{ left: number; right: number }>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? '') as { left: number; right: number };
@@ -349,132 +317,7 @@ export function SessionsApp({ initial }: { initial?: string }) {
     }
     return { left: 280, right: 400 };
   });
-  const [view, setView] = useState<View | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
-  const stateRef = useRef(state);
-  stateRef.current = state;
-
-  useEffect(() => {
-    document.title = 'Sessions';
-    void window.looper.sessions.state().then((s) => {
-      setState(s);
-      setLoaded(true);
-    });
-    void window.looper.info().then((i) => setView(i.settings.view));
-    const tick = setInterval(() => setNow(Date.now()), 15_000);
-    const unsub = subscribe((e) => {
-      if (e.type === 'sessions') setState(e.state);
-      else if (e.type === 'chat' && e.state.id === selectedRef.current) setChat(e.state);
-      else if (e.type === 'session:activity' && e.activity.id === selectedRef.current) setActivity(e.activity);
-      else if (e.type === 'settings') setView(e.settings.view);
-    });
-    const unsubUi = window.looper.onUi((e) => {
-      if (e.type === 'sessions-select') setSelected(e.id);
-      else if (e.type === 'sessions-dashboard') setSelected(null);
-      else if (e.type === 'sessions-nav') setSelected(stepTo(stateRef.current.sessions, selectedRef.current, e.dir, e.waiting));
-      else if (e.type === 'sessions-pane') focusPane(e.dir);
-    });
-    // Capture phase, so a terminal doesn't get the keys the window takes.
-    const onKey = (e: KeyboardEvent) => {
-      const shown = stateRef.current.sessions.find((s) => s.id === selectedRef.current);
-      const take = () => {
-        e.preventDefault();
-        e.stopPropagation();
-      };
-      if (e.altKey || e.metaKey) return;
-      // The keys without Fn: Ctrl+PageUp/PageDown, and with Shift for the waiting sessions.
-      if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
-        take();
-        setSelected(stepTo(stateRef.current.sessions, selectedRef.current, e.key === 'PageDown' ? 1 : -1, e.shiftKey));
-      } else if (e.key === 'F6' && !e.ctrlKey) {
-        take();
-        focusPane(e.shiftKey ? -1 : 1);
-      } else if (e.ctrlKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-        // As in browsers: Ctrl+1 to Ctrl+8 the session at that place in project order (Waiting for you aside), Ctrl+9 the last.
-        const list = stateRef.current.sessions;
-        const target = e.key === '9' ? list.at(-1) : list[Number(e.key) - 1];
-        if (!target) return;
-        take();
-        setSelected(target.id);
-      } else if (e.ctrlKey && !e.shiftKey && e.key === 'F4') {
-        take();
-        if (shown) void window.looper.sessions.close(shown.id);
-      } else if (e.ctrlKey && !e.shiftKey && (e.key === 't' || e.key === 'w') && shown?.kind !== 'terminal') {
-        // In a terminal session Ctrl+T and Ctrl+W are the agent's (and the shell's).
-        take();
-        if (e.key === 'w' && shown) void window.looper.sessions.close(shown.id);
-        else if (e.key === 't' && shown?.projectId) void window.looper.projects.newChat(shown.projectId);
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => {
-      clearInterval(tick);
-      unsub();
-      unsubUi();
-      window.removeEventListener('keydown', onKey, true);
-    };
-  }, []);
-
-  const summary = state.sessions.find((s) => s.id === selected);
-  const gitRepo = useGitRepo(summary?.projectId);
-
-  // A closed session leaves the window on the Overview. A new one isn't in the list
-  // for a moment after it opens, so only one that was in it counts as closed.
-  const listed = useRef(new Set<string>());
-  useEffect(() => {
-    for (const s of state.sessions) listed.current.add(s.id);
-    if (loaded && selected && !summary && listed.current.has(selected)) setSelected(null);
-  }, [loaded, selected, summary, state.sessions]);
-
-  useEffect(() => {
-    window.looper.sessions.show(selected);
-    setChat(null);
-    setActivity(null);
-    setFollow(null);
-    if (!selected) return;
-    window.looper.sessions.seen(selected);
-    void window.looper.chat.get(selected).then((c) => {
-      if (c && c.id === selectedRef.current) setChat(c);
-    });
-    void window.looper.sessions.activity(selected).then((a) => {
-      if (a && a.id === selectedRef.current) setActivity(a);
-    });
-  }, [selected]);
-
-  // Looking at a session ends its wait for a finished turn or a notification.
-  const waitKey = summary?.waiting ? `${summary.id}:${summary.waiting.reason}:${summary.waiting.since}` : '';
-  useEffect(() => {
-    if (!summary?.waiting || summary.waiting.reason === 'permission') return;
-    if (document.hasFocus()) window.looper.sessions.seen(summary.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitKey]);
-  useEffect(() => {
-    const onFocus = () => {
-      if (selectedRef.current) window.looper.sessions.seen(selectedRef.current);
-    };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, []);
-
-  // A followed subagent's conversation, read again while the window shows it.
-  useEffect(() => {
-    setSubRows([]);
-    if (!follow || !summary) return;
-    let live = true;
-    const load = () =>
-      void window.looper.runs.messages(summary.taskId, summary.id, follow).then((r) => {
-        if (live && r.status === 'ok') setSubRows(r.rows.filter((row) => row.kind !== 'raw'));
-      });
-    load();
-    const timer = setInterval(load, 1500);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [follow, summary?.id]);
 
   const saveWidths = (w: { left: number; right: number }) => {
     setWidths(w);
@@ -491,28 +334,11 @@ export function SessionsApp({ initial }: { initial?: string }) {
     onDrag: (pos, rect) => saveWidths({ ...widths, right: Math.min(720, Math.max(280, rect.width - pos)) }),
   });
 
-  const rows = summary?.kind === 'chat' ? (chat ? [...chat.history, ...chat.rows] : []) : (activity?.rows ?? []);
-  const attachments = rows.flatMap((r) => r.attachments ?? []);
-  const followed = activity?.subagents.find((a) => a.agentId === follow);
-  const watchedRows = follow ? subRows : rows;
-  const shown = view?.sessions ?? { toolbar: true, activityPane: true, statusBar: true, collapsed: [] };
   const pane = !!summary && shown.activityPane;
-  const toggleGroup = (key: string) => {
-    if (!view) return;
-    const collapsed = shown.collapsed.includes(key) ? shown.collapsed.filter((k) => k !== key) : [...shown.collapsed, key];
-    void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, collapsed } } });
-  };
-
-  const subagents = activity?.subagents ?? [];
-  let center;
-  if (!summary) center = <Dashboard sessions={state.sessions} now={now} onOpen={setSelected} />;
-  else if (follow && followed) center = <SubagentView summary={summary} rows={subRows} />;
-  else if (summary.kind === 'terminal') center = <TerminalView key={summary.id} id={summary.id} />;
-  else center = chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
 
   return (
     <div className="sessions-app">
-      {shown.toolbar && <SessionsToolbar summary={summary} chat={chat} onDashboard={() => setSelected(null)} />}
+      {shown.toolbar && <SessionsToolbar summary={summary} chat={chat} onDashboard={() => s.setSelected(null)} />}
       <div
         className="sessions-body"
         ref={bodyRef}
@@ -521,15 +347,15 @@ export function SessionsApp({ initial }: { initial?: string }) {
         <SessionList
           sessions={state.sessions}
           selected={selected}
-          now={now}
+          now={s.now}
           collapsed={shown.collapsed}
-          onToggle={toggleGroup}
-          onSelect={setSelected}
+          onToggle={s.toggleGroup}
+          onSelect={s.setSelected}
         />
         <div className="sidebar-divider" onMouseDown={dragLeft} />
         <main className="sessions-center">
-          {summary && subagents.length > 0 && <SubagentTabs subagents={subagents} following={follow} onFollow={setFollow} />}
-          {center}
+          {summary && subagents.length > 0 && <SubagentTabs subagents={subagents} following={s.follow} onFollow={s.setFollow} />}
+          <SessionCenter s={s} />
         </main>
         {pane && summary && (
           <>
@@ -537,21 +363,122 @@ export function SessionsApp({ initial }: { initial?: string }) {
             <ActivityPanel
               sessionId={summary.id}
               taskId={summary.taskId}
-              rows={watchedRows}
-              attachments={attachments}
+              rows={s.watchedRows}
+              attachments={s.attachments}
               background={activity?.background ?? []}
               subagents={subagents}
-              gitProject={gitRepo ? summary.projectId : undefined}
-              following={follow}
-              onFollow={setFollow}
-              pos={nowPos}
-              onPos={setNowPos}
-              now={now}
+              gitProject={s.gitRepo ? summary.projectId : undefined}
+              following={s.follow}
+              onFollow={s.setFollow}
+              pos={s.nowPos}
+              onPos={s.setNowPos}
+              now={s.now}
             />
           </>
         )}
       </div>
-      {shown.statusBar && <SessionsStatusBar summary={summary} chat={chat} limits={state.limits} now={now} />}
+      {shown.statusBar && <SessionsStatusBar summary={summary} chat={chat} limits={state.limits} now={s.now} />}
     </div>
   );
 }
+
+type PhoneList = 'sessions' | 'overview';
+const PHONE_LISTS: [PhoneList, string][] = [
+  ['sessions', 'Sessions'],
+  ['overview', 'Overview'],
+];
+
+/**
+ * The Sessions window on a phone: the session list (or the Overview, as a
+ * list), then a session's own screen. A chat's message box stays above the
+ * keyboard; the activity pane, with the status bar's facts, is a sheet.
+ */
+function PhoneSessions({ s }: { s: SessionsWindow }) {
+  const { state, summary, chat, activity, subagents } = s;
+  const [list, setList] = useState<PhoneList>('sessions');
+  const [sheet, setSheet] = useState(false);
+  useEffect(() => setSheet(false), [summary?.id]);
+  const fail = (e: Error) => void window.looper.showError(e.message);
+
+  const actions: PageNavAction[] = summary
+    ? [
+        ...(s.stoppable ? [{ id: 'stop', label: 'Stop', icon: 'stopChat', run: () => void window.looper.sessions.stop(summary.id).catch(fail) }] : []),
+        ...((chat?.queued.length ?? 0) > 0 ? [{ id: 'send-now', label: 'Send Now', icon: 'sendNow', run: () => void window.looper.chat.sendNow(chat!.id).catch(fail) }] : []),
+        { id: 'activity', label: 'Activity', run: () => setSheet(true) },
+      ]
+    : [
+        { id: 'chat', label: 'New Chat', icon: 'newChat', run: () => window.looper.sessions.showNewMenu('chat', 0, 0) },
+        { id: 'terminal', label: 'New Terminal', icon: 'terminal', run: () => window.looper.sessions.showNewMenu('terminal', 0, 0) },
+        { id: 'send', label: 'Send to Sessions', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
+      ];
+  usePageNav({
+    title: summary ? summary.title : 'Sessions',
+    back: summary ? () => (sheet ? setSheet(false) : s.setSelected(null)) : sheet ? () => setSheet(false) : undefined,
+    actions,
+    largeTitle: platform === 'ios' && !summary,
+  });
+
+  if (!summary) {
+    return (
+      <div className="phone-sessions phone-page">
+        <div className="pg-scroll">
+          <LargeTitle>Sessions</LargeTitle>
+          <div className="pg-segmented-wrap">
+            <Segmented items={PHONE_LISTS} value={list} onChange={setList} label="Show" />
+          </div>
+          {list === 'sessions' ? (
+            <section className="pg-group pg-sessions">
+              <SessionList sessions={state.sessions} selected={null} now={s.now} collapsed={s.shown.collapsed} onToggle={s.toggleGroup} onSelect={s.setSelected} selectOnMenu={false} />
+            </section>
+          ) : (
+            <Dashboard sessions={state.sessions} now={s.now} onOpen={s.setSelected} />
+          )}
+          {limitParts(state.limits, s.now).length > 0 && <p className="pg-group-footer">{limitParts(state.limits, s.now).join(' · ')}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`phone-sessions phone-page phone-conversation kind-${summary.kind}`}>
+      {subagents.length > 0 && <SubagentTabs subagents={subagents} following={s.follow} onFollow={s.setFollow} />}
+      <main className="sessions-center">
+        <SessionCenter s={s} />
+      </main>
+      {sheet && (
+        <div className="pg-sheet-scrim" onClick={() => setSheet(false)}>
+          <div className="pg-sheet" role="dialog" aria-label="Activity" onClick={(e) => e.stopPropagation()}>
+            <div className="pg-sheet-grabber" aria-hidden="true" />
+            <div className="pg-sheet-head">
+              <span className="pg-sheet-title">Activity</span>
+              {platform === 'ios' && (
+                <button className="pg-sheet-done" onClick={() => setSheet(false)}>
+                  Done
+                </button>
+              )}
+            </div>
+            <SessionsStatusBar summary={summary} chat={chat} limits={state.limits} now={s.now} />
+            <ActivityPanel
+              sessionId={summary.id}
+              taskId={summary.taskId}
+              rows={s.watchedRows}
+              attachments={s.attachments}
+              background={activity?.background ?? []}
+              subagents={subagents}
+              gitProject={s.gitRepo ? summary.projectId : undefined}
+              following={s.follow}
+              onFollow={(id) => {
+                s.setFollow(id);
+                setSheet(false);
+              }}
+              pos={s.nowPos}
+              onPos={s.setNowPos}
+              now={s.now}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

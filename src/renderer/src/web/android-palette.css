@@ -1,0 +1,47 @@
+/* Android: the Material 3 color scheme, the tonal palette of Looper's blue (#0067c0), light and dark.
+   One source of truth: the frame (android.css) and the pages inside it (phone.css) both import this file. */
+
+html[data-platform='android'] {
+  --md-primary: #0061a4;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #d1e4ff;
+  --md-on-primary-container: #001d36;
+  --md-secondary-container: #d7e3f7;
+  --md-on-secondary-container: #101c2b;
+  --md-surface: #f8f9ff;
+  --md-on-surface: #191c20;
+  --md-on-surface-variant: #43474e;
+  --md-outline: #73777f;
+  --md-outline-variant: #c3c7cf;
+  --md-surface-container-low: #f2f3fa;
+  --md-surface-container: #eceef4;
+  --md-surface-container-high: #e6e8ee;
+  --md-surface-container-highest: #e0e2e8;
+  --md-inverse-surface: #2e3135;
+  --md-inverse-on-surface: #eff0f7;
+  --md-inverse-primary: #9ecaff;
+  --md-error: #ba1a1a;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-platform='android'] {
+    --md-primary: #9ecaff;
+    --md-on-primary: #003258;
+    --md-primary-container: #00497d;
+    --md-on-primary-container: #d1e4ff;
+    --md-secondary-container: #3b4858;
+    --md-on-secondary-container: #d7e3f7;
+    --md-surface: #111418;
+    --md-on-surface: #e1e2e8;
+    --md-on-surface-variant: #c3c7cf;
+    --md-outline: #8d9199;
+    --md-outline-variant: #43474e;
+    --md-surface-container-low: #191c20;
+    --md-surface-container: #1d2024;
+    --md-surface-container-high: #282a2f;
+    --md-surface-container-highest: #33353a;
+    --md-inverse-surface: #e1e2e8;
+    --md-inverse-on-surface: #2e3135;
+    --md-inverse-primary: #0061a4;
+    --md-error: #ffb4ab;
+  }
+}

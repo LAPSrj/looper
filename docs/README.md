@@ -31,6 +31,10 @@ polling inside the agent, no context buildup, at most one agent per task.
   actions, the Recycle Bin, the live terminal tab, terminal sessions and
   chats, the Runs tab and run window, the engine log, notifications, Rest Mode, the tray, and the
   Settings window.
+- **[Remote Access](remote-access.md)**: Looper in a browser on your phone,
+  tablet or another computer: turning it on with Tailscale, pairing a device,
+  using it in a desktop browser and on a phone, notifications, paired
+  devices, and security.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a
   tour of the `~/looper` data directory.
@@ -38,8 +42,8 @@ polling inside the agent, no context buildup, at most one agent per task.
   Tools menu and the Addons window, and the manifest and protocol for writing
   one.
 - **[Troubleshooting](troubleshooting.md)**: fixes for auto-pause, usage
-  limits, permission prompts, restart artifacts, and Windows notification
-  setup, plus the current known limitations.
+  limits, permission prompts, restart artifacts, Windows notification
+  setup, and Remote Access, plus the current known limitations.
 
 New to Looper? Read [Getting started](getting-started.md), then skim
 [How a run works](how-a-run-works.md) — the rest is reference. Inside the

@@ -21,6 +21,16 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/cli/**/*",
+    "src/renderer/src/web/session.ts",
+    "src/renderer/src/web/request.ts",
+    "src/renderer/src/web/store.ts",
+    "src/renderer/src/web/device-name.ts",
+    "src/renderer/src/web/menu-model.ts",
+    "src/renderer/src/web/dialog-flows.ts",
+    "src/renderer/src/phone-nav.ts",
+    "src/renderer/src/components/terminal-keys.ts",
+    "src/renderer/src/web/nav-stack.ts",
+    "src/renderer/src/web/gestures.ts",
     "tests/**/*"
   ]
 }

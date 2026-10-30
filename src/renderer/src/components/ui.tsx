@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+// On a phone, marks the window's page and keeps the keyboard and safe-area insets its styles use.
+import './phone/keyboard';
 
 /** A labelled group of radio buttons, one per option, stacked vertically. */
 export function RadioField<T extends string>({

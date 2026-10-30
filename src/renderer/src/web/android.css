@@ -1,0 +1,769 @@
+/* Android: Material 3. The color scheme (android-palette.css) is the tonal palette of Looper's blue (#0067c0),
+   light and dark; 48 dp touch targets and the Material type scale. */
+@import './android-palette.css';
+
+.ph-root.android,
+.ph-pair.android,
+.md-dialog-layer {
+  font-family: Roboto, 'Google Sans Text', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0.03px;
+  color: var(--md-on-surface);
+}
+.ph-root.android {
+  background: var(--md-surface);
+}
+.android .ph-card {
+  background: var(--md-surface);
+}
+
+/* ---------- buttons ---------- */
+.md-icon-btn {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+}
+.md-icon-btn:active:not(:disabled),
+.md-text-btn:active:not(:disabled) {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.md-icon-btn:disabled {
+  opacity: 0.38;
+}
+.md-text-btn {
+  flex: none;
+  min-width: 48px;
+  height: 40px;
+  margin: 4px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  color: var(--md-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.md-text-btn:disabled {
+  color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+}
+.md-text-btn.error {
+  color: var(--md-error);
+}
+.md-filled-btn {
+  height: 40px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+.md-filled-btn:disabled {
+  background: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+}
+.md-filled-btn.wide {
+  width: 100%;
+  height: 48px;
+  margin-top: 24px;
+  border-radius: 24px;
+}
+
+/* ---------- the top app bar ---------- */
+.md-bar {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--md-surface);
+}
+.android .pres-bottom-sheet .md-bar,
+.android .pres-dialog .md-bar {
+  padding-top: 0;
+  background: transparent;
+}
+.md-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 64px;
+  padding: 0 4px;
+}
+.md-bar.sheet .md-bar-row {
+  height: 56px;
+  padding: 0 12px;
+}
+.md-bar-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 28px;
+}
+.md-bar-title.no-lead {
+  margin-left: 12px;
+}
+.md-handle {
+  width: 32px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--md-on-surface-variant) 40%, transparent);
+}
+.md-bar.sheet .md-handle {
+  margin: 22px auto 0;
+}
+
+/* ---------- how windows present ---------- */
+.android .pres-push > .ph-card {
+  animation: md-axis-in 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+.android .pres-push.leaving > .ph-card {
+  animation: md-axis-out 0.2s cubic-bezier(0.3, 0, 1, 1) forwards;
+}
+.android .pres-full-dialog > .ph-card {
+  animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.android .pres-full-dialog.leaving > .ph-card,
+.android .pres-bottom-sheet.leaving > .ph-card {
+  animation: ph-up-out 0.25s cubic-bezier(0.3, 0, 0.8, 0.15) forwards;
+}
+.android .pres-bottom-sheet > .ph-card {
+  top: auto;
+  left: 0;
+  right: 0;
+  max-width: 640px;
+  margin: 0 auto;
+  height: min(calc(var(--sheet-h, 320px) + 80px + env(safe-area-inset-bottom)), 90%);
+  border-radius: 28px 28px 0 0;
+  background: var(--md-surface-container-low);
+  animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.android .pres-bottom-sheet .ph-frame {
+  background: transparent;
+}
+.android .pres-dialog > .ph-card {
+  margin: auto;
+  width: min(var(--win-w, 560px), calc(100% - 48px));
+  height: min(calc(var(--win-h, 480px) + 64px), calc(100% - 48px));
+  border-radius: 28px;
+  background: var(--md-surface-container-high);
+  animation: md-dialog-in 0.3s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.android .pres-dialog .ph-body {
+  padding: 0;
+}
+.android .pres-dialog.leaving > .ph-card {
+  animation: ph-fade-out 0.15s forwards;
+}
+.android .ph-scrim {
+  background: rgba(0, 0, 0, 0.32);
+}
+
+/* ---------- menus ---------- */
+.md-menu-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 800;
+}
+.md-menu {
+  position: absolute;
+  display: flex;
+  min-width: 112px;
+  max-width: 280px;
+  max-height: 70%;
+  padding: 8px 0;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--md-surface-container);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
+  transform-origin: top right;
+  animation: md-menu-in 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+.md-menu-list {
+  flex: 1;
+  min-width: 0;
+}
+.md-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  color: var(--md-on-surface);
+  text-align: left;
+}
+.md-menu-item:active:not(:disabled) {
+  background: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+}
+.md-menu-item:disabled {
+  color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+}
+.md-menu-up {
+  color: var(--md-on-surface-variant);
+}
+.md-menu-lead,
+.md-menu-trail {
+  display: flex;
+  justify-content: center;
+  width: 24px;
+  flex: none;
+  color: var(--md-on-surface-variant);
+}
+.md-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-radio-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--md-primary);
+  box-shadow: 0 0 0 3px var(--md-surface-container), 0 0 0 5px var(--md-primary);
+}
+.md-divider {
+  height: 1px;
+  margin: 8px 0;
+  background: var(--md-outline-variant);
+}
+
+/* ---------- dialogs ---------- */
+.md-dialog-layer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-h, 100%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.md-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  animation: ph-fade-in 0.2s;
+}
+.md-dialog {
+  position: relative;
+  width: calc(100% - 48px);
+  min-width: 280px;
+  max-width: 560px;
+  max-height: calc(100% - 48px);
+  overflow: auto;
+  padding: 24px 24px 20px;
+  border-radius: 28px;
+  background: var(--md-surface-container-high);
+  animation: md-dialog-in 0.3s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.md-dialog-headline {
+  margin: 0 0 16px;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+.md-dialog-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  color: var(--md-on-surface-variant);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.md-outlined-input,
+.md-field input {
+  width: 100%;
+  height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--md-outline);
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 16px;
+  color: var(--md-on-surface);
+  outline: none;
+}
+.md-outlined-input:focus,
+.md-field input:focus {
+  border: 2px solid var(--md-primary);
+  padding: 0 15px;
+}
+.md-field input.mono {
+  font-family: 'Roboto Mono', ui-monospace, monospace;
+  letter-spacing: 0.1em;
+}
+.md-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+.md-check-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--md-primary);
+}
+.md-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 24px -8px 0 0;
+}
+.md-dialog-actions .md-text-btn {
+  margin: 0;
+}
+.md-dialog-actions.stacked {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+}
+
+/* ---------- the frame's own dialogs and sheets ---------- */
+.md-own-dialog,
+.md-sheet-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 500;
+}
+.md-sheet-layer {
+  z-index: 600;
+}
+.md-own-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-surface);
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.md-own-dialog.tablet .md-own-card {
+  margin: auto;
+  width: min(720px, calc(100% - 48px));
+  height: min(640px, calc(100% - 48px));
+  overflow: hidden;
+  border-radius: 28px;
+  background: var(--md-surface-container-high);
+  padding-bottom: 0;
+}
+.md-own-dialog.tablet .md-bar {
+  padding-top: 0;
+  background: transparent;
+}
+.md-bottom-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: 640px;
+  max-height: 90%;
+  margin: 0 auto;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 28px 28px 0 0;
+  background: var(--md-surface-container-low);
+  transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+  animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.md-handle-area {
+  flex: none;
+  padding: 22px 0;
+  touch-action: none;
+}
+.md-sheet-title {
+  margin: 0 24px 8px;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 28px;
+}
+.md-sheet-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding: 8px 12px 16px;
+}
+.md-list {
+  padding: 0 0 8px;
+}
+.md-list-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 56px;
+  padding: 8px 24px 8px 24px;
+}
+.md-list-text {
+  flex: 1;
+  min-width: 0;
+}
+.md-list-headline {
+  font-size: 16px;
+  line-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-list-supporting {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--md-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-switch {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--md-outline);
+  border-radius: 16px;
+  background: var(--md-surface-container-highest);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.md-switch-handle {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: var(--md-outline);
+  color: var(--md-primary);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+.md-switch-handle svg {
+  width: 16px;
+  height: 16px;
+}
+.md-switch.on {
+  border-color: var(--md-primary);
+  background: var(--md-primary);
+}
+.md-switch.on .md-switch-handle {
+  left: 22px;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  background: var(--md-on-primary);
+}
+.md-switch:disabled {
+  opacity: 0.38;
+}
+
+/* ---------- file dialogs ---------- */
+.md-tabs {
+  display: flex;
+  flex: none;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+.md-tab {
+  flex: 1;
+  height: 48px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  color: var(--md-on-surface-variant);
+}
+.md-tab span {
+  display: inline-block;
+  height: 48px;
+  line-height: 48px;
+  border-bottom: 3px solid transparent;
+}
+.md-tab.on {
+  color: var(--md-primary);
+}
+.md-tab.on span {
+  border-bottom-color: var(--md-primary);
+  border-radius: 0;
+}
+.md-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px;
+}
+.md-field-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--md-on-surface-variant);
+}
+.md-crumbs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 12px;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+.md-crumb-part {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.md-crumb-sep {
+  display: flex;
+  color: var(--md-on-surface-variant);
+}
+.md-crumb-sep svg {
+  width: 18px;
+  height: 18px;
+}
+.md-crumb {
+  height: 40px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+}
+.md-crumb.current {
+  color: var(--md-on-surface);
+  font-weight: 500;
+}
+.android .ph-files {
+  padding-bottom: 88px;
+}
+.android .ph-file-row {
+  min-height: 56px;
+  padding: 8px 16px;
+  gap: 16px;
+}
+.android .ph-file-row:active,
+.android .ph-file-row.selected {
+  background: var(--md-secondary-container);
+}
+.android .ph-file-icon {
+  color: var(--md-on-surface-variant);
+}
+.android .ph-file-name {
+  font-size: 16px;
+}
+.android .ph-file-detail {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--md-on-surface-variant);
+}
+.android .ph-file-end {
+  color: var(--md-primary);
+}
+.android .ph-files-empty {
+  color: var(--md-on-surface-variant);
+}
+.md-fab {
+  position: absolute;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 20px 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+}
+.md-fab:disabled {
+  opacity: 0.38;
+}
+.md-own-dialog.tablet .md-fab {
+  bottom: 16px;
+}
+.md-device-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 16px;
+}
+.md-supporting {
+  font-size: 14px;
+  color: var(--md-on-surface-variant);
+}
+.md-bottom-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--md-outline-variant);
+}
+
+/* ---------- snackbar and the connection ---------- */
+.md-snackbar-area {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  z-index: 900;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.md-snackbar-area.above-tabs {
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+}
+.md-snackbar {
+  display: flex;
+  align-items: center;
+  width: calc(100% - 24px);
+  max-width: 560px;
+  min-height: 48px;
+  padding: 4px 4px 4px 16px;
+  border-radius: 4px;
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  animation: md-snack-in 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+.md-snackbar-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  color: inherit;
+  text-align: left;
+}
+.md-snackbar-title {
+  font-weight: 500;
+}
+.md-snackbar-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.md-snackbar-action {
+  flex: none;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  color: var(--md-inverse-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+.md-snackbar-close {
+  color: var(--md-inverse-on-surface);
+}
+.android .ph-connection {
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+}
+
+/* ---------- pairing ---------- */
+.ph-pair.android {
+  min-height: 100%;
+  padding: calc(env(safe-area-inset-top) + 56px) calc(env(safe-area-inset-right) + 24px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 24px);
+  background: var(--md-surface);
+}
+.ph-pair.android .md-field {
+  margin: 16px 0;
+}
+.md-headline {
+  margin: 0 0 24px;
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 36px;
+}
+.md-error-text {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--md-error);
+}
+
+@keyframes md-axis-in {
+  from {
+    transform: translateX(30%);
+    opacity: 0;
+  }
+}
+@keyframes md-axis-out {
+  to {
+    transform: translateX(30%);
+    opacity: 0;
+  }
+}
+@keyframes md-dialog-in {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+}
+@keyframes md-menu-in {
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+}
+@keyframes md-snack-in {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+}

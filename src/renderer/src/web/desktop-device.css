@@ -1,0 +1,19 @@
+/* The desktop browser's This Device control (right end of the window strip) and its window. */
+.ws-taskbar .ws-device-btn {
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
+}
+.ws-thisdevice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px 10px;
+}
+.ws-thisdevice-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.ws-thisdevice-body .checkbox-field {
+  margin-top: 10px;
+}

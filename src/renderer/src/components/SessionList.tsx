@@ -40,11 +40,13 @@ function Row({
   selected,
   sub,
   onSelect,
+  selectOnMenu,
 }: {
   s: SessionSummary;
   selected: boolean;
   sub: string;
   onSelect: (id: string) => void;
+  selectOnMenu: boolean;
 }) {
   return (
     <div
@@ -52,7 +54,7 @@ function Row({
       onClick={() => onSelect(s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
-        onSelect(s.id);
+        if (selectOnMenu) onSelect(s.id);
         window.looper.sessions.showContextMenu(s.id);
       }}
     >
@@ -108,6 +110,7 @@ export function SessionList({
   collapsed,
   onToggle,
   onSelect,
+  selectOnMenu = true,
 }: {
   sessions: SessionSummary[];
   selected: string | null;
@@ -116,6 +119,8 @@ export function SessionList({
   collapsed: string[];
   onToggle: (key: string) => void;
   onSelect: (id: string | null) => void;
+  /** A right-click (a long press) selects the row before its menu shows; off where selecting opens it. */
+  selectOnMenu?: boolean;
 }) {
   const waiting = waitingOf(sessions);
   const groups: { key: string; name: string; items: SessionSummary[] }[] = [];
@@ -157,6 +162,7 @@ export function SessionList({
                 selected={selected === s.id}
                 sub={`${s.waiting!.text} · ${waitedText(now - s.waiting!.since)}`}
                 onSelect={onSelect}
+                selectOnMenu={selectOnMenu}
               />
             ))}
         </>
@@ -166,7 +172,7 @@ export function SessionList({
           <GroupHeader name={g.name} open={isOpen(g.key)} count={g.items.length} onToggle={() => onToggle(g.key)} />
           {isOpen(g.key) &&
             g.items.map((s) => (
-              <Row key={s.id} s={s} selected={selected === s.id} sub={terminal(s) + (s.latest ?? statusText(s))} onSelect={onSelect} />
+              <Row key={s.id} s={s} selected={selected === s.id} sub={terminal(s) + (s.latest ?? statusText(s))} onSelect={onSelect} selectOnMenu={selectOnMenu} />
             ))}
         </div>
       ))}

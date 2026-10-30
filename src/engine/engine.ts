@@ -253,8 +253,8 @@ export interface Engine {
   sessionsState(): SessionsState;
   /** The background work, subagents and (terminal session) conversation of a session. */
   sessionActivity(id: string): SessionActivity | null;
-  /** The session the Sessions window shows (its activity is sent as it changes); null for none. */
-  watchSession(id: string | null): void;
+  /** The sessions the Sessions windows show (their activity is sent as it changes). */
+  watchSessions(ids: Iterable<string>): void;
   /** The user looked at a session: a finished turn or notification stops waiting for them. */
   seenSession(id: string): void;
   /** Whether a session is a chat or a terminal session; undefined once it's closed. */
@@ -1274,7 +1274,7 @@ export function createEngine(opts: EngineOptions): Engine {
     unqueueChat: (chatId, messageId) => chats.unqueue(chatId, messageId),
     sessionsState: () => sessionHub.state(),
     sessionActivity: (id) => sessionHub.activity(id),
-    watchSession: (id) => sessionHub.watch(id),
+    watchSessions: (ids) => sessionHub.watch(ids),
     seenSession: (id) => sessionHub.seen(id),
     sessionKind(id: string): 'chat' | 'terminal' | undefined {
       if (chats.taskOf(id)) return 'chat';

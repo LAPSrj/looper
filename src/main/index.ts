@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type Engine } from '../engine/engine';
@@ -18,7 +18,32 @@ import { adjustImportedTaskPaths } from './import-paths';
 import { AddonHost } from './addon-host';
 import { addonPanesMenu, addonToolbarsMenu, addonToolsMenu, installAddonFile, registerAddonIpc, sendAddonEvent, type AddonUiDeps } from './addons';
 import { ENGINE_LOG_LOOPER, engineLogAddonSource, type EngineLogLevel } from '../shared/addons';
-import { registerIpc } from './ipc';
+import { broadcastEvent, registerIpc } from './ipc';
+import {
+  callerMainWindow,
+  caller,
+  ipc,
+  isRemote,
+  newWindow,
+  notifyClients,
+  ofCaller,
+  openPath,
+  remoteMainWindows,
+  runAs,
+  setWindowMenu,
+  showMessageBox,
+  showOpenDialog,
+  showSaveDialog,
+  useRemoteClients,
+  windowOf,
+  WindowSlots,
+  writeClipboard,
+  type AppWindow,
+  type RemoteWindow,
+} from './platform';
+import { RemoteAccess } from './remote-access';
+import { pwaIcons } from './pwa-icons';
+import type { RemoteAccessPhase } from '../shared/remote-access';
 import { taskListMenu } from './view-menu';
 
 let win: BrowserWindow | null = null;
@@ -28,6 +53,9 @@ let tray: Tray | null = null;
 let quitting = false;
 /** Whether Remote Control was on at its last event: the menus change only when this does. */
 let remoteRunning = false;
+let remoteAccess: RemoteAccess | null = null;
+/** Remote Access's phase at its last event: the menu changes only when this does. */
+let remoteAccessPhase: RemoteAccessPhase = 'off';
 
 // The engine must survive anything the UI or a child process throws at it.
 process.on('uncaughtException', (err) => {
@@ -75,7 +103,9 @@ if (!app.requestSingleInstanceLock()) {
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
       else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
+      else if (event.type === 'sessions') void remoteAccess?.sessionsChanged(event.state.sessions, !!engine?.settings.notificationsEnabled);
       else if (event.type === 'settings') {
+        applyRemoteAccess();
         tray?.setContextMenu(trayMenu());
         // The View menu follows the view settings, which a pane header's context menu also changes.
         rebuildMenu();
@@ -120,25 +150,52 @@ if (!app.requestSingleInstanceLock()) {
       startBuilder: startBuilderInWindow,
       editWithAgent,
       reviewBuilder,
-      builderWindow: (id) => builderWindows.get(id),
+      builderWindow: (id) => (builderWindows.get(id) ?? []).filter((w) => !w.isDestroyed()),
       openTerminal,
-      terminalWindow: (id) => terminalWindows.get(id) ?? (sessionShown === id ? (sessionsWindow ?? undefined) : undefined),
+      terminalWindow: (id) => [...terminalWindows.all(id), ...sessionWindowsShowing(id)],
       openChat,
       forkChat,
-      sessionWindow: (id) => (sessionShown === id ? (sessionsWindow ?? undefined) : undefined),
+      sessionWindow: sessionWindowsShowing,
       showSession,
       closeSession: (id) => closeSessionAsk(id),
       openSendToSessions: openSendToSessionsWindow,
-      openSessions: () => openSessionsWindow(),
+      openSessions: (select) => openSessionsWindow(select),
       chatSettingMenu,
       openRemoteConversation,
       openRemoteHelperEditor,
+      remoteAccess: () => remoteAccess,
+      openRemoteAccessPair: openRemoteAccessPairWindow,
+      openRemoteAccessRename: openRemoteAccessRenameWindow,
+      openNotification,
       openProjectEditor,
       openNewTaskIn,
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
     });
+    const eng = engine;
+    remoteAccess = new RemoteAccess({
+      dataDir: eng.dataDir,
+      log: eng.log,
+      settings: () => eng.settings.remoteAccess,
+      version: app.getVersion(),
+      ipc,
+      icon: pwaIcons(appIcon),
+      emit: (state) => {
+        broadcastEvent({ type: 'remote-access', state });
+        if (state.phase !== remoteAccessPhase) {
+          remoteAccessPhase = state.phase;
+          rebuildMenu();
+        }
+      },
+    });
+    useRemoteClients(remoteAccess.clients);
+    // A new browser tab's main window gets the main window's menu bar.
+    remoteAccess.clients.onMainWindow((w) => {
+      buildRemoteMenu(w);
+      reopenRescuedBuilders(w);
+    });
+    applyRemoteAccess();
     addons = new AddonHost({
       dir: path.join(engine.dataDir, 'addons'),
       host: engine.host,
@@ -196,8 +253,7 @@ if (!app.requestSingleInstanceLock()) {
       if (!ok || quitting || !engine) return;
       quitting = true;
       addons?.dispose();
-      engine
-        .stop()
+      Promise.all([engine.stop(), remoteAccess?.dispose()])
         .catch(() => undefined)
         .finally(() => {
           engineLock?.release();
@@ -217,7 +273,7 @@ let engineLock: EngineLock | null = null;
 async function claimDataDir(dataDir: string): Promise<boolean> {
   const holder = liveHolder(dataDir);
   if (holder) {
-    const r = await dialog.showMessageBox({
+    const r = await showMessageBox(undefined, {
       type: 'question',
       title: 'Looper',
       message: 'Looper is already running on this data folder.',
@@ -240,8 +296,8 @@ async function claimDataDir(dataDir: string): Promise<boolean> {
 /** Another engine took the data dir over: stop running tasks here and quit. */
 async function onLockLost(by: LockHolder | null): Promise<void> {
   quitting = true;
-  await engine?.stop().catch(() => undefined);
-  await dialog.showMessageBox({
+  await Promise.all([engine?.stop(), remoteAccess?.dispose()]).catch(() => undefined);
+  await showMessageBox(undefined, {
     type: 'error',
     title: 'Looper',
     message: 'Another Looper took over this data folder.',
@@ -322,7 +378,7 @@ async function confirmQuit(): Promise<boolean> {
       cancelId: 1,
     };
     const parent = win && !win.isDestroyed() && win.isVisible() ? win : undefined;
-    const r = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    const r = await showMessageBox(parent, opts);
     if (r.response === 0) quitConfirmed = true;
     return r.response === 0;
   } finally {
@@ -388,7 +444,7 @@ async function toggleRestMode(): Promise<void> {
   if (policy) {
     const onBattery = powerMonitor.isOnBatteryPower();
     if (onBattery ? !policy.dc : !policy.ac) {
-      const r = await dialog.showMessageBox({
+      const r = await showMessageBox(undefined, {
         type: 'warning',
         title: 'Looper',
         message: 'The computer will not wake on its own.',
@@ -404,7 +460,7 @@ async function toggleRestMode(): Promise<void> {
   try {
     engine.armRest();
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+    await showMessageBox(undefined, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   }
 }
 
@@ -422,7 +478,7 @@ async function toggleRemote(): Promise<void> {
   if (!engine.remoteState().running) {
     engine.startRemote();
     if (engine.settings.remote.helpers.length === 0 && !engine.listProjects().some((p) => p.remote)) {
-      await dialog.showMessageBox({
+      await showMessageBox(undefined, {
         type: 'info',
         title: 'Looper',
         message: 'Remote Control is on, but no helper or project keeps a conversation open yet.',
@@ -435,7 +491,7 @@ async function toggleRemote(): Promise<void> {
   }
   const used = engine.usedRemoteConversations();
   if (used > 0) {
-    const r = await dialog.showMessageBox({
+    const r = await showMessageBox(undefined, {
       type: 'question',
       title: 'Looper',
       message: used === 1 ? 'A Remote Control conversation is still open.' : `${used} Remote Control conversations are still open.`,
@@ -535,12 +591,12 @@ interface ToastTarget {
 const liveToasts = new Set<Notification>();
 const MAX_LIVE_TOASTS = 100;
 
+/** Where recent toasts lead, by task and run: a device's copy of a toast is clicked there, and opens the same. */
+const toastTargets = new Map<string, ToastTarget>();
+const toastKey = (taskId: string, runId: string | undefined): string => `${taskId}\n${runId ?? '-'}`;
+
 function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void {
-  if (!engine?.settings.notificationsEnabled || !Notification.isSupported()) return;
-  // The user is already looking at the app: no toast. A question waits only so
-  // long, so it is skipped only while its run window, where it's answered, is focused.
-  const focused = BrowserWindow.getFocusedWindow();
-  if (focused && (e.kind !== 'question' || focused.webContents.getURL().includes(`#${runWindowHash(e.taskId, e.runId)}/`))) return;
+  if (!engine?.settings.notificationsEnabled) return;
   // A run that ended badly opens its run window on the report, and a question
   // opens it where the answer is typed; another finished run lands on the
   // Runs tab with the run selected; a live run on the terminal.
@@ -554,6 +610,18 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
         ? 'runs'
         : 'terminal';
   const target: ToastTarget = { taskId: e.taskId, runId: e.runId, view };
+  toastTargets.delete(toastKey(e.taskId, e.runId));
+  toastTargets.set(toastKey(e.taskId, e.runId), target);
+  if (toastTargets.size > MAX_LIVE_TOASTS) toastTargets.delete(toastTargets.keys().next().value!);
+  // Every connected device shows it too, whether or not the desktop's toast is skipped below.
+  notifyClients({ title: e.title, body: e.body, ...(e.taskId ? { taskId: e.taskId } : {}), ...(e.runId && e.runId !== '-' ? { runId: e.runId } : {}) });
+  // The user is already looking at the app: no toast. A question waits only so
+  // long, so it is skipped only while its run window, where it's answered, is focused.
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && (e.kind !== 'question' || focused.webContents.getURL().includes(`#${runWindowHash(e.taskId, e.runId)}/`))) return;
+  // The paired devices not looking at Looper get the same toast as a push notification.
+  void remoteAccess?.pushToast({ title: e.title, body: e.body, ...(e.taskId ? { taskId: e.taskId } : {}), ...(e.runId && e.runId !== '-' ? { runId: e.runId } : {}) });
+  if (!Notification.isSupported()) return;
   const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
   liveToasts.add(toast);
   if (liveToasts.size > MAX_LIVE_TOASTS) liveToasts.delete(liveToasts.values().next().value!);
@@ -562,6 +630,11 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
     openToastTarget(target);
   });
   toast.show();
+}
+
+/** A device's click on its copy of a toast (it runs as that device, so the windows open there). */
+function openNotification(taskId: string, runId?: string): void {
+  openToastTarget(toastTargets.get(toastKey(taskId, runId)) ?? { taskId, runId: runId ?? '-', view: runId ? 'runs' : 'terminal' });
 }
 
 function openToastTarget(t: ToastTarget): void {
@@ -574,6 +647,14 @@ function openToastTarget(t: ToastTarget): void {
 
 function openTaskView(taskId: string, runId: string, view: 'terminal' | 'runs'): void {
   const payload = { type: 'open-task', taskId, runId, view };
+  if (caller()) {
+    const main = mainWin();
+    if (main) {
+      main.focus();
+      main.webContents.send('ui:event', payload);
+    }
+    return;
+  }
   if (!win || win.isDestroyed()) {
     createWindow();
     // The renderer subscribes to ui:event after mount; give it a beat.
@@ -602,7 +683,12 @@ function webPreferences(): Electron.WebPreferences {
   };
 }
 
-function loadRenderer(target: BrowserWindow, hash?: string): void {
+function loadRenderer(target: AppWindow, hash?: string): void {
+  if (isRemote(target)) {
+    target.load(hash ?? '');
+    return;
+  }
+  if (!(target instanceof BrowserWindow)) return;
   if (process.env.ELECTRON_RENDERER_URL) {
     void target.loadURL(process.env.ELECTRON_RENDERER_URL + (hash ? `#${hash}` : ''));
   } else {
@@ -633,10 +719,11 @@ function macTemplate(template: Electron.MenuItemConstructorOptions[]): Electron.
  * (where BrowserWindow.setMenu does not exist) the global menu bar shows it
  * while the window is focused — see the browser-window-focus handler.
  */
-function attachWindowMenu(child: BrowserWindow, template: Electron.MenuItemConstructorOptions[]): Menu {
-  if (process.platform !== 'darwin') {
+function attachWindowMenu(child: AppWindow, template: Electron.MenuItemConstructorOptions[]): Menu {
+  // A remote window shows its own menu bar on every host.
+  if (process.platform !== 'darwin' || !(child instanceof BrowserWindow)) {
     const menu = Menu.buildFromTemplate(template);
-    child.setMenu(menu);
+    setWindowMenu(child, menu);
     return menu;
   }
   const menu = Menu.buildFromTemplate(macTemplate(template));
@@ -647,9 +734,9 @@ function attachWindowMenu(child: BrowserWindow, template: Electron.MenuItemConst
 }
 
 /** Swap a window's own menu for a new one (attachWindowMenu set the first). */
-function replaceWindowMenu(child: BrowserWindow, template: Electron.MenuItemConstructorOptions[]): void {
-  if (process.platform !== 'darwin') {
-    child.setMenu(Menu.buildFromTemplate(template));
+function replaceWindowMenu(child: AppWindow, template: Electron.MenuItemConstructorOptions[]): void {
+  if (process.platform !== 'darwin' || !(child instanceof BrowserWindow)) {
+    setWindowMenu(child, Menu.buildFromTemplate(template));
     return;
   }
   const menu = Menu.buildFromTemplate(macTemplate(template));
@@ -657,18 +744,23 @@ function replaceWindowMenu(child: BrowserWindow, template: Electron.MenuItemCons
   if (child.isFocused()) Menu.setApplicationMenu(menu);
 }
 
+/** The desktop's main window; a browser tab's comes with its connection. */
 function createWindow(): void {
-  win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
-    title: 'Looper',
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    autoHideMenuBar: false,
-    webPreferences: webPreferences(),
-  });
+  win = newWindow(
+    {
+      width: 1400,
+      height: 900,
+      minWidth: 900,
+      minHeight: 600,
+      title: 'Looper',
+      icon: appIcon,
+      backgroundColor: windowBackground(),
+      autoHideMenuBar: false,
+      webPreferences: webPreferences(),
+    },
+    '',
+    { desktop: true },
+  ) as BrowserWindow;
   win.on('close', (e) => {
     if (!quitting && tray && engine?.settings.closeToTray) {
       e.preventDefault();
@@ -719,25 +811,29 @@ function openChildWindow(
   title: string,
   width: number,
   height: number,
-  modalParent?: BrowserWindow | null,
-  /** contentSize: width/height (and the minimums) size the page, not the frame around it. */
-  opts?: { minWidth?: number; minHeight?: number; resizable?: boolean; contentSize?: boolean },
-): BrowserWindow {
+  modalParent?: AppWindow | null,
+  /** contentSize: width/height (and the minimums) size the page, not the frame around it. desktop: on the computer, whoever asks. */
+  opts?: { minWidth?: number; minHeight?: number; resizable?: boolean; contentSize?: boolean; desktop?: boolean },
+): AppWindow {
   const parent = modalParent && !modalParent.isDestroyed() ? modalParent : undefined;
-  const child = new BrowserWindow({
-    width,
-    height,
-    useContentSize: opts?.contentSize ?? false,
-    minWidth: opts?.minWidth ?? 520,
-    minHeight: opts?.minHeight ?? 420,
-    title,
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    maximizable: false,
-    resizable: opts?.resizable ?? true,
-    webPreferences: webPreferences(),
-    ...(parent ? { parent, modal: true, minimizable: false } : {}),
-  });
+  const child = newWindow(
+    {
+      width,
+      height,
+      useContentSize: opts?.contentSize ?? false,
+      minWidth: opts?.minWidth ?? 520,
+      minHeight: opts?.minHeight ?? 420,
+      title,
+      icon: appIcon,
+      backgroundColor: windowBackground(),
+      maximizable: false,
+      resizable: opts?.resizable ?? true,
+      webPreferences: webPreferences(),
+      ...(parent ? { parent, modal: true, minimizable: false } : {}),
+    },
+    hash,
+    opts?.desktop ? { desktop: true } : undefined,
+  );
   // Detach the app menu entirely; hiding it would leave Alt able to summon it.
   child.removeMenu();
   // Links (e.g. in rendered markdown) open in the system browser, never a new app window.
@@ -760,7 +856,7 @@ interface MarkdownExportChoice {
  * is chosen (the native save dialog cannot carry checkboxes). Resolves the
  * chosen options, or null when the window is dismissed without confirming.
  */
-function promptMarkdownExport(parent: BrowserWindow, defaults: MarkdownExportChoice): Promise<MarkdownExportChoice | null> {
+function promptMarkdownExport(parent: AppWindow, defaults: MarkdownExportChoice): Promise<MarkdownExportChoice | null> {
   return new Promise((resolve) => {
     const bit = (b: boolean): string => (b ? '1' : '0');
     const hash = `markdown-export/${bit(defaults.includeThinking)}/${bit(defaults.includeTools)}/${bit(defaults.plain)}`;
@@ -769,15 +865,15 @@ function promptMarkdownExport(parent: BrowserWindow, defaults: MarkdownExportCho
     const done = (value: MarkdownExportChoice | null): void => {
       if (settled) return;
       settled = true;
-      ipcMain.removeListener('markdown-export:apply', onApply);
+      ipc.removeListener('markdown-export:apply', onApply);
       resolve(value);
       if (!child.isDestroyed()) child.close();
     };
     const onApply = (e: Electron.IpcMainEvent, opts: MarkdownExportChoice): void => {
-      if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+      if (windowOf(e) !== child) return;
       done({ includeThinking: !!opts?.includeThinking, includeTools: !!opts?.includeTools, plain: !!opts?.plain });
     };
-    ipcMain.on('markdown-export:apply', onApply);
+    ipc.on('markdown-export:apply', onApply);
     child.on('closed', () => done(null));
   });
 }
@@ -799,12 +895,12 @@ function promptRunOptions(taskId: string): Promise<boolean> {
     const done = (started: boolean): void => {
       if (settled) return;
       settled = true;
-      ipcMain.removeListener('run-options:apply', onApply);
+      ipc.removeListener('run-options:apply', onApply);
       resolve(started);
       if (!child.isDestroyed()) child.close();
     };
     const onApply = (e: Electron.IpcMainEvent, opts: { check: boolean; classifier: boolean; agent: boolean }): void => {
-      if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+      if (windowOf(e) !== child) return;
       let started = false;
       try {
         started =
@@ -815,7 +911,7 @@ function promptRunOptions(taskId: string): Promise<boolean> {
       }
       done(started);
     };
-    ipcMain.on('run-options:apply', onApply);
+    ipc.on('run-options:apply', onApply);
     child.on('closed', () => done(false));
   });
 }
@@ -825,11 +921,11 @@ async function openHostPath(p: string): Promise<void> {
   if (process.platform === 'win32' && p.startsWith('/')) {
     const winPath = await convertWslPath(p, 'windows');
     if (winPath) {
-      void shell.openPath(winPath);
+      void openPath(winPath);
       return;
     }
   }
-  void shell.openPath(p);
+  void openPath(p);
 }
 
 /** focusReport: select the run's report row (or its last step) once it loads. */
@@ -845,17 +941,24 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       ? `Subagent: ${label.trim().slice(0, 80)}`
       : `Subagent ${agentId}`
     : `${engine?.taskName(taskId) ?? taskId} – ${runId}`;
-  const child = new BrowserWindow({
-    width: 960,
-    height: 640,
-    minWidth: 560,
-    minHeight: 420,
-    title,
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    maximizable: true,
-    webPreferences: webPreferences(),
-  });
+  const hash =
+    (agentId ? `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${encodeURIComponent(agentId)}` : runWindowHash(taskId, runId)) +
+    `/${encodeURIComponent(title)}` +
+    (focusReport ? '/report' : '');
+  const child = newWindow(
+    {
+      width: 960,
+      height: 640,
+      minWidth: 560,
+      minHeight: 420,
+      title,
+      icon: appIcon,
+      backgroundColor: windowBackground(),
+      maximizable: true,
+      webPreferences: webPreferences(),
+    },
+    hash,
+  );
   const send = (payload: unknown) => {
     if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
   };
@@ -877,10 +980,10 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     try {
       const result = await engine.readMessages(taskId, runId, agentId, false);
       if (result.status !== 'ok' || result.rows.length === 0) {
-        await dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
+        await showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
         return;
       }
-      const picked = await dialog.showSaveDialog(child, {
+      const picked = await showSaveDialog(child, {
         title: 'Save as Markdown',
         defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '-')}.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }],
@@ -894,7 +997,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       const md = messagesToMarkdown(result.rows, { title, ...chosen });
       fs.writeFileSync(picked.filePath, md, 'utf8');
     } catch (err) {
-      await dialog.showMessageBox(child, {
+      await showMessageBox(child, {
         type: 'error',
         title: 'Looper',
         message: 'Could not save the messages.',
@@ -925,7 +1028,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           enabled: canContinue.terminal,
           click: () =>
             void openTerminal(taskId, runId).catch(async (err: unknown) => {
-              await dialog.showMessageBox(child, {
+              await showMessageBox(child, {
                 type: 'error',
                 title: 'Looper',
                 message: err instanceof Error ? err.message : String(err),
@@ -938,7 +1041,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           enabled: canContinue.chat,
           click: () =>
             void openChat(taskId, runId).catch(async (err: unknown) => {
-              await dialog.showMessageBox(child, {
+              await showMessageBox(child, {
                 type: 'error',
                 title: 'Looper',
                 message: err instanceof Error ? err.message : String(err),
@@ -969,7 +1072,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         {
           label: 'Copy Run Folder &Path',
           click: () => {
-            if (engine) clipboard.writeText(engine.runDir(taskId, runId));
+            if (engine) writeClipboard(engine.runDir(taskId, runId));
           },
         },
         {
@@ -1036,45 +1139,45 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
   ];
   const menu = attachWindowMenu(child, template);
   const onFilterState = (e: Electron.IpcMainEvent, filter: string) => {
-    if (BrowserWindow.fromWebContents(e.sender) !== child) return;
+    if (windowOf(e) !== child) return;
     filterValue = String(filter ?? '');
     const item = menu.getMenuItemById('filter');
     if (item) item.checked = filterValue.trim() !== '';
+    if (isRemote(child)) child.refreshMenu();
   };
-  ipcMain.on('messages:filter-state', onFilterState);
-  child.on('closed', () => ipcMain.removeListener('messages:filter-state', onFilterState));
+  ipc.on('messages:filter-state', onFilterState);
+  child.on('closed', () => ipc.removeListener('messages:filter-state', onFilterState));
   child.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
-  const hash =
-    (agentId ? `messages/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${encodeURIComponent(agentId)}` : runWindowHash(taskId, runId)) +
-    `/${encodeURIComponent(title)}` +
-    (focusReport ? '/report' : '');
   loadRenderer(child, hash);
 }
 
 function openImageWindow(taskId: string, runId: string, rowId: string, agentId?: string, label?: string): void {
   const name = label?.trim() ? label.trim().slice(0, 80) : `${runId} row ${rowId}`;
-  const child = new BrowserWindow({
-    width: 900,
-    height: 700,
-    minWidth: 420,
-    minHeight: 320,
-    title: `Image – ${name}`,
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    maximizable: true,
-    webPreferences: webPreferences(),
-  });
+  const hash =
+    `image/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
+    `/${encodeURIComponent(rowId)}/${encodeURIComponent(`Image – ${name}`)}`;
+  const child = newWindow(
+    {
+      width: 900,
+      height: 700,
+      minWidth: 420,
+      minHeight: 320,
+      title: `Image – ${name}`,
+      icon: appIcon,
+      backgroundColor: windowBackground(),
+      maximizable: true,
+      webPreferences: webPreferences(),
+    },
+    hash,
+  );
   child.removeMenu();
   child.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
-  const hash =
-    `image/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
-    `/${encodeURIComponent(rowId)}/${encodeURIComponent(`Image – ${name}`)}`;
   loadRenderer(child, hash);
 }
 
@@ -1168,39 +1271,40 @@ function openTemplatesWindow(): void {
   openChildWindow('templates', 'Templates', 560, 520);
 }
 
-let recycleBinWindow: BrowserWindow | null = null;
-
-/** One Recycle Bin window: opening it again brings the open one forward. */
-function openRecycleBinWindow(): void {
-  if (recycleBinWindow && !recycleBinWindow.isDestroyed()) {
-    recycleBinWindow.focus();
-    return;
-  }
-  recycleBinWindow = openChildWindow('recycle-bin', 'Recycle Bin', 560, 520);
-  recycleBinWindow.on('closed', () => {
-    recycleBinWindow = null;
-  });
+/** The caller's main window: a browser tab's own, or the desktop's. */
+function mainWin(): AppWindow | null {
+  return callerMainWindow(win);
 }
 
-let addonsWindow: BrowserWindow | null = null;
+const recycleBinWindows = new WindowSlots();
 
-/** One Addons window: opening it again brings the open one forward. */
-function openAddonsWindow(): void {
-  if (addonsWindow && !addonsWindow.isDestroyed()) {
-    addonsWindow.focus();
+/** One Recycle Bin window (per client): opening it again brings the open one forward. */
+function openRecycleBinWindow(): void {
+  const open = recycleBinWindows.get();
+  if (open) {
+    open.focus();
     return;
   }
-  addonsWindow = openChildWindow('addons', 'Addons', 560, 560);
-  addonsWindow.on('closed', () => {
-    addonsWindow = null;
-  });
+  recycleBinWindows.set(openChildWindow('recycle-bin', 'Recycle Bin', 560, 520));
+}
+
+const addonsWindows = new WindowSlots();
+
+/** One Addons window (per client): opening it again brings the open one forward. */
+function openAddonsWindow(): void {
+  const open = addonsWindows.get();
+  if (open) {
+    open.focus();
+    return;
+  }
+  addonsWindows.set(openChildWindow('addons', 'Addons', 560, 560));
 }
 
 function addonDeps(): AddonUiDeps {
   return {
     host: addons!,
     hostKind: engine!.host,
-    mainWindow: () => win,
+    mainWindow: mainWin,
     openWindow: openChildWindow,
     view: () => engine?.settings.view ?? ViewSchema.parse({}),
     updateView,
@@ -1212,17 +1316,20 @@ function openInstructionsWindow(): void {
 }
 
 function openEngineLogWindow(): void {
-  const child = new BrowserWindow({
-    width: 1000,
-    height: 640,
-    minWidth: 640,
-    minHeight: 420,
-    title: 'Engine Log',
-    icon: appIcon,
-    backgroundColor: windowBackground(),
-    maximizable: true,
-    webPreferences: webPreferences(),
-  });
+  const child = newWindow(
+    {
+      width: 1000,
+      height: 640,
+      minWidth: 640,
+      minHeight: 420,
+      title: 'Engine Log',
+      icon: appIcon,
+      backgroundColor: windowBackground(),
+      maximizable: true,
+      webPreferences: webPreferences(),
+    },
+    'engine-log',
+  );
   // View: which sources (Looper itself, each addon) and levels the window lists.
   const hiddenSources = new Set<string>();
   const hiddenLevels = new Set<EngineLogLevel>();
@@ -1270,7 +1377,7 @@ function openAboutWindow(): void {
   openChildWindow('about', 'About', 360, 320, win, { minWidth: 360, minHeight: 320, resizable: false });
 }
 
-function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: BrowserWindow | null): void {
+function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: AppWindow | null): void {
   openChildWindow(
     `env-editor/${encodeURIComponent(envId)}${isNew ? '/new' : ''}`,
     isNew ? 'New Environment' : 'Edit Environment',
@@ -1284,7 +1391,7 @@ function openHarnessEditorWindow(
   envId: string,
   harnessId: string,
   isNew?: boolean,
-  parent?: BrowserWindow | null,
+  parent?: AppWindow | null,
 ): void {
   openChildWindow(
     `harness-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}${isNew ? '/new' : ''}`,
@@ -1299,7 +1406,7 @@ function openModelEditorWindow(
   envId: string,
   harnessId: string,
   index?: number,
-  parent?: BrowserWindow | null,
+  parent?: AppWindow | null,
 ): void {
   openChildWindow(
     `model-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}/${index === undefined ? 'new' : index}`,
@@ -1312,7 +1419,7 @@ function openModelEditorWindow(
   );
 }
 
-function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: BrowserWindow | null): void {
+function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: AppWindow | null): void {
   const hash =
     envId && harnessId
       ? `model-update/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}`
@@ -1320,7 +1427,7 @@ function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: Brow
   openChildWindow(hash, 'Update Models', 560, 560, parent ?? win);
 }
 
-function openTemplateEditorWindow(templateId?: string, _parent?: BrowserWindow | null): void {
+function openTemplateEditorWindow(templateId?: string, _parent?: AppWindow | null): void {
   openChildWindow(
     templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
     templateId ? 'Edit Template' : 'New Template',
@@ -1342,30 +1449,29 @@ function openEditorFromTemplateWindow(templateId: string): void {
   );
   // The picker is modal to main; closing it auto-focuses main.
   // Intercept that focus event and redirect to the editor.
-  if (win && !win.isDestroyed()) {
+  const main = mainWin();
+  if (main && !main.isDestroyed()) {
     const redirect = () => { if (!child.isDestroyed()) child.focus(); };
-    win.once('focus', redirect);
-    child.once('closed', () => win?.removeListener('focus', redirect));
+    main.once('focus', redirect);
+    child.once('closed', () => main.removeListener('focus', redirect));
   }
 }
 
 // ---------- version history ----------
 
-const versionWindows = new Map<string, BrowserWindow>();
+const versionWindows = new WindowSlots();
 
-/** One Version History window per task: opening it again brings the open one forward. */
+/** One Version History window per task (and client): opening it again brings the open one forward. */
 function openVersionsWindow(taskId: string): void {
   const open = versionWindows.get(taskId);
-  if (open && !open.isDestroyed()) {
+  if (open) {
     open.focus();
     return;
   }
-  const child = openChildWindow(`versions/${encodeURIComponent(taskId)}`, 'Version History', 640, 480);
-  versionWindows.set(taskId, child);
-  child.on('closed', () => versionWindows.delete(taskId));
+  versionWindows.set(openChildWindow(`versions/${encodeURIComponent(taskId)}`, 'Version History', 640, 480), taskId);
 }
 
-function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _parent: BrowserWindow | null): void {
+function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _parent: AppWindow | null): void {
   openChildWindow(
     `version/${encodeURIComponent(taskId)}/${n}/${compare ? 'compare' : 'view'}`,
     compare ? `Compare Version ${n} with Current` : `Version ${n}`,
@@ -1376,8 +1482,8 @@ function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _p
 
 // ---------- terminal sessions ----------
 
-/** Open Remote Control conversation windows by session id. */
-const terminalWindows = new Map<string, BrowserWindow>();
+/** Open Remote Control conversation windows by session id (one per client). */
+const terminalWindows = new WindowSlots();
 
 /**
  * Open Project in Terminal, or Continue in Terminal with a run id: in the
@@ -1401,7 +1507,7 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
  */
 function openTerminalWindow(sessionId: string, title: string): void {
   const open = terminalWindows.get(sessionId);
-  if (open && !open.isDestroyed()) {
+  if (open) {
     if (open.isMinimized()) open.restore();
     open.focus();
     return;
@@ -1413,8 +1519,7 @@ function openTerminalWindow(sessionId: string, title: string): void {
     contentSize: true,
   });
   child.setMaximizable(true);
-  terminalWindows.set(sessionId, child);
-  child.on('closed', () => terminalWindows.delete(sessionId));
+  terminalWindows.set(child, sessionId);
 }
 
 // ---------- Remote Control ----------
@@ -1434,22 +1539,69 @@ function openRemoteSettingsWindow(): void {
 }
 
 // Page sizes: every field shows without a scroll bar.
-function openRemoteHelperEditor(id: string, isNew: boolean, parent: BrowserWindow | null): void {
+function openRemoteHelperEditor(id: string, isNew: boolean, parent: AppWindow | null): void {
   openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 700, parent, {
     contentSize: true,
+  });
+}
+
+// ---------- Remote Access ----------
+
+function applyRemoteAccess(): void {
+  if (!engine || !remoteAccess) return;
+  remoteAccess.apply(engine.settings.remoteAccess).catch((err: unknown) => engine?.log.error(`remote access: ${String(err)}`));
+}
+
+/** Advanced → Remote Access → Turn On / Turn Off. */
+function toggleRemoteAccess(): void {
+  if (!engine) return;
+  const ra = engine.settings.remoteAccess;
+  engine.updateSettings({ remoteAccess: { ...ra, enabled: !ra.enabled } });
+}
+
+function openRemoteAccessSettingsWindow(): void {
+  openChildWindow('remote-access-settings', 'Remote Access', 560, 600, win, { contentSize: true });
+}
+
+const remoteAccessPairWindows = new WindowSlots();
+
+/** One Pair Device window per client; closing the last one cancels the code (there's one code for all). */
+function openRemoteAccessPairWindow(parent: AppWindow | null = mainWin()): void {
+  const open = remoteAccessPairWindows.get();
+  if (open) {
+    open.focus();
+    return;
+  }
+  const child = openChildWindow('remote-access-pair', 'Pair Device', 420, 520, parent, {
+    minWidth: 420,
+    minHeight: 520,
+    resizable: false,
+    contentSize: true,
+  });
+  remoteAccessPairWindows.set(child);
+  child.on('closed', () => {
+    if (remoteAccessPairWindows.all().length === 0) remoteAccess?.cancelPairing();
+  });
+}
+
+function openRemoteAccessRenameWindow(deviceId: string, parent: AppWindow | null): void {
+  openChildWindow(`remote-access-rename/${encodeURIComponent(deviceId)}`, 'Rename Device', 420, 240, parent, {
+    minWidth: 420,
+    minHeight: 240,
+    resizable: false,
   });
 }
 
 // ---------- projects ----------
 
 /** Open Edit Project windows by project id ('' = New Project): opening one again brings it forward. */
-const projectWindows = new Map<string, BrowserWindow>();
+const projectWindows = new WindowSlots();
 
 /** The Edit Project window, modeless like the task editor (no id = New Project). */
 function openProjectEditor(id?: string): void {
   const key = id ?? '';
   const open = projectWindows.get(key);
-  if (open && !open.isDestroyed()) {
+  if (open) {
     if (open.isMinimized()) open.restore();
     open.focus();
     return;
@@ -1457,8 +1609,7 @@ function openProjectEditor(id?: string): void {
   const child = openChildWindow(id ? `project/${encodeURIComponent(id)}` : 'project-new', id ? 'Edit Project' : 'New Project', 560, 545, undefined, {
     contentSize: true,
   });
-  projectWindows.set(key, child);
-  child.on('closed', () => projectWindows.delete(key));
+  projectWindows.set(child, key);
 }
 
 /** File → New Task with a project picked (a project's New Task…). */
@@ -1469,23 +1620,22 @@ function openNewTaskIn(projectId: string): void {
 /** A new chat in a project, from the tray: Looper's main window stays as it is. */
 function openProjectChat(projectId: string): void {
   void openChat(projectTaskId(projectId)).catch((err: unknown) => {
-    void dialog.showMessageBox({ type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+    void showMessageBox(undefined, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   });
 }
 
-let remoteConversationsWindow: BrowserWindow | null = null;
+const remoteConversationsWindows = new WindowSlots();
 
-/** One Conversations window, modeless: opening it again brings the open one forward. */
+/** One Conversations window per client, modeless: opening it again brings the open one forward. */
 function openRemoteConversationsWindow(): void {
-  if (remoteConversationsWindow && !remoteConversationsWindow.isDestroyed()) {
-    remoteConversationsWindow.focus();
+  const open = remoteConversationsWindows.get();
+  if (open) {
+    open.focus();
     return;
   }
-  remoteConversationsWindow = openChildWindow('remote-conversations', 'Remote Control Conversations', 820, 600);
-  remoteConversationsWindow.setMaximizable(true);
-  remoteConversationsWindow.on('closed', () => {
-    remoteConversationsWindow = null;
-  });
+  const child = openChildWindow('remote-conversations', 'Remote Control Conversations', 820, 600);
+  child.setMaximizable(true);
+  remoteConversationsWindows.set(child);
 }
 
 // ---------- task chats ----------
@@ -1592,19 +1742,32 @@ function chatMenu(
 function chatSettingMenu(chatId: string, which: 'model' | 'effort' | 'permission'): Electron.MenuItemConstructorOptions[] {
   const chat = engine?.getChat(chatId);
   if (!chat) return [];
-  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const parent = sessionsWindows.get();
   const showError = (err: unknown) => {
     const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
-    void (parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts));
+    void showMessageBox(parent, opts);
   };
-  return chatSettingItems(chat, (patch) => void engine?.configureChat(chatId, patch).catch(showError).finally(() => refreshSessionsMenu(true)))[which];
+  return chatSettingItems(chat, (patch) => void engine?.configureChat(chatId, patch).catch(showError).finally(() => refreshSessionsMenus(true)))[which];
 }
 
 // ---------- the Sessions window ----------
 
-let sessionsWindow: BrowserWindow | null = null;
-/** The session the Sessions window shows: its chat and terminal output go there. Null for the Overview. */
-let sessionShown: string | null = null;
+/** A Sessions window and the session it shows (null: the Overview): that session's chat and terminal output go there. */
+interface SessionsView {
+  w: AppWindow;
+  shown: string | null;
+  /** What its menu was last built from. */
+  menuKey: string;
+}
+
+/** One Sessions window per client. */
+const sessionsWindows = new WindowSlots();
+const sessionsViews = new Map<AppWindow, SessionsView>();
+
+/** Every Sessions window showing the session (a desktop and a phone can watch the same chat). */
+function sessionWindowsShowing(id: string): AppWindow[] {
+  return [...sessionsViews.values()].filter((v) => v.shown === id && !v.w.isDestroyed()).map((v) => v.w);
+}
 
 /**
  * The Sessions window, opened or brought forward, showing the session
@@ -1612,11 +1775,12 @@ let sessionShown: string | null = null;
  * Conversation, Close All Conversations and quitting Looper end them.
  */
 function openSessionsWindow(select?: string): void {
-  if (sessionsWindow && !sessionsWindow.isDestroyed()) {
-    if (sessionsWindow.isMinimized()) sessionsWindow.restore();
-    sessionsWindow.show();
-    sessionsWindow.focus();
-    if (select) sessionsWindow.webContents.send('ui:event', { type: 'sessions-select', id: select });
+  const open = sessionsWindows.get();
+  if (open) {
+    if (open.isMinimized()) open.restore();
+    open.show();
+    open.focus();
+    if (select) open.webContents.send('ui:event', { type: 'sessions-select', id: select });
     return;
   }
   const child = openChildWindow(select ? `sessions/${encodeURIComponent(select)}` : 'sessions', 'Sessions', 1388, 895, undefined, {
@@ -1625,34 +1789,40 @@ function openSessionsWindow(select?: string): void {
     contentSize: true,
   });
   child.setMaximizable(true);
-  sessionsWindow = child;
-  sessionShown = select ?? null;
-  attachWindowMenu(child, sessionsTemplate(child));
-  sessionsMenuKey = sessionsMenuState();
+  const view: SessionsView = { w: child, shown: select ?? null, menuKey: '' };
+  sessionsWindows.set(child);
+  sessionsViews.set(child, view);
+  attachWindowMenu(child, sessionsTemplate(view));
+  view.menuKey = sessionsMenuState(view);
   const unsubscribe = engine!.on((e) => {
-    if ((e.type === 'chat' && e.state.id === sessionShown) || e.type === 'sessions' || e.type === 'projects' || e.type === 'settings') {
-      refreshSessionsMenu();
+    if ((e.type === 'chat' && e.state.id === view.shown) || e.type === 'sessions' || e.type === 'projects' || e.type === 'settings') {
+      refreshSessionsMenu(view);
     }
   });
   child.on('closed', () => {
     unsubscribe();
-    sessionsWindow = null;
-    sessionShown = null;
-    engine?.watchSession(null);
+    sessionsViews.delete(child);
+    watchShownSessions();
   });
 }
 
-/** The Sessions window now shows `id` (null: the Overview): its chat and terminal output go there. */
-function showSession(id: string | null): void {
-  sessionShown = id;
-  engine?.watchSession(id);
-  refreshSessionsMenu(true);
+/** The engine follows closely every session a Sessions window shows, on any device. */
+function watchShownSessions(): void {
+  engine?.watchSessions([...sessionsViews.values()].flatMap((v) => (v.shown === null ? [] : [v.shown])));
 }
 
-/** What the Sessions window's menu depends on: rebuilt when it changes. */
-let sessionsMenuKey = '';
-function sessionsMenuState(): string {
-  const id = sessionShown;
+/** That Sessions window now shows `id` (null: the Overview): its chat and terminal output go there. */
+function showSession(w: AppWindow | null, id: string | null): void {
+  const target = w && sessionsViews.has(w) ? w : sessionsWindows.get();
+  const view = target ? sessionsViews.get(target) : undefined;
+  if (view) view.shown = id;
+  watchShownSessions();
+  if (view) refreshSessionsMenu(view, true);
+}
+
+/** What a Sessions window's menu depends on: rebuilt when it changes. */
+function sessionsMenuState(view: SessionsView): string {
+  const id = view.shown;
   const chat = id ? engine?.getChat(id) : undefined;
   return JSON.stringify([
     id,
@@ -1664,13 +1834,16 @@ function sessionsMenuState(): string {
   ]);
 }
 
-function refreshSessionsMenu(force = false): void {
-  const child = sessionsWindow;
-  if (!child || child.isDestroyed()) return;
-  const key = sessionsMenuState();
-  if (key === sessionsMenuKey && !force) return;
-  sessionsMenuKey = key;
-  replaceWindowMenu(child, sessionsTemplate(child));
+function refreshSessionsMenu(view: SessionsView, force = false): void {
+  if (view.w.isDestroyed()) return;
+  const key = sessionsMenuState(view);
+  if (key === view.menuKey && !force) return;
+  view.menuKey = key;
+  replaceWindowMenu(view.w, sessionsTemplate(view));
+}
+
+function refreshSessionsMenus(force = false): void {
+  for (const view of [...sessionsViews.values()]) refreshSessionsMenu(view, force);
 }
 
 /** A session's name for a question about it. */
@@ -1687,7 +1860,7 @@ function sessionBusy(id: string): boolean {
 /** Close Conversation (the toolbar, the menus, Ctrl+W, Ctrl+F4): the session ends once the user confirms. */
 async function closeSessionAsk(id: string): Promise<void> {
   if (!engine || !engine.sessionKind(id)) return;
-  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const parent = sessionsWindows.get();
   const busy = sessionBusy(id);
   const opts = {
     type: 'question' as const,
@@ -1701,7 +1874,7 @@ async function closeSessionAsk(id: string): Promise<void> {
     defaultId: busy ? 1 : 0,
     cancelId: 1,
   };
-  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  const { response } = await showMessageBox(parent, opts);
   if (response === 0) await engine.closeSession(id);
 }
 
@@ -1711,7 +1884,7 @@ async function closeAllSessionsAsk(): Promise<void> {
   const sessions = engine.sessionsState().sessions;
   if (sessions.length === 0) return;
   const working = sessions.filter((s) => sessionBusy(s.id)).length;
-  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const parent = sessionsWindows.get();
   const opts = {
     type: 'question' as const,
     title: 'Sessions',
@@ -1727,27 +1900,28 @@ async function closeAllSessionsAsk(): Promise<void> {
     defaultId: 1,
     cancelId: 1,
   };
-  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  const { response } = await showMessageBox(parent, opts);
   if (response === 0) await engine.closeAllSessions();
 }
 
 /** The Sessions window's menus: File, Edit, View, and Chat while a chat is shown. */
-function sessionsTemplate(child: BrowserWindow): Electron.MenuItemConstructorOptions[] {
-  const id = sessionShown;
+function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions[] {
+  const child = sv.w;
+  const id = sv.shown;
   const kind = id ? engine?.sessionKind(id) : undefined;
   const chat = kind === 'chat' && id ? engine?.getChat(id) : undefined;
   const send = (payload: unknown) => {
     if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
   };
   const showError = (err: unknown) =>
-    void dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+    void showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   const projects = engine?.listProjects() ?? [];
   const anySessions = (engine?.sessionsState().sessions.length ?? 0) > 0;
   const shownProjectId = id ? engine?.sessionsState().sessions.find((s) => s.id === id)?.projectId : undefined;
   const shownProject = shownProjectId ? projects.find((p) => p.id === shownProjectId) : undefined;
   const attachFiles = async () => {
     if (!id) return;
-    const r = await dialog.showOpenDialog(child, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
+    const r = await showOpenDialog(child, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
     if (r.canceled || r.filePaths.length === 0 || !engine) return;
     const added = engine.attachToChat(id, r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
     send({ type: 'chat-attached', attachments: added });
@@ -1757,11 +1931,11 @@ function sessionsTemplate(child: BrowserWindow): Electron.MenuItemConstructorOpt
     if (!c) return;
     const rows = [...c.history, ...c.rows];
     if (rows.length === 0) {
-      await dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
+      await showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
       return;
     }
     const title = sessionTitle(c.id);
-    const picked = await dialog.showSaveDialog(child, {
+    const picked = await showSaveDialog(child, {
       title: 'Save as Markdown',
       defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '-')}.md`,
       filters: [{ name: 'Markdown', extensions: ['md'] }],
@@ -1861,7 +2035,7 @@ function sessionsTemplate(child: BrowserWindow): Electron.MenuItemConstructorOpt
         () => void engine?.stopChat(id).catch(showError),
         () => void engine?.sendNowChat(id).catch(showError),
         // The menu shows the chat's settings as they are once the change is through (or refused).
-        (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(true)),
+        (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
       ),
     );
   }
@@ -1871,24 +2045,25 @@ function sessionsTemplate(child: BrowserWindow): Electron.MenuItemConstructorOpt
 /** The export options Save as Markdown last used in the Sessions window. */
 let sessionsExportOpts = { includeThinking: true, includeTools: true, plain: false };
 
-let sendToSessionsWindow: BrowserWindow | null = null;
+const sendToSessionsWindows = new WindowSlots();
 
-/** Send to Sessions: one message to the sessions picked there. Modeless; opening it again brings it forward. */
+/** Send to Sessions: one message to the sessions picked there. Modeless, one per client; opening it again brings it forward. */
 function openSendToSessionsWindow(): void {
-  if (sendToSessionsWindow && !sendToSessionsWindow.isDestroyed()) {
-    sendToSessionsWindow.focus();
+  const open = sendToSessionsWindows.get();
+  if (open) {
+    open.focus();
     return;
   }
-  sendToSessionsWindow = openChildWindow('send-to-sessions', 'Send to Sessions', 620, 560, undefined, { contentSize: true, minWidth: 480, minHeight: 420 });
-  sendToSessionsWindow.on('closed', () => {
-    sendToSessionsWindow = null;
-  });
+  sendToSessionsWindows.set(openChildWindow('send-to-sessions', 'Send to Sessions', 620, 560, undefined, { contentSize: true, minWidth: 480, minHeight: 420 }));
 }
 
 // ---------- task builder ----------
 
-/** Open builder windows by builder id; closing one ends its session. */
-const builderWindows = new Map<string, BrowserWindow>();
+/**
+ * Open builder windows by builder id: one per client at most (the desktop
+ * and a phone can both show a builder). Closing the last one ends its session.
+ */
+const builderWindows = new Map<string, AppWindow[]>();
 
 const BUILDER_SIZE = { width: 1180, height: 760 };
 
@@ -1908,9 +2083,10 @@ const settlingBuilders = new Set<string>();
 /**
  * Before a builder's window closes, ask about unsaved changes: Save stores the
  * draft, Don't Save puts back the files the agent changed, Cancel keeps the
- * window open. True = the window may close.
+ * window open. True = the window may close. The question goes over `parent`
+ * when the builder's window isn't the asker's (quitting while a phone has it).
  */
-async function settleBuilder(id: string, child: BrowserWindow): Promise<boolean> {
+async function settleBuilder(id: string, child: AppWindow, parent: AppWindow | null = child): Promise<boolean> {
   if (!engine || settledBuilders.has(id)) return true;
   if (settlingBuilders.has(id)) return false;
   settlingBuilders.add(id);
@@ -1926,9 +2102,11 @@ async function settleBuilder(id: string, child: BrowserWindow): Promise<boolean>
     // Not saving also undoes the agent's file changes, which isn't obvious: say which files.
     const files = (state?.changedFiles ?? []).map((f) => f.split(/[\\/]/).pop() ?? f);
     const fileList = listInWords(files.length > 3 ? [...files.slice(0, 2), `${files.length - 2} other files`] : files);
-    if (child.isMinimized()) child.restore();
-    child.focus();
-    const r = await dialog.showMessageBox(child, {
+    if (parent === child) {
+      if (child.isMinimized()) child.restore();
+      child.focus();
+    }
+    const r = await showMessageBox(parent, {
       // A routine "save changes" confirmation: no icon.
       type: 'none',
       title: child.getTitle(),
@@ -1948,14 +2126,14 @@ async function settleBuilder(id: string, child: BrowserWindow): Promise<boolean>
       try {
         await engine.saveBuilder(id);
       } catch (err) {
-        await dialog.showMessageBox(child, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
+        await showMessageBox(parent, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
         return false;
       }
     } else {
       try {
         await engine.discardBuilder(id);
       } catch (err) {
-        await dialog.showMessageBox(child, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
+        await showMessageBox(parent, { type: 'error', title: child.getTitle(), message: (err as Error).message, buttons: ['OK'] });
       }
     }
     settledBuilders.add(id);
@@ -1973,27 +2151,88 @@ function listInWords(items: string[]): string {
 
 /** Every open builder answered (quitting, or closing the main window, which closes them). */
 async function settleAllBuilders(): Promise<boolean> {
-  for (const [id, child] of builderWindows) {
-    if (!child.isDestroyed() && !(await settleBuilder(id, child))) return false;
+  for (const [id, list] of [...builderWindows]) {
+    const live = list.filter((w) => !w.isDestroyed());
+    // Asked over the asker's own builder window; one only another client shows is asked about over the asker's main window.
+    const mine = ofCaller(live)[0];
+    const child = mine ?? live[0];
+    if (child && !(await settleBuilder(id, child, mine ? child : mainWin()))) return false;
   }
   return true;
 }
 
-/** Tie a builder to its window: the window's events, the Save question, and the session's end when it closes. */
-function attachBuilder(child: BrowserWindow, id: string): void {
-  builderWindows.set(id, child);
+/** Tie a builder to a window: the window's events, the Save question, and the session's end when its last window closes. */
+function attachBuilder(child: AppWindow, id: string): void {
+  builderWindows.set(id, [...(builderWindows.get(id) ?? []), child]);
+  const others = () => (builderWindows.get(id) ?? []).filter((w) => w !== child && !w.isDestroyed());
   child.on('close', (e) => {
-    if (quitting || settledBuilders.has(id) || !engine) return;
+    // Another client still shows the builder: this window just goes.
+    if (quitting || settledBuilders.has(id) || !engine || others().length > 0) return;
     e.preventDefault();
     void settleBuilder(id, child).then((ok) => {
       if (ok && !child.isDestroyed()) child.close();
     });
   });
   child.on('closed', () => {
+    const rest = others();
+    if (rest.length > 0) {
+      builderWindows.set(id, rest);
+      return;
+    }
     builderWindows.delete(id);
+    // A browser tab that never came back took its window without the Save question.
+    if (isRemote(child) && child.client.disposed && !quitting && !settledBuilders.has(id)) {
+      void rescueBuilder(id, child);
+      return;
+    }
     settledBuilders.delete(id);
+    rescuedBuilders.delete(id);
     void engine?.closeBuilder(id);
   });
+}
+
+/** Builders a device left with unsaved work, by the device's id: they open there again when it reconnects. */
+const rescuedBuilders = new Map<string, string>();
+
+/**
+ * The builder's work outlives the tab: with unsaved changes it opens on the
+ * desktop, where its Save question comes as usual (also on quit), and on the
+ * same device again once it reconnects. Without any, its session ends.
+ */
+async function rescueBuilder(id: string, gone: RemoteWindow): Promise<void> {
+  if (!engine) return;
+  const unsaved = await engine.builderUnsaved(id).catch(() => false);
+  if (builderWindows.has(id)) return;
+  if (!unsaved || quitting) {
+    settledBuilders.delete(id);
+    void engine.closeBuilder(id);
+    return;
+  }
+  const child = openChildWindow(`builder/${encodeURIComponent(id)}`, gone.getTitle() || builderTitle(false), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
+    minWidth: 760,
+    minHeight: 480,
+    contentSize: true,
+    desktop: true,
+  });
+  child.setMaximizable(true);
+  attachBuilder(child, id);
+  rescuedBuilders.set(id, gone.client.device.id);
+  engine.log.info(`remote access: ${gone.client.device.name} didn't come back to its task builder; its unsaved work is open on the desktop`);
+}
+
+/** A device's new tab: the builders it left with unsaved work open there too. */
+function reopenRescuedBuilders(main: RemoteWindow): void {
+  for (const [id, deviceId] of [...rescuedBuilders]) {
+    if (deviceId !== main.client.device.id) continue;
+    rescuedBuilders.delete(id);
+    if (!builderWindows.has(id) || !engine?.getBuilder(id)) continue;
+    const title = engine.getBuilder(id)?.taskId ? builderTitle(true) : builderTitle(false);
+    const child = runAs({ client: main.client, window: main }, () =>
+      openChildWindow(`builder/${encodeURIComponent(id)}`, title, BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, { minWidth: 760, minHeight: 480, contentSize: true }),
+    );
+    child.setMaximizable(true);
+    attachBuilder(child, id);
+  }
 }
 
 function builderTitle(edit: boolean): string {
@@ -2001,7 +2240,7 @@ function builderTitle(edit: boolean): string {
 }
 
 /** The setup window's Start: the builder starts and the same window turns into its conversation. */
-function startBuilderInWindow(setupWindow: BrowserWindow | null, setup: BuilderSetup): void {
+function startBuilderInWindow(setupWindow: AppWindow | null, setup: BuilderSetup): void {
   if (!engine) return;
   const state = engine.startBuilder(setup);
   if (!setupWindow || setupWindow.isDestroyed()) {
@@ -2025,9 +2264,21 @@ function startBuilderInWindow(setupWindow: BrowserWindow | null, setup: BuilderS
 async function editWithAgent(taskId: string): Promise<void> {
   if (!engine) return;
   const openId = engine.builderForTask(taskId);
-  const open = openId ? builderWindows.get(openId) : undefined;
-  if (open && !open.isDestroyed()) {
+  const shown = openId ? (builderWindows.get(openId) ?? []).filter((w) => !w.isDestroyed()) : [];
+  const open = ofCaller(shown)[0];
+  if (open) {
     open.focus();
+    return;
+  }
+  // Open on another client only: this one gets a window on the same builder.
+  if (openId && shown.length > 0) {
+    const child = openChildWindow(`builder/${openId}`, builderTitle(true), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
+      minWidth: 760,
+      minHeight: 480,
+      contentSize: true,
+    });
+    child.setMaximizable(true);
+    attachBuilder(child, openId);
     return;
   }
   try {
@@ -2071,8 +2322,9 @@ function takeImportDraft(key: string): unknown {
 
 /** Pick a .loopertask file and open a New Task editor prefilled from it. */
 async function importTask(): Promise<void> {
-  if (!win || win.isDestroyed()) return;
-  const result = await dialog.showOpenDialog(win, {
+  const main = mainWin();
+  if (!main || main.isDestroyed()) return;
+  const result = await showOpenDialog(main, {
     title: 'Import Task',
     filters: [{ name: FILE_KINDS.task.filterName, extensions: [FILE_KINDS.task.ext] }],
     properties: ['openFile'],
@@ -2083,8 +2335,8 @@ async function importTask(): Promise<void> {
 
 async function fileErrorBox(message: string, detail: string): Promise<void> {
   const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, detail, buttons: ['OK'] };
-  if (win && !win.isDestroyed()) await dialog.showMessageBox(win, opts);
-  else await dialog.showMessageBox(opts);
+  const main = mainWin();
+  await showMessageBox(main && !main.isDestroyed() ? main : undefined, opts);
 }
 
 /** The last argument naming an existing Looper document (double-click / “Open with” / drop). */
@@ -2106,7 +2358,7 @@ function looperFileFromArgv(argv: string[]): string | undefined {
 async function openLooperFile(file: string): Promise<void> {
   if (!isLooperFileName(file)) return;
   if (isAddonFileName(file)) {
-    if (addons) await installAddonFile(addonDeps(), file, win);
+    if (addons) await installAddonFile(addonDeps(), file, mainWin());
     return;
   }
   let input: unknown;
@@ -2163,7 +2415,8 @@ async function openLooperFile(file: string): Promise<void> {
       defaultId: 0,
       cancelId: 2,
     };
-    const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+    const main = mainWin();
+    const r = await showMessageBox(main && !main.isDestroyed() ? main : undefined, opts);
     if (r.response === 2) return;
     update = r.response === 0;
   }
@@ -2176,14 +2429,14 @@ async function openLooperFile(file: string): Promise<void> {
 
 /** Send a UI command to the main window (menu accelerators act on the selected task there). */
 function sendUi(type: string): void {
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('ui:event', { type });
-    win.focus();
+  const main = mainWin();
+  if (main && !main.isDestroyed()) {
+    main.webContents.send('ui:event', { type });
+    main.focus();
   }
 }
 
-/** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
-let menuSelection: [
+type MenuSelection = [
   boolean,
   boolean | undefined,
   boolean | undefined,
@@ -2192,7 +2445,13 @@ let menuSelection: [
   boolean | undefined,
   boolean,
   boolean,
-] = [false, undefined, undefined, undefined, false, undefined, false, false];
+];
+const NO_SELECTION: MenuSelection = [false, undefined, undefined, undefined, false, undefined, false, false];
+
+/** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
+let menuSelection: MenuSelection = NO_SELECTION;
+/** The same for each browser tab's main window. */
+const remoteSelections = new WeakMap<RemoteWindow, MenuSelection>();
 
 function updateTaskMenu(
   hasTask: boolean,
@@ -2204,7 +2463,7 @@ function updateTaskMenu(
   taskCompleted?: boolean,
   allowComplete?: boolean,
 ): void {
-  menuSelection = [
+  const selection: MenuSelection = [
     hasTask,
     taskEnabled,
     taskPaused,
@@ -2214,11 +2473,29 @@ function updateTaskMenu(
     taskCompleted ?? false,
     allowComplete ?? false,
   ];
+  // A browser tab's main window reported it: only that tab's menu bar follows.
+  const ctx = caller();
+  if (ctx) {
+    const main = ctx.client.main;
+    if (main && !main.isDestroyed()) {
+      remoteSelections.set(main, selection);
+      buildRemoteMenu(main);
+    }
+    return;
+  }
+  menuSelection = selection;
   buildMenu(...menuSelection);
 }
 
 function rebuildMenu(): void {
   buildMenu(...menuSelection);
+  for (const w of remoteMainWindows()) buildRemoteMenu(w);
+}
+
+/** A browser tab's main window: the desktop main window's menu bar, from its own selection. */
+function buildRemoteMenu(w: RemoteWindow): void {
+  if (w.isDestroyed()) return;
+  setWindowMenu(w, Menu.buildFromTemplate(mainMenuTemplate(...(remoteSelections.get(w) ?? NO_SELECTION))));
 }
 
 /** Persist a View-menu option; the settings event carries it to the renderer. */
@@ -2227,7 +2504,22 @@ function updateView(patch: Partial<Settings['view']>): void {
   engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
 }
 
-function buildMenu(
+function buildMenu(...selection: Partial<MenuSelection>): void {
+  const template = mainMenuTemplate(...selection);
+  if (process.platform === 'darwin') {
+    // Don't stomp the menu of a focused run/subagent window; the
+    // browser-window-focus handler restores the main menu on the next switch.
+    const focused = BrowserWindow.getFocusedWindow();
+    if (!focused || !macWindowMenus.has(focused)) {
+      Menu.setApplicationMenu(Menu.buildFromTemplate(macTemplate(template)));
+    }
+  } else if (win && !win.isDestroyed()) {
+    win.setMenu(Menu.buildFromTemplate(template));
+  }
+}
+
+/** The main window's menu bar for a selection in its task list. */
+function mainMenuTemplate(
   hasTask = false,
   taskEnabled?: boolean,
   taskPaused?: boolean,
@@ -2236,7 +2528,7 @@ function buildMenu(
   canRunNow?: boolean,
   taskCompleted = false,
   allowComplete = false,
-): void {
+): Electron.MenuItemConstructorOptions[] {
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
   const runNow = canRunNow ?? !active;
@@ -2343,6 +2635,18 @@ function buildMenu(
             { label: 'S&ettings…', click: () => openRemoteSettingsWindow() },
           ],
         },
+        {
+          label: 'Remote Acc&ess',
+          submenu: [
+            {
+              label: engine?.settings.remoteAccess.enabled ? 'Turn &Off Remote Access' : 'Turn &On Remote Access',
+              click: () => toggleRemoteAccess(),
+            },
+            { type: 'separator' },
+            { label: '&Pair Device…', enabled: remoteAccessPhase === 'running', click: () => openRemoteAccessPairWindow() },
+            { label: 'S&ettings…', click: () => openRemoteAccessSettingsWindow() },
+          ],
+        },
         { label: '&Addons…', click: () => openAddonsWindow() },
         { type: 'separator' },
         { label: 'Update &Models…', click: () => openModelUpdateWindow() },
@@ -2350,7 +2654,7 @@ function buildMenu(
         {
           label: 'Open &Data Directory',
           click: () => {
-            if (engine) void shell.openPath(engine.dataDir);
+            if (engine) void openPath(engine.dataDir);
           },
         },
         { role: 'reload', label: '&Reload UI' },
@@ -2365,14 +2669,5 @@ function buildMenu(
       ],
     },
   ];
-  if (process.platform === 'darwin') {
-    // Don't stomp the menu of a focused run/subagent window; the
-    // browser-window-focus handler restores the main menu on the next switch.
-    const focused = BrowserWindow.getFocusedWindow();
-    if (!focused || !macWindowMenus.has(focused)) {
-      Menu.setApplicationMenu(Menu.buildFromTemplate(macTemplate(template)));
-    }
-  } else if (win && !win.isDestroyed()) {
-    win.setMenu(Menu.buildFromTemplate(template));
-  }
+  return template;
 }

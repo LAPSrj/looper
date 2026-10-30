@@ -3,6 +3,7 @@ import { AddonLocalRunSchema } from './addons';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
 import type { RemoteState } from './remote';
+import type { RemoteAccessState } from './remote-access';
 import type { SessionActivity, SessionsState } from './sessions';
 
 // ---------- Task definition ----------
@@ -592,6 +593,28 @@ export const RemoteSettingsSchema = z
   .default({});
 export type RemoteSettings = z.infer<typeof RemoteSettingsSchema>;
 
+/**
+ * Advanced → Remote Access: Looper's UI served to other devices. The server
+ * listens on 127.0.0.1 only; the provider makes it reachable (tailscale: an
+ * HTTPS address on the user's tailnet; local: this computer's browser only).
+ */
+export const RemoteAccessSettingsSchema = z
+  .object({
+    /** Turned on: it starts with Looper too. */
+    enabled: z.boolean().default(false),
+    provider: z.enum(['tailscale', 'local']).default('tailscale'),
+    /** The computer's name on the tailnet: the start of its ts.net address. */
+    hostname: z
+      .string()
+      .regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/, 'use lowercase letters, digits and hyphens')
+      .default('looper'),
+    /** The 127.0.0.1 port the server listens on; 0 = a free one each start. */
+    port: z.number().int().min(0).max(65535).default(0),
+  })
+  .strict()
+  .default({});
+export type RemoteAccessSettings = z.infer<typeof RemoteAccessSettingsSchema>;
+
 export const SettingsSchema = z.object({
   /** Where checks and agents can run, each with its own harness list. */
   environments: z.array(EnvironmentSchema).min(1).default(() => defaultEnvironments()),
@@ -672,6 +695,7 @@ export const SettingsSchema = z.object({
   addonRuns: z.record(z.string(), AddonLocalRunSchema).default({}),
   /** Advanced → Remote Control: the conversations it keeps open for the Claude app. */
   remote: RemoteSettingsSchema,
+  remoteAccess: RemoteAccessSettingsSchema,
 }).superRefine((s, ctx) => {
   const envIds = new Set<string>();
   for (const env of s.environments) {
@@ -911,4 +935,6 @@ export type EngineEvent =
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' }
   /** Remote Control started or stopped, or one of its conversations changed. */
-  | { type: 'remote'; state: RemoteState };
+  | { type: 'remote'; state: RemoteState }
+  /** Remote Access started, stopped or changed status, or its paired devices changed. */
+  | { type: 'remote-access'; state: RemoteAccessState };

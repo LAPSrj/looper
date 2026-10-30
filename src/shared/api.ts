@@ -21,6 +21,7 @@ import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
+import type { PairingCode, RemoteAccessState } from './remote-access';
 import type { EngineEvent, Project, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -238,8 +239,8 @@ export interface LooperApi {
     showContextMenu(id: string): void;
     /** The Send to Sessions window. */
     openSend(): void;
-    /** The Sessions window, opened or brought forward. */
-    openWindow(): void;
+    /** The Sessions window, opened or brought forward; `id` shows that session in it. */
+    openWindow(id?: string): void;
     /** New Chat's or New Terminal's drop-down list of projects, at (x, y) in the window. */
     showNewMenu(kind: 'chat' | 'terminal', x: number, y: number): void;
     send(ids: string[], text: string): void;
@@ -293,6 +294,21 @@ export interface LooperApi {
     openHelperEditor(id: string, isNew?: boolean): Promise<void>;
     /** Fire-and-forget removal of a freshly created, never-saved helper. */
     discard(id: string): void;
+  };
+  /** Advanced → Remote Access: its status, paired devices and pairing codes. */
+  remoteAccess: {
+    state(): Promise<RemoteAccessState>;
+    /** A new code (replacing the one before); rejects while Remote Access isn't on. */
+    pairingCode(): Promise<PairingCode>;
+    cancelPairing(): Promise<void>;
+    /** Unpair it: its open connections close. */
+    removeDevice(id: string): Promise<void>;
+    renameDevice(id: string, name: string): Promise<void>;
+    signOut(): Promise<void>;
+    /** Tailscale's sign-in page, in the system browser. */
+    openLogin(): Promise<void>;
+    openPair(): Promise<void>;
+    openRename(id: string): Promise<void>;
   };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;

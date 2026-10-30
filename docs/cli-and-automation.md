@@ -252,6 +252,10 @@ engine.lock            the running Looper's heartbeat: one Looper per data dir
 engine.log             diagnostics; entries older than Settings -> Engine
                        log retention (default 10 days) are pruned
 addons/<id>.looperaddon  the installed addons' manifests (see addons.md)
+remote-access/         Remote Access: devices.json (the paired devices),
+                       push.json (notification keys and subscriptions), the
+                       provider's folder (tailscale/, with the computer's
+                       sign-in), and uploads/ (files sent from a device)
 inbox/                 JSON drop folder for the CLI and scripts
 inbox/processed/       handled files, timestamp-prefixed
 inbox/rejected/        failed files, plus a matching .error.txt each

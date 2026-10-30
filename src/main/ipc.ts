@@ -1,8 +1,10 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
+import { app, Menu, nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
-import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { convertWslPath, detectedDefaultWslDistro, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { REMOTE_CHANNELS } from '../shared/remote-access';
+import { listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
@@ -13,11 +15,29 @@ import type { BuilderSetup } from '../shared/builder';
 import type { Attachment, AttachmentInput } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
-import type { Task, View } from '../shared/types';
+import type { EngineEvent, Task, View } from '../shared/types';
+import {
+  allWindows,
+  caller,
+  ipc,
+  openOnHost,
+  openExternal,
+  openPath,
+  popupMenu,
+  showItemInFolder,
+  showMessageBox,
+  showOpenDialog,
+  showSaveDialog,
+  windowOf,
+  ofCaller,
+  writeClipboard,
+  type AppWindow,
+} from './platform';
+import type { RemoteAccess } from './remote-access';
 import { paneMenuItems, singleMenuItems } from './view-menu';
 
 export interface IpcHost {
-  getWindow: () => BrowserWindow | null;
+  getWindow: () => AppWindow | null;
   openMessages: (taskId: string, runId: string, agentId?: string, label?: string) => void;
   openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
   openEditor: (taskId?: string) => void;
@@ -33,53 +53,59 @@ export interface IpcHost {
   openNewFolder: (parentId?: string) => void;
   openRenameFolder: (folderId: string) => void;
 
-  openEnvEditor: (envId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
-  openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: BrowserWindow | null) => void;
-  openModelEditor: (envId: string, harnessId: string, index?: number, parent?: BrowserWindow | null) => void;
-  openModelUpdate: (envId?: string, harnessId?: string, parent?: BrowserWindow | null) => void;
-  openTemplateEditor: (templateId?: string, parent?: BrowserWindow | null) => void;
+  openEnvEditor: (envId: string, isNew?: boolean, parent?: AppWindow | null) => void;
+  openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: AppWindow | null) => void;
+  openModelEditor: (envId: string, harnessId: string, index?: number, parent?: AppWindow | null) => void;
+  openModelUpdate: (envId?: string, harnessId?: string, parent?: AppWindow | null) => void;
+  openTemplateEditor: (templateId?: string, parent?: AppWindow | null) => void;
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
   /** The task's Version History window (one per task). */
   openVersions: (taskId: string) => void;
   /** A version's View or Compare window. */
-  openVersionDetail: (taskId: string, n: number, compare: boolean, parent: BrowserWindow | null) => void;
+  openVersionDetail: (taskId: string, n: number, compare: boolean, parent: AppWindow | null) => void;
   /** The New Task with Agent setup window. */
   openBuilderSetup: () => void;
   /** Start a builder from its setup window, which then becomes the conversation. */
-  startBuilder: (setupWindow: BrowserWindow | null, setup: BuilderSetup) => void;
+  startBuilder: (setupWindow: AppWindow | null, setup: BuilderSetup) => void;
   /** Edit with Agent: a builder on the task, or the one already open brought forward. */
   editWithAgent: (taskId: string) => Promise<void>;
   /** Create/Update: the import editor prefilled with the builder's draft. */
   reviewBuilder: (builderId: string) => void;
-  /** The window of a builder, which alone gets its events. */
-  builderWindow: (builderId: string) => BrowserWindow | undefined;
+  /** The windows showing a builder (one per client at most), which alone get its events. */
+  builderWindow: (builderId: string) => AppWindow[];
   /**
    * Open Project in Terminal / Continue in Terminal (with a run id): a Looper
    * terminal window or the system's terminal, as the setting says. Rejects
    * with the reason when the session can't start.
    */
   openTerminal: (taskId: string, runId?: string) => Promise<void>;
-  /** The window showing a terminal session (the Sessions window, or a Remote Control conversation's), which alone gets its output. */
-  terminalWindow: (sessionId: string) => BrowserWindow | undefined;
+  /** The windows showing a terminal session (Sessions windows, or a Remote Control conversation's), which alone get its output. */
+  terminalWindow: (sessionId: string) => AppWindow[];
   /** Open Project in Chat / Continue in Chat (with a run id). Rejects with the reason when the chat can't start. */
   openChat: (taskId: string, runId?: string) => Promise<void>;
   /** Fork from Here: a new chat with the conversation up to the row at `index`. Throws with the reason. */
   forkChat: (chatId: string, index: number) => void;
-  /** The Sessions window while it shows the session, which alone gets its chat and activity events. */
-  sessionWindow: (sessionId: string) => BrowserWindow | undefined;
-  /** The Sessions window now shows this session (null: the Overview). */
-  showSession: (sessionId: string | null) => void;
+  /** The Sessions windows showing the session, which alone get its chat and activity events. */
+  sessionWindow: (sessionId: string) => AppWindow[];
+  /** That Sessions window now shows this session (null: the Overview). */
+  showSession: (window: AppWindow | null, sessionId: string | null) => void;
   /** Close Conversation: ends the session, asking first when it's working. */
   closeSession: (sessionId: string) => Promise<void>;
   openSendToSessions: () => void;
-  /** The Sessions window, opened or brought forward. */
-  openSessions: () => void;
+  /** The Sessions window, opened or brought forward; `select` shows that session in it. */
+  openSessions: (select?: string) => void;
   /** A chat's Model, Effort or Permission Mode menu, as the Chat menu has them. */
   chatSettingMenu: (chatId: string, which: 'model' | 'effort' | 'permission') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
-  openRemoteHelperEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
+  openRemoteHelperEditor: (id: string, isNew: boolean, parent: AppWindow | null) => void;
+  /** Remote Access, once it's created (after the engine). */
+  remoteAccess: () => RemoteAccess | null;
+  openRemoteAccessPair: (parent: AppWindow | null) => void;
+  openRemoteAccessRename: (deviceId: string, parent: AppWindow | null) => void;
+  /** A device's click on a task notification: what a click on the desktop's toast opens, on that device. */
+  openNotification: (taskId: string, runId?: string) => void;
   /** The Edit Project window (no id = New Project). */
   openProjectEditor: (id?: string) => void;
   /** The New Task editor with the project picked. */
@@ -121,7 +147,7 @@ function attachmentInputs(files: unknown): AttachmentInput[] {
 }
 
 export function registerIpc(engine: Engine, host: IpcHost): void {
-  ipcMain.handle('info', (): AppInfo => ({
+  ipc.handle('info', (): AppInfo => ({
     version: app.getVersion(),
     dataDir: engine.dataDir,
     inboxDir: engine.inboxDir(),
@@ -130,52 +156,52 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     settings: engine.settings,
   }));
 
-  ipcMain.handle('tasks:list', () => engine.listTasks());
-  ipcMain.handle('tasks:save', (_e, input: unknown, opts?: { builderId?: string }) =>
+  ipc.handle('tasks:list', () => engine.listTasks());
+  ipc.handle('tasks:save', (_e, input: unknown, opts?: { builderId?: string }) =>
     engine.saveTask(input, opts?.builderId ? { builderId: String(opts.builderId) } : undefined),
   );
-  ipcMain.handle('versions:list', (_e, id: string) => engine.listVersions(id));
-  ipcMain.handle('versions:detail', (_e, id: string, n: number, compare?: boolean) => engine.versionDetail(id, n, compare));
-  ipcMain.handle('versions:restore', (_e, id: string, n: number) => engine.restoreVersion(id, n));
-  ipcMain.handle('versions:open', (_e, id: string) => host.openVersions(id));
-  ipcMain.handle('versions:openDetail', (e, id: string, n: number, compare: boolean) =>
-    host.openVersionDetail(id, n, !!compare, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('versions:list', (_e, id: string) => engine.listVersions(id));
+  ipc.handle('versions:detail', (_e, id: string, n: number, compare?: boolean) => engine.versionDetail(id, n, compare));
+  ipc.handle('versions:restore', (_e, id: string, n: number) => engine.restoreVersion(id, n));
+  ipc.handle('versions:open', (_e, id: string) => host.openVersions(id));
+  ipc.handle('versions:openDetail', (e, id: string, n: number, compare: boolean) =>
+    host.openVersionDetail(id, n, !!compare, windowOf(e)),
   );
-  ipcMain.handle('builder:start', (e, setup: BuilderSetup) => host.startBuilder(BrowserWindow.fromWebContents(e.sender), setup));
-  ipcMain.handle('builder:get', (_e, id: string) => engine.getBuilder(id) ?? null);
-  ipcMain.on('builder:send', (_e, id: string, text: string) => engine.sendBuilder(id, String(text ?? '')));
-  ipcMain.handle('builder:review', (_e, id: string) => host.reviewBuilder(id));
-  ipcMain.handle('builder:save', (_e, id: string) => engine.saveBuilder(id));
-  ipcMain.handle('builder:undo', (_e, id: string) => engine.undoBuilder(id));
-  ipcMain.handle('builder:redo', (_e, id: string) => engine.redoBuilder(id));
-  ipcMain.handle('builder:forTask', (_e, taskId: string) => engine.builderForTask(taskId) ?? null);
-  ipcMain.handle('builder:loadVersion', async (_e, taskId: string, n: number) => {
+  ipc.handle('builder:start', (e, setup: BuilderSetup) => host.startBuilder(windowOf(e), setup));
+  ipc.handle('builder:get', (_e, id: string) => engine.getBuilder(id) ?? null);
+  ipc.on('builder:send', (_e, id: string, text: string) => engine.sendBuilder(id, String(text ?? '')));
+  ipc.handle('builder:review', (_e, id: string) => host.reviewBuilder(id));
+  ipc.handle('builder:save', (_e, id: string) => engine.saveBuilder(id));
+  ipc.handle('builder:undo', (_e, id: string) => engine.undoBuilder(id));
+  ipc.handle('builder:redo', (_e, id: string) => engine.redoBuilder(id));
+  ipc.handle('builder:forTask', (_e, taskId: string) => engine.builderForTask(taskId) ?? null);
+  ipc.handle('builder:loadVersion', async (_e, taskId: string, n: number) => {
     const id = engine.builderForTask(taskId);
     if (!id) throw new Error("The task's Edit Task with Agent window was closed.");
     await engine.loadBuilderVersion(id, n);
-    host.builderWindow(id)?.focus();
+    (ofCaller(host.builderWindow(id))[0] ?? host.builderWindow(id)[0])?.focus();
   });
-  ipcMain.handle('builder:editTask', (_e, taskId: string) => host.editWithAgent(taskId));
-  ipcMain.handle('builder:openNew', () => host.openBuilderSetup());
-  ipcMain.handle('builder:output', (_e, id: string) => engine.builderOutput(id));
-  ipcMain.on('builder:write', (_e, id: string, data: string) => engine.writeBuilder(id, data));
-  ipcMain.on('builder:resize', (_e, id: string, cols: number, rows: number) => engine.resizeBuilder(id, cols, rows));
-  ipcMain.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
-  ipcMain.handle('recycleBin:list', () => engine.listRecycleBin());
-  ipcMain.handle('recycleBin:restore', (_e, id: string) => engine.restoreTask(id));
-  ipcMain.handle('recycleBin:delete', (_e, id: string) => engine.purgeTask(id));
-  ipcMain.handle('recycleBin:empty', () => engine.emptyRecycleBin());
+  ipc.handle('builder:editTask', (_e, taskId: string) => host.editWithAgent(taskId));
+  ipc.handle('builder:openNew', () => host.openBuilderSetup());
+  ipc.handle('builder:output', (_e, id: string) => engine.builderOutput(id));
+  ipc.on('builder:write', (_e, id: string, data: string) => engine.writeBuilder(id, data));
+  ipc.on('builder:resize', (_e, id: string, cols: number, rows: number) => engine.resizeBuilder(id, cols, rows));
+  ipc.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
+  ipc.handle('recycleBin:list', () => engine.listRecycleBin());
+  ipc.handle('recycleBin:restore', (_e, id: string) => engine.restoreTask(id));
+  ipc.handle('recycleBin:delete', (_e, id: string) => engine.purgeTask(id));
+  ipc.handle('recycleBin:empty', () => engine.emptyRecycleBin());
   /** Save dialog, then write the definition as a Looper document of the given kind. */
   const exportDocument = async (e: Electron.IpcMainInvokeEvent, kind: LooperFileKind, item?: Task): Promise<void> => {
     if (!item) return;
-    const sender = BrowserWindow.fromWebContents(e.sender);
+    const sender = windowOf(e);
     const { ext, filterName } = FILE_KINDS[kind];
     const options: Electron.SaveDialogOptions = {
       title: kind === 'task' ? 'Export Task' : 'Export Template',
       defaultPath: `${item.id}.${ext}`,
       filters: [{ name: filterName, extensions: [ext] }],
     };
-    const result = sender ? await dialog.showSaveDialog(sender, options) : await dialog.showSaveDialog(options);
+    const result = await showSaveDialog(sender, options);
     if (result.canceled || !result.filePath) return;
     try {
       const doc = wrapLooperFile(kind, app.getVersion(), item);
@@ -188,13 +214,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         detail: (err as Error).message,
         buttons: ['OK'],
       };
-      if (sender) await dialog.showMessageBox(sender, opts);
-      else await dialog.showMessageBox(opts);
+      await showMessageBox(sender, opts);
     }
   };
-  ipcMain.handle('tasks:export', (e, id: string) => exportDocument(e, 'task', engine.getTask(id)));
+  ipc.handle('tasks:export', (e, id: string) => exportDocument(e, 'task', engine.getTask(id)));
 
-  ipcMain.handle(
+  ipc.handle(
     'tasks:reorder',
     (
       _e,
@@ -204,86 +229,86 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       parents?: Record<string, string | null>,
     ) => engine.reorderTasks(ids, folders, layout, parents),
   );
-  ipcMain.handle('folders:list', () => engine.listFolders());
-  ipcMain.handle('folders:layout', () => engine.listLayout());
-  ipcMain.handle('folders:add', (_e, name: string, parentId?: string) => engine.addFolder(name, parentId));
-  ipcMain.handle('folders:rename', (_e, id: string, name: string) => engine.renameFolder(id, name));
-  ipcMain.handle('folders:remove', (_e, id: string) => engine.removeFolder(id));
+  ipc.handle('folders:list', () => engine.listFolders());
+  ipc.handle('folders:layout', () => engine.listLayout());
+  ipc.handle('folders:add', (_e, name: string, parentId?: string) => engine.addFolder(name, parentId));
+  ipc.handle('folders:rename', (_e, id: string, name: string) => engine.renameFolder(id, name));
+  ipc.handle('folders:remove', (_e, id: string) => engine.removeFolder(id));
 
-  ipcMain.handle('templates:list', () => engine.listTemplates());
-  ipcMain.handle('templates:save', (_e, input: unknown) => engine.saveTemplate(input));
-  ipcMain.handle('templates:remove', (_e, id: string) => engine.removeTemplate(id));
-  ipcMain.handle('templates:reorder', (_e, ids: string[]) => engine.reorderTemplates(ids));
-  ipcMain.handle('templates:export', (e, id: string) =>
+  ipc.handle('templates:list', () => engine.listTemplates());
+  ipc.handle('templates:save', (_e, input: unknown) => engine.saveTemplate(input));
+  ipc.handle('templates:remove', (_e, id: string) => engine.removeTemplate(id));
+  ipc.handle('templates:reorder', (_e, ids: string[]) => engine.reorderTemplates(ids));
+  ipc.handle('templates:export', (e, id: string) =>
     exportDocument(e, 'template', engine.listTemplates().find((t) => t.id === id)),
   );
-  ipcMain.handle('templates:import', async (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('templates:import', async (e) => {
+    const sender = windowOf(e);
     const options: Electron.OpenDialogOptions = {
       title: 'Import Template',
       filters: [{ name: FILE_KINDS.template.filterName, extensions: [FILE_KINDS.template.ext] }],
       properties: ['openFile'],
     };
-    const result = sender ? await dialog.showOpenDialog(sender, options) : await dialog.showOpenDialog(options);
+    const result = await showOpenDialog(sender, options);
     const file = result.canceled ? undefined : result.filePaths[0];
     if (file) await host.openLooperFile(file);
   });
   /** A Looper document dropped onto a window; behaves exactly like double-clicking it. */
-  ipcMain.handle('file:openLooper', (_e, file: string) => host.openLooperFile(file));
+  ipc.handle('file:openLooper', (_e, file: string) => host.openLooperFile(file));
 
-  ipcMain.handle('rest:state', () => engine.restState());
+  ipc.handle('rest:state', () => engine.restState());
 
-  ipcMain.handle('runtime:list', () => engine.listRuntimes());
+  ipc.handle('runtime:list', () => engine.listRuntimes());
   // With the setting on, the run is started by the Run Options window instead.
-  ipcMain.handle('runtime:runNow', (_e, id: string) =>
+  ipc.handle('runtime:runNow', (_e, id: string) =>
     engine.settings.promptRunOptions ? host.promptRunOptions(id) : engine.runNow(id),
   );
-  ipcMain.handle('runtime:pause', (_e, id: string) => engine.pause(id));
-  ipcMain.handle('runtime:resume', (_e, id: string) => engine.resume(id));
-  ipcMain.handle('runtime:complete', (_e, id: string) => engine.completeTask(id));
-  ipcMain.handle('runtime:reopen', (_e, id: string) => engine.reopenTask(id));
-  ipcMain.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
+  ipc.handle('runtime:pause', (_e, id: string) => engine.pause(id));
+  ipc.handle('runtime:resume', (_e, id: string) => engine.resume(id));
+  ipc.handle('runtime:complete', (_e, id: string) => engine.completeTask(id));
+  ipc.handle('runtime:reopen', (_e, id: string) => engine.reopenTask(id));
+  ipc.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
 
-  ipcMain.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
-  ipcMain.handle('runs:recent', (_e, limit: number, filter: RunFilter) => engine.recentRuns(limit, filter));
-  ipcMain.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
-  ipcMain.handle('runs:openDir', (_e, id: string, runId: string) => shell.openPath(engine.runDir(id, runId)));
-  ipcMain.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
-  ipcMain.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) =>
+  ipc.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
+  ipc.handle('runs:recent', (_e, limit: number, filter: RunFilter) => engine.recentRuns(limit, filter));
+  ipc.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
+  ipc.handle('runs:openDir', (_e, id: string, runId: string) => openPath(engine.runDir(id, runId)));
+  ipc.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
+  ipc.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) =>
     engine.readMessages(id, runId, agentId, raw),
   );
-  ipcMain.handle('runs:messageImage', (_e, id: string, runId: string, rowId: string, agentId?: string) =>
+  ipc.handle('runs:messageImage', (_e, id: string, runId: string, rowId: string, agentId?: string) =>
     engine.readMessageImage(id, runId, rowId, agentId),
   );
-  ipcMain.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
+  ipc.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
     host.openMessages(taskId, runId, agentId, label),
   );
-  ipcMain.handle('messages:openImage', (_e, taskId: string, runId: string, rowId: string, agentId?: string, label?: string) =>
+  ipc.handle('messages:openImage', (_e, taskId: string, runId: string, rowId: string, agentId?: string, label?: string) =>
     host.openMessageImage(taskId, runId, rowId, agentId, label),
   );
 
-  ipcMain.handle('engineLog:read', () => engine.readEngineLog());
+  ipc.handle('engineLog:read', () => engine.readEngineLog());
 
-  ipcMain.handle('task:openTerminal', (_e, id: string, runId?: string) => host.openTerminal(id, runId));
-  ipcMain.handle('terminalSession:output', (_e, id: string) => engine.terminalSessionOutput(id));
-  ipcMain.on('terminalSession:write', (_e, id: string, data: string) => engine.writeTerminalSession(id, data));
-  ipcMain.on('terminalSession:resize', (_e, id: string, cols: number, rows: number) =>
+  ipc.handle('task:openTerminal', (_e, id: string, runId?: string) => host.openTerminal(id, runId));
+  ipc.handle('terminalSession:output', (_e, id: string) => engine.terminalSessionOutput(id));
+  ipc.on('terminalSession:write', (_e, id: string, data: string) => engine.writeTerminalSession(id, data));
+  ipc.on('terminalSession:resize', (_e, id: string, cols: number, rows: number) =>
     engine.resizeTerminalSession(id, cols, rows),
   );
-  ipcMain.handle('terminalSession:attach', (_e, id: string, files: unknown) => engine.attachToTerminal(id, attachmentInputs(files)));
-  ipcMain.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('terminalSession:attach', (_e, id: string, files: unknown) => engine.attachToTerminal(id, attachmentInputs(files)));
+  ipc.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const send = (payload: unknown) => {
       if (!sender.isDestroyed()) sender.webContents.send('ui:event', payload);
     };
     const attachFiles = async () => {
-      const r = await dialog.showOpenDialog(sender, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
+      const r = await showOpenDialog(sender, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
       if (r.canceled || r.filePaths.length === 0) return;
       const files = r.filePaths.map((p) => ({ name: p.split(/[\\/]/).pop() ?? p, path: p }));
       send({ type: 'terminal-attached', text: engine.attachToTerminal(id, files) });
     };
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'Copy', enabled: !!hasSelection, click: () => send({ type: 'terminal-copy' }) },
       { label: 'Paste', click: () => send({ type: 'terminal-paste' }) },
       { type: 'separator' },
@@ -291,25 +316,25 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         label: 'Attach Files…',
         click: () =>
           void attachFiles().catch((err: unknown) => {
-            void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+            void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
           }),
       },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
-  ipcMain.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
-  ipcMain.handle('chat:get', (_e, id: string) => engine.getChat(id) ?? null);
-  ipcMain.on('chat:send', (_e, id: string, text: string, attachments: Attachment[]) => {
+  ipc.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
+  ipc.handle('chat:get', (_e, id: string) => engine.getChat(id) ?? null);
+  ipc.on('chat:send', (_e, id: string, text: string, attachments: Attachment[]) => {
     // Only Looper's own copies: the renderer never makes the agent read any other file.
     const files = (Array.isArray(attachments) ? attachments : [])
       .filter((a) => engine.isAttachment(String(a?.path)))
       .map((a) => ({ name: String(a.name), path: String(a.path), image: !!a.image }));
     engine.sendChat(id, String(text ?? ''), files);
   });
-  ipcMain.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
-  ipcMain.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
+  ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
+  ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
   // A chat message's right-click menu; Edit as New Message hands the message back to the window's message box.
-  ipcMain.on(
+  ipc.on(
     'context-menu:chat',
     (
       e,
@@ -325,13 +350,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         fork?: number;
       },
     ) => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
+      const sender = windowOf(e);
       if (!sender) return;
       const groups: Electron.MenuItemConstructorOptions[][] = [];
-      if (info.selection) groups.push([{ label: 'Copy', click: () => clipboard.writeText(info.selection!) }]);
+      if (info.selection) groups.push([{ label: 'Copy', click: () => writeClipboard(info.selection!) }]);
       const copies: Electron.MenuItemConstructorOptions[] = [];
-      if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => clipboard.writeText(info.text!) });
-      if (info.result) copies.push({ label: 'Copy Result', click: () => clipboard.writeText(info.result!) });
+      if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => writeClipboard(info.text!) });
+      if (info.result) copies.push({ label: 'Copy Result', click: () => writeClipboard(info.result!) });
       if (copies.length) groups.push(copies);
       if (info.file) {
         const file = info.file;
@@ -340,7 +365,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             label: 'Open File',
             click: () =>
               void openTargetPath(info.taskId, file).catch((err: unknown) => {
-                void dialog.showMessageBox(sender, {
+                void showMessageBox(sender, {
                   type: 'error',
                   title: 'Looper',
                   message: `Could not open ${file}.`,
@@ -349,7 +374,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
                 });
               }),
           },
-          { label: 'Copy Path', click: () => clipboard.writeText(file) },
+          { label: 'Copy Path', click: () => writeClipboard(file) },
         ]);
       }
       const again: Electron.MenuItemConstructorOptions[] = [];
@@ -365,7 +390,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             try {
               host.forkChat(String(info.chatId), index);
             } catch (err) {
-              void dialog.showMessageBox(sender, {
+              void showMessageBox(sender, {
                 type: 'error',
                 title: 'Looper',
                 message: err instanceof Error ? err.message : String(err),
@@ -377,34 +402,34 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       }
       if (again.length) groups.push(again);
       const items = groups.flatMap((g, i) => (i ? [{ type: 'separator' } as const, ...g] : g));
-      if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: sender });
+      if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
     },
   );
-  ipcMain.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
+  ipc.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
   /** The message box's Attach Files: pick files, then copy them in like dropped ones. */
-  ipcMain.handle('chat:pickFiles', async (e, id: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('chat:pickFiles', async (e, id: string) => {
+    const sender = windowOf(e);
     const opts: Electron.OpenDialogOptions = { title: 'Attach Files', properties: ['openFile', 'multiSelections'] };
-    const r = sender ? await dialog.showOpenDialog(sender, opts) : await dialog.showOpenDialog(opts);
+    const r = await showOpenDialog(sender, opts);
     if (r.canceled || r.filePaths.length === 0) return [];
     return engine.attachToChat(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
   });
-  ipcMain.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
-  ipcMain.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
+  ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
+  ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
 
   // ---------- the Sessions window ----------
 
-  ipcMain.handle('sessions:state', () => engine.sessionsState());
-  ipcMain.handle('sessions:activity', (_e, id: string) => engine.sessionActivity(String(id)));
-  ipcMain.on('sessions:show', (_e, id: string | null) => host.showSession(typeof id === 'string' ? id : null));
-  ipcMain.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
-  ipcMain.handle('sessions:close', (_e, id: string) => host.closeSession(String(id)));
-  ipcMain.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
-  ipcMain.on('sessions:openSend', () => host.openSendToSessions());
-  ipcMain.on('sessions:openWindow', () => host.openSessions());
+  ipc.handle('sessions:state', () => engine.sessionsState());
+  ipc.handle('sessions:activity', (_e, id: string) => engine.sessionActivity(String(id)));
+  ipc.on('sessions:show', (e, id: string | null) => host.showSession(windowOf(e), typeof id === 'string' ? id : null));
+  ipc.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
+  ipc.handle('sessions:close', (_e, id: string) => host.closeSession(String(id)));
+  ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
+  ipc.on('sessions:openSend', () => host.openSendToSessions());
+  ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
   /** New Chat's or New Terminal's drop-down: the projects, under the button that asked. */
-  ipcMain.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const open = kind === 'terminal' ? projectTerminal : projectChat;
     const items: Electron.MenuItemConstructorOptions[] = engine.listProjects().map((p) => ({
@@ -412,33 +437,33 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       click: () => void open(p.id, sender),
     }));
     if (items.length === 0) items.push({ label: 'No projects', enabled: false });
-    Menu.buildFromTemplate(items).popup({ window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
+    popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
   });
   /** The message box's Model, Effort and Permission Mode buttons. */
-  ipcMain.on('context-menu:chat-setting', (e, chatId: string, which: string, x: number, y: number) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:chat-setting', (e, chatId: string, which: string, x: number, y: number) => {
+    const sender = windowOf(e);
     if (!sender || (which !== 'model' && which !== 'effort' && which !== 'permission')) return;
     const items = host.chatSettingMenu(String(chatId), which);
-    if (items.length) Menu.buildFromTemplate(items).popup({ window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
+    if (items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
   });
-  ipcMain.on('sessions:send', (_e, ids: unknown, text: string) => {
+  ipc.on('sessions:send', (_e, ids: unknown, text: string) => {
     engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''));
   });
-  ipcMain.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
+  ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
   // A session's right-click menu in the list.
-  ipcMain.on('context-menu:session', (e, id: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:session', (e, id: string) => {
+    const sender = windowOf(e);
     const s = engine.sessionsState().sessions.find((x) => x.id === id);
     if (!sender || !s) return;
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'Stop', enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
       { type: 'separator' },
       { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },      { type: 'separator' },
       { label: 'Close Conversation', click: () => void host.closeSession(id) },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
   /** An image the agent read or wrote, as a thumbnail; only image files are read. */
-  ipcMain.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
+  ipc.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
     const file = String(p);
     if (!/\.(png|jpe?g|gif|webp)$/i.test(file)) return null;
     const hostPath = await targetToHost(String(taskId), file);
@@ -448,23 +473,23 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
   });
   /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
-  ipcMain.handle('attachment:open', async (_e, p: string) => {
+  ipc.handle('attachment:open', async (_e, p: string) => {
     if (!engine.isAttachment(String(p))) return;
-    const err = await shell.openPath(String(p));
+    const err = await openPath(String(p));
     if (err) throw new Error(err);
   });
-  ipcMain.handle('attachment:thumbnail', (_e, p: string) => {
+  ipc.handle('attachment:thumbnail', (_e, p: string) => {
     if (!engine.isAttachment(String(p))) return null;
     const img = nativeImage.createFromPath(String(p));
     if (img.isEmpty()) return null;
     const { height } = img.getSize();
     return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
   });
-  ipcMain.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
+  ipc.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
     engine.continueRun(id, runId, guidance),
   );
-  ipcMain.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
-  ipcMain.handle('run:guide', (_e, id: string, runId: string, text: string) => engine.sendGuidance(id, runId, text));
+  ipc.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
+  ipc.handle('run:guide', (_e, id: string, runId: string, text: string) => engine.sendGuidance(id, runId, text));
 
   /** A target-native path (in the task's environment) as the host opens it, translated across the WSL boundary. */
   const targetToHost = async (taskId: string, p: string): Promise<string> => {
@@ -478,11 +503,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
   const openTargetPath = async (taskId: string, p: string): Promise<void> => {
-    const err = await shell.openPath(await targetToHost(taskId, p));
+    const err = await openPath(await targetToHost(taskId, p));
     if (err) throw new Error(err);
   };
 
-  ipcMain.handle('task:openWorkFolder', async (_e, id: string) => {
+  ipc.handle('task:openWorkFolder', async (_e, id: string) => {
     const task = engine.findSessionTask(id);
     if (!task) return;
     await openTargetPath(id, task.cwd);
@@ -491,17 +516,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   // ---------- projects ----------
 
   /** A failure shown over the window that asked. */
-  const fail = (sender: BrowserWindow | null, err: unknown) => {
+  const fail = (sender: AppWindow | null, err: unknown) => {
     const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
-    void (sender ? dialog.showMessageBox(sender, opts) : dialog.showMessageBox(opts));
+    void showMessageBox(sender, opts);
   };
-  const projectChat = (id: string, sender: BrowserWindow | null) => host.openChat(projectTaskId(id)).catch((err) => fail(sender, err));
-  const projectTerminal = (id: string, sender: BrowserWindow | null) => host.openTerminal(projectTaskId(id)).catch((err) => fail(sender, err));
-  const removeProject = async (id: string, sender: BrowserWindow | null) => {
+  const projectChat = (id: string, sender: AppWindow | null) => host.openChat(projectTaskId(id)).catch((err) => fail(sender, err));
+  const projectTerminal = (id: string, sender: AppWindow | null) => host.openTerminal(projectTaskId(id)).catch((err) => fail(sender, err));
+  const removeProject = async (id: string, sender: AppWindow | null) => {
     const project = engine.getProject(id);
     if (!project) return;
     const msg = { type: 'question' as const, title: 'Looper', message: `Delete the project "${project.name}"?`, detail: 'Its folder and files stay as they are.', buttons: ['Delete', 'Cancel'], noLink: true, defaultId: 1, cancelId: 1 };
-    const { response } = sender ? await dialog.showMessageBox(sender, msg) : await dialog.showMessageBox(msg);
+    const { response } = await showMessageBox(sender, msg);
     if (response !== 0) return;
     try {
       engine.removeProject(id);
@@ -509,24 +534,24 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       fail(sender, err);
     }
   };
-  ipcMain.handle('projects:list', () => engine.listProjects());
-  ipcMain.handle('projects:save', (_e, input: unknown) => engine.saveProject(input));
-  ipcMain.handle('projects:remove', (e, id: string) => removeProject(String(id), BrowserWindow.fromWebContents(e.sender)));
-  ipcMain.handle('projects:reorder', (_e, ids: string[]) => engine.reorderProjects(Array.isArray(ids) ? ids.map(String) : []));
-  ipcMain.handle('projects:openEditor', (_e, id?: string) => host.openProjectEditor(id ? String(id) : undefined));
-  ipcMain.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
-  ipcMain.handle('projects:newChat', (e, id: string) => projectChat(String(id), BrowserWindow.fromWebContents(e.sender)));
-  ipcMain.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), BrowserWindow.fromWebContents(e.sender)));
+  ipc.handle('projects:list', () => engine.listProjects());
+  ipc.handle('projects:save', (_e, input: unknown) => engine.saveProject(input));
+  ipc.handle('projects:remove', (e, id: string) => removeProject(String(id), windowOf(e)));
+  ipc.handle('projects:reorder', (_e, ids: string[]) => engine.reorderProjects(Array.isArray(ids) ? ids.map(String) : []));
+  ipc.handle('projects:openEditor', (_e, id?: string) => host.openProjectEditor(id ? String(id) : undefined));
+  ipc.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
+  ipc.handle('projects:newChat', (e, id: string) => projectChat(String(id), windowOf(e)));
+  ipc.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), windowOf(e)));
   // A project's menu; with no id, the Projects pane header's or empty space's.
-  ipcMain.on('context-menu:project', (e, id: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:project', (e, id: string) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const pid = String(id ?? '');
     if (!pid || !engine.getProject(pid)) {
-      Menu.buildFromTemplate([{ label: 'New P&roject…', click: () => host.openProjectEditor() }]).popup({ window: sender });
+      popupMenu(Menu.buildFromTemplate([{ label: 'New P&roject…', click: () => host.openProjectEditor() }]), { window: sender });
       return;
     }
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'New &Chat', click: () => void projectChat(pid, sender) },
       { label: 'New Ter&minal', click: () => void projectTerminal(pid, sender) },
       { type: 'separator' },
@@ -535,7 +560,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: '&Edit Project…', click: () => host.openProjectEditor(pid) },
       { label: 'Open &Working Directory', click: () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)) },
       { label: '&Delete Project', click: () => void removeProject(pid, sender) },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
   // ---------- the Git tabs ----------
@@ -545,10 +570,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!p) throw new Error('No file was given.');
     return p;
   };
-  ipcMain.handle('git:repos', () => engine.git.repoIds());
-  ipcMain.handle('git:check', (_e, id: string) => engine.git.check(String(id)));
-  ipcMain.handle('git:status', (_e, id: string) => engine.git.status(String(id)));
-  ipcMain.handle('git:changeDiff', (_e, id: string, change: { path: unknown; origPath?: unknown; kind: unknown }, initial: boolean) =>
+  ipc.handle('git:repos', () => engine.git.repoIds());
+  ipc.handle('git:check', (_e, id: string) => engine.git.check(String(id)));
+  ipc.handle('git:status', (_e, id: string) => engine.git.status(String(id)));
+  ipc.handle('git:changeDiff', (_e, id: string, change: { path: unknown; origPath?: unknown; kind: unknown }, initial: boolean) =>
     engine.git.changeDiff(
       String(id),
       {
@@ -559,88 +584,88 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       initial === true,
     ),
   );
-  ipcMain.handle('git:log', (_e, id: string, skip: number, limit: number) => engine.git.log(String(id), Number(skip) || 0, Number(limit) || 200));
-  ipcMain.handle('git:commit', (_e, id: string, hash: string) => engine.git.commit(String(id), String(hash)));
-  ipcMain.handle('git:commitDiff', (_e, id: string, hash: string, p: string, origPath?: string) =>
+  ipc.handle('git:log', (_e, id: string, skip: number, limit: number) => engine.git.log(String(id), Number(skip) || 0, Number(limit) || 200));
+  ipc.handle('git:commit', (_e, id: string, hash: string) => engine.git.commit(String(id), String(hash)));
+  ipc.handle('git:commitDiff', (_e, id: string, hash: string, p: string, origPath?: string) =>
     engine.git.commitDiff(String(id), String(hash), gitPath(p), origPath ? String(origPath) : undefined),
   );
   /** A file's right-click menu in a Git tab; `root` is the repository's, in the project's own path form. */
-  ipcMain.on('context-menu:git-file', (e, info: { projectId: string; root: string; path: string; exists: boolean }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:git-file', (e, info: { projectId: string; root: string; path: string; exists: boolean }) => {
+    const sender = windowOf(e);
     if (!sender || !info?.path || !info.root) return;
     const taskId = projectTaskId(String(info.projectId));
     const full = `${String(info.root).replace(/[\\/]$/, '')}/${String(info.path)}`;
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: '&Open File', enabled: info.exists, click: () => void openTargetPath(taskId, full).catch((err) => fail(sender, err)) },
       {
         label: 'Show in &Folder',
         enabled: info.exists,
-        click: () => void targetToHost(taskId, full).then((p) => shell.showItemInFolder(p)).catch((err) => fail(sender, err)),
+        click: () => void targetToHost(taskId, full).then((p) => showItemInFolder(p)).catch((err) => fail(sender, err)),
       },
       { type: 'separator' },
-      { label: '&Copy Path', click: () => clipboard.writeText(String(info.path)) },
-    ]).popup({ window: sender });
+      { label: '&Copy Path', click: () => writeClipboard(String(info.path)) },
+    ]), { window: sender });
   });
-  ipcMain.on('context-menu:git-commit', (e, info: { hash: string; subject: string }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:git-commit', (e, info: { hash: string; subject: string }) => {
+    const sender = windowOf(e);
     if (!sender || !info?.hash) return;
-    Menu.buildFromTemplate([
-      { label: 'Copy Commit &ID', click: () => clipboard.writeText(String(info.hash)) },
-      { label: 'Copy &Subject', click: () => clipboard.writeText(String(info.subject ?? '')) },
-    ]).popup({ window: sender });
+    popupMenu(Menu.buildFromTemplate([
+      { label: 'Copy Commit &ID', click: () => writeClipboard(String(info.hash)) },
+      { label: 'Copy &Subject', click: () => writeClipboard(String(info.subject ?? '')) },
+    ]), { window: sender });
   });
 
-  ipcMain.handle('agent:buffer', (_e, id: string, runId?: string) => engine.agentBuffer(id, runId));
-  ipcMain.on('agent:write', (_e, id: string, data: string, runId?: string) => engine.writeAgent(id, data, runId));
-  ipcMain.on('agent:resize', (_e, id: string, cols: number, rows: number, runId?: string) =>
+  ipc.handle('agent:buffer', (_e, id: string, runId?: string) => engine.agentBuffer(id, runId));
+  ipc.on('agent:write', (_e, id: string, data: string, runId?: string) => engine.writeAgent(id, data, runId));
+  ipc.on('agent:resize', (_e, id: string, cols: number, rows: number, runId?: string) =>
     engine.resizeAgent(id, cols, rows, runId),
   );
 
-  ipcMain.handle('openPath', (_e, p: string) => shell.openPath(p));
-  ipcMain.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
-  ipcMain.handle('noteEditor:open', (_e, taskId: string) => host.openNoteEditor(taskId));
-  ipcMain.handle('moveToFolder:open', (_e, taskId: string) => host.openMoveToFolder(taskId));
+  ipc.handle('openPath', (_e, p: string) => openPath(p));
+  ipc.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
+  ipc.handle('noteEditor:open', (_e, taskId: string) => host.openNoteEditor(taskId));
+  ipc.handle('moveToFolder:open', (_e, taskId: string) => host.openMoveToFolder(taskId));
 
-  ipcMain.handle('envEditor:open', (e, envId: string, isNew?: boolean) =>
-    host.openEnvEditor(envId, isNew, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('envEditor:open', (e, envId: string, isNew?: boolean) =>
+    host.openEnvEditor(envId, isNew, windowOf(e)),
   );
-  ipcMain.handle('harnessEditor:open', (e, envId: string, harnessId: string, isNew?: boolean) =>
-    host.openHarnessEditor(envId, harnessId, isNew, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('harnessEditor:open', (e, envId: string, harnessId: string, isNew?: boolean) =>
+    host.openHarnessEditor(envId, harnessId, isNew, windowOf(e)),
   );
-  ipcMain.handle('modelEditor:open', (e, envId: string, harnessId: string, index?: number) =>
-    host.openModelEditor(envId, harnessId, index, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('modelEditor:open', (e, envId: string, harnessId: string, index?: number) =>
+    host.openModelEditor(envId, harnessId, index, windowOf(e)),
   );
-  ipcMain.handle('modelUpdate:open', (e, envId?: string, harnessId?: string) =>
-    host.openModelUpdate(envId, harnessId, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('modelUpdate:open', (e, envId?: string, harnessId?: string) =>
+    host.openModelUpdate(envId, harnessId, windowOf(e)),
   );
-  ipcMain.handle('models:discover', (_e, envId: string, harnessId: string) => {
+  ipc.handle('models:discover', (_e, envId: string, harnessId: string) => {
     const env = engine.settings.environments.find((x) => x.id === envId);
     const harness = env?.harnesses.find((h) => h.id === harnessId);
     if (!env || !harness) throw new Error('This harness no longer exists.');
     return discoverHarnessModels(env, harness, engine.host);
   });
-  ipcMain.handle('templateEditor:open', (e, templateId?: string) =>
-    host.openTemplateEditor(templateId, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('templateEditor:open', (e, templateId?: string) =>
+    host.openTemplateEditor(templateId, windowOf(e)),
   );
-  ipcMain.handle('templatePicker:open', () => host.openTemplatePicker());
-  ipcMain.handle('editorFromTemplate:open', (_e, templateId: string) =>
+  ipc.handle('templatePicker:open', () => host.openTemplatePicker());
+  ipc.handle('editorFromTemplate:open', (_e, templateId: string) =>
     host.openEditorFromTemplate(templateId),
   );
-  ipcMain.handle('import:draft', (_e, key: string) => host.takeImportDraft(key));
+  ipc.handle('import:draft', (_e, key: string) => host.takeImportDraft(key));
 
   // Fired from `beforeunload` when a freshly created environment/harness is
   // closed without saving, so create-on-add leaves no junk behind. `send`
   // (not invoke): the window is going away and cannot await a reply.
   // ---------- Remote Control ----------
 
-  ipcMain.handle('remote:state', () => engine.remoteState());
-  ipcMain.handle('remote:lastMessage', (_e, id: string) => engine.remoteLastMessage(String(id)));
-  ipcMain.handle('remote:open', (_e, id: string) => host.openRemoteConversation(String(id)));
-  ipcMain.handle('remote:openHelperEditor', (e, id: string, isNew?: boolean) =>
-    host.openRemoteHelperEditor(String(id), !!isNew, BrowserWindow.fromWebContents(e.sender)),
+  ipc.handle('remote:state', () => engine.remoteState());
+  ipc.handle('remote:lastMessage', (_e, id: string) => engine.remoteLastMessage(String(id)));
+  ipc.handle('remote:open', (_e, id: string) => host.openRemoteConversation(String(id)));
+  ipc.handle('remote:openHelperEditor', (e, id: string, isNew?: boolean) =>
+    host.openRemoteHelperEditor(String(id), !!isNew, windowOf(e)),
   );
   // A new helper whose window closed without Create.
-  ipcMain.on('remote:discard', (_e, id: string) => {
+  ipc.on('remote:discard', (_e, id: string) => {
     try {
       const r = engine.settings.remote;
       engine.updateSettings({ remote: { ...r, helpers: r.helpers.filter((h) => h.id !== id) } });
@@ -648,8 +673,61 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       engine.log.error(`discard remote helper ${id} failed: ${String(err)}`);
     }
   });
-  ipcMain.on('context-menu:remote-conversation', (e, id: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  // ---------- Remote Access ----------
+
+  const remoteAccess = (): RemoteAccess => {
+    const ra = host.remoteAccess();
+    if (!ra) throw new Error('Remote Access isn\'t ready yet.');
+    return ra;
+  };
+  ipc.handle('remoteAccess:state', () => remoteAccess().state());
+  ipc.handle('remoteAccess:pairingCode', () => remoteAccess().newPairingCode());
+  ipc.handle('remoteAccess:cancelPairing', () => remoteAccess().cancelPairing());
+  ipc.handle('remoteAccess:removeDevice', (_e, id: string) => remoteAccess().removeDevice(String(id)));
+  ipc.handle('remoteAccess:renameDevice', (_e, id: string, name: string) => remoteAccess().renameDevice(String(id), String(name)));
+  ipc.handle('remoteAccess:signOut', () => remoteAccess().signOut());
+  ipc.handle('remoteAccess:openLogin', async () => {
+    const url = remoteAccess().state().loginUrl;
+    if (url && /^https:\/\//i.test(url)) await openExternal(url);
+  });
+  // The host side of a remote client's file browser, Open on Computer and Download.
+  const hostFiles: HostFilesDeps = {
+    host: process.platform === 'win32' ? 'windows' : 'posix',
+    places: () =>
+      engine.listProjects().map((p) => {
+        const env = engine.settings.environments.find((x) => x.id === p.environmentId);
+        return { name: p.name, cwd: p.cwd, ...(env?.kind === 'wsl' && env.distro ? { distro: env.distro } : {}) };
+      }),
+    distros: listWslDistros,
+    defaultDistro: detectedDefaultWslDistro,
+    convert: convertWslPath,
+  };
+  ipc.handle(REMOTE_CHANNELS.listDir, (_e, p?: string | null, flavor?: Flavor, distro?: string) => listDir(hostFiles, p, flavor, distro));
+  ipc.handle(REMOTE_CHANNELS.makeDir, (_e, parent: unknown, name: unknown, flavor?: Flavor, distro?: string) => makeDir(hostFiles, parent, name, flavor, distro));
+  ipc.handle(REMOTE_CHANNELS.openNotification, (_e, taskId: unknown, runId: unknown) => {
+    if (typeof taskId !== 'string' || !taskId) return;
+    host.openNotification(taskId, typeof runId === 'string' && runId ? runId : undefined);
+  });
+  ipc.handle(REMOTE_CHANNELS.openSession, (_e, id: unknown) => {
+    if (typeof id === 'string' && id && engine.sessionKind(id)) host.openSessions(id);
+  });
+  ipc.handle(REMOTE_CHANNELS.openOnHost, async (_e, p: string) => {
+    const err = await openOnHost(String(p));
+    if (err) throw new Error(err);
+  });
+  ipc.handle(REMOTE_CHANNELS.download, (_e, p: string) => {
+    const ctx = caller();
+    if (!ctx) throw new Error('Only a remote device can download a file.');
+    const file = String(p);
+    if (!fs.statSync(file).isFile()) throw new Error(`${file} isn't a file.`);
+    const name = path.basename(file.replace(/\\/g, '/'));
+    ctx.client.send({ t: 'download', token: remoteAccess().offerDownload(file, name), name });
+  });
+  ipc.handle('remoteAccess:openPair', (e) => host.openRemoteAccessPair(windowOf(e)));
+  ipc.handle('remoteAccess:openRename', (e, id: string) => host.openRemoteAccessRename(String(id), windowOf(e)));
+
+  ipc.on('context-menu:remote-conversation', (e, id: string) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const state = engine.remoteState();
     const conv = state.conversations.find((c) => c.id === id);
@@ -659,20 +737,20 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       try {
         engine.restartRemoteConversation(id);
       } catch (err) {
-        void dialog.showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+        void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
       }
     };
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'Open', click: () => void host.openRemoteConversation(id) },
-      { label: 'Open in Browser', enabled: !!conv.link, click: () => conv.link && void shell.openExternal(conv.link) },
-      { label: 'Copy Link', enabled: !!conv.link, click: () => conv.link && clipboard.writeText(conv.link) },
+      { label: 'Open in Browser', enabled: !!conv.link, click: () => conv.link && void openExternal(conv.link) },
+      { label: 'Copy Link', enabled: !!conv.link, click: () => conv.link && writeClipboard(conv.link) },
       { type: 'separator' },
       { label: 'Restart', enabled: state.running && conv.source !== 'helper' && conv.status !== 'waiting', click: restart },
       { label: 'Stop', enabled: open, click: () => engine.stopRemoteConversation(id) },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
-  ipcMain.on('envEditor:discard', (_e, envId: string) => {
+  ipc.on('envEditor:discard', (_e, envId: string) => {
     try {
       const s = engine.settings;
       if (s.environments.length <= 1 || !s.environments.some((x) => x.id === envId)) return;
@@ -685,7 +763,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       engine.log.error(`discard environment ${envId} failed: ${String(err)}`);
     }
   });
-  ipcMain.on('harnessEditor:discard', (_e, envId: string, harnessId: string) => {
+  ipc.on('harnessEditor:discard', (_e, envId: string, harnessId: string) => {
     try {
       const s = engine.settings;
       const env = s.environments.find((x) => x.id === envId);
@@ -699,10 +777,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       engine.log.error(`discard harness ${harnessId} failed: ${String(err)}`);
     }
   });
-  ipcMain.handle('store:move', (_e, store: 'tasks' | 'templates', targetFile: string) =>
+  ipc.handle('store:move', (_e, store: 'tasks' | 'templates', targetFile: string) =>
     engine.moveStoreFile(store, targetFile),
   );
-  ipcMain.handle('settings:update', (_e, patch: unknown) => engine.updateSettings(patch));
+  ipc.handle('settings:update', (_e, patch: unknown) => engine.updateSettings(patch));
 
   // Start-with-the-computer registration lives in the OS (login item / Run key),
   // not in settings.json. The args must match on get and set so Windows finds
@@ -710,7 +788,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   // Only the packaged app registers: a dev run's execPath is the bare
   // electron.exe, which starts Electron's default window without the app path.
   const loginArgs = ['--hidden'];
-  ipcMain.handle('loginItem:get', () => {
+  ipc.handle('loginItem:get', () => {
     if (!app.isPackaged) return false;
     try {
       return app.getLoginItemSettings({ args: loginArgs }).openAtLogin;
@@ -718,24 +796,24 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       return false; // not supported on this platform
     }
   });
-  ipcMain.handle('loginItem:set', (_e, enabled: boolean) => {
+  ipc.handle('loginItem:set', (_e, enabled: boolean) => {
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled, args: loginArgs });
   });
 
-  ipcMain.handle(
+  ipc.handle(
     'dialog:pickSaveFile',
     async (e, defaultPath?: string, filters?: { name: string; extensions: string[] }[]): Promise<string | null> => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
+      const sender = windowOf(e);
       const options: Electron.SaveDialogOptions = {
         title: 'Choose File Location',
         ...(defaultPath ? { defaultPath } : {}),
         ...(filters ? { filters } : {}),
       };
-      const result = sender ? await dialog.showSaveDialog(sender, options) : await dialog.showSaveDialog(options);
+      const result = await showSaveDialog(sender, options);
       return result.canceled ? null : result.filePath;
     },
   );
-  ipcMain.on(
+  ipc.on(
     'ui:selection',
     (
       _e,
@@ -751,26 +829,25 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete),
   );
 
-  ipcMain.handle('dialog:error', async (e, message: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('dialog:error', async (e, message: string) => {
+    const sender = windowOf(e);
     const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, buttons: ['OK'] };
-    if (sender) await dialog.showMessageBox(sender, opts);
-    else await dialog.showMessageBox(opts);
+    await showMessageBox(sender, opts);
   });
-  ipcMain.handle('dialog:confirm', async (e, message: string) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('dialog:confirm', async (e, message: string) => {
+    const sender = windowOf(e);
     const opts: Electron.MessageBoxOptions = { type: 'question', title: 'Looper', message, buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 };
-    const result = sender ? await dialog.showMessageBox(sender, opts) : await dialog.showMessageBox(opts);
+    const result = await showMessageBox(sender, opts);
     return result.response === 0;
   });
 
   // Native directory picker, translating between the host's path style and the
   // environment's native one (flavor). WSL paths cross via \\wsl.localhost\
   // UNC shares plus `wslpath` for drive-mount paths.
-  ipcMain.handle(
+  ipc.handle(
     'dialog:pickDir',
     async (e, current?: string, flavor?: 'posix' | 'windows', distro?: string): Promise<string | null> => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
+      const sender = windowOf(e);
       const hostFlavor = process.platform === 'win32' ? 'windows' : 'posix';
       const uncRoot = distro ? `\\\\wsl.localhost\\${distro}` : undefined;
       const cur = current?.trim();
@@ -793,7 +870,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         properties: ['openDirectory'],
         ...(defaultPath ? { defaultPath } : {}),
       };
-      const result = sender ? await dialog.showOpenDialog(sender, options) : await dialog.showOpenDialog(options);
+      const result = await showOpenDialog(sender, options);
       const picked = result.canceled ? undefined : result.filePaths[0];
       if (!picked) return null;
       if (!flavor || flavor === hostFlavor) return picked;
@@ -807,11 +884,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     },
   );
 
-  ipcMain.handle('wsl:distros', () => listWslDistros());
-  ipcMain.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
+  ipc.handle('wsl:distros', () => listWslDistros());
+  ipc.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipcMain.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; allowComplete: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; allowComplete: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
     // A task allowed several simultaneous runs can start another until its cap.
@@ -841,13 +918,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Open Project in Chat', click: () => sender.webContents.send('ui:event', { type: 'open-chat' }) },
       { label: 'Open Working Directory', click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
     ]);
-    menu.popup({ window: sender });
+    popupMenu(menu, { window: sender });
   });
 
   // Folder header context menu. Bulk actions run directly against the engine;
   // Run All skips disabled tasks and tasks already at their run cap.
-  ipcMain.on('context-menu:folder', (e, info: { folderId: string }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:folder', (e, info: { folderId: string }) => {
+    const sender = windowOf(e);
     if (!sender) return;
     // Folder actions apply to the whole subtree: nested folders included.
     const subtree = () => folderSubtree(engine.listFolders(), info.folderId);
@@ -931,7 +1008,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             defaultId: 0,
             cancelId: 1,
           };
-          void dialog.showMessageBox(sender, opts).then((r) => {
+          void showMessageBox(sender, opts).then((r) => {
             if (r.response !== 0) return;
             if (r.checkboxChecked) {
               // Delete the whole subtree: every task in it, then every nested folder.
@@ -943,22 +1020,22 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         },
       },
     ]);
-    menu.popup({ window: sender });
+    popupMenu(menu, { window: sender });
   });
 
-  ipcMain.on('context-menu:recycle-bin', (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:recycle-bin', (e) => {
+    const sender = windowOf(e);
     if (!sender) return;
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'Restore', click: () => sender.webContents.send('ui:event', { type: 'bin-restore' }) },
       { label: 'Delete', click: () => sender.webContents.send('ui:event', { type: 'bin-delete' }) },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
-  ipcMain.on('context-menu:version', (e, info?: { builder?: boolean }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:version', (e, info?: { builder?: boolean }) => {
+    const sender = windowOf(e);
     if (!sender) return;
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       { label: 'View…', click: () => sender.webContents.send('ui:event', { type: 'version-view' }) },
       { label: 'Compare with Current…', click: () => sender.webContents.send('ui:event', { type: 'version-compare' }) },
       { type: 'separator' },
@@ -966,32 +1043,32 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         label: info?.builder ? 'Edit with Agent' : 'Restore',
         click: () => sender.webContents.send('ui:event', { type: 'version-restore' }),
       },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
-  ipcMain.on('context-menu:tasks-empty', (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:tasks-empty', (e) => {
+    const sender = windowOf(e);
     if (!sender) return;
-    Menu.buildFromTemplate([{ label: 'New Folder…', click: () => host.openNewFolder() }]).popup({ window: sender });
+    popupMenu(Menu.buildFromTemplate([{ label: 'New Folder…', click: () => host.openNewFolder() }]), { window: sender });
   });
 
   // A task list's header: its View-menu options (the pane's, or the single list's), then New Folder.
-  ipcMain.on('context-menu:pane', (e, info: { pane?: PaneId }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:pane', (e, info: { pane?: PaneId }) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const view = engine.settings.view;
     const update = (patch: Partial<View>) => engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
-    Menu.buildFromTemplate([
+    popupMenu(Menu.buildFromTemplate([
       ...(info.pane ? paneMenuItems(view, info.pane, update) : singleMenuItems(view, update)),
       { type: 'separator' },
       { label: 'New Folder…', click: () => host.openNewFolder() },
-    ]).popup({ window: sender });
+    ]), { window: sender });
   });
 
-  ipcMain.on(
+  ipc.on(
     'context-menu:message',
     (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }) => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
+      const sender = windowOf(e);
       if (!sender) return;
       const items: Electron.MenuItemConstructorOptions[] = [];
       if (info.file) {
@@ -1000,7 +1077,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
           label: 'Open File',
           click: () =>
             void openTargetPath(info.taskId, file).catch((err: unknown) => {
-              void dialog.showMessageBox(sender, {
+              void showMessageBox(sender, {
                 type: 'error',
                 title: 'Looper',
                 message: `Could not open ${file}.`,
@@ -1009,7 +1086,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
               });
             }),
         });
-        items.push({ label: 'Copy Path', click: () => clipboard.writeText(file) });
+        items.push({ label: 'Copy Path', click: () => writeClipboard(file) });
       }
       if (info.agentId) {
         if (items.length) items.push({ type: 'separator' });
@@ -1021,15 +1098,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       if (info.text) {
         const text = info.text;
         if (items.length) items.push({ type: 'separator' });
-        items.push({ label: 'Copy Content', click: () => clipboard.writeText(text) });
+        items.push({ label: 'Copy Content', click: () => writeClipboard(text) });
       }
-      if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: sender });
+      if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
     },
   );
 
   // The filter window hands its value to the parent conversation window and closes.
-  ipcMain.on('messages:filter-apply', (e, value: string) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('messages:filter-apply', (e, value: string) => {
+    const win = windowOf(e);
     const parent = win?.getParentWindow();
     if (parent && !parent.isDestroyed()) {
       parent.webContents.send('ui:event', { type: 'messages-filter', value: String(value ?? '') });
@@ -1037,13 +1114,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     win?.close();
   });
 
-  ipcMain.on('context-menu:run', (e, info: { taskId: string; runId: string; details: string }) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('context-menu:run', (e, info: { taskId: string; runId: string; details: string }) => {
+    const sender = windowOf(e);
     if (!sender) return;
     const canContinue = engine.canContinueRun(info.taskId, info.runId);
     const canGuide = engine.canGuideRun(info.taskId, info.runId);
     const showError = (err: unknown) =>
-      void dialog.showMessageBox(sender, {
+      void showMessageBox(sender, {
         type: 'error',
         title: 'Looper',
         message: err instanceof Error ? err.message : String(err),
@@ -1051,7 +1128,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       });
     const menu = Menu.buildFromTemplate([
       { label: 'Open', click: () => host.openMessages(info.taskId, info.runId) },
-      { label: 'Copy Details', enabled: !!info.details, click: () => clipboard.writeText(info.details) },
+      { label: 'Copy Details', enabled: !!info.details, click: () => writeClipboard(info.details) },
       { type: 'separator' },
       {
         label: 'Send Guidance…',
@@ -1074,33 +1151,34 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => host.openContinueRun(info.taskId, info.runId),
       },
       { type: 'separator' },
-      { label: 'Open Run Folder', click: () => void shell.openPath(engine.runDir(info.taskId, info.runId)) },
-      { label: 'Copy Run Folder Path', click: () => clipboard.writeText(engine.runDir(info.taskId, info.runId)) },
+      { label: 'Open Run Folder', click: () => void openPath(engine.runDir(info.taskId, info.runId)) },
+      { label: 'Copy Run Folder Path', click: () => writeClipboard(engine.runDir(info.taskId, info.runId)) },
     ]);
-    menu.popup({ window: sender });
+    popupMenu(menu, { window: sender });
   });
 
-  engine.on((event) => {
-    // A builder's conversation goes to its own window only: it is large and nobody else shows it.
+  const sendTo = (windows: AppWindow[], event: EngineEvent) => {
+    for (const w of windows) if (!w.isDestroyed()) w.webContents.send('engine:event', event);
+  };
+  broadcast = (event) => {
+    // A builder's conversation goes to its own windows only: it is large and nobody else shows it.
     if (event.type === 'builder' || event.type === 'builder:data') {
-      const w = host.builderWindow(event.type === 'builder' ? event.state.id : event.id);
-      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
-      return;
+      return sendTo(host.builderWindow(event.type === 'builder' ? event.state.id : event.id), event);
     }
-    // A chat's whole conversation, and a session's activity, go only to the Sessions window while it shows them.
+    // A chat's whole conversation, and a session's activity, go only to the Sessions windows showing them.
     if (event.type === 'chat' || event.type === 'session:activity') {
-      const w = host.sessionWindow(event.type === 'chat' ? event.state.id : event.activity.id);
-      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
-      return;
+      return sendTo(host.sessionWindow(event.type === 'chat' ? event.state.id : event.activity.id), event);
     }
-    // Likewise a terminal session's output: only its window shows it.
-    if (event.type === 'terminal:data' || event.type === 'terminal:end') {
-      const w = host.terminalWindow(event.id);
-      if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
-      return;
-    }
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (!w.isDestroyed()) w.webContents.send('engine:event', event);
-    }
-  });
+    // Likewise a terminal session's output: only the windows showing it.
+    if (event.type === 'terminal:data' || event.type === 'terminal:end') return sendTo(host.terminalWindow(event.id), event);
+    sendTo(allWindows(), event);
+  };
+  engine.on((event) => broadcast(event));
+}
+
+let broadcast: (event: EngineEvent) => void = () => undefined;
+
+/** Send an event to the windows the way engine events go; for events from outside the engine (Remote Access). */
+export function broadcastEvent(event: EngineEvent): void {
+  broadcast(event);
 }

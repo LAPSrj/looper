@@ -206,12 +206,12 @@ function permissionText(tool: string): string {
 export class SessionHub {
   private readonly tracks = new Map<string, Track>();
   private limits: UsageLimits = {};
-  private watched: string | null = null;
+  private watched = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private emitTimer: NodeJS.Timeout | null = null;
   private polls = 0;
   private lastSent = '';
-  private lastActivity = '';
+  private readonly lastActivity = new Map<string, string>();
 
   constructor(private readonly d: SessionHubDeps) {}
 
@@ -261,11 +261,16 @@ export class SessionHub {
     this.changed();
   }
 
-  /** The session the Sessions window shows: its activity is read and sent. Null when it shows none. */
-  watch(id: string | null): void {
-    this.watched = id;
-    this.lastActivity = '';
-    if (id) void this.readSession(id, true);
+  /** The sessions the Sessions windows show (on any device): their activity is read and sent. */
+  watch(ids: Iterable<string>): void {
+    const next = new Set(ids);
+    for (const id of next) {
+      if (this.watched.has(id)) continue;
+      this.lastActivity.delete(id);
+      void this.readSession(id, true);
+    }
+    for (const id of this.watched) if (!next.has(id)) this.lastActivity.delete(id);
+    this.watched = next;
   }
 
   state(): SessionsState {
@@ -359,14 +364,14 @@ export class SessionHub {
       const r = await this.d.readRows(e.taskId, e.id);
       if (r.status === 'ok') t.rows = r.rows.filter((row) => row.kind !== 'raw');
       if (kind === 'claude-code') t.subagentMetas = await this.d.subagents(e.taskId, e.id);
-      if (kind === 'claude-code' && (force || this.watched === id)) {
+      if (kind === 'claude-code' && (force || this.watched.has(id))) {
         for (const a of subagentsOf(t.subagentMetas, t.rows)) {
           if (a.status !== 'running' && t.subagentStats.has(a.agentId)) continue;
           const stats = await this.d.subagentStats(e.taskId, e.id, a.agentId);
           if (stats) t.subagentStats.set(a.agentId, stats);
         }
       }
-      const now = force || this.watched === id || this.polls % CONTEXT_POLLS === 0;
+      const now = force || this.watched.has(id) || this.polls % CONTEXT_POLLS === 0;
       if (kind === 'claude-code' && now) t.cache = await this.d.cacheUse(e.taskId, e.id);
       if (e.kind === 'terminal' && (force || this.polls % CONTEXT_POLLS === 0)) {
         const tokens = await this.d.contextTokens(e.taskId, e.id);
@@ -387,13 +392,14 @@ export class SessionHub {
       this.lastSent = key;
       this.d.emit({ type: 'sessions', state });
     }
-    if (!this.watched) return;
-    const activity = this.activity(this.watched);
-    if (!activity) return;
-    const aKey = JSON.stringify([activity.id, activity.rows?.length, activity.rows?.at(-1), activity.background, activity.subagents]);
-    if (aKey === this.lastActivity) return;
-    this.lastActivity = aKey;
-    this.d.emit({ type: 'session:activity', activity });
+    for (const id of this.watched) {
+      const activity = this.activity(id);
+      if (!activity) continue;
+      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.background, activity.subagents]);
+      if (aKey === this.lastActivity.get(id)) continue;
+      this.lastActivity.set(id, aKey);
+      this.d.emit({ type: 'session:activity', activity });
+    }
   }
 
   private summaries(): SessionSummary[] {

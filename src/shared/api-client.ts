@@ -1,0 +1,271 @@
+import type { AddonUiEvent } from './addons';
+import type { LooperApi, UiEvent } from './api';
+import type { EngineEvent } from './types';
+
+/** A dropped or picked file for the main process: by path, or by bytes when it has none (a pasted image). */
+export type AttachmentInputItem = { name: string; path: string } | { name: string; data: Uint8Array };
+
+/**
+ * How `window.looper` reaches the main process: Electron's ipcRenderer in the
+ * desktop app, the tab's WebSocket in a browser.
+ */
+export interface LooperTransport {
+  invoke(channel: string, ...args: unknown[]): Promise<any>;
+  send(channel: string, ...args: unknown[]): void;
+  /** Listen to what the main process sends the window on `channel`; returns the unsubscribe function. */
+  on(channel: string, cb: (...args: any[]) => void): () => void;
+  /** Dropped, picked or pasted files, as the main process takes them for attachments. */
+  files(files: File[]): Promise<AttachmentInputItem[]>;
+  /** The file's path on the computer (a Looper document to open). */
+  filePath(file: File): Promise<string>;
+}
+
+/** The engine's message alone, without Electron's IPC framing, for errors shown to the user. */
+const plainError = (e: Error): never => {
+  throw new Error(e.message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+};
+
+export function createLooperApi(t: LooperTransport): LooperApi {
+  const api: LooperApi = {
+    info: () => t.invoke('info'),
+    tasks: {
+      list: () => t.invoke('tasks:list'),
+      save: (input, opts) => t.invoke('tasks:save', input, opts),
+      remove: (id) => t.invoke('tasks:remove', id),
+      export: (id) => t.invoke('tasks:export', id),
+      reorder: (ids, folders, layout, parents) => t.invoke('tasks:reorder', ids, folders, layout, parents),
+    },
+    projects: {
+      list: () => t.invoke('projects:list'),
+      save: (input) => t.invoke('projects:save', input).catch(plainError),
+      remove: (id) => t.invoke('projects:remove', id),
+      reorder: (ids) => t.invoke('projects:reorder', ids),
+      openEditor: (id) => t.invoke('projects:openEditor', id),
+      newTask: (id) => t.invoke('projects:newTask', id),
+      newChat: (id) => t.invoke('projects:newChat', id),
+      newTerminal: (id) => t.invoke('projects:newTerminal', id),
+      showContextMenu: (id) => t.send('context-menu:project', id),
+    },
+    versions: {
+      list: (taskId) => t.invoke('versions:list', taskId),
+      detail: (taskId, n, compare) => t.invoke('versions:detail', taskId, n, compare).catch(plainError),
+      restore: (taskId, n) => t.invoke('versions:restore', taskId, n).catch(plainError),
+      open: (taskId) => t.invoke('versions:open', taskId),
+      openDetail: (taskId, n, compare) => t.invoke('versions:openDetail', taskId, n, compare),
+    },
+    builder: {
+      start: (setup) => t.invoke('builder:start', setup).catch(plainError),
+      get: (id) => t.invoke('builder:get', id),
+      send: (id, text) => t.send('builder:send', id, text),
+      review: (id) => t.invoke('builder:review', id).catch(plainError),
+      save: (id) => t.invoke('builder:save', id).catch(plainError),
+      undo: (id) => t.invoke('builder:undo', id).catch(plainError),
+      redo: (id) => t.invoke('builder:redo', id).catch(plainError),
+      forTask: (taskId) => t.invoke('builder:forTask', taskId),
+      loadVersion: (taskId, n) => t.invoke('builder:loadVersion', taskId, n).catch(plainError),
+      editTask: (taskId) => t.invoke('builder:editTask', taskId),
+      openNew: () => t.invoke('builder:openNew'),
+      output: (id) => t.invoke('builder:output', id),
+      write: (id, data) => t.send('builder:write', id, data),
+      resize: (id, cols, rows) => t.send('builder:resize', id, cols, rows),
+    },
+    recycleBin: {
+      list: () => t.invoke('recycleBin:list'),
+      // The engine's reason is shown to the user; drop Electron's IPC framing.
+      restore: (id) => t.invoke('recycleBin:restore', id).catch(plainError),
+      delete: (id) => t.invoke('recycleBin:delete', id).catch(plainError),
+      empty: () => t.invoke('recycleBin:empty'),
+    },
+    folders: {
+      list: () => t.invoke('folders:list'),
+      layout: () => t.invoke('folders:layout'),
+      add: (name, parentId) => t.invoke('folders:add', name, parentId),
+      rename: (id, name) => t.invoke('folders:rename', id, name),
+      remove: (id) => t.invoke('folders:remove', id),
+    },
+    templates: {
+      list: () => t.invoke('templates:list'),
+      save: (input) => t.invoke('templates:save', input),
+      remove: (id) => t.invoke('templates:remove', id),
+      reorder: (ids) => t.invoke('templates:reorder', ids),
+      export: (id) => t.invoke('templates:export', id),
+      import: () => t.invoke('templates:import'),
+    },
+    runtime: {
+      list: () => t.invoke('runtime:list'),
+      runNow: (id) => t.invoke('runtime:runNow', id),
+      pause: (id) => t.invoke('runtime:pause', id),
+      resume: (id) => t.invoke('runtime:resume', id),
+      complete: (id) => t.invoke('runtime:complete', id),
+      reopen: (id) => t.invoke('runtime:reopen', id),
+      stopTask: (id, runId) => t.invoke('runtime:stopTask', id, runId),
+    },
+    runs: {
+      list: (id, limit) => t.invoke('runs:list', id, limit),
+      recent: (limit, filter) => t.invoke('runs:recent', limit, filter),
+      output: (id, runId, raw) => t.invoke('runs:output', id, runId, raw),
+      openDir: (id, runId) => t.invoke('runs:openDir', id, runId),
+      clear: (id) => t.invoke('runs:clear', id),
+      messages: (id, runId, agentId, raw) => t.invoke('runs:messages', id, runId, agentId, raw),
+      messageImage: (id, runId, rowId, agentId) => t.invoke('runs:messageImage', id, runId, rowId, agentId),
+    },
+    agent: {
+      buffer: (id, runId) => t.invoke('agent:buffer', id, runId),
+      write: (id, data, runId) => t.send('agent:write', id, data, runId),
+      resize: (id, cols, rows, runId) => t.send('agent:resize', id, cols, rows, runId),
+    },
+    restState: () => t.invoke('rest:state'),
+    openPath: (p) => t.invoke('openPath', p),
+    openLooperFile: async (file) => t.invoke('file:openLooper', await t.filePath(file)),
+    readEngineLog: () => t.invoke('engineLog:read'),
+    openTaskTerminal: (taskId, runId) => t.invoke('task:openTerminal', taskId, runId),
+    openTaskChat: (taskId, runId) => t.invoke('task:openChat', taskId, runId).catch(plainError),
+    chat: {
+      get: (id) => t.invoke('chat:get', id),
+      send: (id, text, attachments) => t.send('chat:send', id, text, attachments),
+      answer: (id, requestId, allow) => t.send('chat:answer', id, requestId, allow),
+      stop: (id) => t.invoke('chat:stop', id),
+      attachFiles: async (id, files) => t.invoke('chat:attach', id, await t.files(files)),
+      showContextMenu: (info) => t.send('context-menu:chat', info),
+      sendNow: (id) => t.invoke('chat:sendNow', id),
+      unqueue: (id, messageId) => t.invoke('chat:unqueue', id, messageId),
+      showSettingMenu: (id, which, x, y) => t.send('context-menu:chat-setting', id, which, x, y),
+      pickFiles: (id) => t.invoke('chat:pickFiles', id).catch(plainError),
+    },
+    git: {
+      repos: () => t.invoke('git:repos'),
+      check: (projectId) => t.invoke('git:check', projectId),
+      status: (projectId) => t.invoke('git:status', projectId).catch(plainError),
+      changeDiff: (projectId, change, initial) => t.invoke('git:changeDiff', projectId, change, initial).catch(plainError),
+      log: (projectId, skip, limit) => t.invoke('git:log', projectId, skip, limit).catch(plainError),
+      commit: (projectId, hash) => t.invoke('git:commit', projectId, hash).catch(plainError),
+      commitDiff: (projectId, hash, path, origPath) => t.invoke('git:commitDiff', projectId, hash, path, origPath).catch(plainError),
+      showFileMenu: (info) => t.send('context-menu:git-file', info),
+      showCommitMenu: (info) => t.send('context-menu:git-commit', info),
+    },
+    sessions: {
+      state: () => t.invoke('sessions:state'),
+      activity: (id) => t.invoke('sessions:activity', id),
+      show: (id) => t.send('sessions:show', id),
+      seen: (id) => t.send('sessions:seen', id),
+      close: (id) => t.invoke('sessions:close', id),
+      stop: (id) => t.invoke('sessions:stop', id),
+      showContextMenu: (id) => t.send('context-menu:session', id),
+      openSend: () => t.send('sessions:openSend'),
+      openWindow: (id) => t.send('sessions:openWindow', ...(id ? [id] : [])),
+      showNewMenu: (kind, x, y) => t.send('context-menu:new-session', kind, x, y),
+      send: (ids, text) => t.send('sessions:send', ids, text),
+      backgroundOutput: (id, taskId) => t.invoke('sessions:backgroundOutput', id, taskId),
+      fileThumbnail: (taskId, path) => t.invoke('sessions:fileThumbnail', taskId, path),
+    },
+    attachment: {
+      open: (path) => t.invoke('attachment:open', path),
+      thumbnail: (path) => t.invoke('attachment:thumbnail', path),
+    },
+    terminalSession: {
+      attachFiles: async (id, files) => t.invoke('terminalSession:attach', id, await t.files(files)),
+      showContextMenu: (id, hasSelection) => t.send('context-menu:terminal', id, hasSelection),
+      output: (id) => t.invoke('terminalSession:output', id),
+      write: (id, data) => t.send('terminalSession:write', id, data),
+      resize: (id, cols, rows) => t.send('terminalSession:resize', id, cols, rows),
+    },
+    remote: {
+      state: () => t.invoke('remote:state'),
+      lastMessage: (id) => t.invoke('remote:lastMessage', id),
+      open: (id) => t.invoke('remote:open', id),
+      showContextMenu: (id) => t.send('context-menu:remote-conversation', id),
+      openHelperEditor: (id, isNew) => t.invoke('remote:openHelperEditor', id, isNew),
+      discard: (id) => t.send('remote:discard', id),
+    },
+    remoteAccess: {
+      state: () => t.invoke('remoteAccess:state').catch(plainError),
+      pairingCode: () => t.invoke('remoteAccess:pairingCode').catch(plainError),
+      cancelPairing: () => t.invoke('remoteAccess:cancelPairing').catch(plainError),
+      removeDevice: (id) => t.invoke('remoteAccess:removeDevice', id).catch(plainError),
+      renameDevice: (id, name) => t.invoke('remoteAccess:renameDevice', id, name).catch(plainError),
+      signOut: () => t.invoke('remoteAccess:signOut').catch(plainError),
+      openLogin: () => t.invoke('remoteAccess:openLogin').catch(plainError),
+      openPair: () => t.invoke('remoteAccess:openPair').catch(plainError),
+      openRename: (id) => t.invoke('remoteAccess:openRename', id).catch(plainError),
+    },
+    // The engine's error is shown to the user; drop Electron's IPC framing.
+    continueRun: (taskId, runId, guidance) => t.invoke('run:continue', taskId, runId, guidance).catch(plainError),
+    canGuideRun: (taskId, runId) => t.invoke('run:canGuide', taskId, runId),
+    sendGuidance: (taskId, runId, text) => t.invoke('run:guide', taskId, runId, text).catch(plainError),
+    openTaskWorkFolder: (taskId) => t.invoke('task:openWorkFolder', taskId),
+    openMessages: (taskId, runId, agentId, label) => t.invoke('messages:open', taskId, runId, agentId, label),
+    openMessageImage: (taskId, runId, rowId, agentId, label) =>
+      t.invoke('messages:openImage', taskId, runId, rowId, agentId, label),
+    openEditor: (taskId) => t.invoke('editor:open', taskId),
+    openNoteEditor: (taskId) => t.invoke('noteEditor:open', taskId),
+    openMoveToFolder: (taskId) => t.invoke('moveToFolder:open', taskId),
+
+    openEnvironmentEditor: (envId, isNew) => t.invoke('envEditor:open', envId, isNew),
+    openHarnessEditor: (envId, harnessId, isNew) => t.invoke('harnessEditor:open', envId, harnessId, isNew),
+    openModelEditor: (envId, harnessId, index) => t.invoke('modelEditor:open', envId, harnessId, index),
+    openModelUpdate: (envId, harnessId) => t.invoke('modelUpdate:open', envId, harnessId),
+    discoverModels: (envId, harnessId) => t.invoke('models:discover', envId, harnessId).catch(plainError),
+    openTemplateEditor: (templateId) => t.invoke('templateEditor:open', templateId),
+    openTemplatePicker: () => t.invoke('templatePicker:open'),
+    openEditorFromTemplate: (templateId) => t.invoke('editorFromTemplate:open', templateId),
+    importDraft: (key) => t.invoke('import:draft', key),
+    discardEnvironment: (envId) => t.send('envEditor:discard', envId),
+    discardHarness: (envId, harnessId) => t.send('harnessEditor:discard', envId, harnessId),
+    pickDirectory: (opts) => t.invoke('dialog:pickDir', opts.current, opts.flavor, opts.distro),
+    listWslDistros: () => t.invoke('wsl:distros'),
+    detectWslMountPrefix: (distro) => t.invoke('wsl:mountPrefix', distro),
+    moveStoreFile: (store, targetFile) => t.invoke('store:move', store, targetFile),
+    pickSaveFile: (opts) => t.invoke('dialog:pickSaveFile', opts.defaultPath, opts.filters),
+    updateSettings: (patch) => t.invoke('settings:update', patch),
+    getStartWithSystem: () => t.invoke('loginItem:get'),
+    setStartWithSystem: (enabled) => t.invoke('loginItem:set', enabled),
+    showError: (message) => t.invoke('dialog:error', message),
+    confirm: (message) => t.invoke('dialog:confirm', message),
+    reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete) =>
+      t.send(
+        'ui:selection',
+        hasTask,
+        taskEnabled,
+        taskPaused,
+        taskState,
+        hasNote,
+        canRunNow,
+        taskCompleted,
+        allowComplete,
+      ),
+    showTaskContextMenu: (info) => t.send('context-menu:task', info),
+    showFolderContextMenu: (info) => t.send('context-menu:folder', info),
+    showRecycleBinContextMenu: () => t.send('context-menu:recycle-bin'),
+    showVersionContextMenu: (info) => t.send('context-menu:version', info),
+    showTasksEmptyContextMenu: () => t.send('context-menu:tasks-empty'),
+    showPaneContextMenu: (info) => t.send('context-menu:pane', info),
+    showRunContextMenu: (info) => t.send('context-menu:run', info),
+    showMessageContextMenu: (info) => t.send('context-menu:message', info),
+    reportMessagesFilter: (filter) => t.send('messages:filter-state', filter),
+    applyMessagesFilter: (value) => t.send('messages:filter-apply', value),
+    applyMarkdownExport: (opts) => t.send('markdown-export:apply', opts),
+    applyRunOptions: (opts) => t.send('run-options:apply', opts),
+    addons: {
+      list: () => t.invoke('addons:list'),
+      pane: (id, pane) => t.invoke('addons:pane', id, pane).catch(plainError),
+      render: (id, view, params) => t.invoke('addons:render', id, view, params).catch(plainError),
+      reportSlowDraw: (id, view, ms) => t.send('addons:slowDraw', id, view, ms),
+      event: (id, ev, confirm) => t.invoke('addons:event', id, ev, confirm),
+      restart: (id) => t.invoke('addons:restart', id),
+      edit: (id) => t.invoke('addons:edit', id),
+      setRun: (id, run) => t.invoke('addons:setRun', id, run).catch(plainError),
+      pickFile: (id, accept) => t.invoke('addons:pickFile', id, accept),
+      setEnabled: (id, enabled) => t.invoke('addons:setEnabled', id, enabled),
+      openTool: (id, toolId) => t.invoke('addons:openTool', id, toolId),
+      showToolbarMenu: () => t.send('addons:toolbarMenu'),
+      remove: (id) => t.invoke('addons:remove', id),
+      install: () => t.invoke('addons:install'),
+      showMenu: (id, pane, menu, opts) => t.send('addons:menu', id, pane, menu, opts),
+      setMenuBar: (id, source, menuBar, item) => t.send('addons:menuBar', id, source, menuBar, item),
+      onEvent: (cb) => t.on('addon:event', (ev: AddonUiEvent) => cb(ev)),
+    },
+    onEvent: (cb) => t.on('engine:event', (ev: EngineEvent) => cb(ev)),
+    onUi: (cb) => t.on('ui:event', (ev: UiEvent) => cb(ev)),
+  };
+  return api;
+}

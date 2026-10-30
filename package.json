@@ -16,7 +16,8 @@
     "build": "electron-vite build",
     "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --external:node-pty --outfile=out/cli/cli.js",
     "build:worker": "esbuild src/engine/terminal-worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=out/cli/terminal-worker.js",
-    "build:all": "npm run build && npm run build:cli && npm run build:worker",
+    "build:tsnet": "node scripts/build-tsnet.mjs",
+    "build:all": "npm run build && npm run build:cli && npm run build:worker && npm run build:tsnet",
     "start": "electron-vite preview",
     "serve": "npm run build:cli && npm run build:worker && node out/cli/cli.js serve",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
@@ -35,17 +36,23 @@
     "commander": "^13.1.0",
     "croner": "^9.0.0",
     "node-pty": "1.2.0-beta.15",
+    "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.22.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.5.0",
     "electron": "^44.9.0",
     "electron-builder": "^26.0.0",
@@ -66,7 +73,8 @@
       "output": "release/${os}-${arch}"
     },
     "asarUnpack": [
-      "out/main/terminal-worker.js"
+      "out/main/terminal-worker.js",
+      "out/tsnet/**"
     ],
     "files": [
       "out/**",

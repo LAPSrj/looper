@@ -118,6 +118,9 @@ The full user guide lives in [docs/](docs/README.md):
 - [Monitoring](docs/monitoring.md) — terminal tab, chats and terminal
   sessions, Runs tab and run window, notifications, Rest Mode, Remote
   Control, tray, settings.
+- [Remote Access](docs/remote-access.md) — Looper in a browser on a phone,
+  tablet or another computer, over Tailscale: pairing, notifications,
+  security.
 - [CLI and automation](docs/cli-and-automation.md) — the CLI, the inbox
   protocol, the data directory.
 - [Troubleshooting](docs/troubleshooting.md) — common problems, current

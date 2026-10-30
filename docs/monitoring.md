@@ -105,7 +105,9 @@ tab and the dashboard's Recent runs hide runs with no action (Task Logs → Hide
 Logs → Hide Chats and Terminals), and whether the toolbar and status bar
 themselves are shown.
 
-The Advanced menu has Update Models… (see
+The Advanced menu has Remote Control (see [below](#remote-control)), Remote
+Access (see [Remote Access](remote-access.md)), Addons… (see
+[addons](addons.md)), Update Models… (see
 [Models](environments.md#models)), Engine Log (described below), Open Data
 Directory, which opens the [data directory](cli-and-automation.md#the-data-directory)
 in your file manager, and Reload UI. **Help → Instructions** (F1) opens this

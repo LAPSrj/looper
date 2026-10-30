@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { subscribe } from '../events';
+import { usePhoneTerminal } from './phone/TerminalKeys';
 import { openXterm } from './xterm';
 
 const DIM = '\x1b[90m';
@@ -11,10 +12,20 @@ const reportError = (e: Error) => void window.looper.showError(e.message);
 /** A terminal session: its output so far, then live, with keys, files and size passed to it. */
 export function TerminalView({ id }: { id: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const phone = usePhoneTerminal((d) => window.looper.terminalSession.write(id, d));
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const { term, fit } = openXterm(el);
+    const refit = () => {
+      try {
+        fit.fit();
+        window.looper.terminalSession.resize(id, term.cols, term.rows);
+      } catch {
+        /* element hidden */
+      }
+    };
+    const detachPhone = phone.attach(term, el, refit);
     let loaded = false;
     void window.looper.terminalSession.output(id).then((out) => {
       if (out?.data) term.write(out.data);
@@ -27,7 +38,7 @@ export function TerminalView({ id }: { id: string }) {
       if (e.type === 'terminal:data' && e.id === id) term.write(e.data);
       else if (e.type === 'terminal:end' && e.id === id) term.write(ENDED);
     });
-    const onData = term.onData((d) => window.looper.terminalSession.write(id, d));
+    const onData = term.onData((d) => window.looper.terminalSession.write(id, phone.typed(d)));
 
     // Files go in as their paths, pasted the way a terminal pastes text: Claude
     // Code and Codex turn a pasted image path into an image attachment.
@@ -76,17 +87,11 @@ export function TerminalView({ id }: { id: string }) {
       }
     });
 
-    const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        window.looper.terminalSession.resize(id, term.cols, term.rows);
-      } catch {
-        /* element hidden */
-      }
-    });
+    const ro = new ResizeObserver(refit);
     ro.observe(el);
     term.focus();
     return () => {
+      detachPhone();
       unsub();
       unsubUi();
       onData.dispose();
@@ -97,10 +102,12 @@ export function TerminalView({ id }: { id: string }) {
       ro.disconnect();
       term.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   return (
     <div className="terminal-session">
       <div className="terminal" ref={ref} />
+      {phone.row}
     </div>
   );
 }

@@ -1,0 +1,1544 @@
+/*
+ * Looper's pages on a phone (docs: the remote access phone frames).
+ * Every rule is scoped to html.phone-window (a window's page inside the iOS
+ * or Android frame, set by components/phone/keyboard.ts), so Electron, the
+ * desktop browser and the frame itself are untouched.
+ * iOS follows the Human Interface Guidelines (system colors, inset grouped
+ * lists, segmented controls); Android follows Material 3 (the frame's color
+ * scheme, type scale, navigation bar, tabs).
+ */
+@import './web/android-palette.css';
+
+/* ---------- palettes ---------- */
+html.phone-window[data-platform='ios'] {
+  --pg-bg: #f2f2f7; /* systemGroupedBackground */
+  --pg-cell: #ffffff; /* secondarySystemGroupedBackground */
+  --pg-fill: rgba(118, 118, 128, 0.12);
+  --pg-label: #000000;
+  --pg-label-2: rgba(60, 60, 67, 0.6);
+  --pg-label-3: rgba(60, 60, 67, 0.3);
+  --pg-sep: rgba(60, 60, 67, 0.29);
+  --pg-tint: #007aff;
+  --pg-on-tint: #ffffff;
+  --pg-press: #d1d1d6;
+  --pg-bar: rgba(249, 249, 249, 0.94);
+  --pg-seg-on: #ffffff;
+  --pg-red: #ff3b30;
+  --pg-orange: #ff9500;
+  --pg-green: #34c759;
+  --pg-key: #ffffff;
+  --pg-keys-bg: #d1d3d9;
+  --bg: #ffffff;
+  --bg-2: #f2f2f7;
+  --bg-3: #e5e5ea;
+  --border: #c6c6c8;
+  --fg: #000000;
+  --fg-muted: rgba(60, 60, 67, 0.6);
+  --accent: #007aff;
+  --accent-fg: #ffffff;
+  --green: #248a3d;
+  --yellow: #c93400;
+  --red: #ff3b30;
+  --info-bg: #e5f1ff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
+  font-size: 17px;
+  letter-spacing: -0.41px;
+}
+
+/* The --md-* tokens (Looper's blue, light and dark) are the frame's own: one file, imported by both. */
+html.phone-window[data-platform='android'] {
+  --pg-bg: var(--md-surface);
+  --pg-cell: var(--md-surface);
+  --pg-container: var(--md-surface-container);
+  --pg-container-high: var(--md-surface-container-high);
+  --pg-fill: var(--md-secondary-container);
+  --pg-on-fill: var(--md-on-secondary-container);
+  --pg-label: var(--md-on-surface);
+  --pg-label-2: var(--md-on-surface-variant);
+  --pg-label-3: var(--md-outline);
+  --pg-sep: var(--md-outline-variant);
+  --pg-tint: var(--md-primary);
+  --pg-on-tint: var(--md-on-primary);
+  --pg-press: color-mix(in srgb, var(--md-on-surface) 10%, transparent);
+  --pg-bar: var(--md-surface-container);
+  --pg-red: var(--md-error);
+  --pg-orange: #8c5000;
+  --pg-green: #146c2e;
+  --pg-key: var(--md-surface);
+  --pg-keys-bg: var(--md-surface-container-high);
+  --bg: var(--md-surface);
+  --bg-2: var(--md-surface-container-low);
+  --bg-3: var(--md-surface-container-high);
+  --border: var(--md-outline-variant);
+  --fg: var(--md-on-surface);
+  --fg-muted: var(--md-on-surface-variant);
+  --accent: var(--md-primary);
+  --accent-fg: var(--md-on-primary);
+  --green: #146c2e;
+  --yellow: #8c5000;
+  --red: var(--md-error);
+  --info-bg: var(--md-primary-container);
+  font-family: Roboto, 'Google Sans Text', 'Noto Sans', system-ui, sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.15px;
+}
+
+@media (prefers-color-scheme: dark) {
+  html.phone-window[data-platform='ios'] {
+    --pg-bg: #000000;
+    --pg-cell: #1c1c1e;
+    --pg-fill: rgba(118, 118, 128, 0.24);
+    --pg-label: #ffffff;
+    --pg-label-2: rgba(235, 235, 245, 0.6);
+    --pg-label-3: rgba(235, 235, 245, 0.3);
+    --pg-sep: rgba(84, 84, 88, 0.6);
+    --pg-tint: #0a84ff;
+    --pg-press: #3a3a3c;
+    --pg-bar: rgba(22, 22, 23, 0.94);
+    --pg-seg-on: #636366;
+    --pg-red: #ff453a;
+    --pg-orange: #ff9f0a;
+    --pg-green: #30d158;
+    --pg-key: #6b6b6b;
+    --pg-keys-bg: #2c2c2e;
+    --bg: #000000;
+    --bg-2: #1c1c1e;
+    --bg-3: #2c2c2e;
+    --border: #38383a;
+    --fg: #ffffff;
+    --fg-muted: rgba(235, 235, 245, 0.6);
+    --accent: #0a84ff;
+    --accent-fg: #ffffff;
+    --green: #30d158;
+    --yellow: #ffd60a;
+    --red: #ff453a;
+    --info-bg: #0a2a4d;
+  }
+  /* Everything else follows the --md-* tokens' dark values; only what Material has no token for is set here. */
+  html.phone-window[data-platform='android'] {
+    --pg-orange: #ffb870;
+    --pg-green: #8ad89a;
+    --pg-key: var(--md-surface-container-highest);
+    --green: #8ad89a;
+    --yellow: #ffb870;
+  }
+}
+
+/* ---------- page ---------- */
+html.phone-window {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  background: var(--bg);
+}
+/* The keyboard takes the bottom of the page: everything sits above it. */
+html.phone-window #root {
+  height: calc(100% - var(--keyboard-inset, 0px));
+}
+html.phone-window .phone-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--pg-bg);
+}
+html.phone-window .pg-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 24px;
+}
+html.phone-window .pg-large-title {
+  margin: 6px 16px 12px;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: 0.37px;
+  color: var(--pg-label);
+}
+html.phone-window[data-platform='android'] .pg-scroll {
+  padding-top: 8px;
+}
+
+/* ---------- lists ---------- */
+html.phone-window .pg-group {
+  margin: 0 0 24px;
+}
+html.phone-window .pg-group-title {
+  margin: 0;
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-group-footer {
+  margin: 7px 16px 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 11px 16px;
+  color: var(--pg-label);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+html.phone-window .pg-row.tappable:active {
+  background: var(--pg-press);
+}
+html.phone-window .pg-row-lead {
+  display: flex;
+  flex: none;
+}
+html.phone-window .pg-row-lead .status-icon {
+  margin: 0;
+}
+html.phone-window .pg-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+html.phone-window .pg-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html.phone-window .pg-row-sub {
+  color: var(--pg-label-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+html.phone-window .pg-row-sub .mono {
+  font-size: 0.9em;
+}
+html.phone-window .pg-row-value {
+  flex: none;
+  color: var(--pg-label-2);
+  font-variant-numeric: tabular-nums;
+}
+html.phone-window .pg-row.tone-error .pg-row-sub {
+  color: var(--pg-red);
+}
+html.phone-window .pg-row.tone-warning .pg-row-sub {
+  color: var(--pg-orange);
+}
+html.phone-window .pg-row.tone-muted .pg-row-title {
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-empty {
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-chevron {
+  flex: none;
+  color: var(--pg-label-3);
+}
+
+/* iOS: inset grouped sections, 16 pt from the edges, rounded, hairlines inset under the text. */
+html.phone-window[data-platform='ios'] .pg-group-title {
+  padding: 0 32px 7px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: -0.08px;
+}
+html.phone-window[data-platform='ios'] .pg-list {
+  margin: 0 16px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--pg-cell);
+}
+html.phone-window[data-platform='ios'] .pg-group-footer {
+  margin: 7px 32px 0;
+}
+html.phone-window[data-platform='ios'] .pg-row + .pg-row {
+  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+}
+html.phone-window[data-platform='ios'] .pg-row-sub {
+  font-size: 15px;
+  letter-spacing: -0.24px;
+}
+html.phone-window[data-platform='ios'] .pg-row-value {
+  font-size: 17px;
+}
+
+/* Material 3: full-width lists under a subhead, 56 dp one-line and 72 dp two-line items. */
+html.phone-window[data-platform='android'] .pg-group {
+  margin-bottom: 8px;
+}
+html.phone-window[data-platform='android'] .pg-group-title {
+  padding: 16px 16px 8px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  color: var(--pg-tint);
+}
+html.phone-window[data-platform='android'] .pg-row {
+  min-height: 56px;
+  padding: 8px 24px 8px 16px;
+  gap: 16px;
+}
+html.phone-window[data-platform='android'] .pg-row-title {
+  font-size: 16px;
+  line-height: 24px;
+}
+html.phone-window[data-platform='android'] .pg-row-sub {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+}
+/* Trailing supporting text, centered on the item: as large as the headline (body large), in the
+   variant color, so a count reads as part of the row rather than a footnote. */
+html.phone-window[data-platform='android'] .pg-row-value {
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0.15px;
+}
+
+/* ---------- segmented control (iOS) / tabs (Material) ---------- */
+html.phone-window .pg-segmented-wrap {
+  padding: 0 16px 16px;
+}
+html.phone-window[data-platform='android'] .pg-segmented-wrap {
+  padding: 0 0 8px;
+}
+html.phone-window[data-platform='ios'] .pg-segmented,
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
+  display: flex;
+  gap: 0;
+  padding: 2px;
+  border: none;
+  border-radius: 9px;
+  background: var(--pg-fill);
+}
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
+  flex: none;
+  margin: 8px 16px;
+}
+html.phone-window[data-platform='ios'] .pg-segmented button,
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pg-label);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.08px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.phone-window[data-platform='ios'] .pg-segmented button.active,
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab.active {
+  background: var(--pg-seg-on);
+  font-weight: 600;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.12),
+    0 3px 1px rgba(0, 0, 0, 0.04);
+}
+html.phone-window[data-platform='android'] .pg-segmented,
+html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
+  display: flex;
+  flex: none;
+  gap: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--pg-sep);
+  background: var(--pg-bg);
+}
+html.phone-window[data-platform='android'] .pg-segmented button,
+html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--pg-label-2);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+}
+html.phone-window[data-platform='android'] .pg-segmented button.active,
+html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab.active {
+  color: var(--pg-tint);
+  border-bottom-color: var(--pg-tint);
+}
+
+/* ---------- the main window's tab bar ---------- */
+html.phone-window .phone-main .phone-screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+html.phone-window .phone-tabbar {
+  flex: none;
+  display: flex;
+  padding: 0 0 var(--looper-safe-bottom, 0px);
+}
+/* Under the keyboard, as on the platforms. */
+html.phone-window.keyboard-up .phone-tabbar {
+  display: none;
+}
+html.phone-window .phone-tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--pg-label-2);
+}
+html.phone-window .phone-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+html.phone-window[data-platform='ios'] .phone-tabbar {
+  height: calc(49px + var(--looper-safe-bottom, 0px));
+  background: var(--pg-bar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: inset 0 0.5px 0 var(--pg-sep);
+}
+html.phone-window[data-platform='ios'] .phone-tab {
+  justify-content: flex-start;
+  gap: 1px;
+  padding-top: 5px;
+  color: #8e8e93;
+}
+html.phone-window[data-platform='ios'] .phone-tab-label {
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+html.phone-window[data-platform='ios'] .phone-tab.active {
+  color: var(--pg-tint);
+}
+html.phone-window[data-platform='ios'] .phone-tab.active svg {
+  stroke-width: 2.1;
+}
+html.phone-window[data-platform='android'] .phone-tabbar {
+  height: calc(80px + var(--looper-safe-bottom, 0px));
+  background: var(--pg-bar);
+}
+html.phone-window[data-platform='android'] .phone-tab {
+  justify-content: flex-start;
+  gap: 4px;
+  padding-top: 12px;
+}
+html.phone-window[data-platform='android'] .phone-tab-icon {
+  width: 64px;
+  height: 32px;
+  border-radius: 16px;
+}
+html.phone-window[data-platform='android'] .phone-tab.active .phone-tab-icon {
+  background: var(--pg-fill);
+  color: var(--pg-on-fill);
+}
+html.phone-window[data-platform='android'] .phone-tab-label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+html.phone-window[data-platform='android'] .phone-tab.active .phone-tab-label {
+  color: var(--pg-label);
+  font-weight: 700;
+}
+
+/* ---------- a pushed screen: the desktop's main pane ---------- */
+html.phone-window .phone-detail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+/* The frame's navigation bar shows the title. */
+html.phone-window .phone-detail .detail-bar {
+  display: none;
+}
+html.phone-window .phone-detail > .detail {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+html.phone-window .phone-detail .status-pane {
+  padding: 16px 16px 24px;
+  background: var(--pg-bg);
+  flex: 1;
+}
+html.phone-window .phone-detail .tab-body {
+  background: var(--pg-bg);
+}
+
+/* Property lists: each label over its value, in a grouped card (iOS) or a plain list (Material). */
+html.phone-window .props {
+  display: block;
+  margin: 0;
+  font-size: inherit;
+}
+html.phone-window .props dt {
+  padding: 10px 16px 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--pg-label-2, var(--fg-muted));
+}
+html.phone-window .props dd {
+  padding: 2px 16px 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--pg-label, var(--fg));
+}
+html.phone-window .props dd + dt {
+  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell, var(--bg)), inset 0 0.5px 0 0 var(--pg-sep, var(--border));
+}
+html.phone-window .props dd.mono,
+html.phone-window .props dd .mono {
+  font-size: 14px;
+}
+html.phone-window[data-platform='ios'] .status-pane > .props,
+html.phone-window[data-platform='ios'] .addon-screen .props {
+  border-radius: 10px;
+  background: var(--pg-cell);
+}
+html.phone-window[data-platform='android'] .status-pane {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* ---------- tables become lists ---------- */
+html.phone-window .runlog-table,
+html.phone-window .runlog-table tbody {
+  display: block;
+  width: 100%;
+}
+html.phone-window .runlog-table colgroup,
+html.phone-window .runlog-table thead {
+  display: none;
+}
+html.phone-window .runlog-table tr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 11px 16px;
+  min-height: 44px;
+  box-shadow: inset 0 -0.5px 0 var(--pg-sep, var(--border));
+  background: var(--pg-cell, var(--bg));
+}
+html.phone-window .runlog-table td {
+  display: block;
+  padding: 0;
+  border: none;
+  white-space: normal;
+  overflow: visible;
+  color: var(--pg-label-2, var(--fg-muted));
+  font-size: 15px;
+  background: none !important;
+}
+html.phone-window .runlog-table td:first-child {
+  color: var(--pg-label, var(--fg));
+  font-weight: 500;
+}
+/* The last column (details, preview) takes a line of its own. */
+html.phone-window .runlog-table td:last-child:not(:first-child) {
+  flex-basis: 100%;
+  color: var(--pg-label, var(--fg));
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+html.phone-window .runlog-table td[colspan] {
+  flex-basis: 100%;
+  font-weight: 400;
+  color: var(--pg-label-2, var(--fg-muted));
+}
+html.phone-window .runlog-table tr.result-error td {
+  color: var(--red);
+}
+html.phone-window .runlog-table tr.result-warning td {
+  color: var(--yellow);
+}
+html.phone-window .runlog-table tr.run-row:active,
+html.phone-window .runlog-table tr.msg-row:active {
+  background: var(--pg-press, var(--bg-3));
+}
+html.phone-window .runlog-table tr.selected,
+html.phone-window .runlog-table tr.run-row.selected {
+  background: var(--info-bg);
+}
+html.phone-window .runlog-table tr.selected td {
+  color: var(--pg-label, var(--fg));
+}
+
+/* ---------- split panes stack ---------- */
+html.phone-window .runlog-divider,
+html.phone-window .run-detail-divider,
+html.phone-window .sidebar-divider,
+html.phone-window .pane-sash {
+  display: none;
+}
+html.phone-window .runlog-table-wrap,
+html.phone-window .messages-table-wrap,
+html.phone-window .run-detail-app .run-detail-table-wrap {
+  height: auto !important;
+  max-height: 45%;
+  flex: 0 1 auto;
+  border-bottom: 0.5px solid var(--border);
+}
+html.phone-window .runlog-result,
+html.phone-window .messages-detail,
+html.phone-window .run-detail-output {
+  height: auto !important;
+  flex: 1;
+  min-height: 0;
+}
+/* A task's Runs and a project's Sessions: a tap opens the run's window, so the list fills the screen. */
+html.phone-window .phone-detail .runlog-table-wrap {
+  max-height: none;
+  flex: 1;
+  border-bottom: none;
+  background: var(--pg-bg);
+}
+html.phone-window .phone-detail .runlog-result {
+  display: none;
+}
+/* The main window's sidebar-and-pane windows (an addon pane's own window): the list over the item. */
+html.phone-window .app {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none !important;
+}
+html.phone-window .app > .sidebar {
+  max-height: 42%;
+  border-bottom: 0.5px solid var(--border);
+}
+html.phone-window .app > .main {
+  flex: 1;
+}
+html.phone-window .builder {
+  flex-direction: column;
+}
+html.phone-window .builder-panel {
+  width: auto;
+  max-height: 40%;
+  border-left: none;
+  border-top: 0.5px solid var(--border);
+}
+html.phone-window .compare-pane {
+  overflow: auto;
+}
+html.phone-window .sbs {
+  min-width: 640px;
+}
+
+/* ---------- task and session lists ---------- */
+html.phone-window .pg-tasks .task-list,
+html.phone-window .pg-sessions .session-list {
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+}
+html.phone-window .pg-tasks .task-item,
+html.phone-window .pg-sessions .session-row,
+html.phone-window .pg-addon-pane .task-item {
+  margin: 0 !important;
+  padding: 11px 16px;
+  min-height: 44px;
+  border: none;
+  border-radius: 0;
+  background: var(--pg-cell);
+  font-size: 17px;
+}
+html.phone-window .pg-tasks .task-item:hover,
+html.phone-window .pg-tasks .task-item.selected,
+html.phone-window .pg-sessions .session-row:hover,
+html.phone-window .pg-addon-pane .task-item:hover {
+  background: var(--pg-cell);
+}
+html.phone-window .pg-tasks .task-item:active,
+html.phone-window .pg-sessions .session-row:active,
+html.phone-window .pg-addon-pane .task-item:active {
+  background: var(--pg-press);
+}
+html.phone-window .pg-tasks .task-name {
+  font-weight: 400;
+}
+html.phone-window .pg-tasks .task-item-sub,
+html.phone-window .pg-sessions .session-sub,
+html.phone-window .pg-addon-pane .task-item-sub {
+  font-size: 15px;
+  margin-top: 2px;
+  color: var(--pg-label-2);
+}
+/* A disabled task's text is dimmed, not its whole cell. */
+html.phone-window .pg-tasks .task-item.disabled {
+  opacity: 1;
+}
+html.phone-window .pg-tasks .task-item.disabled .task-name,
+html.phone-window .pg-tasks .task-item.disabled .task-item-sub {
+  color: var(--pg-label-3);
+}
+html.phone-window .pg-tasks .task-item.held .task-item-sub {
+  color: var(--pg-orange);
+}
+html.phone-window .pg-tasks .task-folder,
+html.phone-window .pg-sessions .session-group,
+html.phone-window .pg-addon-pane .task-folder {
+  margin: 0 !important;
+  padding: 18px 16px 7px;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-sessions .session-row {
+  align-items: center;
+  gap: 12px;
+}
+html.phone-window .pg-sessions .session-icon {
+  width: 22px;
+  height: 22px;
+}
+html.phone-window .pg-sessions .session-empty {
+  padding: 16px;
+  background: var(--pg-cell);
+}
+/* iOS: each run of rows between group headers is one rounded inset card, hairlines between rows. */
+html.phone-window[data-platform='ios'] .pg-tasks .task-list,
+html.phone-window[data-platform='ios'] .pg-sessions .session-list,
+html.phone-window[data-platform='ios'] .pg-addon-pane .task-list {
+  margin: 0 16px;
+}
+html.phone-window[data-platform='ios'] .pg-tasks .task-folder,
+html.phone-window[data-platform='ios'] .pg-sessions .session-group,
+html.phone-window[data-platform='ios'] .pg-addon-pane .task-folder {
+  padding-left: 16px;
+  text-transform: uppercase;
+}
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item + .task-item,
+html.phone-window[data-platform='ios'] .pg-sessions .session-row + .session-row {
+  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+}
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-list > .task-item:first-child,
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-folder + .task-item,
+html.phone-window[data-platform='ios'] .pg-sessions .session-group + .session-row,
+html.phone-window[data-platform='ios'] .pg-sessions .session-list > .session-row:first-child {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item:last-child,
+html.phone-window[data-platform='ios'] :is(.pg-tasks, .pg-addon-pane) .task-item:has(+ .task-folder),
+html.phone-window[data-platform='ios'] .pg-sessions .session-row:last-child,
+html.phone-window[data-platform='ios'] .pg-sessions .session-row:has(+ .session-group) {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+html.phone-window[data-platform='ios'] .pg-sessions .session-list > div:not(:last-child) {
+  margin-bottom: 0;
+}
+html.phone-window[data-platform='android'] .pg-tasks .task-item,
+html.phone-window[data-platform='android'] .pg-sessions .session-row,
+html.phone-window[data-platform='android'] .pg-addon-pane .task-item {
+  min-height: 56px;
+  padding: 8px 24px 8px 16px;
+  font-size: 16px;
+}
+html.phone-window[data-platform='android'] .pg-tasks .task-item-sub,
+html.phone-window[data-platform='android'] .pg-sessions .session-sub {
+  font-size: 14px;
+}
+html.phone-window[data-platform='android'] .pg-tasks .task-folder,
+html.phone-window[data-platform='android'] .pg-sessions .session-group {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--pg-tint);
+}
+html.phone-window .pg-addon-toolbar {
+  margin: 0 16px;
+  border-radius: 10px;
+  background: var(--pg-cell);
+}
+html.phone-window .phone-detail > .pg-addon-toolbar {
+  margin: 0;
+  border-radius: 0;
+}
+html.phone-window .pg-addon-toolbar:empty {
+  display: none;
+}
+
+/* The Sessions window's Overview: its cards as a list. */
+html.phone-window .phone-sessions .sessions-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
+  overflow: visible;
+}
+html.phone-window .phone-sessions .overview-card {
+  height: auto;
+  max-height: none;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 16px;
+  background: var(--pg-cell);
+  gap: 8px;
+}
+html.phone-window .phone-sessions .overview-card.waiting {
+  box-shadow: inset 3px 0 0 var(--pg-orange);
+}
+html.phone-window .phone-sessions .overview-card > .overview-messages {
+  max-height: 160px;
+  margin: 0 -16px;
+  padding: 8px 16px;
+  font-size: 15px;
+}
+html.phone-window .phone-sessions .overview-card > .overview-messages:empty {
+  display: none;
+}
+html.phone-window .phone-sessions .overview-actions {
+  margin: 0 -16px;
+  padding: 8px 16px 0;
+}
+html.phone-window .phone-sessions .overview-title {
+  font-size: 17px;
+}
+html.phone-window .phone-sessions .overview-meta {
+  font-size: 13px;
+  white-space: normal;
+}
+html.phone-window[data-platform='android'] .phone-sessions .overview-card {
+  border-radius: 12px;
+  background: var(--pg-container);
+}
+html.phone-window .phone-sessions .empty {
+  padding: 24px 16px;
+}
+
+/* ---------- a session's screen ---------- */
+html.phone-window .phone-conversation {
+  background: var(--bg);
+}
+html.phone-window .phone-conversation .sessions-center {
+  flex: 1;
+  min-height: 0;
+}
+html.phone-window .chat-app,
+html.phone-window .messages-app,
+html.phone-window .builder-app,
+html.phone-window .sessions-app,
+html.phone-window .run-detail-app {
+  height: 100%;
+}
+html.phone-window .chat-scroll {
+  padding: 12px 12px;
+}
+html.phone-window .chat-user {
+  max-width: 85%;
+  border-radius: 18px;
+  padding: 8px 14px;
+  background: var(--pg-tint, var(--accent));
+  color: var(--pg-on-tint, var(--accent-fg));
+}
+html.phone-window .chat-user a {
+  color: inherit;
+}
+html.phone-window .chat-agent,
+html.phone-window .chat-agent-group,
+html.phone-window .chat-card,
+html.phone-window .chat-card.chat-permission {
+  max-width: 100%;
+}
+html.phone-window .chat-msg {
+  font-size: 16px;
+}
+html.phone-window .chat-agent {
+  border-radius: 18px;
+}
+html.phone-window .chat-composer {
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 10px calc(8px + var(--looper-safe-bottom, 0px));
+}
+html.phone-window.keyboard-up .chat-composer,
+html.phone-window.keyboard-up .term-keys,
+html.phone-window.keyboard-up .editor-footer,
+html.phone-window.keyboard-up .guidance-compose {
+  padding-bottom: 8px;
+}
+html.phone-window .chat-composer textarea {
+  min-height: 40px;
+  max-height: 30vh;
+  font-size: 16px;
+  border-radius: 20px;
+  padding: 9px 14px;
+}
+html.phone-window .toolbar.chat-commandbar {
+  margin-left: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+html.phone-window .composer-actions {
+  gap: 6px;
+}
+html.phone-window .composer-actions .btn {
+  min-width: 64px;
+}
+html.phone-window .chat-status.chat-working {
+  padding: 2px 14px 6px;
+}
+html.phone-window .slash-list {
+  max-height: 40vh;
+}
+html.phone-window .subagent-tabs {
+  scrollbar-width: none;
+}
+html.phone-window .subagent-tab {
+  min-height: 44px;
+  font-size: 15px;
+}
+html.phone-window .chat-find {
+  flex-wrap: wrap;
+}
+html.phone-window .chat-find input {
+  flex: 1;
+  width: auto;
+}
+
+/* The activity pane as a sheet from the bottom. */
+html.phone-window .pg-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.35);
+  animation: pg-fade 0.2s ease-out;
+}
+html.phone-window .pg-sheet {
+  width: 100%;
+  height: 90%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--looper-safe-bottom, 0px);
+  background: var(--bg-2);
+  overflow: hidden;
+  animation: pg-rise 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+html.phone-window[data-platform='ios'] .pg-sheet {
+  border-radius: 10px 10px 0 0;
+}
+html.phone-window[data-platform='android'] .pg-sheet {
+  border-radius: 28px 28px 0 0;
+  background: var(--pg-container);
+}
+html.phone-window .pg-sheet-grabber {
+  flex: none;
+  width: 36px;
+  height: 5px;
+  margin: 5px auto 0;
+  border-radius: 3px;
+  background: var(--pg-label-3);
+}
+html.phone-window[data-platform='android'] .pg-sheet-grabber {
+  width: 32px;
+  height: 4px;
+  margin-top: 16px;
+  border-radius: 2px;
+  background: var(--pg-label-2);
+  opacity: 0.4;
+}
+html.phone-window .pg-sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  min-height: 44px;
+}
+html.phone-window .pg-sheet-title {
+  flex: 1;
+  font-weight: 600;
+}
+html.phone-window[data-platform='ios'] .pg-sheet-title {
+  text-align: center;
+  padding-left: 44px;
+}
+html.phone-window[data-platform='android'] .pg-sheet-title {
+  font-size: 22px;
+  font-weight: 400;
+}
+html.phone-window .pg-sheet-done {
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  background: none;
+  color: var(--pg-tint);
+  font-size: 17px;
+  font-weight: 600;
+}
+html.phone-window .pg-sheet .statusbar {
+  flex-wrap: wrap;
+  white-space: normal;
+  gap: 2px 12px;
+  padding: 0 16px 8px;
+  border: none;
+  background: none;
+  font-size: 13px;
+}
+html.phone-window .pg-sheet .activity-panel {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+}
+@keyframes pg-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes pg-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- terminals ---------- */
+html.phone-window .terminal-session {
+  padding: 0;
+}
+html.phone-window .terminal .xterm {
+  padding: 4px;
+}
+html.phone-window .term-keys {
+  flex: none;
+  padding: 6px 4px calc(6px + var(--looper-safe-bottom, 0px));
+  background: var(--pg-keys-bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+html.phone-window .term-keys-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 4px;
+}
+html.phone-window .term-keys-scroll::-webkit-scrollbar {
+  display: none;
+}
+html.phone-window .term-key {
+  flex: none;
+  min-width: 44px;
+  height: 40px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--pg-key);
+  color: var(--pg-label);
+  font-size: 16px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+html.phone-window .term-key:active,
+html.phone-window .term-key.on {
+  background: var(--pg-tint);
+  color: var(--pg-on-tint);
+}
+html.phone-window[data-platform='android'] .term-key {
+  border-radius: 20px;
+  box-shadow: none;
+  height: 40px;
+}
+html.phone-window .term-keys-sep {
+  flex: none;
+  width: 1px;
+  margin: 6px 2px;
+  background: var(--pg-sep);
+}
+
+/* ---------- forms: one column, labels over full-width fields ---------- */
+html.phone-window .editor,
+html.phone-window .editor-window {
+  height: 100%;
+  background: var(--pg-bg);
+}
+html.phone-window .form {
+  max-width: none;
+  padding: 4px 16px 16px;
+}
+html.phone-window .form .row,
+html.phone-window .stagger-fields {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+html.phone-window .form .row > .field {
+  min-width: 0;
+  margin: 14px 0 0;
+}
+html.phone-window .stagger-fields {
+  padding-left: 16px;
+}
+html.phone-window .stagger-fields .field {
+  margin: 10px 0 0;
+}
+html.phone-window .field-label,
+html.phone-window .form section h3 {
+  font-size: 13px;
+}
+html.phone-window .field-label {
+  color: var(--pg-label-2);
+  font-weight: 400;
+}
+html.phone-window .field input,
+html.phone-window .field select,
+html.phone-window .field textarea,
+html.phone-window .guidance-compose textarea,
+html.phone-window .json-editor,
+html.phone-window .overview-actions input,
+html.phone-window .chat-find input,
+html.phone-window .addon-search input,
+html.phone-window .terminal-runs,
+html.phone-window .mu-item select {
+  font-size: 16px;
+  background: var(--pg-cell);
+  color: var(--pg-label);
+}
+html.phone-window .field input,
+html.phone-window .field select,
+html.phone-window .overview-actions input {
+  height: auto;
+  min-height: 44px;
+}
+html.phone-window .mu-item select,
+html.phone-window .terminal-runs {
+  min-height: 44px;
+}
+html.phone-window .input-suffix .suffix {
+  font-size: 15px;
+}
+/* No spin buttons: the number pad types the number, and the unit sits where they were. */
+html.phone-window input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+html.phone-window input[type='number']::-webkit-inner-spin-button,
+html.phone-window input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+html.phone-window .hours-row .input-suffix {
+  flex-basis: 96px;
+}
+html.phone-window[data-platform='ios'] .field input,
+html.phone-window[data-platform='ios'] .field select,
+html.phone-window[data-platform='ios'] .field textarea,
+html.phone-window[data-platform='ios'] .guidance-compose textarea,
+html.phone-window[data-platform='ios'] .overview-actions input {
+  border: none;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-size: 17px;
+}
+html.phone-window[data-platform='android'] .field input,
+html.phone-window[data-platform='android'] .field select,
+html.phone-window[data-platform='android'] .field textarea,
+html.phone-window[data-platform='android'] .guidance-compose textarea {
+  min-height: 56px;
+  padding: 15px 16px;
+  border: 1px solid var(--pg-label-3);
+  border-radius: 4px;
+  background: transparent;
+}
+html.phone-window[data-platform='android'] .field input:focus,
+html.phone-window[data-platform='android'] .field select:focus,
+html.phone-window[data-platform='android'] .field textarea:focus {
+  border: 2px solid var(--pg-tint);
+  padding: 14px 15px;
+}
+html.phone-window .browse-row {
+  flex-wrap: wrap;
+}
+/* The week's seven day buttons share the row. */
+html.phone-window .day-row .day-toggle.day-toggle {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+}
+
+/* Check boxes are switches at the row's end (iOS's and Material's). */
+html.phone-window .checkbox-field {
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row-reverse;
+  gap: 12px;
+  margin: 8px 0;
+  font-size: 17px;
+  font-weight: 400;
+}
+html.phone-window[data-platform='android'] .checkbox-field {
+  min-height: 48px;
+  font-size: 16px;
+}
+html.phone-window .checkbox-field input[type='checkbox'] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  position: relative;
+  top: 0;
+  width: 51px;
+  height: 31px;
+  margin: 0;
+  border-radius: 16px;
+  background: var(--pg-fill);
+  transition: background 0.2s;
+}
+html.phone-window .checkbox-field input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.15),
+    0 3px 1px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s;
+}
+html.phone-window .checkbox-field input[type='checkbox']:checked {
+  background: var(--pg-green);
+}
+html.phone-window .checkbox-field input[type='checkbox']:checked::after {
+  transform: translateX(20px);
+}
+html.phone-window .checkbox-field input[type='checkbox']:disabled {
+  opacity: 0.4;
+}
+html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox'] {
+  width: 52px;
+  height: 32px;
+  border: 2px solid var(--pg-label-3);
+  background: var(--pg-container-high);
+}
+html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox']::after {
+  top: 6px;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  background: var(--pg-label-3);
+  box-shadow: none;
+}
+html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox']:checked {
+  border-color: var(--pg-tint);
+  background: var(--pg-tint);
+}
+html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox']:checked::after {
+  top: 2px;
+  left: 2px;
+  width: 24px;
+  height: 24px;
+  background: var(--pg-on-tint);
+  transform: translateX(20px);
+}
+html.phone-window .checkbox-field input[type='radio'] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--pg-tint);
+  top: 0;
+}
+html.phone-window .radio-list {
+  margin-top: 0;
+}
+
+/* ---------- tab bars scroll sideways ---------- */
+html.phone-window .tabs {
+  flex: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 8px;
+  background: var(--pg-bg);
+}
+html.phone-window .tabs::-webkit-scrollbar {
+  display: none;
+}
+html.phone-window .tab {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 14px;
+  white-space: nowrap;
+  font-size: 15px;
+}
+html.phone-window[data-platform='android'] .tab {
+  min-height: 48px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  color: var(--pg-label-2);
+  border-bottom-width: 3px;
+}
+html.phone-window[data-platform='android'] .tab.active {
+  color: var(--pg-tint);
+  border-bottom-color: var(--pg-tint);
+}
+html.phone-window[data-platform='ios'] .tab.active {
+  color: var(--pg-tint);
+}
+
+/* ---------- buttons and touch targets ---------- */
+html.phone-window .btn {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 17px;
+  border-radius: 10px;
+  touch-action: manipulation;
+}
+html.phone-window .btn.small {
+  height: auto;
+  min-height: 36px;
+  font-size: 15px;
+}
+html.phone-window[data-platform='ios'] .btn {
+  border: none;
+  background: var(--pg-fill);
+  color: var(--pg-tint);
+}
+html.phone-window[data-platform='ios'] .btn.primary {
+  background: var(--pg-tint);
+  color: var(--pg-on-tint);
+}
+html.phone-window[data-platform='ios'] .btn.danger:not(:disabled) {
+  color: var(--pg-red);
+}
+html.phone-window[data-platform='android'] .btn {
+  position: relative;
+  min-height: 40px;
+  margin: 4px 0;
+  padding: 0 24px;
+  border: 1px solid var(--pg-label-3);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--pg-tint);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+/* A 40 dp button, a 48 dp target. */
+html.phone-window[data-platform='android'] .btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px 0;
+}
+html.phone-window[data-platform='android'] .btn.primary {
+  border-color: var(--pg-tint);
+  background: var(--pg-tint);
+  color: var(--pg-on-tint);
+}
+html.phone-window .link {
+  font-size: 15px;
+  min-height: 44px;
+}
+html.phone-window .toolbar {
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
+}
+html.phone-window .toolbar button {
+  flex: none;
+  min-width: 44px;
+  height: 44px;
+}
+html.phone-window .toolbar button.labeled,
+html.phone-window .toolbar button.commandbar-menu {
+  width: auto;
+  font-size: 15px;
+}
+html.phone-window .toolbar-sep {
+  flex: none;
+}
+
+/* ---------- dialog buttons stay at the bottom, above the safe area ---------- */
+html.phone-window .editor-footer {
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: stretch;
+  gap: 8px;
+  /* The buttons sit above the home indicator or the gesture bar, which is the whole bottom margin
+     (the frame passes its height as --looper-safe-bottom); this row's own padding only counts
+     where there is none. */
+  padding: 8px 16px max(8px, var(--looper-safe-bottom, 0px));
+  background: var(--pg-bg);
+  border-top: 0.5px solid var(--pg-sep);
+}
+html.phone-window .editor-footer .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* Material's 48 dp target comes from the ::after, so the row doesn't also need the button's margin. */
+html.phone-window[data-platform='android'] .editor-footer {
+  padding-top: 12px;
+  padding-bottom: max(12px, var(--looper-safe-bottom, 0px));
+}
+html.phone-window[data-platform='android'] .editor-footer .btn {
+  margin: 0;
+}
+/* The editor's panels share one grid cell: never wider than the screen, whatever a panel holds. */
+html.phone-window .editor-body {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+html.phone-window .editor-panel,
+html.phone-window .form {
+  min-width: 0;
+}
+html.phone-window .help code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html.phone-window .guidance-compose {
+  padding: 8px 10px calc(8px + var(--looper-safe-bottom, 0px));
+}
+html.phone-window .guidance-compose textarea {
+  min-height: 44px;
+}
+html.phone-window .statusbar {
+  flex-wrap: wrap;
+  white-space: normal;
+  row-gap: 2px;
+  padding-bottom: calc(4px + var(--looper-safe-bottom, 0px));
+}
+
+/* ---------- lists in dialogs (environments, templates, recycle bin…) ---------- */
+html.phone-window .env-list.boxed,
+html.phone-window .mu-list {
+  border: none;
+  border-radius: 10px;
+  background: var(--pg-cell);
+  padding: 0;
+}
+html.phone-window .env-item,
+html.phone-window .mu-item,
+html.phone-window .mu-group {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 0;
+  font-size: 17px;
+}
+html.phone-window .env-item + .env-item {
+  box-shadow: inset 16px 0.5px 0 0 var(--pg-cell), inset 0 0.5px 0 0 var(--pg-sep);
+}
+html.phone-window .env-item.selected {
+  background: var(--info-bg);
+}
+html.phone-window .env-item-sub,
+html.phone-window .mu-item-sub,
+html.phone-window .mu-group-note {
+  font-size: 14px;
+}
+html.phone-window .env-actions {
+  flex-wrap: wrap;
+}
+html.phone-window .env-actions .btn {
+  flex: 1 1 40%;
+}
+html.phone-window .mu-item {
+  flex-wrap: wrap;
+  padding-left: 16px;
+}
+html.phone-window .mu-item select {
+  width: 100%;
+}
+html.phone-window .picker-body {
+  padding: 8px 16px;
+}
+html.phone-window .send-sessions-list .checkbox-field {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+/* ---------- the rest ---------- */
+html.phone-window .empty {
+  padding: 24px 16px;
+}
+html.phone-window .markdown {
+  font-size: 16px;
+}
+html.phone-window .instructions {
+  padding: 8px 16px 32px;
+}
+html.phone-window .about {
+  padding: 24px 16px calc(24px + var(--looper-safe-bottom, 0px));
+  text-align: center;
+}
+html.phone-window .infobar {
+  margin: 8px 12px;
+  padding: 0 12px;
+}
+html.phone-window .msg-sections {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+html.phone-window .msg-section-label {
+  margin-top: 8px;
+}
+html.phone-window .addon-prop {
+  flex-wrap: wrap;
+}
+html.phone-window .addon-search input {
+  min-height: 36px;
+}
+html.phone-window .image-viewport {
+  touch-action: pinch-zoom pan-x pan-y;
+}
+html.phone-window .pair-qr img {
+  max-width: 100%;
+  height: auto;
+}
+html.phone-window .remote-access-status {
+  flex-wrap: wrap;
+}
+/* The Remote Access and other dialog bodies: no fixed widths wider than the screen. */
+html.phone-window .form *,
+html.phone-window .pair-body * {
+  max-width: 100%;
+}
+/* The unit inside the field keeps its room past the platform's own padding. */
+html.phone-window:is([data-platform='ios'], [data-platform='android']) .input-suffix input {
+  padding-right: 56px;
+}
+/* Pop-up buttons drawn by the page, with the platform's disclosure mark at the end. */
+html.phone-window:is([data-platform='ios'], [data-platform='android']) :is(.field select, .mu-item select, .terminal-runs) {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}

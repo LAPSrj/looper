@@ -1,0 +1,2821 @@
+{
+ "info": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "info",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'info': Error: boom info"
+  }
+ },
+ "tasks.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "tasks:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'tasks:list': Error: boom tasks:list"
+  }
+ },
+ "tasks.save": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "tasks:save",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'tasks:save': Error: boom tasks:save"
+  }
+ },
+ "tasks.remove": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "tasks:remove",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'tasks:remove': Error: boom tasks:remove"
+  }
+ },
+ "tasks.export": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "tasks:export",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'tasks:export': Error: boom tasks:export"
+  }
+ },
+ "tasks.reorder": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "tasks:reorder",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'tasks:reorder': Error: boom tasks:reorder"
+  }
+ },
+ "projects.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "projects:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:list': Error: boom projects:list"
+  }
+ },
+ "projects.save": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:save",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom projects:save"
+  }
+ },
+ "projects.remove": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:remove",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:remove': Error: boom projects:remove"
+  }
+ },
+ "projects.reorder": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:reorder",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:reorder': Error: boom projects:reorder"
+  }
+ },
+ "projects.openEditor": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:openEditor",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:openEditor': Error: boom projects:openEditor"
+  }
+ },
+ "projects.newTask": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:newTask",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:newTask': Error: boom projects:newTask"
+  }
+ },
+ "projects.newChat": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:newChat",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:newChat': Error: boom projects:newChat"
+  }
+ },
+ "projects.newTerminal": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "projects:newTerminal",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:newTerminal': Error: boom projects:newTerminal"
+  }
+ },
+ "projects.showContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:project",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "versions.list": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "versions:list",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'versions:list': Error: boom versions:list"
+  }
+ },
+ "versions.detail": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "versions:detail",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom versions:detail"
+  }
+ },
+ "versions.restore": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "versions:restore",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom versions:restore"
+  }
+ },
+ "versions.open": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "versions:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'versions:open': Error: boom versions:open"
+  }
+ },
+ "versions.openDetail": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "versions:openDetail",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'versions:openDetail': Error: boom versions:openDetail"
+  }
+ },
+ "builder.start": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:start",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:start"
+  }
+ },
+ "builder.get": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:get",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:get': Error: boom builder:get"
+  }
+ },
+ "builder.send": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "builder:send",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "builder.review": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:review",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:review"
+  }
+ },
+ "builder.save": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:save",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:save"
+  }
+ },
+ "builder.undo": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:undo",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:undo"
+  }
+ },
+ "builder.redo": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:redo",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:redo"
+  }
+ },
+ "builder.forTask": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:forTask",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:forTask': Error: boom builder:forTask"
+  }
+ },
+ "builder.loadVersion": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "builder:loadVersion",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom builder:loadVersion"
+  }
+ },
+ "builder.editTask": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:editTask",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:editTask': Error: boom builder:editTask"
+  }
+ },
+ "builder.openNew": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "builder:openNew",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:openNew': Error: boom builder:openNew"
+  }
+ },
+ "builder.output": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "builder:output",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:output': Error: boom builder:output"
+  }
+ },
+ "builder.write": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "builder:write",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "builder.resize": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "builder:resize",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "recycleBin.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "recycleBin:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'recycleBin:list': Error: boom recycleBin:list"
+  }
+ },
+ "recycleBin.restore": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "recycleBin:restore",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom recycleBin:restore"
+  }
+ },
+ "recycleBin.delete": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "recycleBin:delete",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom recycleBin:delete"
+  }
+ },
+ "recycleBin.empty": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "recycleBin:empty",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'recycleBin:empty': Error: boom recycleBin:empty"
+  }
+ },
+ "folders.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "folders:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'folders:list': Error: boom folders:list"
+  }
+ },
+ "folders.layout": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "folders:layout",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'folders:layout': Error: boom folders:layout"
+  }
+ },
+ "folders.add": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "folders:add",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'folders:add': Error: boom folders:add"
+  }
+ },
+ "folders.rename": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "folders:rename",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'folders:rename': Error: boom folders:rename"
+  }
+ },
+ "folders.remove": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "folders:remove",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'folders:remove': Error: boom folders:remove"
+  }
+ },
+ "templates.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "templates:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:list': Error: boom templates:list"
+  }
+ },
+ "templates.save": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "templates:save",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:save': Error: boom templates:save"
+  }
+ },
+ "templates.remove": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "templates:remove",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:remove': Error: boom templates:remove"
+  }
+ },
+ "templates.reorder": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "templates:reorder",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:reorder': Error: boom templates:reorder"
+  }
+ },
+ "templates.export": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "templates:export",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:export': Error: boom templates:export"
+  }
+ },
+ "templates.import": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "templates:import",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templates:import': Error: boom templates:import"
+  }
+ },
+ "runtime.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "runtime:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:list': Error: boom runtime:list"
+  }
+ },
+ "runtime.runNow": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:runNow",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:runNow': Error: boom runtime:runNow"
+  }
+ },
+ "runtime.pause": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:pause",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:pause': Error: boom runtime:pause"
+  }
+ },
+ "runtime.resume": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:resume",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:resume': Error: boom runtime:resume"
+  }
+ },
+ "runtime.complete": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:complete",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:complete': Error: boom runtime:complete"
+  }
+ },
+ "runtime.reopen": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:reopen",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:reopen': Error: boom runtime:reopen"
+  }
+ },
+ "runtime.stopTask": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runtime:stopTask",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:stopTask': Error: boom runtime:stopTask"
+  }
+ },
+ "runs.list": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runs:list",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:list': Error: boom runs:list"
+  }
+ },
+ "runs.recent": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runs:recent",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:recent': Error: boom runs:recent"
+  }
+ },
+ "runs.output": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "runs:output",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:output': Error: boom runs:output"
+  }
+ },
+ "runs.openDir": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runs:openDir",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:openDir': Error: boom runs:openDir"
+  }
+ },
+ "runs.clear": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runs:clear",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:clear': Error: boom runs:clear"
+  }
+ },
+ "runs.messages": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "runs:messages",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:messages': Error: boom runs:messages"
+  }
+ },
+ "runs.messageImage": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "runs:messageImage",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:messageImage': Error: boom runs:messageImage"
+  }
+ },
+ "agent.buffer": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "agent:buffer",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'agent:buffer': Error: boom agent:buffer"
+  }
+ },
+ "agent.write": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "agent:write",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "agent.resize": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "agent:resize",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "restState": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "rest:state",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'rest:state': Error: boom rest:state"
+  }
+ },
+ "openPath": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "openPath",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'openPath': Error: boom openPath"
+  }
+ },
+ "openLooperFile": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "file:openLooper",
+    [
+     "/p/f1.png"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'file:openLooper': Error: boom file:openLooper"
+  }
+ },
+ "readEngineLog": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "engineLog:read",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'engineLog:read': Error: boom engineLog:read"
+  }
+ },
+ "openTaskTerminal": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "task:openTerminal",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'task:openTerminal': Error: boom task:openTerminal"
+  }
+ },
+ "openTaskChat": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "task:openChat",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom task:openChat"
+  }
+ },
+ "chat.get": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:get",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:get': Error: boom chat:get"
+  }
+ },
+ "chat.send": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "chat:send",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.answer": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "chat:answer",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.stop": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:stop",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:stop': Error: boom chat:stop"
+  }
+ },
+ "chat.attachFiles": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:attach",
+    [
+     "id",
+     [
+      {
+       "name": "f1.png",
+       "path": "/p/f1.png"
+      },
+      {
+       "name": "pasted-image.png",
+       "data": {
+        "u8": [
+         1,
+         2
+        ]
+       }
+      }
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:attach': Error: boom chat:attach"
+  }
+ },
+ "chat.showContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:chat",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.sendNow": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:sendNow",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:sendNow': Error: boom chat:sendNow"
+  }
+ },
+ "chat.unqueue": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:unqueue",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:unqueue': Error: boom chat:unqueue"
+  }
+ },
+ "chat.showSettingMenu": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "context-menu:chat-setting",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.pickFiles": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:pickFiles",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom chat:pickFiles"
+  }
+ },
+ "git.repos": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "git:repos",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'git:repos': Error: boom git:repos"
+  }
+ },
+ "git.check": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "git:check",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'git:check': Error: boom git:check"
+  }
+ },
+ "git.status": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "git:status",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom git:status"
+  }
+ },
+ "git.changeDiff": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "git:changeDiff",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom git:changeDiff"
+  }
+ },
+ "git.log": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "git:log",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom git:log"
+  }
+ },
+ "git.commit": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "git:commit",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom git:commit"
+  }
+ },
+ "git.commitDiff": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "git:commitDiff",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom git:commitDiff"
+  }
+ },
+ "git.showFileMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:git-file",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "git.showCommitMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:git-commit",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.state": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "sessions:state",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:state': Error: boom sessions:state"
+  }
+ },
+ "sessions.activity": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:activity",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:activity': Error: boom sessions:activity"
+  }
+ },
+ "sessions.show": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "sessions:show",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.seen": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "sessions:seen",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.close": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:close",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:close': Error: boom sessions:close"
+  }
+ },
+ "sessions.stop": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:stop",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:stop': Error: boom sessions:stop"
+  }
+ },
+ "sessions.showContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:session",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.openSend": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "sessions:openSend",
+    []
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.openWindow": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "sessions:openWindow",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.showNewMenu": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "context-menu:new-session",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.send": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "sessions:send",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.backgroundOutput": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:backgroundOutput",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:backgroundOutput': Error: boom sessions:backgroundOutput"
+  }
+ },
+ "sessions.fileThumbnail": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:fileThumbnail",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:fileThumbnail': Error: boom sessions:fileThumbnail"
+  }
+ },
+ "attachment.open": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "attachment:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'attachment:open': Error: boom attachment:open"
+  }
+ },
+ "attachment.thumbnail": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "attachment:thumbnail",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'attachment:thumbnail': Error: boom attachment:thumbnail"
+  }
+ },
+ "terminalSession.attachFiles": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "terminalSession:attach",
+    [
+     "id",
+     [
+      {
+       "name": "f1.png",
+       "path": "/p/f1.png"
+      },
+      {
+       "name": "pasted-image.png",
+       "data": {
+        "u8": [
+         1,
+         2
+        ]
+       }
+      }
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'terminalSession:attach': Error: boom terminalSession:attach"
+  }
+ },
+ "terminalSession.showContextMenu": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "context-menu:terminal",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "terminalSession.output": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "terminalSession:output",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'terminalSession:output': Error: boom terminalSession:output"
+  }
+ },
+ "terminalSession.write": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "terminalSession:write",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "terminalSession.resize": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "terminalSession:resize",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "remote.state": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remote:state",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'remote:state': Error: boom remote:state"
+  }
+ },
+ "remote.lastMessage": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "remote:lastMessage",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'remote:lastMessage': Error: boom remote:lastMessage"
+  }
+ },
+ "remote.open": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "remote:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'remote:open': Error: boom remote:open"
+  }
+ },
+ "remote.showContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:remote-conversation",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "remote.openHelperEditor": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "remote:openHelperEditor",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'remote:openHelperEditor': Error: boom remote:openHelperEditor"
+  }
+ },
+ "remote.discard": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "remote:discard",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "remoteAccess.state": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:state",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:state"
+  }
+ },
+ "remoteAccess.pairingCode": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:pairingCode",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:pairingCode"
+  }
+ },
+ "remoteAccess.cancelPairing": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:cancelPairing",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:cancelPairing"
+  }
+ },
+ "remoteAccess.removeDevice": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:removeDevice",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:removeDevice"
+  }
+ },
+ "remoteAccess.renameDevice": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:renameDevice",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:renameDevice"
+  }
+ },
+ "remoteAccess.signOut": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:signOut",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:signOut"
+  }
+ },
+ "remoteAccess.openLogin": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:openLogin",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:openLogin"
+  }
+ },
+ "remoteAccess.openPair": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:openPair",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:openPair"
+  }
+ },
+ "remoteAccess.openRename": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:openRename",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:openRename"
+  }
+ },
+ "continueRun": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "run:continue",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom run:continue"
+  }
+ },
+ "canGuideRun": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "run:canGuide",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'run:canGuide': Error: boom run:canGuide"
+  }
+ },
+ "sendGuidance": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "run:guide",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom run:guide"
+  }
+ },
+ "openTaskWorkFolder": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "task:openWorkFolder",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'task:openWorkFolder': Error: boom task:openWorkFolder"
+  }
+ },
+ "openMessages": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "messages:open",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'messages:open': Error: boom messages:open"
+  }
+ },
+ "openMessageImage": {
+  "arity": 5,
+  "calls": [
+   [
+    "invoke",
+    "messages:openImage",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3",
+     "a4"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'messages:openImage': Error: boom messages:openImage"
+  }
+ },
+ "openEditor": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "editor:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'editor:open': Error: boom editor:open"
+  }
+ },
+ "openNoteEditor": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "noteEditor:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'noteEditor:open': Error: boom noteEditor:open"
+  }
+ },
+ "openMoveToFolder": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "moveToFolder:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'moveToFolder:open': Error: boom moveToFolder:open"
+  }
+ },
+ "openEnvironmentEditor": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "envEditor:open",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'envEditor:open': Error: boom envEditor:open"
+  }
+ },
+ "openHarnessEditor": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "harnessEditor:open",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'harnessEditor:open': Error: boom harnessEditor:open"
+  }
+ },
+ "openModelEditor": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "modelEditor:open",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'modelEditor:open': Error: boom modelEditor:open"
+  }
+ },
+ "openModelUpdate": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "modelUpdate:open",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'modelUpdate:open': Error: boom modelUpdate:open"
+  }
+ },
+ "discoverModels": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "models:discover",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom models:discover"
+  }
+ },
+ "openTemplateEditor": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "templateEditor:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templateEditor:open': Error: boom templateEditor:open"
+  }
+ },
+ "openTemplatePicker": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "templatePicker:open",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'templatePicker:open': Error: boom templatePicker:open"
+  }
+ },
+ "openEditorFromTemplate": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "editorFromTemplate:open",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'editorFromTemplate:open': Error: boom editorFromTemplate:open"
+  }
+ },
+ "importDraft": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "import:draft",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'import:draft': Error: boom import:draft"
+  }
+ },
+ "discardEnvironment": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "envEditor:discard",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "discardHarness": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "harnessEditor:discard",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "pickDirectory": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "dialog:pickDir",
+    [
+     null,
+     null,
+     null
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'dialog:pickDir': Error: boom dialog:pickDir"
+  }
+ },
+ "listWslDistros": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "wsl:distros",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'wsl:distros': Error: boom wsl:distros"
+  }
+ },
+ "detectWslMountPrefix": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "wsl:mountPrefix",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'wsl:mountPrefix': Error: boom wsl:mountPrefix"
+  }
+ },
+ "moveStoreFile": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "store:move",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'store:move': Error: boom store:move"
+  }
+ },
+ "pickSaveFile": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "dialog:pickSaveFile",
+    [
+     null,
+     null
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'dialog:pickSaveFile': Error: boom dialog:pickSaveFile"
+  }
+ },
+ "updateSettings": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "settings:update",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'settings:update': Error: boom settings:update"
+  }
+ },
+ "getStartWithSystem": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "loginItem:get",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'loginItem:get': Error: boom loginItem:get"
+  }
+ },
+ "setStartWithSystem": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "loginItem:set",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'loginItem:set': Error: boom loginItem:set"
+  }
+ },
+ "showError": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "dialog:error",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'dialog:error': Error: boom dialog:error"
+  }
+ },
+ "confirm": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "dialog:confirm",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'dialog:confirm': Error: boom dialog:confirm"
+  }
+ },
+ "reportSelection": {
+  "arity": 8,
+  "calls": [
+   [
+    "send",
+    "ui:selection",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3",
+     "a4",
+     "a5",
+     "a6",
+     "a7"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showTaskContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:task",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showFolderContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:folder",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showRecycleBinContextMenu": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "context-menu:recycle-bin",
+    []
+   ]
+  ],
+  "result": {}
+ },
+ "showVersionContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:version",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showTasksEmptyContextMenu": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "context-menu:tasks-empty",
+    []
+   ]
+  ],
+  "result": {}
+ },
+ "showPaneContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:pane",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showRunContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:run",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showMessageContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:message",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "reportMessagesFilter": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "messages:filter-state",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "applyMessagesFilter": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "messages:filter-apply",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "applyMarkdownExport": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "markdown-export:apply",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "applyRunOptions": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "run-options:apply",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "addons.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "addons:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:list': Error: boom addons:list"
+  }
+ },
+ "addons.pane": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "addons:pane",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom addons:pane"
+  }
+ },
+ "addons.render": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "addons:render",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom addons:render"
+  }
+ },
+ "addons.reportSlowDraw": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "addons:slowDraw",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "addons.event": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "addons:event",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:event': Error: boom addons:event"
+  }
+ },
+ "addons.restart": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "addons:restart",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:restart': Error: boom addons:restart"
+  }
+ },
+ "addons.edit": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "addons:edit",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:edit': Error: boom addons:edit"
+  }
+ },
+ "addons.setRun": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "addons:setRun",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom addons:setRun"
+  }
+ },
+ "addons.pickFile": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "addons:pickFile",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:pickFile': Error: boom addons:pickFile"
+  }
+ },
+ "addons.setEnabled": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "addons:setEnabled",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:setEnabled': Error: boom addons:setEnabled"
+  }
+ },
+ "addons.openTool": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "addons:openTool",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:openTool': Error: boom addons:openTool"
+  }
+ },
+ "addons.showToolbarMenu": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "addons:toolbarMenu",
+    []
+   ]
+  ],
+  "result": {}
+ },
+ "addons.remove": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "addons:remove",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:remove': Error: boom addons:remove"
+  }
+ },
+ "addons.install": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "addons:install",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'addons:install': Error: boom addons:install"
+  }
+ },
+ "addons.showMenu": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "addons:menu",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "addons.setMenuBar": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "addons:menuBar",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "addons.onEvent": {
+  "arity": 1,
+  "calls": [
+   [
+    "on",
+    "addon:event",
+    [
+     [
+      "x"
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "ok": "unsub"
+  }
+ },
+ "onEvent": {
+  "arity": 1,
+  "calls": [
+   [
+    "on",
+    "engine:event",
+    [
+     [
+      "x"
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "ok": "unsub"
+  }
+ },
+ "onUi": {
+  "arity": 1,
+  "calls": [
+   [
+    "on",
+    "ui:event",
+    [
+     [
+      "x"
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "ok": "unsub"
+  }
+ }
+}

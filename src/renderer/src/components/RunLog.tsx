@@ -5,6 +5,7 @@ import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
 import { ResizableColumns, type TableCol } from './ui';
+import { isPhone } from '../web/page-nav';
 
 const RUN_COLS: readonly TableCol[] = [
   { label: 'Date', width: 92 },
@@ -85,7 +86,11 @@ export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTer
                 key={g.runId}
                 id={`run-${g.runId}`}
                 className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
-                onClick={() => setSelected(g.runId)}
+                onClick={() => {
+                  setSelected(g.runId);
+                  // A phone has no double-click: a tap opens the run window.
+                  if (isPhone) void window.looper.openMessages(taskId, g.runId);
+                }}
                 onDoubleClick={() => void window.looper.openMessages(taskId, g.runId)}
                 onContextMenu={(e) => {
                   e.preventDefault();

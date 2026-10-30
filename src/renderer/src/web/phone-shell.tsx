@@ -1,0 +1,662 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { MenuItemSpec } from '../../../shared/remote-access';
+import { ICONS } from '../components/icons';
+import type { ShellController } from './controller';
+import { messageCancelId } from './dialog-flows';
+import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
+import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
+import type { PageNav } from './page-nav';
+import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
+import './phone.css';
+
+// ---------- the pages' navigation bars ----------
+
+/** Each window's PageNav, as its page reports it through window.top.__looperFrame. */
+function usePageNavs(): Map<string, PageNav> {
+  const [navs, setNavs] = useState(() => new Map<string, PageNav>());
+  useEffect(() => {
+    window.__looperFrame = {
+      setNav: (w, nav) =>
+        setNavs((old) => {
+          const next = new Map(old);
+          if (nav) next.set(w, nav);
+          else next.delete(w);
+          return next;
+        }),
+    };
+    return () => {
+      delete window.__looperFrame;
+    };
+  }, []);
+  return navs;
+}
+
+// ---------- screen, safe areas and the on-screen keyboard ----------
+
+export interface Viewport extends ScreenSize {
+  /** The on-screen keyboard is up (the visual viewport is much shorter than the window). */
+  keyboard: boolean;
+  safe: { top: number; bottom: number; left: number; right: number };
+}
+
+/** Reads env(safe-area-inset-*) through a hidden element: iframes see 0 there, so the frame passes them on. */
+function readSafeArea(probe: HTMLElement | null): Viewport['safe'] {
+  if (!probe) return { top: 0, bottom: 0, left: 0, right: 0 };
+  const cs = getComputedStyle(probe);
+  return { top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingRight) || 0 };
+}
+
+/**
+ * The shell follows the visual viewport: with the keyboard up it shrinks to
+ * what's left above it (and moves with it when iOS scrolls the page), so bars,
+ * sheets and the page's bottom stay above the keyboard.
+ */
+function useViewport(probe: React.RefObject<HTMLDivElement | null>): Viewport {
+  const read = (): Viewport => {
+    const vv = window.visualViewport;
+    const height = vv?.height ?? window.innerHeight;
+    return { width: vv?.width ?? window.innerWidth, height, keyboard: window.innerHeight - height > 120, safe: readSafeArea(probe.current) };
+  };
+  const [vp, setVp] = useState<Viewport>(read);
+  useLayoutEffect(() => {
+    const vv = window.visualViewport;
+    // On <html>, so layers portaled to <body> (alerts) follow the keyboard too.
+    const html = document.documentElement;
+    html.classList.add('ph-top');
+    const apply = () => {
+      if (vv) {
+        html.style.setProperty('--vv-h', `${vv.height}px`);
+        html.style.setProperty('--vv-top', `${vv.offsetTop}px`);
+      }
+      // iOS scrolls the window to show a focused field; the shell is fixed, so it only needs to go back.
+      if (window.scrollY !== 0 && !vv) window.scrollTo(0, 0);
+      setVp((old) => {
+        const n = read();
+        return old.width === n.width && old.height === n.height && old.keyboard === n.keyboard && JSON.stringify(old.safe) === JSON.stringify(n.safe) ? old : n;
+      });
+    };
+    apply();
+    vv?.addEventListener('resize', apply);
+    vv?.addEventListener('scroll', apply);
+    window.addEventListener('resize', apply);
+    window.addEventListener('orientationchange', apply);
+    return () => {
+      vv?.removeEventListener('resize', apply);
+      vv?.removeEventListener('scroll', apply);
+      window.removeEventListener('resize', apply);
+      window.removeEventListener('orientationchange', apply);
+    };
+  }, [probe]);
+  return vp;
+}
+
+// ---------- screens ----------
+
+export interface Screen {
+  win: WebWindow;
+  pres: Presentation;
+  /** Its place in the stack, from the main window (0) up. */
+  depth: number;
+  nav: PageNav | null;
+  isTop: boolean;
+  /** Drawn: the top screen, what shows around a sheet, and the one under the top (for the back swipe). */
+  visible: boolean;
+  /** Directly under a phone's page sheet: iOS shrinks it back. */
+  behind: boolean;
+  leaving: boolean;
+  /** The screen it goes back to. */
+  below?: WebWindow;
+}
+
+const LEAVE_MS = 320;
+
+/** Closed windows stay a moment, for their exit animation, at their place in the page (moving an iframe reloads it). */
+function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<string, PageNav>): { screens: Screen[]; top: Screen | undefined } {
+  const leaving = useRef(new Map<string, { win: WebWindow; pres: Presentation; depth: number; until: number }>());
+  const domOrder = useRef<string[]>([]);
+  const [, tick] = useState(0);
+  const main = mainWindow(s);
+  const stack = main ? [main, ...childStack(s)] : childStack(s);
+  const live = new Set(s.windows.map((w) => w.w));
+  const presOf = (win: WebWindow) => presentation(os, win, win === main, size);
+  const last = useRef(new Map<string, { win: WebWindow; pres: Presentation; depth: number }>());
+
+  const now = Date.now();
+  for (const [w, info] of last.current) {
+    if (!live.has(w) && !leaving.current.has(w)) leaving.current.set(w, { ...info, until: now + LEAVE_MS });
+  }
+  for (const [w, l] of leaving.current) if (l.until <= now || live.has(w)) leaving.current.delete(w);
+  last.current = new Map(stack.map((win, depth) => [win.w, { win, pres: presOf(win), depth }]));
+
+  useEffect(() => {
+    if (!leaving.current.size) return;
+    const t = setTimeout(() => tick((n) => n + 1), LEAVE_MS + 20);
+    return () => clearTimeout(t);
+  });
+
+  const keep = new Set([...live, ...leaving.current.keys()]);
+  domOrder.current = [...domOrder.current.filter((w) => keep.has(w)), ...s.windows.map((x) => x.w).filter((w) => !domOrder.current.includes(w))];
+
+  const topIndex = stack.length - 1;
+  // Drawn: from the top down to the first screen that covers everything, and always the one right under the top.
+  const visible = new Set<string>();
+  for (let i = topIndex; i >= 0; i--) {
+    visible.add(stack[i].w);
+    if (i < topIndex && coversScreen(presOf(stack[i]))) break;
+  }
+  if (topIndex > 0) visible.add(stack[topIndex - 1].w);
+  const top = stack[topIndex];
+  const topPres = top ? presOf(top) : 'root';
+  const tablet = isTablet(size);
+
+  const screens: Screen[] = [];
+  for (const w of domOrder.current) {
+    const depth = stack.findIndex((x) => x.w === w);
+    if (depth >= 0) {
+      const win = stack[depth];
+      screens.push({
+        win,
+        pres: presOf(win),
+        depth,
+        nav: navs.get(w) ?? null,
+        isTop: depth === topIndex,
+        visible: visible.has(w),
+        behind: os === 'ios' && !tablet && depth === topIndex - 1 && topPres === 'page-sheet',
+        leaving: false,
+        below: stack[depth - 1],
+      });
+      continue;
+    }
+    const l = leaving.current.get(w);
+    if (l) screens.push({ win: l.win, pres: l.pres, depth: l.depth + 0.5, nav: null, isTop: false, visible: true, behind: false, leaving: true });
+  }
+  return { screens, top: screens.find((x) => x.isTop) };
+}
+
+// ---------- back ----------
+
+/** One thing Back closes, bottom to top. */
+export type BackLayer = () => void;
+
+function useBack(layers: BackLayer[]): { goBack: () => void } {
+  const latest = useRef(layers);
+  latest.current = layers;
+  const stack = useMemo(
+    () =>
+      new BackStack(
+        {
+          depth: () => {
+            const d = (history.state as { looperDepth?: number } | null)?.looperDepth;
+            return typeof d === 'number' ? d : 0;
+          },
+          push: (depth) => history.pushState({ ...(history.state ?? {}), looperDepth: depth }, '', location.href),
+          go: (n) => history.go(n),
+        },
+        () => Date.now(),
+      ),
+    [],
+  );
+  const runTop = useCallback((steps: number) => {
+    for (let i = 0; i < steps; i++) latest.current[latest.current.length - 1 - i]?.();
+  }, []);
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const d = (e.state as { looperDepth?: number } | null)?.looperDepth;
+      const steps = stack.popped(typeof d === 'number' ? d : 0);
+      if (steps > 0) {
+        runTop(Math.min(steps, latest.current.length));
+        setTimeout(() => stack.sync(latest.current.length), stack.holdRemaining() + 10);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [stack, runTop]);
+  useEffect(() => stack.sync(layers.length));
+  return { goBack: () => void (stack.back() || runTop(1)) };
+}
+
+// ---------- the pages' documents ----------
+
+/** Put into every window's page: no double-tap zoom, no iOS callout on what isn't text input. */
+const FRAME_CSS = `
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+body { -webkit-touch-callout: none; overscroll-behavior: none; }
+input, textarea, [contenteditable], [contenteditable] * { -webkit-touch-callout: default; }
+`;
+
+const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+export interface FrameHooks {
+  /** Whether the screen can go back by an edge swipe now (iOS). */
+  canSwipeBack: (w: string) => boolean;
+  swipe: (w: string, dx: number | null, commit?: boolean) => void;
+}
+
+/** Long press → contextmenu, and iOS's edge swipe, in a window's page. */
+function attachTouch(win: Window, w: string, os: PhoneOs, hooks: React.RefObject<FrameHooks>): void {
+  const doc = win.document;
+  const ours = new WeakSet<Event>();
+  let swallowClickUntil = 0;
+  const press = new LongPress<Element>(
+    { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
+    (x, y, target) => {
+      const Mouse = (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
+      const ev = new Mouse('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 2, view: win });
+      ours.add(ev);
+      const taken = !target.dispatchEvent(ev);
+      // The page shows a menu: the text iOS started to select under the finger isn't wanted.
+      if (taken) win.getSelection()?.removeAllRanges();
+    },
+  );
+  const edge = new AxisDrag('x');
+  let edgeOn = false;
+  doc.addEventListener(
+    'touchstart',
+    (e) => {
+      const t = e.touches[0];
+      const target = e.target as Element | null;
+      if (!t || !target) return;
+      if (target.closest?.(EDITABLE)) press.cancel();
+      else press.down(t.clientX, t.clientY, target, e.touches.length);
+      edgeOn = os === 'ios' && e.touches.length === 1 && t.clientX <= EDGE_WIDTH && hooks.current.canSwipeBack(w);
+      if (edgeOn) edge.begin(t.clientX, t.clientY, e.timeStamp);
+    },
+    { passive: true, capture: true },
+  );
+  doc.addEventListener(
+    'touchmove',
+    (e) => {
+      const t = e.touches[0];
+      if (!t) return;
+      press.move(t.clientX, t.clientY);
+      if (!edgeOn) return;
+      const r = edge.move(t.clientX, t.clientY, e.timeStamp);
+      if (r) {
+        e.preventDefault();
+        hooks.current.swipe(w, r.offset);
+      } else if (!edge.active) edgeOn = edgeOn && t.clientX <= EDGE_WIDTH + 8;
+    },
+    { passive: false, capture: true },
+  );
+  const end = (e: TouchEvent) => {
+    if (press.up()) {
+      e.preventDefault();
+      swallowClickUntil = Date.now() + 500;
+    }
+    if (edgeOn) {
+      edgeOn = false;
+      hooks.current.swipe(w, null, edge.end(win.innerWidth));
+    }
+  };
+  doc.addEventListener('touchend', end, { passive: false, capture: true });
+  doc.addEventListener('touchcancel', () => {
+    press.cancel();
+    if (edgeOn) {
+      edgeOn = false;
+      edge.end(win.innerWidth);
+      hooks.current.swipe(w, null, false);
+    }
+  }, { capture: true });
+  win.addEventListener(
+    'contextmenu',
+    (e) => {
+      if (ours.has(e)) return;
+      if (press.nativeMenu()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true,
+  );
+  win.addEventListener(
+    'click',
+    (e) => {
+      if (Date.now() < swallowClickUntil) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true,
+  );
+}
+
+function preparePage(el: HTMLIFrameElement, w: string, os: PhoneOs, hooks: React.RefObject<FrameHooks>): void {
+  const win = el.contentWindow;
+  const doc = el.contentDocument;
+  if (!win || !doc) return;
+  const style = doc.createElement('style');
+  style.dataset.looperFrame = '';
+  style.textContent = FRAME_CSS;
+  doc.head.appendChild(style);
+  attachTouch(win, w, os, hooks);
+}
+
+/** A window's iframe; the controller's ref plus the phone's own setup of the page. */
+function PhoneIframe({ controller, win, os, hooks, safeBottom }: { controller: ShellController; win: WebWindow; os: PhoneOs; hooks: React.RefObject<FrameHooks>; safeBottom: number }) {
+  const base = controller.frameRef(win.w);
+  const el = useRef<HTMLIFrameElement | null>(null);
+  const ref = useCallback(
+    (node: HTMLIFrameElement | null) => {
+      base(node);
+      el.current = node;
+      if (node) node.addEventListener('load', () => preparePage(node, win.w, os, hooks));
+    },
+    [base, win.w, os, hooks],
+  );
+  // The page can't read the safe area itself (env() is 0 in an iframe): it gets it as a variable.
+  useEffect(() => {
+    const set = () => el.current?.contentDocument?.documentElement.style.setProperty('--looper-safe-bottom', `${safeBottom}px`);
+    set();
+    const node = el.current;
+    node?.addEventListener('load', set);
+    return () => node?.removeEventListener('load', set);
+  }, [safeBottom, win.nonce]);
+  return <iframe key={`${win.w}:${win.nonce}`} ref={ref} className="ph-frame" title={win.title} src={windowSrc(win)} allow="clipboard-read; clipboard-write" />;
+}
+
+// ---------- the frame's model ----------
+
+export interface PhoneShell {
+  s: ShellState;
+  os: PhoneOs;
+  vp: Viewport;
+  tablet: boolean;
+  screens: Screen[];
+  top: Screen | undefined;
+  rootRef: React.RefObject<HTMLDivElement | null>;
+  probeRef: React.RefObject<HTMLDivElement | null>;
+  hooks: React.RefObject<FrameHooks>;
+  /** Back from the top screen: its page's deeper screen first, else the window closes. */
+  goBack: () => void;
+  /** Whether a window's large title has scrolled away (iOS shows the bar's title then). */
+  scrolledPast: Set<string>;
+}
+
+/** A sheet dragged down, or a screen swiped back: the frame moves it under the finger. */
+export function setDrag(root: HTMLElement | null, w: string, axis: 'x' | 'y', offset: number | null): void {
+  const card = root?.querySelector<HTMLElement>(`.ph-win[data-w="${CSS.escape(w)}"] > .ph-card`);
+  if (!card) return;
+  const under = axis === 'x' ? root?.querySelector<HTMLElement>(`.ph-win[data-under="${CSS.escape(w)}"] > .ph-card`) : null;
+  if (offset === null) {
+    card.style.transition = '';
+    card.style.transform = '';
+    if (under) {
+      under.style.transition = '';
+      under.style.transform = '';
+    }
+    return;
+  }
+  card.style.transition = 'none';
+  card.style.transform = axis === 'x' ? `translateX(${offset}px)` : `translateY(${offset}px)`;
+  if (under) {
+    under.style.transition = 'none';
+    under.style.transform = `translateX(${(offset - card.clientWidth) * 0.3}px)`;
+  }
+}
+
+export function usePhoneShell(controller: ShellController, os: PhoneOs, localLayers: BackLayer[]): PhoneShell {
+  const s = useShellState(controller.store);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const probeRef = useRef<HTMLDivElement | null>(null);
+  const vp = useViewport(probeRef);
+  const navs = usePageNavs();
+  const { screens, top } = useScreens(s, os, vp, navs);
+  const [scrolledPast, setScrolledPast] = useState(() => new Set<string>());
+
+  // Back: bottom to top, the windows over the main one, the top page's own deeper screen, then what the shell has open.
+  const layers: BackLayer[] = [];
+  const live = screens.filter((x) => !x.leaving).sort((a, b) => a.depth - b.depth);
+  for (const sc of live) if (sc.pres !== 'root') layers.push(() => controller.close(sc.win.w));
+  const topNav = top?.nav;
+  if (topNav?.back) layers.push(() => topNav.back?.());
+  layers.push(...localLayers);
+  for (const p of s.paths) layers.push(() => controller.closePath(p.id));
+  for (const d of s.dialogs) {
+    layers.push(() =>
+      d.kind === 'message'
+        ? controller.answer(d.dialogId, { kind: 'message', response: messageCancelId(d.spec), checkboxChecked: !!d.spec.checkboxChecked })
+        : controller.answer(d.dialogId, d.kind === 'open' ? { kind: 'open', canceled: true, filePaths: [] } : { kind: 'save', canceled: true }),
+    );
+  }
+  for (const m of s.menus) layers.push(() => controller.dismissMenu(m.menuId));
+  const { goBack: historyBack } = useBack(layers);
+
+  const hooks = useRef<FrameHooks>({ canSwipeBack: () => false, swipe: () => undefined });
+  hooks.current = {
+    canSwipeBack: (w) => {
+      const sc = screens.find((x) => x.win.w === w);
+      return !!sc?.isTop && (sc.pres === 'push' || !!sc.nav?.back) && s.dialogs.length === 0 && s.menus.length === 0;
+    },
+    swipe: (w, dx, commit) => {
+      const sc = screens.find((x) => x.win.w === w);
+      // A page's own deeper screen has nothing of the frame's under it to show.
+      const moves = sc?.pres === 'push' && !sc.nav?.back;
+      if (moves) setDrag(rootRef.current, w, 'x', dx);
+      if (dx === null && commit) historyBack();
+    },
+  };
+
+  // The bar's title shows once the page's large title (data-large-title) has scrolled under it.
+  useEffect(() => {
+    const offs: (() => void)[] = [];
+    for (const sc of screens) {
+      if (!sc.nav?.largeTitle || sc.leaving) continue;
+      const doc = controller.frameOf(sc.win.w)?.contentDocument;
+      if (!doc) continue;
+      const check = () => {
+        const el = doc.querySelector('[data-large-title]');
+        const past = !el || el.getBoundingClientRect().bottom <= 0;
+        setScrolledPast((old) => {
+          if (old.has(sc.win.w) === past) return old;
+          const next = new Set(old);
+          if (past) next.add(sc.win.w);
+          else next.delete(sc.win.w);
+          return next;
+        });
+      };
+      check();
+      doc.addEventListener('scroll', check, { capture: true, passive: true });
+      offs.push(() => doc.removeEventListener('scroll', check, { capture: true }));
+    }
+    return () => offs.forEach((f) => f());
+  });
+
+  // A click in the shell needs its own press: lifting the finger of a long press in a page lands on the
+  // menu that press opened (Chrome sends it as a click), and must not pick the item under it.
+  useEffect(() => {
+    let pressed = false;
+    const down = () => (pressed = true);
+    const click = (e: MouseEvent) => {
+      if (!pressed && e.isTrusted && e.detail > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      pressed = false;
+    };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('click', click, true);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('click', click, true);
+    };
+  }, []);
+
+  // The shell itself never scrolls or bounces; lists inside it (menus, files) still do.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onMove = (e: TouchEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.ph-scroll')) e.preventDefault();
+    };
+    el.addEventListener('touchmove', onMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onMove);
+  }, []);
+
+  return { s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast };
+}
+
+// ---------- the windows ----------
+
+export interface WindowsProps {
+  shell: PhoneShell;
+  controller: ShellController;
+  /** The bar at the top of a window's card (and the grabber or handle of a sheet). */
+  renderBar: (sc: Screen) => ReactNode;
+  /** Sheets that close when dragged down by their bar. */
+  dragToDismiss: (p: Presentation) => boolean;
+}
+
+/** Every window, in creation order (an iframe that moved would reload), stacked by depth. */
+export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: WindowsProps) {
+  const { screens, os, vp, s, hooks } = shell;
+  const blockedByShell = s.dialogs.length > 0 || s.paths.length > 0;
+  const under = shell.top && shell.top.pres === 'push' ? shell.top.below?.w : undefined;
+  return (
+    <>
+      {screens.map((sc) => {
+        const sheet = sc.pres !== 'root' && sc.pres !== 'push';
+        const ownsBottom = !!sc.nav?.ownsBottom;
+        const safeBottom = !vp.keyboard && (sc.pres === 'root' || sc.pres === 'push' || sc.pres === 'full-dialog' || sc.pres === 'page-sheet' || sc.pres === 'bottom-sheet') ? vp.safe.bottom : 0;
+        const style = { zIndex: 10 + Math.round(sc.depth * 2) } as React.CSSProperties;
+        if (sc.pres === 'bottom-sheet') (style as Record<string, string>)['--sheet-h'] = `${sc.win.height}px`;
+        if (sc.pres === 'dialog' || sc.pres === 'form-sheet') {
+          (style as Record<string, string>)['--win-w'] = `${sc.win.width}px`;
+          (style as Record<string, string>)['--win-h'] = `${sc.win.height}px`;
+        }
+        return (
+          <div
+            key={sc.win.w}
+            data-w={sc.win.w}
+            data-under={sc.win.w === under ? shell.top?.win.w : undefined}
+            className={`ph-win pres-${sc.pres}${sc.visible ? '' : ' hidden'}${sc.leaving ? ' leaving' : ''}${sc.behind ? ' behind' : ''}${sc.isTop ? ' top' : ''}`}
+            style={style}
+            inert={!sc.isTop || sc.leaving || blockedByShell}
+            aria-hidden={!sc.isTop || undefined}
+          >
+            {sheet && <Scrim className="ph-scrim" onTap={() => sc.pres !== 'full-dialog' && os === 'android' && controller.close(sc.win.w)} />}
+            <div className={`ph-card${ownsBottom ? ' owns-bottom' : ''}`} role={sheet ? 'dialog' : undefined} aria-modal={sheet || undefined} aria-label={sc.nav?.title ?? sc.win.title}>
+              <DragArea enabled={sheet && dragToDismiss(sc.pres)} root={shell.rootRef} w={sc.win.w} onDismiss={() => controller.close(sc.win.w)}>
+                {renderBar(sc)}
+              </DragArea>
+              <div className="ph-body">
+                <PhoneIframe controller={controller} win={sc.win} os={os} hooks={hooks} safeBottom={safeBottom} />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** A sheet's bar: drag it down to close the sheet. */
+function DragArea({ enabled, root, w, onDismiss, children }: { enabled: boolean; root: React.RefObject<HTMLDivElement | null>; w: string; onDismiss: () => void; children: ReactNode }) {
+  const drag = useRef(new AxisDrag('y'));
+  if (!enabled) return <>{children}</>;
+  return (
+    <div
+      className="ph-drag"
+      onPointerDown={(e) => {
+        if ((e.target as Element).closest('button, input, a')) return;
+        drag.current.begin(e.clientX, e.clientY, e.timeStamp);
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const r = drag.current.move(e.clientX, e.clientY, e.timeStamp);
+        if (r) setDrag(root.current, w, 'y', r.offset);
+      }}
+      onPointerUp={(e) => {
+        const card = (e.currentTarget.closest('.ph-card') as HTMLElement | null)?.clientHeight ?? 600;
+        const done = drag.current.end(card);
+        setDrag(root.current, w, 'y', null);
+        if (done) onDismiss();
+      }}
+      onPointerCancel={() => {
+        drag.current.end(0);
+        setDrag(root.current, w, 'y', null);
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------- small shared pieces ----------
+
+/**
+ * The dimmed backdrop of a sheet or dialog; a tap on it closes what's over it.
+ * Only a tap that began on it counts: lifting the finger of the long press
+ * that opened a menu lands here too, as a click.
+ */
+export function Scrim({ className, onTap }: { className: string; onTap?: () => void }) {
+  const began = useRef(false);
+  return (
+    <div
+      className={className}
+      onPointerDown={(e) => (began.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (began.current && e.target === e.currentTarget) onTap?.();
+        began.current = false;
+      }}
+    />
+  );
+}
+
+/** An ICONS entry as a 22 px glyph for a bar button. */
+export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
+  const icon = (ICONS as Record<string, ReactNode>)[name];
+  if (!icon) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {icon}
+    </svg>
+  );
+}
+
+/** The synthetic item the root screen's More menu ends with. */
+export const THIS_DEVICE_ITEM = '__looper-this-device';
+
+/** The root screen's More menu: the main window's menu bar, then This Device. */
+export function rootMoreItems(menu: MenuItemSpec[] | null, label: string): MenuItemSpec[] {
+  const own: MenuItemSpec = { id: THIS_DEVICE_ITEM, type: 'normal', label, enabled: true };
+  return menu?.length ? [...menu, { id: '__looper-sep', type: 'separator', enabled: true }, own] : [own];
+}
+
+/** Separator-free groups of a menu, for lists that draw separators as gaps. */
+export function menuGroups(items: MenuItemSpec[]): MenuItemSpec[][] {
+  const out: MenuItemSpec[][] = [[]];
+  for (const it of items) {
+    if (it.type === 'separator') {
+      if (out[out.length - 1].length) out.push([]);
+    } else out[out.length - 1].push(it);
+  }
+  return out.filter((g) => g.length);
+}
+
+/** Electron's &-mnemonics don't belong on a phone. */
+export const plainLabel = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
+
+/** Long menus open as a sheet from the bottom rather than a list at the finger. */
+export const isLongMenu = (items: MenuItemSpec[], height: number): boolean => {
+  const rows = items.filter((i) => i.type !== 'separator').length;
+  return rows > 8 || rows * 48 > height * 0.6;
+};
+
+/** The device's own name for itself in "This iPhone" / "This Phone". */
+export function deviceNoun(os: PhoneOs, tablet: boolean): string {
+  if (os === 'ios') return /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && tablet) || tablet ? 'iPad' : 'iPhone';
+  return tablet ? 'Tablet' : 'Phone';
+}
+
+/** A pull-down or popup menu's state: the submenu path the user opened. */
+export function useSubmenus(items: MenuItemSpec[]): { level: MenuItemSpec[]; title: string | null; open: (it: MenuItemSpec) => void; up: () => void } {
+  const [path, setPath] = useState<MenuItemSpec[]>([]);
+  useEffect(() => setPath([]), [items]);
+  const last = path[path.length - 1];
+  return {
+    level: last?.submenu ?? items,
+    title: last ? plainLabel(last.label) : null,
+    open: (it) => setPath((p) => [...p, it]),
+    up: () => setPath((p) => p.slice(0, -1)),
+  };
+}

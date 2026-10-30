@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage } from 'electron';
+import { Menu, nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { convertWslPath, type HostKind } from '../engine/host';
@@ -25,21 +25,34 @@ import {
 } from '../shared/addons';
 import type { View } from '../shared/types';
 import type { AddonHost, AddonLaunch } from './addon-host';
+import {
+  allWindows,
+  ipc,
+  isRemote,
+  popupMenu,
+  setWindowMenu,
+  showMessageBox,
+  showOpenDialog,
+  windowOf,
+  WindowSlots,
+  writeClipboard,
+  type AppWindow,
+} from './platform';
 
 export interface AddonUiDeps {
   host: AddonHost;
   /** Where Looper itself runs, for converting picked paths to the addon's side. */
   hostKind: HostKind;
-  mainWindow: () => BrowserWindow | null;
+  mainWindow: () => AppWindow | null;
   /** openChildWindow: a hash route in its own window; a parent makes it modal. */
   openWindow: (
     hash: string,
     title: string,
     width: number,
     height: number,
-    modalParent: BrowserWindow | null,
+    modalParent: AppWindow | null,
     opts: { minWidth: number; minHeight: number; contentSize: boolean },
-  ) => BrowserWindow;
+  ) => AppWindow;
   view: () => View;
   updateView: (patch: Partial<View>) => void;
 }
@@ -47,21 +60,21 @@ export interface AddonUiDeps {
 const menuText = (s: string): string => s.replace(/&/g, '&&');
 
 /** Every window hears about addons: panes in the main window, screens in addon windows. */
-export function sendAddonEvent(ev: AddonUiEvent, only?: BrowserWindow | null): void {
-  for (const w of only ? [only] : BrowserWindow.getAllWindows()) {
+export function sendAddonEvent(ev: AddonUiEvent, only?: AppWindow | null): void {
+  for (const w of only ? [only] : allWindows()) {
     if (!w.isDestroyed()) w.webContents.send('addon:event', ev);
   }
 }
 
-async function messageBox(parent: BrowserWindow | null, opts: Electron.MessageBoxOptions): Promise<number> {
-  const r = parent && !parent.isDestroyed() ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+async function messageBox(parent: AppWindow | null, opts: Electron.MessageBoxOptions): Promise<number> {
+  const r = await showMessageBox(parent && !parent.isDestroyed() ? parent : undefined, opts);
   return r.response;
 }
 
-const errorBox = (parent: BrowserWindow | null, message: string, detail?: string) =>
+const errorBox = (parent: AppWindow | null, message: string, detail?: string) =>
   messageBox(parent, { type: 'error', title: 'Looper', message, detail, buttons: ['OK'] });
 
-async function ask(parent: BrowserWindow | null, message: string): Promise<boolean> {
+async function ask(parent: AppWindow | null, message: string): Promise<boolean> {
   return (await messageBox(parent, { type: 'question', title: 'Looper', message, buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 })) === 0;
 }
 
@@ -70,14 +83,14 @@ export function addonWindowHash(addonId: string, view: string, params: Record<st
 }
 
 /** The window an addon window was opened from: a `select` from it goes there. */
-const openers = new WeakMap<BrowserWindow, BrowserWindow>();
-/** The open tool windows, one per tool. */
-const toolWindows = new Map<string, BrowserWindow>();
+const openers = new WeakMap<AppWindow, AppWindow>();
+/** The open tool windows, one per tool and client. */
+const toolWindows = new WindowSlots();
 /** Every open window showing an addon's screens, by addon id: stopping the addon closes them. */
-const addonWindows = new Map<string, Set<BrowserWindow>>();
+const addonWindows = new Map<string, Set<AppWindow>>();
 
-function trackWindow(addonId: string, w: BrowserWindow): void {
-  const set = addonWindows.get(addonId) ?? new Set<BrowserWindow>();
+function trackWindow(addonId: string, w: AppWindow): void {
+  const set = addonWindows.get(addonId) ?? new Set<AppWindow>();
   set.add(w);
   addonWindows.set(addonId, set);
   w.on('closed', () => set.delete(w));
@@ -87,7 +100,7 @@ function trackWindow(addonId: string, w: BrowserWindow): void {
 function openTool(deps: AddonUiDeps, addon: AddonInfo, tool: AddonTool): void {
   const key = `${addon.id}/${tool.id}`;
   const open = toolWindows.get(key);
-  if (open && !open.isDestroyed()) {
+  if (open) {
     open.focus();
     return;
   }
@@ -101,8 +114,7 @@ function openTool(deps: AddonUiDeps, addon: AddonInfo, tool: AddonTool): void {
     minHeight: Math.min(height, 420),
     contentSize: true,
   });
-  toolWindows.set(key, w);
-  w.on('closed', () => toolWindows.delete(key));
+  toolWindows.set(w, key);
   trackWindow(addon.id, w);
 }
 
@@ -117,7 +129,7 @@ export function addonToolsMenu(deps: AddonUiDeps, addons: AddonInfo[]): Electron
   );
 }
 
-async function runAction(deps: AddonUiDeps, sender: BrowserWindow | null, addonId: string, a: AddonAction): Promise<void> {
+async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: string, a: AddonAction): Promise<void> {
   switch (a.type) {
     case 'openWindow': {
       const width = a.width ?? 520;
@@ -141,7 +153,7 @@ async function runAction(deps: AddonUiDeps, sender: BrowserWindow | null, addonI
       await messageBox(sender, { type: a.kind, title: 'Looper', message: a.message, detail: a.detail, buttons: ['OK'] });
       return;
     case 'copy':
-      clipboard.writeText(a.text);
+      writeClipboard(a.text);
       return;
     case 'select': {
       const target = (sender && openers.get(sender)) ?? sender ?? deps.mainWindow();
@@ -158,7 +170,7 @@ async function runAction(deps: AddonUiDeps, sender: BrowserWindow | null, addonI
  */
 async function runEvent(
   deps: AddonUiDeps,
-  sender: BrowserWindow | null,
+  sender: AppWindow | null,
   addonId: string,
   ev: AddonEvent,
   confirm?: string,
@@ -173,14 +185,14 @@ async function runEvent(
   }
   for (const a of result.actions ?? []) await runAction(deps, sender, addonId, a);
   if (ev.kind === 'copy') {
-    if (result.value !== undefined) clipboard.writeText(result.value);
+    if (result.value !== undefined) writeClipboard(result.value);
     return { values: result.values };
   }
   return { value: result.value, values: result.values };
 }
 
 /** Read a .looperaddon file, ask, and install it. */
-export async function installAddonFile(deps: AddonUiDeps, file: string, parent: BrowserWindow | null): Promise<void> {
+export async function installAddonFile(deps: AddonUiDeps, file: string, parent: AppWindow | null): Promise<void> {
   let input: unknown;
   try {
     input = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -281,59 +293,59 @@ export function addonToolbarsMenu(addons: AddonInfo[], view: View, update: (patc
 
 export function registerAddonIpc(deps: AddonUiDeps): void {
   const { host } = deps;
-  ipcMain.handle('addons:list', () => host.list());
-  ipcMain.handle('addons:pane', (_e, id: string, pane: string) => host.pane(id, pane));
-  ipcMain.handle('addons:render', (_e, id: string, view: string, params: Record<string, unknown>) => host.render(id, view, params));
-  ipcMain.on('addons:slowDraw', (_e, id: string, view: string, ms: number) => host.logSlowDraw(id, view, ms));
-  ipcMain.handle('addons:event', (e, id: string, ev: AddonEvent, confirm?: string) =>
-    runEvent(deps, BrowserWindow.fromWebContents(e.sender), id, ev, confirm),
+  ipc.handle('addons:list', () => host.list());
+  ipc.handle('addons:pane', (_e, id: string, pane: string) => host.pane(id, pane));
+  ipc.handle('addons:render', (_e, id: string, view: string, params: Record<string, unknown>) => host.render(id, view, params));
+  ipc.on('addons:slowDraw', (_e, id: string, view: string, ms: number) => host.logSlowDraw(id, view, ms));
+  ipc.handle('addons:event', (e, id: string, ev: AddonEvent, confirm?: string) =>
+    runEvent(deps, windowOf(e), id, ev, confirm),
   );
-  ipcMain.handle('addons:restart', (_e, id: string) => host.restart(id));
-  ipcMain.handle('addons:edit', (e, id: string) => {
+  ipc.handle('addons:restart', (_e, id: string) => host.restart(id));
+  ipc.handle('addons:edit', (e, id: string) => {
     const addon = host.get(id);
     if (!addon) return;
-    deps.openWindow(`addon-edit/${encodeURIComponent(id)}`, 'Edit Addon', 560, 440, BrowserWindow.fromWebContents(e.sender), {
+    deps.openWindow(`addon-edit/${encodeURIComponent(id)}`, 'Edit Addon', 560, 440, windowOf(e), {
       minWidth: 460,
       minHeight: 400,
       contentSize: true,
     });
   });
   // null goes back to how the addon's own file runs it.
-  ipcMain.handle('addons:setRun', (_e, id: string, run: unknown) => {
+  ipc.handle('addons:setRun', (_e, id: string, run: unknown) => {
     if (run === null) return host.setRun(id, undefined);
     const parsed = AddonLocalRunSchema.safeParse(run);
     if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
     host.setRun(id, parsed.data);
   });
-  ipcMain.handle('addons:pickFile', async (e, id: string, accept?: { label: string; extensions: string[] }[]) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('addons:pickFile', async (e, id: string, accept?: { label: string; extensions: string[] }[]) => {
+    const sender = windowOf(e);
     const opts: Electron.OpenDialogOptions = {
       properties: ['openFile'],
       filters: [...(accept ?? []).map((a) => ({ name: a.label, extensions: a.extensions })), { name: 'All files', extensions: ['*'] }],
     };
-    const r = sender ? await dialog.showOpenDialog(sender, opts) : await dialog.showOpenDialog(opts);
+    const r = await showOpenDialog(sender, opts);
     const file = r.canceled ? undefined : r.filePaths[0];
     return file ? addonPath(deps, id, file) : null;
   });
-  ipcMain.handle('addons:setEnabled', (_e, id: string, enabled: boolean) => {
+  ipc.handle('addons:setEnabled', (_e, id: string, enabled: boolean) => {
     host.setEnabled(id, enabled);
     if (enabled) return;
     for (const w of addonWindows.get(id) ?? []) if (!w.isDestroyed()) w.close();
   });
-  ipcMain.on('addons:toolbarMenu', (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.on('addons:toolbarMenu', (e) => {
+    const sender = windowOf(e);
     const items = addonToolbarsMenu(host.list(), deps.view(), deps.updateView);
-    if (sender && items.length) Menu.buildFromTemplate(items).popup({ window: sender });
+    if (sender && items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender });
   });
-  ipcMain.handle('addons:openTool', (_e, id: string, toolId: string) => {
+  ipc.handle('addons:openTool', (_e, id: string, toolId: string) => {
     const addon = host.list().find((a) => a.id === id);
     const tool = addon?.tools.find((t) => t.id === toolId);
     if (addon && tool) openTool(deps, addon, tool);
   });
-  ipcMain.handle('addons:remove', async (e, id: string) => {
+  ipc.handle('addons:remove', async (e, id: string) => {
     const m = host.get(id);
     if (!m) return;
-    const sender = BrowserWindow.fromWebContents(e.sender);
+    const sender = windowOf(e);
     const response = await messageBox(sender, {
       type: 'question',
       title: 'Looper',
@@ -346,14 +358,14 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     });
     if (response === 0) host.remove(id);
   });
-  ipcMain.handle('addons:install', async (e) => {
-    const sender = BrowserWindow.fromWebContents(e.sender);
+  ipc.handle('addons:install', async (e) => {
+    const sender = windowOf(e);
     const opts: Electron.OpenDialogOptions = {
       title: 'Install Addon',
       filters: [{ name: 'Looper Addon', extensions: [ADDON_EXT] }],
       properties: ['openFile'],
     };
-    const r = sender ? await dialog.showOpenDialog(sender, opts) : await dialog.showOpenDialog(opts);
+    const r = await showOpenDialog(sender, opts);
     const file = r.canceled ? undefined : r.filePaths[0];
     if (file) await installAddonFile(deps, file, sender);
   });
@@ -362,10 +374,10 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
    * A pane item's or a pane header's right-click menu: the addon's items,
    * then (header) Hide Pane. A pick goes to the addon as a `menu` event.
    */
-  ipcMain.on(
+  ipc.on(
     'addons:menu',
     (e, id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }) => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
+      const sender = windowOf(e);
       if (!sender) return;
       const items = menuItems(deps, sender, id, { pane }, menu, opts.item ? { id: opts.item } : undefined);
       if (opts.header) {
@@ -380,7 +392,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
           },
         });
       }
-      if (items.length) Menu.buildFromTemplate(items).popup({ window: sender });
+      if (items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender });
     },
   );
 
@@ -388,19 +400,17 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
    * An addon window's menu bar, sent again whenever the screen or the
    * selected item changes; null takes it away. The main window keeps its own.
    */
-  ipcMain.on(
+  ipc.on(
     'addons:menuBar',
     (e, id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: { id: string; menu?: AddonMenuItem[] }) => {
-      const sender = BrowserWindow.fromWebContents(e.sender);
-      if (!sender || sender === deps.mainWindow() || process.platform === 'darwin') return;
-      if (!menuBar?.length) {
-        sender.removeMenu();
-        return;
-      }
-      sender.setMenu(
-        Menu.buildFromTemplate(
-          menuBar.map((m) => ({ label: m.label, submenu: menuItems(deps, sender, id, source, m.items, item) })),
-        ),
+      const sender = windowOf(e);
+      // macOS has one global menu bar, but a remote window shows its own.
+      if (!sender || sender === deps.mainWindow() || (process.platform === 'darwin' && !isRemote(sender))) return;
+      setWindowMenu(
+        sender,
+        menuBar?.length
+          ? Menu.buildFromTemplate(menuBar.map((m) => ({ label: m.label, submenu: menuItems(deps, sender, id, source, m.items, item) })))
+          : null,
       );
     },
   );
@@ -427,7 +437,7 @@ async function addonPath(deps: AddonUiDeps, addonId: string, file: string): Prom
 /** An addon's menu items as Electron's; a pick goes to the addon as a `menu` event. `&` marks an access key. */
 function menuItems(
   deps: AddonUiDeps,
-  sender: BrowserWindow,
+  sender: AppWindow,
   addonId: string,
   source: AddonEventSource,
   menu: AddonMenuItem[],

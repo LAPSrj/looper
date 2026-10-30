@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { TaskSchema } from '../src/shared/types';
 
-const until = async (cond: () => boolean | Promise<boolean>, what: string) => {
-  for (let i = 0; i < 200; i++) {
-    if (await cond()) return;
+// A deadline, not a count of tries: a turn takes ~3 s alone and several times
+// that under the full suite's load, so a fixed 200 × 25 ms ran out first.
+const until = async (cond: () => boolean | Promise<boolean>, what: string, ms = 20_000) => {
+  const end = Date.now() + ms;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error(`timed out waiting for ${what}`);
 };
 
 /**
@@ -85,13 +87,15 @@ async function turn(engine: Engine, id: string, check: string, content: string):
   );
 }
 
-// Each case starts an engine and a fake agent process: 4–5 s alone, more under the full suite's load.
-describe("task builder Undo/Redo, Save and Don't Save", { timeout: 30_000 }, () => {
+// Each case starts an engine and a fake agent process: 7–11 s alone, more under the full suite's load.
+describe("task builder Undo/Redo, Save and Don't Save", { timeout: 60_000 }, () => {
   let engine: Engine | null = null;
+  // Stopping the engine runs the real leftover sweep (two scans of every process
+  // on the machine, 1.5 s apart): ~4 s alone, past the default 10 s under load.
   afterEach(async () => {
     await engine?.stop();
     engine = null;
-  });
+  }, 30_000);
 
   it("undoes the agent's turns one at a time, and a loaded version is one more step", async () => {
     const t = await setUp();

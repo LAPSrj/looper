@@ -10,6 +10,7 @@ import { GitView, useGitStatus } from './GitView';
 import { useGitRepo, useListNav } from './hooks';
 import { RunLog } from './RunLog';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
+import { isPhone } from '../web/page-nav';
 
 type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
 
@@ -139,7 +140,8 @@ export function ProjectDetail({
                         key={t.id}
                         id={`project-task-${t.id}`}
                         className={`run-row${rt?.lastResult ? ` result-${rt.lastResult}` : ''}${t.id === picked ? ' selected' : ''}${!t.enabled ? ' muted' : ''}`}
-                        onClick={() => setPicked(t.id)}
+                        // A phone has no double-click: a tap opens the task.
+                        onClick={() => (isPhone ? onSelectTask(t.id) : setPicked(t.id))}
                         onDoubleClick={() => onSelectTask(t.id)}
                       >
                         <td title={t.name}>{t.name}</td>
@@ -165,7 +167,7 @@ export function ProjectDetail({
         {tab === 'sessions' && (
           <RunLog taskId={standIn} records={records} runtime={undefined} hideNoAction={false} hideChatsAndTerminals={false} />
         )}
-        {tab === 'git' && <GitView projectId={project.id} watch={git} />}
+        {tab === 'git' && <GitView projectId={project.id} watch={git} narrow={isPhone} />}
       </section>
     </div>
   );

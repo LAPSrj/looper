@@ -1,0 +1,789 @@
+/* iOS and iPadOS: system font and colors, 44 pt targets, translucent bars, sheets and alerts as UIKit draws them. */
+
+html[data-platform='ios'] {
+  --ios-tint: #007aff;
+  --ios-red: #ff3b30;
+  --ios-green: #34c759;
+  --ios-bg: #ffffff;
+  --ios-grouped: #f2f2f7;
+  --ios-cell: #ffffff;
+  --ios-label: #000000;
+  --ios-label2: rgba(60, 60, 67, 0.6);
+  --ios-label3: rgba(60, 60, 67, 0.3);
+  --ios-sep: rgba(60, 60, 67, 0.29);
+  --ios-bar: rgba(249, 249, 249, 0.78);
+  --ios-fill: rgba(118, 118, 128, 0.12);
+  /* A light material over a blur. WebKit builds that take backdrop-filter without drawing it (and the
+     @supports check passes there) show the page through the material, so it stays dense enough that
+     what's behind never competes with the text, blur or not. */
+  --ios-menu: rgba(245, 245, 245, 0.98);
+  --ios-alert: rgba(242, 242, 242, 0.95);
+  --ios-gap: rgba(0, 0, 0, 0.08);
+  --ios-folder: #1a9cf0;
+  --ios-seg-on: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-platform='ios'] {
+    --ios-tint: #0a84ff;
+    --ios-red: #ff453a;
+    --ios-green: #30d158;
+    --ios-bg: #000000;
+    --ios-grouped: #000000;
+    --ios-cell: #1c1c1e;
+    --ios-label: #ffffff;
+    --ios-label2: rgba(235, 235, 245, 0.6);
+    --ios-label3: rgba(235, 235, 245, 0.3);
+    --ios-sep: rgba(84, 84, 88, 0.65);
+    --ios-bar: rgba(29, 29, 31, 0.78);
+    --ios-fill: rgba(118, 118, 128, 0.24);
+    --ios-menu: rgba(40, 40, 42, 0.98);
+    --ios-alert: rgba(40, 40, 42, 0.95);
+    --ios-gap: rgba(0, 0, 0, 0.3);
+    --ios-folder: #39a8f0;
+    --ios-seg-on: #636366;
+  }
+}
+
+.ph-root.ios,
+.ph-pair.ios,
+.ios-alert-layer {
+  font-family: -apple-system, system-ui, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--ios-label);
+}
+.ph-root.ios {
+  background: #000;
+}
+.ph-root.ios button {
+  -webkit-tap-highlight-color: transparent;
+}
+.ios .ph-card {
+  background: var(--ios-bg);
+}
+
+/* ---------- the navigation bar ---------- */
+.ios-bar {
+  position: relative;
+  z-index: 1;
+  display: flow-root;
+  flex: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--ios-bar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--ios-sep);
+}
+.ios .pres-page-sheet .ios-bar,
+.ios .pres-form-sheet .ios-bar,
+.ios-own-sheet .ios-bar {
+  padding-top: 0;
+}
+.ios-bar-row {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  align-items: center;
+  height: 44px;
+  padding: 0 8px;
+}
+.ios-bar-lead {
+  display: flex;
+  justify-self: start;
+  min-width: 0;
+}
+.ios-bar-trail {
+  display: flex;
+  justify-self: end;
+  align-items: center;
+  min-width: 0;
+}
+.ios-bar-title {
+  min-width: 0;
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  transition: opacity 0.2s;
+}
+.ios-bar-title.faded {
+  opacity: 0;
+}
+.ios-back,
+.ios-text-btn,
+.ios-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ios-tint);
+  font: inherit;
+  font-size: 17px;
+  cursor: pointer;
+}
+.ios-back {
+  gap: 5px;
+  padding: 0 8px 0 0;
+  max-width: 32vw;
+}
+.ios-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-text-btn {
+  padding: 0 8px;
+  white-space: nowrap;
+}
+.ios-text-btn.bold {
+  font-weight: 600;
+}
+.ios-back:active,
+.ios-text-btn:active,
+.ios-icon-btn:active {
+  opacity: 0.3;
+}
+.ios-text-btn:disabled,
+.ios-icon-btn:disabled {
+  color: var(--ios-label3);
+}
+.ios-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 5px auto 0;
+  border-radius: 3px;
+  background: var(--ios-label3);
+}
+
+/* ---------- how windows present ---------- */
+.ios .pres-push > .ph-card {
+  animation: ph-push-in 0.42s cubic-bezier(0.2, 0.85, 0.25, 1);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+}
+.ios .pres-push.leaving > .ph-card {
+  animation: ph-push-out 0.3s cubic-bezier(0.4, 0, 0.7, 0.4) forwards;
+}
+.ios .ph-win[data-under] > .ph-card {
+  transform: translateX(-30%);
+}
+.ios .pres-page-sheet > .ph-card {
+  top: calc(env(safe-area-inset-top) + 10px);
+  border-radius: 10px 10px 0 0;
+  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.ios .pres-page-sheet.leaving > .ph-card,
+.ios .pres-form-sheet.leaving > .ph-card {
+  animation: ph-up-out 0.3s ease-in forwards;
+}
+/* The screen under an iPhone's page sheet shrinks back. */
+.ios .ph-win.behind > .ph-card {
+  transform: translateY(calc(env(safe-area-inset-top) - 4px)) scale(0.92);
+  transform-origin: 50% 0;
+  border-radius: 10px;
+}
+.ios.tablet .pres-page-sheet > .ph-card {
+  top: calc(env(safe-area-inset-top) + 32px);
+  margin: 0 auto;
+  width: min(704px, calc(100% - 48px));
+  border-radius: 12px 12px 0 0;
+}
+.ios .pres-form-sheet > .ph-card {
+  margin: auto;
+  width: min(var(--win-w, 540px), 540px, calc(100% - 40px));
+  height: min(calc(var(--win-h, 620px) + 56px), 620px, calc(100% - 80px));
+  border-radius: 12px;
+  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.ios .pres-form-sheet .ph-body {
+  padding: 0;
+}
+
+/* ---------- sheets of the shell's own ---------- */
+.ios-own-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 500;
+}
+.ios-own-sheet .ph-card {
+  top: calc(env(safe-area-inset-top) + 10px);
+  border-radius: 10px 10px 0 0;
+  background: var(--ios-grouped);
+  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.ios-own-sheet.small .ph-card {
+  top: auto;
+  height: min(440px, 75%);
+}
+.ios-own-sheet.form .ph-card {
+  margin: auto;
+  width: min(540px, calc(100% - 40px));
+  height: min(620px, calc(100% - 80px));
+  border-radius: 12px;
+}
+.ios-own-sheet.form.small .ph-card {
+  height: min(440px, calc(100% - 80px));
+}
+.ios-sheet-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.ios-own-sheet.form .ios-sheet-body {
+  padding-bottom: 0;
+}
+
+/* ---------- grouped lists ---------- */
+.ios-grouped {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 24px;
+}
+.ios-group {
+  margin: 20px 16px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ios-cell);
+}
+.ios-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.ios-cell + .ios-cell::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 0.5px;
+  background: var(--ios-sep);
+}
+.ios-cell-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-cell-label.secondary {
+  color: var(--ios-label2);
+}
+.ios-cell-button {
+  justify-content: center;
+  color: var(--ios-tint);
+  cursor: pointer;
+}
+.ios-cell-button.destructive {
+  color: var(--ios-red);
+}
+.ios-cell-button:active {
+  background: var(--ios-fill);
+}
+.ios-field .ios-cell-label {
+  flex: none;
+  width: 72px;
+}
+.ios-field input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ios-label);
+}
+.ios-field input.mono {
+  font-family: ui-monospace, Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+.ios-group-footer {
+  margin: 7px 32px 0;
+  font-size: 13px;
+  color: var(--ios-label2);
+}
+.ios-group-footer.error {
+  color: var(--ios-red);
+}
+.ios-switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(120, 120, 128, 0.16);
+  transition: background 0.25s;
+  cursor: pointer;
+}
+.ios-switch.on {
+  background: var(--ios-green);
+}
+.ios-switch:disabled {
+  opacity: 0.4;
+}
+.ios-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
+  transition: transform 0.25s;
+}
+.ios-switch.on .ios-switch-knob {
+  transform: translateX(20px);
+}
+.ios-segmented {
+  display: flex;
+  margin: 10px 16px 6px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--ios-fill);
+}
+.ios-segmented button {
+  flex: 1;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ios-label);
+}
+.ios-segmented button.on {
+  background: var(--ios-seg-on);
+  font-weight: 600;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+}
+.ios-filled-btn {
+  min-height: 50px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ios-tint);
+  color: #fff;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+}
+.ios-filled-btn:disabled {
+  opacity: 0.4;
+}
+.ios-filled-btn.wide {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 28px 16px;
+}
+.ios-device-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 16px;
+}
+.ios-footnote {
+  font-size: 13px;
+  color: var(--ios-label2);
+  text-align: center;
+}
+
+/* ---------- the computer's folders ---------- */
+.ios-folder-bar {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  align-items: center;
+  height: 44px;
+  padding: 0 8px;
+}
+.ios-folder-title {
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.ios .ph-files {
+  background: var(--ios-cell);
+  border-top: 0.5px solid var(--ios-sep);
+}
+.ios .ph-file-row {
+  position: relative;
+  min-height: 56px;
+  padding: 6px 16px;
+}
+.ios .ph-file-row::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 56px;
+  right: 0;
+  height: 0.5px;
+  background: var(--ios-sep);
+}
+.ios .ph-file-row:active,
+.ios .ph-file-row.selected {
+  background: var(--ios-fill);
+}
+.ios .ph-file-icon {
+  color: var(--ios-label2);
+}
+.ios .ph-file-icon.dir {
+  color: var(--ios-folder);
+}
+.ios .ph-file-detail {
+  font-size: 13px;
+  color: var(--ios-label2);
+}
+.ios .ph-file-end {
+  color: var(--ios-label3);
+}
+.ios .ph-file-row.selected .ph-file-end {
+  color: var(--ios-tint);
+}
+.ios .ph-files-empty {
+  color: var(--ios-label2);
+}
+.ios-toolbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: var(--ios-bar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid var(--ios-sep);
+}
+
+/* ---------- menus ---------- */
+.ios-menu-layer,
+.ios-sheet-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 800;
+}
+.ios-menu-layer.dim {
+  background: rgba(0, 0, 0, 0.18);
+}
+.ios-menu {
+  position: absolute;
+  display: flex;
+  max-height: 70%;
+  overflow: hidden;
+  border-radius: 13px;
+  background: var(--ios-menu);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  animation: ph-pop-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.ios-menu-scroll {
+  flex: 1;
+  min-width: 0;
+}
+.ios-menu-group + .ios-menu-group {
+  border-top: 8px solid var(--ios-gap);
+}
+.ios-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ios-label);
+  text-align: left;
+}
+.ios-menu-group .ios-menu-item + .ios-menu-item {
+  border-top: 0.5px solid var(--ios-sep);
+}
+.ios-menu-item:active:not(:disabled) {
+  background: var(--ios-fill);
+}
+.ios-menu-item:disabled {
+  color: var(--ios-label3);
+}
+.ios-menu-up {
+  border-bottom: 0.5px solid var(--ios-sep);
+  font-weight: 600;
+}
+.ios-menu-check {
+  display: flex;
+  justify-content: center;
+  width: 20px;
+  flex: none;
+}
+.ios-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-menu-sub {
+  display: flex;
+  color: var(--ios-label2);
+}
+.ios-sheet-layer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 8px 8px calc(env(safe-area-inset-bottom) + 8px);
+  background: rgba(0, 0, 0, 0.3);
+}
+.ios-action-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(100%, 420px);
+  max-height: 85%;
+  animation: ph-up-in 0.35s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.ios-action-group {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 13px;
+  background: var(--ios-menu);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+}
+.ios-action-cancel {
+  min-height: 57px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--ios-cell);
+  color: var(--ios-tint);
+  font: inherit;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* ---------- alerts ---------- */
+.ios-alert-layer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-h, 100%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  animation: ph-fade-in 0.2s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.ios-alert {
+  width: 270px;
+  max-height: 90%;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--ios-alert);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  text-align: center;
+  animation: ph-pop-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.ios-alert-text {
+  padding: 19px 16px;
+}
+.ios-alert-title {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.ios-alert-message {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.ios-alert-input {
+  width: 100%;
+  margin-top: 14px;
+  padding: 5px 7px;
+  border: 0.5px solid var(--ios-sep);
+  border-radius: 7px;
+  background: var(--ios-cell);
+  font: inherit;
+  font-size: 16px;
+  color: var(--ios-label);
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.ios-alert-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ios-label);
+}
+.ios-checkcircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ios-label3);
+  color: #fff;
+}
+.ios-checkcircle.on {
+  border-color: var(--ios-tint);
+  background: var(--ios-tint);
+}
+.ios-alert-buttons {
+  display: flex;
+  flex-direction: column;
+}
+.ios-alert-buttons.row {
+  flex-direction: row;
+}
+.ios-alert-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-top: 0.5px solid var(--ios-sep);
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ios-tint);
+}
+.ios-alert-buttons.row .ios-alert-btn + .ios-alert-btn {
+  border-left: 0.5px solid var(--ios-sep);
+}
+.ios-alert-btn:active {
+  background: var(--ios-fill);
+}
+.ios-alert-btn.bold {
+  font-weight: 600;
+}
+.ios-alert-btn.destructive {
+  color: var(--ios-red);
+}
+
+/* ---------- banners and the connection ---------- */
+.ios-banners {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 6px);
+  left: 8px;
+  right: 8px;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.ios-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 420px);
+  padding: 12px 14px;
+  border-radius: 22px;
+  background: var(--ios-menu);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  touch-action: none;
+  animation: ph-banner-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+  cursor: pointer;
+}
+.ios-banner-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+.ios-banner-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.3;
+}
+.ios-banner-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-banner-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ios .ph-connection {
+  background: var(--ios-bar);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  color: var(--ios-label2);
+}
+
+/* ---------- pairing ---------- */
+.ph-pair.ios {
+  min-height: 100%;
+  padding: calc(env(safe-area-inset-top) + 44px) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--ios-grouped);
+}
+.ios-large-title {
+  margin: 0 16px 4px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* Without backdrop blur (some WebKit builds), the materials go nearly opaque so text over content stays legible. */
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-platform='ios'] {
+    --ios-bar: rgba(249, 249, 249, 0.97);
+    --ios-menu: rgba(245, 245, 245, 1);
+    --ios-alert: rgba(242, 242, 242, 0.99);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  @supports not (backdrop-filter: blur(1px)) {
+    html[data-platform='ios'] {
+      --ios-bar: rgba(29, 29, 31, 0.97);
+      --ios-menu: rgba(40, 40, 42, 1);
+      --ios-alert: rgba(40, 40, 42, 0.99);
+    }
+  }
+}

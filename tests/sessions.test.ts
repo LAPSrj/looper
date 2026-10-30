@@ -339,6 +339,18 @@ describe('the session hub', () => {
     expect(interrupted.state().sessions[0].status).toBe('ready');
   });
 
+  it('sends the activity of every session a Sessions window shows, on any device', async () => {
+    const { h, events } = hub({ chats: [chat({ id: 'c1' }), chat({ id: 'c2' })] });
+    h.watch(['c1', 'c2']);
+    await new Promise((r) => setTimeout(r, 0));
+    const shown = () => events.flatMap((e) => (e.type === 'session:activity' ? [e.activity.id] : []));
+    expect(new Set(shown())).toEqual(new Set(['c1', 'c2']));
+    events.length = 0;
+    h.watch(['c2']);
+    await (h as unknown as { poll: () => Promise<void> }).poll();
+    expect(shown()).not.toContain('c1');
+  });
+
   it("gives a session's last reply and until when its prompt cache lasts", async () => {
     const { h } = hub({ chats: [chat({ turnEndedAt: 4000 })], cache: { at: 3000, ttlMs: 300_000 } });
     expect(h.state().sessions[0]).toMatchObject({ lastReplyAt: 4000 });

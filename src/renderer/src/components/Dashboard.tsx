@@ -65,6 +65,25 @@ interface Props {
   onOpen: (taskId: string, tab: DetailTab) => void;
 }
 
+/** What opening a dashboard row does (double-click or Enter; a tap on a phone). */
+export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => void) {
+  return {
+    // A waiting run opens on its terminal, or in its run window to answer its question; a failed one in its run window.
+    attention: (r: AttentionRow) => {
+      if (r.question && r.runId) void window.looper.openMessages(r.task.id, r.runId);
+      else if (r.runId) onOpen(r.task.id, 'terminal');
+      else if (r.lastRunId) void window.looper.openMessages(r.task.id, r.lastRunId);
+      else onOpen(r.task.id, 'runs');
+    },
+    running: (r: RunningRow) => onOpen(r.task.id, 'terminal'),
+    // An open conversation opens in a Looper terminal window.
+    remote: (c: RemoteConversation) => void window.looper.remote.open(c.id),
+    recent: (r: RecentRun) => void window.looper.openMessages(r.taskId, r.runId),
+  };
+}
+
+export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
+
 /** What the main window shows when no task is selected. */
 export function Dashboard({ attention, running, remote, recent, runtimes, now, pick, onPick, onOpen }: Props) {
   const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
@@ -72,14 +91,9 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
 
   const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
-  // A waiting run opens on its terminal, or in its run window to answer its question; a failed one in its run window.
-  const openAttention = (r: AttentionRow) => {
-    if (r.question && r.runId) void window.looper.openMessages(r.task.id, r.runId);
-    else if (r.runId) onOpen(r.task.id, 'terminal');
-    else if (r.lastRunId) void window.looper.openMessages(r.task.id, r.lastRunId);
-    else onOpen(r.task.id, 'runs');
-  };
-  const openRunning = (r: RunningRow) => onOpen(r.task.id, 'terminal');
+  const opens = dashboardOpeners(onOpen);
+  const openAttention = opens.attention;
+  const openRunning = opens.running;
 
   const attentionIndex = attention.findIndex((r) => isPicked('attention', r.task.id, r.runId));
   const runningIndex = running.findIndex((r) => isPicked('running', r.task.id, r.runId));
@@ -97,8 +111,7 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
   });
   const conversations = remote ?? [];
   const remotePick = (c: RemoteConversation): DashboardPick => ({ list: 'remote', taskId: c.taskId, runId: c.id });
-  // An open conversation opens in a Looper terminal window.
-  const openRemote = (c: RemoteConversation) => void window.looper.remote.open(c.id);
+  const openRemote = opens.remote;
   const remoteKeys = useListNav({
     count: conversations.length,
     index: conversations.findIndex((c) => isPicked('remote', c.taskId, c.id)),
@@ -107,7 +120,7 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
   });
   const recentRuns = recent ?? [];
   const recentPick = (r: RecentRun): DashboardPick => ({ list: 'recent', taskId: r.taskId, runId: r.runId });
-  const openRecent = (r: RecentRun) => void window.looper.openMessages(r.taskId, r.runId);
+  const openRecent = opens.recent;
   const recentKeys = useListNav({
     count: recentRuns.length,
     index: recentRuns.findIndex((r) => isPicked('recent', r.taskId, r.runId)),

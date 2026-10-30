@@ -11,9 +11,12 @@ import { WSL_TIMEOUT_TEXT } from './wsl-fixtures';
 // A real watcher process through the real launcher, on a local bash target.
 
 const cleanups: (() => Promise<void> | void)[] = [];
+// Stopping the pool runs the real leftover sweep: two scans of every process on
+// the machine with a 1.5 s pause between them, 3.7 s on an idle machine with
+// ~220 processes and longer with more, so the default 10 s is too tight under load.
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
-});
+}, 30_000);
 
 function setup(command: (root: string) => string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-watch-'));
