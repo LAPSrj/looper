@@ -63,6 +63,21 @@ function useViewport(probe: React.RefObject<HTMLDivElement | null>): Viewport {
     // On <html>, so layers portaled to <body> (alerts) follow the keyboard too.
     const html = document.documentElement;
     html.classList.add('ph-top');
+    // A Home Screen app on iOS: the first keyboard leaves the whole viewport short by the status bar's height
+    // (932 → 873 on a Pro Max) until the app quits. Hiding the page for one reflow makes WebKit measure it again.
+    const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    const tallest = new Map<number, number>();
+    let keyboardSeen = false;
+    let healTimer: ReturnType<typeof setTimeout> | undefined;
+    const heal = () => {
+      if (window.innerHeight >= (tallest.get(window.innerWidth) ?? 0) - 4) return;
+      const scrolled = [...document.querySelectorAll<HTMLElement>('.ph-scroll')].map((el) => [el, el.scrollTop] as const);
+      document.body.style.display = 'none';
+      void document.body.offsetHeight;
+      document.body.style.display = '';
+      for (const [el, top] of scrolled) el.scrollTop = top;
+      apply();
+    };
     const apply = () => {
       if (vv) {
         html.style.setProperty('--vv-h', `${vv.height}px`);
@@ -70,10 +85,18 @@ function useViewport(probe: React.RefObject<HTMLDivElement | null>): Viewport {
       }
       // iOS scrolls the window to show a focused field; the shell is fixed, so it only needs to go back.
       if (window.scrollY !== 0 && !vv) window.scrollTo(0, 0);
-      setVp((old) => {
-        const n = read();
-        return old.width === n.width && old.height === n.height && old.keyboard === n.keyboard && JSON.stringify(old.safe) === JSON.stringify(n.safe) ? old : n;
-      });
+      const n = read();
+      if (standalone) {
+        tallest.set(window.innerWidth, Math.max(tallest.get(window.innerWidth) ?? 0, window.innerHeight));
+        if (n.keyboard) keyboardSeen = true;
+        else if (keyboardSeen) {
+          keyboardSeen = false;
+          clearTimeout(healTimer);
+          // After the keyboard's closing animation.
+          healTimer = setTimeout(heal, 400);
+        }
+      }
+      setVp((old) => (old.width === n.width && old.height === n.height && old.keyboard === n.keyboard && JSON.stringify(old.safe) === JSON.stringify(n.safe) ? old : n));
     };
     apply();
     vv?.addEventListener('resize', apply);
@@ -81,6 +104,7 @@ function useViewport(probe: React.RefObject<HTMLDivElement | null>): Viewport {
     window.addEventListener('resize', apply);
     window.addEventListener('orientationchange', apply);
     return () => {
+      clearTimeout(healTimer);
       vv?.removeEventListener('resize', apply);
       vv?.removeEventListener('scroll', apply);
       window.removeEventListener('resize', apply);
@@ -370,6 +394,93 @@ export interface PhoneShell {
   goBack: () => void;
   /** Whether a window's large title has scrolled away (iOS shows the bar's title then). */
   scrolledPast: Set<string>;
+  /** What's at the top of each window's page, under its bar. */
+  edges: Map<string, TopEdge>;
+}
+
+export interface TopEdge {
+  /** The page's background color along its top edge. */
+  color: string;
+  /** The page's content there has scrolled up, past the bar. */
+  scrolled: boolean;
+}
+
+const isTransparent = (c: string) => c === 'transparent' || /^rgba\(.*,\s*0\)$/.test(c);
+
+/** What's at the middle of a page's top edge: the first background behind it, and whether a scroller there has moved. */
+function readTopEdge(doc: Document, win: Window): TopEdge | null {
+  const hit = doc.elementFromPoint(win.innerWidth / 2, 1);
+  // Nothing hit (a hidden or inert page): keep the last reading.
+  if (!hit || hit === doc.documentElement) return null;
+  let color = '';
+  let scrolled = (doc.scrollingElement?.scrollTop ?? 0) > 0;
+  for (let el: Element | null = hit; el; el = el.parentElement) {
+    const cs = win.getComputedStyle(el);
+    if (!scrolled && el.scrollTop > 0 && /auto|scroll/.test(cs.overflowY)) scrolled = true;
+    if (!color && !isTransparent(cs.backgroundColor)) color = cs.backgroundColor;
+  }
+  return { color: color || win.getComputedStyle(doc.documentElement).backgroundColor, scrolled };
+}
+
+/** Follows the top edge of every window's page: its scrolling, its tabs switching, the page loading again. */
+function useTopEdges(controller: ShellController, screens: Screen[], enabled: boolean): Map<string, TopEdge> {
+  const [edges, setEdges] = useState(() => new Map<string, TopEdge>());
+  const live = screens.filter((sc) => !sc.leaving);
+  const key = live.map((sc) => `${sc.win.w}:${sc.win.nonce}`).join(' ');
+  useEffect(() => {
+    if (!enabled) return;
+    const offs: (() => void)[] = [];
+    for (const sc of live) {
+      const w = sc.win.w;
+      const frame = controller.frameOf(w);
+      if (!frame) continue;
+      let detach: (() => void) | null = null;
+      const attach = () => {
+        detach?.();
+        detach = null;
+        const doc = frame.contentDocument;
+        const win = frame.contentWindow;
+        if (!doc?.body || !win) return;
+        let queued = false;
+        const measure = () => {
+          queued = false;
+          const edge = readTopEdge(doc, win);
+          if (!edge) return;
+          setEdges((old) => {
+            const was = old.get(w);
+            if (was && was.color === edge.color && was.scrolled === edge.scrolled) return old;
+            return new Map(old).set(w, edge);
+          });
+        };
+        const schedule = () => {
+          if (queued) return;
+          queued = true;
+          win.requestAnimationFrame(measure);
+        };
+        const mo = new MutationObserver(schedule);
+        mo.observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
+        const scheme = win.matchMedia('(prefers-color-scheme: dark)');
+        doc.addEventListener('scroll', schedule, { capture: true, passive: true });
+        win.addEventListener('resize', schedule);
+        scheme.addEventListener('change', schedule);
+        measure();
+        detach = () => {
+          mo.disconnect();
+          doc.removeEventListener('scroll', schedule, { capture: true });
+          win.removeEventListener('resize', schedule);
+          scheme.removeEventListener('change', schedule);
+        };
+      };
+      attach();
+      frame.addEventListener('load', attach);
+      offs.push(() => {
+        frame.removeEventListener('load', attach);
+        detach?.();
+      });
+    }
+    return () => offs.forEach((f) => f());
+  }, [key, controller, enabled]);
+  return edges;
 }
 
 /** A sheet dragged down, or a screen swiped back: the frame moves it under the finger. */
@@ -402,6 +513,8 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   const navs = usePageNavs();
   const { screens, top } = useScreens(s, os, vp, navs);
   const [scrolledPast, setScrolledPast] = useState(() => new Set<string>());
+  // Only iOS's bar takes the page's color; Android's top app bar has its own.
+  const edges = useTopEdges(controller, screens, os === 'ios');
 
   // Back: bottom to top, the windows over the main one, the top page's own deeper screen, then what the shell has open.
   const layers: BackLayer[] = [];
@@ -492,7 +605,7 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
     return () => el.removeEventListener('touchmove', onMove);
   }, []);
 
-  return { s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast };
+  return { s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast, edges };
 }
 
 // ---------- the windows ----------

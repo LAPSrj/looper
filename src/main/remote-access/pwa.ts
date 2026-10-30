@@ -11,7 +11,7 @@ const MOBILE_HEAD = [
   `<meta name="theme-color" content="${THEME_DARK}" media="(prefers-color-scheme: dark)">`,
   '<meta name="mobile-web-app-capable" content="yes">',
   '<meta name="apple-mobile-web-app-capable" content="yes">',
-  '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
+  // No black-translucent: under it, iOS 26+ blurs the top ~110 px of a Home Screen app, the bar's title and buttons included.
   '<meta name="apple-mobile-web-app-title" content="Looper">',
   '<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">',
   '<link rel="manifest" href="/manifest.webmanifest">',

@@ -42,7 +42,8 @@ html.phone-window[data-platform='ios'] {
   --accent: #0088ff;
   --accent-fg: #ffffff;
   --green: #248a3d;
-  --yellow: #c93400;
+  /* Dark gold: reads as a warning, not an error, at 4.5:1 or better on white, grouped gray and a selected row. */
+  --yellow: #8a6300;
   --red: #ff383c;
   --info-bg: #e5f1ff;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
@@ -476,12 +477,20 @@ html.phone-window[data-platform='ios'] .phone-tabbar {
   backdrop-filter: saturate(180%) blur(16px);
   box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
 }
-/* What scrolls under it can still scroll clear of it; a pushed screen stops above it. */
-html.phone-window[data-platform='ios'] .phone-main:not(.pushed) .pg-scroll {
-  padding-bottom: calc(62px + max(8px, calc(var(--looper-safe-bottom, 0px) - 12px)) + 24px);
+/* Content scrolls under it and can still scroll clear of it. A pushed screen whose tab is one scrolling
+   pane does the same; one with fixed parts at its bottom (a terminal's key row, Git) stops above it. */
+html.phone-window[data-platform='ios'] .phone-main {
+  --tabbar-h: calc(62px + max(8px, calc(var(--looper-safe-bottom, 0px) - 12px)));
 }
-html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen {
-  padding-bottom: calc(62px + max(8px, calc(var(--looper-safe-bottom, 0px) - 12px)) + 8px);
+html.phone-window[data-platform='ios'] .phone-main:not(.pushed) .pg-scroll,
+html.phone-window[data-platform='ios'] .phone-main.pushed .status-pane {
+  padding-bottom: calc(var(--tabbar-h) + 24px);
+}
+html.phone-window[data-platform='ios'] .phone-main.pushed .runlog-table-wrap {
+  padding-bottom: calc(var(--tabbar-h) + 8px);
+}
+html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen:not(:has(.status-pane, .runlog-table-wrap)) {
+  padding-bottom: calc(var(--tabbar-h) + 8px);
 }
 html.phone-window[data-platform='ios'] .phone-tab {
   justify-content: center;
@@ -670,7 +679,11 @@ html.phone-window .runlog-table tr.selected,
 html.phone-window .runlog-table tr.run-row.selected {
   background: var(--info-bg);
 }
-html.phone-window .runlog-table tr.selected td {
+/* :hover and .messages too, to outrank the desktop's white-on-accent rules (a tapped row keeps :hover on iOS). */
+html.phone-window .runlog-table tr.selected td,
+html.phone-window .runlog-table tr.selected:hover td,
+html.phone-window .messages .runlog-table tr.selected td,
+html.phone-window .messages .runlog-table tr.selected:hover td {
   color: var(--pg-label, var(--fg));
 }
 html.phone-window[data-platform='android'] .runlog-table tr.selected,
@@ -678,7 +691,10 @@ html.phone-window[data-platform='android'] .runlog-table tr.run-row.selected {
   border-radius: 16px;
   background: var(--md-secondary-container);
 }
-html.phone-window[data-platform='android'] .runlog-table tr.selected td {
+html.phone-window[data-platform='android'] .runlog-table tr.selected td,
+html.phone-window[data-platform='android'] .runlog-table tr.selected:hover td,
+html.phone-window[data-platform='android'] .messages .runlog-table tr.selected td,
+html.phone-window[data-platform='android'] .messages .runlog-table tr.selected:hover td {
   color: var(--md-on-secondary-container);
 }
 
@@ -1036,17 +1052,43 @@ html.phone-window .chat-msg {
 html.phone-window .chat-agent {
   border-radius: 18px;
 }
+/* The message box runs from the top of Send to the bottom of Stop; the icon row and attachments sit above it. */
 html.phone-window .chat-composer {
-  flex-wrap: nowrap;
-  align-items: flex-end;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0 8px;
   padding: 6px 10px calc(8px + var(--looper-safe-bottom, 0px));
+}
+html.phone-window .chat-composer .composer-main {
+  display: contents;
+}
+html.phone-window .chat-composer .chat-commandbar {
+  grid-area: 1 / 1 / 2 / 3;
+}
+html.phone-window .chat-composer .chat-pending {
+  grid-area: 2 / 1 / 3 / 3;
+}
+html.phone-window .chat-composer .composer-input {
+  grid-area: 3 / 1;
+  align-self: stretch;
+}
+html.phone-window[data-platform='android'] .chat-composer .composer-input {
+  margin: 4px 0;
+}
+html.phone-window .chat-composer .composer-actions {
+  grid-area: 3 / 2;
 }
 html.phone-window.keyboard-up .chat-composer,
 html.phone-window.keyboard-up .term-keys,
 html.phone-window.keyboard-up .editor-footer,
 html.phone-window.keyboard-up .guidance-compose {
   padding-bottom: 8px;
+}
+html.phone-window .chat-composer .composer-input textarea {
+  position: absolute;
+  inset: 0;
+  height: 100%;
 }
 html.phone-window .chat-composer textarea {
   min-height: 40px;

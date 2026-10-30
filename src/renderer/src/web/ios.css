@@ -12,8 +12,8 @@ html[data-platform='ios'] {
   --ios-label2: rgba(60, 60, 67, 0.6);
   --ios-label3: rgba(60, 60, 67, 0.3);
   --ios-sep: rgba(60, 60, 67, 0.29);
-  /* The hard scroll edge under the bars (iOS 27's default): nearly opaque, with a hairline. */
-  --ios-bar: rgba(249, 249, 249, 0.9);
+  /* The hard scroll edge (iOS 27's default under a bar): opaque, with a hairline. */
+  --ios-bar: #f9f9f9;
   --ios-fill: rgba(118, 118, 128, 0.12);
   --ios-fill2: rgba(120, 120, 128, 0.16);
   /* Liquid Glass, regular: the small controls (bar buttons, the tab bar) and the larger, denser
@@ -42,7 +42,7 @@ html[data-platform='ios'] {
     --ios-label2: rgba(235, 235, 245, 0.6);
     --ios-label3: rgba(235, 235, 245, 0.3);
     --ios-sep: rgba(84, 84, 88, 0.65);
-    --ios-bar: rgba(22, 22, 23, 0.9);
+    --ios-bar: #161617;
     --ios-fill: rgba(118, 118, 128, 0.24);
     --ios-fill2: rgba(120, 120, 128, 0.32);
     /* iOS 27 draws dark glass lighter than 26 did. */
@@ -77,25 +77,24 @@ html[data-platform='ios'] {
 }
 
 /* ---------- the navigation bar ---------- */
+/* No fill of its own (the frame gives it the page's top color, inline), and the hard scroll edge
+   (.edge) once the page under it has scrolled. Nothing passes behind it, so there's nothing to blur. */
 .ios-bar {
   position: relative;
   z-index: 1;
   display: flow-root;
   flex: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: transparent;
+}
+.ios-bar.edge {
   background: var(--ios-bar);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 0.5px solid var(--ios-sep);
+  box-shadow: 0 0.5px 0 var(--ios-sep);
 }
 .ios .pres-page-sheet .ios-bar,
 .ios .pres-form-sheet .ios-bar,
 .ios-own-sheet .ios-bar {
   padding-top: 0;
-  background: transparent;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  border-bottom: 0;
 }
 .ios-bar-row {
   display: grid;
@@ -887,7 +886,6 @@ html[data-platform='ios'] {
 /* Without backdrop blur (some WebKit builds), the materials go nearly opaque so text over content stays legible. */
 @supports not (backdrop-filter: blur(1px)) {
   html[data-platform='ios'] {
-    --ios-bar: rgba(249, 249, 249, 0.98);
     --ios-glass: rgba(246, 246, 246, 0.97);
     --ios-glass-dense: rgba(245, 245, 245, 1);
   }
@@ -895,7 +893,6 @@ html[data-platform='ios'] {
 @media (prefers-color-scheme: dark) {
   @supports not (backdrop-filter: blur(1px)) {
     html[data-platform='ios'] {
-      --ios-bar: rgba(22, 22, 23, 0.98);
       --ios-glass: rgba(58, 58, 60, 0.97);
       --ios-glass-dense: rgba(44, 44, 46, 1);
     }

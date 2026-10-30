@@ -74,6 +74,15 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
   }, []);
+  // The status bar takes theme-color: the top screen's bar color, so the two read as one.
+  const topEdge = shell.top ? shell.edges.get(shell.top.win.w) : undefined;
+  useEffect(() => {
+    const bar = shell.rootRef.current?.querySelector('.ph-win.top .ios-bar');
+    if (!bar) return;
+    const own = getComputedStyle(bar).backgroundColor;
+    const color = /^rgba\(.*,\s*0\)$/.test(own) ? getComputedStyle(bar.closest('.ph-card') ?? bar).backgroundColor : own;
+    for (const tc of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) if (tc.content !== color) tc.content = color;
+  }, [shell.rootRef, shell.top?.win.w, topEdge]);
   const overlay = !!more || device;
   useEffect(() => {
     if (!overlay) return;
@@ -139,8 +148,10 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
   const sheet = sc.pres === 'page-sheet' || sc.pres === 'form-sheet';
   const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
   const hasMore = sc.pres === 'root' || !!sc.win.menu?.length;
+  // The bar has no fill of its own: it's the page's top color, with the hard scroll edge once the page scrolls.
+  const edge = shell.edges.get(sc.win.w);
   return (
-    <header className="ios-bar">
+    <header className={`ios-bar${edge?.scrolled ? ' edge' : ''}`} style={edge && !edge.scrolled ? { background: edge.color } : undefined}>
       {sc.pres === 'page-sheet' && !shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
       <div className="ios-bar-row">
         <div className="ios-bar-lead">
