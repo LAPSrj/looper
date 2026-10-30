@@ -74,15 +74,11 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
   }, []);
-  // The status bar takes theme-color: the top screen's bar color, so the two read as one.
-  const topEdge = shell.top ? shell.edges.get(shell.top.win.w) : undefined;
-  useEffect(() => {
-    const bar = shell.rootRef.current?.querySelector('.ph-win.top .ios-bar');
-    if (!bar) return;
-    const own = getComputedStyle(bar).backgroundColor;
-    const color = /^rgba\(.*,\s*0\)$/.test(own) ? getComputedStyle(bar.closest('.ph-card') ?? bar).backgroundColor : own;
-    for (const tc of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) if (tc.content !== color) tc.content = color;
-  }, [shell.rootRef, shell.top?.win.w, topEdge]);
+  // iOS colors the status bar from the fixed element under it (the root), not from theme-color: the color of
+  // the topmost full screen's bar, or black while a phone's page sheet shrinks the screen behind it.
+  const full = shell.screens.filter((x) => !x.leaving && (x.pres === 'root' || x.pres === 'push')).sort((a, b) => b.depth - a.depth)[0];
+  const fullEdge = full ? shell.edges.get(full.win.w) : undefined;
+  const statusBar = !full || (!shell.tablet && shell.top?.pres === 'page-sheet') ? '#000' : !fullEdge ? 'var(--ios-bg)' : fullEdge.scrolled ? 'var(--ios-bar)' : fullEdge.color;
   const overlay = !!more || device;
   useEffect(() => {
     if (!overlay) return;
@@ -96,7 +92,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
   };
 
   return (
-    <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`}>
+    <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
       <div ref={shell.probeRef} className="ph-probe" aria-hidden="true" />
       <PhoneWindows
         shell={shell}

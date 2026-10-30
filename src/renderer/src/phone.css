@@ -22,9 +22,12 @@ html.phone-window[data-platform='ios'] {
   --pg-on-tint: #ffffff;
   --pg-press: #d1d1d6;
   --pg-bar: rgba(249, 249, 249, 0.94);
-  --pg-glass: rgba(255, 255, 255, 0.9);
-  --pg-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.8), 0 0 0 0.5px rgba(0, 0, 0, 0.07);
-  --pg-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  /* Liquid Glass as near as CSS gets: the same tint, filter and rim as the frame's bar buttons (ios.css). */
+  --pg-glass: rgba(255, 255, 255, 0.6);
+  --pg-glass-filter: blur(12px) saturate(200%) brightness(1.06);
+  --pg-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --pg-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
   --pg-tab-on: rgba(120, 120, 128, 0.14);
   --pg-switch-off: rgba(120, 120, 128, 0.16);
   --pg-seg-on: #ffffff;
@@ -101,8 +104,9 @@ html.phone-window[data-platform='android'] {
     --pg-tint: #0091ff;
     --pg-press: #3a3a3c;
     --pg-bar: rgba(22, 22, 23, 0.94);
-    --pg-glass: rgba(64, 64, 68, 0.9);
-    --pg-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+    --pg-glass: rgba(64, 64, 68, 0.6);
+    --pg-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
     --pg-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     /* iOS 27: on the lighter dark glass, the selected tab's pill is darker, not lighter. */
     --pg-tab-on: rgba(0, 0, 0, 0.28);
@@ -374,6 +378,7 @@ html.phone-window[data-platform='ios'] .pg-segmented button,
 html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   height: 32px;
   padding: 0 6px;
   border: none;
@@ -473,9 +478,20 @@ html.phone-window[data-platform='ios'] .phone-tabbar {
   padding: 4px;
   border-radius: 31px;
   background: var(--pg-glass);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: var(--pg-glass-filter);
+  backdrop-filter: var(--pg-glass-filter);
   box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
+}
+/* Without backdrop blur, the glass goes nearly opaque so the content under it doesn't show through the labels. */
+@supports not (backdrop-filter: blur(1px)) {
+  html.phone-window[data-platform='ios'] {
+    --pg-glass: rgba(246, 246, 246, 0.97);
+  }
+  @media (prefers-color-scheme: dark) {
+    html.phone-window[data-platform='ios'] {
+      --pg-glass: rgba(58, 58, 60, 0.97);
+    }
+  }
 }
 /* Content scrolls under it and can still scroll clear of it. A pushed screen whose tab is one scrolling
    pane does the same; one with fixed parts at its bottom (a terminal's key row, Git) stops above it. */
@@ -550,6 +566,14 @@ html.phone-window .phone-detail {
 /* The frame's navigation bar shows the title. */
 html.phone-window .phone-detail .detail-bar {
   display: none;
+}
+/* The tabs sit on the page's own gray, 16 pt above the first group, as the segmented control of a list does. */
+html.phone-window[data-platform='ios'] .phone-detail {
+  background: var(--pg-bg);
+}
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs + * .status-pane,
+html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs + .status-pane {
+  padding-top: 8px;
 }
 html.phone-window .phone-detail > .detail {
   flex: 1;

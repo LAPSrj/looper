@@ -16,13 +16,15 @@ html[data-platform='ios'] {
   --ios-bar: #f9f9f9;
   --ios-fill: rgba(118, 118, 128, 0.12);
   --ios-fill2: rgba(120, 120, 128, 0.16);
-  /* Liquid Glass, regular: the small controls (bar buttons, the tab bar) and the larger, denser
-     surfaces with text on them (menus, alerts). WebKit builds that take backdrop-filter without drawing it
-     show the page through, so neither is thin enough for what's behind to compete with the text. */
-  --ios-glass: rgba(255, 255, 255, 0.9);
-  --ios-glass-dense: rgba(250, 250, 250, 0.97);
-  --ios-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.8), 0 0 0 0.5px rgba(0, 0, 0, 0.07);
-  --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  /* Liquid Glass as near as CSS gets (WebKit has no refraction for a backdrop): the small controls (bar
+     buttons) and the larger, denser surfaces with text on them (menus, alerts). The rim catches the light
+     at two opposite corners. */
+  --ios-glass: rgba(255, 255, 255, 0.6);
+  --ios-glass-dense: rgba(250, 250, 250, 0.9);
+  --ios-glass-filter: blur(12px) saturate(200%) brightness(1.06);
+  --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --ios-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
   --ios-folder: #1a9cf0;
   --ios-seg-on: #ffffff;
   --ios-switch-off: rgba(120, 120, 128, 0.16);
@@ -46,9 +48,10 @@ html[data-platform='ios'] {
     --ios-fill: rgba(118, 118, 128, 0.24);
     --ios-fill2: rgba(120, 120, 128, 0.32);
     /* iOS 27 draws dark glass lighter than 26 did. */
-    --ios-glass: rgba(64, 64, 68, 0.9);
-    --ios-glass-dense: rgba(44, 44, 46, 0.97);
-    --ios-glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+    --ios-glass: rgba(64, 64, 68, 0.6);
+    --ios-glass-dense: rgba(44, 44, 46, 0.9);
+    --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
     --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     --ios-folder: #39a8f0;
     --ios-seg-on: #636366;
@@ -67,7 +70,8 @@ html[data-platform='ios'] {
   color: var(--ios-label);
 }
 .ph-root.ios {
-  background: #000;
+  background: var(--ios-status, #000);
+  transition: background-color 0.3s;
 }
 .ph-root.ios button {
   -webkit-tap-highlight-color: transparent;
@@ -146,8 +150,8 @@ html[data-platform='ios'] {
   border: 0;
   border-radius: 22px;
   background: var(--ios-glass);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: var(--ios-glass-filter);
+  backdrop-filter: var(--ios-glass-filter);
   box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
   color: var(--ios-label);
   font: inherit;
@@ -197,8 +201,8 @@ html[data-platform='ios'] {
   gap: 0;
   border-radius: 22px;
   background: var(--ios-glass);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: var(--ios-glass-filter);
+  backdrop-filter: var(--ios-glass-filter);
   box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
 }
 .ios-bar-trail:has(> :nth-child(2)) > :is(.ios-icon-btn, .ios-text-btn):not(.bold) {
