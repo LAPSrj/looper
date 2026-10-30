@@ -25,10 +25,13 @@ started. No idle burn, no context rot, at most one agent per task, ever.
 - **Monitoring built in** — a per-task Runs tab with results and reports, a
   run window with each run's steps and full conversation, live status, and a
   real terminal tab you can watch *and type into* mid-run.
-- **Chats and terminals on demand** — open a task's agent in a chat window
-  or a terminal, pick up a finished run's conversation in either, and fork a
-  chat from any message; each one you start is kept in the Runs tab with the
-  task's runs.
+- **Chats and terminals on demand** — open a project's agent in a chat or a
+  terminal, all in one Sessions window that lists them by project, puts the
+  ones waiting for you first, and shows what each agent is doing; pick up a
+  finished run's conversation in either, and fork a chat from any message.
+  Each one you start is kept in the Runs tab with the task's runs.
+- **Git tab** — a project's uncommitted changes and commit history, with
+  each file's diff, read in the project's own environment.
 - **System notifications** — each task picks what it toasts, from errors-only
   to every run; clicking one lands on the live terminal, the run in the Runs
   tab, or, for an error or warning, the run's window with its report selected.

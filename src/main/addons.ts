@@ -340,6 +340,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
       message: `Remove the addon "${m.name}"?`,
       detail: m.panes.length ? 'Its panes leave the sidebar.' : undefined,
       buttons: ['Remove', 'Cancel'],
+      noLink: true,
       defaultId: 0,
       cancelId: 1,
     });

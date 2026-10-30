@@ -37,7 +37,7 @@ const HELPER_COMMAND = 'looper-remote';
 /** In a helper's run folder: its environment's home and Claude Code config folders, written by its launcher. */
 const HOME_FILE = 'home.txt';
 /** The prompt cache's two lifetimes; a conversation whose transcript doesn't say is given the long one. */
-const CACHE_LONG_MS = 60 * 60_000;
+export const CACHE_LONG_MS = 60 * 60_000;
 const CACHE_SHORT_MS = 5 * 60_000;
 /** How much of a transcript's end is read for its last request. */
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024;

@@ -4,7 +4,6 @@ import type { RemoteState } from '@shared/remote';
 import { isStandInTaskId, projectTaskId } from '@shared/projects';
 import type { Project, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { subscribe } from './events';
-import { setAppLocale } from './format';
 import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { useAddons, type AddonSelection } from './components/AddonPane';
@@ -259,10 +258,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void window.looper.info().then((i) => {
-      setAppLocale(i.locale);
-      setInfo(i);
-    });
+    void window.looper.info().then(setInfo);
     void window.looper.tasks.list().then(setTasks);
     void window.looper.projects.list().then(setProjects);
     void window.looper.folders.list().then(setFolders);
@@ -408,6 +404,8 @@ export function App() {
     return addon?.enabled && item ? { addon, item } : null;
   }, [addonSel, addons, addonPanes]);
   const targetTask = useMemo(() => tasks.find((t) => t.id === target) ?? null, [tasks, target]);
+  // New Chat and New Terminal start in the selected project, or the selected task's.
+  const sessionProject = project ?? (selected ? (projects.find((p) => p.id === targetTask?.projectId) ?? null) : null);
   const view = info?.settings.view;
 
   // Shown at once; the settings event that follows carries the same view back.
@@ -449,6 +447,7 @@ export function App() {
           task={selected ? targetTask : null}
           project={project}
           newTaskProject={project ?? projects.find((p) => p.id === targetTask?.projectId) ?? null}
+          sessionProject={sessionProject}
           runtime={selected && targetTask ? runtimes[targetTask.id] : undefined}
           dashboard={!selected && !project && !addonShown}
           onAction={uiAction}

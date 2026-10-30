@@ -6,13 +6,17 @@ import { agentArgs } from '../shared/projects';
 import {
   chatTitle,
   forkPoint,
+  slashCommandsOf,
+  usageLimitsOf,
   type Attachment,
   type ChatContext,
   type ChatInfo,
   type ChatPermissionRequest,
   type ChatSettings,
   type ChatState,
+  type QueuedMessage,
 } from '../shared/chat';
+import type { SlashCommand, UsageLimits } from '../shared/sessions';
 import {
   codexPermissionArgs,
   harnessKindLabel,
@@ -128,30 +132,31 @@ export function forkTurnId(turns: unknown[], text: string, occurrence: number): 
 /** How long Codex's app server gets to copy a thread. */
 const FORK_TIMEOUT_MS = 60_000;
 
+type AppServerCall = (method: string, params: Rec) => Promise<Rec>;
+
 /**
- * Fork a Codex thread through the turn holding an agent message, over the
- * app server's JSON-RPC on stdio (`codex app-server`): list the thread's
- * turns, then `thread/fork` with that turn as the last one. Returns the new
- * thread's id; rejects with the reason.
+ * A conversation with Codex's app server over its JSON-RPC on stdio (`codex
+ * app-server`): `body` makes its calls after the handshake, and its answer
+ * is the result. Rejects with the reason, or when the server ends or takes
+ * longer than `timeoutMs`.
  */
-export function codexForkThread(
+function codexAppServer<T>(
   child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
-  threadId: string,
-  text: string,
-  occurrence: number,
-  timeoutMs = FORK_TIMEOUT_MS,
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+  timeoutMs: number,
+  endedEarly: string,
+  body: (call: AppServerCall) => Promise<T>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     const waiting = new Map<number, (msg: Rec) => void>();
     let seq = 0;
     let done = false;
-    const finish = (err: Error | null, id?: string) => {
+    const finish = (err: Error | null, value?: T) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       rl.close();
       if (err) reject(err);
-      else resolve(id!);
+      else resolve(value as T);
     };
     const timer = setTimeout(() => finish(new Error("Codex's app server didn't answer in time.")), timeoutMs);
     const rl = readline.createInterface({ input: child.stdout! });
@@ -168,12 +173,12 @@ export function codexForkThread(
       waiting.delete(msg.id);
     });
     child.on('error', (err: Error) => finish(err));
-    child.on('close', () => finish(new Error("Codex's app server ended before the fork was made.")));
+    child.on('close', () => finish(new Error(endedEarly)));
     child.stdin?.on('error', () => {
       /* the close reports it */
     });
     const send = (msg: Rec) => child.stdin?.write(JSON.stringify(msg) + '\n');
-    const call = (method: string, params: Rec): Promise<Rec> =>
+    const call: AppServerCall = (method, params) =>
       new Promise((ok, fail) => {
         const id = ++seq;
         waiting.set(id, (msg) => {
@@ -186,25 +191,78 @@ export function codexForkThread(
     void (async () => {
       await call('initialize', { clientInfo: { name: 'looper', version: '1' } });
       send({ method: 'initialized' });
-      const turns: unknown[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await call('thread/turns/list', {
-          threadId,
-          sortDirection: 'asc',
-          itemsView: 'full',
-          ...(cursor ? { cursor } : {}),
-        });
-        if (Array.isArray(page.data)) turns.push(...page.data);
-        cursor = typeof page.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
-      } while (cursor);
-      const lastTurnId = forkTurnId(turns, text, occurrence);
-      if (!lastTurnId) throw new Error("Codex's thread doesn't have this message.");
-      const res = await call('thread/fork', { threadId, lastTurnId, excludeTurns: true });
-      const id = obj(res.thread)?.id;
-      if (typeof id !== 'string' || !id) throw new Error("Codex's app server didn't name the new thread.");
-      finish(null, id);
+      finish(null, await body(call));
     })().catch((err: unknown) => finish(err instanceof Error ? err : new Error(String(err))));
+  });
+}
+
+/**
+ * Fork a Codex thread through the turn holding an agent message, over the
+ * app server: list the thread's turns, then `thread/fork` with that turn as
+ * the last one. Returns the new thread's id; rejects with the reason.
+ */
+export function codexForkThread(
+  child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
+  threadId: string,
+  text: string,
+  occurrence: number,
+  timeoutMs = FORK_TIMEOUT_MS,
+): Promise<string> {
+  return codexAppServer(child, timeoutMs, "Codex's app server ended before the fork was made.", async (call) => {
+    const turns: unknown[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call('thread/turns/list', {
+        threadId,
+        sortDirection: 'asc',
+        itemsView: 'full',
+        ...(cursor ? { cursor } : {}),
+      });
+      if (Array.isArray(page.data)) turns.push(...page.data);
+      cursor = typeof page.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
+    } while (cursor);
+    const lastTurnId = forkTurnId(turns, text, occurrence);
+    if (!lastTurnId) throw new Error("Codex's thread doesn't have this message.");
+    const res = await call('thread/fork', { threadId, lastTurnId, excludeTurns: true });
+    const id = obj(res.thread)?.id;
+    if (typeof id !== 'string' || !id) throw new Error("Codex's app server didn't name the new thread.");
+    return id;
+  });
+}
+
+/** How long Codex's app server gets to list the skills. */
+const SKILLS_TIMEOUT_MS = 20_000;
+
+/** The skills Codex offers in a folder, from its app server's `skills/list`; disabled ones are left out. */
+export function codexListSkills(
+  child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
+  cwd: string,
+  timeoutMs = SKILLS_TIMEOUT_MS,
+): Promise<SlashCommand[]> {
+  return codexAppServer(child, timeoutMs, "Codex's app server ended before it listed the skills.", async (call) => {
+    const res = await call('skills/list', { cwds: [cwd] });
+    const out: SlashCommand[] = [];
+    for (const entry of Array.isArray(res.data) ? res.data : []) {
+      const skills = obj(entry)?.skills;
+      for (const s of Array.isArray(skills) ? skills : []) {
+        const skill = obj(s);
+        if (!skill || typeof skill.name !== 'string' || skill.enabled === false) continue;
+        if (out.some((x) => x.name === skill.name)) continue;
+        out.push({ name: skill.name, description: typeof skill.description === 'string' ? skill.description : '' });
+      }
+    }
+    return out;
+  });
+}
+
+/** A claude record's tool calls (tool_use) by id, or the ids of the calls its results answer (tool_result). */
+export function toolUseIds(rec: Rec, kind: 'tool_use' | 'tool_result'): string[] {
+  const content = obj(rec.message)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((c) => {
+    const block = obj(c);
+    const id = kind === 'tool_use' ? block?.id : block?.tool_use_id;
+    return block?.type === kind && typeof id === 'string' ? [id] : [];
   });
 }
 
@@ -246,12 +304,20 @@ export interface ChatDeps {
   /** Add a record to the task's run log and tell the windows. */
   appendRecord: (record: RunRecord) => void;
   taskVersion: (taskId: string) => number | undefined;
+  /** Claude reported the account's usage limits. */
+  onLimits: (limits: UsageLimits) => void;
 }
 
 interface Pending {
   text: string;
   attachments: Attachment[];
 }
+
+/** How long Stop waits for Claude to end its turn by itself before ending the process. */
+const INTERRUPT_GRACE_MS = 5000;
+
+/** The user message Claude records when a turn is interrupted. */
+const INTERRUPTED = '[Request interrupted by user]';
 
 /**
  * Fork from Here: the conversation the new chat starts from, until the agent
@@ -321,13 +387,28 @@ class ChatSession {
   sessionId?: string;
   private codexTurns = 0;
   private codexRollout?: string;
-  /** Messages sent while codex runs a turn, or while claude's process is replaced. */
-  private queued: Pending[] = [];
+  /**
+   * Messages sent while the agent runs a turn, or while claude's process is
+   * replaced. With Claude, one is written to the agent while it runs a tool
+   * (`sent`), and leaves the queue when Claude replays it, which it does as it
+   * reads it with that tool's result, as Claude Code's own queue works.
+   */
+  private queued: QueuedMessage[] = [];
+  private queueSeq = 0;
+  /** Each message written to claude that it hasn't replayed yet, in order: a queued one's id, or null for a message sent at once. */
+  private unreplayed: (string | null)[] = [];
+  /** Claude's tool calls of this turn without a result yet. */
+  private readonly toolsRunning = new Set<string>();
   private permissions: ChatPermissionRequest[] = [];
   private readonly takenRequests = new Set<string>();
   /** Permission mode changes claude hasn't confirmed yet: request id → the mode to go back to. */
   private readonly modeRequests = new Map<string, string>();
   private controlSeq = 0;
+  private commands: SlashCommand[] = [];
+  private turnEndedAt?: number;
+  private readonly startedAt = Date.now();
+  /** Stop asked claude to end its turn: the process ends if the turn doesn't. */
+  private stopTimer: NodeJS.Timeout | null = null;
   private closed = false;
   private timers: NodeJS.Timeout[] = [];
   private emitTimer: NodeJS.Timeout | null = null;
@@ -410,6 +491,8 @@ class ChatSession {
         hooks: {
           // As in a run: the payload names the session and its transcript, which the run window and Continue read.
           SessionStart: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('session.json')) }] }],
+          // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
+          Notification: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('notification.json')) }] }],
           PermissionRequest: [
             {
               matcher: '',
@@ -429,7 +512,23 @@ class ChatSession {
     } else {
       if (this.sessionId) writeJsonAtomic(path.join(this.dir, 'codex-session.json'), { thread_id: this.sessionId });
       this.setStatus('ready');
+      this.loadCodexSkills();
     }
+  }
+
+  /** Codex's skills for the "/" list, from its app server; without them the list stays empty. */
+  private loadCodexSkills(): void {
+    const spec = this.launcher('skills', `${this.harness.command} app-server`);
+    const child = spawn(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    void codexListSkills(child, this.task.cwd)
+      .then((skills) => {
+        this.commands = skills;
+        this.scheduleEmit();
+      })
+      .catch((err: unknown) => this.d.log.warn(`chat ${this.id}: cannot list codex skills: ${errMsg(err)}`))
+      .finally(() => {
+        if (child.pid) void killHostTree(child.pid).catch(() => undefined);
+      });
   }
 
   async close(): Promise<void> {
@@ -439,6 +538,7 @@ class ChatSession {
     this.closed = true;
     for (const t of this.timers) clearInterval(t);
     if (this.emitTimer) clearTimeout(this.emitTimer);
+    if (this.stopTimer) clearTimeout(this.stopTimer);
     this.forkProc?.kill();
     await this.kill();
     // A chat nobody wrote in leaves nothing behind; a run keeps its folder, minus the permission requests.
@@ -458,18 +558,72 @@ class ChatSession {
     await this.target.killLeftovers(this.ctx.runId).catch(() => undefined);
   }
 
-  /** Stop: end the agent's turn. The conversation goes on with the next message. */
+  /**
+   * Stop: end the agent's turn. The conversation goes on with the next
+   * message. Claude ends the turn when asked and keeps its process; one that
+   * doesn't within a few seconds, and Codex's turn, end with their process.
+   */
   async stop(): Promise<void> {
+    // An idle agent has no turn to end: its process stays for the next message.
+    if (!this.proc || this.closed || this.killing || this.status !== 'working') return;
+    // A tool call waiting for an answer would hold the turn: it's refused.
+    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false, p.input));
+    this.permissions = [];
+    if (this.claude && this.status === 'working') {
+      if (this.stopTimer) return;
+      this.proc.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `interrupt-${++this.controlSeq}`, request: { subtype: 'interrupt' } }) + '\n');
+      this.scheduleEmit();
+      this.stopTimer = setTimeout(() => {
+        this.stopTimer = null;
+        if (this.status === 'working') void this.killTurn();
+      }, INTERRUPT_GRACE_MS);
+      return;
+    }
+    await this.killTurn();
+  }
+
+  private async killTurn(): Promise<void> {
     if (!this.proc || this.closed || this.killing) return;
     this.killing = true;
-    this.permissions = [];
     await this.kill();
     this.killing = false;
     if (this.closed) return;
+    this.unsendQueued();
     this.acc.addNote('Stopped.');
-    this.setStatus('ready');
+    this.turnEnded();
     this.save();
     this.drainQueue();
+  }
+
+  /** The agent finished a turn (or stopped): the queued messages go next. */
+  private turnEnded(): void {
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    this.turnEndedAt = Date.now();
+    this.setStatus('ready');
+  }
+
+  // ---------- the queue ----------
+
+  /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
+  async sendNow(): Promise<void> {
+    if (this.queued.length === 0) return;
+    if (this.status === 'working') {
+      // Claude goes on with the written messages as soon as its turn stops.
+      this.writeQueued();
+      await this.stop();
+    } else this.drainQueue();
+  }
+
+  /** Take a queued message out (Cancel, or Edit, which puts it back in the message box); one the agent has already been sent stays. */
+  unqueue(messageId: string): QueuedMessage | undefined {
+    const m = this.queued.find((q) => q.id === messageId);
+    if (!m || m.sent) return undefined;
+    this.queued = this.queued.filter((q) => q !== m);
+    this.scheduleEmit();
+    return m;
   }
 
   /** Claude: a new process with the chat's settings that resumes the conversation. */
@@ -479,6 +633,7 @@ class ChatSession {
     await this.kill();
     this.killing = false;
     if (this.closed || this.status === 'ended') return;
+    this.unsendQueued();
     this.startClaude();
     this.drainQueue();
   }
@@ -545,7 +700,8 @@ class ChatSession {
     parts.push('--settings', q(this.targetFile('settings.json')));
     // A question form needs answers Looper can't collect: the agent asks in the conversation instead.
     parts.push('--disallowedTools', 'AskUserQuestion');
-    parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose');
+    // Replays echo each message when Claude reads it: a queued one shows in the conversation where the agent took it in.
+    parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages');
     for (const arg of this.harness.args) parts.push(q(arg));
     for (const extra of agentArgs(this.task)) parts.push(q(extra));
     this.launched = { model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
@@ -553,6 +709,8 @@ class ChatSession {
       // The one process is the whole conversation: once it is gone, so is the chat.
       this.end(exitText('The session ended.', stderr));
     });
+    // The command list, before any message: Claude answers it without calling the model.
+    this.proc?.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `init-${++this.controlSeq}`, request: { subtype: 'initialize' } }) + '\n');
     if (this.status !== 'working') this.setStatus('ready');
   }
 
@@ -585,7 +743,7 @@ class ChatSession {
     this.setStatus('working');
     this.spawnProc(this.launcher(`turn-${this.codexTurns}`, parts.join(' '), prelude), (code, stderr) => {
       if (code !== 0) this.acc.addNote(exitText(`Codex exited with code ${code}.`, stderr));
-      this.setStatus('ready');
+      this.turnEnded();
       void this.readCodexContext().finally(() => this.save());
       this.drainQueue();
     });
@@ -637,22 +795,15 @@ class ChatSession {
     if (!this.claude) writeJsonAtomic(path.join(this.dir, 'codex-session.json'), { thread_id: id });
   }
 
-  /** Send what waited: codex's next turn takes it all at once, claude gets each message. */
+  /** Send what waited, all of it as one message, once the agent isn't working. */
   private drainQueue(): void {
-    if (this.queued.length === 0 || this.killing) return;
-    if (this.claude) {
-      const waiting = this.queued;
-      this.queued = [];
-      for (const p of waiting) this.writeClaude(p);
-      return;
-    }
-    if (this.status === 'working') return;
+    if (this.queued.length === 0 || this.killing || this.status === 'working' || this.status === 'ended' || this.closed) return;
     const next: Pending = {
       text: this.queued.map((x) => x.text).filter(Boolean).join('\n\n'),
       attachments: this.queued.flatMap((x) => x.attachments),
     };
     this.queued = [];
-    this.startCodexTurn(next);
+    this.dispatch(next);
   }
 
   /** onExit runs only when the process ends by itself, not when Looper ended it. */
@@ -704,7 +855,8 @@ class ChatSession {
     } catch {
       return;
     }
-    this.acc.addLine(line);
+    if (this.claude && isInterruptedRecord(rec)) this.acc.addNote('Stopped.');
+    else this.acc.addLine(line);
     if (this.claude) this.onClaudeRecord(rec, line);
     else if (rec.type === 'thread.started' && typeof rec.thread_id === 'string') this.setSession(rec.thread_id);
     this.scheduleEmit();
@@ -714,14 +866,38 @@ class ChatSession {
     if (rec.type === 'system' && rec.subtype === 'init') {
       if (typeof rec.session_id === 'string') this.setSession(rec.session_id);
       if (typeof rec.model === 'string') this.activeModel = rec.model;
+    } else if (rec.type === 'system' && rec.subtype === 'commands_changed') {
+      this.commands = slashCommandsOf(rec.commands);
+    } else if (rec.type === 'rate_limit_event') {
+      const limits = usageLimitsOf(rec);
+      if (limits) this.d.onLimits(limits);
     } else if ((rec.type === 'assistant' && rec.parent_tool_use_id == null) || (rec.type === 'system' && rec.subtype === 'compact_boundary')) {
       // A subagent's messages (parent_tool_use_id set) fill its own context, not the chat's.
       const tokens = contextOfLine(line, 'claude');
       if (typeof tokens === 'number') this.context = { tokens, window: this.context?.window };
       else if (tokens === 'unknown') this.context = undefined;
+      const calls = rec.type === 'assistant' ? toolUseIds(rec, 'tool_use') : [];
+      for (const id of calls) this.toolsRunning.add(id);
+      if (calls.length) this.writeQueued();
+    } else if (rec.type === 'user' && rec.parent_tool_use_id == null) {
+      for (const id of toolUseIds(rec, 'tool_result')) this.toolsRunning.delete(id);
+      if (rec.isReplay === true) {
+        // Claude read a message: a queued one joins the conversation here.
+        const id = this.unreplayed.shift();
+        const m = id ? this.queued.find((q) => q.id === id) : undefined;
+        if (m) {
+          this.queued = this.queued.filter((q) => q !== m);
+          this.acc.addPrompt(m.text, m.attachments);
+        }
+      }
     } else if (rec.type === 'control_response') {
       const res = obj(rec.response);
       const id = typeof res?.request_id === 'string' ? res.request_id : '';
+      if (id.startsWith('init-')) {
+        const list = slashCommandsOf(obj(res?.response)?.commands);
+        if (list.length) this.commands = list;
+        return;
+      }
       const back = this.modeRequests.get(id);
       if (back === undefined) return;
       this.modeRequests.delete(id);
@@ -733,8 +909,19 @@ class ChatSession {
     } else if (rec.type === 'result') {
       const window = claudeContextWindow(rec, this.activeModel);
       if (this.context && window) this.context = { ...this.context, window };
-      this.setStatus('ready', false);
+      this.toolsRunning.clear();
+      if (this.queued.some((q) => q.sent)) {
+        // Messages the agent didn't read yet: Claude starts its next turn with them by itself.
+        if (this.stopTimer) {
+          clearTimeout(this.stopTimer);
+          this.stopTimer = null;
+        }
+        this.save();
+        return;
+      }
+      this.turnEnded();
       this.save();
+      this.drainQueue();
     }
   }
 
@@ -758,19 +945,25 @@ class ChatSession {
     }
   }
 
+  /** The user's message: to the agent now, or into the queue while it works. */
   send(text: string, attachments: Attachment[]): void {
     const t = text.trim();
     if (this.closed || this.status === 'ended' || (!t && attachments.length === 0)) return;
-    this.acc.addPrompt(t, attachments);
-    this.markOpened();
-    if (this.killing || (!this.claude && this.status === 'working')) {
-      this.queued.push({ text: t, attachments });
+    if (this.killing || this.status === 'working') {
+      this.queued.push({ id: `q${++this.queueSeq}`, text: t, attachments });
+      // A tool is running: the agent reads it with that tool's result.
+      if (!this.killing && this.toolsRunning.size > 0) this.writeQueued();
       this.scheduleEmit();
-    } else if (this.claude) {
-      this.writeClaude({ text: t, attachments });
-    } else {
-      this.startCodexTurn({ text: t, attachments });
+      return;
     }
+    this.dispatch({ text: t, attachments });
+  }
+
+  private dispatch(p: Pending): void {
+    this.acc.addPrompt(p.text, p.attachments);
+    this.markOpened();
+    if (this.claude) this.writeClaude(p);
+    else this.startCodexTurn(p);
   }
 
   private writeClaude(p: Pending): void {
@@ -778,7 +971,34 @@ class ChatSession {
     if (!this.proc) this.startClaude();
     const msg = claudeUserMessage(p.text, p.attachments, (x) => this.target.toTargetPath(x));
     this.proc?.stdin?.write(JSON.stringify(msg) + '\n');
+    this.unreplayed.push(null);
     this.setStatus('working');
+  }
+
+  /**
+   * Claude: write the queued messages to the agent now. Claude reads them
+   * with the result of the tool it's running, or, after a Stop, starts its
+   * next turn with them.
+   */
+  private writeQueued(): void {
+    if (!this.claude || !this.proc) return;
+    let wrote = false;
+    for (const m of this.queued) {
+      if (m.sent) continue;
+      const msg = claudeUserMessage(m.text, m.attachments, (x) => this.target.toTargetPath(x));
+      this.proc.stdin?.write(JSON.stringify(msg) + '\n');
+      m.sent = true;
+      this.unreplayed.push(m.id);
+      wrote = true;
+    }
+    if (wrote) this.scheduleEmit();
+  }
+
+  /** The process that held the written messages is gone: they wait in the queue again, to go to the next one. */
+  private unsendQueued(): void {
+    for (const m of this.queued) m.sent = false;
+    this.unreplayed = [];
+    this.toolsRunning.clear();
   }
 
   // ---------- permission requests (claude) ----------
@@ -953,8 +1173,23 @@ class ChatSession {
       history: this.history,
       rows: this.acc.rows,
       permissions: this.permissions,
+      queued: this.queued,
+      commands: this.commands,
+      commandPrefix: this.claude ? '/' : '$',
+      ...(this.turnEndedAt !== undefined ? { turnEndedAt: this.turnEndedAt } : {}),
+      startedAt: this.startedAt,
     };
   }
+}
+
+/** The user record Claude adds when a turn is interrupted: the chat shows "Stopped." in its place. */
+export function isInterruptedRecord(rec: Rec): boolean {
+  if (rec.type !== 'user') return false;
+  const content = obj(rec.message)?.content;
+  const blocks = Array.isArray(content) ? content : [{ type: 'text', text: content }];
+  const text = obj(blocks[0])?.text;
+  // "[Request interrupted by user]", or "… for tool use]" when a tool call was running.
+  return blocks.length === 1 && typeof text === 'string' && text.startsWith(INTERRUPTED.slice(0, -1));
 }
 
 function exitText(fallback: string, stderr: string): string {
@@ -1006,6 +1241,19 @@ export class ChatManager {
 
   get(id: string): ChatState | undefined {
     return this.sessions.get(id)?.state();
+  }
+
+  /** Every open chat, oldest first. */
+  list(): ChatState[] {
+    return [...this.sessions.values()].map((s) => s.state());
+  }
+
+  async sendNow(id: string): Promise<void> {
+    await this.sessions.get(id)?.sendNow();
+  }
+
+  unqueue(id: string, messageId: string): QueuedMessage | undefined {
+    return this.sessions.get(id)?.unqueue(messageId);
   }
 
   taskOf(id: string): string | undefined {

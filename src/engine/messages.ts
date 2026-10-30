@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { guidanceText, type MessageImage, type MessageRow, type MessagesResult, type PatchHunk } from '../shared/messages';
+import { parseTaskNotification } from '../shared/sessions';
+import { readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
 import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
@@ -212,6 +214,8 @@ export class TranscriptAccumulator {
   readonly images = new Map<string, MessageImage>();
   private nextId = 0;
   private byToolId = new Map<string, MessageRow>();
+  /** Rows that started background work, by Claude's background task id (a subagent's is its agent id). */
+  private byBackgroundId = new Map<string, MessageRow>();
   /** The id of the record addLine is folding: its rows get it. */
   private recordUuid: string | undefined;
 
@@ -222,7 +226,31 @@ export class TranscriptAccumulator {
     this.dropped = 0;
     this.nextId = 0;
     this.byToolId.clear();
+    this.byBackgroundId.clear();
     this.images.clear();
+  }
+
+  /**
+   * A Bash call run in the background (its result names the task id and the
+   * file its output goes to), or an Agent call launched in the background.
+   */
+  private takeBackground(row: MessageRow, tur: Rec | undefined, result: string | undefined): void {
+    let id: string | undefined;
+    if (typeof tur?.backgroundTaskId === 'string' && tur.backgroundTaskId) id = tur.backgroundTaskId;
+    else if (tur?.isAsync === true && typeof tur.agentId === 'string' && tur.agentId) id = tur.agentId;
+    if (!id) return;
+    const outputFile =
+      (typeof tur?.outputFile === 'string' && tur.outputFile ? tur.outputFile : undefined) ??
+      /Output is being written to: (\S+?)\.?(?:\s|$)/.exec(result ?? '')?.[1];
+    row.background = { id, status: 'running', ...(outputFile ? { outputFile } : {}) };
+    this.byBackgroundId.set(id, row);
+  }
+
+  /** A background command's or subagent's task notification: its row gets how it ended. */
+  private takeNotification(text: string): void {
+    const n = parseTaskNotification(text);
+    const row = n ? this.byBackgroundId.get(n.id) : undefined;
+    if (n && row?.background) row.background = { ...row.background, status: n.status, ...(n.summary ? { summary: n.summary } : {}) };
   }
 
   addLine(line: string): void {
@@ -258,6 +286,10 @@ export class TranscriptAccumulator {
       if (att?.type === 'hook_additional_context' && Array.isArray(att.content)) {
         for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
       }
+      // A background command or subagent ended: Claude queues its notification for the agent.
+      if (att?.type === 'queued_command' && att.commandMode === 'task-notification' && typeof att.prompt === 'string') {
+        this.takeNotification(att.prompt);
+      }
       return;
     }
     if (rec.type !== 'user' && rec.type !== 'assistant') return;
@@ -270,6 +302,12 @@ export class TranscriptAccumulator {
     }
 
     if (rec.type === 'user') {
+      // In -p mode a background job's end comes as a user message of its own: no prompt of the user's.
+      const only = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 ? (content[0] as Rec)?.text : undefined;
+      if (typeof only === 'string' && only.trimStart().startsWith('<task-notification>')) {
+        this.takeNotification(only);
+        return;
+      }
       if (typeof content === 'string') {
         // Guidance typed into an idle interactive session arrives as a plain prompt.
         if (!this.pushGuidance(content, ts)) this.push({ kind: 'prompt', ts, text: content });
@@ -286,8 +324,10 @@ export class TranscriptAccumulator {
           const patch = takePatch(rec.toolUseResult);
           if (patch) row.patch = patch;
           // The record-level toolUseResult carries the subagent id of a Task call.
-          const agentId = (rec.toolUseResult as Rec | undefined)?.agentId;
+          const tur = rec.toolUseResult as Rec | undefined;
+          const agentId = tur?.agentId;
           if (typeof agentId === 'string' && agentId) row.agentId = agentId;
+          this.takeBackground(row, tur, row.result);
         } else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           if (!this.pushGuidance(block.text, ts)) this.push({ kind: 'prompt', ts, text: block.text });
         } else if (block?.type === 'image') {
@@ -691,6 +731,16 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/** What Claude's meta file says about a subagent. */
+export interface SubagentMeta {
+  agentId: string;
+  toolUseId: string;
+  type: string;
+  description: string;
+  model?: string;
+  background: boolean;
+}
+
 export interface MessagesDeps {
   getTask(id: string): Task | undefined;
   runDir(taskId: string, runId: string): string;
@@ -864,6 +914,94 @@ export class MessagesService {
       this.readers.delete(oldest);
     }
     return reader;
+  }
+
+  /** Subagent meta files read so far, by host path: they don't change once written. */
+  private readonly metas = new Map<string, SubagentMeta>();
+
+  /**
+   * The subagents a run's agent session started, from the meta file Claude
+   * writes next to each one's transcript (`subagents/agent-<id>.meta.json`).
+   */
+  async subagents(taskId: string, runId: string): Promise<SubagentMeta[]> {
+    const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
+    const hostPath = ref ? await this.toHostPath(ref, taskId) : undefined;
+    if (!hostPath) return [];
+    const dir = path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents');
+    const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
+    const out: SubagentMeta[] = [];
+    for (const name of names) {
+      const m = /^agent-([\w.-]+)\.meta\.json$/.exec(name);
+      if (!m) continue;
+      const file = path.join(dir, name);
+      let meta = this.metas.get(file);
+      if (!meta) {
+        try {
+          const raw = JSON.parse(await fs.promises.readFile(file, 'utf8')) as Rec;
+          if (typeof raw.toolUseId !== 'string') continue;
+          meta = {
+            agentId: m[1],
+            toolUseId: raw.toolUseId,
+            type: typeof raw.agentType === 'string' ? raw.agentType : 'agent',
+            description: typeof raw.description === 'string' ? raw.description : '',
+            ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+            background: raw.requestShape === 'background',
+          };
+          this.metas.set(file, meta);
+        } catch {
+          continue; // still being written
+        }
+      }
+      out.push(meta);
+    }
+    return out;
+  }
+
+  /** A subagent's model, effort and context, from its transcript's newest response; null before it has one. */
+  async subagentStats(taskId: string, runId: string, agentId: string): Promise<SubagentStats | null> {
+    if (!/^[\w.-]+$/.test(agentId)) return null;
+    const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
+    const hostPath = ref ? await this.toHostPath(ref, taskId) : undefined;
+    if (!hostPath) return null;
+    const file = path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`);
+    try {
+      return await readSubagentStats(file);
+    } catch {
+      return null; // not written yet
+    }
+  }
+
+  /** The end of a file the agent named in its own path form (a background command's output), or null when it can't be read. */
+  async readTail(taskId: string, targetPath: string, maxBytes = 65_536): Promise<string | null> {
+    const hostPath = await this.toHostPath(targetPath, taskId);
+    if (!hostPath) return null;
+    try {
+      const fh = await fs.promises.open(hostPath, 'r');
+      try {
+        const { size } = await fh.stat();
+        const start = Math.max(0, size - maxBytes);
+        const buf = Buffer.alloc(size - start);
+        await fh.read(buf, 0, buf.length, start);
+        const text = buf.toString('utf8');
+        return start > 0 ? text.slice(text.indexOf('\n') + 1) : text;
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /** The end of a run's Claude transcript; null before it's written. */
+  async transcriptTail(taskId: string, runId: string, maxBytes = 262_144): Promise<string | null> {
+    const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
+    return ref ? this.readTail(taskId, ref, maxBytes) : null;
+  }
+
+  /** How many tokens the run's agent session holds, from its transcript; null when unknown. */
+  async contextTokens(taskId: string, runId: string): Promise<number | null> {
+    const found = await findStepTranscript(this.deps.runDir(taskId, runId), '', (p) => this.toHostPath(p, taskId));
+    return found ? readContextTokens(found.file, found.kind) : null;
   }
 
   /** Translate the transcript path from the run target's form to the engine host's. */

@@ -5,11 +5,13 @@ import { EFFORT_LEVELS, PERMISSION_MODES, describeEnvironment, harnessKindLabel,
 import { projectTaskId } from '@shared/projects';
 import { envToLine, joinTokens } from '@shared/cmdline';
 import { fmtClock, resultLabel, stateLabel } from '../format';
-import { useListNav } from './hooks';
+import { gitTabLabel } from '@shared/git';
+import { GitView, useGitStatus } from './GitView';
+import { useGitRepo, useListNav } from './hooks';
 import { RunLog } from './RunLog';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 
-type ProjectTab = 'status' | 'tasks' | 'sessions';
+type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
 
 const TABS: [ProjectTab, string][] = [
   ['status', 'Status'],
@@ -27,7 +29,7 @@ const TASK_COLS: readonly TableCol[] = [
   { label: 'Details' },
 ];
 
-/** The main window's view of a project: its settings, its tasks, and its chats and terminal sessions. */
+/** The main window's view of a project: its settings, its tasks, its chats and terminal sessions, and its git repository. */
 export function ProjectDetail({
   project,
   tasks,
@@ -45,7 +47,10 @@ export function ProjectDetail({
   now: number;
   onSelectTask: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<ProjectTab>('status');
+  const [shownTab, setTab] = useState<ProjectTab>('status');
+  const gitRepo = useGitRepo(project.id);
+  const tab = shownTab === 'git' && !gitRepo ? 'status' : shownTab;
+  const git = useGitStatus(gitRepo ? project.id : undefined);
   const [picked, setPicked] = useState<string | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const standIn = projectTaskId(project.id);
@@ -88,7 +93,11 @@ export function ProjectDetail({
       <div className="detail-bar">
         <span className="pane-title">{project.name}</span>
       </div>
-      <TabBar tabs={TABS} active={tab} onSelect={setTab} />
+      <TabBar
+        tabs={gitRepo ? [...TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] : TABS}
+        active={tab}
+        onSelect={setTab}
+      />
       <section className="tab-body">
         {tab === 'status' && (
           <div className="status-pane">
@@ -156,6 +165,7 @@ export function ProjectDetail({
         {tab === 'sessions' && (
           <RunLog taskId={standIn} records={records} runtime={undefined} hideNoAction={false} hideChatsAndTerminals={false} />
         )}
+        {tab === 'git' && <GitView projectId={project.id} watch={git} />}
       </section>
     </div>
   );

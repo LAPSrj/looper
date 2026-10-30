@@ -16,10 +16,13 @@ import { MessagesService, readRunSessionId } from './messages';
 import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions } from './terminal-sessions';
-import { RemoteControl } from './remote';
+import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType } from './chat';
-import type { Attachment, AttachmentInput, ChatSettings, ChatState, TerminalInfo } from '../shared/chat';
+import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
+import type { SessionActivity, SessionsState } from '../shared/sessions';
+import { SessionHub } from './sessions';
+import { GitService } from './git';
 import { createWindowsPowerOps } from './power-win';
 import { RestController, type PowerAdapter, type PowerOps } from './rest';
 import { Scheduler, type SchedulerSteps } from './scheduler';
@@ -62,6 +65,8 @@ export interface Engine {
   readonly host: HostKind;
   readonly settings: Settings;
   readonly log: Logger;
+  /** Read-only git for the Git tabs, and which projects are in a repository. */
+  readonly git: GitService;
   start(): void;
   stop(): Promise<void>;
   /** Validate, persist and apply a settings patch. Running components see it immediately. */
@@ -196,8 +201,6 @@ export interface Engine {
   resizeTerminalSession(sessionId: string, cols: number, rows: number): void;
   /** The session's output so far and whether it ended; null once it's closed. */
   terminalSessionOutput(sessionId: string): { data: string; ended: boolean } | null;
-  /** End a session (its window closed). */
-  closeTerminalSession(sessionId: string): void;
   /** Sessions in Looper terminal windows whose harness is still running (Remote Control's not counted). */
   runningTerminalSessions(): number;
   // remote control
@@ -242,6 +245,34 @@ export interface Engine {
   busyChats(): number;
   /** Copy the files into the chat's task attachments, ready to send. */
   attachToChat(chatId: string, files: AttachmentInput[]): Attachment[];
+  /** Send Now: the chat's queued messages go at once, ending the agent's turn if it's working. */
+  sendNowChat(chatId: string): Promise<void>;
+  /** Take a queued message out of the chat's queue (Cancel, or Edit). */
+  unqueueChat(chatId: string, messageId: string): QueuedMessage | undefined;
+  // sessions window
+  sessionsState(): SessionsState;
+  /** The background work, subagents and (terminal session) conversation of a session. */
+  sessionActivity(id: string): SessionActivity | null;
+  /** The session the Sessions window shows (its activity is sent as it changes); null for none. */
+  watchSession(id: string | null): void;
+  /** The user looked at a session: a finished turn or notification stops waiting for them. */
+  seenSession(id: string): void;
+  /** Whether a session is a chat or a terminal session; undefined once it's closed. */
+  sessionKind(id: string): 'chat' | 'terminal' | undefined;
+  /**
+   * Stop: end the agent's turn in a chat or terminal session. A chat asks
+   * Claude to stop, or ends Codex's turn; a terminal session gets Esc, as if
+   * pressed in it.
+   */
+  stopSession(id: string): Promise<void>;
+  /** End a chat or terminal session. */
+  closeSession(id: string): Promise<void>;
+  /** End every chat and terminal session in the Sessions window. */
+  closeAllSessions(): Promise<void>;
+  /** The end of a background command's output; null when it can't be read. */
+  backgroundOutput(sessionId: string, taskId: string): Promise<string | null>;
+  /** Send to Sessions: the message to each chat (queued while it works) and typed into each terminal session. */
+  sendToSessions(ids: string[], text: string): void;
   /** Whether a host path is one of Looper's attachment copies (the only files a click on an attachment opens). */
   isAttachment(hostPath: string): boolean;
   /**
@@ -472,11 +503,15 @@ export function createEngine(opts: EngineOptions): Engine {
     versions,
   });
 
+  // Declared ahead: chats and terminal sessions tell it when they change.
+  let hub: SessionHub | undefined;
+
   const terminals = new TerminalSessions({
     emit: (e) => {
       emit(e);
       // A Remote Control session's harness exited: Remote Control closes it and opens another if needed.
       if (e.type === 'terminal:end' && remote.owns(e.id)) remote.exited(e.id);
+      if (e.type === 'terminal:end') hub?.changed();
     },
     log,
   });
@@ -519,12 +554,16 @@ export function createEngine(opts: EngineOptions): Engine {
     host,
     settings,
     log,
-    emit,
+    emit: (e) => {
+      emit(e);
+      hub?.changed();
+    },
     runDir: runDirOf,
     readHistory,
     writeInfo: (taskId, runId, info) => runs.writeChatInfo(taskId, runId, info),
     appendRecord,
     taskVersion,
+    onLimits: (limits) => hub?.setLimits(limits),
   });
 
   const terminalRuns = new TerminalRuns({
@@ -570,6 +609,48 @@ export function createEngine(opts: EngineOptions): Engine {
     write: (runId, data) => terminals.write(runId, data),
     readTitle: (taskId, runId) => runs.readTerminalInfo(taskId, runId)?.title,
     runDir: (taskId, runId) => runs.runDir(taskId, runId),
+  });
+
+  const sessionHub = new SessionHub({
+    chats: () => chats.list(),
+    terminals: () => terminals.list().filter((t) => !remote.owns(t.id)),
+    findTask: lookup,
+    projects: () => projects.list(),
+    harnessOf(task) {
+      try {
+        const h = resolveHarness(task, resolveEnvironment(task, settings));
+        return { kind: h.kind, name: h.name };
+      } catch {
+        return { kind: 'custom', name: 'Terminal' };
+      }
+    },
+    runDir: runDirOf,
+    readRows: (taskId, runId) => messages.read(taskId, runId),
+    subagents: (taskId, runId) => messages.subagents(taskId, runId),
+    subagentStats: (taskId, runId, agentId) => messages.subagentStats(taskId, runId, agentId),
+    contextTokens: (taskId, runId) => messages.contextTokens(taskId, runId),
+    cacheUse: async (taskId, runId) => {
+      const tail = await messages.transcriptTail(taskId, runId);
+      const use = tail ? lastCacheUse(tail) : {};
+      // A session that only read the cache kept alive an entry another one wrote: the long lifetime, as Remote Control assumes.
+      return use.at !== undefined && use.ttlMs === undefined ? { ...use, ttlMs: CACHE_LONG_MS } : use;
+    },
+    terminalTitle: (taskId, runId) => runs.readTerminalInfo(taskId, runId)?.title,
+    emit,
+    log,
+  });
+  hub = sessionHub;
+
+  const git = new GitService({
+    projectTask: (id) => {
+      const project = projects.get(id);
+      return project ? projectSessionTask(project, settings) : undefined;
+    },
+    projectIds: () => projects.list().map((p) => p.id),
+    settings: () => settings,
+    host,
+    log,
+    onRepos: (ids) => emit({ type: 'git-repos', ids }),
   });
 
   /**
@@ -629,6 +710,15 @@ export function createEngine(opts: EngineOptions): Engine {
     const info = holder ? runs.readTerminalInfo(task.id, holder) : null;
     if (holder && info) return { runId: holder, resume: sessionId, info };
     return { runId: newRunId(), resume: sessionId, fromRunId: runId };
+  };
+
+  /** End a Looper terminal session; one that never became a run leaves nothing behind. */
+  const closeTerminal = (sessionId: string): void => {
+    const taskId = terminals.taskOf(sessionId);
+    terminals.close(sessionId);
+    if (terminalRuns.openIds().has(sessionId)) terminalRuns.close(sessionId);
+    // A custom harness's session records nothing: its folder only held the launcher.
+    else if (taskId) fs.rmSync(runs.runDir(taskId, sessionId), { recursive: true, force: true });
   };
 
   /** Claude Code and Codex sessions are recorded as runs; a custom harness has no conversation to record. */
@@ -838,6 +928,7 @@ export function createEngine(opts: EngineOptions): Engine {
     host,
     settings,
     log,
+    git,
     start() {
       if (started) return;
       started = true;
@@ -853,6 +944,7 @@ export function createEngine(opts: EngineOptions): Engine {
         if (kind !== 'remove') tasks.rederive(project.id);
         emitProjects();
         remote.settingsChanged();
+        git.checkAll();
       });
       projects.on('reorder', emitProjects);
       tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) => {
@@ -868,10 +960,13 @@ export function createEngine(opts: EngineOptions): Engine {
       sweepRunLogs();
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
       if (settings.remote.startWithLooper) remote.start();
+      sessionHub.start();
+      git.checkAll();
     },
     async stop() {
       if (!started) return;
       started = false;
+      sessionHub.stop();
       if (retentionTimer) clearInterval(retentionTimer);
       retentionTimer = null;
       inbox.stop();
@@ -1119,20 +1214,12 @@ export function createEngine(opts: EngineOptions): Engine {
         const extra = to as { info?: TerminalInfo; fromRunId?: string };
         terminalRuns.start({ taskId: id, runId: to.runId, harnessKind: kind, info: extra.info, fromRunId: extra.fromRunId });
       }
+      sessionHub.changed();
       return sessionId;
     },
     writeTerminalSession: (sessionId, data) => terminals.write(sessionId, data),
     resizeTerminalSession: (sessionId, cols, rows) => terminals.resize(sessionId, cols, rows),
     terminalSessionOutput: (sessionId) => terminals.output(sessionId),
-    closeTerminalSession(sessionId: string): void {
-      // A Remote Control conversation outlives its window: Remote Control ends it.
-      if (remote.owns(sessionId)) return;
-      const taskId = terminals.taskOf(sessionId);
-      terminals.close(sessionId);
-      if (terminalRuns.openIds().has(sessionId)) terminalRuns.close(sessionId);
-      // A custom harness's session records nothing: its folder only held the launcher.
-      else if (taskId) fs.rmSync(runs.runDir(taskId, sessionId), { recursive: true, force: true });
-    },
     runningTerminalSessions: () => terminals.running() - remote.liveCount(),
     startRemote(): void {
       // A sleeping computer drops every Remote Control session: Rest Mode stays off meanwhile.
@@ -1182,6 +1269,48 @@ export function createEngine(opts: EngineOptions): Engine {
       const taskId = chats.taskOf(chatId);
       if (!taskId) throw new Error('This chat is closed.');
       return saveAttachments(taskId, files);
+    },
+    sendNowChat: (chatId) => chats.sendNow(chatId),
+    unqueueChat: (chatId, messageId) => chats.unqueue(chatId, messageId),
+    sessionsState: () => sessionHub.state(),
+    sessionActivity: (id) => sessionHub.activity(id),
+    watchSession: (id) => sessionHub.watch(id),
+    seenSession: (id) => sessionHub.seen(id),
+    sessionKind(id: string): 'chat' | 'terminal' | undefined {
+      if (chats.taskOf(id)) return 'chat';
+      if (terminals.taskOf(id) && !remote.owns(id)) return 'terminal';
+      return undefined;
+    },
+    async stopSession(id: string): Promise<void> {
+      if (chats.taskOf(id)) await chats.stop(id);
+      else if (terminals.taskOf(id) && !remote.owns(id)) {
+        terminals.write(id, '\x1b');
+        sessionHub.stopped(id);
+      }
+    },
+    async closeSession(id: string): Promise<void> {
+      if (chats.taskOf(id)) await chats.close(id);
+      else if (terminals.taskOf(id) && !remote.owns(id)) closeTerminal(id);
+      sessionHub.changed();
+    },
+    async closeAllSessions(): Promise<void> {
+      for (const t of terminals.list()) if (!remote.owns(t.id)) closeTerminal(t.id);
+      await chats.closeAll();
+      sessionHub.changed();
+    },
+    async backgroundOutput(sessionId: string, taskId: string): Promise<string | null> {
+      const owner = chats.taskOf(sessionId) ?? terminals.taskOf(sessionId);
+      const file = owner ? sessionHub.backgroundFile(sessionId, taskId) : undefined;
+      return owner && file ? messages.readTail(owner, file) : null;
+    },
+    sendToSessions(ids: string[], text: string): void {
+      const t = text.trim();
+      if (!t) return;
+      for (const id of ids) {
+        if (chats.taskOf(id)) chats.send(id, t, []);
+        // Pasted the way a terminal pastes, so a line break doesn't send it early, then Enter.
+        else if (terminals.taskOf(id) && !remote.owns(id)) terminals.write(id, `\x1b[200~${t}\x1b[201~\r`);
+      }
     },
     isAttachment(hostPath: string): boolean {
       const rel = path.relative(path.join(dataDir, 'tasks'), path.resolve(hostPath));

@@ -202,10 +202,11 @@ export interface OpenTerminalDeps {
  * Terminal). With `record` (a Looper terminal window, whose `dir` is its run
  * folder), Claude Code and Codex get the hooks a run uses to record the
  * conversation there: Claude's session.json and stop.json, Codex's notify
- * payload as stop.json and its home folder as codex-home. With `remote`
- * (Claude Code, recorded), the session is a Remote Control conversation: it
- * also records each message the user sends (prompt.json), so Looper can tell
- * an empty conversation from a used one and a running turn from an idle one.
+ * payload as stop.json and its home folder as codex-home. Claude also
+ * records each message the user sends (prompt.json), so Looper can tell an
+ * empty conversation from a used one and a running turn from an idle one, and
+ * its notifications (notification.json). With `remote` (Claude Code,
+ * recorded), the session is a Remote Control conversation.
  */
 export function writeTerminalLauncher(
   task: Task,
@@ -231,7 +232,9 @@ export function writeTerminalLauncher(
         SessionStart: pipe('session.json'),
         // Each finished turn: the session becomes a run with its first one.
         Stop: pipe('stop.json'),
-        ...(remote ? { UserPromptSubmit: pipe('prompt.json') } : {}),
+        // A turn starting, and the agent asking for permission or notifying: the Sessions window shows them.
+        UserPromptSubmit: pipe('prompt.json'),
+        Notification: pipe('notification.json'),
       },
     });
     hooks.claudeSettings = t('settings.json');

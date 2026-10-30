@@ -21,6 +21,8 @@ export interface MessageRow {
   resultError?: boolean;
   /** Task tool rows: the subagent id, once known — its conversation can be opened. */
   agentId?: string;
+  /** A command or subagent the tool started in the background, and how it ended. */
+  background?: { id: string; status: 'running' | 'completed' | 'failed' | 'stopped'; summary?: string; outputFile?: string };
   /** The row carries an image (kept engine-side; fetch it via runs.messageImage). */
   image?: { mediaType: string };
   /** The file the tool operated on (file_path/notebook_path input), in the run target's path form. */

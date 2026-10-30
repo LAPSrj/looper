@@ -3,6 +3,7 @@ import { AddonLocalRunSchema } from './addons';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
 import type { RemoteState } from './remote';
+import type { SessionActivity, SessionsState } from './sessions';
 
 // ---------- Task definition ----------
 
@@ -507,6 +508,15 @@ export const ViewSchema = z.object({
   hideNoActionRuns: z.boolean().default(false),
   /** Hide the runs that are chats and terminal sessions (the conversations the user started). */
   hideChatsAndTerminals: z.boolean().default(false),
+  /** The Sessions window's View menu, and the project groups closed in its list (by project id or group name). */
+  sessions: z
+    .object({
+      toolbar: z.boolean().default(true),
+      activityPane: z.boolean().default(true),
+      statusBar: z.boolean().default(true),
+      collapsed: z.array(z.string()).default([]),
+    })
+    .default({}),
 });
 export type View = z.infer<typeof ViewSchema>;
 
@@ -892,6 +902,12 @@ export type EngineEvent =
   /** Output of a terminal session in a Looper terminal window, and its end. */
   | { type: 'terminal:data'; id: string; data: string }
   | { type: 'terminal:end'; id: string }
+  /** The Sessions window's list changed: a session's status, why it waits, its latest line; or the usage limits. */
+  | { type: 'sessions'; state: SessionsState }
+  /** The background work, subagents or (terminal session) conversation of the session the Sessions window shows. */
+  | { type: 'session:activity'; activity: SessionActivity }
+  /** The projects whose folder is in a git repository changed. */
+  | { type: 'git-repos'; ids: string[] }
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' }
   /** Remote Control started or stopped, or one of its conversations changed. */

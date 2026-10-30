@@ -35,18 +35,50 @@ the tasks that run in the project, in the same kind of table as a task's
 Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to select it. The **Sessions** tab lists the
 project's chats, terminal sessions and Remote Control conversations, like a
 task's Runs tab: double-click one for its run window, or right-click it to
-go on with it in a chat or a terminal.
+go on with it in a chat or a terminal. When the project's folder is in a git
+repository, a **Git** tab shows it (see [below](#the-git-tab)).
 
 Right-clicking a project opens a menu with New Chat, New Terminal, New Task…,
 Edit Project…, Open Working Directory and Delete Project. Double-clicking it
 opens Edit Project.
 
+## The Git tab
+
+When a project's folder is in a git repository, the project's view has a
+**Git** tab, and so does the [Sessions window's activity
+pane](monitoring.md#the-activity-pane) for the project's sessions. It shows the
+repository and doesn't change it.
+
+![The Git tab's History: the commits, the selected commit's files, and a file's changes](img/git.png)
+
+- **Changes** lists the uncommitted files, staged or not, with what happened to
+  each (Modified, Added, Deleted, Renamed, Untracked, or Conflict) and whether
+  it's staged. Selecting one shows its changes against the last commit.
+- **History** lists the branch's commits, newest first, with their author,
+  date, short id and the branches and tags on them. Selecting one shows its
+  message, author, date and full id, and the files it changed. Selecting a
+  file shows what the commit changed in it. A merge shows what it brought into
+  the branch.
+
+The tab's title counts the uncommitted files: "Git (+2 ~3 −1)" means 2 new, 3
+changed (renamed and conflicted files included) and 1 deleted, and a count of
+zero is left out. Beside the Changes and History tabs (at the bottom in the
+Sessions window), a line shows the branch and how far it is ahead of or behind
+the remote branch it tracks, or "no remote" when it doesn't track one. The tab reads the changes again every few seconds while Looper
+has the focus, and the history when the changes do or when you come back to
+the window. Right-click a file for Open File, Show in Folder and Copy Path, or
+a commit for Copy Commit ID and Copy Subject.
+
+Git runs in the project's environment, so a WSL project needs git installed in
+its WSL distribution. Looper reads the repository without taking git's index
+lock, so an agent's own git commands never wait on it.
+
 ## Editing a project
 
 ![The Edit Project window](img/project-editor.png)
 
-- **Name** — how the project shows in the Projects pane, the tray menu, its
-  chat windows, and the Claude app for a Remote Control conversation. Left
+- **Name** — how the project shows in the Projects pane, the tray menu, the
+  Sessions window, and the Claude app for a Remote Control conversation. Left
   empty, it's the folder's name.
 - **Working directory** — the project's folder, in the path style its
   environment expects. Browse… opens a picker scoped to the environment.
@@ -89,9 +121,10 @@ To move a task to another project, pick that project on its General tab.
 
 ## Starting a chat from the tray
 
-Right-click the tray icon and click a project: a new chat opens in it, with
-the project's harness, model and permission mode, without bringing up the
-main window. Double-clicking the tray icon still shows the main window.
+Right-click the tray icon and click a project: a new chat opens in it in the
+[Sessions window](monitoring.md#the-sessions-window), with the project's
+harness, model and permission mode, without bringing up the main window.
+Double-clicking the tray icon still shows the main window.
 
 ## Deleting a project
 

@@ -26,7 +26,7 @@ function restFields(input: Rec, shown: string[]): ReactNode {
 
 /* ---------- Diff ---------- */
 
-function DiffView({ hunks }: { hunks: PatchHunk[] }) {
+export function DiffView({ hunks }: { hunks: PatchHunk[] }) {
   return (
     <div className="diff">
       {hunks.map((h, i) => (
@@ -64,7 +64,8 @@ function OldNewDiff({ oldText, newText }: { oldText: string; newText: string }) 
 
 /* ---------- Read result: line-number gutter ---------- */
 
-const GUTTER_RE = /^\s*(\d+)→(.*)$/;
+/** Claude Code numbers a Read result's lines as "12→text", or as "12\ttext" in newer versions. */
+const GUTTER_RE = /^\s*(\d+)(?:→|\t)(.*)$/;
 
 function gutterLines(text: string): { n: string; text: string }[] | null {
   const lines = text.split('\n');

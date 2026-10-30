@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { isLooperFileName } from '@shared/files';
+import { setAppLocale } from './format';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import { AboutApp } from './AboutApp';
@@ -10,7 +11,6 @@ import { AddonWindowApp } from './components/AddonScreen';
 import { App } from './App';
 import { BuilderApp } from './BuilderApp';
 import { BuilderSetupApp } from './BuilderSetupApp';
-import { ChatApp } from './ChatApp';
 import { VersionDetailApp } from './VersionDetailApp';
 import { VersionHistoryApp } from './VersionHistoryApp';
 import { ContinueRunApp } from './ContinueRunApp';
@@ -23,8 +23,7 @@ import { ModelEditorApp } from './ModelEditorApp';
 import { ModelUpdateApp } from './ModelUpdateApp';
 import { FilterApp } from './FilterApp';
 import { FolderNameApp } from './FolderNameApp';
-import { FolderNoteApp } from './FolderNoteApp';
-import { MoveToFolderApp } from './MoveToFolderApp';
+import { FolderNoteApp } from './FolderNoteApp';import { MoveToFolderApp } from './MoveToFolderApp';
 import { ImageApp } from './ImageApp';
 import { MarkdownExportApp } from './MarkdownExportApp';
 import { MessagesApp } from './MessagesApp';
@@ -35,6 +34,8 @@ import { RemoteHelperEditorApp } from './RemoteEditorApps';
 import { ProjectEditorApp } from './ProjectEditorApp';
 import { RemoteSettingsApp } from './RemoteSettingsApp';
 import { RunOptionsApp } from './RunOptionsApp';
+import { SendToSessionsApp } from './SendToSessionsApp';
+import { SessionsApp } from './SessionsApp';
 import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
 import { TemplatesApp } from './TemplatesApp';
@@ -67,8 +68,7 @@ const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
-const chatMatch = /^chat\/([^/]+)\/([^/]+)$/.exec(hash);
-const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
+const sessionsMatch = /^sessions(?:\/([^/]+))?$/.exec(hash);const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
@@ -124,8 +124,8 @@ function pickRoot() {
     );
   }
   if (hash === 'builder-setup') return <BuilderSetupApp />;
-  if (chatMatch) return <ChatApp id={decodeURIComponent(chatMatch[1])} title={decodeURIComponent(chatMatch[2])} />;
-  if (terminalMatch) {
+  if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} />;
+  if (hash === 'send-to-sessions') return <SendToSessionsApp />;  if (terminalMatch) {
     return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
   }
   if (builderMatch) return <BuilderApp id={decodeURIComponent(builderMatch[1])} />;
@@ -241,4 +241,9 @@ window.addEventListener('drop', (e) => {
   if (file && isLooperFileName(file.name)) void window.looper.openLooperFile(file);
 });
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode>{pickRoot()}</React.StrictMode>);
+// Every window formats dates in the machine's regional format, so it's known before the first paint.
+void window.looper
+  .info()
+  .then((i) => setAppLocale(i.locale))
+  .catch(() => undefined)
+  .finally(() => createRoot(document.getElementById('root')!).render(<React.StrictMode>{pickRoot()}</React.StrictMode>));

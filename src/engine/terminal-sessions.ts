@@ -29,13 +29,15 @@ interface Session {
   proc: SessionProc | null;
   output: string;
   launcher: string;
+  startedAt: number;
 }
 
 /**
- * Terminal sessions in Looper's own windows (Open Project in Terminal and
- * Continue in Terminal, with the Looper terminal setting): the task's harness
- * in a pty, typed into by the user. It has no time limits or done signal, and
- * it ends when its window closes. TerminalRuns records it as a run.
+ * Terminal sessions in Looper (Open Project in Terminal and Continue in
+ * Terminal, with the Looper terminal setting, and Remote Control's
+ * conversations): the task's harness in a pty, typed into by the user. It has
+ * no time limits or done signal, and it ends when it's closed. TerminalRuns
+ * records it as a run.
  */
 export class TerminalSessions {
   private readonly sessions = new Map<string, Session>();
@@ -53,7 +55,7 @@ export class TerminalSessions {
       removeFile(launcher);
       throw err;
     }
-    const session: Session = { taskId, proc, output: '', launcher };
+    const session: Session = { taskId, proc, output: '', launcher, startedAt: Date.now() };
     this.sessions.set(id, session);
     // A closed session whose id a new one took (a restarted Remote Control conversation) speaks for it no longer.
     const replaced = () => {
@@ -90,6 +92,11 @@ export class TerminalSessions {
   output(id: string): { data: string; ended: boolean } | null {
     const s = this.sessions.get(id);
     return s ? { data: s.output, ended: !s.proc } : null;
+  }
+
+  /** The open sessions, oldest first. */
+  list(): { id: string; taskId: string; startedAt: number; ended: boolean }[] {
+    return [...this.sessions].map(([id, s]) => ({ id, taskId: s.taskId, startedAt: s.startedAt, ended: !s.proc }));
   }
 
   /** The task a session belongs to; undefined once it's closed. */

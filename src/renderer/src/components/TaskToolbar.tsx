@@ -2,6 +2,7 @@ import type { Project, Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
+import { SplitToolButton, ToolButton } from './ToolButton';
 
 interface Props {
   task: Task | null;
@@ -9,6 +10,8 @@ interface Props {
   project: Project | null;
   /** The project New Task puts the task in: the selected project's, or the selected task's. */
   newTaskProject: Project | null;
+  /** The project New Chat and New Terminal start in; null makes them ask. */
+  sessionProject: Project | null;
   runtime: TaskRuntime | undefined;
   /** The dashboard is showing: its button stays pressed. */
   dashboard: boolean;
@@ -19,7 +22,7 @@ interface Props {
   addonSlot?: (el: HTMLSpanElement | null) => void;
 }
 
-export function TaskToolbar({ task, project, newTaskProject, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
+export function TaskToolbar({ task, project, newTaskProject, sessionProject, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
@@ -57,6 +60,7 @@ export function TaskToolbar({ task, project, newTaskProject, runtime, dashboard,
       >
         <Icon>{ICONS.dashboard}</Icon>
       </button>
+      <ToolButton icon={ICONS.chat} title="Sessions" enabled onClick={() => window.looper.sessions.openWindow()} />
       <span className="toolbar-sep" />
       {button(ICONS.add, newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', 'new-task', true)}
       <span className="toolbar-sep" />
@@ -84,8 +88,22 @@ export function TaskToolbar({ task, project, newTaskProject, runtime, dashboard,
         hasTask,
       )}
       <span className="toolbar-sep" />
-      {button(ICONS.chat, project ? 'New Chat' : 'Open Project in Chat', 'open-chat', hasTask || !!project)}
-      {button(ICONS.terminal, project ? 'New Terminal' : 'Open Project in Terminal (Ctrl+T)', 'open-terminal', hasTask || !!project)}
+      <SplitToolButton
+        icon={ICONS.newChat}
+        title={sessionProject ? `New Chat in ${sessionProject.name}` : 'New Chat'}
+        menuTitle="New Chat in Project"
+        enabled
+        onClick={sessionProject ? () => void window.looper.projects.newChat(sessionProject.id) : null}
+        onMenu={(x, y) => window.looper.sessions.showNewMenu('chat', x, y)}
+      />
+      <SplitToolButton
+        icon={ICONS.terminal}
+        title={sessionProject ? `New Terminal in ${sessionProject.name}${task ? ' (Ctrl+T)' : ''}` : 'New Terminal'}
+        menuTitle="New Terminal in Project"
+        enabled
+        onClick={sessionProject ? () => void window.looper.projects.newTerminal(sessionProject.id) : null}
+        onMenu={(x, y) => window.looper.sessions.showNewMenu('terminal', x, y)}
+      />
       {button(ICONS.folder, 'Open Working Directory', 'open-work-folder', hasTask || !!project)}
       {addonButtons}
       <span className="toolbar-slot" ref={addonSlot} />

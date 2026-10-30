@@ -21,6 +21,10 @@ function parse(line: string): Rec | null {
 export class ClaudeStreamAccumulator extends TranscriptAccumulator {
   addLine(line: string): void {
     const rec = parse(line);
+    // A subagent's messages name the Agent call they belong to: they're its conversation, not this one.
+    if (rec && typeof rec.parent_tool_use_id === 'string' && rec.parent_tool_use_id) return;
+    // A replayed message is one Looper sent: it shows as a prompt row of its own (addPrompt).
+    if (rec?.isReplay === true) return;
     if (rec && rec.tool_use_result !== undefined && rec.toolUseResult === undefined) {
       super.addLine(JSON.stringify({ ...rec, toolUseResult: rec.tool_use_result }));
       return;
@@ -28,7 +32,7 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
     super.addLine(line);
   }
 
-  /** The user's message as a prompt row: stream-json never echoes what was sent on stdin. */
+  /** The user's message as a prompt row: Looper adds it itself, and drops Claude's replay of it. */
   addPrompt(text: string, attachments?: Attachment[]): void {
     const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
     if (attachments?.length) row.attachments = attachments;

@@ -907,13 +907,9 @@ code,
   display: flex;
   gap: 8px;
 }
+/* Files waiting to be sent, between the message box's icon row and the box. */
 .chat-pending {
-  padding: 8px 18px 0;
-  border-top: 1px solid var(--border);
-  background: var(--bg-2);
-}
-.chat-pending + .chat-composer {
-  border-top: none;
+  padding: 0 0 6px;
 }
 .chat-attachments {
   display: flex;
@@ -1266,6 +1262,7 @@ fieldset.step-fields > .row {
 .field select,
 .field textarea,
 .guidance-compose textarea,
+.chat-composer textarea,
 .json-editor {
   width: 100%;
   background: var(--bg-2);
@@ -1285,6 +1282,7 @@ fieldset.step-fields > .row {
 .field select:focus,
 .field textarea:focus,
 .guidance-compose textarea:focus,
+.chat-composer textarea:focus,
 .json-editor:focus {
   outline: none;
   border-color: var(--accent);
@@ -1584,7 +1582,6 @@ fieldset.step-fields > .row {
 .chat-composer textarea {
   flex: 1;
   resize: none;
-  font: inherit;
   font-size: 13px;
 }
 .builder-terminal {
@@ -2492,4 +2489,828 @@ button:focus-visible,
 .props dd.addon-wrap {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------- Sessions window ---------- */
+.sessions-app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sessions-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+.sessions-center {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The chat and terminal views fill the middle instead of the window. */
+.sessions-center .chat-app,
+.sessions-center .terminal-session {
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.session-list {
+  background: var(--bg-2);
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+.session-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  cursor: default;
+  user-select: none;
+}
+.session-group:hover {
+  color: var(--fg);
+}
+.session-group .chev {
+  flex: none;
+  transition: transform 0.1s;
+}
+.session-group .chev.open {
+  transform: rotate(90deg);
+}
+.session-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-group-count {
+  font-weight: 400;
+}
+.session-list:focus-visible {
+  outline: none;
+}
+.session-list:focus-visible .session-row.selected {
+  outline: 1px solid var(--accent);
+}
+.session-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: default;
+}
+.session-row:hover {
+  background: var(--bg-3);
+}
+.session-row.selected {
+  background: var(--bg-3);
+  border-color: var(--border);
+}
+.session-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-row.unread .session-title {
+  font-weight: 600;
+}
+.session-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-empty {
+  padding: 16px 8px;
+}
+.session-icon {
+  flex: none;
+  margin-top: 1px;
+}
+.session-icon .ring {
+  stroke: var(--border);
+}
+.session-icon .fill {
+  stroke: var(--fg-muted);
+}
+.session-icon .fill.mid {
+  stroke: var(--yellow);
+}
+.session-icon .fill.high {
+  stroke: var(--red);
+}
+.session-icon .core {
+  fill: transparent;
+}
+.session-icon.working .core {
+  fill: var(--accent);
+  animation: session-pulse 1.4s ease-in-out infinite;
+}
+.session-icon.starting .core {
+  fill: var(--fg-muted);
+}
+.session-icon.waiting .core {
+  fill: var(--yellow);
+}
+.session-icon.done .core {
+  fill: var(--green);
+}
+.session-icon.ended .core {
+  fill: var(--border);
+}
+@keyframes session-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The Overview: a card per session. */
+.sessions-overview {
+  overflow-y: auto;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-content: start;
+  gap: 12px;
+}
+.overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  cursor: default;
+  min-width: 0;
+}
+.overview-card:hover {
+  border-color: var(--fg-muted);
+}
+.overview-card.waiting {
+  border-color: var(--yellow);
+}
+.overview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.overview-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-meta {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-card {
+  height: 370px;
+}
+.overview-card > * {
+  flex: none;
+}
+.overview-card > .overview-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.overview-msg {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Lines across the whole card between the header, the messages and the reply area. */
+.overview-card > .overview-messages,
+.overview-actions {
+  margin: 2px -12px 0;
+  padding: 8px 12px 0;
+  border-top: 1px solid var(--border);
+}
+.overview-card > .overview-messages {
+  padding-bottom: 8px;
+}
+.overview-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+.overview-actions:empty {
+  display: none;
+}
+.overview-actions input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A followed subagent's conversation. */
+
+/* The right panel. */
+.activity-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-2);
+}
+.activity-tabs {
+  padding: 0 8px;
+  flex: none;
+}
+.activity-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.now-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.now-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.now-tool {
+  font-weight: 600;
+  flex: none;
+}
+.now-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+.now-place {
+  flex: none;
+  font-size: 12px;
+  margin-left: 8px;
+}
+/* A toolbar inside a pane: the same buttons as the window's, on the pane's own background. */
+.toolbar.pane-toolbar {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  padding: 2px 8px;
+}
+.now-body {
+  padding: 10px 12px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.now-result {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.subagent-list,
+.files-tab {
+  padding: 6px;
+}
+.subagent-item {
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  cursor: default;
+}
+.subagent-item:hover {
+  background: var(--bg-3);
+}
+.subagent-item.selected {
+  background: var(--bg-3);
+  border-color: var(--border);
+}
+.subagent-head {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.subagent-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-heading {
+  display: block;
+  padding: 10px 6px 4px;
+}
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: default;
+  font-size: 12.5px;
+}
+.file-item:hover {
+  background: var(--bg-3);
+}
+.file-item-text {
+  min-width: 0;
+}
+.file-dir {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-thumb {
+  max-height: 48px;
+  max-width: 72px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.background-pane {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 10px;
+}
+.background-title {
+  display: block;
+  margin-bottom: 6px;
+}
+.background-none {
+  font-size: 12px;
+}
+.bg-item {
+  font-size: 12.5px;
+  padding: 3px 0;
+}
+.bg-item:not(.running) {
+  color: var(--fg-muted);
+}
+.bg-item-head {
+  display: flex;
+  gap: 8px;
+  cursor: default;
+  min-width: 0;
+}
+.bg-status {
+  flex: none;
+}
+.bg-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.bg-kind {
+  flex: none;
+}
+.bg-summary {
+  font-size: 11.5px;
+}
+.bg-output {
+  max-height: 200px;
+  overflow: auto;
+  margin: 4px 0 0;
+}
+
+/* The chat's queue, above the message box. */
+/* A queued message closes the conversation: the user's bubble, outlined and paler until the agent reads it. */
+.chat-queued {
+  align-self: flex-end;
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.chat-queued .chat-user {
+  max-width: none;
+  background: transparent;
+  border: 1px dashed var(--accent);
+  opacity: 0.8;
+}
+.chat-queued-actions {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* The "/" list over the message box. */
+.chat-composer {
+  position: relative;
+}
+.slash-list {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: calc(100% - 4px);
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 5;
+  overflow-x: hidden;
+}
+.slash-item {
+  display: flex;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  cursor: default;
+  min-width: 0;
+}
+.slash-item.selected {
+  background: var(--bg-3);
+}
+.slash-name {
+  flex: 0 1 auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  font-size: 12px;
+}
+.slash-desc {
+  flex: 1;
+  min-width: 0;
+}
+.slash-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Send to Sessions. */
+.send-sessions-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+  padding: 4px 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.send-sessions-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 18px 8px;
+}
+.send-sessions-list .checkbox-field {
+  margin: 6px 0;
+}
+.send-sessions-list .send-sessions-item {
+  margin-left: 22px;
+  font-weight: 400;
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+}
+.send-sessions-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.send-sessions-kind {
+  flex: none;
+}
+.send-sessions-text {
+  margin: 0 18px 12px;
+  resize: none;
+}
+
+/* ---------- toolbar split buttons ---------- */
+
+.split-button {
+  display: flex;
+  border-radius: 4px;
+}
+.split-button:hover:has(button:not(:disabled)) {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.toolbar .split-button button {
+  border-radius: 4px 0 0 4px;
+}
+.toolbar .split-button .split-arrow {
+  width: 14px;
+  border-radius: 0 4px 4px 0;
+}
+
+/* ---------- Sessions window: subagent tabs, command bar, subagent details ---------- */
+
+.subagent-tabs {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 0 10px;
+}
+.subagent-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  flex: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 7px 10px;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  cursor: default;
+}
+.subagent-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.subagent-tab:hover:not(.active) {
+  color: var(--fg);
+}
+.subagent-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-icon.failed .core {
+  fill: var(--red);
+}
+/* "Claude Code is working…": the last line of the conversation's grey, right above the message area, kept in view. */
+.chat-status.chat-working {
+  border-top: none;
+  background: none;
+  padding: 2px 18px 8px;
+}
+.composer-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The box sits on the composer's grey, like a field on a card. */
+.chat-composer textarea {
+  background: var(--bg);
+}
+.toolbar.chat-commandbar {
+  padding: 0 0 4px;
+  margin-left: -6px;
+  background: transparent;
+}
+.composer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.composer-actions .btn {
+  min-width: 72px;
+}
+.toolbar button.commandbar-menu {
+  width: auto;
+  gap: 2px;
+  padding: 0 4px 0 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.toolbar button.commandbar-menu:hover:not(:disabled) {
+  color: var(--fg);
+}
+.subagent-head .subagent-desc {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+}
+.subagent-facts dt {
+  color: var(--fg-muted);
+}
+.subagent-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Git tabs ---------- */
+
+.git-view {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* One row with one full-width line under it: the tabs, and in the wide view the branch at the right. */
+.git-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.git-head .tabs {
+  flex: none;
+  padding: 0;
+  border-bottom: none;
+}
+.git-branch {
+  min-width: 0;
+  margin-left: auto;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The activity pane is narrow: the lists sit over the diff, and the branch at the bottom. */
+.git-view.narrow .git-head {
+  padding: 0 8px;
+}
+.git-foot {
+  flex: none;
+  display: flex;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border);
+}
+.git-foot .git-branch {
+  margin-left: 0;
+}
+.git-view.narrow .git-columns.two {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(90px, 35%) 1fr;
+}
+.git-view.narrow .git-columns.three {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(90px, 30%) minmax(90px, 30%) 1fr;
+}
+.git-view.narrow .git-columns > * {
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+.git-view.narrow .git-columns > :last-child {
+  border-bottom: none;
+}
+.git-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.git-columns {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+.git-columns.two {
+  grid-template-columns: 360px 1fr;
+}
+.git-columns.three {
+  grid-template-columns: 360px 300px 1fr;
+}
+.git-columns > * {
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.git-columns > :last-child {
+  border-right: none;
+}
+.git-list {
+  overflow: auto;
+  padding: 4px;
+}
+.git-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.git-file,
+.git-commit {
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  cursor: default;
+}
+.git-file:hover,
+.git-commit:hover {
+  background: var(--bg-3);
+}
+.git-file.selected,
+.git-commit.selected {
+  background: var(--bg-3);
+  border-color: var(--border);
+}
+.git-file-name {
+  display: flex;
+  gap: 8px;
+}
+.git-file-name > :first-child,
+.git-commit-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-file-status {
+  flex: none;
+}
+.git-file-dir,
+.git-commit-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.git-commit-detail {
+  display: flex;
+  flex-direction: column;
+}
+.git-commit-head {
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  max-height: 45%;
+  overflow: auto;
+}
+.git-commit-subject {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.git-commit-body {
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+.git-files-title {
+  flex: none;
+  padding: 8px 12px 2px;
+}
+.git-commit-detail .git-list {
+  flex: 1;
+  min-height: 0;
+}
+.git-diff {
+  display: flex;
+  flex-direction: column;
+}
+.git-diff-head {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 12.5px;
+}
+.git-diff-head .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-diff-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.git-diff-note {
+  padding: 10px 14px;
+  font-size: 12.5px;
 }

@@ -564,7 +564,7 @@ describe('a Remote Control launcher', () => {
     expect(fs.existsSync(path.join(root, 'bin', 'looper-remote'))).toBe(true);
     const s = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
     expect(s.idleCompaction).toBe(false);
-    expect(Object.keys(s.hooks)).toEqual(['SessionStart', 'Stop', 'UserPromptSubmit']);
+    expect(Object.keys(s.hooks)).toEqual(['SessionStart', 'Stop', 'UserPromptSubmit', 'Notification']);
   });
 
   it('passes a first message after --, so a variadic option before it cannot take it', () => {
@@ -579,13 +579,18 @@ describe('a Remote Control launcher', () => {
     expect(fs.readFileSync(path.join(root, 'initial-prompt.txt'), 'utf8')).toBe('Fix the footer');
   });
 
-  it('a plain terminal session records no messages and has no remote flags', () => {
+  it('a plain terminal session has no remote flags, and records its turns and notifications for the Sessions window', () => {
     const settings = settingsWith({});
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-remote-launch-'));
     const { launcherHost } = writeTerminalLauncher(task('t1'), { host: 'linux', settings }, root, undefined, true);
     const script = fs.readFileSync(launcherHost, 'utf8');
     expect(script).not.toContain('--remote-control');
     expect(script).not.toContain('export PATH');
-    expect(Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).hooks)).toEqual(['SessionStart', 'Stop']);
+    expect(Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).hooks)).toEqual([
+      'SessionStart',
+      'Stop',
+      'UserPromptSubmit',
+      'Notification',
+    ]);
   });
 });

@@ -122,10 +122,15 @@ if (!app.requestSingleInstanceLock()) {
       reviewBuilder,
       builderWindow: (id) => builderWindows.get(id),
       openTerminal,
-      terminalWindow: (id) => terminalWindows.get(id),
+      terminalWindow: (id) => terminalWindows.get(id) ?? (sessionShown === id ? (sessionsWindow ?? undefined) : undefined),
       openChat,
       forkChat,
-      chatWindow: (id) => chatWindows.get(id),
+      sessionWindow: (id) => (sessionShown === id ? (sessionsWindow ?? undefined) : undefined),
+      showSession,
+      closeSession: (id) => closeSessionAsk(id),
+      openSendToSessions: openSendToSessionsWindow,
+      openSessions: () => openSessionsWindow(),
+      chatSettingMenu,
       openRemoteConversation,
       openRemoteHelperEditor,
       openProjectEditor,
@@ -220,6 +225,7 @@ async function claimDataDir(dataDir: string): Promise<boolean> {
         `It's ${describeHolder(holder)}. Running both would run every task twice. ` +
         'Take Over stops that one, along with any runs it has going.',
       buttons: ['Take Over', 'Quit'],
+      noLink: true,
       defaultId: 1,
       cancelId: 1,
     });
@@ -311,6 +317,7 @@ async function confirmQuit(): Promise<boolean> {
       message: warning.message,
       detail: warning.detail,
       buttons: ['Quit', 'Cancel'],
+      noLink: true,
       defaultId: 1,
       cancelId: 1,
     };
@@ -387,6 +394,7 @@ async function toggleRestMode(): Promise<void> {
         message: 'The computer will not wake on its own.',
         detail: `Windows wake timers are disabled while ${onBattery ? 'on battery' : 'plugged in'} (Power Options → Sleep → Allow wake timers). Rest Mode can put the computer to sleep, but scheduled tasks will not wake it.`,
         buttons: ['Start Anyway', 'Cancel'],
+        noLink: true,
         defaultId: 1,
         cancelId: 1,
       });
@@ -433,6 +441,7 @@ async function toggleRemote(): Promise<void> {
       message: used === 1 ? 'A Remote Control conversation is still open.' : `${used} Remote Control conversations are still open.`,
       detail: 'Stopping Remote Control ends every one of its sessions.',
       buttons: ['Stop', 'Cancel'],
+      noLink: true,
       defaultId: 1,
       cancelId: 1,
     });
@@ -482,6 +491,7 @@ function trayMenu(): Menu {
   return Menu.buildFromTemplate([
     ...(projects.length ? [...projects, { type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
     { label: 'Show Looper', click: showWindow },
+    { label: 'Show Sessions', click: () => openSessionsWindow() },
     { type: 'separator' },
     {
       label: notifOn ? 'Disable Notifications' : 'Enable Notifications',
@@ -1366,12 +1376,13 @@ function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _p
 
 // ---------- terminal sessions ----------
 
-/** Open Looper terminal windows by session id; closing one ends its session. */
+/** Open Remote Control conversation windows by session id. */
 const terminalWindows = new Map<string, BrowserWindow>();
 
 /**
- * Open Project in Terminal, or Continue in Terminal with a run id: in a Looper
- * terminal window, or the system's default terminal when the setting says so.
+ * Open Project in Terminal, or Continue in Terminal with a run id: in the
+ * Sessions window, or the system's default terminal when the setting says so.
+ * A Remote Control conversation holding the run's conversation shows in its own window.
  */
 async function openTerminal(taskId: string, runId?: string): Promise<void> {
   if (!engine) return;
@@ -1380,12 +1391,13 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
     return;
   }
   const sessionId = engine.startTerminalSession(taskId, runId);
-  openTerminalWindow(sessionId, `${engine.taskName(taskId) ?? taskId} – Terminal`);
+  if (engine.isRemoteSession(sessionId)) openTerminalWindow(sessionId, `${engine.taskName(taskId) ?? taskId} – Remote Control`);
+  else openSessionsWindow(sessionId);
 }
 
 /**
- * A Looper terminal window on a session, or the open one brought forward.
- * Closing it ends the session, except a Remote Control conversation's.
+ * A Remote Control conversation's terminal window, or the open one brought
+ * forward. The conversation keeps running when it closes.
  */
 function openTerminalWindow(sessionId: string, title: string): void {
   const open = terminalWindows.get(sessionId);
@@ -1402,10 +1414,7 @@ function openTerminalWindow(sessionId: string, title: string): void {
   });
   child.setMaximizable(true);
   terminalWindows.set(sessionId, child);
-  child.on('closed', () => {
-    terminalWindows.delete(sessionId);
-    engine?.closeTerminalSession(sessionId);
-  });
+  child.on('closed', () => terminalWindows.delete(sessionId));
 }
 
 // ---------- Remote Control ----------
@@ -1481,29 +1490,19 @@ function openRemoteConversationsWindow(): void {
 
 // ---------- task chats ----------
 
-/** Open chat windows by chat id; closing one ends its chat. */
-const chatWindows = new Map<string, BrowserWindow>();
-
 /**
  * Open Project in Chat, or Continue in Chat with a run id: the task's harness
- * in a Looper chat window. A chat already open on the run's conversation
- * comes forward instead.
+ * in a chat in the Sessions window. A chat already open on the run's
+ * conversation is shown instead.
  */
 async function openChat(taskId: string, runId?: string): Promise<void> {
   if (!engine) return;
-  const state = engine.startChat(taskId, runId);
-  const open = chatWindows.get(state.id);
-  if (open && !open.isDestroyed()) {
-    if (open.isMinimized()) open.restore();
-    open.focus();
-    return;
-  }
-  openChatWindow(state);
+  openSessionsWindow(engine.startChat(taskId, runId).id);
 }
 
-/** Fork from Here: a new chat window with the conversation up to the message. */
+/** Fork from Here: a new chat with the conversation up to the message. */
 function forkChat(chatId: string, index: number): void {
-  if (engine) openChatWindow(engine.forkChat(chatId, index));
+  if (engine) openSessionsWindow(engine.forkChat(chatId, index).id);
 }
 
 /** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
@@ -1531,7 +1530,10 @@ function radioItems(
  * permission mode. Claude replaces its process for a new model, effort or
  * Bypass, which would cut a turn short, so those wait for the turn to end.
  */
-function chatMenu(s: ChatState, stop: () => void, configure: (patch: Partial<ChatSettings>) => void): Electron.MenuItemConstructorOptions {
+function chatSettingItems(
+  s: ChatState,
+  configure: (patch: Partial<ChatSettings>) => void,
+): Record<'model' | 'effort' | 'permission', Electron.MenuItemConstructorOptions[]> {
   const ended = s.status === 'ended';
   const claude = s.harnessKind === 'claude-code';
   const busy = s.status === 'working' || s.status === 'starting' || s.permissions.length > 0;
@@ -1542,170 +1544,345 @@ function chatMenu(s: ChatState, stop: () => void, configure: (patch: Partial<Cha
   const defaultEffort = entry?.defaultEffort ? levels.find(([v]) => v === entry.defaultEffort)?.[1] ?? entry.defaultEffort : undefined;
   const bypassLive = s.settings.permissionMode === 'bypassPermissions';
   return {
+    model: radioItems(
+      [['', 'Default'], ...s.models.map((m): [string, string] => [m.id, m.name])],
+      s.settings.model ?? '',
+      () => canReplace,
+      (v) => configure({ model: v || undefined }),
+    ),
+    effort: radioItems(
+      [['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered],
+      s.settings.effort ?? '',
+      () => canReplace,
+      (v) => configure({ effort: v || undefined }),
+    ),
+    permission: radioItems(
+      PERMISSION_MODES[s.harnessKind],
+      s.settings.permissionMode,
+      (v) => !ended && (v !== 'bypassPermissions' || bypassLive || canReplace),
+      (v) => configure({ permissionMode: v }),
+    ),
+  };
+}
+
+function chatMenu(
+  s: ChatState,
+  stop: () => void,
+  sendNow: () => void,
+  configure: (patch: Partial<ChatSettings>) => void,
+): Electron.MenuItemConstructorOptions {
+  const items = chatSettingItems(s, configure);
+  return {
     label: '&Chat',
     submenu: [
       // Esc, as in Claude Code's own terminal: it ends the agent's turn. The window handles
       // the key itself, so Esc in the find bar closes that instead.
       { label: '&Stop', accelerator: 'Esc', registerAccelerator: false, enabled: s.status === 'working', click: stop },
+      // The queued messages go now: the agent's turn ends first.
+      { label: 'Send &Now', accelerator: 'CmdOrCtrl+Enter', enabled: s.queued.length > 0, click: sendNow },
       { type: 'separator' },
-      {
-        label: '&Model',
-        submenu: radioItems(
-          [['', 'Default'], ...s.models.map((m): [string, string] => [m.id, m.name])],
-          s.settings.model ?? '',
-          () => canReplace,
-          (v) => configure({ model: v || undefined }),
-        ),
-      },
-      {
-        label: '&Effort',
-        submenu: radioItems(
-          [['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered],
-          s.settings.effort ?? '',
-          () => canReplace,
-          (v) => configure({ effort: v || undefined }),
-        ),
-      },
-      {
-        label: '&Permission Mode',
-        submenu: radioItems(
-          PERMISSION_MODES[s.harnessKind],
-          s.settings.permissionMode,
-          (v) => !ended && (v !== 'bypassPermissions' || bypassLive || canReplace),
-          (v) => configure({ permissionMode: v }),
-        ),
-      },
+      { label: '&Model', submenu: items.model },
+      { label: '&Effort', submenu: items.effort },
+      { label: '&Permission Mode', submenu: items.permission },
     ],
   };
 }
 
-/** A chat's window: the conversation, File/Edit/Chat menus, and a question before closing cuts a turn short. */
-function openChatWindow(state: ChatState): BrowserWindow {
-  const title = `${state.taskName} – Chat`;
-  const hash = `chat/${encodeURIComponent(state.id)}/${encodeURIComponent(title)}`;
-  const child = openChildWindow(hash, title, 900, 680, undefined, { minWidth: 520, minHeight: 400, contentSize: true });
+/** The message box's Model, Effort or Permission Mode menu: the Chat menu's list, which then rebuilds the menu bar. */
+function chatSettingMenu(chatId: string, which: 'model' | 'effort' | 'permission'): Electron.MenuItemConstructorOptions[] {
+  const chat = engine?.getChat(chatId);
+  if (!chat) return [];
+  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const showError = (err: unknown) => {
+    const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
+    void (parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts));
+  };
+  return chatSettingItems(chat, (patch) => void engine?.configureChat(chatId, patch).catch(showError).finally(() => refreshSessionsMenu(true)))[which];
+}
+
+// ---------- the Sessions window ----------
+
+let sessionsWindow: BrowserWindow | null = null;
+/** The session the Sessions window shows: its chat and terminal output go there. Null for the Overview. */
+let sessionShown: string | null = null;
+
+/**
+ * The Sessions window, opened or brought forward, showing the session
+ * `select` when given. Closing it leaves every session running: only Close
+ * Conversation, Close All Conversations and quitting Looper end them.
+ */
+function openSessionsWindow(select?: string): void {
+  if (sessionsWindow && !sessionsWindow.isDestroyed()) {
+    if (sessionsWindow.isMinimized()) sessionsWindow.restore();
+    sessionsWindow.show();
+    sessionsWindow.focus();
+    if (select) sessionsWindow.webContents.send('ui:event', { type: 'sessions-select', id: select });
+    return;
+  }
+  const child = openChildWindow(select ? `sessions/${encodeURIComponent(select)}` : 'sessions', 'Sessions', 1388, 895, undefined, {
+    minWidth: 900,
+    minHeight: 500,
+    contentSize: true,
+  });
   child.setMaximizable(true);
-  chatWindows.set(state.id, child);
+  sessionsWindow = child;
+  sessionShown = select ?? null;
+  attachWindowMenu(child, sessionsTemplate(child));
+  sessionsMenuKey = sessionsMenuState();
+  const unsubscribe = engine!.on((e) => {
+    if ((e.type === 'chat' && e.state.id === sessionShown) || e.type === 'sessions' || e.type === 'projects' || e.type === 'settings') {
+      refreshSessionsMenu();
+    }
+  });
+  child.on('closed', () => {
+    unsubscribe();
+    sessionsWindow = null;
+    sessionShown = null;
+    engine?.watchSession(null);
+  });
+}
+
+/** The Sessions window now shows `id` (null: the Overview): its chat and terminal output go there. */
+function showSession(id: string | null): void {
+  sessionShown = id;
+  engine?.watchSession(id);
+  refreshSessionsMenu(true);
+}
+
+/** What the Sessions window's menu depends on: rebuilt when it changes. */
+let sessionsMenuKey = '';
+function sessionsMenuState(): string {
+  const id = sessionShown;
+  const chat = id ? engine?.getChat(id) : undefined;
+  return JSON.stringify([
+    id,
+    id ? engine?.sessionKind(id) : null,
+    chat ? [chat.settings, chat.status, chat.permissions.length > 0, chat.models, chat.queued.length > 0] : null,
+    engine?.listProjects().map((p) => p.name),
+    engine?.sessionsState().sessions.length ?? 0,
+    engine?.settings.view.sessions,
+  ]);
+}
+
+function refreshSessionsMenu(force = false): void {
+  const child = sessionsWindow;
+  if (!child || child.isDestroyed()) return;
+  const key = sessionsMenuState();
+  if (key === sessionsMenuKey && !force) return;
+  sessionsMenuKey = key;
+  replaceWindowMenu(child, sessionsTemplate(child));
+}
+
+/** A session's name for a question about it. */
+function sessionTitle(id: string): string {
+  return engine?.sessionsState().sessions.find((s) => s.id === id)?.title ?? 'The conversation';
+}
+
+/** Whether ending the session would cut the agent short: it's working, or waiting for a permission answer. */
+function sessionBusy(id: string): boolean {
+  const s = engine?.sessionsState().sessions.find((x) => x.id === id);
+  return !!s && (s.status === 'working' || s.waiting?.reason === 'permission');
+}
+
+/** Close Conversation (the toolbar, the menus, Ctrl+W, Ctrl+F4): the session ends once the user confirms. */
+async function closeSessionAsk(id: string): Promise<void> {
+  if (!engine || !engine.sessionKind(id)) return;
+  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const busy = sessionBusy(id);
+  const opts = {
+    type: 'question' as const,
+    title: 'Sessions',
+    message: `Close "${sessionTitle(id)}"?`,
+    detail: busy ? 'It’s still working, and closing stops it.' : 'It ends, and stays in its project’s or task’s run history.',
+    // Not "Close": Windows turns that label into its own Close button and puts it after Cancel.
+    buttons: ['Close Conversation', 'Cancel'],
+    noLink: true,
+    // Enter closes an idle conversation; one that's working takes a deliberate click.
+    defaultId: busy ? 1 : 0,
+    cancelId: 1,
+  };
+  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  if (response === 0) await engine.closeSession(id);
+}
+
+/** Close All Conversations: every session ends, after asking. */
+async function closeAllSessionsAsk(): Promise<void> {
+  if (!engine) return;
+  const sessions = engine.sessionsState().sessions;
+  if (sessions.length === 0) return;
+  const working = sessions.filter((s) => sessionBusy(s.id)).length;
+  const parent = sessionsWindow && !sessionsWindow.isDestroyed() ? sessionsWindow : undefined;
+  const opts = {
+    type: 'question' as const,
+    title: 'Sessions',
+    message: sessions.length === 1 ? 'Close the conversation?' : `Close all ${sessions.length} conversations?`,
+    detail:
+      working === 0
+        ? 'Each one ends, and stays in its project’s or task’s run history.'
+        : working === 1
+          ? 'One of them is still working, and closing stops it.'
+          : `${working} of them are still working, and closing stops them.`,
+    buttons: ['Close All', 'Cancel'],
+    noLink: true,
+    defaultId: 1,
+    cancelId: 1,
+  };
+  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  if (response === 0) await engine.closeAllSessions();
+}
+
+/** The Sessions window's menus: File, Edit, View, and Chat while a chat is shown. */
+function sessionsTemplate(child: BrowserWindow): Electron.MenuItemConstructorOptions[] {
+  const id = sessionShown;
+  const kind = id ? engine?.sessionKind(id) : undefined;
+  const chat = kind === 'chat' && id ? engine?.getChat(id) : undefined;
   const send = (payload: unknown) => {
     if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
   };
   const showError = (err: unknown) =>
     void dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+  const projects = engine?.listProjects() ?? [];
+  const anySessions = (engine?.sessionsState().sessions.length ?? 0) > 0;
+  const shownProjectId = id ? engine?.sessionsState().sessions.find((s) => s.id === id)?.projectId : undefined;
+  const shownProject = shownProjectId ? projects.find((p) => p.id === shownProjectId) : undefined;
   const attachFiles = async () => {
+    if (!id) return;
     const r = await dialog.showOpenDialog(child, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
     if (r.canceled || r.filePaths.length === 0 || !engine) return;
-    const added = engine.attachToChat(state.id, r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+    const added = engine.attachToChat(id, r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
     send({ type: 'chat-attached', attachments: added });
   };
-  // The export options window remembers the last choice for this window's lifetime.
-  let exportOpts = { includeThinking: true, includeTools: true, plain: false };
   const saveMarkdown = async () => {
-    const chat = engine?.getChat(state.id);
-    if (!chat) return;
-    const rows = [...chat.history, ...chat.rows];
+    const c = id ? engine?.getChat(id) : undefined;
+    if (!c) return;
+    const rows = [...c.history, ...c.rows];
     if (rows.length === 0) {
       await dialog.showMessageBox(child, { type: 'error', title: 'Looper', message: 'There are no messages to save.', buttons: ['OK'] });
       return;
     }
+    const title = sessionTitle(c.id);
     const picked = await dialog.showSaveDialog(child, {
       title: 'Save as Markdown',
       defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '-')}.md`,
       filters: [{ name: 'Markdown', extensions: ['md'] }],
     });
     if (picked.canceled || !picked.filePath) return;
-    const chosen = await promptMarkdownExport(child, exportOpts);
+    const chosen = await promptMarkdownExport(child, sessionsExportOpts);
     if (!chosen) return;
-    exportOpts = chosen;
+    sessionsExportOpts = chosen;
     fs.writeFileSync(picked.filePath, messagesToMarkdown(rows, { title, ...chosen }), 'utf8');
   };
   const openWorkingDirectory = () => {
-    const cwd = engine?.findSessionTask(state.taskId)?.cwd;
+    const taskId = id ? engine?.sessionsState().sessions.find((s) => s.id === id)?.taskId : undefined;
+    const cwd = taskId ? engine?.findSessionTask(taskId)?.cwd : undefined;
     if (cwd) void openHostPath(cwd);
   };
-  const find: Electron.MenuItemConstructorOptions = { label: '&Find…', accelerator: 'CmdOrCtrl+F', click: () => send({ type: 'chat-find' }) };
-  const template = (s: ChatState): Electron.MenuItemConstructorOptions[] => {
-    const ended = s.status === 'ended';
-    const chat = chatMenu(
-      s,
-      () => void engine?.stopChat(state.id).catch(showError),
-      // The menu shows the chat's settings as they are once the change is through (or refused).
-      (patch) => void engine?.configureChat(state.id, patch).catch(showError).finally(() => refresh(true)),
+  const perProject = (open: (projectId: string) => void): Electron.MenuItemConstructorOptions[] =>
+    projects.map((p) => ({ label: menuText(p.name), click: () => open(p.id) }));
+  const file: Electron.MenuItemConstructorOptions = {
+    label: '&File',
+    submenu: [
+      // The page handles Ctrl+T, Ctrl+W and Ctrl+F4, so in a terminal session Ctrl+T and Ctrl+W stay the agent's.
+      {
+        label: shownProject ? `New Chat in ${menuText(shownProject.name)}` : 'New Chat in Project',
+        accelerator: 'CmdOrCtrl+T',
+        registerAccelerator: false,
+        enabled: !!shownProject,
+        click: () => shownProject && openProjectChat(shownProject.id),
+      },
+      { label: 'New &Chat', enabled: projects.length > 0, submenu: perProject(openProjectChat) },
+      {
+        label: 'New &Terminal',
+        enabled: projects.length > 0,
+        submenu: perProject((pid) => void openTerminal(projectTaskId(pid)).catch(showError)),
+      },
+      { type: 'separator' },
+      // Chat-only: in a terminal these keys belong to the agent.
+      { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', enabled: !!chat && chat.status !== 'ended', click: () => void attachFiles().catch(showError) },
+      { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', enabled: !!chat, click: () => void saveMarkdown().catch(showError) },
+      { type: 'separator' },
+      { label: 'Open &Working Directory', enabled: !!kind, click: openWorkingDirectory },
+      { label: 'Send to Sess&ions…', enabled: anySessions, click: openSendToSessionsWindow },
+      { type: 'separator' },
+      {
+        label: 'Close C&onversation',
+        accelerator: 'CmdOrCtrl+W',
+        registerAccelerator: false,
+        enabled: !!kind,
+        click: () => id && void closeSessionAsk(id).catch(showError),
+      },
+      { label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk().catch(showError) },
+      { type: 'separator' },
+      { label: 'Close &Window', accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
+    ],
+  };
+  // The page handles these keys itself, so a terminal still gets Ctrl+C and the rest.
+  const edit: Electron.MenuItemConstructorOptions = {
+    label: '&Edit',
+    submenu: [
+      { role: 'undo', label: '&Undo', registerAccelerator: false },
+      { role: 'redo', label: '&Redo', registerAccelerator: false },
+      { type: 'separator' },
+      { role: 'cut', label: 'Cu&t', registerAccelerator: false },
+      { role: 'copy', label: '&Copy', registerAccelerator: false },
+      { role: 'paste', label: '&Paste', registerAccelerator: false },
+      { role: 'selectAll', label: 'Select &All', registerAccelerator: false },
+      { type: 'separator' },
+      { label: '&Find…', accelerator: 'CmdOrCtrl+F', enabled: !!chat, click: () => send({ type: 'chat-find' }) },
+    ],
+  };
+  const nav = (dir: 1 | -1, waiting: boolean) => () => send({ type: 'sessions-nav', dir, waiting });
+  const shown = engine?.settings.view.sessions ?? ViewSchema.parse({}).sessions;
+  const setShown = (patch: Partial<Settings['view']['sessions']>) => updateView({ sessions: { ...shown, ...patch } });
+  const view: Electron.MenuItemConstructorOptions = {
+    label: '&View',
+    submenu: [
+      { label: '&Dashboard', click: () => send({ type: 'sessions-dashboard' }) },
+      { type: 'separator' },
+      { label: '&Toolbar', type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
+      { label: 'A&ctivity Pane', type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
+      { label: 'Status &Bar', type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
+      { type: 'separator' },
+      { label: 'Previous &Waiting Session', accelerator: 'F8', click: nav(-1, true) },
+      { label: 'Next W&aiting Session', accelerator: 'F9', click: nav(1, true) },
+      { label: '&Previous Session', accelerator: 'Shift+F8', click: nav(-1, false) },
+      { label: '&Next Session', accelerator: 'Shift+F9', click: nav(1, false) },
+      { type: 'separator' },
+      // The page handles F6 too, so a terminal never gets it.
+      { label: 'Next Pan&e', accelerator: 'F6', registerAccelerator: false, click: () => send({ type: 'sessions-pane', dir: 1 }) },
+      { label: 'Previous Pane', accelerator: 'Shift+F6', registerAccelerator: false, click: () => send({ type: 'sessions-pane', dir: -1 }) },
+    ],
+  };
+  const menus = process.platform === 'darwin' ? [file, view] : [file, edit, view];
+  if (chat && id) {
+    menus.push(
+      chatMenu(
+        chat,
+        () => void engine?.stopChat(id).catch(showError),
+        () => void engine?.sendNowChat(id).catch(showError),
+        // The menu shows the chat's settings as they are once the change is through (or refused).
+        (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(true)),
+      ),
     );
-    const file: Electron.MenuItemConstructorOptions = {
-      label: '&File',
-      submenu: [
-        { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', enabled: !ended, click: () => void attachFiles().catch(showError) },
-        { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown().catch(showError) },
-        { type: 'separator' },
-        { label: 'Open &Working Directory', click: openWorkingDirectory },
-        { type: 'separator' },
-        { label: '&Close', accelerator: 'CmdOrCtrl+W', click: () => child.close() },
-      ],
-    };
-    // macOS adds its own Edit menu (see macTemplate): Find goes under Chat there.
-    if (process.platform === 'darwin') {
-      (chat.submenu as Electron.MenuItemConstructorOptions[]).push({ type: 'separator' }, find);
-      return [file, chat];
-    }
-    const edit: Electron.MenuItemConstructorOptions = {
-      label: '&Edit',
-      submenu: [
-        { role: 'undo', label: '&Undo' },
-        { role: 'redo', label: '&Redo' },
-        { type: 'separator' },
-        { role: 'cut', label: 'Cu&t' },
-        { role: 'copy', label: '&Copy' },
-        { role: 'paste', label: '&Paste' },
-        { role: 'selectAll', label: 'Select &All' },
-        { type: 'separator' },
-        find,
-      ],
-    };
-    return [file, edit, chat];
-  };
-  // Rebuilt when what it shows changes: radio checks and enabled items follow the chat.
-  let shown = '';
-  const refresh = (force = false) => {
-    const s = engine?.getChat(state.id);
-    if (!s || child.isDestroyed()) return;
-    const key = JSON.stringify([s.settings, s.status, s.permissions.length > 0, s.models]);
-    if (key === shown && !force) return;
-    shown = key;
-    replaceWindowMenu(child, template(s));
-  };
-  attachWindowMenu(child, template(state));
-  shown = JSON.stringify([state.settings, state.status, state.permissions.length > 0, state.models]);
-  const unsubscribe = engine!.on((e) => {
-    if (e.type === 'chat' && e.state.id === state.id) refresh();
+  }
+  return menus;
+}
+
+/** The export options Save as Markdown last used in the Sessions window. */
+let sessionsExportOpts = { includeThinking: true, includeTools: true, plain: false };
+
+let sendToSessionsWindow: BrowserWindow | null = null;
+
+/** Send to Sessions: one message to the sessions picked there. Modeless; opening it again brings it forward. */
+function openSendToSessionsWindow(): void {
+  if (sendToSessionsWindow && !sendToSessionsWindow.isDestroyed()) {
+    sendToSessionsWindow.focus();
+    return;
+  }
+  sendToSessionsWindow = openChildWindow('send-to-sessions', 'Send to Sessions', 620, 560, undefined, { contentSize: true, minWidth: 480, minHeight: 420 });
+  sendToSessionsWindow.on('closed', () => {
+    sendToSessionsWindow = null;
   });
-  child.on('closed', unsubscribe);
-  let confirmed = false;
-  child.on('close', (e) => {
-    const chat = engine?.getChat(state.id);
-    if (quitting || confirmed || !chat || (chat.status !== 'working' && chat.permissions.length === 0)) return;
-    // Closing ends the agent's turn: ask, as Windows apps do before cutting work short.
-    e.preventDefault();
-    void dialog
-      .showMessageBox(child, {
-        type: 'question',
-        title: child.getTitle(),
-        message: `${chat.harnessName} is still working.`,
-        detail: 'Closing the chat stops it.',
-        buttons: ['Close', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
-      })
-      .then((r) => {
-        if (r.response !== 0 || child.isDestroyed()) return;
-        confirmed = true;
-        child.close();
-      });
-  });
-  child.on('closed', () => {
-    chatWindows.delete(state.id);
-    void engine?.closeChat(state.id);
-  });
-  return child;
 }
 
 // ---------- task builder ----------
@@ -1982,6 +2159,7 @@ async function openLooperFile(file: string): Promise<void> {
       message: `The ${kindLabel} "${existing.name}" is already in Looper.`,
       detail: `Update it with the file's contents, or create a new ${kindLabel}?`,
       buttons: ['Update', 'Create New', 'Cancel'],
+      noLink: true,
       defaultId: 0,
       cancelId: 2,
     };
@@ -2121,6 +2299,7 @@ function buildMenu(
       label: '&View',
       submenu: [
         { label: '&Dashboard', click: () => sendUi('show-dashboard') },
+        { label: '&Sessions', click: () => openSessionsWindow() },
         { type: 'separator' },
         {
           label: '&Projects',

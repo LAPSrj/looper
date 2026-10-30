@@ -1,8 +1,17 @@
 import type { ReactNode } from 'react';
 import type { AddonIconName } from '@shared/addons';
 
+/** A speech bubble in the top-left of the icon, leaving the bottom-right corner for an action glyph. */
+const BUBBLE = 'M3 2h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 12.8V10H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 2Z';
+
+/** The same bubble lower down, leaving the top-right corner for an action glyph. */
+const BUBBLE_LOW = 'M3 5h8a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 15v-2.5H3A1.5 1.5 0 0 1 1.5 11V6.5A1.5 1.5 0 0 1 3 5Z';
+
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
-export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat', ReactNode> = {
+export const ICONS: Record<
+  AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat' | 'newChat' | 'bullhorn' | 'sendNow' | 'stopChat' | 'closeChat' | 'attach' | 'skills',
+  ReactNode
+> = {
   dashboard: (
     <>
       <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
@@ -33,6 +42,63 @@ export const ICONS: Record<AddonIconName | 'dashboard' | 'resume' | 'power' | 'c
     <>
       <path d="M1.5 2.5h8.5v5.5H5L2.8 9.8V8H1.5Z" />
       <path d="M12 5.5h2.5v6h-1.2v1.8L11 11.5H6.5V10" />
+    </>
+  ),
+  // A speech bubble with a plus at its bottom-right corner, a gap cut around it (Fluent's compound icons).
+  newChat: (
+    <>
+      <mask id="ico-cut-plus" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE} mask="url(#ico-cut-plus)" />
+      <path d="M12 9.2v5.6M9.2 12h5.6" />
+    </>
+  ),
+  bullhorn: (
+    <>
+      <path d="M2 6v3.5h2.8L11 13V2.5L4.8 6Z" />
+      <path d="m5.4 9.5 1 3.8h1.8l-.8-3.1M13.5 6v3.5" />
+    </>
+  ),
+  // A speech bubble with fast-forward at its corner: the queued messages skip ahead of the agent's turn.
+  sendNow: (
+    <>
+      <mask id="ico-cut-ff" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <rect x="7.2" y="8" width="9" height="8" rx="2" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE} mask="url(#ico-cut-ff)" />
+      <path d="m9 9.4 2.6 2.6L9 14.6M12.3 9.4l2.6 2.6-2.6 2.6" />
+    </>
+  ),
+  // A speech bubble with a stop square at its corner: the agent's turn stops.
+  stopChat: (
+    <>
+      <mask id="ico-cut-stop" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE} mask="url(#ico-cut-stop)" />
+      <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="0.8" />
+    </>
+  ),
+  // A speech bubble lower down with an X at the top-right corner, as on a window's close button.
+  closeChat: (
+    <>
+      <mask id="ico-cut-close" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <circle cx="12.5" cy="3.5" r="3.9" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE_LOW} mask="url(#ico-cut-close)" />
+      <path d="m10.6 1.6 3.8 3.8M14.4 1.6l-3.8 3.8" />
+    </>
+  ),
+  attach:<path d="m13 7.5-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.3 11.2a1 1 0 0 1-1.5-1.5L10 4.5" />,
+  skills: (
+    <>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+      <path d="M9.6 5 6.4 11" />
     </>
   ),
   edit: <path d="m11.3 2.7 2 2L5.5 12.5l-2.8.8.8-2.8Z" />,

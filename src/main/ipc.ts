@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import fs from 'node:fs';
+import path from 'node:path';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
 import { discoverHarnessModels } from '../engine/discover-models';
@@ -59,14 +60,23 @@ export interface IpcHost {
    * with the reason when the session can't start.
    */
   openTerminal: (taskId: string, runId?: string) => Promise<void>;
-  /** The Looper terminal window of a session, which alone gets its events. */
+  /** The window showing a terminal session (the Sessions window, or a Remote Control conversation's), which alone gets its output. */
   terminalWindow: (sessionId: string) => BrowserWindow | undefined;
   /** Open Project in Chat / Continue in Chat (with a run id). Rejects with the reason when the chat can't start. */
   openChat: (taskId: string, runId?: string) => Promise<void>;
-  /** Fork from Here: a new chat window with the conversation up to the row at `index`. Throws with the reason. */
+  /** Fork from Here: a new chat with the conversation up to the row at `index`. Throws with the reason. */
   forkChat: (chatId: string, index: number) => void;
-  /** The window of a chat, which alone gets its events. */
-  chatWindow: (chatId: string) => BrowserWindow | undefined;
+  /** The Sessions window while it shows the session, which alone gets its chat and activity events. */
+  sessionWindow: (sessionId: string) => BrowserWindow | undefined;
+  /** The Sessions window now shows this session (null: the Overview). */
+  showSession: (sessionId: string | null) => void;
+  /** Close Conversation: ends the session, asking first when it's working. */
+  closeSession: (sessionId: string) => Promise<void>;
+  openSendToSessions: () => void;
+  /** The Sessions window, opened or brought forward. */
+  openSessions: () => void;
+  /** A chat's Model, Effort or Permission Mode menu, as the Chat menu has them. */
+  chatSettingMenu: (chatId: string, which: 'model' | 'effort' | 'permission') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
   openRemoteHelperEditor: (id: string, isNew: boolean, parent: BrowserWindow | null) => void;
@@ -371,6 +381,72 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     },
   );
   ipcMain.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
+  /** The message box's Attach Files: pick files, then copy them in like dropped ones. */
+  ipcMain.handle('chat:pickFiles', async (e, id: string) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    const opts: Electron.OpenDialogOptions = { title: 'Attach Files', properties: ['openFile', 'multiSelections'] };
+    const r = sender ? await dialog.showOpenDialog(sender, opts) : await dialog.showOpenDialog(opts);
+    if (r.canceled || r.filePaths.length === 0) return [];
+    return engine.attachToChat(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+  });
+  ipcMain.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
+  ipcMain.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
+
+  // ---------- the Sessions window ----------
+
+  ipcMain.handle('sessions:state', () => engine.sessionsState());
+  ipcMain.handle('sessions:activity', (_e, id: string) => engine.sessionActivity(String(id)));
+  ipcMain.on('sessions:show', (_e, id: string | null) => host.showSession(typeof id === 'string' ? id : null));
+  ipcMain.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
+  ipcMain.handle('sessions:close', (_e, id: string) => host.closeSession(String(id)));
+  ipcMain.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
+  ipcMain.on('sessions:openSend', () => host.openSendToSessions());
+  ipcMain.on('sessions:openWindow', () => host.openSessions());
+  /** New Chat's or New Terminal's drop-down: the projects, under the button that asked. */
+  ipcMain.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender) return;
+    const open = kind === 'terminal' ? projectTerminal : projectChat;
+    const items: Electron.MenuItemConstructorOptions[] = engine.listProjects().map((p) => ({
+      label: p.name.replace(/&/g, '&&'),
+      click: () => void open(p.id, sender),
+    }));
+    if (items.length === 0) items.push({ label: 'No projects', enabled: false });
+    Menu.buildFromTemplate(items).popup({ window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
+  });
+  /** The message box's Model, Effort and Permission Mode buttons. */
+  ipcMain.on('context-menu:chat-setting', (e, chatId: string, which: string, x: number, y: number) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender || (which !== 'model' && which !== 'effort' && which !== 'permission')) return;
+    const items = host.chatSettingMenu(String(chatId), which);
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
+  });
+  ipcMain.on('sessions:send', (_e, ids: unknown, text: string) => {
+    engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''));
+  });
+  ipcMain.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
+  // A session's right-click menu in the list.
+  ipcMain.on('context-menu:session', (e, id: string) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    const s = engine.sessionsState().sessions.find((x) => x.id === id);
+    if (!sender || !s) return;
+    Menu.buildFromTemplate([
+      { label: 'Stop', enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
+      { type: 'separator' },
+      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },      { type: 'separator' },
+      { label: 'Close Conversation', click: () => void host.closeSession(id) },
+    ]).popup({ window: sender });
+  });
+  /** An image the agent read or wrote, as a thumbnail; only image files are read. */
+  ipcMain.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
+    const file = String(p);
+    if (!/\.(png|jpe?g|gif|webp)$/i.test(file)) return null;
+    const hostPath = await targetToHost(String(taskId), file);
+    const img = nativeImage.createFromPath(hostPath);
+    if (img.isEmpty()) return null;
+    const { height } = img.getSize();
+    return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
+  });
   /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
   ipcMain.handle('attachment:open', async (_e, p: string) => {
     if (!engine.isAttachment(String(p))) return;
@@ -390,18 +466,19 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipcMain.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
   ipcMain.handle('run:guide', (_e, id: string, runId: string, text: string) => engine.sendGuidance(id, runId, text));
 
-  /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
-  const openTargetPath = async (taskId: string, p: string): Promise<void> => {
+  /** A target-native path (in the task's environment) as the host opens it, translated across the WSL boundary. */
+  const targetToHost = async (taskId: string, p: string): Promise<string> => {
     const task = engine.findSessionTask(taskId);
     const env = task ? engine.settings.environments.find((x) => x.id === task.environmentId) : undefined;
     const distro = env?.kind === 'wsl' ? env.distro : undefined;
-    let hostPath = p;
-    if (process.platform === 'win32' && p.startsWith('/')) {
-      hostPath = (await convertWslPath(p, 'windows', distro)) ?? p;
-    } else if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) {
-      hostPath = (await convertWslPath(p, 'posix', distro)) ?? p;
-    }
-    const err = await shell.openPath(hostPath);
+    if (process.platform === 'win32' && p.startsWith('/')) return (await convertWslPath(p, 'windows', distro)) ?? p;
+    if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) return (await convertWslPath(p, 'posix', distro)) ?? p;
+    return p;
+  };
+
+  /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
+  const openTargetPath = async (taskId: string, p: string): Promise<void> => {
+    const err = await shell.openPath(await targetToHost(taskId, p));
     if (err) throw new Error(err);
   };
 
@@ -423,7 +500,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   const removeProject = async (id: string, sender: BrowserWindow | null) => {
     const project = engine.getProject(id);
     if (!project) return;
-    const msg = { type: 'question' as const, title: 'Looper', message: `Delete the project "${project.name}"?`, detail: 'Its folder and files stay as they are.', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 };
+    const msg = { type: 'question' as const, title: 'Looper', message: `Delete the project "${project.name}"?`, detail: 'Its folder and files stay as they are.', buttons: ['Delete', 'Cancel'], noLink: true, defaultId: 1, cancelId: 1 };
     const { response } = sender ? await dialog.showMessageBox(sender, msg) : await dialog.showMessageBox(msg);
     if (response !== 0) return;
     try {
@@ -458,6 +535,58 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: '&Edit Project…', click: () => host.openProjectEditor(pid) },
       { label: 'Open &Working Directory', click: () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)) },
       { label: '&Delete Project', click: () => void removeProject(pid, sender) },
+    ]).popup({ window: sender });
+  });
+
+  // ---------- the Git tabs ----------
+
+  const gitPath = (v: unknown): string => {
+    const p = String(v ?? '');
+    if (!p) throw new Error('No file was given.');
+    return p;
+  };
+  ipcMain.handle('git:repos', () => engine.git.repoIds());
+  ipcMain.handle('git:check', (_e, id: string) => engine.git.check(String(id)));
+  ipcMain.handle('git:status', (_e, id: string) => engine.git.status(String(id)));
+  ipcMain.handle('git:changeDiff', (_e, id: string, change: { path: unknown; origPath?: unknown; kind: unknown }, initial: boolean) =>
+    engine.git.changeDiff(
+      String(id),
+      {
+        path: gitPath(change?.path),
+        ...(change?.origPath ? { origPath: String(change.origPath) } : {}),
+        kind: change?.kind === 'untracked' ? 'untracked' : 'modified',
+      },
+      initial === true,
+    ),
+  );
+  ipcMain.handle('git:log', (_e, id: string, skip: number, limit: number) => engine.git.log(String(id), Number(skip) || 0, Number(limit) || 200));
+  ipcMain.handle('git:commit', (_e, id: string, hash: string) => engine.git.commit(String(id), String(hash)));
+  ipcMain.handle('git:commitDiff', (_e, id: string, hash: string, p: string, origPath?: string) =>
+    engine.git.commitDiff(String(id), String(hash), gitPath(p), origPath ? String(origPath) : undefined),
+  );
+  /** A file's right-click menu in a Git tab; `root` is the repository's, in the project's own path form. */
+  ipcMain.on('context-menu:git-file', (e, info: { projectId: string; root: string; path: string; exists: boolean }) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender || !info?.path || !info.root) return;
+    const taskId = projectTaskId(String(info.projectId));
+    const full = `${String(info.root).replace(/[\\/]$/, '')}/${String(info.path)}`;
+    Menu.buildFromTemplate([
+      { label: '&Open File', enabled: info.exists, click: () => void openTargetPath(taskId, full).catch((err) => fail(sender, err)) },
+      {
+        label: 'Show in &Folder',
+        enabled: info.exists,
+        click: () => void targetToHost(taskId, full).then((p) => shell.showItemInFolder(p)).catch((err) => fail(sender, err)),
+      },
+      { type: 'separator' },
+      { label: '&Copy Path', click: () => clipboard.writeText(String(info.path)) },
+    ]).popup({ window: sender });
+  });
+  ipcMain.on('context-menu:git-commit', (e, info: { hash: string; subject: string }) => {
+    const sender = BrowserWindow.fromWebContents(e.sender);
+    if (!sender || !info?.hash) return;
+    Menu.buildFromTemplate([
+      { label: 'Copy Commit &ID', click: () => clipboard.writeText(String(info.hash)) },
+      { label: 'Copy &Subject', click: () => clipboard.writeText(String(info.subject ?? '')) },
     ]).popup({ window: sender });
   });
 
@@ -958,8 +1087,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
       return;
     }
-    if (event.type === 'chat') {
-      const w = host.chatWindow(event.state.id);
+    // A chat's whole conversation, and a session's activity, go only to the Sessions window while it shows them.
+    if (event.type === 'chat' || event.type === 'session:activity') {
+      const w = host.sessionWindow(event.type === 'chat' ? event.state.id : event.activity.id);
       if (w && !w.isDestroyed()) w.webContents.send('engine:event', event);
       return;
     }

@@ -1,5 +1,6 @@
 import type { MessageRow } from './messages';
 import { stripMarkdown } from './messages-md';
+import type { SlashCommand, UsageLimits } from './sessions';
 import type { HarnessModel } from './types';
 
 /** A file the user attached to a chat message, or dropped or pasted into a Looper terminal. */
@@ -73,6 +74,23 @@ export interface ChatState {
   rows: MessageRow[];
   /** Tool calls waiting for the user's answer, oldest first. */
   permissions: ChatPermissionRequest[];
+  /** Messages sent while the agent works: they go to it together when its turn ends, or at once with Send Now. */
+  queued: QueuedMessage[];
+  /** The harness's slash commands and skills, for the message box's "/" list. */
+  commands: SlashCommand[];
+  /** What a picked command is written with: "/" for Claude Code, "$" for a Codex skill. */
+  commandPrefix: '/' | '$';
+  /** When the agent last finished a turn (ms since the epoch). */
+  turnEndedAt?: number;
+  startedAt: number;
+}
+
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: Attachment[];
+  /** Claude: already written to the agent, which reads it with its next tool result; it can't be edited any more. */
+  sent?: boolean;
 }
 
 /** What a chat's run folder records about it (chat.json): Continue in Chat opens the chat again from it. */
@@ -137,6 +155,37 @@ export function forkPoint(
     return forkable(i) ? { at: rows[i], keep: i + 1, draft: row } : null;
   }
   return { keep: 0, draft: row };
+}
+
+/**
+ * The usage limits in Claude's rate_limit_event record: its unifiedWindows
+ * give each window's used share and reset time (in seconds). Null when the
+ * record has neither window.
+ */
+export function usageLimitsOf(rec: Record<string, unknown>): UsageLimits | null {
+  const info = rec.rate_limit_info as Record<string, unknown> | undefined;
+  const windows = info?.unifiedWindows as Record<string, Record<string, unknown> | undefined> | undefined;
+  const take = (w: Record<string, unknown> | undefined) =>
+    typeof w?.utilization === 'number' && typeof w.resetsAt === 'number' ? { used: w.utilization, resetsAt: w.resetsAt * 1000 } : undefined;
+  const fiveHour = take(windows?.five_hour);
+  const sevenDay = take(windows?.seven_day);
+  if (!fiveHour && !sevenDay) return null;
+  return { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}) };
+}
+
+/** Claude's command list (an initialize answer or a commands_changed record) as the "/" list. */
+export function slashCommandsOf(list: unknown): SlashCommand[] {
+  if (!Array.isArray(list)) return [];
+  const out: SlashCommand[] = [];
+  for (const c of list as Record<string, unknown>[]) {
+    if (typeof c?.name !== 'string' || !c.name) continue;
+    out.push({
+      name: c.name,
+      description: typeof c.description === 'string' ? c.description : '',
+      ...(typeof c.argumentHint === 'string' && c.argumentHint ? { argumentHint: c.argumentHint } : {}),
+    });
+  }
+  return out;
 }
 
 /** 950 → "950", 42_310 → "42k", 1_000_000 → "1M", 1_250_000 → "1.3M". */

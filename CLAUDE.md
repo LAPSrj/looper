@@ -54,8 +54,10 @@ This is a Windows-first Electron app. Follow native Windows UX patterns:
 - **Right-click context menus** on list items.
 - **Only the main window gets "Looper" in its title.** Child windows show just
   their own name (e.g. "Settings", "Edit Task").
-- **Child windows have no menu bar** — call `removeMenu()` so Alt doesn't
-  summon one.
+- **Dialogs and editors have no menu bar** (Settings, New Task, Edit Project
+  and the like) — call `removeMenu()` so Alt doesn't summon one. Windows you
+  work in, with commands of their own (the Sessions window, the run window),
+  can have one.
 - **Settings windows are modal** (block their parent). **Task and template
   editors are modeless** (main window stays usable).
 

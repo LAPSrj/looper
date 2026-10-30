@@ -90,6 +90,38 @@ export async function readContextTokens(file: string, kind: TranscriptKind): Pro
   return found === 'unknown' ? null : found;
 }
 
+export interface SubagentStats {
+  /** The model id the newest response came from. */
+  model?: string;
+  effort?: string;
+  tokens: number;
+}
+
+/** What a subagent transcript line's response says: its model, effort and context; null for any other line. */
+export function subagentStatsOfLine(line: string): SubagentStats | null {
+  if (!line.includes('"usage"')) return null;
+  let rec: Rec | null;
+  try {
+    rec = obj(JSON.parse(line));
+  } catch {
+    return null;
+  }
+  if (rec?.type !== 'assistant') return null;
+  const msg = obj(rec.message);
+  const usage = obj(msg?.usage);
+  if (!usage || msg?.model === '<synthetic>') return null;
+  return {
+    ...(typeof msg?.model === 'string' ? { model: msg.model } : {}),
+    ...(typeof rec.effort === 'string' ? { effort: rec.effort } : {}),
+    tokens: num(usage.input_tokens) + num(usage.cache_read_input_tokens) + num(usage.cache_creation_input_tokens),
+  };
+}
+
+/** A subagent's model, effort and context from its transcript's newest response; null before its first. */
+export function readSubagentStats(file: string): Promise<SubagentStats | null> {
+  return newestFromEnd(file, subagentStatsOfLine);
+}
+
 /** Codex's context window, which each token_count names as info.model_context_window. */
 export function codexWindowOfLine(line: string): number | null {
   if (!line.includes('model_context_window')) return null;

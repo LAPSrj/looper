@@ -13,7 +13,9 @@ import type {
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
-import type { Attachment, ChatState } from './chat';
+import type { Attachment, ChatState, QueuedMessage } from './chat';
+import type { SessionActivity, SessionsState } from './sessions';
+import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { MessageImage, MessagesResult } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -182,14 +184,23 @@ export interface LooperApi {
   openTaskTerminal(taskId: string, runId?: string): Promise<void>;
   /** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a Looper chat window. */
   openTaskChat(taskId: string, runId?: string): Promise<void>;
-  /** A chat window's chat. */
+  /** A chat in the Sessions window. */
   chat: {
     get(id: string): Promise<ChatState | null>;
+    /** To the agent, or into the chat's queue while it works. */
     send(id: string, text: string, attachments: Attachment[]): void;
+    /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
+    sendNow(id: string): Promise<void>;
+    /** Take a message out of the queue (Cancel; Edit puts it back in the message box). */
+    unqueue(id: string, messageId: string): Promise<QueuedMessage | null>;
     /** Allow or deny the agent's permission request. */
     answer(id: string, requestId: string, allow: boolean): void;
     /** End the agent's turn (Esc). */
     stop(id: string): Promise<void>;
+    /** The message box's Model, Effort or Permission Mode menu, at (x, y) in the window. */
+    showSettingMenu(id: string, which: 'model' | 'effort' | 'permission', x: number, y: number): void;
+    /** Attach Files: the open dialog, then the picked files copied in like dropped ones. */
+    pickFiles(id: string): Promise<Attachment[]>;
     /** Copy pasted or dropped files into the task's attachments, ready to send. */
     attachFiles(id: string, files: File[]): Promise<Attachment[]>;
     /**
@@ -211,6 +222,48 @@ export interface LooperApi {
       resend?: { text: string; attachments: Attachment[] };
       fork?: number;
     }): void;
+  };
+  /** The Sessions window: every chat and terminal session, and the one it shows. */
+  sessions: {
+    state(): Promise<SessionsState>;
+    activity(id: string): Promise<SessionActivity | null>;
+    /** The window shows this session now (null: the Overview): its conversation and activity come as events. */
+    show(id: string | null): void;
+    /** The user looked at the session: a finished turn or a notification stops waiting. */
+    seen(id: string): void;
+    /** Close Conversation, asking first when the agent is working. */
+    close(id: string): Promise<void>;
+    /** Stop: end the agent's turn (Claude's interrupt in a chat, Esc in a terminal session). */
+    stop(id: string): Promise<void>;
+    showContextMenu(id: string): void;
+    /** The Send to Sessions window. */
+    openSend(): void;
+    /** The Sessions window, opened or brought forward. */
+    openWindow(): void;
+    /** New Chat's or New Terminal's drop-down list of projects, at (x, y) in the window. */
+    showNewMenu(kind: 'chat' | 'terminal', x: number, y: number): void;
+    send(ids: string[], text: string): void;
+    /** The end of a background command's output; null when it can't be read. */
+    backgroundOutput(id: string, taskId: string): Promise<string | null>;
+    /** A thumbnail of an image file the agent read or wrote (a path in the session's own form); null for any other file. */
+    fileThumbnail(taskId: string, path: string): Promise<string | null>;
+  };
+  /** A project's git repository, read-only, for the Git tabs. */
+  git: {
+    /** The projects whose folder is in a git repository; changes come as git-repos events. */
+    repos(): Promise<string[]>;
+    /** Check one project again (its folder may have become a repository). */
+    check(projectId: string): Promise<boolean>;
+    status(projectId: string): Promise<GitStatusResult>;
+    /** An uncommitted file's change against HEAD (`initial`: the branch has no commits yet). */
+    changeDiff(projectId: string, change: Pick<GitChange, 'path' | 'origPath' | 'kind'>, initial: boolean): Promise<GitFileDiff>;
+    log(projectId: string, skip: number, limit: number): Promise<GitCommit[]>;
+    commit(projectId: string, hash: string): Promise<GitCommitDetail>;
+    commitDiff(projectId: string, hash: string, path: string, origPath?: string): Promise<GitFileDiff>;
+    /** A file's right-click menu: Open File, Show in Folder, Copy Path. */
+    showFileMenu(info: { projectId: string; root: string; path: string; exists: boolean }): void;
+    /** A commit's right-click menu: Copy Commit ID, Copy Subject. */
+    showCommitMenu(info: { hash: string; subject: string }): void;
   };
   /** One of Looper's attachment copies: open it in its default app, or get a thumbnail of an image. */
   attachment: {
@@ -451,7 +504,15 @@ export type UiEvent =
   /** Chat window: File → Attach Files… copied the files; they wait to be sent. */
   | { type: 'chat-attached'; attachments: Attachment[] }
   /** Chat window: Edit as New Message put a sent message back in the message box. */
-  | { type: 'chat-edit'; text: string; attachments: Attachment[] };
+  | { type: 'chat-edit'; text: string; attachments: Attachment[] }
+  /** Sessions window: show this session (a chat or terminal opened elsewhere). */
+  | { type: 'sessions-select'; id: string }
+  /** Sessions window View menu: the next or previous session, or waiting session. */
+  | { type: 'sessions-nav'; dir: 1 | -1; waiting: boolean }
+  /** Sessions window View menu: show the dashboard. */
+  | { type: 'sessions-dashboard' }
+  /** Sessions window View menu: move the focus to the next or previous pane (list, conversation, activity pane). */
+  | { type: 'sessions-pane'; dir: 1 | -1 };
 
 /** run: the run's own step records (check, classifier, agent, result, guidance). */
 export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

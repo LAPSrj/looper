@@ -1,5 +1,21 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
+import { subscribe } from '../events';
+
+/** Whether the project's folder is in a git repository; it's checked again whenever the project changes. */
+export function useGitRepo(projectId: string | undefined): boolean {
+  const [repos, setRepos] = useState<string[]>([]);
+  useEffect(() => {
+    void window.looper.git.repos().then(setRepos);
+    return subscribe((e) => {
+      if (e.type === 'git-repos') setRepos(e.ids);
+    });
+  }, []);
+  useEffect(() => {
+    if (projectId) void window.looper.git.check(projectId);
+  }, [projectId]);
+  return !!projectId && repos.includes(projectId);
+}
 
 interface DialogKeysOpts<T extends string> {
   onSave?: () => void | Promise<void>;

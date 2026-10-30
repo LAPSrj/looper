@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { contextText, forkPoint, type Attachment, type ChatPermissionRequest, type ChatState } from '@shared/chat';
+import { forkPoint, type Attachment, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
-import { AttachmentList, ChatRow, ToolGroup, groupRows, type ChatItem, type RowCtx } from './components/ChatRows';
-import { ToolInputView } from './components/ToolContent';
-import { subscribe } from './events';
+import type { SlashCommand } from '@shared/sessions';
+import { AttachmentList, ChatRow, ToolGroup, groupRows, type ChatItem, type RowCtx } from './ChatRows';
+import { ICONS } from './icons';
+import { MessageBody } from './Markdown';
+import { ToolButton } from './ToolButton';
+import { ToolInputView } from './ToolContent';
 
 const reportError = (e: Error) => void window.looper.showError(e.message);
 
@@ -46,7 +49,7 @@ function requestText(harnessName: string, p: ChatPermissionRequest): string {
 }
 
 /** A tool call waiting for the user: what it does, then Allow or Deny. */
-function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissionRequest }) {
+export function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissionRequest }) {
   const row: MessageRow = {
     id: `permission-${p.id}`,
     kind: 'tool',
@@ -75,32 +78,62 @@ function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissionReque
 
 /** One line above the input: what the agent is doing, or why the chat ended. */
 function ChatStatus({ state }: { state: ChatState }) {
-  if (state.permissions.length > 0) return <div className="chat-status muted">{state.harnessName} is waiting for your answer.</div>;
-  if (state.status === 'working') return <div className="chat-status muted">{state.harnessName} is working…</div>;
-  if (state.status === 'starting') return <div className="chat-status muted">Starting {state.harnessName}…</div>;
-  if (state.status === 'ended') return <div className="chat-status error-text">{state.error ?? 'The session ended.'}</div>;
+  if (state.permissions.length > 0) return <div className="chat-status chat-working muted">{state.harnessName} is waiting for your answer.</div>;
+  if (state.status === 'working') return <div className="chat-status chat-working muted">{state.harnessName} is working…</div>;
+  if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {state.harnessName}…</div>;
+  if (state.status === 'ended') return <div className="chat-status chat-working error-text">{state.error ?? 'The session ended.'}</div>;
   return null;
 }
 
-const permissionLabel = (state: ChatState): string =>
+export const permissionLabel = (state: ChatState): string =>
   PERMISSION_MODES[state.harnessKind].find(([v]) => v === state.settings.permissionMode)?.[1] ?? state.settings.permissionMode;
 
-/** The window's bottom line: harness, model, effort, permission mode, and how full the context is. */
-function ChatStatusBar({ state }: { state: ChatState }) {
+/** The chat's model, effort and permission mode as the command bar names them. */
+function settingLabels(state: ChatState): Record<'model' | 'effort' | 'permission', string> {
   const s = state.settings;
   const entry = state.models.find((m) => m.id === s.model);
-  const model = entry?.name ?? s.model ?? state.activeModel ?? 'Default model';
   // As resolveEffort: the chat's own, else the model entry's default.
   const effort = s.effort ?? (s.model ? entry?.defaultEffort : undefined);
-  const effortName = effort ? EFFORT_LEVELS[state.harnessKind].find(([v]) => v === effort)?.[1] ?? effort : undefined;
+  return {
+    model: entry?.name ?? s.model ?? state.activeModel ?? 'Default model',
+    effort: effort ? (EFFORT_LEVELS[state.harnessKind].find(([v]) => v === effort)?.[1] ?? effort) : 'Default effort',
+    permission: permissionLabel(state) || 'Default',
+  };
+}
+
+const SETTING_TITLES ={ model: 'Model', effort: 'Effort', permission: 'Permission Mode' } as const;
+
+/**
+ * The bar above the message box: Attach Files and the skill list on the left,
+ * the chat's model, effort and permission mode on the right, each a menu.
+ */
+function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach: () => void; onSkills: () => void }) {
+  const ended = state.status === 'ended';
+  const labels = settingLabels(state);
   return (
-    <div className="statusbar">
-      <span>{state.harnessName}</span>
-      <span>{model}</span>
-      <span>{effortName ? `${effortName} effort` : 'Default effort'}</span>
-      <span>Permission mode: {permissionLabel(state)}</span>
+    <div className="toolbar chat-commandbar">
+      <ToolButton icon={ICONS.attach} title="Attach Files (Ctrl+O)" enabled={!ended} onClick={onAttach} />
+      <ToolButton icon={ICONS.skills} title="Skills and Commands (/)" enabled={!ended && state.commands.length > 0} onClick={onSkills} />
       <span className="spacer" />
-      {state.context && <span>{contextText(state.context)}</span>}
+      {(['model', 'effort', 'permission'] as const).map((which) => (
+        <button
+          key={which}
+          className="labeled commandbar-menu"
+          title={SETTING_TITLES[which]}
+          aria-label={`${SETTING_TITLES[which]}: ${labels[which]}`}
+          aria-haspopup="menu"
+          disabled={ended}
+          onClick={(e) => {
+            const box = e.currentTarget.getBoundingClientRect();
+            window.looper.chat.showSettingMenu(state.id, which, box.left, box.bottom);
+          }}
+        >
+          {labels[which]}
+          <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
+          </svg>
+        </button>
+      ))}
     </div>
   );
 }
@@ -126,14 +159,29 @@ function findRanges(root: HTMLElement, query: string): Range[] {
   return ranges;
 }
 
-/** A chat window: the task's harness without a terminal (Open Project in Chat, Continue in Chat, Fork from Here). */
-export function ChatApp({ id, title }: { id: string; title: string }) {
-  const [state, setState] = useState<ChatState | null>(null);
-  const [text, setText] = useState('');
-  const [pending, setPending] = useState<Attachment[]>([]);
+/** Each chat's unsent message and files, kept while the window shows another session. */
+const drafts = new Map<string, { text: string; pending: Attachment[] }>();
+
+/** The "/" list's matches: the commands whose name starts with what follows the "/", then those that contain it. */
+export function matchCommands(commands: SlashCommand[], typed: string, limit = 50): SlashCommand[] {
+  const q = typed.toLowerCase();
+  const starts = commands.filter((c) => c.name.toLowerCase().startsWith(q));
+  const contains = commands.filter((c) => !starts.includes(c) && c.name.toLowerCase().includes(q));
+  return [...starts, ...contains].slice(0, limit);
+}
+
+/** A chat in the Sessions window: the conversation, its queue, and the message box. */
+export function ChatView({ state }: { state: ChatState }) {
+  const id = state.id;
+  const [text, setTextState] = useState(() => drafts.get(id)?.text ?? state.draft?.text ?? '');
+  const [pending, setPendingState] = useState<Attachment[]>(() => drafts.get(id)?.pending ?? state.draft?.attachments ?? []);
   const [dragging, setDragging] = useState(false);
   const [find, setFind] = useState<{ query: string; index: number } | null>(null);
   const [matches, setMatches] = useState(0);
+  const [pick, setPick] = useState(0);
+  const [slashClosed, setSlashClosed] = useState(false);
+  // The command bar's skill button: the whole list, whatever the box holds.
+  const [picker, setPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
@@ -141,20 +189,18 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
   /** Up/Down in the message box: which sent message is shown, and the draft to go back to. */
   const recall = useRef<{ index: number; draft: string } | null>(null);
 
-  useEffect(() => {
-    document.title = title;
-  }, [title]);
+  const setText = (t: string) => {
+    setTextState(t);
+    drafts.set(id, { text: t, pending: drafts.get(id)?.pending ?? pending });
+  };
+  const setPending = (fn: (p: Attachment[]) => Attachment[]) =>
+    setPendingState((p) => {
+      const next = fn(p);
+      drafts.set(id, { text: drafts.get(id)?.text ?? text, pending: next });
+      return next;
+    });
 
   useEffect(() => {
-    void window.looper.chat.get(id).then((s) => {
-      if (!s) return;
-      setState(s);
-      // Fork from Here on the user's own message: it waits in the message box, ready to change and send.
-      if (s.draft) {
-        setText(s.draft.text);
-        setPending(s.draft.attachments);
-      }
-    });
     const unsubUi = window.looper.onUi((e) => {
       // File → Attach Files…: the files wait under the message box like dropped ones.
       if (e.type === 'chat-attached') setPending((p) => [...p, ...e.attachments]);
@@ -164,23 +210,19 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
       } else if (e.type === 'chat-edit') {
         recall.current = null;
         setText(e.text);
-        setPending(e.attachments);
+        setPending(() => e.attachments);
         composerRef.current?.focus();
       }
     });
-    const unsub = subscribe((e) => {
-      if (e.type === 'chat' && e.state.id === id) setState(e.state);
-    });
-    return () => {
-      unsub();
-      unsubUi();
-    };
+    composerRef.current?.focus();
+    return unsubUi;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [state?.rows.length, state?.history.length, state?.permissions.length, state?.status]);
+  }, [state.rows.length, state.history.length, state.permissions.length, state.status, state.queued.length]);
 
   // Find: every match highlighted, the current one brought into view when it changes
   // (new output only updates the highlights, so reading elsewhere isn't interrupted).
@@ -214,8 +256,8 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
   }, [find, state]);
 
   const sent = useMemo(
-    () => (state ? [...state.history, ...state.rows].filter((r) => r.kind === 'prompt' && r.text).map((r) => r.text) : []),
-    [state],
+    () => [...state.history, ...state.rows].filter((r) => r.kind === 'prompt' && r.text).map((r) => r.text),
+    [state.history, state.rows],
   );
 
   const stepFind = (dir: 1 | -1) => setFind((f) => (f ? { ...f, index: f.index + dir } : f));
@@ -226,10 +268,11 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
 
   // Esc closes the find bar, else stops the agent's turn (the Chat menu shows it as Stop's key);
   // F3 and Shift+F3 step through the matches.
-  const keys = useRef({ find, status: state?.status });
-  keys.current = { find, status: state?.status };
+  const keys = useRef({ find, status: state.status });
+  keys.current = { find, status: state.status };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.key === 'Escape') {
         if (keys.current.find) closeFind();
         else if (keys.current.status === 'working') void window.looper.chat.stop(id);
@@ -244,10 +287,7 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [id]);
 
-  if (!state) return <div className="empty">Starting…</div>;
-
   const ended = state.status === 'ended';
-
   const all = [...state.history, ...state.rows];
   const onRowContextMenu = (_e: React.MouseEvent, row: MessageRow) => {
     const selection = window.getSelection()?.toString() || undefined;
@@ -290,16 +330,58 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
     if (ended || (!text.trim() && pending.length === 0)) return;
     window.looper.chat.send(id, text.trim(), pending);
     setText('');
-    setPending([]);
+    setPending(() => []);
     recall.current = null;
     atBottom.current = true;
   };
+
+  // "/" at the start of an empty-looking message opens the harness's commands and skills.
+  const slash = /^\/(\S*)$/.exec(text);
+  const typedList = !!slash && !slashClosed;
+  const options = typedList ? matchCommands(state.commands, slash[1]) : picker ? matchCommands(state.commands, '', Infinity) : [];
+  const choose = (c: SlashCommand) => {
+    // From the skill button, the command goes in front of what's already typed.
+    setText(typedList ? `${state.commandPrefix}${c.name} ` : `${state.commandPrefix}${c.name} ${text.replace(/^\s+/, '')}`);
+    setSlashClosed(true);
+    setPicker(false);
+    composerRef.current?.focus();
+  };
+  const openPicker = () => {
+    setPicker(true);
+    setPick(0);
+    composerRef.current?.focus();
+  };
+  const pickFiles = () =>
+    void window.looper.chat
+      .pickFiles(id)
+      .then((added) => setPending((p) => [...p, ...added]))
+      .catch(reportError);
 
   /** Up on the first line of an empty box (or while going through them) brings back the sent messages, newest first. */
   const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget;
     const plain = !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (options.length > 0) {
+      const at = Math.min(pick, options.length - 1);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPick((at + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault();
+        choose(options[at]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSlashClosed(true);
+        setPicker(false);
+        return;
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
       e.preventDefault();
       send();
     } else if (e.key === 'ArrowUp' && plain && !ta.value.slice(0, ta.selectionStart).includes('\n')) {
@@ -321,6 +403,14 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
       }
     }
   };
+
+  const editQueued = (messageId: string) =>
+    void window.looper.chat.unqueue(id, messageId).then((m) => {
+      if (!m) return;
+      setText(text.trim() ? `${m.text}\n\n${text}` : m.text);
+      setPending((p) => [...m.attachments, ...p]);
+      composerRef.current?.focus();
+    });
 
   return (
     <div
@@ -391,48 +481,98 @@ export function ChatApp({ id, title }: { id: string; title: string }) {
             window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection });
           }}
         >
-          {state.history.length > 0 && state.historyLabel && (
-            <div className="pane-title chat-divider">{state.historyLabel}</div>
-          )}
+          {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
           <Items items={groupRows(state.history)} ctx={ctx} prefix="h" />
           {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
           <Items items={groupRows(state.rows)} ctx={ctx} prefix="r" />
           {state.permissions.map((p) => (
             <PermissionCard key={p.id} state={state} p={p} />
           ))}
-          <ChatStatus state={state} />
+          {/* Queued messages close the conversation, outlined until the agent reads them; Edit and Cancel until they've gone to it. */}
+          {state.queued.map((m) => (
+            <div key={m.id} className="chat-queued">
+              <div className="chat-msg chat-user">
+                {m.text && <MessageBody text={m.text} />}
+                {m.attachments.length > 0 && <AttachmentList items={m.attachments} />}
+              </div>
+              {!m.sent && (
+                <div className="chat-queued-actions">
+                  <button className="link" onClick={() => editQueued(m.id)}>
+                    Edit
+                  </button>
+                  <button className="link" onClick={() => void window.looper.chat.unqueue(id, m.id)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
-        {pending.length > 0 && (
-          <div className="chat-pending">
-            <AttachmentList items={pending} onRemove={(a) => setPending((p) => p.filter((x) => x !== a))} />
-          </div>
-        )}
+        <ChatStatus state={state} />
         <div className="chat-composer">
-          <textarea
-            ref={composerRef}
-            value={text}
-            placeholder={`Message ${state.harnessName}`}
-            rows={3}
-            autoFocus
-            disabled={ended}
-            onChange={(e) => {
-              recall.current = null;
-              setText(e.target.value);
-            }}
-            onPaste={(e) => {
-              const files = [...e.clipboardData.files];
-              if (files.length === 0) return;
-              e.preventDefault();
-              attach(files);
-            }}
-            onKeyDown={onComposerKey}
-          />
-          <button className="btn primary" disabled={ended || (!text.trim() && pending.length === 0)} onClick={send}>
-            Send
-          </button>
+          {options.length > 0 && (
+            <div className="slash-list" role="listbox">
+              {options.map((c, i) => (
+                <div
+                  key={c.name}
+                  role="option"
+                  aria-selected={i === Math.min(pick, options.length - 1)}
+                  className={`slash-item${i === Math.min(pick, options.length - 1) ? ' selected' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    choose(c);
+                  }}
+                  onMouseEnter={() => setPick(i)}
+                >
+                  <span className="slash-name">
+                    {state.commandPrefix}
+                    {c.name}
+                    {c.argumentHint ? <span className="muted"> {c.argumentHint}</span> : null}
+                  </span>
+                  <span className="slash-desc muted">{c.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="composer-main">
+            <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
+            {pending.length > 0 && (
+              <div className="chat-pending">
+                <AttachmentList items={pending} onRemove={(a) => setPending((p) => p.filter((x) => x !== a))} />
+              </div>
+            )}
+            <textarea
+              ref={composerRef}
+              value={text}
+              placeholder={`Message ${state.harnessName}`}
+              rows={3}
+              disabled={ended}
+              onChange={(e) => {
+                recall.current = null;
+                setText(e.target.value);
+                setPick(0);
+                if (!e.target.value.startsWith('/')) setSlashClosed(false);
+              }}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (files.length === 0) return;
+                e.preventDefault();
+                attach(files);
+              }}
+              onKeyDown={onComposerKey}
+              onBlur={() => setPicker(false)}
+            />
+          </div>
+          <div className="composer-actions">
+            <button className="btn primary" disabled={ended || (!text.trim() && pending.length === 0)} onClick={send}>
+              {state.status === 'working' ? 'Queue' : 'Send'}
+            </button>
+            <button className="btn" title="Stop (Esc)" disabled={state.status !== 'working'} onClick={() => void window.looper.chat.stop(id).catch(reportError)}>
+              Stop
+            </button>
+          </div>
         </div>
       </section>
-      <ChatStatusBar state={state} />
     </div>
   );
 }
