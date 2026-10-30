@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { REPORT_INPUT, issueLines } from './issues';
 
 /**
  * Addons: programs that add screens to Looper. An addon is a process Looper
@@ -116,8 +117,8 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
   const obj = input as Record<string, unknown>;
   if (obj.$type !== ADDON_TYPE) return { ok: false, reason: 'not-addon' };
   if (typeof obj.$version === 'number' && obj.$version > ADDON_FORMAT) return { ok: false, reason: 'newer' };
-  const parsed = AddonManifestSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid', error: zodSummary(parsed.error) };
+  const parsed = AddonManifestSchema.safeParse(input, REPORT_INPUT);
+  if (!parsed.success) return { ok: false, reason: 'invalid', error: issueLines(parsed.error, 4) };
   const ids = new Set<string>();
   for (const p of parsed.data.panes) {
     if (ids.has(p.id)) return { ok: false, reason: 'invalid', error: `panes: duplicate id "${p.id}"` };
@@ -136,14 +137,6 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
     if (b.tool && !toolIds.has(b.tool)) return { ok: false, reason: 'invalid', error: `toolbar: "${b.id}" names no tool "${b.tool}"` };
   }
   return { ok: true, manifest: parsed.data };
-}
-
-/** The first few issues as `path: message` lines. */
-export function zodSummary(err: z.ZodError): string {
-  return err.issues
-    .slice(0, 4)
-    .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
-    .join('\n');
 }
 
 /** In `run.command`, `run.cwd` and `run.env`: the folder the `.looperaddon` file was installed from. */
@@ -353,7 +346,7 @@ const ToolbarItemSchema = z.union([
       needsItem: z.boolean().optional(),
     })
     .strict()
-    .refine((t) => !t.iconOnly || t.icon, { message: '"iconOnly" needs an "icon"', path: ['iconOnly'] }),
+    .refine((t) => !t.iconOnly || t.icon, { error: '"iconOnly" needs an "icon"', path: ['iconOnly'] }),
   z.object({ separator: z.literal(true) }).strict(),
 ]);
 export type AddonToolbarItem = z.infer<typeof ToolbarItemSchema>;

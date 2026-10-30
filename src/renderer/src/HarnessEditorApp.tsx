@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
+import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
@@ -129,9 +130,9 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? folded : h)) } : e,
     );
-    const parsed = SettingsSchema.safeParse({ ...settings, environments });
+    const parsed = SettingsSchema.safeParse({ ...settings, environments }, REPORT_INPUT);
     if (!parsed.success) {
-      void window.looper.showError(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+      void window.looper.showError(issueLines(parsed.error));
       return false;
     }
     setSaving(true);

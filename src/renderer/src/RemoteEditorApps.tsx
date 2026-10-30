@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
+import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { EditorFooter, Field, NumberField } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { RemoteFolderFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
@@ -10,9 +11,9 @@ import { RemoteFolderFields, draftProblem, foldDraft, type RemoteFolderDraft } f
  * schema, so a bad value is reported before anything is written. True when saved.
  */
 async function saveRemote(live: Settings, remote: Settings['remote']): Promise<boolean> {
-  const parsed = SettingsSchema.safeParse({ ...live, remote });
+  const parsed = SettingsSchema.safeParse({ ...live, remote }, REPORT_INPUT);
   if (!parsed.success) {
-    void window.looper.showError(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+    void window.looper.showError(issueLines(parsed.error));
     return false;
   }
   try {

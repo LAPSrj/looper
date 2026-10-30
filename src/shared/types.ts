@@ -131,6 +131,7 @@ export type HarnessModel = z.output<typeof HarnessModelSchema>;
 export const EnvVarsSchema = z.record(
   z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'variable names may only use letters, digits and _, and not start with a digit'),
   z.string(),
+  { error: (issue) => (issue.code === 'invalid_key' ? issue.issues[0]?.message : undefined) },
 );
 
 export const HarnessSchema = z.object({
@@ -275,7 +276,7 @@ export const AgentSchema = z
         waitMin: z.number().positive().default(5),
       })
       .strict()
-      .default({}),
+      .prefault({}),
   })
   .strict();
 
@@ -308,7 +309,7 @@ export const TaskNotificationsSchema = z
     environmentErrors: z.boolean().default(false),
   })
   .strict()
-  .default({});
+  .prefault({});
 export type TaskNotifications = z.infer<typeof TaskNotificationsSchema>;
 
 /**
@@ -343,7 +344,7 @@ export const CompletionSchema = z
     allowed: z.boolean().default(false),
   })
   .strict()
-  .default({});
+  .prefault({});
 export type Completion = z.infer<typeof CompletionSchema>;
 
 /** A sidebar folder grouping tasks. Tasks reference it via `folderId`; folders nest via `parentId`. */
@@ -402,7 +403,7 @@ export const TaskSchema = z.object({
   backoff: z
     .object({ maxConsecutiveErrors: z.number().int().positive().default(5) })
     .strict()
-    .default({}),
+    .prefault({}),
   /** Cycles of this task that may be in flight at once; 1 = a due slot while a run is active is skipped. */
   maxConcurrentRuns: z.number().int().positive().default(1),
   notifications: TaskNotificationsSchema,
@@ -473,14 +474,14 @@ export const ViewSchema = z.object({
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
-  single: TaskListOptionsSchema.default({}),
+  single: TaskListOptionsSchema.prefault({}),
   panes: z
     .object({
-      tasks: SidebarPaneSchema.default({}),
-      goals: SidebarPaneSchema.default({ showCompleted: false }),
-      watchers: SidebarPaneSchema.default({}),
+      tasks: SidebarPaneSchema.prefault({}),
+      goals: SidebarPaneSchema.prefault({ showCompleted: false }),
+      watchers: SidebarPaneSchema.prefault({}),
     })
-    .default({}),
+    .prefault({}),
   /** Addon panes by addonPaneKey (shared/addons); a pane missing here shows, open. */
   addonPanes: z
     .record(
@@ -499,7 +500,7 @@ export const ViewSchema = z.object({
       collapsed: z.boolean().default(false),
       weight: z.number().positive().default(1),
     })
-    .default({}),
+    .prefault({}),
   /** Addons whose buttons the main toolbar leaves out (View → "<Addon> Toolbar"), by addon id. */
   hiddenAddonToolbars: z.array(z.string()).default([]),
   /** The single task list's share of the sidebar's height, against the addon panes below it. */
@@ -517,7 +518,7 @@ export const ViewSchema = z.object({
       statusBar: z.boolean().default(true),
       collapsed: z.array(z.string()).default([]),
     })
-    .default({}),
+    .prefault({}),
 });
 export type View = z.infer<typeof ViewSchema>;
 
@@ -590,7 +591,7 @@ export const RemoteSettingsSchema = z
     closeWhenCacheExpires: z.boolean().default(true),
     helpers: z.array(RemoteHelperSchema).default([]),
   })
-  .default({});
+  .prefault({});
 export type RemoteSettings = z.infer<typeof RemoteSettingsSchema>;
 
 /**
@@ -612,7 +613,7 @@ export const RemoteAccessSettingsSchema = z
     port: z.number().int().min(0).max(65535).default(0),
   })
   .strict()
-  .default({});
+  .prefault({});
 export type RemoteAccessSettings = z.infer<typeof RemoteAccessSettingsSchema>;
 
 export const SettingsSchema = z.object({
@@ -631,7 +632,7 @@ export const SettingsSchema = z.object({
     minDelaySec: z.number().nonnegative().default(60),
     maxDelaySec: z.number().positive().default(600),
     minIntervalSec: z.number().nonnegative().default(30),
-  }).default({}),
+  }).prefault({}),
   /** Bytes of live terminal output kept per task for late-attaching UIs. */
   outputBufferBytes: z.number().int().positive().default(262144),
   /** Days a run's records and output are kept before being deleted. */
@@ -644,7 +645,7 @@ export const SettingsSchema = z.object({
       enabled: z.boolean().default(true),
       days: z.number().int().positive().default(10),
     })
-    .default({}),
+    .prefault({}),
   /** Days a task stays in the Recycle Bin before it is deleted for good, along with its run history. */
   recycleBinDays: z.number().int().positive().default(30),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
@@ -661,7 +662,7 @@ export const SettingsSchema = z.object({
       /** Tasks whose watcher is up: quitting stops it until Looper starts again. Only asked while `runs` is on. */
       watchers: z.boolean().default(false),
     })
-    .default({}),
+    .prefault({}),
   /** Master switch for system notifications; per-task selection is on the task. */
   notificationsEnabled: z.boolean().default(true),
   /** Show a step-selection window before a manual Run Now starts. */
@@ -677,7 +678,7 @@ export const SettingsSchema = z.object({
       /** chat = Looper's message view; terminal = the harness's own interactive session. */
       view: z.enum(['chat', 'terminal']).default('chat'),
     })
-    .default({}),
+    .prefault({}),
   /** Rest Mode: sleep the computer between runs and wake it for the next one (Windows only). */
   rest: z.object({
     /** Earliest the wake timer may fire, counted from the moment the computer goes to sleep. */
@@ -686,9 +687,9 @@ export const SettingsSchema = z.object({
     graceSec: z.number().positive().default(60),
     /** Turn Rest Mode off when something other than the wake timer wakes the computer. */
     disarmOnUserWake: z.boolean().default(true),
-  }).default({}),
+  }).prefault({}),
   /** Main-window view options (View menu). */
-  view: ViewSchema.default({}),
+  view: ViewSchema.prefault({}),
   /** Addons stopped in Advanced → Addons…, by id: they don't start with Looper and show nothing. */
   disabledAddons: z.array(z.string()).default([]),
   /** How the user changed where and how an addon runs (Advanced → Addons… → Edit…), by id. */
@@ -700,14 +701,14 @@ export const SettingsSchema = z.object({
   const envIds = new Set<string>();
   for (const env of s.environments) {
     if (envIds.has(env.id)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['environments'], message: `duplicate environment id "${env.id}"` });
+      ctx.addIssue({ code: 'custom', path: ['environments'], message: `duplicate environment id "${env.id}"` });
     }
     envIds.add(env.id);
     const harnessIds = new Set<string>();
     for (const h of env.harnesses) {
       if (harnessIds.has(h.id)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['environments'],
           message: `environment "${env.name}": duplicate harness id "${h.id}"`,
         });
@@ -717,14 +718,14 @@ export const SettingsSchema = z.object({
   }
   if (!envIds.has(s.defaultEnvironmentId)) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['defaultEnvironmentId'],
       message: `unknown environment "${s.defaultEnvironmentId}"`,
     });
   }
   if (s.staggerFirstRun.enabled && s.staggerFirstRun.minDelaySec > s.staggerFirstRun.maxDelaySec) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['staggerFirstRun', 'minDelaySec'],
       message: 'min delay must be ≤ max delay',
     });

@@ -216,7 +216,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     detectWslMountPrefix: (distro) => t.invoke('wsl:mountPrefix', distro),
     moveStoreFile: (store, targetFile) => t.invoke('store:move', store, targetFile),
     pickSaveFile: (opts) => t.invoke('dialog:pickSaveFile', opts.defaultPath, opts.filters),
-    updateSettings: (patch) => t.invoke('settings:update', patch),
+    updateSettings: (patch) => t.invoke('settings:update', patch).catch(plainError),
     getStartWithSystem: () => t.invoke('loginItem:get'),
     setStartWithSystem: (enabled) => t.invoke('loginItem:set', enabled),
     showError: (message) => t.invoke('dialog:error', message),

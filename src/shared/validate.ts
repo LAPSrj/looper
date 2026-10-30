@@ -2,6 +2,7 @@ import { Cron } from 'croner';
 import { z } from 'zod';
 import { ProjectSchema, TaskSchema, TemplateSchema, type Environment, type Harness, type Project, type Task, type TaskInput } from './types';
 import { cronTz } from './cron';
+import { REPORT_INPUT, issueMessage } from './issues';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from './environments';
 
 /** Whether croner accepts the IANA timezone name (it only checks on nextRun). */
@@ -101,23 +102,13 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 /** Longest known prefix wins, so nested/indexed paths fall back to their section label. */
-export function fieldLabel(path: (string | number)[]): string {
+export function fieldLabel(path: PropertyKey[]): string {
   const parts = path.filter((p): p is string => typeof p === 'string');
   for (let i = parts.length; i > 0; i--) {
     const label = FIELD_LABELS[parts.slice(0, i).join('.')];
     if (label) return label;
   }
-  return path.join('.') || 'Task';
-}
-
-/** Zod's wording for the common cases, translated for the editor's error dialog. */
-function issueMessage(issue: z.ZodIssue): string {
-  if (issue.code === z.ZodIssueCode.too_small && issue.type === 'string') return 'must not be empty';
-  if (issue.code === z.ZodIssueCode.invalid_type && issue.received === 'undefined') return 'is required';
-  if (issue.code === z.ZodIssueCode.unrecognized_keys) {
-    return issue.keys.map((k) => `unknown field "${k}"`).join(', ');
-  }
-  return issue.message;
+  return path.map(String).join('.') || 'Task';
 }
 
 interface ValidateOpts {
@@ -163,7 +154,7 @@ function effortError(effort: string | undefined, kind?: Harness['kind']): string
  * intentionally incomplete, filled in when a task is created from them.
  */
 export function validateTask(input: unknown, environments?: Environment[], host?: string, opts?: ValidateOpts): ValidationResult {
-  const parsed = (opts?.template ? TemplateSchema : TaskSchema).safeParse(input);
+  const parsed = (opts?.template ? TemplateSchema : TaskSchema).safeParse(input, REPORT_INPUT);
   if (!parsed.success) {
     return {
       ok: false,
@@ -274,11 +265,11 @@ export type ProjectValidation = { ok: true; project: Project } | { ok: false; er
 
 /** Schema validation plus the environment, harness, folder style, permission mode and effort checks a task gets (those need `environments`). */
 export function validateProject(input: unknown, environments?: Environment[], host?: string): ProjectValidation {
-  const parsed = ProjectSchema.safeParse(input);
+  const parsed = ProjectSchema.safeParse(input, REPORT_INPUT);
   if (!parsed.success) {
     return {
       ok: false,
-      errors: parsed.error.issues.map((i) => `${PROJECT_LABELS[String(i.path[0])] ?? (i.path.join('.') || 'Project')}: ${issueMessage(i)}`),
+      errors: parsed.error.issues.map((i) => `${PROJECT_LABELS[String(i.path[0])] ?? (i.path.map(String).join('.') || 'Project')}: ${issueMessage(i)}`),
     };
   }
   const project = parsed.data;
@@ -381,14 +372,14 @@ export function importTaskDraft(input: unknown, opts: ImportDraftOpts): TaskInpu
 }
 
 /** Field-by-field lenient parse: valid leaves are kept, the rest get defaults. */
-function sanitize(schema: z.ZodTypeAny, value: unknown): unknown {
+function sanitize(schema: z.ZodType, value: unknown): unknown {
   let inner = schema;
   let optional = false;
   let hasDefault = false;
-  while (inner instanceof z.ZodDefault || inner instanceof z.ZodOptional) {
-    if (inner instanceof z.ZodDefault) hasDefault = true;
-    else optional = true;
-    inner = inner._def.innerType as z.ZodTypeAny;
+  while (inner instanceof z.ZodDefault || inner instanceof z.ZodPrefault || inner instanceof z.ZodOptional) {
+    if (inner instanceof z.ZodOptional) optional = true;
+    else hasDefault = true;
+    inner = inner.unwrap() as z.ZodType;
   }
   if (inner instanceof z.ZodObject) {
     let obj = value;
@@ -397,7 +388,7 @@ function sanitize(schema: z.ZodTypeAny, value: unknown): unknown {
       obj = {};
     }
     const out: Record<string, unknown> = {};
-    for (const [key, sub] of Object.entries(inner.shape as Record<string, z.ZodTypeAny>)) {
+    for (const [key, sub] of Object.entries(inner.shape as Record<string, z.ZodType>)) {
       const v = sanitize(sub, (obj as Record<string, unknown>)[key]);
       if (v !== undefined) out[key] = v;
     }

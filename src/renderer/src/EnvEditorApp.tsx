@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
+import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
 import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
@@ -151,9 +152,9 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
       maxConcurrentTasks: draft.maxConcurrentTasks,
     };
     const environments = live.environments.map((e) => (e.id === envId ? folded : e));
-    const parsed = SettingsSchema.safeParse({ ...live, environments });
+    const parsed = SettingsSchema.safeParse({ ...live, environments }, REPORT_INPUT);
     if (!parsed.success) {
-      void window.looper.showError(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+      void window.looper.showError(issueLines(parsed.error));
       return false;
     }
     setSaving(true);

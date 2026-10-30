@@ -7,6 +7,7 @@ import type { EngineEvent, InboxCommand, Project, RecycleBinEntry, RestState, Ru
 import { projectIdOf, projectSessionTask } from '../shared/projects';
 import { ProjectStore } from './store/projects';
 import { SettingsSchema } from '../shared/types';
+import { REPORT_INPUT, issueLines } from '../shared/issues';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
@@ -996,7 +997,9 @@ export function createEngine(opts: EngineOptions): Engine {
       const oldTasksFile = settings.tasksFile;
       const oldTemplatesFile = settings.templatesFile;
       const merged = { ...settings, ...(patch as Record<string, unknown>) };
-      const parsed = SettingsSchema.parse(merged);
+      const result = SettingsSchema.safeParse(merged, REPORT_INPUT);
+      if (!result.success) throw new Error(issueLines(result.error));
+      const parsed = result.data;
       saveSettings(dataDir, parsed);
       // The settings object is shared by reference across the engine: swap its contents in place.
       for (const key of Object.keys(settings)) delete (settings as Record<string, unknown>)[key];

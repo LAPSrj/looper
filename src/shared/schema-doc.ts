@@ -20,27 +20,25 @@ export interface FieldDoc {
   pattern?: string;
 }
 
-function typeName(schema: z.ZodTypeAny): string {
+function typeName(schema: z.ZodType): string {
   if (schema instanceof z.ZodString) return 'string';
-  if (schema instanceof z.ZodNumber) {
-    return schema._def.checks.some((c) => c.kind === 'int') ? 'integer' : 'number';
-  }
+  if (schema instanceof z.ZodNumber) return schema.isInt ? 'integer' : 'number';
   if (schema instanceof z.ZodBoolean) return 'boolean';
   if (schema instanceof z.ZodEnum) return 'enum';
-  if (schema instanceof z.ZodArray) return `${typeName(schema.element as z.ZodTypeAny)}[]`;
-  if (schema instanceof z.ZodRecord) return `record<${typeName(schema._def.valueType as z.ZodTypeAny)}>`;
+  if (schema instanceof z.ZodArray) return `${typeName(schema.element as z.ZodType)}[]`;
+  if (schema instanceof z.ZodRecord) return `record<${typeName(schema.valueType as z.ZodType)}>`;
   if (schema instanceof z.ZodObject) return 'object';
   return 'unknown';
 }
 
-function walk(schema: z.ZodTypeAny, path: string, out: FieldDoc[]): void {
+function walk(schema: z.ZodType, path: string, out: FieldDoc[]): void {
   let inner = schema;
   let optional = false;
   let hasDefault = false;
-  while (inner instanceof z.ZodDefault || inner instanceof z.ZodOptional) {
-    if (inner instanceof z.ZodDefault) hasDefault = true;
-    else optional = true;
-    inner = inner._def.innerType as z.ZodTypeAny;
+  while (inner instanceof z.ZodDefault || inner instanceof z.ZodPrefault || inner instanceof z.ZodOptional) {
+    if (inner instanceof z.ZodOptional) optional = true;
+    else hasDefault = true;
+    inner = inner.unwrap() as z.ZodType;
   }
   if (path) {
     const doc: FieldDoc = { path, type: typeName(inner) };
@@ -51,19 +49,19 @@ function walk(schema: z.ZodTypeAny, path: string, out: FieldDoc[]): void {
     }
     if (inner instanceof z.ZodEnum) doc.values = [...(inner.options as string[])];
     if (inner instanceof z.ZodString) {
-      const regex = inner._def.checks.find((c) => c.kind === 'regex');
-      if (regex && regex.kind === 'regex') doc.pattern = regex.regex.source;
+      const { pattern } = z.toJSONSchema(inner);
+      if (pattern) doc.pattern = pattern;
     }
     out.push(doc);
   }
   if (inner instanceof z.ZodObject) {
-    for (const [key, sub] of Object.entries(inner.shape as Record<string, z.ZodTypeAny>)) {
+    for (const [key, sub] of Object.entries(inner.shape as Record<string, z.ZodType>)) {
       walk(sub, path ? `${path}.${key}` : key, out);
     }
   }
 }
 
-export function describeSchema(schema: z.ZodTypeAny): FieldDoc[] {
+export function describeSchema(schema: z.ZodType): FieldDoc[] {
   const out: FieldDoc[] = [];
   walk(schema, '', out);
   return out;

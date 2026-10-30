@@ -15,7 +15,6 @@ import {
   readAddonManifest,
   runCommand,
   sideName,
-  zodSummary,
   type AddonEvent,
   type AddonEventResult,
   type AddonInfo,
@@ -28,6 +27,7 @@ import {
 } from '../shared/addons';
 import { tokenize } from '../shared/cmdline';
 import { DEFAULT_SHELL } from '../shared/environments';
+import { REPORT_INPUT, issueLines } from '../shared/issues';
 import type { Environment } from '../shared/types';
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -370,9 +370,9 @@ class AddonProcess {
 }
 
 /** Throws the addon developer a readable reason when a reply doesn't fit the protocol. */
-function check<T>(what: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown): T {
-  const r = schema.safeParse(value);
-  if (!r.success) throw new Error(`The addon sent ${what} Looper can't show:\n${zodSummary(r.error)}`);
+function check<T>(what: string, schema: z.ZodType<T, unknown>, value: unknown): T {
+  const r = schema.safeParse(value, REPORT_INPUT);
+  if (!r.success) throw new Error(`The addon sent ${what} Looper can't show:\n${issueLines(r.error, 4)}`);
   return r.data;
 }
 

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
-import { defaultEnvironments, type Environment } from '../src/shared/types';
+import { SettingsSchema, defaultEnvironments, type Environment } from '../src/shared/types';
 import { importTaskDraft, validateTask, type ValidationResult } from '../src/shared/validate';
 
 const errorsOf = (v: ValidationResult): string => (v.ok ? '' : v.errors.join('; '));
@@ -18,6 +18,25 @@ describe('strict task schema', () => {
     const v = validateTask({ ...EXAMPLE_TASK, agent: { ...EXAMPLE_TASK.agent, permissions: 'auto' } });
     expect(v.ok).toBe(false);
     expect(errorsOf(v)).toContain('Agent: unknown field "permissions"');
+  });
+
+  it('words missing, empty and badly named fields in the editor\'s terms', () => {
+    const { cwd: _cwd, ...noCwd } = EXAMPLE_TASK;
+    expect(errorsOf(validateTask(noCwd))).toContain('Working directory: is required');
+    expect(errorsOf(validateTask({ ...EXAMPLE_TASK, name: '' }))).toContain('Task name: must not be empty');
+    expect(errorsOf(validateTask({ ...EXAMPLE_TASK, env: { '1BAD': 'x' } }))).toContain(
+      'Extra environment variables: variable names may only use letters, digits and _, and not start with a digit',
+    );
+  });
+});
+
+describe('schema defaults', () => {
+  it('fills in the nested defaults of a missing section', () => {
+    const settings = SettingsSchema.parse({});
+    expect(settings.view.panes.goals.showCompleted).toBe(false);
+    expect(settings.view.panes.tasks.visible).toBe(true);
+    expect(settings.remoteAccess.hostname).toBe('looper');
+    expect(settings.staggerFirstRun.minDelaySec).toBe(60);
   });
 });
 

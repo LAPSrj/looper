@@ -23,6 +23,7 @@ import {
   type AddonTool,
   type AddonUiEvent,
 } from '../shared/addons';
+import { REPORT_INPUT, issueLines } from '../shared/issues';
 import type { View } from '../shared/types';
 import type { AddonHost, AddonLaunch } from './addon-host';
 import {
@@ -313,8 +314,8 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
   // null goes back to how the addon's own file runs it.
   ipc.handle('addons:setRun', (_e, id: string, run: unknown) => {
     if (run === null) return host.setRun(id, undefined);
-    const parsed = AddonLocalRunSchema.safeParse(run);
-    if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+    const parsed = AddonLocalRunSchema.safeParse(run, REPORT_INPUT);
+    if (!parsed.success) throw new Error(issueLines(parsed.error));
     host.setRun(id, parsed.data);
   });
   ipc.handle('addons:pickFile', async (e, id: string, accept?: { label: string; extensions: string[] }[]) => {

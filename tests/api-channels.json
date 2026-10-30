@@ -2291,7 +2291,7 @@
    ]
   ],
   "result": {
-   "err": "Error invoking remote method 'settings:update': Error: boom settings:update"
+   "err": "boom settings:update"
   }
  },
  "getStartWithSystem": {
