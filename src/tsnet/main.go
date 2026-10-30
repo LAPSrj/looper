@@ -232,14 +232,17 @@ func watch(ctx context.Context, lc *local.Client, running map[string]any) {
 	}
 }
 
+// stripProxyHeaders removes the headers only this proxy may set, so a caller can't forge them.
+// The page's own X-Looper-Request (Looper's CSRF check) passes through.
+func stripProxyHeaders(h http.Header) {
+	h.Del(proxySecretHeader)
+	h.Del(proxyLoginHeader)
+}
+
 // guard strips spoofable headers, identifies the caller and refuses tagged devices.
 func guard(lc *local.Client, next http.Handler, secret string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for name := range r.Header {
-			if strings.HasPrefix(strings.ToLower(name), "x-looper-") {
-				r.Header.Del(name)
-			}
-		}
+		stripProxyHeaders(r.Header)
 		who, err := lc.WhoIs(r.Context(), r.RemoteAddr)
 		if err != nil || who == nil || who.UserProfile == nil || who.UserProfile.LoginName == "" ||
 			(who.Node != nil && who.Node.IsTagged()) {
