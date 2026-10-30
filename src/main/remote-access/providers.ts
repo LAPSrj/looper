@@ -97,7 +97,7 @@ export function parseTsnetLine(line: string): TsnetMessage | null {
     case 'needs-login':
       return s('loginUrl') ? (m as TsnetMessage) : null;
     case 'running':
-      return s('url') && s('dnsName') && s('login') ? (m as TsnetMessage) : null;
+      return s('url') && s('dnsName') && s('login') && m.login !== '' ? (m as TsnetMessage) : null;
     case 'error':
       return s('message') ? (m as TsnetMessage) : null;
     default:

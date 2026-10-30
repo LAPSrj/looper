@@ -170,6 +170,10 @@ func runServe(args []string) {
 		if u, ok := st.User[st.Self.UserID]; ok {
 			login = u.LoginName
 		}
+		// A restart from saved state can be Running before the user profiles arrive.
+		if login == "" {
+			continue
+		}
 		dnsName := strings.TrimSuffix(st.Self.DNSName, ".")
 
 		ln, err := s.ListenTLS("tcp", ":443")

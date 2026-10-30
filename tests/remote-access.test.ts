@@ -740,6 +740,8 @@ describe('providers', () => {
   it('reads the helper protocol', () => {
     expect(parseTsnetLine('{"type":"status","state":"running","url":"https://a","dnsName":"a","login":"me"}')).toMatchObject({ state: 'running' });
     expect(parseTsnetLine('{"type":"status","state":"needs-login"}')).toBeNull();
+    // Running with no account would make the server refuse every request.
+    expect(parseTsnetLine('{"type":"status","state":"running","url":"https://a","dnsName":"a","login":""}')).toBeNull();
     expect(parseTsnetLine('{"type":"log","level":"info","message":"hi"}')).toMatchObject({ type: 'log' });
     expect(parseTsnetLine('garbage')).toBeNull();
   });
