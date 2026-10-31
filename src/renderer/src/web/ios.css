@@ -9,7 +9,8 @@ html[data-platform='ios'] {
   --ios-grouped: #f2f2f7;
   --ios-cell: #ffffff;
   --ios-label: #000000;
-  --ios-label2: rgba(60, 60, 67, 0.6);
+  /* secondaryLabel at 0.78 instead of Apple's 0.6: 5.3:1 on the grouped gray, 5.6:1 on white (0.6 gives 3.3:1 and 3.4:1). */
+  --ios-label2: rgba(60, 60, 67, 0.78);
   --ios-label3: rgba(60, 60, 67, 0.3);
   --ios-sep: rgba(60, 60, 67, 0.29);
   /* The hard scroll edge (iOS 27's default under a bar): opaque, with a hairline. */
@@ -31,6 +32,15 @@ html[data-platform='ios'] {
   /* A sheet's own background and its groups' (dark mode raises both, so a sheet stands off what's under it). */
   --ios-sheet: #f2f2f7;
   --ios-sheet-cell: #ffffff;
+  /* One design pixel: the text below is a multiple of it, so it follows the root's size (Dynamic Type). */
+  font-size: 17px;
+  --u: calc(1rem / 17);
+}
+/* Dynamic Type: WebKit's text style takes the size from Settings > Display > Text Size. A browser that doesn't know it keeps 17px. */
+@supports (font: -apple-system-body) {
+  html[data-platform='ios'] {
+    font: -apple-system-body;
+  }
 }
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
@@ -65,7 +75,7 @@ html[data-platform='ios'] {
 .ph-pair.ios,
 .ios-alert-layer {
   font-family: -apple-system, system-ui, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   letter-spacing: -0.01em;
   color: var(--ios-label);
 }
@@ -132,6 +142,12 @@ html[data-platform='ios'] {
   font-weight: 600;
   text-align: center;
   transition: opacity 0.2s;
+}
+
+/* Over a dark page top (a terminal), the title is light; the buttons keep their own glass. */
+.on-dark .ios-bar-title,
+.ios-bar-row.on-dark .ios-bar-title {
+  color: #fff;
 }
 .ios-bar-title.faded {
   opacity: 0;
@@ -211,6 +227,80 @@ html[data-platform='ios'] {
   backdrop-filter: none;
   box-shadow: none;
 }
+/* ---------- iPad: the tab bar near the top, and a bar over each column of a split view ---------- */
+.ios-tabbar-row {
+  display: flex;
+  justify-content: center;
+  padding: 6px 16px 0;
+}
+.ios-tabbar {
+  display: flex;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--ios-glass);
+  -webkit-backdrop-filter: var(--ios-glass-filter);
+  backdrop-filter: var(--ios-glass-filter);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
+}
+.ios-tab {
+  height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* The selected tab on a pill of its own, its name in the tint (4.8:1 on the pill, as the phone's tab bar). */
+.ios-tab.active {
+  background: var(--ios-fill2);
+  color: var(--ios-tab-label, #0062cc);
+}
+.ios-bar-split {
+  display: flex;
+}
+.ios-bar-split > .ios-bar-row {
+  min-width: 0;
+}
+/* A narrow column: the title takes what its buttons leave, rather than staying centered on the column. */
+.ios-bar-list {
+  flex: none;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  box-sizing: border-box;
+  box-shadow: inset -0.5px 0 0 var(--ios-sep);
+}
+.ios-bar-detail {
+  flex: 1;
+}
+.ios-bar-inspector {
+  flex: none;
+  box-sizing: border-box;
+  box-shadow: inset 0.5px 0 0 var(--ios-sep);
+}
+/* Each column's bar gets the hard scroll edge when its own column has scrolled. */
+.ios-bar-split > .ios-bar-row.edge {
+  background: var(--ios-bar);
+  box-shadow: 0 0.5px 0 var(--ios-sep);
+}
+.ios-bar-split > .ios-bar-list.edge {
+  box-shadow: 0 0.5px 0 var(--ios-sep), inset -0.5px 0 0 var(--ios-sep);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-platform='ios'] {
+    --ios-tab-label: #0091ff;
+  }
+}
+@media (prefers-contrast: more) {
+  html[data-platform='ios'] {
+    --ios-tab-label: #0040dd;
+  }
+}
+
 .ios-grabber {
   width: 36px;
   height: 5px;
@@ -391,7 +481,7 @@ html[data-platform='ios'] {
   outline: none;
   background: none;
   font: inherit;
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   color: var(--ios-label);
 }
 .ios-field input.mono {
@@ -400,7 +490,7 @@ html[data-platform='ios'] {
 }
 .ios-group-footer {
   margin: 7px 32px 0;
-  font-size: 13px;
+  font-size: calc(13 * var(--u));
   color: var(--ios-label2);
 }
 .ios-group-footer.error {
@@ -418,6 +508,12 @@ html[data-platform='ios'] {
   background: var(--ios-switch-off);
   transition: background 0.25s;
   cursor: pointer;
+}
+/* A 28 pt switch, a 44 pt target. */
+.ios-switch::after {
+  content: '';
+  position: absolute;
+  inset: -8px -2px;
 }
 .ios-switch.on {
   background: var(--ios-green);
@@ -459,6 +555,15 @@ html[data-platform='ios'] {
   font-weight: 500;
   color: var(--ios-label);
 }
+/* A 32 pt segment, a 44 pt target. */
+.ios-segmented button {
+  position: relative;
+}
+.ios-segmented button::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
 .ios-segmented button.on {
   background: var(--ios-seg-on);
   font-weight: 600;
@@ -474,7 +579,7 @@ html[data-platform='ios'] {
   background: var(--ios-tint);
   color: #fff;
   font: inherit;
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   font-weight: 600;
 }
 .ios-filled-btn:disabled {
@@ -493,7 +598,7 @@ html[data-platform='ios'] {
   padding: 40px 16px;
 }
 .ios-footnote {
-  font-size: 13px;
+  font-size: calc(13 * var(--u));
   color: var(--ios-label2);
   text-align: center;
 }
@@ -544,7 +649,7 @@ html[data-platform='ios'] {
   color: var(--ios-folder);
 }
 .ios .ph-file-detail {
-  font-size: 13px;
+  font-size: calc(13 * var(--u));
   color: var(--ios-label2);
 }
 .ios .ph-file-end {
@@ -580,8 +685,7 @@ html[data-platform='ios'] {
 }
 
 /* ---------- menus ---------- */
-.ios-menu-layer,
-.ios-sheet-layer {
+.ios-menu-layer {
   position: absolute;
   inset: 0;
   z-index: 800;
@@ -626,7 +730,7 @@ html[data-platform='ios'] {
   border-radius: 18px;
   background: none;
   font: inherit;
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   color: var(--ios-label);
   text-align: left;
 }
@@ -656,43 +760,15 @@ html[data-platform='ios'] {
   display: flex;
   color: var(--ios-label2);
 }
-.ios-sheet-layer {
+/* The item's symbol, at its end as UIMenu draws it. */
+.ios-menu-icon {
   display: flex;
-  align-items: flex-end;
+  flex: none;
   justify-content: center;
-  padding: 8px 8px max(8px, calc(env(safe-area-inset-bottom) - 8px));
-  background: rgba(0, 0, 0, 0.3);
+  width: 24px;
 }
-.ios-action-sheet {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(100%, 420px);
-  max-height: 85%;
-  animation: ph-up-in 0.35s cubic-bezier(0.2, 0.9, 0.25, 1);
-}
-.ios-action-group {
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
-  border-radius: 32px;
-  background: var(--ios-glass-dense);
-  -webkit-backdrop-filter: saturate(180%) blur(30px);
-  backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: var(--ios-glass-edge);
-}
-.ios-action-cancel {
-  min-height: 56px;
-  border: 0;
-  border-radius: 28px;
-  background: var(--ios-glass-dense);
-  -webkit-backdrop-filter: saturate(180%) blur(30px);
-  backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: var(--ios-glass-edge);
-  color: var(--ios-tint);
-  font: inherit;
-  font-size: 17px;
-  font-weight: 600;
+.ios-menu-item.destructive {
+  color: var(--ios-red);
 }
 
 /* ---------- alerts ---------- */
@@ -729,17 +805,19 @@ html[data-platform='ios'] {
   padding: 0 6px 20px;
 }
 .ios-alert-title {
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .ios-alert-message {
   margin-top: 6px;
-  font-size: 15px;
+  font-size: calc(15 * var(--u));
   line-height: 1.35;
   color: var(--ios-label2);
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .ios-alert-input {
   width: 100%;
@@ -749,7 +827,7 @@ html[data-platform='ios'] {
   border-radius: 14px;
   background: var(--ios-fill);
   font: inherit;
-  font-size: 16px;
+  font-size: calc(16 * var(--u));
   color: var(--ios-label);
   outline: none;
   -webkit-user-select: text;
@@ -764,7 +842,7 @@ html[data-platform='ios'] {
   border: 0;
   background: none;
   font: inherit;
-  font-size: 15px;
+  font-size: calc(15 * var(--u));
   color: var(--ios-label);
   text-align: left;
 }
@@ -800,7 +878,7 @@ html[data-platform='ios'] {
   border-radius: 24px;
   background: var(--ios-fill2);
   font: inherit;
-  font-size: 17px;
+  font-size: calc(17 * var(--u));
   font-weight: 500;
   color: var(--ios-label);
 }
@@ -858,7 +936,7 @@ html[data-platform='ios'] {
 .ios-banner-text {
   flex: 1;
   min-width: 0;
-  font-size: 15px;
+  font-size: calc(15 * var(--u));
   line-height: 1.3;
 }
 .ios-banner-title {
@@ -892,14 +970,36 @@ html[data-platform='ios'] {
 /* ---------- pairing ---------- */
 .ph-pair.ios {
   min-height: 100%;
-  padding: calc(env(safe-area-inset-top) + 44px) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* On iPad the form keeps a form sheet's width (540 pt), centered; the gray runs to the edges. */
+  padding: calc(env(safe-area-inset-top) + 44px) max(env(safe-area-inset-right), calc((100% - 540px) / 2)) env(safe-area-inset-bottom)
+    max(env(safe-area-inset-left), calc((100% - 540px) / 2));
   background: var(--ios-grouped);
 }
 .ios-large-title {
   margin: 0 16px 4px;
-  font-size: 34px;
+  font-size: calc(34 * var(--u));
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+
+/* Increase Contrast: the same high-contrast colors the pages use (phone.css). */
+@media (prefers-contrast: more) {
+  html[data-platform='ios'] {
+    --ios-tint: #0040dd;
+    --ios-red: #d70015;
+    --ios-label2: rgba(60, 60, 67, 0.86);
+    --ios-label3: rgba(60, 60, 67, 0.55);
+    --ios-sep: rgba(60, 60, 67, 0.6);
+  }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  html[data-platform='ios'] {
+    --ios-tint: #409cff;
+    --ios-red: #ff6961;
+    --ios-label2: rgba(235, 235, 245, 0.78);
+    --ios-label3: rgba(235, 235, 245, 0.5);
+    --ios-sep: rgba(142, 142, 147, 0.8);
+  }
 }
 
 /* Without backdrop blur (some WebKit builds), the materials go nearly opaque so text over content stays legible. */

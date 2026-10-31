@@ -1,3 +1,4 @@
+import { isTablet } from '../../web/nav-stack';
 import { isPhone } from '../../web/page-nav';
 
 /**
@@ -27,6 +28,8 @@ function track(): void {
   const vv = top.visualViewport;
   if (!vv) return;
   const update = () => {
+    // html.tablet: an iPad or Android tablet (the screen's, not this iframe's, size), for its readable widths.
+    root.classList.toggle('tablet', isTablet({ width: top.innerWidth, height: top.innerHeight }));
     const up = top.innerHeight - vv.height > 120;
     // Only the keyboard counts: a sheet's iframe sliding in also reaches below the screen for a moment.
     const frame = window.frameElement as HTMLElement | null;
@@ -43,4 +46,22 @@ function track(): void {
   setTimeout(update, 600);
 }
 
-if (isPhone && typeof window !== 'undefined' && window !== window.top) track();
+const inPhoneWindow = isPhone && typeof window !== 'undefined' && window !== window.top;
+
+if (inPhoneWindow) track();
+
+/**
+ * The phone stylesheet is a chunk only a phone's window pages load (the desktop app and the desktop
+ * browser never do). It starts loading with the page and `bootWindow` waits for it before the first
+ * render, so a window is never drawn unstyled. It goes in as a `<style>` placed before the app's
+ * stylesheet, where the `@import` at the top of styles.css used to put it: a plain dynamic CSS
+ * import would land after it and win every tie in specificity.
+ */
+export const phoneStyles: Promise<unknown> = inPhoneWindow
+  ? import('../../phone.css?inline').then(({ default: css }) => {
+      const style = document.createElement('style');
+      style.dataset.phone = '';
+      style.textContent = css;
+      document.head.insertBefore(style, document.head.querySelector('link[rel="stylesheet"], style'));
+    })
+  : Promise.resolve();

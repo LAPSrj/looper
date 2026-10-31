@@ -22,6 +22,24 @@ export async function askPairing(fetchMe: () => Promise<Response>): Promise<Pair
   return me?.paired === true ? 'paired' : me?.paired === false ? 'unpaired' : 'unreachable';
 }
 
+/** A sleep that `wake` cuts short: the Try Again button asks at once instead of at the next retry. */
+export function wakeableSleep(): { sleep: (ms: number) => Promise<void>; wake: () => void } {
+  let wake: (() => void) | null = null;
+  return {
+    sleep: (ms) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(done, ms);
+        function done() {
+          clearTimeout(timer);
+          wake = null;
+          resolve();
+        }
+        wake = done;
+      }),
+    wake: () => wake?.(),
+  };
+}
+
 /** Ask until the computer answers, every `retryMs`; `onWaiting` runs once, after the first miss. */
 export async function waitForPairing(
   fetchMe: () => Promise<Response>,

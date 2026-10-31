@@ -1,25 +1,30 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
+import { useConnection } from './connection';
 import type { ShellController } from './controller';
+import { OfflineBanner } from './OfflineBanner';
 import { useThisDevice } from './device-flows';
 import { messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
 import { CHECK, FileRows, FileViewBody } from './phone-files';
+import { phoneMenu } from './more-menu';
 import {
+  ActionGlyph,
   deviceNoun,
   isLongMenu,
   menuGroups,
+  moreFor,
   NavIcon,
   PhoneWindows,
+  pickMore,
   plainLabel,
   Scrim,
-  rootMoreItems,
-  THIS_DEVICE_ITEM,
   usePhoneShell,
   useSubmenus,
   type BackLayer,
+  type OpenMore,
   type PhoneShell,
   type Screen,
 } from './phone-shell';
@@ -56,7 +61,7 @@ const NEW_FOLDER = (
 
 /** Android, after Material 3: windows as screens with a top app bar, dialogs, and bottom sheets. */
 export function AndroidFrame({ controller }: { controller: ShellController }) {
-  const [more, setMore] = useState<{ w: string; items: MenuItemSpec[]; anchor: DOMRect } | null>(null);
+  const [more, setMore] = useState<OpenMore | null>(null);
   const [device, setDevice] = useState(false);
   const local: BackLayer[] = [];
   if (device) local.push(() => setDevice(false));
@@ -70,10 +75,7 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
     return () => controller.setOverlay(false);
   }, [overlay, controller]);
 
-  const openMore = (sc: Screen, button: HTMLElement) => {
-    const items = sc.pres === 'root' ? rootMoreItems(sc.win.menu, 'This device') : (sc.win.menu ?? []);
-    setMore({ w: sc.win.w, items, anchor: button.getBoundingClientRect() });
-  };
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
     <div ref={shell.rootRef} className={`ph-root android${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`}>
@@ -84,9 +86,9 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
         renderBar={(sc) => <TopBar shell={shell} controller={controller} sc={sc} onMore={openMore} />}
         dragToDismiss={(p) => p === 'bottom-sheet'}
       />
-      {!s.connected && (
+      {!s.connected && !s.everConnected && (
         <div className="ph-connection" role="status">
-          {s.everConnected ? 'Reconnecting…' : 'Connecting…'}
+          Connecting…
         </div>
       )}
       {device && <DeviceSheet controller={controller} onClose={() => setDevice(false)} />}
@@ -107,8 +109,7 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
           onClose={() => setMore(null)}
           onPick={(item) => {
             setMore(null);
-            if (item.id === THIS_DEVICE_ITEM) setDevice(true);
-            else controller.pick(more.w, more.w, item);
+            pickMore(controller, more, item, () => setDevice(true));
           }}
         />
       )}
@@ -122,13 +123,26 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
 
 // ---------- the top app bar ----------
 
+/** The label of This device in the main window's overflow menu. */
+const DEVICE_LABEL = 'This device';
+
 function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controller: ShellController; sc: Screen; onMore: (sc: Screen, button: HTMLElement) => void }) {
   const nav = sc.nav;
   const title = plainLabel(nav?.title ?? sc.win.title);
-  const hasMore = sc.pres === 'root' || !!sc.win.menu?.length;
+  const hasMore = moreFor(sc, DEVICE_LABEL).items.length > 0;
   const dialogLike = sc.pres === 'full-dialog' || sc.pres === 'dialog';
-  const lead =
-    nav?.back || sc.pres === 'push' ? (
+  const cancel = nav?.cancel;
+  const confirm = nav?.confirm;
+  const lead = nav?.back ? (
+    <button className="md-icon-btn" aria-label="Back" onClick={() => shell.goBack()}>
+      {ARROW_BACK}
+    </button>
+  ) : cancel ? (
+    // A full-screen dialog's close, as Material draws an editor's Cancel.
+    <button className="md-icon-btn" aria-label={plainLabel(cancel.label ?? 'Cancel')} disabled={cancel.disabled} onClick={() => cancel.run()}>
+      {CLOSE}
+    </button>
+  ) : sc.pres === 'push' ? (
       <button className="md-icon-btn" aria-label="Back" onClick={() => shell.goBack()}>
         {ARROW_BACK}
       </button>
@@ -137,6 +151,7 @@ function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
         {CLOSE}
       </button>
     ) : null;
+  const connection = useConnection(controller);
   return (
     <header className={`md-bar${sc.pres === 'bottom-sheet' ? ' sheet' : ''}`}>
       {sc.pres === 'bottom-sheet' && <div className="md-handle" aria-hidden="true" />}
@@ -144,9 +159,9 @@ function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
         {lead}
         <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{title}</h1>
         {nav?.actions?.map((a) =>
-          a.icon && !dialogLike ? (
+          (a.icon || a.ring) && !dialogLike ? (
             <button key={a.id} className="md-icon-btn" aria-label={a.label} title={a.label} disabled={a.disabled} onClick={() => a.run()}>
-              <NavIcon name={a.icon} size={24} />
+              <ActionGlyph action={a} size={24} />
             </button>
           ) : (
             <button key={a.id} className="md-text-btn" disabled={a.disabled} onClick={() => a.run()}>
@@ -154,12 +169,18 @@ function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
             </button>
           ),
         )}
+        {confirm && (
+          <button className="md-text-btn" disabled={confirm.disabled} onClick={() => confirm.run()}>
+            {plainLabel(confirm.label ?? 'Save')}
+          </button>
+        )}
         {hasMore && (
           <button className="md-icon-btn" aria-label="More options" aria-haspopup="menu" onClick={(e) => onMore(sc, e.currentTarget)}>
             {MORE_VERT}
           </button>
         )}
       </div>
+      <OfflineBanner connection={connection} />
     </header>
   );
 }
@@ -193,7 +214,15 @@ function MenuItems({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
               disabled={!it.enabled}
               onClick={() => onItem(it)}
             >
-              {checks && <span className="md-menu-lead">{it.checked ? CHECK : null}</span>}
+              {checks ? (
+                <span className="md-menu-lead">{it.checked ? CHECK : null}</span>
+              ) : (
+                it.icon && (
+                  <span className="md-menu-lead">
+                    <NavIcon name={it.icon} size={24} />
+                  </span>
+                )
+              )}
               <span className="md-menu-label">{plainLabel(it.label)}</span>
               {it.type === 'submenu' && <span className="md-menu-trail">{ARROW_RIGHT}</span>}
             </button>
@@ -219,7 +248,8 @@ function Menu({ items, style, onPick, onClose }: { items: MenuItemSpec[]; style:
 /** A menu the computer popped up (a long press): at the finger, or a bottom sheet when it's long. */
 function PopupMenu({ controller, shell, menu: m }: { controller: ShellController; shell: PhoneShell; menu: OpenMenu }) {
   const at = useMemo(() => controller.popupPoint(m), [controller, m]);
-  const sub = useSubmenus(m.items);
+  const items = useMemo(() => phoneMenu(m.items), [m.items]);
+  const sub = useSubmenus(items);
   const pick = (it: MenuItemSpec) => (it.type === 'submenu' ? sub.open(it) : controller.pick(m.menuId, m.w, it));
   const dismiss = () => controller.dismissMenu(m.menuId);
   if (isLongMenu(sub.level, shell.vp.height)) {
@@ -236,7 +266,7 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
   const height = rows * 44 + Math.max(1, groups.length) * 8 + Math.max(0, groups.length - 1) * 2;
   const left = Math.max(8, Math.min(at.x, shell.vp.width - width - 8));
   const top = at.y + height + 8 <= shell.vp.height ? at.y : Math.max(8, at.y - height);
-  return <Menu items={m.items} style={{ left, top, minWidth: width }} onPick={(it) => controller.pick(m.menuId, m.w, it)} onClose={dismiss} />;
+  return <Menu items={items} style={{ left, top, minWidth: width }} onPick={(it) => controller.pick(m.menuId, m.w, it)} onClose={dismiss} />;
 }
 
 // ---------- dialogs ----------

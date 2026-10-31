@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MenuItemSpec } from '../../../shared/remote-access';
+import { UsageGlyph } from '../components/ContextRing';
 import { ICONS } from '../components/icons';
 import type { ShellController } from './controller';
 import { messageCancelId } from './dialog-flows';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
+import { composeMore, THIS_DEVICE_ITEM, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
-import type { PageNav } from './page-nav';
+import type { PageNav, PageNavAction } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
 
@@ -403,13 +405,14 @@ export interface TopEdge {
   color: string;
   /** The page's content there has scrolled up, past the bar. */
   scrolled: boolean;
+  /** iPad split view: the same over the detail column (the rest is the list column's). */
+  detail?: { color: string; scrolled: boolean };
 }
 
 const isTransparent = (c: string) => c === 'transparent' || /^rgba\(.*,\s*0\)$/.test(c);
-
-/** What's at the middle of a page's top edge: the first background behind it, and whether a scroller there has moved. */
-function readTopEdge(doc: Document, win: Window): TopEdge | null {
-  const hit = doc.elementFromPoint(win.innerWidth / 2, 1);
+/** What's at `x` (the middle) of a page's top edge: the first background behind it, and whether a scroller there has moved. */
+function readTopEdge(doc: Document, win: Window, x = win.innerWidth / 2): TopEdge | null {
+  const hit = doc.elementFromPoint(x, 1);
   // Nothing hit (a hidden or inert page): keep the last reading.
   if (!hit || hit === doc.documentElement) return null;
   let color = '';
@@ -426,6 +429,11 @@ function readTopEdge(doc: Document, win: Window): TopEdge | null {
 function useTopEdges(controller: ShellController, screens: Screen[], enabled: boolean): Map<string, TopEdge> {
   const [edges, setEdges] = useState(() => new Map<string, TopEdge>());
   const live = screens.filter((sc) => !sc.leaving);
+  // A page split in columns (PageNav split): its edge is the list column's, with the detail column's beside it.
+  const splitWidth = useRef(new Map<string, { lead: number; inspector: number }>());
+  splitWidth.current = new Map(
+    live.flatMap((sc) => (sc.nav?.split ? [[sc.win.w, { lead: sc.nav.split.width, inspector: sc.nav.split.inspector?.width ?? 0 }] as const] : [])),
+  );
   const key = live.map((sc) => `${sc.win.w}:${sc.win.nonce}`).join(' ');
   useEffect(() => {
     if (!enabled) return;
@@ -444,11 +452,16 @@ function useTopEdges(controller: ShellController, screens: Screen[], enabled: bo
         let queued = false;
         const measure = () => {
           queued = false;
-          const edge = readTopEdge(doc, win);
+          const cols = splitWidth.current.get(w);
+          const edge = readTopEdge(doc, win, cols ? cols.lead / 2 : undefined);
           if (!edge) return;
+          if (cols) {
+            const detail = readTopEdge(doc, win, cols.lead + (win.innerWidth - cols.lead - cols.inspector) / 2);
+            if (detail) edge.detail = { color: detail.color, scrolled: detail.scrolled };
+          }
           setEdges((old) => {
             const was = old.get(w);
-            if (was && was.color === edge.color && was.scrolled === edge.scrolled) return old;
+            if (was && was.color === edge.color && was.scrolled === edge.scrolled && JSON.stringify(was.detail) === JSON.stringify(edge.detail)) return old;
             return new Map(old).set(w, edge);
           });
         };
@@ -522,6 +535,7 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   for (const sc of live) if (sc.pres !== 'root') layers.push(() => controller.close(sc.win.w));
   const topNav = top?.nav;
   if (topNav?.back) layers.push(() => topNav.back?.());
+  const firstOverlay = layers.length;
   layers.push(...localLayers);
   for (const p of s.paths) layers.push(() => controller.closePath(p.id));
   for (const d of s.dialogs) {
@@ -533,6 +547,21 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   }
   for (const m of s.menus) layers.push(() => controller.dismissMenu(m.menuId));
   const { goBack: historyBack } = useBack(layers);
+
+  // A hardware keyboard's Escape closes what the shell has open (a menu, a sheet, an alert), never a screen.
+  const overlays = useRef<BackLayer[]>([]);
+  overlays.current = layers.slice(firstOverlay);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const close = overlays.current[overlays.current.length - 1];
+      if (!close) return;
+      e.preventDefault();
+      close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const hooks = useRef<FrameHooks>({ canSwipeBack: () => false, swipe: () => undefined });
   hooks.current = {
@@ -553,7 +582,7 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   useEffect(() => {
     const offs: (() => void)[] = [];
     for (const sc of screens) {
-      if (!sc.nav?.largeTitle || sc.leaving) continue;
+      if (!(sc.nav?.largeTitle || sc.nav?.split?.largeTitle) || sc.leaving) continue;
       const doc = controller.frameOf(sc.win.w)?.contentDocument;
       if (!doc) continue;
       const check = () => {
@@ -647,9 +676,12 @@ export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: Wi
             aria-hidden={!sc.isTop || undefined}
           >
             {sheet && <Scrim className="ph-scrim" onTap={() => sc.pres !== 'full-dialog' && os === 'android' && controller.close(sc.win.w)} />}
-            <div className={`ph-card${ownsBottom ? ' owns-bottom' : ''}`} role={sheet ? 'dialog' : undefined} aria-modal={sheet || undefined} aria-label={sc.nav?.title ?? sc.win.title}>
-              <DragArea enabled={sheet && dragToDismiss(sc.pres)} root={shell.rootRef} w={sc.win.w} onDismiss={() => controller.close(sc.win.w)}>
-                {renderBar(sc)}
+            <div className={`ph-card${ownsBottom ? ' owns-bottom' : ''}`} role={sheet ? 'dialog' : undefined} aria-modal={sheet || undefined} aria-label={sc.nav?.title || sc.win.title}>
+              <DragArea enabled={sheet && dragToDismiss(sc.pres) && !sc.nav?.modal} root={shell.rootRef} w={sc.win.w} onDismiss={() => controller.close(sc.win.w)}>
+                {/* The page has a sheet of its own open: the bar is dimmed with its backdrop and out of reach. */}
+                <div className={`ph-bar-slot${sc.nav?.modal ? ' page-modal' : ''}`} inert={!!sc.nav?.modal}>
+                  {renderBar(sc)}
+                </div>
               </DragArea>
               <div className="ph-body">
                 <PhoneIframe controller={controller} win={sc.win} os={os} hooks={hooks} safeBottom={safeBottom} />
@@ -726,13 +758,42 @@ export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
   );
 }
 
-/** The synthetic item the root screen's More menu ends with. */
-export const THIS_DEVICE_ITEM = '__looper-this-device';
+/** A bar button's glyph: its usage ring, or its icon. */
+export function ActionGlyph({ action, size = 22 }: { action: Pick<PageNavAction, 'icon' | 'ring'>; size?: number }) {
+  if (action.ring) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden="true">
+        <UsageGlyph context={action.ring.context} used={action.ring.used} />
+      </svg>
+    );
+  }
+  return action.icon ? <NavIcon name={action.icon} size={size} /> : null;
+}
 
-/** The root screen's More menu: the main window's menu bar, then This Device. */
-export function rootMoreItems(menu: MenuItemSpec[] | null, label: string): MenuItemSpec[] {
-  const own: MenuItemSpec = { id: THIS_DEVICE_ITEM, type: 'normal', label, enabled: true };
-  return menu?.length ? [...menu, { id: '__looper-sep', type: 'separator', enabled: true }, own] : [own];
+/** The More menu open over a screen, and what its page's own items do. */
+export interface OpenMore extends MoreMenu {
+  w: string;
+  anchor: DOMRect;
+}
+
+/** A screen's More menu (more-menu.ts): This Device ends the main window's. */
+export function moreFor(sc: Screen, device: string): MoreMenu {
+  const nav = sc.nav;
+  return composeMore({
+    toolbar: nav?.toolbar,
+    barIds: [...(nav?.actions ?? []), ...(nav?.split?.actions ?? [])].map((a) => a.id),
+    menu: sc.win.menu,
+    more: nav?.more,
+    device: sc.pres === 'root' ? device : undefined,
+  });
+}
+
+/** A pick in the More menu: This Device, a command of the page's, or the computer's menu item. */
+export function pickMore(controller: ShellController, more: OpenMore, item: MenuItemSpec, openDevice: () => void): void {
+  if (item.id === THIS_DEVICE_ITEM) return openDevice();
+  const own = more.run.get(item.id);
+  if (own) own();
+  else controller.pick(more.w, more.w, item);
 }
 
 /** Separator-free groups of a menu, for lists that draw separators as gaps. */
@@ -749,7 +810,7 @@ export function menuGroups(items: MenuItemSpec[]): MenuItemSpec[][] {
 /** Electron's &-mnemonics don't belong on a phone. */
 export const plainLabel = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
 
-/** Long menus open as a sheet from the bottom rather than a list at the finger. */
+/** Android: long menus open as a bottom sheet rather than a list at the finger (iOS keeps the menu, which scrolls). */
 export const isLongMenu = (items: MenuItemSpec[], height: number): boolean => {
   const rows = items.filter((i) => i.type !== 'separator').length;
   return rows > 8 || rows * 48 > height * 0.6;

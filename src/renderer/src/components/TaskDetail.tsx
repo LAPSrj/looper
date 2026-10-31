@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { watcherOf } from '@shared/types';
-import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort } from '@shared/environments';
+import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort, withKind } from '@shared/environments';
 import { cronToForm, nextWindowOpen } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
+import { tickFor, useNow } from '../useNow';
 import { RunLog } from './RunLog';
 import { Terminal } from './Terminal';
 import { TabBar } from './ui';
@@ -21,7 +23,6 @@ interface Props {
   environments: Environment[];
   runtime: TaskRuntime | undefined;
   records: RunRecord[];
-  now: number;
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
   hideNoActionRuns: boolean;
@@ -103,22 +104,31 @@ function statusDetail(runtime: TaskRuntime | undefined): string {
   }
 }
 
-function describeNextRun(runtime: TaskRuntime | undefined, now: number): string {
-  if (!runtime || runtime.nextRunAt === null) return 'Not scheduled';
-  return describeNextAt(runtime.nextRunAt, now);
+/** The next run's time and the countdown to it, which ticks (each second below an hour, then each minute). */
+function NextAt({ at }: { at: number }): ReactNode {
+  const left = at - Date.now();
+  const now = useNow(left > 0 ? tickFor(left) : null);
+  const countdown = fmtCountdown(at, now);
+  if (countdown === 'now') return 'Now';
+  // The countdown only means something live: a phone showing what it kept greys it out.
+  return (
+    <>
+      {fmtTime(new Date(at).toISOString())} <span className="live-only">(in {countdown})</span>
+    </>
+  );
 }
 
-function describeNextAt(at: number, now: number): string {
-  const countdown = fmtCountdown(at, now);
-  return countdown === 'now' ? 'Now' : `${fmtTime(new Date(at).toISOString())} (in ${countdown})`;
+function NextRun({ runtime }: { runtime: TaskRuntime | undefined }): ReactNode {
+  if (!runtime || runtime.nextRunAt === null) return 'Not scheduled';
+  return <NextAt at={runtime.nextRunAt} />;
 }
 
 /** The watcher is down (outside its run window): when watching is scheduled to resume. */
-function describeNextWatch(task: Task, runtime: TaskRuntime | undefined, now: number): string {
+function NextWatch({ task, runtime }: { task: Task; runtime: TaskRuntime | undefined }): ReactNode {
   const watcher = watcherOf(task);
   if (!watcher || runtime?.state !== 'idle') return 'Not scheduled';
-  const at = nextWindowOpen(watcher, now);
-  return at === null ? 'Not scheduled' : describeNextAt(at, now);
+  const at = nextWindowOpen(watcher, Date.now());
+  return at === null ? 'Not scheduled' : <NextAt at={at} />;
 }
 
 export function TaskDetail({
@@ -127,7 +137,6 @@ export function TaskDetail({
   environments,
   runtime,
   records,
-  now,
   tab,
   onTab,
   hideNoActionRuns,
@@ -191,13 +200,13 @@ export function TaskDetail({
                 {task.completedAt
                   ? 'Never: the task is completed'
                   : task.trigger.mode === 'schedule'
-                    ? describeNextRun(runtime, now)
+                    ? <NextRun runtime={runtime} />
                     : task.trigger.mode === 'watcher'
                       ? runtime?.watcher === 'watching'
                         ? 'When the watcher fires'
                         : runtime?.watcher === 'restarting'
                           ? 'Watcher restarting'
-                          : describeNextWatch(task, runtime, now)
+                          : <NextWatch task={task} runtime={runtime} />
                       : 'When triggered manually'}
               </dd>
               {!task.completedAt && task.trigger.mode !== 'manual' && task.trigger.stopOn?.enabled && (
@@ -226,7 +235,7 @@ export function TaskDetail({
               <dt>Classifier</dt>
               <dd>{task.classifier?.enabled ? 'Yes' : 'No'}</dd>
               <dt>Harness</dt>
-              <dd>{harness ? `${harness.name} (${harnessKindLabel(harness.kind)})` : 'None'}</dd>
+              <dd>{harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None'}</dd>
               <dt>Model</dt>
               <dd>
                 {task.agent.model ? (harness ? harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model : task.agent.model) : 'Default'}
@@ -239,7 +248,7 @@ export function TaskDetail({
               <dt>Environment</dt>
               <dd>
                 {env ? (
-                  `${env.name} (${describeEnvironment(env)})`
+                  withKind(env.name, describeEnvironment(env))
                 ) : (
                   <span className="warn">Unknown environment "{task.environmentId}"</span>
                 )}

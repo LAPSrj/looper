@@ -13,7 +13,7 @@ import {
 import { createPortal } from 'react-dom';
 import type { HostDirEntry, MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
 import { Icon } from '../components/Icon';
-import { ICONS } from '../components/icons';
+import { Chevron, ICONS } from '../components/icons';
 import { fmtDateTime } from '../format';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
@@ -414,11 +414,7 @@ const DOT = (
     <circle cx="6" cy="6" r="2.5" fill="currentColor" />
   </svg>
 );
-const CHEVRON = (
-  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-    <path d="M3.5 1.5L7 5 3.5 8.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-  </svg>
-);
+const CHEVRON = <Chevron />;
 
 interface MenuListProps {
   nav: MenuNav;

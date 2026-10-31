@@ -7,25 +7,13 @@ import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { subscribe } from './events';
 import { useAddons, type AddonSelection } from './components/AddonPane';
+import { MenuTarget } from './menu-target';
 import type { DashboardPick } from './components/Dashboard';
 import type { DetailTab } from './components/TaskDetail';
 import { useDialogKeys } from './components/hooks';
 
 const MAX_RECORDS = 500;
 const RECENT_RUNS = 10;
-
-export function restStatus(rest: RestState, now: number): string {
-  if (rest.phase === 'countdown' && rest.sleepAt !== null) {
-    return `Rest Mode — sleeping in ${Math.max(0, Math.ceil((rest.sleepAt - now) / 1000))} s`;
-  }
-  if (rest.phase === 'sleeping') {
-    const wake = rest.wakeAt !== null
-      ? ` until ${new Date(rest.wakeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-      : '';
-    return `Rest Mode — sleeping${wake}`;
-  }
-  return 'Rest Mode — waiting for tasks to finish';
-}
 
 /** The status bar's Prevent Sleep text while its timer is on; null while it's off. */
 export function preventSleepStatus(state: PreventSleepState): string | null {
@@ -42,6 +30,8 @@ export function preventSleepStatus(state: PreventSleepState): string | null {
 export function useMainWindow() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  // False until the tasks and the runtimes have both answered: the counts before that are placeholders.
+  const [loaded, setLoaded] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   // The project whose view shows; picking a task or an addon item clears it.
   const [projectSel, setProjectSel] = useState<string | null>(null);
@@ -56,7 +46,6 @@ export function useMainWindow() {
   const [tab, setTab] = useState<DetailTab>('status');
   // Run to select in the run log (notification click); a fresh object per click re-triggers.
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
-  const [now, setNow] = useState(Date.now());
   const [rest, setRest] = useState<RestState | null>(null);
   const [preventSleep, setPreventSleep] = useState<PreventSleepState | null>(null);
   // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
@@ -68,7 +57,7 @@ export function useMainWindow() {
   const [runsChanged, setRunsChanged] = useState(0);
   // Counts View → Dashboard, so a phone view can go back to its dashboard.
   const [dashboardShown, setDashboardShown] = useState(0);
-  const { addons, panes: addonPanes, reload: reloadAddon } = useAddons();
+  const { addons, panes: addonPanes, reload: reloadAddon, loaded: addonsLoaded } = useAddons();
   // The addon pane item whose screen shows; picking a task clears it.
   const [addonSel, setAddonSel] = useState<AddonSelection | null>(null);
   const runningAddons = addons.filter((a) => a.status === 'running').length;
@@ -123,8 +112,23 @@ export function useMainWindow() {
     setFocusRun(e.view === 'runs' ? { runId: e.runId } : null);
   }, []);
 
+  // The task a long-pressed row's menu is open for: its command acts on it, not on the selection (which the press must not change).
+  const menuTarget = useRef(new MenuTarget()).current;
+  const setMenuTarget = useCallback((taskId: string | null) => menuTarget.set(taskId), [menuTarget]);
+  useEffect(() => {
+    // The popup is drawn outside this page: a touch on the page means it closed without a command.
+    const drop = () => menuTarget.clear();
+    document.addEventListener('pointerdown', drop, true);
+    return () => document.removeEventListener('pointerdown', drop, true);
+  }, [menuTarget]);
+
   const uiAction = useCallback((type: UiEvent['type']) => {
-    const { selected: sel, project: proj, menuProject: menuProj, tasks: ts, runtimes: rts, terminalRun: pickedRun } = uiRef.current;
+    const forced = menuTarget.take<string | null>(null);
+    const ui = uiRef.current;
+    const { menuProject: menuProj, tasks: ts, runtimes: rts } = ui;
+    const sel = forced ?? ui.selected;
+    const proj = forced ? null : ui.project;
+    const pickedRun = forced ? null : ui.terminalRun;
     switch (type) {
       case 'edit-project':
         if (menuProj) void window.looper.projects.openEditor(menuProj);
@@ -279,19 +283,21 @@ export function useMainWindow() {
         break;
       }
     }
-  }, []);
+  }, [menuTarget]);
 
   useEffect(() => {
     void window.looper.info().then(setInfo);
-    void window.looper.tasks.list().then(setTasks);
+    void Promise.all([
+      window.looper.tasks.list().then(setTasks),
+      window.looper.runtime.list().then((list) => {
+        const map: Record<string, TaskRuntime> = {};
+        for (const rt of list) map[rt.taskId] = rt;
+        setRuntimes(map);
+      }),
+    ]).finally(() => setLoaded(true));
     void window.looper.projects.list().then(setProjects);
     void window.looper.folders.list().then(setFolders);
     void window.looper.folders.layout().then(setLayout);
-    void window.looper.runtime.list().then((list) => {
-      const map: Record<string, TaskRuntime> = {};
-      for (const rt of list) map[rt.taskId] = rt;
-      setRuntimes(map);
-    });
     void window.looper.restState().then(setRest);
     void window.looper.preventSleepState().then(setPreventSleep);
     void window.looper.remote.state().then(setRemote);
@@ -344,12 +350,10 @@ export function useMainWindow() {
       setProjectSel(null);
       setAddonSel({ addonId: e.addonId, pane: e.pane, item: e.item });
     });
-    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       unsub();
       unsubUi();
       unsubAddons();
-      clearInterval(t);
     };
   }, []);
 
@@ -472,6 +476,7 @@ export function useMainWindow() {
 
   return {
     info,
+    loaded,
     view,
     tasks,
     projects,
@@ -479,13 +484,15 @@ export function useMainWindow() {
     layout,
     runtimes,
     records,
-    now,
     rest,
     preventSleep,
     remote,
     remoteOpen,
+    // False until Remote Control's state answers: before that its sessions can't be told from none.
+    remoteLoaded: remote !== null,
     counts,
     addons,
+    addonsLoaded,
     addonPanes,
     runningAddons,
     reloadAddon,
@@ -513,6 +520,7 @@ export function useMainWindow() {
     selectAddon,
     setTab,
     setPick,
+    setMenuTarget,
     setTerminalRun,
     openFromDashboard,
     uiAction,

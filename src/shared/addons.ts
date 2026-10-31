@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { REPORT_INPUT, issueLines } from './issues';
+import { UI_PLATFORMS } from './ui-platform';
 
 /**
  * Addons: programs that add screens to Looper. An addon is a process Looper
@@ -17,6 +18,13 @@ export const ADDON_FORMAT = 1;
 const id = z.string().regex(/^[a-z0-9][a-z0-9._:-]*$/i, 'use letters, digits, ".", "_", ":" or "-"');
 /** An addon's own id names its manifest file, so it keeps to what every file system accepts. */
 const addonId = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/i, 'use letters, digits, ".", "_" or "-"');
+
+/** Where an item shows: 'desktop' (Looper's windows), 'web' (a desktop browser), 'mobile' (phones and tablets); unset: everywhere. */
+const platforms = z
+  .array(z.enum(UI_PLATFORMS))
+  .min(1)
+  .refine((p) => new Set(p).size === p.length, 'list each platform once')
+  .optional();
 
 const RunBase = {
   command: z.array(z.string().min(1)).min(1),
@@ -71,6 +79,7 @@ export const AddonToolSchema = z
     params: ParamsSchema.optional(),
     width: z.number().int().min(320).max(2000).optional(),
     height: z.number().int().min(200).max(1400).optional(),
+    platforms,
   })
   .strict()
   .refine((t) => !!t.pane !== !!t.view, 'give either "pane" or "view"');
@@ -83,6 +92,7 @@ export const AddonMainButtonSchema = z
     label: z.string().min(1),
     icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
     tool: id.optional(),
+    platforms,
   })
   .strict();
 export type AddonMainButton = z.infer<typeof AddonMainButtonSchema>;
@@ -366,6 +376,7 @@ const MenuItemSchema = z.union([
       checked: z.boolean().optional(),
       /** With `checked`: a bullet instead, for one choice among the items next to it. */
       radio: z.boolean().optional(),
+      platforms,
     })
     .strict(),
   z.object({ separator: z.literal(true) }).strict(),
@@ -387,8 +398,48 @@ export function commandOn(command: { id: string; needsItem?: boolean }, item: { 
 }
 
 /** A window's menu bar: its menus, left to right. `&` in a label marks its access key. */
-const MenuBarSchema = z.array(z.object({ label: z.string().min(1), items: z.array(MenuItemSchema) }).strict());
+const MenuBarSchema = z.array(z.object({ label: z.string().min(1), items: z.array(MenuItemSchema), platforms }).strict());
 export type AddonMenuBar = z.infer<typeof MenuBarSchema>;
+
+/**
+ * One entry of a designed phone More menu: a toolbar button (by id), a whole
+ * menu-bar menu (by its label, `&` aside) whose items show in its place, or
+ * one menu-bar item (by id).
+ */
+const MoreRefSchema = z.union([
+  z.object({ toolbar: id }).strict(),
+  z.object({ menu: z.string().min(1) }).strict(),
+  z.object({ item: id }).strict(),
+]);
+export type AddonMoreRef = z.infer<typeof MoreRefSchema>;
+
+/**
+ * A designed More menu for phones, instead of the default one (the toolbar's
+ * buttons, then the menu bar's menus): groups of entries, each group set off
+ * from the next. Only what applies to the screen.
+ */
+const MobileMoreSchema = z.array(z.array(MoreRefSchema).min(1)).min(1);
+export type AddonMobileMore = z.infer<typeof MobileMoreSchema>;
+
+const menuLabel = (label: string): string => label.replace(/&(&?)/g, (_m, amp: string) => amp).toLowerCase();
+
+/** The entries of a `mobileMore` that name nothing in the screen's toolbar or menu bar. */
+function strayMoreRefs(s: { toolbar?: AddonToolbarItem[]; menuBar?: AddonMenuBar; mobileMore?: AddonMobileMore }): string[] {
+  const buttons = new Set((s.toolbar ?? []).flatMap((t) => ('id' in t ? [t.id] : [])));
+  const menus = new Set((s.menuBar ?? []).map((m) => menuLabel(m.label)));
+  const items = new Set((s.menuBar ?? []).flatMap((m) => m.items.flatMap((it) => ('id' in it ? [it.id] : []))));
+  return (s.mobileMore ?? []).flat().flatMap((r) =>
+    'toolbar' in r
+      ? buttons.has(r.toolbar) ? [] : [`no toolbar button "${r.toolbar}"`]
+      : 'menu' in r
+        ? menus.has(menuLabel(r.menu)) ? [] : [`no menu "${r.menu}"`]
+        : items.has(r.item) ? [] : [`no menu item "${r.item}"`],
+  );
+}
+
+const checkMobileMore = (s: Parameters<typeof strayMoreRefs>[0], ctx: z.RefinementCtx) => {
+  for (const message of strayMoreRefs(s)) ctx.addIssue({ code: 'custom', path: ['mobileMore'], message: `mobileMore names ${message}` });
+};
 
 const ToolbarItemSchema = z.union([
   z
@@ -402,6 +453,7 @@ const ToolbarItemSchema = z.union([
       disabled: z.boolean().optional(),
       confirm: z.string().min(1).optional(),
       needsItem: z.boolean().optional(),
+      platforms,
     })
     .strict()
     .refine((t) => !t.iconOnly || t.icon, { error: '"iconOnly" needs an "icon"', path: ['iconOnly'] }),
@@ -416,11 +468,14 @@ export const AddonScreenSchema = z
     toolbar: z.array(ToolbarItemSchema).optional(),
     /** The menu bar of a window this screen fills (ignored in the main window). */
     menuBar: MenuBarSchema.optional(),
+    /** The phone's More menu for this screen; unset: its toolbar buttons, then its menu bar. */
+    mobileMore: MobileMoreSchema.optional(),
     body: z.array(AddonNodeSchema),
     /** Draw the screen again this often while it shows (a countdown, a live value). */
     refreshSec: z.number().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(checkMobileMore);
 export type AddonScreen = z.infer<typeof AddonScreenSchema>;
 
 // ---------- Panes ----------
@@ -458,8 +513,11 @@ export const AddonPaneContentSchema = z
     empty: z.string().optional(),
     /** A search box above the list; Looper filters the items as the user types. */
     search: z.object({ placeholder: z.string().min(1).optional() }).strict().optional(),
+    /** In a pane window on a phone: its More menu; unset: the toolbar's buttons, then the menu bar. */
+    mobileMore: MobileMoreSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(checkMobileMore);
 export type AddonPaneContent = z.infer<typeof AddonPaneContentSchema>;
 
 const WORD = /[^\p{L}\p{N}]+/u;

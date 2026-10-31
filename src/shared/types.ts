@@ -486,7 +486,7 @@ export const ViewSchema = z.object({
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
-  single: TaskListOptionsSchema.extend({ visible: z.boolean().default(true) }).prefault({}),
+  single: TaskListOptionsSchema.extend({ visible: z.boolean().default(true), collapsed: z.boolean().default(false) }).prefault({}),
   panes: z
     .object({
       tasks: SidebarPaneSchema.prefault({}),
@@ -532,6 +532,8 @@ export const ViewSchema = z.object({
       showRuns: z.boolean().default(false),
       /** A single chat's window (Open in New Window) shows the activity pane. */
       windowActivityPane: z.boolean().default(false),
+      /** A single chat's window shows the status bar. */
+      windowStatusBar: z.boolean().default(true),
       collapsed: z.array(z.string()).default([]),
       /** The dashboard's cards shown at twice their size, by session id. */
       bigCards: z.array(z.string()).default([]),

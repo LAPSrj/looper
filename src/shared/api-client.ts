@@ -82,6 +82,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       add: (name, parentId) => t.invoke('folders:add', name, parentId),
       rename: (id, name) => t.invoke('folders:rename', id, name),
       remove: (id) => t.invoke('folders:remove', id),
+      command: (id, command) => t.send('folder:command', id, command),
     },
     templates: {
       list: () => t.invoke('templates:list'),
@@ -209,7 +210,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
 
     openEnvironmentEditor: (envId, isNew) => t.invoke('envEditor:open', envId, isNew),
     openHarnessEditor: (envId, harnessId, isNew) => t.invoke('harnessEditor:open', envId, harnessId, isNew),
-    openModelEditor: (envId, harnessId, index) => t.invoke('modelEditor:open', envId, harnessId, index),
+    openModelEditor: (envId, harnessId, index, copyOf) => t.invoke('modelEditor:open', envId, harnessId, index, copyOf),
     openModelUpdate: (envId, harnessId) => t.invoke('modelUpdate:open', envId, harnessId),
     discoverModels: (envId, harnessId) => t.invoke('models:discover', envId, harnessId).catch(plainError),
     openTemplateEditor: (templateId) => t.invoke('templateEditor:open', templateId),
@@ -226,7 +227,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     updateSettings: (patch) => t.invoke('settings:update', patch).catch(plainError),
     getStartWithSystem: () => t.invoke('loginItem:get'),
     setStartWithSystem: (enabled) => t.invoke('loginItem:set', enabled),
-    showError: (message) => t.invoke('dialog:error', message),
+    showError: (message, detail) => t.invoke('dialog:error', message, detail),
+    fitWindow: (contentHeight) => t.send('window:fit', contentHeight),
     confirm: (message) => t.invoke('dialog:confirm', message),
     reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject) =>
       t.send(
@@ -243,6 +245,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       ),
     showTaskContextMenu: (info) => t.send('context-menu:task', info),
     showFolderContextMenu: (info) => t.send('context-menu:folder', info),
+    showListContextMenu: (token, items) => t.send('context-menu:list', token, items),
     showRecycleBinContextMenu: () => t.send('context-menu:recycle-bin'),
     showVersionContextMenu: (info) => t.send('context-menu:version', info),
     showTasksEmptyContextMenu: () => t.send('context-menu:tasks-empty'),

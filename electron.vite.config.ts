@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
+import pkg from './package.json';
 
 export default defineConfig({
   main: {
@@ -29,5 +30,9 @@ export default defineConfig({
     resolve: {
       alias: { '@shared': resolve(__dirname, 'src/shared') },
     },
+    // A phone page compares this with the server's version to tell it is out of date.
+    define: { __LOOPER_VERSION__: JSON.stringify(pkg.version) },
+    // electron-vite's renderer default is no minification; phones download this bundle.
+    build: { minify: 'esbuild', cssMinify: true },
   },
 });

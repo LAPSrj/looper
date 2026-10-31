@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react';
 import type { DragEvent } from 'react';
+import type { UiEvent } from '@shared/api';
 import type { Task, TaskFolder, TaskListOptions, TaskRuntime } from '@shared/types';
 import { folderParents, folderSubtree } from '@shared/folders';
 import { ALL_FILTERS, passesFilter, type PaneDef } from '@shared/panes';
-import { capFirst, fmtClock, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
+import { siblingOrder } from '../task-tree';
+import { isPhone } from '../web/page-nav';
+import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
+import { listContextMenu, parentIndex } from './list-nav';
+import { TaskSubline } from './Live';
 
 interface Props {
+  /** The main window's task commands (Delete runs `delete-task` on the selected task, with its question). */
+  onCommand?: (type: UiEvent['type']) => void;
   tasks: Task[];
   folders: TaskFolder[];
   /** Sibling display order per container ('' = top level): `folder:<id>` entries mixed with task ids. */
   layout: Record<string, string[]>;
   runtimes: Record<string, TaskRuntime>;
   selected: string | null;
-  now: number;
   /** null = nothing selected (a click on the list's empty space). */
   onSelect: (id: string | null) => void;
   /** Show only the task name, without the state line. */
@@ -70,9 +76,9 @@ type Row =
   | { kind: 'folder'; folder: TaskFolder; depth: number; open: boolean; showChildren: boolean; taskCount: number }
   | { kind: 'task'; task: Task; depth: number; container: string; popOut: boolean };
 
-const INDENT = 14;
+const INDENT = GROUP_INDENT;
 
-export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSelect, compact, pane, options, showEmptyFolders, autoOpenFolders }: Props) {
+export function TaskList({ tasks, folders, layout, runtimes, selected, onSelect, onCommand, compact, pane, options, showEmptyFolders, autoOpenFolders }: Props) {
   const passes = (t: Task) => (!pane || pane.member(t)) && passesFilter(t, options, pane?.filters ?? ALL_FILTERS);
   // Goals list by due time; the other lists keep the order the user dragged them into.
   const sorted = pane?.id === 'goals';
@@ -85,20 +91,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
 
   // Sibling order per container, self-healed: the folders/tasks props can
   // outrun the layout event, so members the layout doesn't know append.
-  const entriesOf = new Map<string, string[]>();
-  for (const container of ['', ...folders.map((f) => f.id)]) {
-    const valid = new Set<string>();
-    for (const f of folders) if (parents.get(f.id) === container) valid.add(`folder:${f.id}`);
-    for (const t of tasks) if (containerOf(t) === container) valid.add(t.id);
-    const list: string[] = [];
-    for (const entry of layout[container] ?? []) {
-      if (!valid.has(entry)) continue;
-      valid.delete(entry);
-      list.push(entry);
-    }
-    list.push(...valid);
-    entriesOf.set(container, list);
-  }
+  const entriesOf = siblingOrder(tasks, folders, layout, parents);
 
   // Folder open state lives per session; the setting decides the default.
   // `marked` holds the exceptions: closed folders when auto-open is on, open
@@ -184,15 +177,53 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
   if (options.showFolders) build('', 0);
   else buildFlat();
 
-  const visible = rows.flatMap((r) => (r.kind === 'task' ? [r.task] : []));
-  const idx = visible.findIndex((t) => t.id === selected);
+  // The keyboard walks every row, folder headers included. The active row is the selected task, or the folder the
+  // keyboard last stopped on (the selected task stays selected while it does).
+  const folderRowId = (id: string) => rowId(`folder-${id}`);
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  const folderAt = activeFolder ? rows.findIndex((r) => r.kind === 'folder' && r.folder.id === activeFolder) : -1;
+  const idx = folderAt >= 0 ? folderAt : rows.findIndex((r) => r.kind === 'task' && r.task.id === selected);
+  const rowIdAt = (r: Row) => (r.kind === 'task' ? rowId(r.task.id) : folderRowId(r.folder.id));
+  const depths = rows.map((r) => r.depth);
+  const showRowMenu = (r: Row) => (r.kind === 'task' ? showTaskMenu(r.task, runtimes[r.task.id]) : window.looper.showFolderContextMenu({ folderId: r.folder.id }));
   const onKeyDown = useListNav({
-    count: visible.length,
+    count: rows.length,
     index: idx,
     onIndex: (i) => {
-      if (visible[i].id !== selected) onSelect(visible[i].id);
+      const r = rows[i];
+      if (r.kind === 'folder') return setActiveFolder(r.folder.id);
+      setActiveFolder(null);
+      if (r.task.id !== selected) onSelect(r.task.id);
     },
-    scrollToId: selected ? rowId(selected) : null,
+    onActivate: (i) => {
+      const r = rows[i];
+      if (r.kind === 'folder') toggleFolder(r.folder.id);
+      else void window.looper.openEditor(r.task.id);
+    },
+    onDelete: (i) => {
+      const r = rows[i];
+      if (r.kind === 'folder') window.looper.folders.command(r.folder.id, 'delete');
+      else onCommand?.('delete-task');
+    },
+    onRename: (i) => {
+      const r = rows[i];
+      if (r.kind === 'folder') window.looper.folders.command(r.folder.id, 'rename');
+    },
+    onMenu: (i) => showRowMenu(rows[i]),
+    tree: options.showFolders
+      ? {
+          expanded: (i) => {
+            const r = rows[i];
+            return r.kind === 'folder' ? r.open : undefined;
+          },
+          set: (i, open) => {
+            const r = rows[i];
+            if (r.kind === 'folder' && r.open !== open) toggleFolder(r.folder.id);
+          },
+          parent: (i) => parentIndex(depths, i),
+        }
+      : undefined,
+    scrollToId: idx >= 0 ? rowIdAt(rows[idx]) : null,
   });
 
   const [drag, setDrag] = useState<DragItem | null>(null);
@@ -312,33 +343,6 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
   const taskRow = (r: Extract<Row, { kind: 'task' }>) => {
     const { task: t, depth, container, popOut } = r;
     const rt = runtimes[t.id];
-    const label = stateLabel(rt);
-    const countdown = rt?.state === 'idle' ? fmtCountdown(rt.nextRunAt, now) : '';
-    const sub =
-      rt?.state === 'idle'
-        ? countdown === ''
-          ? t.trigger.mode === 'manual'
-            ? 'Manual'
-            : t.trigger.mode === 'watcher'
-              ? (rt.watcher === 'watching' ? 'Watching' : rt.watcher === 'restarting' ? 'Watcher restarting' : 'Idle') +
-                (rt.lastEventAt !== null ? ` · last event ${fmtClock(rt.lastEventAt, now)}` : '')
-              : 'Not scheduled'
-          : countdown === 'now'
-            ? 'Next run now'
-            : sorted && rt.nextRunAt !== null
-              ? `Next run ${fmtDateTime(rt.nextRunAt)}`
-              : `Next run in ${countdown}`
-        : rt?.state === 'paused'
-          ? capFirst(rt.pausedReason ?? 'paused')
-          : capFirst(rt?.lastDetail ?? '') || resultLabel(rt?.lastResult ?? '');
-    const active = rt?.state === 'running' || rt?.state === 'checking' || rt?.state === 'classifying';
-    const subLine = active
-      ? label
-      : t.completedAt
-        ? `Completed ${fmtDate(t.completedAt)}`
-        : rt?.state === 'disabled'
-          ? 'Disabled'
-          : sub;
     // "After the folder" on its closing row shows a line one indent step out.
     const dropClass =
       drop?.kind === 'task' && drop.taskId === t.id
@@ -350,7 +354,8 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
       <li
         key={t.id}
         id={rowId(t.id)}
-        role="option"
+        role={options.showFolders ? 'treeitem' : 'option'}
+        aria-level={options.showFolders ? depth + 1 : undefined}
         aria-selected={selected === t.id}
         className={`task-item ${selected === t.id ? 'selected' : ''} ${rt?.held || rt?.asking ? 'held' : ''}${t.enabled ? '' : ' disabled'}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
@@ -381,23 +386,23 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           e.stopPropagation();
           if (drop) completeDrop(drop);
         }}
-        onClick={() => onSelect(t.id)}
+        onClick={() => {
+          setActiveFolder(null);
+          onSelect(t.id);
+        }}
         onDoubleClick={() => void window.looper.openEditor(t.id)}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          onSelect(t.id);
+          // On a phone a selection is a push: the long press mustn't open the task.
+          if (!isPhone) onSelect(t.id);
           showTaskMenu(t, runtimes[t.id]);
         }}
       >
         <div className="task-item-row">
           <span className="task-name">{t.name}</span>
         </div>
-        {!compact && (
-          <div className="task-item-sub" title={subLine}>
-            {subLine}
-          </div>
-        )}
+        {!compact && <TaskSubline task={t} runtime={rt} sorted={sorted} />}
       </li>
     );
   };
@@ -415,10 +420,15 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
             ? ' drop-after'
             : '';
     return (
-      <li
+      <GroupHeader
         key={`folder-${f.id}`}
-        role="presentation"
-        className={`task-folder${dropClass}`}
+        id={folderRowId(f.id)}
+        as="li"
+        name={f.name}
+        open={open}
+        count={taskCount}
+        level={depth + 1}
+        className={`task-folder${activeFolder === f.id ? ' active' : ''}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
         draggable
         onDragStart={(e) => {
@@ -427,7 +437,10 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           e.dataTransfer.setData('text/plain', `folder:${f.id}`);
         }}
         onDragEnd={clearDrag}
-        onClick={() => toggleFolder(f.id)}
+        onToggle={() => {
+          setActiveFolder(f.id);
+          toggleFolder(f.id);
+        }}
         onDragOver={(e) => {
           if (!drag) return;
           const rect = e.currentTarget.getBoundingClientRect();
@@ -448,35 +461,18 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
           e.stopPropagation();
           window.looper.showFolderContextMenu({ folderId: f.id });
         }}
-      >
-        <svg
-          className={`chev${open ? ' open' : ''}`}
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3.5 1.5 7 5l-3.5 3.5" />
-        </svg>
-        <span className="task-folder-name">{f.name}</span>
-        {!open && taskCount > 0 && <span className="task-folder-count">{taskCount}</span>}
-      </li>
+      />
     );
   };
 
   return (
     <ul
       className={`task-list${compact ? ' compact' : ''}`}
-      role="listbox"
+      role={options.showFolders ? 'tree' : 'listbox'}
       aria-label="Tasks"
       tabIndex={0}
       onKeyDown={onKeyDown}
-      aria-activedescendant={selected && visible.some((t) => t.id === selected) ? rowId(selected) : undefined}
+      aria-activedescendant={idx >= 0 ? rowIdAt(rows[idx]) : undefined}
       // A click on the empty space below the rows clears the selection, which shows the dashboard.
       onClick={(e) => {
         if (e.target === e.currentTarget) onSelect(null);
@@ -489,11 +485,8 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, now, onSe
         e.preventDefault();
         completeDrop({ kind: 'root' });
       }}
-      onContextMenu={(e) => {
-        if (e.target !== e.currentTarget) return;
-        e.preventDefault();
-        window.looper.showTasksEmptyContextMenu();
-      }}
+      // The keyboard's menu request (Shift+F10, the Menu key) lands here: it opens the active row's menu.
+      onContextMenu={(e) => listContextMenu(e, idx, (i) => showRowMenu(rows[i]), () => window.looper.showTasksEmptyContextMenu())}
     >
       {rows.map((r) => (r.kind === 'task' ? taskRow(r) : folderRow(r)))}
     </ul>

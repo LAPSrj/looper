@@ -10,6 +10,7 @@ import type {
   RemoteWindowSpec,
   ServerMessage,
 } from '../../shared/remote-access';
+import { uiPlatformOf, type UiPlatform } from '../../shared/ui-platform';
 import { encodeBytes } from './bytes';
 import { runAs } from './context';
 import { SaveDelivery } from './deliver';
@@ -234,15 +235,18 @@ export class RemoteWindow extends EventEmitter implements AppWindow {
 
   setMenu(menu: MenuLike | null): void {
     if (!menu) return this.removeMenu();
+    const next = serializeMenu(menu, this.client.uiPlatform);
+    // The new items are the ones a pick runs, even when the client already has an identical bar.
+    const same = JSON.stringify(next.items) === JSON.stringify(this.menuBar?.items);
     this.menuSource = menu;
-    this.menuBar = serializeMenu(menu);
-    if (!this.destroyed) this.client.send({ t: 'window-menu', w: this.w, menu: this.menuBar.items });
+    this.menuBar = next;
+    if (!same && !this.destroyed) this.client.send({ t: 'window-menu', w: this.w, menu: next.items });
   }
 
   /** Send the menu bar again when its items changed in place (a checkmark the code set). */
   refreshMenu(): void {
     if (!this.menuSource || this.destroyed) return;
-    const next = serializeMenu(this.menuSource);
+    const next = serializeMenu(this.menuSource, this.client.uiPlatform);
     if (JSON.stringify(next.items) === JSON.stringify(this.menuBar?.items)) return;
     this.menuBar = next;
     this.client.send({ t: 'window-menu', w: this.w, menu: next.items });
@@ -334,6 +338,11 @@ export class RemoteClient {
     return this.sendFn !== null;
   }
 
+  /** Which menu and toolbar items it shows (shared/ui-platform). */
+  get uiPlatform(): UiPlatform {
+    return uiPlatformOf(this.platform);
+  }
+
   /** Attach the tab's current connection, or null while it's away. */
   setConnection(send: Send | null): void {
     this.sendFn = send;
@@ -396,7 +405,7 @@ export class RemoteClient {
   // ---------- menus ----------
 
   popup(win: RemoteWindow, menu: MenuLike, x?: number, y?: number): void {
-    const { items, byId } = serializeMenu(menu);
+    const { items, byId } = serializeMenu(menu, this.uiPlatform);
     if (items.length === 0 || win.isDestroyed()) return;
     // One popup at a time, as on the desktop: a new one replaces the last.
     this.popups.clear();

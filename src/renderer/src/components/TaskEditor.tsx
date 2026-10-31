@@ -7,8 +7,9 @@ import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathF
 import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
-import { Field, NumberField, NumberInput, TabBar, EditorFooter } from './ui';
+import { Field, NumberField, NumberInput, StepFields, TabBar, EditorFooter } from './ui';
 import { useDialogKeys } from './hooks';
+import { blankDraft, type Draft } from './blank-draft';
 
 interface Props {
   task: Task | null;
@@ -31,10 +32,6 @@ interface Props {
   onCancel: () => void;
 }
 
-type Draft = TaskInput & {
-  agent: NonNullable<TaskInput['agent']>;
-};
-
 /** The context limit a task gets when the restart option is turned on. */
 const DEFAULT_CONTEXT_LIMIT_K = 400;
 
@@ -51,19 +48,6 @@ const TABS: [EditorTab, string][] = [
   ['notifications', 'Notifications'],
   ['json', 'Advanced'],
 ];
-
-function blankDraft(environmentId?: string): Draft {
-  return {
-    ...EXAMPLE_TASK,
-    id: '',
-    name: '',
-    cwd: '',
-    environmentId: environmentId ?? '',
-    check: { enabled: true, command: '', timeoutSec: 60 },
-    classifier: undefined,
-    agent: { ...EXAMPLE_TASK.agent, prompt: '' },
-  } as Draft;
-}
 
 function toDraft(t: Task): Draft {
   return JSON.parse(JSON.stringify(t)) as Draft;
@@ -148,9 +132,9 @@ function defaultStopOn(): string {
   return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function TimezoneSelect({ value, onChange }: { value?: string; onChange: (tz?: string) => void }) {
+function TimezoneSelect({ value, onChange, id }: { value?: string; onChange: (tz?: string) => void; id?: string }) {
   return (
-    <select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}>
+    <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}>
       <option value="">Use computer timezone</option>
       {value && !TIMEZONES.includes(value) && <option value={value}>{value}</option>}
       {TIMEZONE_GROUPS.map(([region, zones]) => (
@@ -165,7 +149,7 @@ function TimezoneSelect({ value, onChange }: { value?: string; onChange: (tz?: s
     </select>
   );
 }
-
+TimezoneSelect.labelable = true;
 
 export function TaskEditor({ task, initial, environments, projects, projectId, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() => {
@@ -431,7 +415,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
     }
     const v = validateTask(obj, environments, host, mode === 'template' ? { template: true } : undefined);
     if (!v.ok) {
-      void window.looper.showError(v.errors.join('\n'));
+      void window.looper.showError(mode === 'template' ? "Can't save the template." : "Can't save the task.", v.errors.join('\n'));
       return false;
     }
     setSaving(true);
@@ -455,7 +439,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
 
   return (
     <div className="editor">
-      <TabBar tabs={TABS} active={tab} onSelect={switchTab} className="editor-tabs" />
+      <TabBar tabs={TABS} active={tab} onSelect={switchTab} className="editor-tabs" label="Task" sections>
       <div className="editor-body">
         <div className={`editor-panel${tab !== 'general' ? ' hidden' : ''}`}>
           <div className="form">
@@ -508,20 +492,23 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 Override the project's environment
               </label>
             )}
-            <Field label="Environment">
-              <select
-                value={env?.id ?? draft.environmentId ?? ''}
-                disabled={!!project && !draft.overrideEnvironment}
-                onChange={(e) => setEnvironment(e.target.value)}
-              >
-                {!env && <option value={draft.environmentId ?? ''}>Unknown environment ({draft.environmentId || 'none'})</option>}
-                {envChoices.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {/* Under a project the environment is the project's unless overridden: it hangs under the checkbox. */}
+            <StepFields when={!!project} on={!!draft.overrideEnvironment}>
+              <Field label="Environment">
+                <select
+                  value={env?.id ?? draft.environmentId ?? ''}
+                  disabled={!!project && !draft.overrideEnvironment}
+                  onChange={(e) => setEnvironment(e.target.value)}
+                >
+                  {!env && <option value={draft.environmentId ?? ''}>Unknown environment ({draft.environmentId || 'none'})</option>}
+                  {envChoices.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </StepFields>
           </div>
         </div>
 
@@ -568,6 +555,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                     <NumberInput
                       min={everyH > 0 ? 0 : 1}
                       max={59}
+                      label="Minutes"
                       suffix="min"
                       value={everyM}
                       onChange={(m) => {
@@ -590,6 +578,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                       return (
                         <button
                           key={d}
+                          aria-pressed={on}
                           className={`btn small day-toggle ${on ? 'selected' : ''}`}
                           onClick={() => {
                             const days = on ? schedForm.days.filter((x) => x !== d) : [...schedForm.days, d];
@@ -641,6 +630,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                           min={0}
                           max={23}
                           suffix="h"
+                          label="From hour"
                           value={schedForm.from}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23) setSchedule({ ...schedForm, from: v });
@@ -654,6 +644,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                           min={0}
                           max={23}
                           suffix="h"
+                          label="To hour"
                           value={schedForm.to}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23) setSchedule({ ...schedForm, to: v });
@@ -671,6 +662,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                     {[1, 2, 3, 4, 5, 6, 0].map((d) => (
                       <button
                         key={d}
+                        aria-pressed={constraintDays.includes(d)}
                         className={`btn small day-toggle ${constraintDays.includes(d) ? 'selected' : ''}`}
                         onClick={() => toggleConstraintDay(d)}
                       >
@@ -726,6 +718,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                     return (
                       <button
                         key={d}
+                        aria-pressed={on}
                         className={`btn small day-toggle ${on ? 'selected' : ''}`}
                         onClick={() => {
                           const days = on ? schedForm.days.filter((x) => x !== d) : [...schedForm.days, d];
@@ -752,7 +745,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 )}
               </Field>
             )}
-            <Field label="Timezone">
+            <Field label="Time zone">
               <TimezoneSelect
                 value={trig.schedule?.timezone}
                 onChange={(tz) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: tz } })}
@@ -817,6 +810,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                           min={0}
                           max={23}
                           suffix="h"
+                          label="From hour"
                           value={hours.from}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
@@ -831,6 +825,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                           min={0}
                           max={23}
                           suffix="h"
+                          label="To hour"
                           value={hours.to}
                           onChange={(v) => {
                             if (Number.isInteger(v) && v >= 0 && v <= 23)
@@ -849,6 +844,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                     {[1, 2, 3, 4, 5, 6, 0].map((d) => (
                       <button
                         key={d}
+                        aria-pressed={watcherDays.includes(d)}
                         className={`btn small day-toggle ${watcherDays.includes(d) ? 'selected' : ''}`}
                         onClick={() => toggleWatcherDay(d)}
                       >
@@ -858,7 +854,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                   </div>
                 </Field>
                 {(hours || watcher?.days) && (
-                  <Field label="Timezone">
+                  <Field label="Time zone">
                     <TimezoneSelect value={watcher?.timezone} onChange={(tz) => setWatcher({ timezone: tz })} />
                   </Field>
                 )}
@@ -1062,6 +1058,8 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 Override the project's agent settings
               </label>
             )}
+            {/* The same order as the Project editor: Harness, Model | Effort, Session type | Permission mode. Under a project they hang under the override checkbox. */}
+            <StepFields when={!!project} on={!!draft.overrideAgent}>
             <div className="row">
               <Field label="Harness">
                 <select
@@ -1077,23 +1075,6 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                   ))}
                 </select>
               </Field>
-              <Field label="Session type">
-                <select value={draft.agent.mode ?? 'interactive'} disabled={agentLocked} onChange={(e) => setAgent('mode', e.target.value as 'interactive' | 'headless')}>
-                  <option value="interactive">Interactive terminal (default)</option>
-                  <option value="headless">Headless{isCodex ? ' (codex exec)' : ''}</option>
-                </select>
-              </Field>
-              {permissionModes.length > 0 && (
-                <Field label="Permission mode">
-                  <select value={draft.agent.permissionMode ?? 'auto'} disabled={agentLocked} onChange={(e) => setAgent('permissionMode', e.target.value)}>
-                    {permissionModes.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              )}
             </div>
             {(isClaude || isCodex) && (
               <div className="row">
@@ -1159,6 +1140,26 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 )}
               </div>
             )}
+            <div className="row">
+              <Field label="Session type">
+                <select value={draft.agent.mode ?? 'interactive'} disabled={agentLocked} onChange={(e) => setAgent('mode', e.target.value as 'interactive' | 'headless')}>
+                  <option value="interactive">Interactive terminal (default)</option>
+                  <option value="headless">Headless{isCodex ? ' (codex exec)' : ''}</option>
+                </select>
+              </Field>
+              {permissionModes.length > 0 && (
+                <Field label="Permission mode">
+                  <select value={draft.agent.permissionMode ?? 'auto'} disabled={agentLocked} onChange={(e) => setAgent('permissionMode', e.target.value)}>
+                    {permissionModes.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+            </StepFields>
             {(isClaude || isCodex) && (
               <>
                 <label className="checkbox-field">
@@ -1377,9 +1378,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
         </div>
 
         <div className={`editor-panel${tab !== 'json' ? ' hidden' : ''}`}>
-          <textarea className="json-editor mono" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
+          <textarea className="json-editor mono" aria-label="Task JSON" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
         </div>
       </div>
+      </TabBar>
       <EditorFooter onPrimary={() => void save()} onCancel={onCancel} onApply={() => void apply()} saving={saving} />
     </div>
   );

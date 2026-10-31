@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyModelUpdate, buildUpdateRows, type DiscoveredModel } from '../src/shared/model-update';
-import { DEFAULT_MODELS } from '../src/shared/environments';
+import { applyModelUpdate, buildUpdateRows, hasModelChange, type DiscoveredModel } from '../src/shared/model-update';
+import { DEFAULT_MODELS, withKind } from '../src/shared/environments';
 
 const codexCatalog: DiscoveredModel[] = [
   { id: 'gpt-6-astra', name: 'GPT-6-Astra', main: true },
@@ -87,5 +87,34 @@ describe('applyModelUpdate', () => {
       { id: 'gpt-5.5', name: 'GPT-5.5' },
       { id: 'gpt-6-astra', name: 'GPT-6-Astra', defaultEffort: 'medium' },
     ]);
+  });
+});
+
+describe('withKind', () => {
+  it('names the kind only when the name does not already say it', () => {
+    expect(withKind('Claude Code', 'Claude Code')).toBe('Claude Code');
+    expect(withKind('wsl', 'WSL')).toBe('wsl');
+    expect(withKind('Work', 'Claude Code')).toBe('Work (Claude Code)');
+  });
+});
+
+describe('hasModelChange', () => {
+  const current = [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }, { id: 'gpt-5.5', name: 'GPT-5.5' }];
+
+  it('is true while a suggestion would add or remove a model', () => {
+    const rows = buildUpdateRows('codex', current, codexCatalog);
+    expect(hasModelChange(rows, {})).toBe(true);
+  });
+
+  it('is false with no rows (the catalog could not be read) or when every row is kept', () => {
+    expect(hasModelChange([], {})).toBe(false);
+    const rows = buildUpdateRows('codex', current, codexCatalog);
+    expect(hasModelChange(rows, { 'gpt-5.5': 'keep', 'gpt-6.1': 'keep' })).toBe(false);
+  });
+
+  it('is true when the user turns a kept row into a removal', () => {
+    const rows = buildUpdateRows('codex', [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }], [codexCatalog[0]]);
+    expect(hasModelChange(rows, {})).toBe(false);
+    expect(hasModelChange(rows, { 'gpt-6-astra': 'remove' })).toBe(true);
   });
 });

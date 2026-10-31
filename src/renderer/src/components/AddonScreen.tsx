@@ -5,16 +5,20 @@ import type {
   AddonButton,
   AddonEventKind,
   AddonField,
+  AddonInfo,
   AddonMenuItem,
+  AddonMobileMore,
   AddonNode,
   AddonProp,
   AddonScreen,
   AddonToolbarItem,
 } from '@shared/addons';
+import { isPhone, usePageNav } from '../web/page-nav';
+import type { MoreGroup, MoreRef } from '../web/more-menu';
 import { useDialogKeys } from './hooks';
-import { Icon } from './Icon';
-import { ICONS } from './icons';
 import { Markdown } from './Markdown';
+import { ToolbarButtons } from './Toolbar';
+import { groupsAtSeparators, type ToolbarGroup } from './toolbar-model';
 import { EditorFooter, Field, InfoBar, NumberInput, TabBar } from './ui';
 
 type Value = string | number | boolean;
@@ -62,16 +66,19 @@ export function AddonScreenView({
   mode,
   toolbarSlot,
   toolbarSep = true,
+  toolbarHidden = false,
 }: {
   addonId: string;
   addonName: string;
   view: string;
   params: Record<string, unknown>;
   mode: 'main' | 'window' | 'inline';
-  /** `main`: the end of the window's toolbar, where the screen's toolbar buttons go. */
+  /** `main`, on the desktop: the end of the window's toolbar, where the screen's toolbar buttons go. */
   toolbarSlot?: HTMLElement | null;
   /** The slot follows other buttons: a separator comes first. */
   toolbarSep?: boolean;
+  /** The addon's toolbar is turned off (View → "<Addon> Toolbar"): a phone's More menu leaves its buttons out. */
+  toolbarHidden?: boolean;
 }) {
   const [screen, setScreen] = useState<AddonScreen | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -402,24 +409,16 @@ export function AddonScreenView({
     <InfoBar stacked title={`${addonName} couldn't show this screen`} message={error} action={<button className="btn" onClick={load}>Try Again</button>} />
   );
 
-  const buttons = screen?.toolbar?.length ? (
-    <AddonToolbarButtons items={screen.toolbar} busy={busy} onClick={(id, confirm) => void send('click', id, confirm)} />
-  ) : null;
+  const groups = addonToolbarGroups(screen?.toolbar ?? [], { busy, onClick: (id, confirm) => void send('click', id, confirm) }, 'screen');
+  // A phone draws no toolbar: the screen's buttons and its designed More menu go to the frame, after the window's own.
+  usePageNav(mode === 'inline' || toolbarHidden ? null : { toolbar: groups, more: addonMore(screen?.mobileMore) }, 1);
 
   if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || screen?.body.map(node)}</div>;
   if (mode === 'main') {
     return (
       <div className="detail addon-screen">
         {/* The buttons join the window's toolbar, after its own. */}
-        {buttons &&
-          toolbarSlot &&
-          createPortal(
-            <>
-              {toolbarSep && <span className="toolbar-sep" />}
-              {buttons}
-            </>,
-            toolbarSlot,
-          )}
+        {groups.length > 0 && toolbarSlot && createPortal(<ToolbarButtons groups={groups} leadingSep={toolbarSep} />, toolbarSlot)}
         <div className="detail-bar">
           <span className="pane-title">{screen?.title ?? ''}</span>
         </div>
@@ -429,7 +428,11 @@ export function AddonScreenView({
   }
   return (
     <div className="editor addon-screen">
-      {buttons && <div className="toolbar addon-toolbar">{buttons}</div>}
+      {groups.length > 0 && !isPhone && (
+        <div className="toolbar addon-toolbar">
+          <ToolbarButtons groups={groups} />
+        </div>
+      )}
       {windowTabs && (
         <TabBar
           tabs={windowTabs.items.map((t) => [t.id, t.title] as const)}
@@ -456,44 +459,62 @@ export function AddonScreenView({
   );
 }
 
-/**
- * An addon toolbar, drawn like Looper's. Its buttons show their label next to
- * the icon, unless the addon asks for the icon alone (the label is then the tooltip).
- */
-export function AddonToolbarButtons({
-  items,
-  selected,
-  busy,
-  onClick,
-}: {
-  items: AddonToolbarItem[];
+interface AddonToolbarOpts {
   /** In a pane window: the selected item (null for none), which decides its `needsItem` buttons (commandOn). */
   selected?: { menu?: AddonMenuItem[] } | null;
   busy?: boolean;
   onClick: (id: string, confirm?: string) => void;
-}) {
-  return (
-    <>
-      {items.map((t, i) =>
-        'separator' in t ? (
-          <span key={i} className="toolbar-sep" />
-        ) : (
-          <button
-            key={t.id}
-            className={t.iconOnly ? undefined : 'labeled'}
-            title={t.iconOnly ? t.label : undefined}
-            aria-label={t.iconOnly ? t.label : undefined}
-            disabled={busy || t.disabled || (selected !== undefined && !commandOn(t, selected ?? undefined))}
-            onClick={() => onClick(t.id, t.confirm)}
-          >
-            {t.icon && <Icon>{ICONS[t.icon]}</Icon>}
-            {!t.iconOnly && t.label}
-          </button>
-        ),
-      )}
-    </>
+}
+
+/**
+ * An addon toolbar as Looper's toolbar data: its separators split the groups.
+ * Its buttons show their label next to the icon, unless the addon asks for
+ * the icon alone (the label is then the tooltip).
+ */
+export function addonToolbarGroups(items: AddonToolbarItem[], { selected, busy, onClick }: AddonToolbarOpts, prefix = 'addon'): ToolbarGroup[] {
+  return groupsAtSeparators<Exclude<AddonToolbarItem, { separator: true }>>(
+    items,
+    (t) => ({
+      id: t.id,
+      label: t.label,
+      icon: t.icon,
+      labeled: !t.iconOnly,
+      platforms: t.platforms,
+      enabled: !(busy || t.disabled || (selected !== undefined && !commandOn(t, selected ?? undefined))),
+      run: () => onClick(t.id, t.confirm),
+    }),
+    prefix,
   );
 }
+
+/** The addons' main-toolbar buttons (manifest `toolbar`), one group per addon whose toolbar shows. */
+export function addonMainGroups(addons: AddonInfo[], hidden: string[]): ToolbarGroup[] {
+  return addons
+    .filter((a) => a.enabled && a.toolbar.length && !hidden.includes(a.id))
+    .map((a) => ({
+      id: `addon:${a.id}`,
+      items: a.toolbar.map((b) => ({
+        id: `${a.id}:${b.id}`,
+        label: b.label,
+        icon: b.icon,
+        labeled: true,
+        platforms: b.platforms,
+        enabled: a.status === 'running',
+        run: () => {
+          if (b.tool) void window.looper.addons.openTool(a.id, b.tool);
+          else void window.looper.addons.event(a.id, { source: { toolbar: 'main' }, kind: 'click', id: b.id });
+        },
+      })),
+    }));
+}
+
+/** An addon toolbar's buttons, drawn like Looper's (what doesn't show on this platform left out). */
+export function AddonToolbarButtons({ items, ...opts }: AddonToolbarOpts & { items: AddonToolbarItem[] }) {
+  return <ToolbarButtons groups={addonToolbarGroups(items, opts)} />;
+}
+
+/** An addon's designed phone More menu, as the frame's: its references name the toolbar's ids and the menu bar. */
+export const addonMore = (more: AddonMobileMore | undefined): MoreGroup[] | undefined => more?.map((g) => g.map((r): MoreRef => r));
 
 /** An addon window: one of the addon's screens, opened by its openWindow action. */
 export function AddonWindowApp({ addonId, view, params, title }: { addonId: string; view: string; params: Record<string, unknown>; title: string }) {

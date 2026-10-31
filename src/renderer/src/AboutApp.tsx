@@ -16,7 +16,7 @@ export function AboutApp() {
       <h1>Looper</h1>
       <div className="muted">Created by Leandro Amorim</div>
       <div className="muted">{version ? `Version ${version}` : ''}</div>
-      <button className="btn" onClick={() => window.close()}>
+      <button className="btn" autoFocus onClick={() => window.close()}>
         OK
       </button>
     </div>

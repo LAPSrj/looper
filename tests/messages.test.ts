@@ -500,7 +500,10 @@ describe('a run with context restarts', () => {
     });
     const res = await service.read('t1', 'r1', 'a9a1cc7bb1018ff6b');
     expect(res.status).toBe('ok');
-    expect(res.rows.map((r) => r.text)).toEqual(['[Workflow harness — computed task] Move the menu', 'Moving it']);
+    expect(res.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['task', 'Move the menu'],
+      ['agent', 'Moving it'],
+    ]);
     const runs = await service.workflows('t1', 'r1');
     expect(runs.map((r) => [r.runId, r.status, r.phases.map((p) => p.agents.map((a) => a.label))])).toEqual([['wf_e83e0899-949', 'running', [['menus and power']]]]);
   });

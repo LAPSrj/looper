@@ -5,6 +5,8 @@ import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../
 import type { DetailTab } from './TaskDetail';
 import { showTaskMenu } from './TaskList';
 import { useListNav } from './hooks';
+import { StatusGlyph } from './icons';
+import { Elapsed } from './Live';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
@@ -30,24 +32,9 @@ const TRIGGER_LABELS: Record<ActiveRun['trigger'], string> = {
 /** Fits a date and time in the regional formats' short style, e.g. "22/10/2026, 18:00". */
 const STARTED_WIDTH = 150;
 
-/** Windows' standard 16 px error and warning icons. */
+/** Windows' standard 16 px error and warning icons, named for assistive technology. */
 function StatusIcon({ level }: { level: 'error' | 'warning' }) {
-  return (
-    <svg className="status-icon" width="16" height="16" viewBox="0 0 16 16" aria-label={level === 'error' ? 'Error' : 'Warning'}>
-      {level === 'error' ? (
-        <>
-          <circle className="status-icon-error" cx="8" cy="8" r="7.5" />
-          <path d="M5.3 5.3l5.4 5.4M10.7 5.3l-5.4 5.4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-        </>
-      ) : (
-        <>
-          <path className="status-icon-warning" d="M8 1.2 15.3 14.3H.7Z" strokeLinejoin="round" />
-          <path d="M8 5.6v4.3" stroke="#1b1b1b" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="8" cy="12" r=".9" fill="#1b1b1b" />
-        </>
-      )}
-    </svg>
-  );
+  return <StatusGlyph level={level} label={level === 'error' ? 'Error' : 'Warning'} />;
 }
 
 interface Props {
@@ -58,7 +45,6 @@ interface Props {
   /** The latest finished runs, newest first; null until they load. */
   recent: RecentRun[] | null;
   runtimes: Record<string, TaskRuntime>;
-  now: number;
   pick: DashboardPick | null;
   onPick: (pick: DashboardPick) => void;
   /** Double-click or Enter: select the task and show one of its tabs. */
@@ -85,9 +71,14 @@ export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => voi
 export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, remote, recent, runtimes, now, pick, onPick, onOpen }: Props) {
+export function Dashboard({ attention, running, remote, recent, runtimes, pick, onPick, onOpen }: Props) {
+  // Only names the day of a time: the running time ticks in its own component.
+  const now = Date.now();
   const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
     pick?.list === list && pick.taskId === taskId && pick.runId === runId;
+
+  const rowId = (p: DashboardPick) => `dash-${p.list}-${p.taskId}-${p.runId ?? 'last'}`;
+  const activeId = (list: DashboardPick['list']) => (pick?.list === list ? rowId(pick) : undefined);
 
   const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
@@ -145,8 +136,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
           {running.length === 0 ? (
             <div className="dashboard-empty muted">Nothing is running.</div>
           ) : (
-            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Running now" onKeyDown={runningKeys}>
-              <table className="runlog-table">
+            <div className="dashboard-list">
+              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Running now" aria-activedescendant={activeId('running')} onKeyDown={runningKeys}>
                 <colgroup>
                   <col style={{ width: 240 }} />
                   <col />
@@ -169,6 +160,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                     return (
                       <tr
                         key={r.runId}
+                        id={rowId(p)}
+                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
                         className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
                         onClick={() => onPick(p)}
                         onDoubleClick={() => openRunning(r)}
@@ -178,7 +171,7 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                         <td>{r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
                         <td>{TRIGGER_LABELS[r.run.trigger]}</td>
                         <td className="num">{fmtClock(r.run.startedAt, now)}</td>
-                        <td className="num">{now - r.run.startedAt < 1000 ? '0s' : formatDuration(now - r.run.startedAt)}</td>
+                        <td className="num live-only"><Elapsed since={r.run.startedAt} /></td>
                       </tr>
                     );
                   })}
@@ -193,8 +186,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
           {attention.length === 0 ? (
             <div className="dashboard-empty muted">Nothing needs attention.</div>
           ) : (
-            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Needs attention" onKeyDown={attentionKeys}>
-              <table className="runlog-table">
+            <div className="dashboard-list">
+              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Needs attention" aria-activedescendant={activeId('attention')} onKeyDown={attentionKeys}>
                 <colgroup>
                   <col style={{ width: 240 }} />
                   <col />
@@ -213,6 +206,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                     return (
                       <tr
                         key={`${r.task.id}-${r.runId ?? 'last'}`}
+                        id={rowId(p)}
+                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
                         className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
                         onClick={() => onPick(p)}
                         onDoubleClick={() => openAttention(r)}
@@ -238,8 +233,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
           {recent && recentRuns.length === 0 ? (
             <div className="dashboard-empty muted">No runs yet.</div>
           ) : (
-            <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Recent runs" onKeyDown={recentKeys}>
-              <table className="runlog-table">
+            <div className="dashboard-list">
+              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Recent runs" aria-activedescendant={activeId('recent')} onKeyDown={recentKeys}>
                 <colgroup>
                   <col style={{ width: 240 }} />
                   <col style={{ width: 110 }} />
@@ -262,6 +257,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                     return (
                       <tr
                         key={`${r.taskId}-${r.runId}`}
+                        id={rowId(p)}
+                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
                         className={`result-${r.result} run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
                         onClick={() => onPick(p)}
                         onDoubleClick={() => openRecent(r)}
@@ -289,10 +286,10 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
           <section className="dashboard-section">
             <span className="pane-title">Remote Control</span>
             {conversations.length === 0 ? (
-              <div className="dashboard-empty muted">No sessions are open.</div>
+              <div className="dashboard-empty muted">No conversations are open.</div>
             ) : (
-              <div className="dashboard-list" tabIndex={0} role="listbox" aria-label="Remote Control" onKeyDown={remoteKeys}>
-                <table className="runlog-table">
+              <div className="dashboard-list">
+                <table className="runlog-table" tabIndex={0} role="grid" aria-label="Remote Control" aria-activedescendant={activeId('remote')} onKeyDown={remoteKeys}>
                   <colgroup>
                     <col style={{ width: 240 }} />
                     <col style={{ width: 110 }} />
@@ -313,6 +310,8 @@ export function Dashboard({ attention, running, remote, recent, runtimes, now, p
                       return (
                         <tr
                           key={c.id}
+                          id={rowId(p)}
+                          aria-selected={isPicked(p.list, p.taskId, p.runId)}
                           className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
                           onClick={() => onPick(p)}
                           onDoubleClick={() => openRemote(c)}

@@ -1,73 +1,92 @@
+import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { formatTokens } from '@shared/chat';
 import { formatDuration } from '@shared/duration';
 import {
   WORKFLOW_STATUS_TEXT,
   elapsedMs,
   tabStatus,
-  workflowAgents,
   workflowCounts,
   workflowPhaseStatus,
   type WorkflowAgent,
   type WorkflowRun,
 } from '@shared/workflows';
+import { tickFor, useNow } from '../useNow';
+import { MessageBody } from './Markdown';
 import { Group, Row } from './phone/PhoneList';
+import { StatusMark } from './StatusMark';
+import { ParamTable } from './ToolContent';
+import { resultParts, resultSummary } from './workflow-summary';
 
-/** A state as a tab's dot: pulsing while it runs, red when it failed (a subagent's tab, a workflow's, a workflow agent's). */
-export function StatusMark({ status }: { status: 'running' | 'done' | 'failed' }) {
-  return (
-    <svg className={`session-icon ${status === 'running' ? 'working' : status === 'failed' ? 'failed' : 'ended'}`} width="14" height="14" viewBox="0 0 18 18" aria-hidden="true">
-      <circle cx="9" cy="9" r="7" className="ring" fill="none" strokeWidth="2" />
-      <circle cx="9" cy="9" r="3" className="core" />
-    </svg>
-  );
-}
+type Timed = { startedAt?: number; endedAt?: number };
 
-const elapsedText = (item: { startedAt?: number; endedAt?: number }, now: number): string | undefined => {
+const elapsedText = (item: Timed, now: number): string | undefined => {
   const ms = elapsedMs(item, now);
   return ms === undefined ? undefined : formatDuration(ms);
 };
 
-/** "Running · 4 of 9 agents done · 12m3s". */
-function runLine(run: WorkflowRun, now: number): string {
+/** A time that runs while the item does: it ticks each second below an hour, then each minute, and stops when the item ends. */
+function useElapsed(item: Timed): string | undefined {
+  const running = item.startedAt !== undefined && item.endedAt === undefined;
+  const now = useNow(running ? tickFor(Date.now() - item.startedAt!) : null);
+  return elapsedText(item, now);
+}
+
+/** An item's time, or `fallback` before it has started. */
+function ElapsedText({ item, fallback }: { item: Timed; fallback?: string }) {
+  const text = useElapsed(item);
+  return <>{text ?? fallback}</>;
+}
+
+const elapsedNode = (item: Timed) => (item.startedAt === undefined ? undefined : <ElapsedText item={item} />);
+
+/** "4 of 9 agents done · 1 failed". */
+function countsLine(run: WorkflowRun): string {
   const c = workflowCounts(run);
-  const parts = [WORKFLOW_STATUS_TEXT[run.status], `${c.done} of ${c.total} agents done`];
-  if (c.failed) parts.push(`${c.failed} failed`);
-  const t = elapsedText(run, now);
+  return `${c.done} of ${c.total} agents done${c.failed ? ` · ${c.failed} failed` : ''}`;
+}
+
+/** "Running · 4 of 9 agents done · 12m3s". */
+function RunLine({ run }: { run: WorkflowRun }) {
+  const parts = [WORKFLOW_STATUS_TEXT[run.status], countsLine(run)];
+  const t = useElapsed(run);
   if (t) parts.push(t);
-  return parts.join(' · ');
+  return <>{parts.join(' · ')}</>;
 }
 
 const agentModel = (a: WorkflowAgent): string | undefined => a.modelId ?? a.model;
 
-/** Its first line, for a short place; a result that is indented JSON (its first line a lone "{" or "["), all of it on one line. */
-const firstLine = (text: string): string => {
-  const line = text.split('\n').find((l) => l.trim())?.trim() ?? '';
-  return line === '{' || line === '[' ? text.replace(/\s+/g, ' ').trim() : line;
-};
+const isTextField = (el: EventTarget | null): boolean => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 /**
- * The workflow's own tabs, inside its tab beside the conversation's:
- * Overview, then one per agent in the order its phases list them.
+ * The bar above an agent's conversation inside a workflow's tab: "‹ Overview"
+ * goes back to the run's Overview (so does Alt+Left, and Backspace outside a
+ * text field), and the agent's name and state follow.
  */
-export function WorkflowTabs({ run, agentId, onAgent }: { run: WorkflowRun; agentId: string | null; onAgent: (id: string | null) => void }) {
+export function WorkflowAgentBack({ run, agent, onBack }: { run: WorkflowRun; agent: WorkflowAgent | null; onBack: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const back = (e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.metaKey) || (e.key === 'Backspace' && !e.altKey && !e.ctrlKey && !e.metaKey && !isTextField(e.target));
+      if (!back) return;
+      e.preventDefault();
+      onBack();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onBack]);
+  if (!agent) return null;
   return (
-    <div className="subagent-tabs workflow-tabs" role="tablist" aria-label={run.name}>
-      <button role="tab" aria-selected={!agentId} className={`subagent-tab${agentId ? '' : ' active'}`} onClick={() => onAgent(null)}>
+    <div className="workflow-back">
+      <button type="button" className="workflow-back-button" title={`Back to the ${run.name} Overview (Alt+Left)`} onClick={onBack}>
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10 3.5 5.5 8l4.5 4.5" />
+        </svg>
         Overview
       </button>
-      {workflowAgents(run).map((a) => (
-        <button
-          key={a.agentId}
-          role="tab"
-          aria-selected={agentId === a.agentId}
-          className={`subagent-tab${agentId === a.agentId ? ' active' : ''}`}
-          title={a.phase ? `${a.label} (${a.phase})` : a.label}
-          onClick={() => onAgent(a.agentId)}
-        >
-          <StatusMark status={tabStatus(a.status)} />
-          <span className="subagent-tab-label">{a.label}</span>
-        </button>
-      ))}
+      <span className="workflow-back-agent">
+        <StatusMark status={tabStatus(agent.status)} />
+        <span className="workflow-back-label">{agent.label}</span>
+        <span className="sr-only">, {WORKFLOW_STATUS_TEXT[agent.status].toLowerCase()}</span>
+      </span>
     </div>
   );
 }
@@ -75,30 +94,50 @@ export function WorkflowTabs({ run, agentId, onAgent }: { run: WorkflowRun; agen
 /** Right-click on an agent: the subagent menu (Open Subagent Conversation). */
 const agentMenu = (taskId: string, sessionId: string, a: WorkflowAgent) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.label });
 
+/** What a run returned: its summary as Markdown, its other fields in a table, the raw JSON on demand. */
+function ResultSection({ text }: { text: string }) {
+  const parts = resultParts(text);
+  if (parts.kind === 'text') return <pre className="mono workflow-log">{text}</pre>;
+  return (
+    <div className="workflow-result">
+      {parts.main && <MessageBody text={parts.main.text} />}
+      <ParamTable entries={parts.rest} />
+      <details className="workflow-json">
+        <summary>Show JSON</summary>
+        <pre className="mono workflow-log">{text}</pre>
+      </details>
+    </div>
+  );
+}
+
 /**
  * A workflow run's Overview tab: its phases in order with their agents (what
  * each does, its state, model and time, its latest tool call while it runs,
  * its result or error once it ends), then the script's log and what it
- * returned, which Claude Code writes when the run ends.
+ * returned, which Claude Code writes when the run ends. The agents are its
+ * navigator: one opens its conversation.
  */
 export function WorkflowOverview({
   run,
-  now,
   taskId,
   sessionId,
   onAgent,
 }: {
   run: WorkflowRun;
-  now: number;
   taskId: string;
   sessionId: string;
   onAgent: (id: string) => void;
 }) {
+  const activate = (id: string) => (e: ReactKeyboardEvent) => {
+    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    onAgent(id);
+  };
   return (
     <div className="workflow-overview">
       <div className="workflow-head">
         <span className="workflow-name">{run.name}</span>
-        <span className={run.status === 'failed' ? 'error-text' : 'muted'}>{runLine(run, now)}</span>
+        <span className={run.status === 'failed' ? 'error-text' : 'muted'}><RunLine run={run} /></span>
       </div>
       {run.description && <div className="muted workflow-description">{run.description}</div>}
       {run.error && <div className="error-text workflow-error">{run.error}</div>}
@@ -106,9 +145,9 @@ export function WorkflowOverview({
         const state = workflowPhaseStatus(p);
         return (
           <section key={p.title || '-'} className="workflow-phase">
-            <div className="pane-title workflow-phase-title">
+            <div className="workflow-phase-title">
               <span>{p.title || 'Other agents'}</span>
-              <span className={state === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[state]}</span>
+              <span className={`workflow-phase-state ${state === 'failed' ? 'error-text' : 'muted'}`}>{WORKFLOW_STATUS_TEXT[state]}</span>
             </div>
             {p.detail && <div className="muted workflow-phase-detail">{p.detail}</div>}
             <div className="subagent-list">
@@ -116,13 +155,17 @@ export function WorkflowOverview({
                 <div
                   key={a.agentId}
                   className="subagent-item"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onAgent(a.agentId)}
+                  onKeyDown={activate(a.agentId)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     agentMenu(taskId, sessionId, a);
                   }}
                 >
                   <div className="subagent-head">
+                    <StatusMark status={tabStatus(a.status)} />
                     <span className="subagent-desc">{a.label}</span>
                     <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[a.status]}</span>
                   </div>
@@ -130,7 +173,7 @@ export function WorkflowOverview({
                     <dt>Model</dt>
                     <dd className="mono">{agentModel(a) ?? 'Not known yet'}</dd>
                     <dt>Time</dt>
-                    <dd>{elapsedText(a, now) ?? 'Not known yet'}</dd>
+                    <dd><ElapsedText item={a} fallback="Not known yet" /></dd>
                     {a.status === 'running' && a.lastTool && (
                       <>
                         <dt>Now</dt>
@@ -157,7 +200,7 @@ export function WorkflowOverview({
                     {a.result && (
                       <>
                         <dt>Result</dt>
-                        <dd className="workflow-result-line">{firstLine(a.result)}</dd>
+                        <dd className="workflow-result-line">{resultSummary(a.result)}</dd>
                       </>
                     )}
                     {a.error && (
@@ -183,27 +226,66 @@ export function WorkflowOverview({
       {run.result !== undefined && (
         <section className="workflow-phase">
           <div className="pane-title">Result</div>
-          <pre className="mono workflow-log">{run.result}</pre>
+          <ResultSection text={run.result} />
         </section>
       )}
     </div>
   );
 }
 
+/** The phone's Result: each string field as a labelled text block, the others in a table, the raw JSON behind a disclosure. */
+function PhoneResult({ text }: { text: string }) {
+  const parts = resultParts(text);
+  if (parts.kind === 'text') {
+    return (
+      <Group title="Result">
+        <pre className="mono workflow-log">{text}</pre>
+      </Group>
+    );
+  }
+  const strings = parts.rest.filter(([, v]) => typeof v === 'string' && v.trim());
+  const others = parts.rest.filter(([, v]) => !(typeof v === 'string' && v.trim()));
+  return (
+    <>
+      {parts.main && (
+        <Group title={parts.main.key}>
+          <div className="workflow-text">
+            <MessageBody text={parts.main.text} />
+          </div>
+        </Group>
+      )}
+      {strings.map(([k, v]) => (
+        <Group key={k} title={k}>
+          <div className="workflow-text">{v as string}</div>
+        </Group>
+      ))}
+      {others.length > 0 && (
+        <Group title={parts.main || strings.length ? 'Other fields' : 'Result'}>
+          <ParamTable entries={others} />
+        </Group>
+      )}
+      <Group>
+        <details className="workflow-json">
+          <summary>Show JSON</summary>
+          <pre className="mono workflow-log">{text}</pre>
+        </details>
+      </Group>
+    </>
+  );
+}
+
 /**
  * The phone's workflow page, pushed from the conversation's workflow tab: the
- * run's line, a list section per phase with a row per agent (a tap pushes the
+ * run's state, a list section per phase with a row per agent (a tap pushes the
  * agent's conversation), then the log and result once it ended.
  */
 export function PhoneWorkflow({
   run,
-  now,
   taskId,
   sessionId,
   onAgent,
 }: {
   run: WorkflowRun;
-  now: number;
   taskId: string;
   sessionId: string;
   onAgent: (id: string) => void;
@@ -211,7 +293,7 @@ export function PhoneWorkflow({
   return (
     <div className="pg-scroll">
       <Group footer={run.error ?? run.description}>
-        <Row title={run.name} sub={runLine(run, now)} tone={run.status === 'failed' ? 'error' : undefined} />
+        <Row title={WORKFLOW_STATUS_TEXT[run.status]} sub={countsLine(run)} value={elapsedNode(run)} tone={run.status === 'failed' ? 'error' : undefined} />
       </Group>
       {run.phases.map((p) => (
         <Group key={p.title || '-'} title={`${p.title || 'Other agents'} · ${WORKFLOW_STATUS_TEXT[workflowPhaseStatus(p)]}`} footer={p.detail}>
@@ -225,9 +307,9 @@ export function PhoneWorkflow({
                   ? a.lastTool
                     ? `${a.lastTool.name}${a.lastTool.preview ? `: ${a.lastTool.preview}` : ''}`
                     : agentModel(a)
-                  : (a.error ?? (a.result ? firstLine(a.result) : agentModel(a)))
+                  : (a.error ?? (a.result ? resultSummary(a.result) : agentModel(a)))
               }
-              value={elapsedText(a, now)}
+              value={elapsedNode(a)}
               tone={a.status === 'failed' ? 'error' : undefined}
               chevron
               onOpen={() => onAgent(a.agentId)}
@@ -242,11 +324,7 @@ export function PhoneWorkflow({
           <pre className="mono workflow-log">{run.logs.join('\n')}</pre>
         </Group>
       )}
-      {run.result !== undefined && (
-        <Group title="Result">
-          <pre className="mono workflow-log">{run.result}</pre>
-        </Group>
-      )}
+      {run.result !== undefined && <PhoneResult text={run.result} />}
     </div>
   );
 }

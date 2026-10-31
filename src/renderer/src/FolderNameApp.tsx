@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TaskFolder } from '@shared/types';
 import { folderTree } from '@shared/folders';
 import { Field, EditorFooter } from './components/ui';
@@ -15,6 +15,8 @@ export function FolderNameApp({ folderId, parentId }: { folderId?: string; paren
   const [parent, setParent] = useState(parentId ?? '');
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     document.title = folderId ? 'Rename Folder' : 'New Folder';
@@ -34,13 +36,18 @@ export function FolderNameApp({ folderId, parentId }: { folderId?: string; paren
         return;
       }
       setName(f.name);
-      document.title = `Rename "${f.name}"`;
+      setLoaded(true);
     });
     // Keep the draft; only track the folder itself (deletion).
     return window.looper.onEvent((e) => {
       if (e.type === 'folders' && !e.folders.some((x) => x.id === folderId)) setMissing(true);
     });
   }, [folderId]);
+
+  // Renaming starts with the current name selected, so typing replaces it.
+  useEffect(() => {
+    if (loaded) nameRef.current?.select();
+  }, [loaded]);
 
   const save = async () => {
     if (!name.trim()) return;
@@ -64,12 +71,12 @@ export function FolderNameApp({ folderId, parentId }: { folderId?: string; paren
       <div className="editor-body">
         <div className="form">
           <Field label="Name">
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+            <input ref={nameRef} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           {!folderId && (
             <Field label="Parent folder">
               <select value={parent} onChange={(e) => setParent(e.target.value)}>
-                <option value=""></option>
+                <option value="">Top level</option>
                 {folderTree(folders).map(({ folder, depth }) => (
                   <option key={folder.id} value={folder.id}>
                     {' '.repeat(depth * 3) + folder.name}

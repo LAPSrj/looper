@@ -51,6 +51,7 @@ export function TemplatePickerApp() {
                 itemName={(t) => t.name}
                 onSelect={(t) => setSelected(t.id)}
                 onOpen={create}
+                autoFocus
               />
             )}
           </div>

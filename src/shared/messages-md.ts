@@ -101,6 +101,12 @@ export function messagesToMarkdown(rows: readonly MessageRow[], opts: MessagesMa
       case 'agent':
         parts.push(heading(2, row.source === 'classifier' ? 'Classifier' : 'Agent', row.ts, plain), prose(row.text));
         break;
+      case 'task':
+        parts.push(heading(2, 'Task', row.ts, plain), prose(row.text));
+        break;
+      case 'error':
+        parts.push(heading(2, 'Error', row.ts, plain), prose(row.text));
+        break;
       case 'thinking':
         if (opts.includeThinking) parts.push(heading(3, 'Thinking', row.ts, plain), blockquote(prose(row.text), plain));
         break;

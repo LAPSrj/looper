@@ -1,9 +1,17 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 // On a phone, marks the window's page and keeps the keyboard and safe-area insets its styles use.
 import './phone/keyboard';
+import { platform } from '../platform';
+import { isPhone, usePageNav } from '../web/page-nav';
+import { bindField } from './field-model';
+import { ICON_STROKE_BOLD, StatusGlyph } from './icons';
+import { Group, Row } from './phone/PhoneList';
+import { Tabs } from './Tabs';
 
-/** A labelled group of radio buttons, one per option, stacked vertically. */
+const onIos = isPhone && platform === 'ios';
+
+/** A labelled group of radio buttons, one per option, stacked vertically; on an iPhone, rows with a check on the chosen one. */
 export function RadioField<T extends string>({
   label,
   name,
@@ -17,6 +25,7 @@ export function RadioField<T extends string>({
   options: [T, string][];
   onChange: (value: T) => void;
 }) {
+  if (onIos) return <CheckRows label={label} value={value} options={options} onChange={onChange} />;
   return (
     <div className="radio-field" role="radiogroup" aria-label={label}>
       <span className="field-label">{label}</span>
@@ -26,6 +35,37 @@ export function RadioField<T extends string>({
           {text}
         </label>
       ))}
+    </div>
+  );
+}
+
+/** iOS's choice of one: a row per option, a check on the chosen one (a radio group for assistive technology). */
+function CheckRows<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (value: T) => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const chosen = Math.max(0, options.findIndex(([v]) => v === value));
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const to = (chosen + step + options.length) % options.length;
+    onChange(options[to][0]);
+    refs.current[to]?.focus();
+  };
+  return (
+    <div className="radio-field radio-rows">
+      <span className="field-label">{label}</span>
+      <div className="radio-rows-list" role="radiogroup" aria-label={label} onKeyDown={onKeyDown}>
+        {options.map(([v, text], i) => (
+          <button key={v} type="button" role="radio" aria-checked={value === v} tabIndex={i === chosen ? 0 : -1} className="radio-row" ref={(el) => void (refs.current[i] = el)} onClick={() => onChange(v)}>
+            <span>{text}</span>
+            {value === v && (
+              <svg className="radio-row-check" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={ICON_STROKE_BOLD} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="m2 7.5 3.2 3.2L12 3.5" />
+              </svg>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -48,11 +88,7 @@ export function InfoBar({
 }) {
   return (
     <div className={`infobar${stacked ? ' infobar-stacked' : ''}`} role="status">
-      <svg className="infobar-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r="8" className="infobar-icon-bg" />
-        <circle cx="8" cy="4.9" r="1" className="infobar-icon-fg" />
-        <path d="M8 7.3v4.4" strokeWidth="1.6" strokeLinecap="round" className="infobar-icon-stroke" />
-      </svg>
+      <StatusGlyph level="info" />
       <div className="infobar-text">
         <span className="infobar-title">{title}</span>
         <span className="infobar-message">{message}</span>
@@ -62,20 +98,31 @@ export function InfoBar({
   );
 }
 
+/** A label and its control, tied together so the control is named by the label (and a click on the label focuses it). */
 export function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
+  const id = useId();
+  const labelId = `${id}-label`;
+  const bound = bindField(children, id);
   return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      {children}
+    <div className="field" role={bound.group ? 'group' : undefined} aria-labelledby={bound.group ? labelId : undefined}>
+      <label id={labelId} className="field-label" htmlFor={bound.controlId}>
+        {label}
+      </label>
+      {bound.children}
       {help && <p className="help">{help}</p>}
     </div>
   );
 }
 
 interface NumberInputProps {
-  suffix: string;
+  /** The unit, inside the box at its right edge; omit for a plain number (a port). */
+  suffix?: string;
   value: number;
   onChange: (n: number) => void;
+  /** Set by a Field around it. */
+  id?: string;
+  /** A name for it when no Field's label names it (the second box of a pair). */
+  label?: string;
   /** Fired when focus leaves the input; the place to normalize against other fields. */
   onBlur?: () => void;
   min?: number;
@@ -83,10 +130,12 @@ interface NumberInputProps {
   disabled?: boolean;
 }
 
-export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled }: NumberInputProps) {
+export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled, id, label }: NumberInputProps) {
   return (
     <div className="input-suffix">
       <input
+        id={id}
+        aria-label={label}
         type="number"
         min={min}
         max={max}
@@ -100,10 +149,23 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
         }}
         onBlur={onBlur}
       />
-      <span className="suffix">{suffix}</span>
+      {suffix && <span className="suffix">{suffix}</span>}
     </div>
   );
 }
+
+/** The fields that depend on a checkbox right above them: indented under it, and dimmed and disabled (not hidden) while it's off. */
+export function StepFields({ on, when = true, children }: { on: boolean; /** False: the fields have no checkbox above them (no project), and show as they are. */ when?: boolean; children: ReactNode }) {
+  if (!when) return <>{children}</>;
+  return (
+    <fieldset className={`step-fields step-stack${on ? '' : ' disabled'}`} disabled={!on}>
+      {children}
+    </fieldset>
+  );
+}
+
+/** Tells a Field around a component that the component puts its `id` on an input. */
+NumberInput.labelable = true;
 
 export function NumberField({ label, ...rest }: { label: string } & NumberInputProps) {
   return (
@@ -113,25 +175,73 @@ export function NumberField({ label, ...rest }: { label: string } & NumberInputP
   );
 }
 
+/** Up to this many tabs, an iPhone draws them as a segmented control. */
+const SEGMENTS = 5;
+
+/**
+ * A window's tabs (a thin wrapper over Tabs). With `sections`, the tabs'
+ * panel is the TabBar's `children`: an iPhone shows the sections as a list of
+ * rows and a section's panel in a screen of its own, which Back leaves; every
+ * other platform shows the tabs with the panel below.
+ */
 export function TabBar<T extends string>({
   tabs,
   active,
   onSelect,
   className,
+  label = 'Sections',
+  sections,
+  ctrlTab,
+  children,
 }: {
   tabs: readonly (readonly [T, string])[];
   active: T;
   onSelect: (id: T) => void;
   className?: string;
+  /** Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs while the window has focus (see Tabs); one strip per window. */
+  ctrlTab?: boolean;
+  /** The tab list's accessible name. */
+  label?: string;
+  sections?: boolean;
+  children?: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
+  const rows = onIos && !!sections;
+  const close = () => setOpen(false);
+  usePageNav(rows && open ? { title: tabs.find(([id]) => id === active)?.[1], back: close } : null, 3);
+  if (rows) {
+    if (open) return <>{children}</>;
+    return (
+      <div className="pg-scroll tab-sections">
+        <Group>
+          {tabs.map(([id, text]) => (
+            <Row
+              key={id}
+              title={text}
+              chevron
+              onOpen={() => {
+                onSelect(id);
+                setOpen(true);
+              }}
+            />
+          ))}
+        </Group>
+      </div>
+    );
+  }
+  const segmented = onIos && !sections && tabs.length <= SEGMENTS;
   return (
-    <nav className={`tabs${className ? ` ${className}` : ''}`}>
-      {tabs.map(([id, label]) => (
-        <button key={id} className={`tab ${active === id ? 'active' : ''}`} onClick={() => onSelect(id)}>
-          {label}
-        </button>
-      ))}
-    </nav>
+    <>
+      <Tabs
+        tabs={tabs.map(([id, text]) => ({ id, label: text }))}
+        active={active}
+        onSelect={(id) => onSelect(id as T)}
+        label={label}
+        ctrlTab={ctrlTab}
+        className={`${segmented ? 'tabs-segmented ' : ''}${className ?? ''}`.trim() || undefined}
+      />
+      {children}
+    </>
   );
 }
 
@@ -249,8 +359,14 @@ interface EditorFooterProps {
   primaryDisabled?: boolean;
 }
 
-/** Standard dialog footer: Save | Cancel | Apply. */
+/**
+ * Standard dialog footer: Save | Cancel | Apply. A phone draws Cancel and the
+ * primary button in its navigation bar instead (PageNav `cancel`/`confirm`),
+ * and leaves Apply out.
+ */
 export function EditorFooter({ primaryLabel = 'Save', onPrimary, onCancel, onApply, applyLabel = 'Apply', saving, primaryDisabled }: EditorFooterProps) {
+  usePageNav({ cancel: { disabled: saving, run: onCancel }, confirm: { label: primaryLabel, disabled: saving || primaryDisabled, run: onPrimary } }, 2);
+  if (isPhone) return null;
   return (
     <div className="editor-footer">
       <button className="btn primary" onClick={onPrimary} disabled={saving || primaryDisabled}>

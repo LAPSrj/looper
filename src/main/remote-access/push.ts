@@ -2,7 +2,7 @@ import webpush from 'web-push';
 import type { Logger } from '../../engine/log';
 import { readJson, writeJsonAtomic } from '../../engine/store/fsutil';
 import type { PushPayload, PushSubscribeRequest } from '../../shared/remote-access';
-import type { SessionSummary } from '../../shared/sessions';
+import { waitingOf, type SessionSummary } from '../../shared/sessions';
 import type { Clock } from './devices';
 
 export interface VapidKeys {
@@ -153,7 +153,7 @@ export class PushSender {
     private readonly subject: () => string,
   ) {}
 
-  async push(deviceIds: Iterable<string>, payload: PushPayload, o: { urgency: SendOptions['urgency']; ttlSeconds: number }): Promise<{ sent: number; dropped: number }> {
+  async push(deviceIds: Iterable<string>, payload: PushPayload & { badge?: number }, o: { urgency: SendOptions['urgency']; ttlSeconds: number }): Promise<{ sent: number; dropped: number }> {
     const subs = this.store.forDevices(deviceIds);
     if (!subs.length) return { sent: 0, dropped: 0 };
     const body = JSON.stringify(payload);
@@ -181,6 +181,9 @@ export class PushSender {
   }
 }
 
+/** How many sessions waited for the user when each one that `WaitWatcher.next` returned started waiting: the app icon's badge. */
+const badges = new WeakMap<SessionSummary, number>();
+
 /** The reasons a session waits that a push tells the user about: it asks for permission, or its turn is over. */
 const PUSHED_REASONS = new Set(['permission', 'turn']);
 
@@ -195,22 +198,28 @@ export class WaitWatcher {
   next(sessions: SessionSummary[]): SessionSummary[] {
     const now = new Map<string, string>();
     const fresh: SessionSummary[] = [];
+    const waiting = waitingOf(sessions).length;
     for (const s of sessions) {
       if (!s.waiting || !PUSHED_REASONS.has(s.waiting.reason)) continue;
       const key = `${s.waiting.reason}:${s.waiting.since}`;
       now.set(s.id, key);
-      if (this.seen && this.seen.get(s.id) !== key) fresh.push(s);
+      if (this.seen && this.seen.get(s.id) !== key) {
+        fresh.push(s);
+        badges.set(s, waiting);
+      }
     }
     this.seen = now;
     return fresh;
   }
 }
 
-export function waitingPayload(s: SessionSummary): PushPayload {
+export function waitingPayload(s: SessionSummary): PushPayload & { badge?: number } {
+  const badge = badges.get(s);
   return {
     title: s.title === 'New chat' || s.title === 'Terminal' ? s.groupName : `${s.groupName}: ${s.title}`,
     body: s.waiting?.text ?? '',
     tag: `session:${s.id}`,
     open: { kind: 'session', id: s.id },
+    ...(badge === undefined ? {} : { badge }),
   };
 }

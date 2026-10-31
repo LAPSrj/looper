@@ -1,19 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AddonSearchBox } from './AddonPane';
-import { forkPoint, type Attachment, type ChatPermissionRequest, type ChatSettingMenu, type ChatState } from '@shared/chat';
-import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel } from '@shared/environments';
+import { forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
+import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
-import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList, ChatRow, ToolGroup, groupRows, type ChatItem, type RowCtx } from './ChatRows';
-import { commandAt, insertCommand, matchCommands, quoteText } from './composer';
-import { ICONS } from './icons';
+import { permissionLabel } from './chat-settings';
+import { Composer, type ComposerHandle } from './Composer';
 import { PromptBody } from './Markdown';
-import { ToolButton } from './ToolButton';
 import { ToolInputView } from './ToolContent';
 
-const reportError = (e: Error) => void window.looper.showError(e.message);
-
-function Items({ items, ctx, prefix }: { items: ChatItem[]; ctx: RowCtx; prefix: string }) {
+const Items = memo(function Items({ items, ctx, prefix }: { items: ChatItem[]; ctx: RowCtx; prefix: string }) {
   return (
     <>
       {items.map((item) =>
@@ -25,7 +21,7 @@ function Items({ items, ctx, prefix }: { items: ChatItem[]; ctx: RowCtx; prefix:
       )}
     </>
   );
-}
+});
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
 
@@ -87,84 +83,6 @@ function ChatStatus({ state }: { state: ChatState }) {
   return null;
 }
 
-export const permissionLabel = (state: ChatState): string =>
-  PERMISSION_MODES[state.harnessKind].find(([v]) => v === state.settings.permissionMode)?.[1] ?? state.settings.permissionMode;
-
-/** The chat's harness, model, effort and permission mode as the command bar names them. */
-function settingLabels(state: ChatState): Record<ChatSettingMenu, string> {
-  const s = state.settings;
-  const entry = state.models.find((m) => m.id === s.model);
-  // As resolveEffort: the chat's own, else the model entry's default.
-  const effort = s.effort ?? (s.model ? entry?.defaultEffort : undefined);
-  return {
-    harness: state.harnessName,
-    model: entry?.name ?? s.model ?? state.activeModel ?? 'Default model',
-    effort: effort ? (EFFORT_LEVELS[state.harnessKind].find(([v]) => v === effort)?.[1] ?? effort) : 'Default effort',
-    permission: permissionLabel(state) || 'Default',
-  };
-}
-
-const SETTING_TITLES = { harness: 'Harness', model: 'Model', effort: 'Effort', permission: 'Permission Mode' } as const;
-const SETTINGS = ['harness', 'model', 'effort', 'permission'] as const;
-
-const MENU_ARROW = (
-  <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
-  </svg>
-);
-
-/**
- * The bar above the message box: Attach Files and the skill list on the left,
- * the chat's harness, model, effort and permission mode on the right, each a
- * menu. The harness changes only until the first message. A narrow chat (a
- * dashboard card, a phone) has one button instead, whose menu has the four
- * as submenus; the stylesheet shows one or the other by the composer's width.
- */
-function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach: () => void; onSkills: () => void }) {
-  const ended = state.status === 'ended';
-  const labels = settingLabels(state);
-  // A chat whose harness didn't start can still move to another one.
-  const disabled = (which: ChatSettingMenu) => (which === 'harness' ? state.harnessLocked : ended);
-  const open = (which: ChatSettingMenu | 'all') => (e: React.MouseEvent<HTMLButtonElement>) => {
-    const box = e.currentTarget.getBoundingClientRect();
-    window.looper.chat.showSettingMenu(state.id, which, box.left, box.bottom);
-  };
-  return (
-    <div className="toolbar chat-commandbar">
-      <ToolButton icon={ICONS.attach} title="Attach Files (Ctrl+O)" enabled={!ended} onClick={onAttach} />
-      <ToolButton icon={ICONS.skills} title="Skills and Commands (/)" enabled={!ended && state.commands.length > 0} onClick={onSkills} />
-      <span className="spacer" />
-      <span className="commandbar-full">
-        {SETTINGS.map((which) => (
-          <button
-            key={which}
-            className="labeled commandbar-menu"
-            title={SETTING_TITLES[which]}
-            aria-label={`${SETTING_TITLES[which]}: ${labels[which]}`}
-            aria-haspopup="menu"
-            disabled={disabled(which)}
-            onClick={open(which)}
-          >
-            {labels[which]}
-            {MENU_ARROW}
-          </button>
-        ))}
-      </span>
-      <button
-        className="labeled commandbar-menu commandbar-compact"
-        title="Chat Settings"
-        aria-label={`Chat Settings: ${SETTINGS.map((w) => labels[w]).join(', ')}`}
-        aria-haspopup="menu"
-        disabled={SETTINGS.every(disabled)}
-        onClick={open('all')}
-      >
-        {labels.model}
-        {MENU_ARROW}
-      </button>
-    </div>
-  );
-}
-
 /** The visible matches of `query` in `root`, in document order (case-insensitive, within one text node). */
 function findRanges(root: HTMLElement, query: string): Range[] {
   const needle = query.toLowerCase();
@@ -186,8 +104,35 @@ function findRanges(root: HTMLElement, query: string): Range[] {
   return ranges;
 }
 
-/** Each chat's unsent message and files, kept while the window shows another session. */
-const drafts = new Map<string, { text: string; pending: Attachment[] }>();
+/** Right-click on a message or tool call: the chat's menu for that row. */
+function showRowMenu(state: ChatState, row: MessageRow): void {
+  const ended = state.status === 'ended';
+  const all = [...state.history, ...state.rows];
+  const selection = window.getSelection()?.toString() || undefined;
+  const index = all.indexOf(row);
+  const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
+  const base = { chatId: state.id, taskId: state.taskId, selection, quote: !ended, fork };
+  switch (row.kind) {
+    case 'prompt':
+      window.looper.chat.showContextMenu({
+        ...base,
+        text: row.text || undefined,
+        resend: ended ? undefined : { text: row.text, attachments: row.attachments ?? [] },
+      });
+      return;
+    case 'tool':
+      window.looper.chat.showContextMenu({
+        ...base,
+        text: row.text || undefined,
+        textLabel: 'Copy Input',
+        result: row.result || undefined,
+        file: row.file,
+      });
+      return;
+    default:
+      window.looper.chat.showContextMenu({ ...base, text: row.text || undefined });
+  }
+}
 
 /**
  * A chat in the Sessions window: the conversation, its queue, and the message box.
@@ -196,8 +141,6 @@ const drafts = new Map<string, { text: string; pending: Attachment[] }>();
  */
 export function ChatView({ state, embedded = false }: { state: ChatState; embedded?: boolean }) {
   const id = state.id;
-  const [text, setTextState] = useState(() => drafts.get(id)?.text ?? state.draft?.text ?? '');
-  const [pending, setPendingState] = useState<Attachment[]>(() => drafts.get(id)?.pending ?? state.draft?.attachments ?? []);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   /** Ctrl+F counts up: the find box takes the focus and selects what it holds, once it shows. */
@@ -228,87 +171,10 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   }, []);
   const [find, setFind] = useState<{ query: string; index: number } | null>(null);
   const [matches, setMatches] = useState(0);
-  const [pick, setPick] = useState(0);
-  /** Where the cursor is in the message box: the "/" list follows the word it's in. */
-  const [caret, setCaret] = useState(0);
-  /** Esc closed the "/" list for the word starting here. */
-  const [closedAt, setClosedAt] = useState<number | null>(null);
-  const [focused, setFocused] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
-  // The command bar's skill button: the whole list, whatever the box holds.
-  const [picker, setPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composer = useRef<ComposerHandle>(null);
   const findRef = useRef<HTMLInputElement | null>(null);
   const atBottom = useRef(true);
-  /** Up/Down in the message box: which sent message is shown, and the draft to go back to. */
-  const recall = useRef<{ index: number; draft: string } | null>(null);
-
-  const setText = (t: string) => {
-    setTextState(t);
-    const draft = { text: t, pending: drafts.get(id)?.pending ?? pending };
-    drafts.set(id, draft);
-    // The engine keeps it too, for the next start of Looper.
-    window.looper.chat.setDraft(id, draft.text, draft.pending);
-  };
-  const setPending = (fn: (p: Attachment[]) => Attachment[]) =>
-    setPendingState((p) => {
-      const next = fn(p);
-      const draft = { text: drafts.get(id)?.text ?? text, pending: next };
-      drafts.set(id, draft);
-      window.looper.chat.setDraft(id, draft.text, next);
-      return next;
-    });
-
-  /** Text put in the box by code: the box takes the focus with its cursor here once it shows the text. */
-  const caretTo = useRef<number | null>(null);
-  const putText = (t: string, at: number) => {
-    setText(t);
-    setCaret(at);
-    caretTo.current = at;
-  };
-  useLayoutEffect(() => {
-    const ta = composerRef.current;
-    const at = caretTo.current;
-    if (at === null || !ta) return;
-    caretTo.current = null;
-    ta.focus();
-    ta.setSelectionRange(at, at);
-    if (at === ta.value.length) ta.scrollTop = ta.scrollHeight;
-  }, [text]);
-
-  // Quote: the selection goes after what the box holds, and the cursor after the quote.
-  const quoteIntoBox = (selection: string) => {
-    const quote = quoteText(selection);
-    if (!quote || state.status === 'ended') return;
-    recall.current = null;
-    const next = text.trim() ? `${text.replace(/\s+$/, '')}\n\n${quote}` : quote;
-    putText(next, next.length);
-  };
-  const quoteRef = useRef(quoteIntoBox);
-  quoteRef.current = quoteIntoBox;
-
-  useEffect(() => {
-    const unsubUi = window.looper.onUi((e) => {
-      // File → Attach Files…: the files wait under the message box like dropped ones.
-      if (e.type === 'chat-attached') setPending((p) => [...p, ...e.attachments]);
-      else if (e.type === 'chat-quote') {
-        if (e.chatId === id) quoteRef.current(e.text);
-      }
-      else if (e.type === 'chat-find') {
-        setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
-        setFindFocus((n) => n + 1);
-      } else if (e.type === 'chat-edit' && e.chatId === id) {
-        recall.current = null;
-        setText(e.text);
-        setPending(() => e.attachments);
-        composerRef.current?.focus();
-      }
-    });
-    if (!embedded) composerRef.current?.focus();
-    return unsubUi;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -346,16 +212,19 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
     }
   }, [find, state]);
 
-  const sent = useMemo(
-    () => [...state.history, ...state.rows].filter((r) => r.kind === 'prompt' && r.text).map((r) => r.text),
-    [state.history, state.rows],
-  );
-
   const stepFind = (dir: 1 | -1) => setFind((f) => (f ? { ...f, index: f.index + dir } : f));
   const closeFind = () => {
     setFind(null);
-    composerRef.current?.focus();
+    composer.current?.focus();
   };
+
+  useEffect(() => {
+    return window.looper.onUi((e) => {
+      if (e.type !== 'chat-find') return;
+      setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
+      setFindFocus((n) => n + 1);
+    });
+  }, []);
 
   // Esc closes the find bar, else stops the agent's turn (the Chat menu shows it as Stop's key);
   // F3 and Shift+F3 step through the matches; Ctrl+Shift+Q quotes the text selected in the messages.
@@ -369,7 +238,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
         const root = scrollRef.current;
         if (!sel || !root || !sel.anchorNode || !root.contains(sel.anchorNode)) return;
         e.preventDefault();
-        quoteRef.current(sel.toString());
+        composer.current?.quote(sel.toString());
       } else if (e.key === 'Escape') {
         const mine = !embedded || !!scrollRef.current?.closest('.chat-app')?.contains(document.activeElement);
         if (keys.current.find) closeFind();
@@ -386,136 +255,16 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   }, [id, embedded]);
 
   const ended = state.status === 'ended';
-  const all = [...state.history, ...state.rows];
-  const onRowContextMenu = (_e: React.MouseEvent, row: MessageRow) => {
-    const selection = window.getSelection()?.toString() || undefined;
-    const index = all.indexOf(row);
-    const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
-    const base = { chatId: id, taskId: state.taskId, selection, quote: !ended, fork };
-    switch (row.kind) {
-      case 'prompt':
-        window.looper.chat.showContextMenu({
-          ...base,
-          text: row.text || undefined,
-          resend: ended ? undefined : { text: row.text, attachments: row.attachments ?? [] },
-        });
-        return;
-      case 'tool':
-        window.looper.chat.showContextMenu({
-          ...base,
-          text: row.text || undefined,
-          textLabel: 'Copy Input',
-          result: row.result || undefined,
-          file: row.file,
-        });
-        return;
-      default:
-        window.looper.chat.showContextMenu({ ...base, text: row.text || undefined });
-    }
-  };
-
-  const ctx: RowCtx = { taskId: state.taskId, runId: state.id, onContextMenu: onRowContextMenu };
-
-  const attach = (files: File[]) => {
-    if (files.length === 0 || ended) return;
-    void window.looper.chat
-      .attachFiles(id, files)
-      .then((added) => setPending((p) => [...p, ...added]))
-      .catch(reportError);
-  };
-
-  const send = () => {
-    if (ended || (!text.trim() && pending.length === 0)) return;
-    window.looper.chat.send(id, text.trim(), pending);
-    setText('');
-    setPending(() => []);
-    recall.current = null;
-    atBottom.current = true;
-  };
-
-  // "/" at the start of the box or of a word lists the harness's commands and skills (Codex's "$" too).
-  const typed = commandAt(text, caret, [...new Set(['/', state.commandPrefix])]);
-  const typedList = !!typed && typed.start !== closedAt && focused && !ended;
-  const options = typedList ? matchCommands(state.commands, typed.query) : picker ? matchCommands(state.commands, '', Infinity) : [];
-  const picked = Math.min(pick, options.length - 1);
-  useLayoutEffect(() => {
-    listRef.current?.querySelector('.slash-item.selected')?.scrollIntoView({ block: 'nearest' });
-  }, [picked, options.length]);
-  const choose = (c: SlashCommand) => {
-    const command = `${state.commandPrefix}${c.name}`;
-    setPicker(false);
-    if (typedList) {
-      const next = insertCommand(text, typed.start, caret, command);
-      putText(next.text, next.caret);
-    } else {
-      // From the skill button, the command goes in front of what's already typed.
-      putText(`${command} ${text.replace(/^\s+/, '')}`, command.length + 1);
-    }
-  };
-  const openPicker = () => {
-    setPicker(true);
-    setPick(0);
-    composerRef.current?.focus();
-  };
-  const pickFiles = () =>
-    void window.looper.chat
-      .pickFiles(id)
-      .then((added) => setPending((p) => [...p, ...added]))
-      .catch(reportError);
-
-  /** Up on the first line of an empty box (or while going through them) brings back the sent messages, newest first. */
-  const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const ta = e.currentTarget;
-    const plain = !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
-    if (options.length > 0) {
-      const at = Math.min(pick, options.length - 1);
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        setPick((at + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length);
-        return;
-      }
-      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
-        e.preventDefault();
-        choose(options[at]);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        if (typed) setClosedAt(typed.start);
-        setPicker(false);
-        return;
-      }
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
-      e.preventDefault();
-      send();
-    } else if (e.key === 'ArrowUp' && plain && !ta.value.slice(0, ta.selectionStart).includes('\n')) {
-      if (ta.value && !recall.current) return;
-      const index = (recall.current?.index ?? sent.length) - 1;
-      if (index < 0) return;
-      e.preventDefault();
-      recall.current = { index, draft: recall.current?.draft ?? ta.value };
-      setText(sent[index]);
-    } else if (e.key === 'ArrowDown' && plain && recall.current && !ta.value.slice(ta.selectionEnd).includes('\n')) {
-      e.preventDefault();
-      const index = recall.current.index + 1;
-      if (index >= sent.length) {
-        setText(recall.current.draft);
-        recall.current = null;
-      } else {
-        recall.current = { ...recall.current, index };
-        setText(sent[index]);
-      }
-    }
-  };
+  // Stable while the chat is the same one, so the rows don't re-render for what changes around them; the menu reads the chat as it is.
+  const latest = useRef(state);
+  latest.current = state;
+  const ctx = useMemo<RowCtx>(() => ({ taskId: state.taskId, runId: state.id, onContextMenu: (_e, row) => showRowMenu(latest.current, row) }), [state.taskId, state.id]);
+  const history = useMemo(() => groupRows(state.history), [state.history]);
+  const items = useMemo(() => groupRows(state.rows), [state.rows]);
 
   const editQueued = (messageId: string) =>
     void window.looper.chat.unqueue(id, messageId).then((m) => {
-      if (!m) return;
-      setText(text.trim() ? `${m.text}\n\n${text}` : m.text);
-      setPending((p) => [...m.attachments, ...p]);
-      composerRef.current?.focus();
+      if (m) composer.current?.take(m.text, m.attachments);
     });
 
   return (
@@ -542,7 +291,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
         e.stopPropagation();
         dragDepth.current = 0;
         setDragging(false);
-        attach([...e.dataTransfer.files]);
+        composer.current?.attach([...e.dataTransfer.files]);
       }}
     >
       {state.harnessKind === 'codex' && (
@@ -601,9 +350,9 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           }}
         >
           {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
-          <Items items={groupRows(state.history)} ctx={ctx} prefix="h" />
+          <Items items={history} ctx={ctx} prefix="h" />
           {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
-          <Items items={groupRows(state.rows)} ctx={ctx} prefix="r" />
+          <Items items={items} ctx={ctx} prefix="r" />
           {state.permissions.map((p) => (
             <PermissionCard key={p.id} state={state} p={p} />
           ))}
@@ -628,85 +377,14 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           ))}
         </div>
         <ChatStatus state={state} />
-        <div className="chat-composer">
-          <div className="composer-main">
-            <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
-            {pending.length > 0 && (
-              <div className="chat-pending">
-                <AttachmentList items={pending} onRemove={(a) => setPending((p) => p.filter((x) => x !== a))} />
-              </div>
-            )}
-            {/* The "/" list drops from the message box's top edge, like a combo box's list. */}
-            <div className="composer-input">
-              {options.length > 0 && (
-                <div className="slash-list" role="listbox" id={`slash-list-${id}`} ref={listRef}>
-                  {options.map((c, i) => (
-                    <div
-                      key={c.name}
-                      id={`slash-${id}-${i}`}
-                      role="option"
-                      aria-selected={i === picked}
-                      className={`slash-item${i === picked ? ' selected' : ''}`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        choose(c);
-                      }}
-                      onMouseEnter={() => setPick(i)}
-                    >
-                      <span className="slash-name">
-                        {state.commandPrefix}
-                        {c.name}
-                        {c.argumentHint ? <span className="slash-hint"> {c.argumentHint}</span> : null}
-                      </span>
-                      <span className="slash-desc">{c.description}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <textarea
-                ref={composerRef}
-                value={text}
-                placeholder={`Message ${harnessKindLabel(state.harnessKind)}`}
-                rows={3}
-                disabled={ended}
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={options.length > 0}
-                aria-controls={options.length > 0 ? `slash-list-${id}` : undefined}
-                aria-activedescendant={options.length > 0 ? `slash-${id}-${picked}` : undefined}
-                onChange={(e) => {
-                  recall.current = null;
-                  const at = e.target.selectionStart;
-                  setText(e.target.value);
-                  setCaret(at);
-                  setPick(0);
-                  if (commandAt(e.target.value, at, ['/', state.commandPrefix])?.start !== closedAt) setClosedAt(null);
-                }}
-                onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-                onPaste={(e) => {
-                  const files = [...e.clipboardData.files];
-                  if (files.length === 0) return;
-                  e.preventDefault();
-                  attach(files);
-                }}
-                onKeyDown={onComposerKey}
-                onFocus={() => setFocused(true)}
-                onBlur={() => {
-                  setFocused(false);
-                  setPicker(false);
-                }}
-              />
-            </div>
-          </div>
-          <div className="composer-actions">
-            <button className="btn primary" disabled={ended || (!text.trim() && pending.length === 0)} onClick={send}>
-              {state.status === 'working' ? 'Queue' : 'Send'}
-            </button>
-            <button className="btn" title="Stop (Esc)" disabled={state.status !== 'working'} onClick={() => void window.looper.chat.stop(id).catch(reportError)}>
-              Stop
-            </button>
-          </div>
-        </div>
+        <Composer
+          ref={composer}
+          state={state}
+          embedded={embedded}
+          onSent={() => {
+            atBottom.current = true;
+          }}
+        />
       </section>
     </div>
   );

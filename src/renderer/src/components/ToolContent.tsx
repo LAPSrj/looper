@@ -11,8 +11,19 @@ const inputOf = (row: MessageRow): Rec | null =>
 
 const valueText = (v: unknown): string => (typeof v === 'string' ? v : (JSON.stringify(v, null, 2) ?? String(v)));
 
-/** A call's parameters as a table: names in the first column, and every value starting at the same place. */
-export function ParamTable({ entries }: { entries: [string, unknown][] }) {
+/** The parameters that hold code, by tool, and the language each is written in. */
+const CODE_PARAMS: Record<string, Record<string, string>> = {
+  Workflow: { script: 'javascript' },
+  Bash: { command: 'bash' },
+  PowerShell: { command: 'powershell' },
+};
+
+/**
+ * A call's parameters as a table: names in the first column, and every value
+ * starting at the same place. A parameter named in `code` (parameter name to
+ * language) is highlighted code that scrolls sideways instead of wrapping.
+ */
+export function ParamTable({ entries, code }: { entries: [string, unknown][]; code?: Record<string, string> }) {
   if (entries.length === 0) return null;
   return (
     <table className="tc-params">
@@ -20,7 +31,15 @@ export function ParamTable({ entries }: { entries: [string, unknown][] }) {
         {entries.map(([k, v]) => (
           <tr key={k}>
             <th scope="row">{k}</th>
-            <td>{valueText(v)}</td>
+            {code?.[k] && typeof v === 'string' ? (
+              <td className="has-code">
+                <div className="tc-code">
+                  <CodeBlock text={v} language={code[k]} />
+                </div>
+              </td>
+            ) : (
+              <td>{valueText(v)}</td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -167,17 +186,17 @@ export function gutterLines(text: string): { n: string; text: string }[] | null 
   return matched >= lines.length * 0.6 ? parsed : null;
 }
 
-function CodeView({ lines, file, language }: { lines: { n: string; text: string }[]; file?: string; language?: string }) {
+function CodeView({ lines, file, language, numbered = true }: { lines: { n: string; text: string }[]; file?: string; language?: string; numbered?: boolean }) {
   const html = useHighlight(
     lines.map((l) => l.text),
     file,
     language,
   );
   return (
-    <div className="code-view">
+    <div className={`code-view${numbered ? '' : ' plain'}`}>
       {lines.map((l, i) => (
         <div key={i} className="code-line">
-          <span className="code-gutter">{l.n}</span>
+          {numbered && <span className="code-gutter">{l.n}</span>}
           <CodeText className="code-text" html={html?.[i]} text={l.text} />
         </div>
       ))}
@@ -185,10 +204,10 @@ function CodeView({ lines, file, language }: { lines: { n: string; text: string 
   );
 }
 
-/** Code with numbered lines; a Read result keeps the numbers it came with. */
-export function CodeBlock({ text, file, language }: { text: string; file?: string; language?: string }) {
+/** Code with numbered lines (unless `numbered` is off); a Read result keeps the numbers it came with. */
+export function CodeBlock({ text, file, language, numbered = true }: { text: string; file?: string; language?: string; numbered?: boolean }) {
   const lines = gutterLines(text) ?? text.replace(/\n$/, '').split('\n').map((t, i) => ({ n: String(i + 1), text: t }));
-  return <CodeView lines={lines} file={file} language={language} />;
+  return <CodeView lines={lines} file={file} language={language} numbered={numbered} />;
 }
 
 /* ---------- JSON tree ---------- */
@@ -293,12 +312,14 @@ function fileHeader(file: string | undefined): ReactNode {
 
 /* ---------- Input renders ---------- */
 
-function bashInput(input: Rec): ReactNode {
+function bashInput(row: MessageRow, input: Rec): ReactNode {
   const description = str(input.description);
   return (
     <>
       {description && <div className="tc-caption muted">{description}</div>}
-      <pre className="term-block">{str(input.command) ?? ''}</pre>
+      <div className="term-block tc-code">
+        <CodeBlock text={str(input.command) ?? ''} language={row.tool === 'PowerShell' ? 'powershell' : 'bash'} numbered={false} />
+      </div>
       {restFields(input, ['command', 'description'])}
     </>
   );
@@ -384,7 +405,7 @@ export function ToolInputView({ row }: { row: MessageRow }) {
     // Claude Code on Windows runs commands with its PowerShell tool: same input shape as Bash.
     case 'Bash':
     case 'PowerShell':
-      return <>{bashInput(input)}</>;
+      return <>{bashInput(row, input)}</>;
     case 'Edit':
       return <>{editInput(row, input)}</>;
     case 'Write':
@@ -398,7 +419,7 @@ export function ToolInputView({ row }: { row: MessageRow }) {
     case 'WebSearch':
       return <>{webInput(input)}</>;
     default:
-      return Object.keys(input).length > 0 ? <ParamTable entries={Object.entries(input)} /> : plain(row.text);
+      return Object.keys(input).length > 0 ? <ParamTable entries={Object.entries(input)} code={row.tool ? CODE_PARAMS[row.tool] : undefined} /> : plain(row.text);
   }
 }
 

@@ -8,7 +8,7 @@ import type { Logger } from '../src/engine/log';
 import { RemoteAccess } from '../src/main/remote-access';
 import { LocalProvider } from '../src/main/remote-access/providers';
 import { parseSubscription, PushSender, PushStore, WaitWatcher, type PushSend } from '../src/main/remote-access/push';
-import { manifest, SERVICE_WORKER, withMobileHead } from '../src/main/remote-access/pwa';
+import { manifest, serviceWorker, shellCacheName, withMobileHead } from '../src/main/remote-access/pwa';
 import { REQUEST_HEADER, REQUEST_HEADER_VALUE, type PushPayload, PushSubscribeRequest, ServerMessage } from '../src/shared/remote-access';
 import type { SessionSummary } from '../src/shared/sessions';
 import { RemoteAccessSettingsSchema } from '../src/shared/types';
@@ -132,6 +132,16 @@ describe('home-screen app', () => {
     expect(withMobileHead(out)).toBe(out);
   });
 
+  it('the page starts with the iOS top edge strip, sized for WebKit to find and hidden elsewhere', () => {
+    const out = withMobileHead('<!doctype html><html><head></head><body class="x"><div id="root"></div></body></html>');
+    expect(out).toContain('<body class="x"><div class="ios-top-edge" aria-hidden="true"></div><div id="root">');
+    expect(out.match(/class="ios-top-edge"/g)).toHaveLength(1);
+    const ios = /@supports \(-webkit-touch-callout: none\)\{(.*)<\/style>/.exec(out)?.[1] ?? '';
+    expect(ios).toMatch(/\.ios-top-edge\{position:fixed;top:0;left:0;right:0;height:12px;z-index:2147483647;pointer-events:none;/);
+    expect(ios).toMatch(/background-clip:text/);
+    expect(out).toMatch(/<style>\.ios-top-edge\{display:none\}@supports/);
+  });
+
   it('the manifest installs Looper standalone with its icons', () => {
     const m = JSON.parse(manifest()) as { name: string; display: string; start_url: string; theme_color: string; background_color: string; icons: { src: string; sizes: string; purpose: string }[] };
     expect(m).toMatchObject({ name: 'Looper', display: 'standalone', start_url: '/' });
@@ -140,14 +150,22 @@ describe('home-screen app', () => {
     expect(m.icons.map((i) => `${i.sizes} ${i.purpose}`).sort()).toEqual(['192x192 any', '192x192 maskable', '512x512 any', '512x512 maskable']);
   });
 
-  it("the service worker caches nothing: it has no fetch handler", () => {
-    expect(SERVICE_WORKER).not.toMatch(/addEventListener\(\s*'fetch'/);
-    expect(SERVICE_WORKER).not.toMatch(/caches\./);
-    expect(SERVICE_WORKER).toMatch(/addEventListener\('push'/);
-    expect(SERVICE_WORKER).toMatch(/addEventListener\('notificationclick'/);
+  it('the service worker keeps the files it is given, and still handles push and notification clicks', () => {
+    const list = ['/index.html', '/manifest.webmanifest', '/assets/index-abc.js'];
+    const sw = serviceWorker(list);
+    expect(sw).toContain(`const PRECACHE = ${JSON.stringify(list)};`);
+    expect(sw).toMatch(/addEventListener\('fetch'/);
+    expect(sw).toMatch(/addEventListener\('push'/);
+    expect(sw).toMatch(/addEventListener\('notificationclick'/);
     // It parses, and a tab on screen means no system notification (except on Safari, which must show each one).
-    expect(() => new Function(SERVICE_WORKER)).not.toThrow();
-    expect(SERVICE_WORKER).toMatch(/visibilityState === 'visible'/);
+    expect(() => new Function(sw)).not.toThrow();
+    expect(sw).toMatch(/visibilityState === 'visible'/);
+    // A different list (a new build) is a different cache, so a different sw.js.
+    expect(shellCacheName(list)).toMatch(/^looper-shell-[0-9a-f]{10}$/);
+    expect(shellCacheName(list)).not.toBe(shellCacheName([...list, '/assets/index-def.css']));
+    // So is a change to the page as served (its head tags), with the same assets.
+    expect(shellCacheName(list, '<head>a</head>')).not.toBe(shellCacheName(list, '<head>b</head>'));
+    expect(serviceWorker(list)).toBe(sw);
   });
 });
 
@@ -174,7 +192,9 @@ async function setup() {
   const root = tmp();
   const dataDir = path.join(root, 'data');
   const staticDir = path.join(root, 'static');
-  fs.mkdirSync(staticDir, { recursive: true });
+  fs.mkdirSync(path.join(staticDir, 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(staticDir, 'assets', 'index-abc.js'), 'js');
+  fs.writeFileSync(path.join(staticDir, 'assets', 'index-def.css'), 'css');
   fs.writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><html><head><title>Looper</title></head><body></body></html>');
   const settings = RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['local'] });
   const pushes: { endpoint: string; body: PushPayload }[] = [];
@@ -187,6 +207,7 @@ async function setup() {
     staticDir,
     createProvider: () => new LocalProvider(),
     icon: (name) => (name === 'icon-192' ? Buffer.from('PNG') : null),
+    startup: (width, height, dark) => (width === 1170 && height === 2532 ? Buffer.from(dark ? 'DARK' : 'LIGHT') : null),
     pushSend: async (s, body) => void pushes.push({ endpoint: s.endpoint, body: JSON.parse(body) as PushPayload }),
   });
   cleanups.push(() => ra.dispose());
@@ -264,7 +285,7 @@ describe('push endpoints', () => {
     await s.ra.sessionsChanged([session('a', { reason: 'permission', text: 'Bash: rm -rf out', since: 2 })], false);
     expect(s.pushes).toEqual([]);
     await s.ra.sessionsChanged([session('a', { reason: 'turn', text: 'Finished its turn', since: 3 })], true);
-    expect(s.pushes).toEqual([{ endpoint: sub(1).endpoint, body: { title: 'Project: Fix the build', body: 'Finished its turn', tag: 'session:a', open: { kind: 'session', id: 'a' } } }]);
+    expect(s.pushes).toEqual([{ endpoint: sub(1).endpoint, body: { title: 'Project: Fix the build', body: 'Finished its turn', tag: 'session:a', open: { kind: 'session', id: 'a' }, badge: 1 } }]);
   });
 
   it('a device that unpairs itself loses its cookie and its subscriptions', async () => {
@@ -288,7 +309,13 @@ describe('push endpoints', () => {
     expect(sw.status).toBe(200);
     expect(sw.headers['content-type']).toMatch(/^text\/javascript/);
     expect(sw.headers['cache-control']).toBe('no-cache');
+    // The service worker keeps the page, the manifest, the icons that exist and every built asset.
+    expect(sw.body).toContain('const PRECACHE = ["/index.html","/manifest.webmanifest","/icons/icon-192.png","/assets/index-abc.js","/assets/index-def.css"];');
     expect((await request(s.port, { path: '/icons/icon-192.png' })).body).toBe('PNG');
+    const launch = await request(s.port, { path: '/startup/1170x2532-dark.png' });
+    expect([launch.status, launch.body, launch.headers['cache-control']]).toEqual([200, 'DARK', 'public, max-age=86400']);
+    expect((await request(s.port, { path: '/startup/1170x2532-light.png' })).body).toBe('LIGHT');
+    expect((await request(s.port, { path: '/startup/100x100-light.png' })).status).toBe(404);
     expect((await request(s.port, { path: '/icons/maskable-512.png' })).status).toBe(404);
     expect((await request(s.port, { path: '/icons/nope.png' })).status).toBe(404);
     const page = await request(s.port, { path: '/' });

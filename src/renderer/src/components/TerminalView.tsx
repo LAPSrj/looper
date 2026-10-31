@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { subscribe } from '../events';
+import { terminalOverlay } from '../phone-lists';
+import { isPhone } from '../web/page-nav';
 import { usePhoneTerminal } from './phone/TerminalKeys';
+import { TERMINAL_STAGE, TerminalOverlay } from './phone/TerminalOverlay';
 import { openXterm } from './xterm';
 
 const DIM = '\x1b[90m';
@@ -14,6 +17,7 @@ const reportError = (e: Error) => void window.looper.showError(e.message);
 /** A terminal session: its output so far, then live, with keys, files and size passed to it. */
 export function TerminalView({ id }: { id: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [output, setOutput] = useState<'unknown' | 'none' | 'some'>('unknown');
   const phone = usePhoneTerminal((d) => window.looper.terminalSession.write(id, d));
   useEffect(() => {
     const el = ref.current;
@@ -29,17 +33,25 @@ export function TerminalView({ id }: { id: string }) {
     };
     const detachPhone = phone.attach(term, el, refit);
     let loaded = false;
+    setOutput('unknown');
     void window.looper.terminalSession.output(id).then((out) => {
       if (out?.data) term.write(out.data);
       if (out?.stopped) term.write(STOPPED);
       else if (!out || out.ended) term.write(ENDED);
+      // An ended or stopped session has nothing more to wait for.
+      setOutput(out?.data || !out || out.ended || out.stopped ? 'some' : 'none');
       loaded = true;
       window.looper.terminalSession.resize(id, term.cols, term.rows);
     });
     const unsub = subscribe((e) => {
       if (!loaded) return; // the replay above includes it
-      if (e.type === 'terminal:data' && e.id === id) term.write(e.data);
-      else if (e.type === 'terminal:end' && e.id === id) term.write(ENDED);
+      if (e.type === 'terminal:data' && e.id === id) {
+        term.write(e.data);
+        setOutput('some');
+      } else if (e.type === 'terminal:end' && e.id === id) {
+        term.write(ENDED);
+        setOutput('some');
+      }
     });
     const onData = term.onData((d) => window.looper.terminalSession.write(id, phone.typed(d)));
 
@@ -107,9 +119,14 @@ export function TerminalView({ id }: { id: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  // A phone shows "Starting…" over the terminal until its session prints something.
+  const overlay = isPhone ? terminalOverlay({ loaded: output !== 'unknown', hasOutput: output === 'some', sessionActive: true }) : null;
   return (
     <div className="terminal-session">
-      <div className="terminal" ref={ref} />
+      <div className="terminal-stage" style={TERMINAL_STAGE}>
+        <div className="terminal" ref={ref} />
+        {overlay && <TerminalOverlay kind={overlay} />}
+      </div>
       {phone.row}
     </div>
   );

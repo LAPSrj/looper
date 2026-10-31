@@ -145,6 +145,24 @@ html.ph-top body {
 .ph-drag {
   touch-action: none;
 }
+/* The bar's place in the card; while the page shows a sheet of its own, the sheet's backdrop dims it too. */
+.ph-bar-slot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+.ph-bar-slot.page-modal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  animation: ph-fade-in 0.2s ease-out;
+}
+@keyframes ph-fade-in {
+  from {
+    opacity: 0;
+  }
+}
 
 /* The connection: one plain line under the status bar. */
 .ph-connection {

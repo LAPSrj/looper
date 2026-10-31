@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem } from '@shared/addons';
-import { AddonScreenView, AddonToolbarButtons } from './AddonScreen';
+import { isPhone, usePageNav } from '../web/page-nav';
+import { addonMore, addonToolbarGroups, AddonScreenView } from './AddonScreen';
+import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useDragResize, useListNav } from './hooks';
+import { listContextMenu } from './list-nav';
+import { Toolbar } from './Toolbar';
 import { InfoBar } from './ui';
 
 export type AddonPaneState = { status: 'ready'; content: AddonPaneContent } | { status: 'error'; error: string };
@@ -14,8 +18,10 @@ export interface AddonSelection {
 }
 
 /** The installed addons and their panes' items, kept current as addons start, stop and ask for a redraw. */
-export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonPaneState>; reload: (addonId: string) => void } {
+export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonPaneState>; reload: (addonId: string) => void; loaded: boolean } {
   const [addons, setAddons] = useState<AddonInfo[]>([]);
+  // False until the first list answers: an empty list before that is a placeholder, not "no addons".
+  const [loaded, setLoaded] = useState(false);
   const [panes, setPanes] = useState<Record<string, AddonPaneState>>({});
   const current = useRef<AddonInfo[]>([]);
 
@@ -31,16 +37,20 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
   }, []);
 
   useEffect(() => {
-    void window.looper.addons.list().then((list) => {
-      current.current = list;
-      setAddons(list);
-      list.forEach(load);
-    });
+    void window.looper.addons
+      .list()
+      .then((list) => {
+        current.current = list;
+        setAddons(list);
+        list.forEach(load);
+      })
+      .finally(() => setLoaded(true));
     return window.looper.addons.onEvent((e) => {
       if (e.type === 'addons') {
         const prev = current.current;
         current.current = e.addons;
         setAddons(e.addons);
+        setLoaded(true);
         for (const a of e.addons) {
           if (prev.find((x) => x.id === a.id)?.status !== 'running') load(a);
         }
@@ -56,7 +66,7 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
     if (a) load(a);
   }, [load]);
 
-  return { addons, panes, reload };
+  return { addons, panes, reload, loaded };
 }
 
 /** An addon pane's body in the sidebar: its items, drawn like the task list's. */
@@ -122,17 +132,66 @@ export function AddonPaneList({
   }
   // What the arrow keys move through: the rows that show.
   const isCollapsed = (name: string) => !searching && collapsed.has(name);
-  const items = [...loose, ...groups.flatMap((g) => (isCollapsed(g.name) ? [] : g.items))];
-  const index = selected === null ? -1 : items.findIndex((it) => it.id === selected);
   const rowId = (id: string) => `addon-${addon.id}-${pane}-${id}`;
+  const groupRowId = (name: string) => `addon-${addon.id}-${pane}-group-${groups.findIndex((g) => g.name === name)}`;
   const open = (it: AddonPaneItem) =>
     void window.looper.addons.event(addon.id, { source: { pane }, kind: 'open', id: it.id, item: it.id });
+  // The rows the keyboard visits, in the order they show: the loose items, then each group's header and its items while it's open.
+  type NavRow = { kind: 'group'; name: string } | { kind: 'item'; it: AddonPaneItem };
+  const rows: NavRow[] = [
+    ...loose.map((it) => ({ kind: 'item' as const, it })),
+    ...groups.flatMap((g): NavRow[] => [
+      { kind: 'group', name: g.name },
+      ...(isCollapsed(g.name) ? [] : g.items.map((it) => ({ kind: 'item' as const, it }))),
+    ]),
+  ];
+  // The active row is the selected item, or the header the keyboard last stopped on.
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.name === activeGroup);
+  const index = groupAt >= 0 ? groupAt : selected === null ? -1 : rows.findIndex((r) => r.kind === 'item' && r.it.id === selected);
+  const idAt = (r: NavRow) => (r.kind === 'group' ? groupRowId(r.name) : rowId(r.it.id));
+  const pick = (it: AddonPaneItem) => {
+    setActiveGroup(null);
+    onSelect(it);
+  };
+  const showItemMenu = (it: AddonPaneItem) => {
+    if (it.menu?.length) window.looper.addons.showMenu(addon.id, pane, it.menu, { item: it.id });
+  };
   const nav = useListNav({
-    count: items.length,
+    count: rows.length,
     index,
-    onIndex: (i) => onSelect(items[i]),
-    onActivate: (i) => open(items[i]),
-    scrollToId: index >= 0 ? rowId(items[index].id) : null,
+    onIndex: (i) => {
+      const r = rows[i];
+      if (r.kind === 'group') return setActiveGroup(r.name);
+      pick(r.it);
+    },
+    onActivate: (i) => {
+      const r = rows[i];
+      if (r.kind === 'group') toggleGroup(r.name);
+      else open(r.it);
+    },
+    onMenu: (i) => {
+      const r = rows[i];
+      if (r.kind === 'item') showItemMenu(r.it);
+    },
+    tree: {
+      expanded: (i) => {
+        const r = rows[i];
+        return r.kind === 'group' ? !isCollapsed(r.name) : undefined;
+      },
+      set: (i, wanted) => {
+        const r = rows[i];
+        if (r.kind === 'group' && !isCollapsed(r.name) !== wanted) toggleGroup(r.name);
+      },
+      // Loose items sit at the top level; a grouped item is inside the header above it.
+      parent: (i) => {
+        const r = rows[i];
+        if (r.kind === 'group') return -1;
+        for (let j = i - 1; j >= 0; j--) if (rows[j].kind === 'group') return loose.some((l) => l.id === r.it.id) ? -1 : j;
+        return -1;
+      },
+    },
+    scrollToId: index >= 0 ? idAt(rows[index]) : null,
   });
 
   if (addon.status === 'stopped') {
@@ -186,17 +245,18 @@ export function AddonPaneList({
         <li
           key={it.id}
           id={rowId(it.id)}
-          role="option"
+          role="treeitem"
+          aria-level={grouped ? 2 : 1}
           aria-selected={it.id === selected}
           className={`task-item${it.id === selected ? ' selected' : ''}${it.dimmed ? ' disabled' : ''}`}
           style={grouped ? { marginLeft: GROUP_INDENT } : undefined}
-          onClick={() => onSelect(it)}
+          onClick={() => pick(it)}
           onDoubleClick={() => open(it)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onSelect(it);
-            if (it.menu?.length) window.looper.addons.showMenu(addon.id, pane, it.menu, { item: it.id });
+            pick(it);
+            showItemMenu(it);
           }}
         >
           <div className="task-item-row">
@@ -215,34 +275,36 @@ export function AddonPaneList({
     {searchBox}
     <ul
       className={`task-list${compact ? ' compact' : ''}`}
-      role="listbox"
+      role="tree"
       aria-label={addon.name}
       tabIndex={0}
       onKeyDown={nav}
-      aria-activedescendant={index >= 0 ? rowId(items[index].id) : undefined}
+      aria-activedescendant={index >= 0 ? idAt(rows[index]) : undefined}
+      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active item's menu.
+      onContextMenu={(e) =>
+        listContextMenu(e, index, (i) => {
+          const r = rows[i];
+          if (r.kind === 'item') showItemMenu(r.it);
+        })
+      }
     >
       {loose.map((it) => row(it, false))}
       {groups.map((g) => {
         const open = !isCollapsed(g.name);
         return [
-          <li key={`group:${g.name}`} role="presentation" className="task-folder" onClick={() => toggleGroup(g.name)}>
-            <svg
-              className={`chev${open ? ' open' : ''}`}
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3.5 1.5 7 5l-3.5 3.5" />
-            </svg>
-            <span className="task-folder-name">{g.name}</span>
-            {!open && <span className="task-folder-count">{g.items.length}</span>}
-          </li>,
+          <GroupHeader
+            key={`group:${g.name}`}
+            id={groupRowId(g.name)}
+            as="li"
+            name={g.name}
+            open={open}
+            count={g.items.length}
+            className={`task-folder${activeGroup === g.name ? ' active' : ''}`}
+            onToggle={() => {
+              setActiveGroup(g.name);
+              toggleGroup(g.name);
+            }}
+          />,
           ...(open ? g.items.map((it) => row(it, true)) : []),
         ];
       })}
@@ -250,9 +312,6 @@ export function AddonPaneList({
     </>
   );
 }
-
-/** How far a group's items sit in from its heading. */
-const GROUP_INDENT = 14;
 
 /**
  * An instant Search box as the Windows guidelines draw one: a prompt inside
@@ -274,15 +333,25 @@ export function AddonSearchBox({
   const ref = useRef<HTMLInputElement | null>(null);
   // A click that focuses the box would undo the select-on-focus on mouse up.
   const justFocused = useRef(false);
-  const prompt = placeholder ?? 'Type to search';
-  return (
-    <div className="addon-search">
+  // A phone's search field (iOS's look): the magnifying glass stays at its start, and Cancel shows beside it while it has the focus.
+  const [focused, setFocused] = useState(false);
+  const prompt = placeholder ?? (isPhone ? 'Search' : 'Type to search');
+  const glass = (
+    <svg className="addon-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m10.3 10.3 3.2 3.2" />
+    </svg>
+  );
+  const field = (
+    <>
+      {isPhone && glass}
       <input
         ref={(el) => {
           ref.current = el;
           inputRef?.(el);
         }}
         type="text"
+        enterKeyHint={isPhone ? 'search' : undefined}
         aria-label={prompt}
         placeholder={prompt}
         value={value}
@@ -290,7 +359,9 @@ export function AddonSearchBox({
         onFocus={(e) => {
           e.currentTarget.select();
           justFocused.current = true;
+          setFocused(true);
         }}
+        onBlur={() => setFocused(false)}
         onMouseUp={(e) => {
           if (justFocused.current) e.preventDefault();
           justFocused.current = false;
@@ -317,10 +388,27 @@ export function AddonSearchBox({
           </svg>
         </button>
       ) : (
-        <svg className="addon-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-          <circle cx="7" cy="7" r="4.5" />
-          <path d="m10.3 10.3 3.2 3.2" />
-        </svg>
+        !isPhone && glass
+      )}
+    </>
+  );
+  if (!isPhone) return <div className="addon-search">{field}</div>;
+  return (
+    <div className="addon-search">
+      <span className="addon-search-field">{field}</span>
+      {focused && (
+        <button
+          type="button"
+          className="addon-search-cancel"
+          // Before the field's blur, which would take the button away first.
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onChange('');
+            ref.current?.blur();
+          }}
+        >
+          Cancel
+        </button>
       )}
     </div>
   );
@@ -369,6 +457,12 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
   }, [addonId, pane, menuBarKey, itemKey]);
 
   const paneButtons = content?.toolbar ?? [];
+  const paneGroups = addonToolbarGroups(
+    paneButtons,
+    { selected: item ?? null, onClick: (id, confirm) => void window.looper.addons.event(addonId, { source: { pane }, kind: 'click', id, item: item?.id }, confirm) },
+    'pane',
+  );
+  usePageNav(content?.mobileMore ? { more: addonMore(content.mobileMore) } : null);
 
   // Ctrl+E goes to the Search box, its standard shortcut in Windows.
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -385,16 +479,9 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
 
   return (
     <div className="app-shell">
-      {/* The window's toolbar: the pane's buttons, then the selected item's screen's, and the Search box at its right. */}
+      {/* The window's toolbar: the pane's buttons, then the selected item's screen's, and the Search box at its right. A phone's More menu has the buttons. */}
       {(paneButtons.length > 0 || item || content?.search) && (
-        <div className="toolbar addon-toolbar">
-          <AddonToolbarButtons
-            items={paneButtons}
-            selected={item ?? null}
-            onClick={(id, confirm) =>
-              void window.looper.addons.event(addonId, { source: { pane }, kind: 'click', id, item: item?.id }, confirm)
-            }
-          />
+        <Toolbar groups={paneGroups} className="addon-toolbar">
           <span className="toolbar-slot" ref={setToolbarSlot} />
           {content?.search && (
             <AddonSearchBox
@@ -406,9 +493,9 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
               }}
             />
           )}
-        </div>
+        </Toolbar>
       )}
-      <div className="app" ref={appRef} style={{ gridTemplateColumns: `${listWidth}px 5px 1fr` }}>
+      <div className={addon && item ? 'app' : 'app no-item'} ref={appRef} style={{ gridTemplateColumns: `${listWidth}px 5px 1fr` }}>
         <aside
           className="sidebar"
           onContextMenu={(e) => {
@@ -450,6 +537,12 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
           ) : null}
         </main>
       </div>
+      {/* iOS puts a screen's search in a bottom toolbar of its own (HIG: Search fields), which rises with the keyboard. */}
+      {isPhone && content?.search && (
+        <div className="addon-search-bar">
+          <AddonSearchBox value={query} onChange={setQuery} placeholder={content.search.placeholder} />
+        </div>
+      )}
     </div>
   );
 }

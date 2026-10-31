@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { MenuItemSpec, MessageBoxSpec, FileDialogSpec, RemoteWindowSpec } from '../../../shared/remote-access';
+import type { StoredShell } from './offline-store';
 import type { Session, ShellMessage } from './session';
 
 export interface WebWindow extends RemoteWindowSpec {
@@ -162,22 +163,66 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
   }
 }
 
+/** The windows to keep for the next launch: what the iframes need to load again, not their nonce. */
+export function storedShell(s: ShellState): StoredShell {
+  return {
+    windows: s.windows.map(({ nonce: _nonce, ...win }) => win),
+    order: s.order,
+    focused: s.focused,
+    minimized: s.minimized,
+  };
+}
+
+/** The shell as the last launch left it, not connected: it counts as a reconnect once the computer answers. */
+export function restoreShell(saved: StoredShell): ShellState {
+  const windows = saved.windows.map((w): WebWindow => ({ ...w, nonce: 0 }));
+  const known = new Set(windows.map((w) => w.w));
+  return {
+    ...initialShellState,
+    windows,
+    order: saved.order.filter((w) => known.has(w)),
+    focused: saved.focused && known.has(saved.focused) ? saved.focused : null,
+    minimized: saved.minimized.filter((w) => known.has(w)),
+    everConnected: true,
+  };
+}
+
+const SAVE_SHELL_MS = 500;
+
 /** The shell's state, kept in step with the session's messages. */
 export class ShellStore {
-  private state = initialShellState;
+  private state: ShellState;
   private readonly listeners = new Set<() => void>();
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(readonly session: Session) {
+    const saved = session.restoredShell();
+    this.state = saved ? restoreShell(saved) : initialShellState;
     session.onShell((m) => this.dispatch(m));
     session.onConnection((connected) => this.dispatch({ t: 'connected', connected }));
     if (session.isConnected()) this.dispatch({ t: 'connected', connected: true });
   }
 
   dispatch(a: ShellAction): void {
-    const next = reduceShell(this.state, a);
-    if (next === this.state) return;
+    const prev = this.state;
+    const next = reduceShell(prev, a);
+    if (next === prev) return;
     this.state = next;
+    if (this.stackChanged(prev, next)) this.saveSoon();
     for (const l of [...this.listeners]) l();
+  }
+
+  private stackChanged(a: ShellState, b: ShellState): boolean {
+    return a.windows !== b.windows || a.order !== b.order || a.focused !== b.focused || a.minimized !== b.minimized;
+  }
+
+  /** The windows are kept for a launch without the computer. */
+  private saveSoon(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.session.saveShell(storedShell(this.state));
+    }, SAVE_SHELL_MS);
   }
 
   getState = (): ShellState => this.state;

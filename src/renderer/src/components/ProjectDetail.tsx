@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RemoteState } from '@shared/remote';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, describeEnvironment, harnessKindLabel, harnessModels, withKind } from '@shared/environments';
 import { projectTaskId } from '@shared/projects';
 import { isSessionRun } from '@shared/runs';
 import { envToLine, joinTokens } from '@shared/cmdline';
@@ -38,7 +38,6 @@ export function ProjectDetail({
   runtimes,
   environments,
   remote,
-  now,
   onSelectTask,
 }: {
   project: Project;
@@ -46,7 +45,6 @@ export function ProjectDetail({
   runtimes: Record<string, TaskRuntime>;
   environments: Environment[];
   remote: RemoteState | null;
-  now: number;
   onSelectTask: (id: string) => void;
 }) {
   const [shownTab, setTab] = useState<ProjectTab>('status');
@@ -110,6 +108,7 @@ export function ProjectDetail({
         tabs={gitRepo ? [...TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] : TABS}
         active={tab}
         onSelect={setTab}
+        ctrlTab
       />
       <section className="tab-body">
         {tab === 'status' && (
@@ -118,9 +117,9 @@ export function ProjectDetail({
               <dt>Working directory</dt>
               <dd className="mono">{project.cwd}</dd>
               <dt>Environment</dt>
-              <dd>{env ? `${env.name} (${describeEnvironment(env)})` : <span className="warn">Unknown environment "{project.environmentId}"</span>}</dd>
+              <dd>{env ? withKind(env.name, describeEnvironment(env)) :<span className="warn">Unknown environment "{project.environmentId}"</span>}</dd>
               <dt>Harness</dt>
-              <dd>{harness ? `${harness.name} (${harnessKindLabel(harness.kind)})` : 'None'}</dd>
+              <dd>{harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None'}</dd>
               <dt>Model</dt>
               <dd>
                 {model}
@@ -131,9 +130,9 @@ export function ProjectDetail({
               <dt>Permission mode</dt>
               <dd>{mode || 'None'}</dd>
               <dt>Extra command-line arguments</dt>
-              <dd className="mono">{project.extraArgs.length ? joinTokens(project.extraArgs) : 'None'}</dd>
+              <dd className={project.extraArgs.length ? 'mono' : undefined}>{project.extraArgs.length ? joinTokens(project.extraArgs) : 'None'}</dd>
               <dt>Extra environment variables</dt>
-              <dd className="mono">{Object.keys(project.env).length ? envToLine(project.env) : 'None'}</dd>
+              <dd className={Object.keys(project.env).length ? 'mono' : undefined}>{Object.keys(project.env).length ? envToLine(project.env) : 'None'}</dd>
               <dt>Remote Control</dt>
               <dd>{remoteText}</dd>
             </dl>
@@ -158,7 +157,7 @@ export function ProjectDetail({
                       >
                         <td title={t.name}>{t.name}</td>
                         <td>{statusOf(t)}</td>
-                        <td>{rt?.lastRunAt ? fmtClock(rt.lastRunAt, now) : 'Never'}</td>
+                        <td>{rt?.lastRunAt ? fmtClock(rt.lastRunAt, Date.now()) : 'Never'}</td>
                         <td>{rt?.lastResult ? resultLabel(rt.lastResult) : 'None'}</td>
                         <td title={rt?.lastDetail ?? undefined}>{rt?.lastDetail ?? ''}</td>
                       </tr>

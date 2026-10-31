@@ -8,6 +8,13 @@ import { requestHeaders } from './request';
  */
 export type PushState = 'unsupported' | 'home-screen' | 'denied' | 'off' | 'on';
 
+/** What to do about each state that keeps the Notifications switch off, shown under it. */
+export const PUSH_HINTS: Partial<Record<PushState, string>> = {
+  'home-screen': 'Add Looper to the Home Screen to get notifications.',
+  denied: 'Turn on notifications for Looper in Settings > Notifications.',
+  unsupported: 'Notifications need the secure (https) address.',
+};
+
 const FLAG = 'looper.push';
 
 const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);

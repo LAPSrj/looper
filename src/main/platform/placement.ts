@@ -181,6 +181,21 @@ export function restoredBounds(args: {
   return fitToDisplays(cascade(want, args.taken ?? []), displays);
 }
 
+/**
+ * The page height (CSS px) a dialog should have for the content it measured:
+ * null to leave it. The first fit sets the height exactly, so a dialog opens
+ * with no empty band; later fits only grow it, so a tab or a revealed field
+ * that needs more room never brings a scroll bar back. `max` is the room on
+ * the display.
+ */
+export function fitContentHeight(args: { current: number; wanted: number; first: boolean; max: number }): number | null {
+  const { current, wanted, first, max } = args;
+  if (!Number.isFinite(wanted) || wanted <= 0) return null;
+  const target = Math.min(Math.ceil(wanted), Math.floor(max));
+  if (first) return target === current ? null : target;
+  return target > current ? target : null;
+}
+
 /** The saved places file's entries that are well-formed; anything else is dropped. */
 export function parsePlaces(data: unknown): Record<string, Place> {
   const out: Record<string, Place> = {};

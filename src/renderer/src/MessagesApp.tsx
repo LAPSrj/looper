@@ -3,6 +3,8 @@ import type { TaskRuntime } from '@shared/types';
 import { MessagesView } from './components/Messages';
 import { InfoBar } from './components/ui';
 import { subscribe } from './events';
+import { taskNameOf } from './phone-lists';
+import { isPhone } from './web/page-nav';
 
 /**
  * A conversation in its own window: a run's messages, or a subagent's
@@ -40,6 +42,9 @@ export function MessagesApp({
       if (e.type === 'runtime' && e.runtime.taskId === taskId) setRuntime(e.runtime);
     });
   }, [taskId]);
+
+  // The window's title is "<task> – <run id>"; a phone's bar names the task only (the run is the screen's content).
+  const phoneTitle = agentId ? title : taskNameOf(title, runId);
 
   const run = runtime?.runs.find((r) => r.runId === runId);
   const running = run?.state === 'running' || run?.state === 'classifying';
@@ -79,6 +84,7 @@ export function MessagesApp({
         running={running}
         refreshKey={sent}
         focusReport={focusReport}
+        phoneTitle={phoneTitle}
         notice={canGuide && question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
       />
       {canGuide && (
@@ -89,7 +95,8 @@ export function MessagesApp({
             value={guidance}
             onChange={(e) => setGuidance(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.ctrlKey) {
+              // Enter is a line break; Ctrl+Enter sends (Cmd+Enter too on a phone or tablet).
+              if (e.key === 'Enter' && (e.ctrlKey || (isPhone && e.metaKey))) {
                 e.preventDefault();
                 void send();
               }

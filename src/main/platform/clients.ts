@@ -25,10 +25,13 @@ export interface RemoteClientsOptions {
   offerDownload: (file: string, name: string, onDone: () => void) => string;
   /** How long a tab that lost its connection keeps its windows. */
   graceMs?: number;
+  /** The same for a phone's installed app, which is locked or away far longer than a tab. */
+  phoneGraceMs?: number;
   deliveryQuietMs?: number;
 }
 
 export const CLIENT_GRACE_MS = 2 * 60_000;
+export const PHONE_GRACE_MS = 24 * 60 * 60_000;
 
 /**
  * The remote clients and their messages: a hello makes a client (or resumes
@@ -116,7 +119,9 @@ export class RemoteClients {
   private detach(client: RemoteClient, conn: ConnectionLike): void {
     if (client.disposed) return;
     client.setConnection(null);
-    const timer = setTimeout(() => this.expire(client, conn.device.name), this.opts.graceMs ?? CLIENT_GRACE_MS);
+    const phone = conn.platform === 'ios' || conn.platform === 'android';
+    const grace = phone ? (this.opts.phoneGraceMs ?? PHONE_GRACE_MS) : (this.opts.graceMs ?? CLIENT_GRACE_MS);
+    const timer = setTimeout(() => this.expire(client, conn.device.name), grace);
     timer.unref?.();
     this.graceTimers.set(client, timer);
   }

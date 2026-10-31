@@ -105,13 +105,14 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
             empty="No versions yet. A version is saved each time the task's definition changes."
             onSelect={(v) => setSelected(v.n)}
             onOpen={(v) => void window.looper.versions.openDetail(taskId, v.n, false)}
-            onContextMenu={() => window.looper.showVersionContextMenu({ builder: builderOpen })}
+            onContextMenu={(v) => window.looper.showVersionContextMenu({ builder: builderOpen, current: v.n === current })}
+            autoFocus
           />
           <div className="env-actions">
             <button className="btn" disabled={!version} onClick={view}>
               View…
             </button>
-            <button className="btn" disabled={!version} onClick={compare}>
+            <button className="btn" disabled={!version || version.n === current} onClick={compare}>
               Compare with Current…
             </button>
             {builderOpen ? (

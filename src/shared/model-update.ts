@@ -117,3 +117,11 @@ export function applyModelUpdate(
   }
   return next;
 }
+
+/** Whether the chosen actions (default: each row's suggestion) would add or remove anything. */
+export function hasModelChange(rows: ModelUpdateRow[], actions: Record<string, ModelAction>): boolean {
+  return rows.some((r) => {
+    const a = actions[r.id] ?? r.suggested;
+    return r.inList ? a === 'remove' : a === 'add';
+  });
+}

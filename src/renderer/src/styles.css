@@ -1,6 +1,3 @@
-/* A window's page in a phone's frame: its own rules, all scoped to html.phone-window. */
-@import './phone.css';
-
 :root {
   /* Light theme (Windows 11 palette). Dark overrides below. */
   --bg: #f3f3f3;
@@ -20,9 +17,45 @@
   --yellow-bg: #fff4ce;
   --red-bg: #fde7e9;
   --backdrop: rgba(0, 0, 0, 0.35);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--fg));
+  /* Fluent's two radii: 4px for in-page elements (buttons, boxes, rows), 8px for what floats over the page (windows, flyouts, dialogs). */
+  --radius-control: 4px;
+  --radius-overlay: 8px;
+  /* A small type ramp: captions and labels, body text. */
+  --font-caption: 12px;
+  --font-body: 13px;
+  /* SF Mono on Apple devices (ui-monospace), Cascadia or Consolas on Windows. */
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace;
+  /* One control height, shared by buttons, text boxes and drop-downs. */
+  --control-height: 32px;
+  /* A disabled control, its label included. */
+  --disabled-opacity: 0.45;
+  /* How far a group's rows sit in from its header. */
+  --group-indent: 14px;
+  /* Elevation: a flyout or toast, a dialog or window, the skill list opening upward. */
+  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.2);
+  --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.35);
+  --shadow-flyout-up: 0 -2px 8px rgba(0, 0, 0, 0.14);
+  /* Layers, from the page up: a pop-up list, menus, dialogs, toasts, the top of the window frame. */
+  --z-popup: 5;
+  --z-menu: 2000;
+  --z-modal: 3000;
+  --z-toast: 4000;
+  --z-top: 5000;
+  /* Status colors the dashboard icons and message boxes share. */
+  --warning-fill: #f7c948;
+  --warning-edge: #9d5d00;
+  --on-warning: #1b1b1b;
+  --on-red: #ffffff;
+  /* The agent's terminal stays dark in both themes (xterm.ts reads these too). */
+  --term-bg: #0f1115;
+  --term-fg: #d7dae0;
+  --term-muted: #8b919c;
+  --term-prompt: #4cc38a;
+  --term-selection: #3a4252;
   color-scheme: light dark;
   font-family: system-ui, 'Segoe UI', sans-serif;
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--fg);
   background: var(--bg);
 }
@@ -67,8 +100,8 @@ textarea {
 }
 code,
 .mono {
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 .muted {
   color: var(--fg-muted);
@@ -167,13 +200,15 @@ code,
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg);
 }
 
-.toolbar button:hover:not(:disabled) {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .toolbar button:hover:not(:disabled) {
+    background: var(--bg-3);
+  }
 }
 
 .toolbar button:active:not(:disabled) {
@@ -187,7 +222,7 @@ code,
 
 .toolbar button:disabled {
   color: var(--fg-muted);
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .toolbar-sep {
@@ -204,9 +239,14 @@ code,
   padding: 3px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
   white-space: nowrap;
+}
+.statusbar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- sidebar ---------- */
@@ -251,12 +291,14 @@ code,
 .pane-header .chev.open {
   transform: rotate(90deg);
 }
-.pane-header:hover .pane-title {
-  color: var(--fg);
+@media (hover: hover) and (pointer: fine) {
+  .pane-header:hover .pane-title {
+    color: var(--fg);
+  }
 }
 .pane-count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
 }
 /* The splitter straddles the border between two panes. */
@@ -270,7 +312,7 @@ code,
   cursor: row-resize;
 }
 .pane-title {
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -287,6 +329,13 @@ code,
   min-height: 41px;
   box-sizing: border-box;
 }
+/* The detail bar's title is the item's own name (a task, a project, an addon screen): a page title shown as written, not an uppercase section label. */
+.detail-bar .pane-title {
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--fg);
+}
 .task-list {
   list-style: none;
   margin: 0;
@@ -296,12 +345,14 @@ code,
 }
 .task-item {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   border: 1px solid transparent;
 }
-.task-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .task-item:hover {
+    background: var(--bg-3);
+  }
 }
 .task-item.selected {
   background: var(--bg-3);
@@ -324,7 +375,7 @@ code,
 }
 .task-item-sub {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
   margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -333,48 +384,50 @@ code,
 .task-list.compact .task-item {
   padding: 5px 10px;
 }
-.task-item.disabled {
-  opacity: 0.5;
+/* A disabled task is still a row to select and run commands on, so its text keeps 4.5:1: the name in the muted color (the sub-line already is), not half opacity. */
+.task-item.disabled .task-name {
+  color: var(--fg-muted);
 }
-/* ---------- task-list folders ---------- */
-.task-folder {
+/* ---------- group headers (components/GroupHeader.tsx) ---------- */
+/* One header for a group in any list (task folders, project groups, chat groups, addon pane groups): a level
+   below the pane header (.pane-title is the uppercase section label), the name shown as written. */
+.group-header {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 4px;
   margin-top: 4px;
-  border-radius: 4px;
-  font-size: 11.5px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-caption);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--fg-muted);
   cursor: default;
+  user-select: none;
 }
-.task-folder:hover {
-  color: var(--fg);
+@media (hover: hover) and (pointer: fine) {
+  .group-header:hover {
+    color: var(--fg);
+  }
 }
-.task-folder .chev {
+.group-header .chev {
   flex: none;
   transition: transform 0.1s;
 }
-.task-folder .chev.open {
+.group-header .chev.open {
   transform: rotate(90deg);
 }
-.task-folder-name {
+.group-header-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-folder-count {
+.group-header-count {
   color: var(--fg-muted);
   font-weight: 400;
 }
-
-/* A Projects pane group is a folder path or a harness name: shown as written. */
-.task-folder.project-group {
-  text-transform: none;
-  letter-spacing: normal;
+/* Rows under a header sit one step in (GROUP_INDENT in GroupHeader.tsx); the Chats list does it here, since a phone's rows must not move. */
+html:not(.phone-window) .session-group ~ .session-row {
+  margin-left: var(--group-indent);
 }
 /* ---------- drag reorder ---------- */
 /* A pseudo-element, not box-shadow: the shadow would follow the item's border-radius. */
@@ -421,37 +474,6 @@ code,
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-/* ---------- badges ---------- */
-.badge {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 10px;
-  background: var(--bg-3);
-  color: var(--fg-muted);
-  white-space: nowrap;
-}
-.badge.state-running {
-  background: var(--green-bg);
-  color: var(--green);
-}
-.badge.state-checking,
-.badge.state-classifying {
-  background: var(--info-bg);
-  color: var(--accent);
-}
-.badge.state-paused {
-  background: var(--yellow-bg);
-  color: var(--yellow);
-}
-.badge.state-held {
-  background: var(--yellow-bg);
-  color: var(--yellow);
-  font-weight: 600;
-}
-.badge.state-disabled {
-  opacity: 0.6;
-}
-
 /* ---------- main / detail ---------- */
 .main {
   display: flex;
@@ -489,7 +511,7 @@ code,
   display: block;
   margin-bottom: 6px;
 }
-.dashboard-list:focus-visible {
+.dashboard-list .runlog-table:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
@@ -499,18 +521,38 @@ code,
 .runlog-table .num {
   text-align: right;
 }
-.status-icon {
+/* The error, warning and information glyphs (components/icons.tsx StatusGlyph). */
+.status-glyph {
   flex: none;
+  /* Beside text, on its baseline. */
   vertical-align: -3px;
   margin-right: 6px;
 }
-.status-icon-error {
+.status-glyph.error .status-glyph-bg {
   fill: var(--red);
 }
-.status-icon-warning {
-  fill: #f7c948;
-  stroke: #9d5d00;
+.status-glyph.error .status-glyph-mark {
+  stroke: var(--on-red);
+}
+.status-glyph.warning .status-glyph-bg {
+  fill: var(--warning-fill);
+  stroke: var(--warning-edge);
   stroke-width: 0.8;
+}
+.status-glyph.warning .status-glyph-mark {
+  stroke: var(--on-warning);
+}
+.status-glyph.warning .status-glyph-dot {
+  fill: var(--on-warning);
+}
+.status-glyph.info .status-glyph-bg {
+  fill: var(--accent);
+}
+.status-glyph.info .status-glyph-dot {
+  fill: var(--accent-fg);
+}
+.status-glyph.info .status-glyph-mark {
+  stroke: var(--accent-fg);
 }
 .status-pane .props {
   margin-top: 0;
@@ -521,7 +563,7 @@ code,
   gap: 3px 26px;
   align-items: baseline;
   margin: 12px 0 2px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
 .props dt {
   color: var(--fg-muted);
@@ -537,21 +579,26 @@ code,
 .btn {
   background: var(--bg-3);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 5px 11px;
+  min-height: var(--control-height);
   cursor: pointer;
 }
-.btn:hover:not(:disabled) {
-  border-color: var(--fg-muted);
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) {
+    border-color: var(--fg-muted);
+  }
 }
 .btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
   cursor: default;
 }
+/* Smaller than the standard 32px button, not taller. */
 .btn.small {
   padding: 2px 8px;
-  font-size: 12px;
-  height: 32px;
+  font-size: var(--font-caption);
+  min-height: 24px;
+  height: 24px;
 }
 .btn.primary {
   background: var(--accent);
@@ -568,10 +615,12 @@ code,
   color: var(--accent);
   cursor: pointer;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
-.link:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .link:hover {
+    text-decoration: underline;
+  }
 }
 
 .tabs {
@@ -591,6 +640,167 @@ code,
 .tab.active {
   color: var(--fg);
   border-bottom-color: var(--accent);
+}
+
+/* The shared tab strip (components/Tabs.tsx): no scrollbar, a fade or scroll buttons where more tabs lie. */
+.tabs-scroll {
+  --tabs-bg: var(--bg);
+  --tabs-fade: 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-padding-inline: 28px;
+}
+.tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+.tabs-scroll .tab-item {
+  display: contents;
+}
+.tabs-scroll .tab-item.has-close {
+  display: flex;
+}
+.tabs-scroll .tab {
+  position: relative;
+  flex: none;
+  max-width: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--font-body);
+  white-space: nowrap;
+}
+.tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tabs-scroll .tab.divide-after {
+  margin-right: 9px;
+}
+.tabs-scroll .tab.divide-after::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: var(--border);
+}
+/* The open finished subagent's close button continues its tab's underline. */
+.tab-close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 8px 0 2px;
+  color: var(--fg-muted);
+}
+.tab-item.active .tab-close {
+  border-bottom-color: var(--accent);
+}
+.tabs-scroll-button {
+  display: none;
+}
+@media (hover: none), (pointer: coarse) {
+  .tabs-scroll[data-more-start] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
+    mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
+  }
+  .tabs-scroll[data-more-end] {
+    -webkit-mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
+    mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
+  }
+  .tabs-scroll[data-more-start][data-more-end] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade), #000 calc(100% - var(--tabs-fade)), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade), #000 calc(100% - var(--tabs-fade)), transparent);
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .tabs-scroll[data-more-start] > .tabs-scroll-button.start,
+  .tabs-scroll[data-more-end] > .tabs-scroll-button.end {
+    display: flex;
+  }
+  .tabs-scroll-button {
+    position: sticky;
+    z-index: 1;
+    flex: none;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    padding: 0;
+    border: none;
+    background: var(--tabs-bg);
+    color: var(--fg-muted);
+  }
+  .tabs-scroll-button.start {
+    left: 0;
+    margin-right: -22px;
+  }
+  .tabs-scroll-button.end {
+    right: 0;
+    margin-left: -22px;
+  }
+  .tabs-scroll-button:hover,
+  .tabs-scroll .tab:not(.active):hover,
+  .tab-close:hover {
+    color: var(--fg);
+  }
+}
+
+/* A state as a small mark (components/StatusMark.tsx). */
+.status-mark {
+  flex: none;
+}
+.status-mark.running {
+  color: var(--accent);
+  animation: status-spin 0.9s linear infinite;
+}
+.status-mark.waiting {
+  color: var(--yellow);
+}
+.status-mark.done {
+  color: var(--green);
+}
+.status-mark.failed {
+  color: var(--red);
+}
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Reduce Motion (iOS) and Animation effects off (Windows) reach every page as this query, the phone's pages in the
+   frame's iframes too. Transitions and one-shot animations finish at once (the end events still fire); the looping
+   ones (spinners, the working dot's pulse, the Now cursor) stand still. The pairing code's countdown bar is a
+   timer, not decoration, so it keeps running. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.pair-progress-fill),
+  *:not(.pair-progress-fill)::before,
+  *:not(.pair-progress-fill)::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .status-mark.running,
+  .session-icon.working .core,
+  .now-term-cursor,
+  .pg-spinner {
+    animation: none !important;
+  }
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .tab-body {
   flex: 1;
@@ -626,8 +836,8 @@ code,
   margin: 0;
   padding: 12px 14px;
   white-space: pre-wrap;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   height: 100%;
   overflow: auto;
 }
@@ -638,7 +848,7 @@ code,
 /* Remote Control conversations: who wrote the message the panel shows, when it's the user. */
 .runlog-result-from {
   padding: 10px 14px 0;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .runlog-table {
   width: 100%;
@@ -694,13 +904,20 @@ code,
 .runlog-table tr.run-row {
   cursor: default;
 }
-.runlog-table tr.run-row:hover td {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .runlog-table tr.run-row:hover td {
+    background: var(--bg-3);
+  }
 }
-.runlog-table tr.run-row.selected td,
-.runlog-table tr.run-row.selected:hover td {
+.runlog-table tr.run-row.selected td {
   background: var(--accent);
   color: var(--accent-fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .runlog-table tr.run-row.selected:hover td {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
 }
 .runlog-table-wrap:focus-visible,
 .run-detail-table-wrap:focus-visible {
@@ -721,8 +938,10 @@ code,
 .run-detail-app .runlog-table tr {
   cursor: default;
 }
-.run-detail-app .runlog-table tr:hover td {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .run-detail-app .runlog-table tr:hover td {
+    background: var(--bg-3);
+  }
 }
 .run-detail-app .runlog-table tr.selected td {
   background: var(--accent);
@@ -742,8 +961,8 @@ code,
   margin: 0;
   padding: 12px 14px;
   white-space: pre-wrap;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   height: 100%;
   overflow: auto;
 }
@@ -756,7 +975,7 @@ code,
   height: 100%;
   overflow: auto;
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -796,7 +1015,7 @@ code,
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .markdown ul,
 .markdown ol {
@@ -809,12 +1028,12 @@ code,
 }
 .markdown code {
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: var(--bg-3);
 }
 .markdown pre {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-3);
   overflow: auto;
   white-space: pre;
@@ -886,7 +1105,7 @@ code,
   padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .chat-find .addon-search {
   margin: 0;
@@ -897,7 +1116,7 @@ code,
 }
 ::highlight(chat-find-current) {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 /* Both classes: the builder's .chat-card rules come later in this file. */
 .chat-card.chat-permission {
@@ -941,7 +1160,7 @@ code,
 .chat-thumb {
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   cursor: pointer;
   line-height: 0;
@@ -949,7 +1168,7 @@ code,
 .chat-thumb img {
   max-height: 120px;
   max-width: 220px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 .chat-thumb span {
   display: inline-block;
@@ -962,7 +1181,7 @@ code,
   align-items: baseline;
 }
 .chat-file .link {
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 
 /* A Looper terminal window: the session fills it. */
@@ -971,28 +1190,30 @@ code,
   display: flex;
   flex-direction: column;
   padding: 6px 0 0 6px;
-  background: #0f1115;
+  background: var(--term-bg);
 }
 .terminal-wrap {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  background: #0f1115;
+  background: var(--term-bg);
 }
 .terminal-runs {
   align-self: flex-start;
   margin: 6px 10px 0;
   padding: 4px 8px;
-  background: #0f1115;
+  background: var(--term-bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  color: #d7dae0;
+  border-radius: var(--radius-control);
+  color: var(--term-fg);
 }
 .terminal {
   flex: 1;
   min-height: 0;
   position: relative;
+  /* The scrollbar of the always-dark terminal is dark too. */
+  color-scheme: dark;
 }
 /* Padding, not an inset: the fit addon subtracts only this padding from the parent's size, so an inset makes the last row spill out. */
 .terminal .xterm {
@@ -1002,7 +1223,7 @@ code,
 }
 .banner {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--font-caption);
   border-bottom: 1px solid var(--border);
 }
 /* WinUI's InfoBar, informational severity (InfoBar_themeresources.xaml and Common_themeresources_any.xaml). */
@@ -1015,22 +1236,12 @@ code,
   margin: 8px 10px;
   padding: 0 16px;
   border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: rgba(246, 246, 246, 0.5);
   color: var(--fg);
 }
-.infobar-icon {
-  flex: none;
-  margin-top: 16px;
-}
-.infobar-icon-bg {
-  fill: var(--accent);
-}
-.infobar-icon-fg {
-  fill: var(--accent-fg);
-}
-.infobar-icon-stroke {
-  stroke: var(--accent-fg);
+.infobar > .status-glyph {
+  margin: 16px 0 0;
 }
 .infobar-text {
   padding: 14px 0;
@@ -1122,7 +1333,7 @@ code,
 }
 .form {
   overflow-y: auto;
-  padding: 4px 24px 48px;
+  padding: 4px 24px 24px;
   max-width: 760px;
   width: 100%;
   margin: 0 auto;
@@ -1134,7 +1345,7 @@ code,
 .form section h3,
 .addon-screen section h3 {
   margin: 0 0 4px;
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -1151,18 +1362,18 @@ code,
   min-width: 0;
 }
 .field-label {
-  font-size: 12.5px;
+  font-size: var(--font-body);
   font-weight: 500;
   color: var(--fg);
 }
 .checkbox-field {
   display: flex;
   width: fit-content;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   margin: 14px 0;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: var(--font-body);
+  font-weight: 400;
   color: var(--fg);
   cursor: default;
 }
@@ -1198,7 +1409,7 @@ code,
   margin: 0;
 }
 .stagger-fields.disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .step-fields {
@@ -1216,18 +1427,138 @@ fieldset.step-fields {
 fieldset.step-fields > .row {
   margin: 0;
 }
-.step-fields.disabled {
-  opacity: 0.4;
+/* Several fields or rows under one checkbox (StepFields): the first sits right under it, the others keep the form's spacing. */
+fieldset.step-fields.step-stack > :first-child {
+  margin-top: 0;
 }
-.checkbox-field input[type="checkbox"],
-.checkbox-field input[type="radio"] {
-  /* Inside a .field too (Remote Access's Sources): not a text box's size. */
-  width: auto;
-  height: auto;
-  padding: 0;
-  margin: 0;
+fieldset.step-fields.step-stack > * + * {
+  margin-top: 14px;
+}
+.step-fields.disabled {
+  opacity: var(--disabled-opacity);
+}
+/* ---------- native controls ---------- */
+/* Desktop windows and the web desktop frame draw checkboxes, radio buttons, drop-down arrows, number spinners, date
+   fields and disclosure triangles in Looper's look, wherever they sit (not only inside a .field). A phone's page
+   draws its own (phone.css). Windows 11 sizes: a 20px box, 4px corners, the accent fill when checked. */
+html:not(.phone-window) input:is([type='checkbox'], [type='radio']) {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
   position: relative;
-  top: 1px;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--fg-muted);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+  cursor: default;
+}
+html:not(.phone-window) input[type='radio'] {
+  border-radius: 50%;
+}
+html:not(.phone-window) input:is([type='checkbox'], [type='radio']):checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+html:not(.phone-window) input:is([type='checkbox'], [type='radio']):checked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-fg);
+}
+html:not(.phone-window) input[type='checkbox']:checked::after {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8.5 3 3 6-7' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8.5 3 3 6-7' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+html:not(.phone-window) input[type='radio']:checked::after {
+  inset: 4px;
+  border-radius: 50%;
+}
+@media (hover: hover) and (pointer: fine) {
+  html:not(.phone-window) input:is([type='checkbox'], [type='radio']):not(:disabled):hover {
+    border-color: var(--fg);
+  }
+  html:not(.phone-window) input:is([type='checkbox'], [type='radio']):not(:disabled):checked:hover {
+    border-color: var(--accent-hover);
+    background: var(--accent-hover);
+  }
+}
+/* Drop-downs: a muted chevron in place of the system arrow (the pop-up list stays the system's). */
+html:not(.phone-window) select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%235f5f5f' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.phone-window) select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b919c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+}
+/* On the terminal's always-dark ground, the light chevron in both themes. */
+html:not(.phone-window) select.terminal-runs {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b919c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+/* Number boxes: no spin buttons (the arrow keys step the value, and the unit sits where they were). */
+html:not(.phone-window) input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+html:not(.phone-window) input[type='number']::-webkit-inner-spin-button,
+html:not(.phone-window) input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+/* Date and time fields: the focused part in the accent, a quiet calendar button. */
+html:not(.phone-window) input:is([type='date'], [type='time'], [type='datetime-local'])::-webkit-datetime-edit-field:focus {
+  background: var(--accent);
+  color: var(--accent-fg);
+  outline: none;
+}
+html:not(.phone-window) input:is([type='date'], [type='datetime-local'])::-webkit-calendar-picker-indicator {
+  padding: 2px;
+  border-radius: var(--radius-control);
+  opacity: 0.7;
+  cursor: default;
+}
+@media (hover: hover) and (pointer: fine) {
+  html:not(.phone-window) input:is([type='date'], [type='datetime-local'])::-webkit-calendar-picker-indicator:hover {
+    background: var(--bg-3);
+    opacity: 1;
+  }
+}
+/* Disclosure triangles: the thin chevron every other disclosure uses, turning a quarter when open. */
+summary {
+  display: block;
+  list-style: none;
+  cursor: default;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 1.5 7 5l-3.5 3.5' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 1.5 7 5l-3.5 3.5' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.1s;
+}
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+/* Chromium's own focus ring (orange on some Windows setups) never shows: keyboard focus is Looper's accent, on anything focusable. */
+:where(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Radio options sit tight under their parent checkbox (which has 14px bottom margin). */
@@ -1244,22 +1575,20 @@ fieldset.step-fields > .row {
 }
 .checkbox-field.radio-option {
   margin: 2px 0;
-  font-weight: 400;
 }
 .radio-list .checkbox-field {
   margin: 4px 0;
-  font-weight: 400;
 }
 .help {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
   line-height: 1.45;
 }
 .help code {
   background: var(--bg-3);
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 .form .row {
   display: flex;
@@ -1271,37 +1600,67 @@ fieldset.step-fields > .row {
   min-width: 190px;
   margin: 0;
 }
-.field input,
+/* The text box: every text control. :where() keeps the specificity of `.field input`, so component rules after this still win. */
+.field input:where(:not([type='checkbox'], [type='radio'])),
 .field select,
 .field textarea,
 .guidance-compose textarea,
 .chat-composer textarea,
-.json-editor {
+.json-editor,
+.send-sessions-text,
+.pair-source,
+.mu-item select {
   width: 100%;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 6px 9px;
   color: var(--fg);
 }
-.field input,
-.field select {
-  height: 32px;
+.field input:where(:not([type='checkbox'], [type='radio'])),
+.field select,
+.pair-source {
+  height: var(--control-height);
 }
-.field input:disabled {
-  opacity: 0.55;
-}
-.field input:focus,
+.field input:where(:not([type='checkbox'], [type='radio'])):focus,
 .field select:focus,
 .field textarea:focus,
 .guidance-compose textarea:focus,
 .chat-composer textarea:focus,
-.json-editor:focus {
+.json-editor:focus,
+.send-sessions-text:focus,
+.pair-source:focus,
+.mu-item select:focus {
   outline: none;
   border-color: var(--accent);
 }
 .field textarea {
   resize: vertical;
+}
+/* A drop-down is as wide as its longest choice (at least 200px), not the window; name, path and command boxes stay full width. */
+:where(html:not(.phone-window)) .field select {
+  width: auto;
+  min-width: min(200px, 100%);
+  max-width: 100%;
+  align-self: flex-start;
+}
+/* One disabled look for every control, and for its label. */
+:is(input, select, textarea):disabled {
+  opacity: var(--disabled-opacity);
+}
+/* Only a disabled control counts: a disabled <option> (Status) leaves its select, and so its label, enabled. */
+.field:has(:is(input, select, textarea, button):disabled) > .field-label {
+  opacity: var(--disabled-opacity);
+}
+.checkbox-field:has(input:disabled) {
+  opacity: var(--disabled-opacity);
+}
+.checkbox-field input:disabled {
+  opacity: 1;
+}
+/* A group dimmed as a whole doesn't dim what's inside it again. */
+:is(.stagger-fields, .step-fields).disabled :is(input, select, textarea, .btn, .field-label) {
+  opacity: 1;
 }
 .browse-row {
   display: flex;
@@ -1315,6 +1674,7 @@ fieldset.step-fields > .row {
 
 .hours-row select {
   width: auto;
+  min-width: 0;
   flex: 0 0 auto;
 }
 
@@ -1330,9 +1690,18 @@ fieldset.step-fields > .row {
   flex: 1;
   min-width: 0;
 }
+/* A number box fits its number, not the window (a phone's page sizes its own). */
+:where(html:not(.phone-window)) .input-suffix {
+  flex: 0 0 auto;
+  width: 140px;
+  max-width: 100%;
+}
 .input-suffix input {
   width: 100%;
   padding-right: 48px;
+}
+.input-suffix:not(:has(.suffix)) input {
+  padding-right: 9px;
 }
 .input-suffix .suffix {
   position: absolute;
@@ -1340,7 +1709,7 @@ fieldset.step-fields > .row {
   top: 50%;
   transform: translateY(-50%);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
   pointer-events: none;
 }
 .day-row {
@@ -1354,7 +1723,6 @@ fieldset.step-fields > .row {
 }
 .day-toggle {
   min-width: 44px;
-  height: 32px;
 }
 .day-toggle.selected {
   background: var(--accent);
@@ -1375,18 +1743,19 @@ fieldset.step-fields > .row {
 .advanced {
   margin: 26px 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 0 16px 4px;
 }
 .advanced summary {
-  cursor: pointer;
   padding: 10px 2px;
   color: var(--fg-muted);
   font-weight: 500;
   user-select: none;
 }
-.advanced summary:hover {
-  color: var(--fg);
+@media (hover: hover) and (pointer: fine) {
+  .advanced summary:hover {
+    color: var(--fg);
+  }
 }
 .advanced[open] summary {
   border-bottom: 1px solid var(--border);
@@ -1403,7 +1772,7 @@ fieldset.step-fields > .row {
 .picker-body {
   display: flex;
   flex-direction: column;
-  padding: 11px 12px 12px;
+  padding: 18px 24px 12px;
   overflow: hidden;
   height: 100%;
 }
@@ -1473,7 +1842,7 @@ fieldset.step-fields > .row {
   padding: 0;
 }
 .chat-msg {
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -1481,14 +1850,14 @@ fieldset.step-fields > .row {
   align-self: flex-end;
   max-width: 78%;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-overlay);
   background: var(--info-bg);
 }
 .chat-agent {
   align-self: flex-start;
   max-width: 88%;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-overlay);
   border: 1px solid var(--border);
   background: var(--bg-2);
 }
@@ -1511,9 +1880,9 @@ fieldset.step-fields > .row {
   gap: 14px;
   padding: 8px 8px 8px 12px;
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--radius-overlay);
   background: var(--bg);
-  font-size: 13px;
+  font-size: var(--font-body);
   font-weight: 600;
 }
 .chat-agent-group > .chat-card {
@@ -1524,11 +1893,10 @@ fieldset.step-fields > .row {
   flex: 1;
 }
 .chat-aside {
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
 }
 .chat-aside > summary {
-  cursor: pointer;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
@@ -1538,7 +1906,7 @@ fieldset.step-fields > .row {
   height: auto;
   overflow: visible;
   padding: 6px 0 0 14px;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .chat-tools-list {
   display: flex;
@@ -1551,17 +1919,22 @@ fieldset.step-fields > .row {
   color: var(--fg);
 }
 .chat-tool-preview {
-  font-family: Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace;
+  font-family: var(--font-mono);
 }
 .chat-tool-body {
   margin: 6px 0 2px 14px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-2);
   color: var(--fg);
   max-height: 360px;
   overflow: auto;
+}
+/* Code isn't capped: the conversation scrolls, not a box inside it. */
+.chat-tool-body:has(.tc-code) {
+  max-height: none;
+  overflow: visible;
 }
 .chat-tool-result {
   margin-top: 8px;
@@ -1569,7 +1942,7 @@ fieldset.step-fields > .row {
   border-top: 1px solid var(--border);
 }
 .chat-status {
-  font-size: 12px;
+  font-size: var(--font-caption);
   white-space: pre-wrap;
   padding: 6px 18px;
   border-top: 1px solid var(--border);
@@ -1595,10 +1968,10 @@ fieldset.step-fields > .row {
 .chat-composer textarea {
   flex: 1;
   resize: none;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .builder-terminal {
-  background: #0f1115;
+  background: var(--term-bg);
 }
 .builder-panel {
   width: 340px;
@@ -1614,7 +1987,7 @@ fieldset.step-fields > .row {
   min-height: 0;
   overflow-y: auto;
   padding: 12px 14px;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .builder-field {
   margin-bottom: 12px;
@@ -1630,7 +2003,7 @@ fieldset.step-fields > .row {
   overflow-y: auto;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg);
 }
 .builder-list,
@@ -1682,8 +2055,8 @@ fieldset.step-fields > .row {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 .sbs-num-col {
   width: 44px;
@@ -1736,7 +2109,7 @@ fieldset.step-fields > .row {
 }
 .env-list.boxed {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg-2);
   min-height: 120px;
   flex: 1;
@@ -1745,15 +2118,17 @@ fieldset.step-fields > .row {
 .env-list:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 .env-item {
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
 }
-.env-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .env-item:hover {
+    background: var(--bg-3);
+  }
 }
 .env-item.selected {
   background: var(--bg-3);
@@ -1767,7 +2142,7 @@ fieldset.step-fields > .row {
 }
 .env-item-sub {
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1785,7 +2160,7 @@ fieldset.step-fields > .row {
   padding: 6px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg-2);
   min-height: 120px;
   flex: 1;
@@ -1796,12 +2171,14 @@ fieldset.step-fields > .row {
   gap: 6px;
   min-width: 0;
   padding: 7px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   cursor: default;
   user-select: none;
 }
-.mu-group:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .mu-group:hover {
+    background: var(--bg-3);
+  }
 }
 .mu-group-name {
   font-weight: 600;
@@ -1809,10 +2186,9 @@ fieldset.step-fields > .row {
 }
 .mu-group-note {
   color: var(--fg-muted);
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--font-caption);
+  flex: 1;
+  min-width: 0;
 }
 .mu-chev {
   flex: none;
@@ -1838,11 +2214,13 @@ fieldset.step-fields > .row {
   align-items: center;
   gap: 10px;
   padding: 5px 10px 5px 26px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
 }
-.mu-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .mu-item:hover {
+    background: var(--bg-3);
+  }
 }
 .mu-item-main {
   flex: 1;
@@ -1856,7 +2234,7 @@ fieldset.step-fields > .row {
 }
 .mu-item-sub {
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1867,23 +2245,18 @@ fieldset.step-fields > .row {
   color: var(--fg-muted);
   opacity: 0.65;
 }
+/* The text box's look comes from the shared rule near .field; this one is its size. */
 .mu-item select {
   width: 120px;
   flex: none;
   height: 28px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 6px;
-  color: var(--fg);
-}
-.mu-item select:focus {
-  outline: none;
-  border-color: var(--accent);
+  background-color: var(--bg);
+  padding-top: 3px;
+  padding-bottom: 3px;
 }
 .harness-card {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 2px 14px 12px;
   margin: 10px 0;
   background: var(--bg-2);
@@ -1907,8 +2280,8 @@ fieldset.step-fields > .row {
   margin: 0;
   padding: 12px 14px;
   white-space: pre-wrap;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 /* ---------- desktop feel ---------- */
@@ -1943,11 +2316,20 @@ label {
 button:focus-visible,
 .tab:focus-visible,
 .link:focus-visible,
-.task-list:focus-visible,
+.pane-header:focus-visible,
+.pane-sash:focus-visible,
 .advanced summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
+}
+/* A list keeps focus on itself (aria-activedescendant): the outline goes on its active row, not around the list. */
+.task-list:focus-visible {
+  outline: none;
+}
+.task-list:focus-visible :is(.task-item.selected, .group-header.active) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ---------- Messages ---------- */
@@ -2007,14 +2389,21 @@ button:focus-visible,
   cursor: default;
 }
 
-.messages .runlog-table tr.msg-row:hover td {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .messages .runlog-table tr.msg-row:hover td {
+    background: var(--bg-3);
+  }
 }
 
-.messages .runlog-table tr.msg-row.selected td,
-.messages .runlog-table tr.msg-row.selected:hover td {
+.messages .runlog-table tr.msg-row.selected td {
   background: var(--accent);
   color: var(--accent-fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .messages .runlog-table tr.msg-row.selected:hover td {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
 }
 
 .messages .runlog-table tr.msg-thinking td {
@@ -2044,8 +2433,8 @@ button:focus-visible,
   margin: 0;
   padding: 12px 14px;
   white-space: pre-wrap;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .messages-detail-empty {
@@ -2135,8 +2524,8 @@ button:focus-visible,
 
 .tc-file {
   padding: 10px 14px 0;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .tc-caption {
@@ -2150,8 +2539,8 @@ button:focus-visible,
 
 .tc-fields {
   padding: 6px 14px 0;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   overflow-wrap: anywhere;
 }
 
@@ -2159,7 +2548,7 @@ button:focus-visible,
 .tc-params {
   margin: 6px 14px 0;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .tc-params th,
 .tc-params td {
@@ -2174,9 +2563,29 @@ button:focus-visible,
   white-space: nowrap;
 }
 .tc-params td {
-  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A code parameter keeps its lines and scrolls sideways; its cell takes the width left, so a long line can't widen the pane. */
+.tc-params td.has-code {
+  width: 100%;
+  max-width: 0;
+}
+.tc-code {
+  overflow-x: auto;
+}
+.tc-code .code-view {
+  width: max-content;
+  min-width: 100%;
+}
+.tc-code .code-view.plain {
+  padding: 0;
+}
+.tc-code .code-text {
+  flex: none;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .tc-image {
@@ -2243,18 +2652,18 @@ button:focus-visible,
 .term-block {
   margin: 8px 14px;
   background: var(--bg-3);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   white-space: pre-wrap;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   overflow-wrap: anywhere;
 }
 
 .diff {
   padding: 8px 14px 12px;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .diff-hunk-header {
@@ -2277,8 +2686,8 @@ button:focus-visible,
 
 .code-view {
   padding: 12px 14px 12px 0;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .code-line {
@@ -2320,12 +2729,11 @@ button:focus-visible,
 
 .json-tree {
   padding: 12px 14px;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .json-node > summary {
-  cursor: pointer;
   user-select: none;
 }
 
@@ -2340,8 +2748,8 @@ button:focus-visible,
 
 .file-list {
   padding: 8px 14px 12px;
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 
 .file-list-item {
@@ -2349,8 +2757,10 @@ button:focus-visible,
   overflow-wrap: anywhere;
 }
 
-.file-list-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .file-list-item:hover {
+    background: var(--bg-3);
+  }
 }
 
 /* ---------- Image window ---------- */
@@ -2376,7 +2786,7 @@ button:focus-visible,
 .image-zoom input {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   height: 28px;
   padding: 0 28px 0 8px;
 }
@@ -2387,7 +2797,7 @@ button:focus-visible,
 }
 
 .image-zoom input:disabled {
-  opacity: 0.55;
+  opacity: var(--disabled-opacity);
 }
 
 .image-viewport {
@@ -2444,9 +2854,11 @@ button:focus-visible,
   border-color: transparent;
 }
 
-.addon-prop-actions .btn:hover:not(:disabled) {
-  background: var(--bg-3);
-  border-color: var(--border);
+@media (hover: hover) and (pointer: fine) {
+  .addon-prop-actions .btn:hover:not(:disabled) {
+    background: var(--bg-3);
+    border-color: var(--border);
+  }
 }
 
 .addon-prop-actions .addon-reveal {
@@ -2471,7 +2883,7 @@ button:focus-visible,
 
 .addon-text {
   margin: 10px 0;
-  font-size: 13px;
+  font-size: var(--font-body);
   white-space: pre-wrap;
 }
 
@@ -2502,7 +2914,7 @@ button:focus-visible,
   height: 28px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 0 28px 0 8px;
   color: var(--fg);
 }
@@ -2539,14 +2951,16 @@ button:focus-visible,
   height: 20px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg-muted);
 }
 
-.addon-search .addon-search-clear:hover {
-  background: var(--bg-3);
-  color: var(--fg);
+@media (hover: hover) and (pointer: fine) {
+  .addon-search .addon-search-clear:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
 }
 
 .addon-search .addon-search-clear:active {
@@ -2576,7 +2990,7 @@ button:focus-visible,
 
 .addon-pane-note {
   padding: 10px 12px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
 
 .addon-details {
@@ -2621,54 +3035,26 @@ button:focus-visible,
   padding: 6px;
   min-height: 0;
 }
-.session-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 8px 4px;
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-muted);
-  cursor: default;
-  user-select: none;
-}
-.session-group:hover {
-  color: var(--fg);
-}
-.session-group .chev {
-  flex: none;
-  transition: transform 0.1s;
-}
-.session-group .chev.open {
-  transform: rotate(90deg);
-}
-.session-group-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.session-group-count {
-  font-weight: 400;
-}
 .session-list:focus-visible {
   outline: none;
 }
-.session-list:focus-visible .session-row.selected {
-  outline: 1px solid var(--accent);
+.session-list:focus-visible :is(.session-row.selected, .group-header.active) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .session-row {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
   cursor: default;
 }
-.session-row:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover {
+    background: var(--bg-3);
+  }
 }
 .session-row.selected {
   background: var(--bg-3);
@@ -2687,7 +3073,7 @@ button:focus-visible,
   font-weight: 600;
 }
 .session-sub {
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2695,6 +3081,9 @@ button:focus-visible,
 }
 .session-empty {
   padding: 16px 8px;
+}
+.session-sub.error-text {
+  color: var(--red);
 }
 .session-icon {
   flex: none;
@@ -2752,13 +3141,15 @@ button:focus-visible,
   gap: 6px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg-2);
   cursor: default;
   min-width: 0;
 }
-.overview-card:hover {
-  border-color: var(--fg-muted);
+@media (hover: hover) and (pointer: fine) {
+  .overview-card:hover {
+    border-color: var(--fg-muted);
+  }
 }
 .overview-card.waiting {
   border-color: var(--yellow);
@@ -2776,7 +3167,7 @@ button:focus-visible,
   white-space: nowrap;
 }
 .overview-meta {
-  font-size: 12px;
+  font-size: var(--font-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2794,7 +3185,7 @@ button:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
 .overview-msg {
   white-space: pre-wrap;
@@ -2867,8 +3258,10 @@ button:focus-visible,
   padding-bottom: 0;
   overflow: hidden;
 }
-.overview-chat:hover:not(.waiting) {
-  border-color: var(--border);
+@media (hover: hover) and (pointer: fine) {
+  .overview-chat:hover:not(.waiting) {
+    border-color: var(--border);
+  }
 }
 .overview-bar {
   display: flex;
@@ -2942,7 +3335,7 @@ button:focus-visible,
 }
 .now-place {
   flex: none;
-  font-size: 12px;
+  font-size: var(--font-caption);
   margin-left: 8px;
 }
 /* A toolbar inside a pane: the same buttons as the window's, on the pane's own background. */
@@ -2974,7 +3367,7 @@ button:focus-visible,
 /* A result an addon asked to show as a table. */
 .now-table {
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .now-table th,
 .now-table td {
@@ -2995,27 +3388,27 @@ button:focus-visible,
 }
 .now-terminal {
   flex: 1;
-  background: #0f1115;
-  color: #d7dae0;
+  background: var(--term-bg);
+  color: var(--term-fg);
   padding: 8px 10px;
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   line-height: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
 }
 .now-term-comment {
-  color: #8b919c;
+  color: var(--term-muted);
 }
 .now-term-prompt {
-  color: #4cc38a;
+  color: var(--term-prompt);
 }
 .now-term-cursor {
   display: inline-block;
   width: 7px;
   height: 14px;
-  background: #d7dae0;
+  background: var(--term-fg);
   vertical-align: text-bottom;
   animation: now-cursor 1s steps(1) infinite;
 }
@@ -3032,8 +3425,8 @@ button:focus-visible,
 }
 .now-editor-lines {
   padding: 6px 0;
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
   line-height: 18px;
   user-select: text;
 }
@@ -3077,13 +3470,15 @@ button:focus-visible,
 }
 .subagent-item {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
-  font-size: 12.5px;
+  font-size: var(--font-body);
   cursor: default;
 }
-.subagent-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .subagent-item:hover {
+    background: var(--bg-3);
+  }
 }
 .subagent-item.selected {
   background: var(--bg-3);
@@ -3091,6 +3486,7 @@ button:focus-visible,
 }
 .subagent-head {
   display: flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
@@ -3108,12 +3504,14 @@ button:focus-visible,
   align-items: center;
   gap: 8px;
   padding: 5px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   cursor: default;
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
-.file-item:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .file-item:hover {
+    background: var(--bg-3);
+  }
 }
 .file-item-text {
   min-width: 0;
@@ -3128,16 +3526,16 @@ button:focus-visible,
   max-height: 48px;
   max-width: 72px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 .background-tab {
   padding: 8px 12px 10px;
 }
 .background-none {
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .bg-item {
-  font-size: 12.5px;
+  font-size: var(--font-body);
   padding: 3px 0;
 }
 .bg-item:not(.running) {
@@ -3162,7 +3560,7 @@ button:focus-visible,
   flex: none;
 }
 .bg-summary {
-  font-size: 11.5px;
+  font-size: var(--font-caption);
 }
 .bg-output {
   max-height: 200px;
@@ -3189,7 +3587,7 @@ button:focus-visible,
 .chat-queued-actions {
   display: flex;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 /* The "/" list: a combo box's drop-down list on the message box's top edge, as wide as the box. */
@@ -3210,14 +3608,16 @@ button:focus-visible,
   overflow-x: hidden;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.14);
-  z-index: 5;
+  /* The corners away from the text box are a flyout's; the edge that meets the box stays square. */
+  border-radius: var(--radius-overlay) var(--radius-overlay) 0 0;
+  box-shadow: var(--shadow-flyout-up);
+  z-index: var(--z-popup);
 }
 .slash-item {
   display: flex;
   gap: 12px;
   padding: 3px 8px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
   line-height: 18px;
   cursor: default;
   min-width: 0;
@@ -3238,8 +3638,8 @@ button:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 .slash-desc {
   flex: 1;
@@ -3285,6 +3685,7 @@ button:focus-visible,
   flex: none;
 }
 .send-sessions-text {
+  width: auto;
   margin: 0 18px 12px;
   resize: none;
 }
@@ -3293,10 +3694,12 @@ button:focus-visible,
 
 .split-button {
   display: flex;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
-.split-button:hover:has(button:not(:disabled)) {
-  box-shadow: inset 0 0 0 1px var(--border);
+@media (hover: hover) and (pointer: fine) {
+  .split-button:hover:has(button:not(:disabled)) {
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
 }
 .toolbar .split-button button {
   border-radius: 4px 0 0 4px;
@@ -3309,56 +3712,56 @@ button:focus-visible,
 /* ---------- Sessions window: subagent tabs, command bar, subagent details ---------- */
 
 .subagent-tabs {
+  --tabs-bg: var(--bg-2);
   flex: none;
-  display: flex;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
   background: var(--bg-2);
   padding: 0 10px;
 }
-.subagent-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 240px;
-  flex: none;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 7px 10px;
-  color: var(--fg-muted);
-  font-size: 12.5px;
-  cursor: default;
-}
-.subagent-tab.active {
-  color: var(--fg);
-  border-bottom-color: var(--accent);
-}
-.subagent-tab:hover:not(.active) {
-  color: var(--fg);
-}
-.subagent-tab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-/* A workflow's tab: its own tabs (Overview, then one per agent), then the Overview or the agent's conversation. */
+/* A workflow's tab: its Overview, or one agent's conversation under a bar that goes back to it. */
 .workflow-view {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.workflow-tabs {
-  background: var(--bg);
+.workflow-back {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.workflow-back-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-control);
+  padding: 4px 8px 4px 4px;
+  color: var(--accent);
+}
+.workflow-back-agent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.workflow-back-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
 }
 .workflow-overview {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 12px 16px 24px;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .workflow-head {
   display: flex;
@@ -3379,6 +3782,28 @@ button:focus-visible,
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  font-size: var(--font-body);
+  font-weight: 600;
+}
+.workflow-phase-state {
+  font-weight: 400;
+}
+.workflow-json {
+  margin-top: 8px;
+}
+.workflow-json summary {
+  color: var(--fg-muted);
+}
+.workflow-result {
+  margin-top: 6px;
+}
+.workflow-text {
+  padding: 11px 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+html.phone-window .workflow-text {
+  font-size: 17px;
 }
 .workflow-phase-detail {
   margin-top: 2px;
@@ -3393,7 +3818,7 @@ button:focus-visible,
   margin: 6px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .session-icon.failed .core {
   fill: var(--red);
@@ -3432,7 +3857,7 @@ button:focus-visible,
   white-space: nowrap;
   gap: 2px;
   padding: 0 4px 0 8px;
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
 }
 /* A narrow chat (a dashboard card, a phone) has one settings button in place of the four. */
@@ -3453,8 +3878,10 @@ button:focus-visible,
     display: flex;
   }
 }
-.toolbar button.commandbar-menu:hover:not(:disabled) {
-  color: var(--fg);
+@media (hover: hover) and (pointer: fine) {
+  .toolbar button.commandbar-menu:hover:not(:disabled) {
+    color: var(--fg);
+  }
 }
 .subagent-head .subagent-desc {
   flex: 1;
@@ -3504,7 +3931,7 @@ button:focus-visible,
 .git-branch {
   min-width: 0;
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--font-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3595,14 +4022,16 @@ button:focus-visible,
 .git-file,
 .git-commit {
   padding: 5px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
-  font-size: 12.5px;
+  font-size: var(--font-body);
   cursor: default;
 }
-.git-file:hover,
-.git-commit:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .git-file:hover,
+  .git-commit:hover {
+    background: var(--bg-3);
+  }
 }
 .git-file.selected,
 .git-commit.selected {
@@ -3629,11 +4058,11 @@ button:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: var(--font-caption);
 }
 .git-commit-head {
   padding: 10px 12px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
   overflow: auto;
 }
 .git-commit-subject {
@@ -3656,7 +4085,7 @@ button:focus-visible,
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
 .git-diff-head .mono {
   overflow: hidden;
@@ -3670,7 +4099,7 @@ button:focus-visible,
 }
 .git-diff-note {
   padding: 10px 14px;
-  font-size: 12.5px;
+  font-size: var(--font-body);
 }
 
 /* ---------- Remote Access ---------- */
@@ -3683,19 +4112,24 @@ button:focus-visible,
   padding: 20px 24px;
   overflow-y: auto;
 }
+/* The address choice is as wide as the QR code under it. */
+.pair-source {
+  width: 236px;
+  max-width: 100%;
+}
 /* A QR code needs dark modules on a light ground in either theme. */
 .pair-qr {
   width: 236px;
   height: 236px;
   padding: 8px;
   background: #fff;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 .pair-qr img {
   display: block;
 }
 .pair-code {
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 32px;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -3703,7 +4137,7 @@ button:focus-visible,
 }
 .pair-icon {
   display: block;
-  border-radius: 10px;
+  border-radius: var(--radius-overlay);
 }
 .pair-url {
   display: flex;
@@ -3713,8 +4147,8 @@ button:focus-visible,
 }
 .pair-address {
   min-width: 0;
-  font-family: 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
-  font-size: 12.5px;
+  font-family: var(--font-mono);
+  font-size: var(--font-body);
   color: var(--fg-muted);
   overflow-wrap: anywhere;
   user-select: all;
@@ -3745,7 +4179,7 @@ button:focus-visible,
 }
 .pair-message {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-body);
   text-align: center;
 }
 
@@ -3792,12 +4226,12 @@ button:focus-visible,
   flex-direction: column;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-flyout);
   overflow: hidden;
 }
 .ws-window.active {
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--shadow-dialog);
   border-color: var(--fg-muted);
 }
 .ws-window.flash {
@@ -3806,7 +4240,7 @@ button:focus-visible,
 @keyframes ws-flash {
   50% {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent), 0 12px 40px rgba(0, 0, 0, 0.32);
+    box-shadow: 0 0 0 2px var(--accent), var(--shadow-dialog);
   }
 }
 .ws-backdrop {
@@ -3838,7 +4272,7 @@ button:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
 }
 .ws-window.active .ws-title,
@@ -3857,12 +4291,16 @@ button:focus-visible,
   background: transparent;
   color: var(--fg);
 }
-.ws-caption:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-caption:hover {
+    background: var(--bg-3);
+  }
 }
-.ws-close:hover {
-  background: #c42b1c;
-  color: #fff;
+@media (hover: hover) and (pointer: fine) {
+  .ws-close:hover {
+    background: #c42b1c;
+    color: #fff;
+  }
 }
 
 .ws-resize {
@@ -3939,17 +4377,19 @@ button:focus-visible,
   min-width: 72px;
   padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--font-caption);
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-task:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-task:hover {
+    background: var(--bg-3);
+  }
 }
 /* As the selected item in the side panel (.task-item.selected). */
 .ws-task.active {
@@ -3962,11 +4402,11 @@ button:focus-visible,
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 5000;
+  z-index: var(--z-top);
   padding: 6px 12px;
   background: var(--bg-3);
   border-top: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--font-body);
   text-align: center;
 }
 
@@ -3981,14 +4421,18 @@ button:focus-visible,
 .ws-menubar-item {
   padding: 0 10px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   margin: 2px 0;
   background: transparent;
   color: var(--fg);
 }
-.ws-menubar-item:hover:not(:disabled),
 .ws-menubar-item.open {
   background: var(--bg-3);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ws-menubar-item:hover:not(:disabled) {
+    background: var(--bg-3);
+  }
 }
 /* The open menu shows where the keyboard is. */
 .ws-menubar-item.open:focus-visible {
@@ -4000,7 +4444,7 @@ button:focus-visible,
 .ws-catcher {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: var(--z-menu);
 }
 .ws-menu-focus {
   outline: none;
@@ -4010,9 +4454,9 @@ button:focus-visible,
   padding: 4px;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  font-size: 13px;
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-flyout);
+  font-size: var(--font-body);
   white-space: nowrap;
   z-index: 1;
 }
@@ -4022,14 +4466,13 @@ button:focus-visible,
   align-items: center;
   height: 28px;
   padding: 0 8px 0 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 .ws-menu-item.active {
   background: var(--bg-3);
 }
 .ws-menu-item.disabled {
-  color: var(--fg-muted);
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 .ws-menu-check {
   display: flex;
@@ -4043,7 +4486,7 @@ button:focus-visible,
 }
 .ws-menu-key {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
   padding-right: 4px;
 }
 .ws-menu-arrow {
@@ -4062,7 +4505,7 @@ button:focus-visible,
 .ws-modal-layer {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4074,8 +4517,8 @@ button:focus-visible,
   max-height: calc(100vh - 24px);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-dialog);
   overflow: hidden;
 }
 .ws-msgbox-body {
@@ -4102,20 +4545,23 @@ button:focus-visible,
 }
 .ws-msg-icon {
   flex: none;
-  color: #fff;
+  color: var(--accent-fg);
 }
 .ws-msg-icon .shape {
   fill: var(--accent);
+}
+.ws-msg-icon.error {
+  color: var(--on-red);
 }
 .ws-msg-icon.error .shape {
   fill: var(--red);
 }
 .ws-msg-icon.warning {
-  color: #1b1b1b;
+  color: var(--on-warning);
 }
 .ws-msg-icon.warning .shape {
-  fill: #f7c948;
-  stroke: #f7c948;
+  fill: var(--warning-fill);
+  stroke: var(--warning-fill);
   stroke-width: 2;
   stroke-linejoin: round;
 }
@@ -4154,15 +4600,17 @@ button:focus-visible,
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg);
 }
-.ws-icon-btn:hover:not(:disabled) {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-icon-btn:hover:not(:disabled) {
+    background: var(--bg-3);
+  }
 }
 .ws-icon-btn:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 .ws-crumbs {
   flex: 1;
@@ -4173,7 +4621,7 @@ button:focus-visible,
   padding: 0 4px;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   overflow: hidden;
 }
 .ws-crumb-part {
@@ -4187,15 +4635,17 @@ button:focus-visible,
 .ws-crumb {
   padding: 2px 6px;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-crumb:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-crumb:hover {
+    background: var(--bg-3);
+  }
 }
 .ws-crumb-sep {
   display: flex;
@@ -4218,10 +4668,12 @@ button:focus-visible,
   gap: 6px;
   height: 28px;
   padding: 0 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
-.ws-file:not(.ws-file-head):hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-file:not(.ws-file-head):hover {
+    background: var(--bg-3);
+  }
 }
 .ws-file.selected {
   background: var(--info-bg);
@@ -4229,7 +4681,7 @@ button:focus-visible,
 .ws-file-head {
   height: 24px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 .ws-file-name {
   overflow: hidden;
@@ -4244,7 +4696,7 @@ button:focus-visible,
   height: 24px;
   padding: 2px 6px;
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   background: var(--bg-2);
   color: var(--fg);
   outline: none;
@@ -4257,7 +4709,7 @@ button:focus-visible,
 .ws-files-group {
   padding: 10px 8px 4px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
   font-weight: 600;
 }
 .ws-files-group:first-child {
@@ -4287,8 +4739,8 @@ button:focus-visible,
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
 }
 .ws-viewer-note {
   padding: 24px;
@@ -4306,14 +4758,14 @@ button:focus-visible,
 }
 .ws-filter {
   padding-top: 6px;
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 .ws-toasts {
   position: fixed;
   right: 12px;
   bottom: 44px;
-  z-index: 4000;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4324,12 +4776,14 @@ button:focus-visible,
   padding: 12px 40px 12px 14px;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-flyout);
   cursor: default;
 }
-.ws-toast:hover {
-  border-color: var(--fg-muted);
+@media (hover: hover) and (pointer: fine) {
+  .ws-toast:hover {
+    border-color: var(--fg-muted);
+  }
 }
 .ws-toast-title {
   font-weight: 600;
@@ -4349,12 +4803,14 @@ button:focus-visible,
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--fg);
 }
-.ws-toast-close:hover {
-  background: var(--bg-3);
+@media (hover: hover) and (pointer: fine) {
+  .ws-toast-close:hover {
+    background: var(--bg-3);
+  }
 }
 
 /* ---------- web pairing page ---------- */
@@ -4369,8 +4825,8 @@ button:focus-visible,
   width: min(400px, 100%);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-dialog);
   overflow: hidden;
 }
 .pair-page-body {
@@ -4402,7 +4858,7 @@ button:focus-visible,
 .ra-source-status {
   display: block;
   margin: 2px 0 0 19px;
-  font-size: 11.5px;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
   overflow-wrap: anywhere;
 }
@@ -4420,7 +4876,7 @@ button:focus-visible,
 .ra-setup-link {
   display: block;
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--font-caption);
   overflow-wrap: anywhere;
 }
 

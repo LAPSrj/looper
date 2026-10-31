@@ -700,7 +700,7 @@ describe('several sources at once', () => {
         { id: 'local', phase: 'running', url: `http://localhost:${s.port}` },
       ],
     });
-    expect(remoteAccessStatusItems(s.ra.state())).toEqual([`Tailscale: https://${TS_HOST}`, `Host Computer: http://localhost:${s.port}`]);
+    expect(remoteAccessStatusItems(s.ra.state())).toEqual([`Tailscale: https://${TS_HOST}`, `Local Browser: http://localhost:${s.port}`]);
 
     const { cookie: local } = await pair(s, localHeaders(s.port), 'Laptop');
     const { cookie: ts, res } = await pair(s, tsHeaders(s), 'Phone');

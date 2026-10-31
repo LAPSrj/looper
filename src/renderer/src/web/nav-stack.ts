@@ -21,6 +21,31 @@ export interface ScreenSize {
 /** A tablet: its short side is 600 CSS px or more (Material's medium window class; every iPad). */
 export const isTablet = (screen: ScreenSize): boolean => Math.min(screen.width, screen.height) >= 600;
 
+/** An iPad split view's columns, in CSS px: the list's (leading) and the inspector's (trailing; 0 when there's no room for one). */
+export interface SplitLayout {
+  lead: number;
+  inspector: number;
+}
+
+/** The leading column: 320 pt, 375 pt on wide screens (UISplitViewController's widths). */
+const leadWidth = (width: number): number => (width >= 1200 ? 375 : 320);
+export const INSPECTOR_WIDTH = 360;
+/** The detail column keeps at least this much beside an inspector; with less, the inspector is a sheet. */
+const MIN_DETAIL_BESIDE_INSPECTOR = 600;
+/** Narrower than this (iPad split-screen multitasking), a page shows one column, as on a phone. */
+const MIN_SPLIT_WIDTH = 700;
+
+/**
+ * Whether a page `width` wide on `screen` shows a list beside its detail
+ * (iPad), and the columns' widths; null shows one column (a phone, or a narrow
+ * window on a tablet).
+ */
+export function splitLayout(width: number, screen: ScreenSize): SplitLayout | null {
+  if (!isTablet(screen) || width < MIN_SPLIT_WIDTH) return null;
+  const lead = leadWidth(width);
+  return { lead, inspector: width - lead - INSPECTOR_WIDTH >= MIN_DETAIL_BESIDE_INSPECTOR ? INSPECTOR_WIDTH : 0 };
+}
+
 /** A window made for most of a desktop (Sessions, a run) shows full screen on a tablet rather than in a sheet. */
 const isLarge = (win: Pick<RemoteWindowSpec, 'width' | 'height'>, screen: ScreenSize): boolean =>
   win.width >= 900 || win.width > screen.width * 0.95 || win.height > screen.height * 0.95;
@@ -126,4 +151,12 @@ export class BackStack {
     this.h.go(-1);
     return true;
   }
+}
+
+/** A computed `rgb()`/`rgba()` color dark enough that the bar's title must be light over it (a terminal's black). */
+export function darkColor(c: string | undefined): boolean {
+  const m = c ? /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(c) : null;
+  if (!m || (m[4] !== undefined && Number(m[4]) < 0.5)) return false;
+  const [r, g, b] = [m[1], m[2], m[3]].map((v) => Number(v) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.35;
 }

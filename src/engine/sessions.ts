@@ -116,12 +116,25 @@ function oneLine(text: string): string {
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;
 }
 
-/** A list row's preview: the agent's latest text message since the user's last one, never a tool call or its result. */
+/** A list row's preview: the agent's latest text message (or API error) since the user's last one, never a tool call or its result. */
 export function latestLine(rows: MessageRow[]): string | undefined {
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i];
     if (r.kind === 'prompt') return undefined;
-    if (r.kind === 'agent' && r.text.trim()) return oneLine(r.text);
+    if ((r.kind === 'agent' || r.kind === 'error') && r.text.trim()) return oneLine(r.text);
+  }
+  return undefined;
+}
+
+/** The API error (usage limit, overloaded…) the conversation ended its latest turn on, with when it came; undefined once the user has written again or the agent has said more. */
+export function endingError(rows: MessageRow[]): { text: string; at?: number } | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.kind === 'prompt' || r.kind === 'agent') return undefined;
+    if (r.kind === 'error' && r.text.trim()) {
+      const at = r.ts ? Date.parse(r.ts) : NaN;
+      return { text: oneLine(r.text), ...(Number.isFinite(at) ? { at } : {}) };
+    }
   }
   return undefined;
 }
@@ -137,7 +150,7 @@ export function recentMessages(rows: MessageRow[]): string[] {
   let left = RECENT_CHARS;
   for (let i = rows.length - 1; i >= from && left > 0; i--) {
     const r = rows[i];
-    if (r.kind !== 'agent') continue;
+    if (r.kind !== 'agent' && r.kind !== 'error') continue;
     const text = stripMarkdown(r.text.trim());
     if (!text) continue;
     out.unshift(text.length > left ? `…${text.slice(text.length - left)}` : text);
@@ -502,6 +515,12 @@ export class SessionHub {
     else if (c.status === 'ended') {
       if (t.endedAt! > t.seenAt) waiting = { reason: 'error', text: oneLine(c.error ?? 'The session ended.'), since: t.endedAt! };
     } else waiting = this.notification(t, 0);
+    // A turn that ended on an API error (usage limit…) failed: it isn't "Ready" news until the user has looked.
+    const failure = c.status === 'ready' ? endingError(rows) : undefined;
+    if (!waiting && failure) {
+      const since = failure.at ?? c.turnEndedAt ?? c.startedAt;
+      if (since > t.seenAt) waiting = { reason: 'error', text: failure.text, since };
+    }
     if (!waiting && c.status === 'ready' && c.turnEndedAt !== undefined && c.turnEndedAt > t.seenAt) {
       waiting = { reason: 'turn', text: 'Finished its turn', since: c.turnEndedAt };
     }

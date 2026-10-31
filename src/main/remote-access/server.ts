@@ -26,8 +26,9 @@ import {
   type UploadResponse,
 } from '../../shared/remote-access';
 import { cleanDeviceName, safeEqual, type Clock, type DeviceStore, type Pairing, type StoredDevice } from './devices';
-import { manifest, SERVICE_WORKER, withMobileHead } from './pwa';
+import { manifest, serviceWorker, withMobileHead } from './pwa';
 import { parseSubscription } from './push';
+import { sendPayload, StaticCache } from './static-cache';
 
 export const MAX_PAIR_BODY_BYTES = 4 * 1024;
 
@@ -48,6 +49,8 @@ export const UPLOAD_MAX_AGE_MS = 24 * 60 * 60_000;
 export const DOWNLOAD_TTL_MS = 10 * 60_000;
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 const PING_INTERVAL_MS = 30_000;
+/** Built assets the service worker keeps up front: code, styles and fonts. */
+const PRECACHE_EXT = /\.(js|css|woff2?|ttf)$/i;
 /** A WebSocket must say hello this soon after it opens. */
 const HELLO_TIMEOUT_MS = 15_000;
 /** Rejected requests logged per minute; the rest are counted. */
@@ -145,6 +148,8 @@ export interface RemoteServerOptions {
   push?: PushEndpoints;
   /** A home-screen icon as PNG (made from the app's icon); null when it can't be made. */
   icon?: (name: PwaIconName) => Buffer | null;
+  /** A launch screen (apple-touch-startup-image) as PNG for a screen of `width` x `height` pixels; null for a size no iPhone has. */
+  startup?: (width: number, height: number, dark: boolean) => Buffer | null;
   /** A device unpaired itself (POST /api/unpair). */
   onUnpair?: (deviceId: string) => void;
   /** A device renamed itself (POST /api/rename); stored by the time this runs. */
@@ -340,6 +345,9 @@ export class RemoteServer {
   private readonly downloads = new Map<string, { file: string; name: string; expiresAt: number; onDone?: () => void }>();
   private timers: NodeJS.Timeout[] = [];
   private rejectWindow = { start: 0, logged: 0, dropped: 0 };
+  private readonly cache = new StaticCache();
+  /** The files the service worker keeps, listed again when the assets folder changes. */
+  private assetList: { mtimeMs: number; names: string[] } | null = null;
 
   constructor(private readonly opts: RemoteServerOptions) {}
 
@@ -350,7 +358,8 @@ export class RemoteServer {
   /** Listen on 127.0.0.1:port (0 = a free one); resolves the port. */
   async listen(port: number): Promise<number> {
     const server = http.createServer((req, res) => void this.handle(req, res));
-    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_MESSAGE_BYTES });
+    // permessage-deflate for the JSON traffic; small messages (pings, acks) aren't worth compressing.
+    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_MESSAGE_BYTES, perMessageDeflate: { threshold: 1024 } });
     server.on('upgrade', (req, socket, head) => this.upgrade(req, socket as Socket, head, wss));
     server.on('clientError', (_err, socket) => socket.destroy());
     await new Promise<void>((resolve, reject) => {
@@ -804,15 +813,19 @@ export class RemoteServer {
       return this.text(res, 400, 'Bad Request');
     }
     if (rel === '/manifest.webmanifest') return this.generated(req, res, 'application/manifest+json; charset=utf-8', manifest());
-    if (rel === '/sw.js') return this.generated(req, res, MIME['.js'], SERVICE_WORKER);
+    if (rel === '/sw.js') return this.generated(req, res, MIME['.js'], serviceWorker(this.precacheList(), await this.servedPage(req, source)));
     const icon = /^\/icons\/([a-z0-9-]+)\.png$/.exec(rel);
     if (icon) {
       const name = icon[1] as PwaIconName;
       const png = Object.hasOwn(PWA_ICONS, name) ? this.opts.icon?.(name) : null;
       if (!png) return this.text(res, 404, 'Not Found');
-      res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length, 'Cache-Control': 'public, max-age=86400' });
-      res.end(req.method === 'HEAD' ? undefined : png);
-      return;
+      return sendPayload(req, res, this.cache.intern('image/png', png), 'public, max-age=86400');
+    }
+    const startup = /^\/startup\/(\d+)x(\d+)-(light|dark)\.png$/.exec(rel);
+    if (startup) {
+      const png = this.opts.startup?.(Number(startup[1]), Number(startup[2]), startup[3] === 'dark');
+      if (!png) return this.text(res, 404, 'Not Found');
+      return sendPayload(req, res, this.cache.intern('image/png', png), 'public, max-age=86400');
     }
     if (rel === '/' || rel === '/pair') rel = '/index.html';
     const root = path.resolve(this.opts.staticDir);
@@ -828,24 +841,46 @@ export class RemoteServer {
     // The page itself must always be fresh; built assets carry a content hash.
     if (path.extname(file).toLowerCase() === '.html') {
       const body = Buffer.from(withMobileHead(withConnectSrc(await fs.promises.readFile(file, 'utf8'), this.pageHost(req, source))), 'utf8');
-      res.writeHead(200, { 'Content-Type': MIME['.html'], 'Content-Length': body.length, 'Cache-Control': 'no-cache' });
-      res.end(req.method === 'HEAD' ? undefined : body);
-      return;
+      return sendPayload(req, res, this.cache.intern(MIME['.html'] as string, body), 'no-cache');
     }
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': stat.size,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-    });
-    if (req.method === 'HEAD') return void res.end();
-    await pipeline(fs.createReadStream(file), res);
+    return this.cache.sendFile(req, res, file, stat, MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'public, max-age=31536000, immutable');
   }
 
-  /** A file the server makes itself; always checked again, so an update shows at once. */
-  private generated(req: http.IncomingMessage, res: http.ServerResponse, type: string, text: string): void {
-    const body = Buffer.from(text, 'utf8');
-    res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'no-cache' });
-    res.end(req.method === 'HEAD' ? undefined : body);
+  /** index.html as this host serves it ('' without one), which the service worker keeps: a change to it is a new shell. */
+  private async servedPage(req: http.IncomingMessage, source: RemoteAccessProviderId): Promise<string> {
+    try {
+      return withMobileHead(withConnectSrc(await fs.promises.readFile(path.join(path.resolve(this.opts.staticDir), 'index.html'), 'utf8'), this.pageHost(req, source)));
+    } catch {
+      return '';
+    }
+  }
+
+  /** What the service worker keeps for the app to open offline: the page, the manifest, the icons that exist and the built code, styles and fonts. Images (the docs' screenshots among them) are kept once a screen shows them. */
+  private precacheList(): string[] {
+    const dir = path.join(path.resolve(this.opts.staticDir), 'assets');
+    let mtimeMs = -1;
+    try {
+      mtimeMs = fs.statSync(dir).mtimeMs;
+    } catch {
+      // No assets folder (a test's static dir): only the page.
+    }
+    let assets = this.assetList;
+    if (!assets || assets.mtimeMs !== mtimeMs) {
+      let names: string[] = [];
+      try {
+        names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && PRECACHE_EXT.test(e.name)).map((e) => e.name).sort();
+      } catch {
+        // As above.
+      }
+      assets = this.assetList = { mtimeMs, names };
+    }
+    const icons = (Object.keys(PWA_ICONS) as PwaIconName[]).filter((name) => this.opts.icon?.(name)).map((name) => `/icons/${name}.png`);
+    return ['/index.html', '/manifest.webmanifest', ...icons, ...assets.names.map((n) => `/assets/${n}`)];
+  }
+
+  /** A file the server makes itself; always checked again (a 304 when unchanged), so an update shows at once. */
+  private generated(req: http.IncomingMessage, res: http.ServerResponse, type: string, text: string): Promise<void> {
+    return sendPayload(req, res, this.cache.intern(type, Buffer.from(text, 'utf8')), 'no-cache');
   }
 
   // ---------- WebSocket ----------

@@ -636,6 +636,20 @@
    "err": "Error invoking remote method 'folders:remove': Error: boom folders:remove"
   }
  },
+ "folders.command": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "folder:command",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "templates.list": {
   "arity": 0,
   "calls": [
@@ -2176,7 +2190,7 @@
   }
  },
  "openModelEditor": {
-  "arity": 3,
+  "arity": 4,
   "calls": [
    [
     "invoke",
@@ -2184,7 +2198,8 @@
     [
      "a0",
      "a1",
-     "a2"
+     "a2",
+     "a3"
     ]
    ]
   ],
@@ -2430,13 +2445,14 @@
   }
  },
  "showError": {
-  "arity": 1,
+  "arity": 2,
   "calls": [
    [
     "invoke",
     "dialog:error",
     [
-     "a0"
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -2501,6 +2517,20 @@
     "context-menu:folder",
     [
      "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showListContextMenu": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "context-menu:list",
+    [
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -2573,6 +2603,19 @@
    [
     "send",
     "context-menu:message",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "fitWindow": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "window:fit",
     [
      "a0"
     ]

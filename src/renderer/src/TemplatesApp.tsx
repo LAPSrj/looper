@@ -28,12 +28,13 @@ export function TemplatesApp() {
 
   const tpl = templates.find((t) => t.id === selected);
 
-  const duplicate = async () => {
-    if (!tpl) return;
+  // Each command takes the template it acts on (the selected one for a button, the clicked row for the menu).
+  const duplicate = async (from: Task | undefined = tpl) => {
+    if (!from) return;
     const copy = {
-      ...JSON.parse(JSON.stringify(tpl)),
-      id: `${tpl.id}-${rid()}`,
-      name: `${tpl.name} (copy)`,
+      ...JSON.parse(JSON.stringify(from)),
+      id: `${from.id}-${rid()}`,
+      name: `${from.name} (copy)`,
     };
     delete copy.createdAt;
     delete copy.updatedAt;
@@ -45,14 +46,23 @@ export function TemplatesApp() {
     }
   };
 
-  const remove = async () => {
-    if (!tpl) return;
-    if (!(await window.looper.confirm(`Remove template "${tpl.name}"?`))) return;
+  const remove = async (target: Task | undefined = tpl) => {
+    if (!target) return;
+    if (!(await window.looper.confirm(`Remove template "${target.name}"?`))) return;
     try {
-      await window.looper.templates.remove(tpl.id);
+      await window.looper.templates.remove(target.id);
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
+  };
+
+  /** The order is the keyboard's too, where a drag isn't: one place up or down. */
+  const move = (t: Task, by: -1 | 1) => {
+    const ids = templates.map((x) => x.id);
+    const at = ids.indexOf(t.id);
+    if (at + by < 0 || at + by >= ids.length) return;
+    ids.splice(at + by, 0, ...ids.splice(at, 1));
+    void window.looper.templates.reorder(ids);
   };
 
   return (
@@ -70,6 +80,16 @@ export function TemplatesApp() {
             onSelect={(t) => setSelected(t.id)}
             onOpen={(t) => void window.looper.openTemplateEditor(t.id)}
             onReorder={(ids) => void window.looper.templates.reorder(ids)}
+            autoFocus
+            menu={(t, i) => [
+              { label: 'Edit…', run: () => void window.looper.openTemplateEditor(t.id) },
+              { label: 'Duplicate', run: () => void duplicate(t) },
+              { label: 'Export…', run: () => void window.looper.templates.export(t.id) },
+              { label: 'Move Up', enabled: i > 0, run: () => move(t, -1) },
+              { label: 'Move Down', enabled: i < templates.length - 1, run: () => move(t, 1) },
+              { label: 'Remove', run: () => void remove(t) },
+            ]}
+            onDelete={(t) => void remove(t)}
           />
           <ListActions
             onAdd={() => void window.looper.openTemplateEditor()}

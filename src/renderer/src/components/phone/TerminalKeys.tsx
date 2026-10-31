@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Terminal as XTerm } from '@xterm/xterm';
-import { isPhone } from '../../web/page-nav';
+import { TEXT_LARGER, TEXT_SMALLER } from '../../phone-lists';
+import { isPhone, usePageNav } from '../../web/page-nav';
 import { KEY_ROW, StickyCtrl, stepFontSize, type TermKey } from '../terminal-keys';
 
 const ARROW_NAMES: Partial<Record<TermKey, string>> = { up: 'Up', down: 'Down', left: 'Left', right: 'Right' };
@@ -75,6 +76,24 @@ export function usePhoneTerminal(send: (data: string) => void): PhoneTerminal {
     t.refit();
   };
 
+  // The text size isn't a key: it's in the window's More menu (a toolbar item the menu offers, and a designed menu can name).
+  usePageNav(
+    isPhone
+      ? {
+          toolbar: [
+            {
+              id: 'terminal-text',
+              items: [
+                { id: TEXT_SMALLER, label: 'Smaller Text', run: () => changeFont(-1), enabled: fontSize > stepFontSize(fontSize, -1) },
+                { id: TEXT_LARGER, label: 'Larger Text', run: () => changeFont(1), enabled: fontSize < stepFontSize(fontSize, 1) },
+              ],
+            },
+          ],
+        }
+      : null,
+    5,
+  );
+
   // Pressing a key mustn't take the focus from the terminal: the keyboard would go down.
   const keep = (e: React.PointerEvent | React.MouseEvent) => e.preventDefault();
 
@@ -96,13 +115,6 @@ export function usePhoneTerminal(send: (data: string) => void): PhoneTerminal {
           Ctrl
         </button>
         {KEY_ROW.slice(2).map(keyButton)}
-        <span className="term-keys-sep" />
-        <button className="term-key" aria-label="Smaller Text" onClick={() => changeFont(-1)}>
-          A−
-        </button>
-        <button className="term-key" aria-label="Larger Text" onClick={() => changeFont(1)}>
-          A+
-        </button>
       </div>
     </div>
   ) : null;

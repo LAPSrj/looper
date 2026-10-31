@@ -52,6 +52,7 @@ export function EngineLogApp() {
   stateRef.current = { count: entries.length, selected, hidden };
 
   useEffect(() => {
+    document.title = 'Engine Log';
     let cancelled = false;
     const load = async () => {
       const text = await window.looper.readEngineLog();

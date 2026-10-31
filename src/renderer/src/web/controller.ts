@@ -186,7 +186,15 @@ export class ShellController {
     }, true);
     win.addEventListener('contextmenu', track, true);
     win.addEventListener('focus', () => this.activate(w));
-    win.addEventListener('keydown', (e) => this.onKey(e));
+    win.addEventListener('keydown', (e) => {
+      // The shell's own menus and sheets close on Escape in the top document, wherever the focus is.
+      if (e.key === 'Escape' && this.overlayOpen()) {
+        e.preventDefault();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        return;
+      }
+      this.onKey(e);
+    });
     if (this.front()?.w === w) this.focusFront();
   }
 

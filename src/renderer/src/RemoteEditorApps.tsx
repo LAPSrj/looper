@@ -4,7 +4,8 @@ import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { EditorFooter, Field, NumberField } from './components/ui';
 import { useDialogKeys } from './components/hooks';
-import { RemoteFolderFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
+import { useFitWindow } from './fit-window';
+import { AgentFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
 
 /**
  * Save a changed Remote Control helper list through the full settings
@@ -70,6 +71,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
   const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);
   const [saving, setSaving] = useState(false);
   const savedRef = useDiscardUnsaved(id, isNew);
+  useFitWindow();
 
   useEffect(() => {
     if (!live || draft) return;
@@ -77,8 +79,11 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     if (!h) return;
     const { name, environmentId, harnessId, cwd, model, effort, idleRestartMin, instructions } = h;
     setDraft({ name, environmentId, harnessId, cwd, model, effort, idleRestartMin, instructions });
-    document.title = isNew ? 'New Helper' : h.name;
-  }, [live, draft, id, isNew]);
+  }, [live, draft, id]);
+
+  useEffect(() => {
+    document.title = isNew ? 'New Helper' : 'Edit Helper';
+  }, [isNew]);
 
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
@@ -108,10 +113,11 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <RemoteFolderFields
+          <AgentFields
             draft={draft}
             environments={live.environments}
             host={host}
+            harnesses="claude-code"
             onChange={(p) => setDraft((d) => (d ? { ...d, ...p } : d))}
           />
           <NumberField

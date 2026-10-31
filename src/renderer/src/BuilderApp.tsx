@@ -11,6 +11,7 @@ import { openXterm } from './components/xterm';
 import { subscribe } from './events';
 import { fmtDateTime } from './format';
 import { settingLabel, settingValue } from './taskSettings';
+import { isPhone } from './web/page-nav';
 
 type Rec = Record<string, unknown>;
 
@@ -327,7 +328,8 @@ function Chat({ state }: { state: BuilderState }) {
           disabled={state.status === 'ended'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // On a phone or tablet Enter is a line break, and Ctrl+Enter or Cmd+Enter sends.
+            if (e.key === 'Enter' && (isPhone ? e.ctrlKey || e.metaKey : !e.shiftKey)) {
               e.preventDefault();
               send();
             }

@@ -1,0 +1,221 @@
+/* The screens of a phone without its computer: the first screen (Waiting) and the banner under the top bar. */
+
+/* ---------- Waiting ---------- */
+
+html:has(.offline-waiting.ios) {
+  background: #f2f2f7;
+}
+
+.offline-waiting {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top) 32px env(safe-area-inset-bottom);
+  text-align: center;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.offline-waiting h1 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.offline-waiting p {
+  margin: 0 0 14px;
+  color: var(--fg-muted);
+}
+
+.offline-waiting button {
+  padding: 5px 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-2);
+  cursor: pointer;
+}
+
+.offline-waiting.ios {
+  background: #f2f2f7;
+  color: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}
+
+.offline-waiting.ios h1 {
+  margin-bottom: 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.35px;
+}
+
+.offline-waiting.ios p {
+  margin-bottom: 18px;
+  font-size: 15px;
+  color: rgba(60, 60, 67, 0.6);
+}
+
+.offline-waiting.ios button {
+  padding: 8px 16px;
+  border: 0;
+  background: none;
+  font-size: 17px;
+  color: #0088ff;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.offline-waiting.ios button:active {
+  opacity: 0.4;
+}
+
+.offline-waiting.android {
+  background: #f8f9ff;
+  color: #191c20;
+  font-family: Roboto, system-ui, sans-serif;
+}
+
+.offline-waiting.android h1 {
+  margin-bottom: 8px;
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.offline-waiting.android p {
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: #43474e;
+}
+
+.offline-waiting.android button {
+  min-height: 40px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 20px;
+  background: #0061a4;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:has(.offline-waiting.ios) {
+    background: #000;
+  }
+  .offline-waiting.ios {
+    background: #000;
+    color: #fff;
+  }
+  .offline-waiting.ios p {
+    color: rgba(235, 235, 245, 0.6);
+  }
+  .offline-waiting.ios button {
+    color: #0091ff;
+  }
+  .offline-waiting.android {
+    background: #111418;
+    color: #e1e2e8;
+  }
+  .offline-waiting.android p {
+    color: #c3c7cf;
+  }
+  .offline-waiting.android button {
+    background: #9ecaff;
+    color: #003258;
+  }
+}
+
+/* ---------- the banner ---------- */
+
+.offline-banner {
+  --offline-mark: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 34px;
+  padding: 0 16px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.offline-banner-icon {
+  flex: none;
+  color: #ff9500;
+}
+
+.offline-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offline-banner-retry {
+  flex: none;
+  padding: 6px 0 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.offline-banner.ios {
+  background: var(--ios-bar, #f9f9f9);
+  border-bottom: 0.5px solid var(--ios-sep, rgba(60, 60, 67, 0.29));
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--ios-label2, rgba(60, 60, 67, 0.6));
+}
+
+.offline-banner.ios .offline-banner-retry {
+  font: inherit;
+  font-size: 15px;
+  color: var(--ios-tint, #0088ff);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.offline-banner.ios .offline-banner-retry:active {
+  opacity: 0.4;
+}
+
+.offline-banner.android {
+  background: #eceef4;
+  border-bottom: 0;
+  font-family: Roboto, system-ui, sans-serif;
+  color: #43474e;
+}
+
+.offline-banner.android .offline-banner-retry {
+  font-weight: 500;
+  color: #0061a4;
+}
+
+@media (prefers-color-scheme: dark) {
+  .offline-banner.ios {
+    --offline-mark: #000;
+    background: var(--ios-bar, #161617);
+    border-bottom-color: var(--ios-sep, rgba(84, 84, 88, 0.65));
+    color: var(--ios-label2, rgba(235, 235, 245, 0.6));
+  }
+  .offline-banner.ios .offline-banner-retry {
+    color: var(--ios-tint, #0091ff);
+  }
+  .offline-banner.android {
+    --offline-mark: #000;
+    background: #1d2024;
+    color: #c3c7cf;
+  }
+  .offline-banner.android .offline-banner-retry {
+    color: #9ecaff;
+  }
+}
+
+/* ---------- stale data ---------- */
+
+/* A value that only means something live (a countdown, a running time) while the screen shows what the phone kept. */
+html[data-stale] .live-only {
+  opacity: 0.4;
+}

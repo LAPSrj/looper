@@ -11,6 +11,7 @@ import type { FileDialogSpec, MessageBoxSpec, ServerMessage } from '../../shared
 import type { RemoteClients } from './clients';
 import { caller } from './context';
 import { IpcTable, type IpcMainLike } from './ipc-table';
+import { hideOffPlatform } from './menus';
 import { RemoteWindow, RemoteWebContents, type AppWindow, type RemoteClient } from './remote-window';
 import { createPlacedWindow } from './window-places';
 
@@ -100,13 +101,18 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
     if (!w.isDestroyed()) w.client.popup(w, menu, options.x, options.y);
     return;
   }
+  hideOffPlatform(menu, 'desktop');
   menu.popup(options as unknown as Electron.PopupOptions);
 }
 
-/** w.setMenu(menu), or w.removeMenu() for null. */
+/**
+ * w.setMenu(menu), or w.removeMenu() for null. The menu is the window's own:
+ * the items its platform doesn't show are hidden in it.
+ */
 export function setWindowMenu(w: AppWindow, menu: Menu | null): void {
-  if (menu) w.setMenu(menu);
-  else w.removeMenu();
+  if (!menu) return w.removeMenu();
+  hideOffPlatform(menu, w instanceof RemoteWindow ? w.client.uiPlatform : 'desktop');
+  w.setMenu(menu);
 }
 
 // ---------- dialogs ----------

@@ -1,5 +1,5 @@
-import { Fragment, useRef, useState } from 'react';
-import { AddonScreenView, AddonToolbarButtons } from './components/AddonScreen';
+import { useRef, useState } from 'react';
+import { addonMainGroups, AddonScreenView } from './components/AddonScreen';
 import { Dashboard } from './components/Dashboard';
 import { ProjectDetail } from './components/ProjectDetail';
 import { Sidebar } from './components/Sidebar';
@@ -9,7 +9,8 @@ import { TaskToolbar } from './components/TaskToolbar';
 import { useDragResize } from './components/hooks';
 import { PhoneMain } from './components/phone/PhoneMain';
 import { isPhone } from './web/page-nav';
-import { preventSleepStatus, restStatus, useMainWindow, type MainWindow } from './useMainWindow';
+import { RestStatusText } from './components/Live';
+import { preventSleepStatus, useMainWindow, type MainWindow } from './useMainWindow';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { remoteAccessStatusItems } from '@shared/remote-access';
 
@@ -19,12 +20,20 @@ export function App() {
   return isPhone ? <PhoneMain m={m} /> : <DesktopMain m={m} />;
 }
 
+const SIDEBAR_WIDTH_KEY = 'main.sidebarWidth';
+
+/** The sidebar's width as last dragged (a window's own, like the Chats window's panes). */
+function savedSidebarWidth(): number {
+  const width = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  return width >= 180 ? width : 300;
+}
+
 /** The desktop main window: toolbar, sidebar, the selected item's view, status bar. */
 function DesktopMain({ m }: { m: MainWindow }) {
-  const { view, tasks, projects, runtimes, now, task, project, addonShown, targetTask, selected, addons, rest, counts, remoteOpen } = m;
+  const { view, tasks, projects, runtimes, task, project, addonShown, targetTask, selected, addons, rest, counts, remoteOpen } = m;
   // The main toolbar's end, where the shown addon screen puts its buttons.
   const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const appRef = useRef<HTMLDivElement>(null);
   // With every pane hidden (View menu) there is no sidebar: the main view takes the whole width.
   const sidebar = !view || sidebarHasPanes(view, addons);
@@ -34,7 +43,11 @@ function DesktopMain({ m }: { m: MainWindow }) {
   const onSidebarDragStart = useDragResize({
     axis: 'x',
     containerRef: appRef,
-    onDrag: (x, rect) => setSidebarWidth(Math.max(180, Math.min(rect.width * 0.5, x))),
+    onDrag: (x, rect) => {
+      const width = Math.max(180, Math.min(rect.width * 0.5, x));
+      setSidebarWidth(width);
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width)));
+    },
   });
 
   return (
@@ -49,21 +62,7 @@ function DesktopMain({ m }: { m: MainWindow }) {
           runtime={selected && targetTask ? runtimes[targetTask.id] : undefined}
           dashboard={!selected && !project && !addonShown}
           onAction={m.uiAction}
-          addonButtons={addons
-            .filter((a) => a.enabled && a.toolbar.length && !view?.hiddenAddonToolbars.includes(a.id))
-            .map((a) => (
-              <Fragment key={a.id}>
-                <span className="toolbar-sep" />
-                <AddonToolbarButtons
-                  items={a.toolbar.map((b) => ({ ...b, disabled: a.status !== 'running' }))}
-                  onClick={(id) => {
-                    const b = a.toolbar.find((x) => x.id === id);
-                    if (b?.tool) void window.looper.addons.openTool(a.id, b.tool);
-                    else void window.looper.addons.event(a.id, { source: { toolbar: 'main' }, kind: 'click', id });
-                  }}
-                />
-              </Fragment>
-            ))}
+          addonGroups={addonMainGroups(addons, view?.hiddenAddonToolbars ?? [])}
           addonSlot={setToolbarSlot}
         />
       )}
@@ -79,8 +78,8 @@ function DesktopMain({ m }: { m: MainWindow }) {
             layout={m.layout}
             runtimes={runtimes}
             selected={selected}
-            now={now}
             onSelect={m.select}
+            onCommand={m.uiAction}
             view={view}
             onView={m.changeView}
             addons={addons}
@@ -102,7 +101,6 @@ function DesktopMain({ m }: { m: MainWindow }) {
               environments={m.info?.settings.environments ?? []}
               runtime={runtimes[task.id]}
               records={m.records[task.id] ?? []}
-              now={now}
               tab={m.tab}
               onTab={m.setTab}
               hideNoActionRuns={view?.hideNoActionRuns ?? false}
@@ -118,7 +116,6 @@ function DesktopMain({ m }: { m: MainWindow }) {
               runtimes={runtimes}
               environments={m.info?.settings.environments ?? []}
               remote={m.remote}
-              now={now}
               onSelectTask={m.select}
             />
           ) : addonShown ? (
@@ -138,7 +135,6 @@ function DesktopMain({ m }: { m: MainWindow }) {
               remote={remoteOpen}
               recent={m.recentShown}
               runtimes={runtimes}
-              now={now}
               pick={m.livePick}
               onPick={m.setPick}
               onOpen={m.openFromDashboard}
@@ -148,14 +144,15 @@ function DesktopMain({ m }: { m: MainWindow }) {
       </div>
       {(view?.statusBar ?? true) && (
         <div className="statusbar">
-          <span>
-            {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}
-            {counts.running} running
-            {remoteOpen && ` · ${remoteOpen.length} Remote Control session${remoteOpen.length === 1 ? '' : 's'}`}
-            {addons.length > 0 && ` · ${m.runningAddons} addon${m.runningAddons === 1 ? '' : 's'} running`}
-          </span>
+          <span>{counts.enabled} enabled</span>
+          <span>{counts.disabled} disabled</span>
+          <span>{counts.completed} completed</span>
+          <span>{counts.paused} paused</span>
+          <span>{counts.running} running</span>
+          {remoteOpen && <span>{remoteOpen.length} Remote Control conversation{remoteOpen.length === 1 ? '' : 's'}</span>}
+          {addons.length > 0 && <span>{m.runningAddons} addon{m.runningAddons === 1 ? '' : 's'} running</span>}
           <span className="spacer" />
-          {rest?.armed && <span>{restStatus(rest, now)}</span>}
+          {rest?.armed && <span><RestStatusText rest={rest} /></span>}
           {preventSleepText && <span>{preventSleepText}</span>}
           {remoteAccess && remoteAccessStatusItems(remoteAccess).map((text) => <span key={text}>{text}</span>)}
         </div>

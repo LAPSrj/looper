@@ -44,6 +44,8 @@ export interface RemoteAccessOptions {
   graceMs?: number;
   /** The home-screen icons, as PNG. */
   icon?: (name: PwaIconName) => Buffer | null;
+  /** The home-screen app's launch screens, as PNG by pixel size. */
+  startup?: (width: number, height: number, dark: boolean) => Buffer | null;
   /** Tests swap in their own push service. */
   pushSend?: PushSend;
   /**
@@ -154,6 +156,7 @@ export class RemoteAccess {
         unsubscribe: (deviceId, endpoint) => void push.unsubscribe(deviceId, endpoint),
       },
       ...(opts.icon ? { icon: opts.icon } : {}),
+      ...(opts.startup ? { startup: opts.startup } : {}),
       onUnpair: (id) => this.removeDevice(id),
       onRenamed: () => this.changed(),
       computerName: () => opts.settings().name.trim() || os.hostname(),

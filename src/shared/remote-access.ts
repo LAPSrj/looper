@@ -9,6 +9,8 @@
  * the same renderer route (`index.html#<hash>`) a desktop window would.
  */
 
+import type { UiPlatform } from './ui-platform';
+
 // ---------- providers ----------
 
 /**
@@ -21,7 +23,7 @@ export type RemoteAccessProviderId = 'tailscale' | 'local';
 export const REMOTE_ACCESS_SOURCES: readonly RemoteAccessProviderId[] = ['tailscale', 'local'];
 
 /** A source's name in the windows, menus and status bar. */
-export const SOURCE_NAMES: Record<RemoteAccessProviderId, string> = { tailscale: 'Tailscale', local: 'Host Computer' };
+export const SOURCE_NAMES: Record<RemoteAccessProviderId, string> = { tailscale: 'Tailscale', local: 'Local Browser' };
 
 export type RemoteAccessPhase = 'off' | 'starting' | 'needs-login' | 'running' | 'error';
 
@@ -164,9 +166,11 @@ export const REQUEST_HEADER_VALUE = '1';
  *   GET  /api/ws                WebSocket upgrade; messages below
  *
  * The home-screen app (no cookie needed): GET /manifest.webmanifest, GET /sw.js
- * (the service worker, for installing and push; it caches nothing), and GET
- * /icons/<name>.png (PWA_ICONS). Every HTML page gets the mobile head tags
- * (viewport, theme-color, the manifest and touch icon links) as it's served.
+ * (the service worker, for installing, push and the app's shell kept for
+ * opening offline; it never caches /api/), GET /icons/<name>.png (PWA_ICONS)
+ * and GET /startup/<w>x<h>-<light|dark>.png (iOS launch images). Every HTML
+ * page gets the mobile head tags (viewport, theme-color, color-scheme, the
+ * manifest, touch icon and launch image links) as it's served.
  */
 export interface MeResponse {
   paired: boolean;
@@ -250,6 +254,12 @@ export interface MenuItemSpec {
   /** Edit roles the client carries out itself: copy, cut, paste, selectAll, undo, redo, reload. */
   role?: string;
   submenu?: MenuItemSpec[];
+  /** The template's own id (Electron's `id`), by which a page's designed More menu names it. */
+  key?: string;
+  /** An ICONS key (components/icons.tsx) the phone's menus draw before the label. */
+  icon?: string;
+  /** Where it shows (unset: everywhere); the server leaves out what the client's platform doesn't show. */
+  platforms?: UiPlatform[];
 }
 
 /** Electron's MessageBoxOptions, as data. */

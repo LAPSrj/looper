@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Environment, Project, Task, TaskInput } from '@shared/types';
 import { importTaskDraft } from '@shared/validate';
+import { windowTitle } from '@shared/window-title';
 
 import { TaskEditor } from './components/TaskEditor';
 
@@ -50,7 +51,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
       void window.looper.templates.list().then((templates) => {
         const found = templates.find((t) => t.id === templateId) ?? null;
         setTask(found);
-        if (found) document.title = found.name;
+        if (found) document.title = windowTitle('Edit Template', found.name);
       });
     } else if (fromTemplateId) {
       void window.looper.templates.list().then((templates) => {
@@ -76,7 +77,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
               // the imported definition: the existing task keeps its own.
               draft.folderId = current.folderId;
               draft.note = current.note;
-              document.title = current.name;
+              document.title = windowTitle(mode === 'template' ? 'Edit Template' : 'Edit Task', current.name);
             }
           }
           setInitial(draft);
@@ -87,7 +88,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
       void window.looper.tasks.list().then((tasks) => {
         const found = tasks.find((t) => t.id === taskId) ?? null;
         setTask(found);
-        if (found) document.title = found.name;
+        if (found) document.title = windowTitle('Edit Task', found.name);
       });
     }
   }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode]);

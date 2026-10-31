@@ -1,6 +1,76 @@
 import type { ReactNode } from 'react';
 import type { AddonIconName } from '@shared/addons';
 
+/** The stroke of every line icon, and of the glyphs drawn beside text (chevrons, status marks). */
+export const ICON_STROKE = 1.4;
+/** The heavier stroke of a check or a cross inside a small control. */
+export const ICON_STROKE_BOLD = 2;
+
+/** The disclosure chevron's path in its 10 x 10 box. The disclosure triangle in styles.css (summary::before) draws the same path. */
+export const CHEVRON_PATH = 'M3.5 1.5 7 5l-3.5 3.5';
+
+/** The one disclosure chevron: it points right and turns a quarter when `open` (styles.css rotates `.chev.open`). */
+export function Chevron({ open, className }: { open?: boolean; className?: string }) {
+  return (
+    <svg
+      className={`chev${open ? ' open' : ''}${className ? ` ${className}` : ''}`}
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={CHEVRON_PATH} />
+    </svg>
+  );
+}
+
+/** How serious a status glyph is. */
+export type StatusLevel = 'error' | 'warning' | 'info';
+
+/**
+ * Windows' 16 px error, warning and information glyphs, drawn once for the
+ * dashboard's status column and the InfoBar. Colors come from the theme tokens
+ * (styles.css `.status-glyph`). With a `label` it is an image; without, it is
+ * hidden from assistive technology because the text beside it says the same.
+ */
+export function StatusGlyph({ level, label, className }: { level: StatusLevel; label?: string; className?: string }) {
+  return (
+    <svg
+      className={`status-glyph ${level}${className ? ` ${className}` : ''}`}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      role={label ? 'img' : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+    >
+      {level === 'error' ? (
+        <>
+          <circle className="status-glyph-bg" cx="8" cy="8" r="7.5" />
+          <path className="status-glyph-mark" d="M5.3 5.3l5.4 5.4M10.7 5.3l-5.4 5.4" strokeWidth="1.6" strokeLinecap="round" />
+        </>
+      ) : level === 'warning' ? (
+        <>
+          <path className="status-glyph-bg" d="M8 1.2 15.3 14.3H.7Z" strokeLinejoin="round" />
+          <path className="status-glyph-mark" d="M8 5.6v4.3" strokeWidth="1.5" strokeLinecap="round" />
+          <circle className="status-glyph-dot" cx="8" cy="12" r=".9" />
+        </>
+      ) : (
+        <>
+          <circle className="status-glyph-bg" cx="8" cy="8" r="8" />
+          <circle className="status-glyph-dot" cx="8" cy="4.9" r="1" />
+          <path className="status-glyph-mark" d="M8 7.3v4.4" strokeWidth="1.6" strokeLinecap="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /** A speech bubble in the top-left of the icon, leaving the bottom-right corner for an action glyph. */
 const BUBBLE = 'M3 2h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 12.8V10H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 2Z';
 

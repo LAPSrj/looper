@@ -1,4 +1,4 @@
-import { app, Menu, nativeImage } from 'electron';
+import { app, Menu as ElectronMenu, nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
@@ -8,6 +8,7 @@ import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } fro
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
+import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
 import { projectTaskId } from '../shared/projects';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
@@ -34,8 +35,16 @@ import {
   writeClipboard,
   type AppWindow,
 } from './platform';
+import { fitWindowHeight } from './platform/fit-window';
+import { withAccessKeys } from './platform/menus';
+import { projectMenuItems, type ProjectCommand } from './project-menu';
 import type { RemoteAccess } from './remote-access';
 import { paneMenuItems, projectsPaneMenuItems, singleMenuItems } from './view-menu';
+
+/** Every context menu built here: each item gets an access key (withAccessKeys) unless its label has one. */
+const Menu = {
+  buildFromTemplate: (template: Electron.MenuItemConstructorOptions[]) => ElectronMenu.buildFromTemplate(withAccessKeys(template)),
+};
 
 export interface IpcHost {
   getWindow: () => AppWindow | null;
@@ -56,7 +65,7 @@ export interface IpcHost {
 
   openEnvEditor: (envId: string, isNew?: boolean, parent?: AppWindow | null) => void;
   openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: AppWindow | null) => void;
-  openModelEditor: (envId: string, harnessId: string, index?: number, parent?: AppWindow | null) => void;
+  openModelEditor: (envId: string, harnessId: string, index?: number, parent?: AppWindow | null, copyOf?: number) => void;
   openModelUpdate: (envId?: string, harnessId?: string, parent?: AppWindow | null) => void;
   openTemplateEditor: (templateId?: string, parent?: AppWindow | null) => void;
   openTemplatePicker: () => void;
@@ -513,8 +522,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             { type: 'separator' } as const,
           ]),
       ...(card === true ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { type: 'separator' } as const] : []),
-      ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', click: () => host.openChatWindow(id) }]),
-      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
+      ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),
+      { label: 'Open Working Directory', platforms: DESKTOP_ONLY, click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
       { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
       ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
     ];
@@ -697,16 +706,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       ]), { window: sender });
       return;
     }
-    popupMenu(Menu.buildFromTemplate([
-      { label: 'New &Chat', click: () => void projectChat(pid, sender) },
-      { label: 'New Ter&minal', click: () => void projectTerminal(pid, sender) },
-      { type: 'separator' },
-      { label: 'New &Task…', click: () => host.openNewTaskIn(pid) },
-      { type: 'separator' },
-      { label: '&Edit Project…', click: () => host.openProjectEditor(pid) },
-      { label: 'Open &Working Directory', click: () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)) },
-      { label: '&Delete Project', click: () => void removeProject(pid, sender) },
-    ]), { window: sender });
+    const run: Record<ProjectCommand, () => void> = {
+      'new-task': () => host.openNewTaskIn(pid),
+      'new-chat': () => void projectChat(pid, sender),
+      'new-terminal': () => void projectTerminal(pid, sender),
+      edit: () => host.openProjectEditor(pid),
+      'open-folder': () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)),
+      delete: () => void removeProject(pid, sender),
+    };
+    popupMenu(Menu.buildFromTemplate(projectMenuItems((command) => run[command]())), { window: sender });
   });
 
   // ---------- the Git tabs ----------
@@ -745,6 +753,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: '&Open File', enabled: info.exists, click: () => void openTargetPath(taskId, full).catch((err) => fail(sender, err)) },
       {
         label: 'Show in &Folder',
+        platforms: DESKTOP_ONLY,
         enabled: info.exists,
         click: () => void targetToHost(taskId, full).then((p) => showItemInFolder(p)).catch((err) => fail(sender, err)),
       },
@@ -778,8 +787,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('harnessEditor:open', (e, envId: string, harnessId: string, isNew?: boolean) =>
     host.openHarnessEditor(envId, harnessId, isNew, windowOf(e)),
   );
-  ipc.handle('modelEditor:open', (e, envId: string, harnessId: string, index?: number) =>
-    host.openModelEditor(envId, harnessId, index, windowOf(e)),
+  ipc.handle('modelEditor:open', (e, envId: string, harnessId: string, index?: number, copyOf?: number) =>
+    host.openModelEditor(envId, harnessId, index, windowOf(e), copyOf),
   );
   ipc.handle('modelUpdate:open', (e, envId?: string, harnessId?: string) =>
     host.openModelUpdate(envId, harnessId, windowOf(e)),
@@ -1010,9 +1019,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject),
   );
 
-  ipc.handle('dialog:error', async (e, message: string) => {
+  // A dialog's page measures its content and asks for a window that fits it.
+  ipc.on('window:fit', (e, contentHeight: number) => fitWindowHeight(windowOf(e), contentHeight));
+
+  ipc.handle('dialog:error', async (e, message: string, detail?: string) => {
     const sender = windowOf(e);
-    const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, buttons: ['OK'] };
+    const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, ...(detail ? { detail } : {}), buttons: ['OK'] };
     await showMessageBox(sender, opts);
   });
   ipc.handle('dialog:confirm', async (e, message: string) => {
@@ -1075,32 +1087,61 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     // A task allowed several simultaneous runs can start another until its cap.
     const canRun = !active || (info.activeRuns ?? 1) < (info.maxRuns ?? 1);
     const menu = Menu.buildFromTemplate([
-      { label: 'Run Now', enabled: canRun, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
-      { label: 'Stop Task', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
-      { label: info.state === 'paused' ? 'Resume' : 'Pause', enabled: info.state !== 'disabled' && !info.completed, click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
+      { label: 'Run Now', glyph: 'run', enabled: canRun, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
+      { label: 'Stop Task', glyph: 'stop', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
+      { label: info.state === 'paused' ? 'Resume' : 'Pause', glyph: info.state === 'paused' ? 'resume' : 'pause', enabled: info.state !== 'disabled' && !info.completed, click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
       { label: info.enabled ? 'Disable' : 'Enable', enabled: !info.completed, click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
       {
         label: info.completed ? 'Reopen' : 'Complete',
         enabled: info.completed || info.allowComplete,
         click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }),
       },
-      { label: 'Edit Task…', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
+      { label: 'Edit Task…', glyph: 'edit', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
       { label: 'Edit with Agent…', click: () => sender.webContents.send('ui:event', { type: 'edit-with-agent' }) },
-      { label: 'Version History…', click: () => sender.webContents.send('ui:event', { type: 'version-history' }) },
-      { label: 'Delete Task', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
+      { label: 'Version History', click: () => sender.webContents.send('ui:event', { type: 'version-history' }) },
+      { label: 'Delete Task', glyph: 'delete', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
       { type: 'separator' },
       { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
       { label: 'Clear Guidance', enabled: info.hasNote, click: () => sender.webContents.send('ui:event', { type: 'clear-note' }) },
       { type: 'separator' },
-      { label: 'Move to Folder…', click: () => sender.webContents.send('ui:event', { type: 'move-to-folder' }) },
+      { label: 'Move to Folder…', glyph: 'folder', click: () => sender.webContents.send('ui:event', { type: 'move-to-folder' }) },
       { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
       { type: 'separator' },
       { label: 'Open Project in Terminal', click: () => sender.webContents.send('ui:event', { type: 'open-terminal' }) },
       { label: 'Open Project in Chat', click: () => sender.webContents.send('ui:event', { type: 'open-chat' }) },
-      { label: 'Open Working Directory', click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
+      { label: 'Open Working Directory', platforms: DESKTOP_ONLY, click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
     ]);
     popupMenu(menu, { window: sender });
   });
+
+  /** Delete Folder…: asks first, and with tasks inside offers to delete them too (unchecked, they move up to the folder's parent). */
+  const deleteFolder = (sender: AppWindow, folderId: string) => {
+    // Folder actions apply to the whole subtree: nested folders included.
+    const subtree = () => folderSubtree(engine.listFolders(), folderId);
+    const members = () => {
+      const ids = subtree();
+      return engine.listTasks().filter((t) => t.folderId && ids.has(t.folderId));
+    };
+    const name = engine.listFolders().find((f) => f.id === folderId)?.name ?? '?';
+    const opts: Electron.MessageBoxOptions = {
+      type: 'question',
+      title: 'Looper',
+      message: `Delete folder "${name}"?`,
+      ...(members().length > 0 ? { checkboxLabel: 'Also delete tasks inside', checkboxChecked: false } : {}),
+      buttons: ['Yes', 'No'],
+      defaultId: 0,
+      cancelId: 1,
+    };
+    void showMessageBox(sender, opts).then((r) => {
+      if (r.response !== 0) return;
+      if (r.checkboxChecked) {
+        // Delete the whole subtree: every task in it, then every nested folder.
+        for (const t of members()) engine.removeTask(t.id);
+        for (const id of subtree()) if (id !== folderId) engine.removeFolder(id);
+      }
+      engine.removeFolder(folderId);
+    });
+  };
 
   // Folder header context menu. Bulk actions run directly against the engine;
   // Run All skips disabled tasks and tasks already at their run cap.
@@ -1113,7 +1154,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const ids = subtree();
       return engine.listTasks().filter((t) => t.folderId && ids.has(t.folderId));
     };
-    const folderName = () => engine.listFolders().find((f) => f.id === info.folderId)?.name ?? '?';
     const stateOf = (taskId: string) => engine.listRuntimes().find((rt) => rt.taskId === taskId)?.state;
     const hasMembers = members().length > 0;
     const forEachMember = (fn: (t: Task) => void) => {
@@ -1171,37 +1211,35 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => host.openRenameFolder(info.folderId),
       },
       {
-        label: 'Delete Folder',
-        click: () => {
-          const count = members().length;
-          const opts: Electron.MessageBoxOptions = {
-            type: 'question',
-            title: 'Looper',
-            message: `Delete folder "${folderName()}"?`,
-            // Unchecked, the folder's contents just move up to its parent.
-            ...(count > 0
-              ? {
-                  checkboxLabel: 'Also delete tasks inside',
-                  checkboxChecked: false,
-                }
-              : {}),
-            buttons: ['Yes', 'No'],
-            defaultId: 0,
-            cancelId: 1,
-          };
-          void showMessageBox(sender, opts).then((r) => {
-            if (r.response !== 0) return;
-            if (r.checkboxChecked) {
-              // Delete the whole subtree: every task in it, then every nested folder.
-              for (const t of members()) engine.removeTask(t.id);
-              for (const id of subtree()) if (id !== info.folderId) engine.removeFolder(id);
-            }
-            engine.removeFolder(info.folderId);
-          });
-        },
+        label: 'Delete Folder…',
+        click: () => deleteFolder(sender, info.folderId),
       },
     ]);
     popupMenu(menu, { window: sender });
+  });
+
+  // The folder commands the keyboard has in the task list (F2, Delete): the same flows as the menu's.
+  ipc.on('folder:command', (e, folderId: string, command: string) => {
+    const sender = windowOf(e);
+    if (!sender || typeof folderId !== 'string') return;
+    if (command === 'rename') host.openRenameFolder(folderId);
+    else if (command === 'delete') deleteFolder(sender, folderId);
+  });
+
+  // A list window's row menu: the window names the items; a pick comes back as a 'list-menu' event carrying the same token.
+  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean }[]) => {
+    const sender = windowOf(e);
+    if (!sender || !Array.isArray(items)) return;
+    popupMenu(
+      Menu.buildFromTemplate(
+        items.map((it) => ({
+          label: String(it.label),
+          enabled: it.enabled !== false,
+          click: () => sender.webContents.send('ui:event', { type: 'list-menu', token: String(token), id: String(it.id) }),
+        })),
+      ),
+      { window: sender },
+    );
   });
 
   ipc.on('context-menu:recycle-bin', (e) => {
@@ -1213,15 +1251,16 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     ]), { window: sender });
   });
 
-  ipc.on('context-menu:version', (e, info?: { builder?: boolean }) => {
+  ipc.on('context-menu:version', (e, info?: { builder?: boolean; current?: boolean }) => {
     const sender = windowOf(e);
     if (!sender) return;
     popupMenu(Menu.buildFromTemplate([
       { label: 'View…', click: () => sender.webContents.send('ui:event', { type: 'version-view' }) },
-      { label: 'Compare with Current…', click: () => sender.webContents.send('ui:event', { type: 'version-compare' }) },
+      { label: 'Compare with Current…', enabled: !info?.current, click: () => sender.webContents.send('ui:event', { type: 'version-compare' }) },
       { type: 'separator' },
       {
         label: info?.builder ? 'Edit with Agent' : 'Restore',
+        enabled: !!info?.builder || !info?.current,
         click: () => sender.webContents.send('ui:event', { type: 'version-restore' }),
       },
     ]), { window: sender });
@@ -1332,7 +1371,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => host.openContinueRun(info.taskId, info.runId),
       },
       { type: 'separator' },
-      { label: 'Open Run Folder', click: () => void openPath(engine.runDir(info.taskId, info.runId)) },
+      { label: 'Open Run Folder', platforms: DESKTOP_ONLY, click: () => void openPath(engine.runDir(info.taskId, info.runId)) },
       { label: 'Copy Run Folder Path', click: () => writeClipboard(engine.runDir(info.taskId, info.runId)) },
     ]);
     popupMenu(menu, { window: sender });

@@ -1,10 +1,11 @@
 import type { Project, Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
-import { Icon } from './Icon';
-import { ICONS } from './icons';
-import { SplitToolButton, ToolButton } from './ToolButton';
+import { DESKTOP_ONLY } from '@shared/ui-platform';
+import { SHORTCUTS, hint } from '@shared/shortcuts';
+import { Toolbar } from './Toolbar';
+import type { ToolbarGroup } from './toolbar-model';
 
-interface Props {
+export interface TaskToolbarState {
   task: Task | null;
   /** The selected project: the edit, chat, terminal and folder buttons act on it. */
   project: Project | null;
@@ -16,13 +17,10 @@ interface Props {
   /** The dashboard is showing: its button stays pressed. */
   dashboard: boolean;
   onAction: (type: UiEvent['type']) => void;
-  /** The installed addons' own buttons, after Looper's. */
-  addonButtons?: React.ReactNode;
-  /** Where the shown addon screen puts its toolbar buttons, at the end. */
-  addonSlot?: (el: HTMLSpanElement | null) => void;
 }
 
-export function TaskToolbar({ task, project, newTaskProject, sessionProject, runtime, dashboard, onAction, addonButtons, addonSlot }: Props) {
+/** The main window's toolbar as data: the desktop draws it, a phone's More menu offers it. */
+export function taskToolbarGroups({ task, project, newTaskProject, sessionProject, runtime, dashboard, onAction }: TaskToolbarState): ToolbarGroup[] {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
   const paused = state === 'paused';
@@ -31,83 +29,93 @@ export function TaskToolbar({ task, project, newTaskProject, sessionProject, run
   const activeRuns = runtime?.runs.length ?? 0;
   const maxRuns = task?.maxConcurrentRuns ?? 1;
   const canRunNow = !active || activeRuns < maxRuns;
+  const act = (type: UiEvent['type']) => () => onAction(type);
+  return [
+    {
+      id: 'views',
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: dashboard, run: act('show-dashboard') },
+        { id: 'chats', label: 'Chats', icon: 'chat', run: () => window.looper.sessions.openWindow() },
+      ],
+    },
+    {
+      id: 'new',
+      items: [
+        { id: 'new-task', label: newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', icon: 'newTask', run: act('new-task') },
+        { id: 'new-project', label: 'New Project', icon: 'newProject', run: () => void window.looper.projects.openEditor() },
+      ],
+    },
+    {
+      id: 'task',
+      items: [
+        { id: 'run-now', label: 'Run Now', shortcut: 'F5', icon: 'run', enabled: hasTask && canRunNow, run: act('run-now') },
+        { id: 'stop-task', label: 'Stop Task', shortcut: 'Shift+F5', icon: 'stop', enabled: active, run: act('stop-task') },
+        {
+          id: 'pause-resume',
+          label: paused ? 'Resume' : 'Pause',
+          shortcut: hint(SHORTCUTS.pauseResume),
+          icon: paused ? 'resume' : 'pause',
+          enabled: hasTask && state !== 'disabled' && !completed,
+          run: act('pause-resume'),
+        },
+        { id: 'enable-disable', label: task?.enabled === false ? 'Enable' : 'Disable', icon: 'power', enabled: hasTask && !completed, run: act('enable-disable') },
+        { id: 'complete-reopen', label: completed ? 'Reopen' : 'Complete', icon: 'complete', enabled: hasTask && (completed || !!task?.completion.allowed), run: act('complete-reopen') },
+        {
+          id: project ? 'edit-project' : 'edit-task',
+          label: project ? 'Edit Project' : 'Edit Task',
+          shortcut: project ? undefined : 'Ctrl+E',
+          icon: 'edit',
+          enabled: hasTask || !!project,
+          run: act('edit-task'),
+        },
+      ],
+    },
+    {
+      id: 'guidance',
+      items: [{ id: 'edit-note', label: task?.note ? 'Edit Guidance for Next Run' : 'Add Guidance for Next Run', icon: 'guidance', enabled: hasTask, run: act('edit-note') }],
+    },
+    {
+      id: 'sessions',
+      items: [
+        {
+          id: 'new-chat',
+          label: sessionProject ? `New Chat in ${sessionProject.name}` : 'New Chat',
+          shortcut: sessionProject ? hint(SHORTCUTS.newChat) : undefined,
+          icon: 'newChat',
+          run: sessionProject ? () => void window.looper.projects.newChat(sessionProject.id) : null,
+          menu: { label: sessionProject ? 'New Chat in Another Project' : 'New Chat in Project', open: (x, y) => window.looper.sessions.showNewMenu('chat', x, y) },
+        },
+        {
+          id: 'new-terminal',
+          label: sessionProject ? `New Terminal in ${sessionProject.name}` : 'New Terminal',
+          shortcut: sessionProject ? hint(SHORTCUTS.newTerminal) : undefined,
+          icon: 'terminal',
+          run: sessionProject ? () => void window.looper.projects.newTerminal(sessionProject.id) : null,
+          menu: { label: sessionProject ? 'New Terminal in Another Project' : 'New Terminal in Project', open: (x, y) => window.looper.sessions.showNewMenu('terminal', x, y) },
+        },
+        { id: 'open-work-folder', label: 'Open Working Directory', icon: 'folder', platforms: DESKTOP_ONLY, enabled: hasTask || !!project, run: act('open-work-folder') },
+      ],
+    },
+  ];
+}
 
-  const button = (
-    icon: React.ReactNode,
-    title: string,
-    type: UiEvent['type'],
-    enabled: boolean,
-  ) => (
-    <button title={title} aria-label={title} disabled={!enabled} onClick={() => onAction(type)}>
-      <Icon>{icon}</Icon>
-    </button>
-  );
+interface Props extends TaskToolbarState {
+  /** The installed addons' own buttons, after Looper's. */
+  addonGroups?: ToolbarGroup[];
+  /** Where the shown addon screen puts its toolbar buttons, at the end. */
+  addonSlot?: (el: HTMLSpanElement | null) => void;
+}
 
+export function TaskToolbar({ addonGroups = [], addonSlot, ...state }: Props) {
   return (
-    <div
-      className="toolbar"
+    <Toolbar
+      groups={[...taskToolbarGroups(state), ...addonGroups]}
       onContextMenu={(e) => {
         e.preventDefault();
         window.looper.addons.showToolbarMenu();
       }}
     >
-      <button
-        className={dashboard ? 'pressed' : undefined}
-        title="Dashboard"
-        aria-label="Dashboard"
-        aria-pressed={dashboard}
-        onClick={() => onAction('show-dashboard')}
-      >
-        <Icon>{ICONS.dashboard}</Icon>
-      </button>
-      <ToolButton icon={ICONS.chat} title="Chats" enabled onClick={() => window.looper.sessions.openWindow()} />
-      <span className="toolbar-sep" />
-      {button(ICONS.newTask, newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', 'new-task', true)}
-      <ToolButton icon={ICONS.newProject} title="New Project" enabled onClick={() => void window.looper.projects.openEditor()} />
-      <span className="toolbar-sep" />
-      {button(ICONS.run, 'Run Now (F5)', 'run-now', hasTask && canRunNow)}
-      {button(ICONS.stop, 'Stop Task (Shift+F5)', 'stop-task', active)}
-      {button(
-        paused ? ICONS.resume : ICONS.pause,
-        paused ? 'Resume (Ctrl+P)' : 'Pause (Ctrl+P)',
-        'pause-resume',
-        hasTask && state !== 'disabled' && !completed,
-      )}
-      {button(ICONS.power, task?.enabled === false ? 'Enable' : 'Disable', 'enable-disable', hasTask && !completed)}
-      {button(
-        ICONS.complete,
-        completed ? 'Reopen' : 'Complete',
-        'complete-reopen',
-        hasTask && (completed || !!task?.completion.allowed),
-      )}
-      {button(ICONS.edit, project ? 'Edit Project' : 'Edit Task (Ctrl+E)', 'edit-task', hasTask || !!project)}
-      <span className="toolbar-sep" />
-      {button(
-        ICONS.guidance,
-        task?.note ? 'Edit Guidance for Next Run' : 'Add Guidance for Next Run',
-        'edit-note',
-        hasTask,
-      )}
-      <span className="toolbar-sep" />
-      <SplitToolButton
-        icon={ICONS.newChat}
-        title={sessionProject ? `New Chat in ${sessionProject.name}` : 'New Chat'}
-        menuTitle="New Chat in Project"
-        enabled
-        onClick={sessionProject ? () => void window.looper.projects.newChat(sessionProject.id) : null}
-        onMenu={(x, y) => window.looper.sessions.showNewMenu('chat', x, y)}
-      />
-      <SplitToolButton
-        icon={ICONS.terminal}
-        title={sessionProject ? `New Terminal in ${sessionProject.name}${task ? ' (Ctrl+T)' : ''}` : 'New Terminal'}
-        menuTitle="New Terminal in Project"
-        enabled
-        onClick={sessionProject ? () => void window.looper.projects.newTerminal(sessionProject.id) : null}
-        onMenu={(x, y) => window.looper.sessions.showNewMenu('terminal', x, y)}
-      />
-      {button(ICONS.folder, 'Open Working Directory', 'open-work-folder', hasTask || !!project)}
-      {addonButtons}
       <span className="toolbar-slot" ref={addonSlot} />
-    </div>
+    </Toolbar>
   );
 }

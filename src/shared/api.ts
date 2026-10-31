@@ -128,6 +128,8 @@ export interface LooperApi {
     rename(id: string, name: string): Promise<TaskFolder>;
     /** Delete a folder; its tasks move to the top level. */
     remove(id: string): Promise<boolean>;
+    /** The task list's F2 and Delete: the Rename Folder window, or the folder menu's Delete Folder question. */
+    command(id: string, command: 'rename' | 'delete'): void;
   };
   templates: {
     list(): Promise<Template[]>;
@@ -354,8 +356,8 @@ export interface LooperApi {
   openEnvironmentEditor(envId: string, isNew?: boolean): Promise<void>;
   /** Open the harness editor in its own window (isNew: discard the harness when closed unsaved). */
   openHarnessEditor(envId: string, harnessId: string, isNew?: boolean): Promise<void>;
-  /** Open the model editor for a harness's preset list (no index = add a new model). */
-  openModelEditor(envId: string, harnessId: string, index?: number): Promise<void>;
+  /** Open the model editor for a harness's preset list (no index = add a new model, starting from the model at `copyOf` when given). */
+  openModelEditor(envId: string, harnessId: string, index?: number, copyOf?: number): Promise<void>;
   /** Open the Update Models window (no ids = every claude-code/codex harness). */
   openModelUpdate(envId?: string, harnessId?: string): Promise<void>;
   /** Query a harness's CLI/API for its current model catalog. */
@@ -391,8 +393,10 @@ export interface LooperApi {
   getStartWithSystem(): Promise<boolean>;
   /** Register/unregister looper as an OS login item (starts hidden in the tray). */
   setStartWithSystem(enabled: boolean): Promise<void>;
-  /** Show a native error dialog (OK button only). */
-  showError(message: string): Promise<void>;
+  /** Show a native error dialog (OK button only): the message, and under it an optional detail (one line per problem). */
+  showError(message: string, detail?: string): Promise<void>;
+  /** Ask the desktop for a window whose page is this tall (CSS px): a dialog sized to its content. */
+  fitWindow(contentHeight: number): void;
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
   /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
@@ -424,10 +428,12 @@ export interface LooperApi {
   }): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
+  /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
+  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean }[]): void;
   /** Context menu of a Recycle Bin item (Restore, Delete). */
   showRecycleBinContextMenu(): void;
   /** Context menu of a Version History item (View, Compare with Current, then Restore or, with Edit Task with Agent open on the task, Edit with Agent). */
-  showVersionContextMenu(info: { builder: boolean }): void;
+  showVersionContextMenu(info: { builder: boolean; /** The row is the current version: nothing to compare with or restore. */ current: boolean }): void;
   /** Context menu of the task list's empty space (New Folder…). */
   showTasksEmptyContextMenu(): void;
   /** Context menu of a task list's header: that pane's view options (no pane = the single list's), then New Folder…. */
@@ -526,6 +532,8 @@ export type UiEvent =
         | 'version-compare'
         | 'version-restore';
     }
+  /** A list window's row menu (showListContextMenu): the item picked. */
+  | { type: 'list-menu'; token: string; id: string }
   /** A notification was clicked: select the task and show the right view. */
   | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'runs' }
   /** Conversation window View menu: a Show toggle changed. */

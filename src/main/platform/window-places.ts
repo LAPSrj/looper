@@ -7,11 +7,15 @@
 import { BrowserWindow, screen } from 'electron';
 import { readJson, writeJsonAtomic } from '../../engine/store/fsutil';
 import { parsePlaces, placeKey, placeMode, restoredBounds, type Place, type PlaceMode, type Rect } from './placement';
+import { attachZoom } from './zoom';
+import { parseZooms } from './zoom-steps';
 
 const SAVE_DELAY_MS = 500;
 
 let file: string | null = null;
 let places: Record<string, Place> = {};
+/** The page zoom of each kind of window (View → Zoom), where it isn't 100%. */
+let zooms: Record<string, number> = {};
 let writeTimer: NodeJS.Timeout | null = null;
 
 /** A window's kind, and what of its place it gets back. */
@@ -21,10 +25,13 @@ const tracked = new WeakMap<BrowserWindow, { key: string; mode: PlaceMode }>();
 export function useWindowPlaces(path: string): void {
   file = path;
   try {
-    places = parsePlaces(readJson<unknown>(path, {}));
+    const data = readJson<unknown>(path, {});
+    places = parsePlaces(data);
+    zooms = parseZooms(data);
   } catch {
     // A torn or hand-edited file: every window opens at its default place.
     places = {};
+    zooms = {};
   }
 }
 
@@ -33,7 +40,7 @@ function flush(): void {
   writeTimer = null;
   if (!file) return;
   try {
-    writeJsonAtomic(file, { version: 1, places });
+    writeJsonAtomic(file, { version: 1, places, zooms });
   } catch {
     /* window places are advisory */
   }
@@ -132,6 +139,11 @@ export function createPlacedWindow(options: Electron.BrowserWindowConstructorOpt
     });
   }
   track(w, key, mode);
+  attachZoom(w, zooms[key], (factor) => {
+    if (factor === 1) delete zooms[key];
+    else zooms[key] = factor;
+    scheduleWrite();
+  });
   return w;
 }
 

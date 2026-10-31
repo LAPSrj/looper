@@ -3,12 +3,12 @@ import { Markdown } from './components/Markdown';
 
 const HOME = 'README.md';
 
-// Every user-guide page, bundled at build time.
-const pages: Record<string, string> = {};
-for (const [file, text] of Object.entries(
-  import.meta.glob('../../../docs/*.md', { query: '?raw', import: 'default', eager: true }),
+// Every user-guide page, bundled at build time; a page loads when it's shown.
+const pages: Record<string, () => Promise<string>> = {};
+for (const [file, load] of Object.entries(
+  import.meta.glob<string>('../../../docs/*.md', { query: '?raw', import: 'default', eager: false }),
 )) {
-  pages[file.split('/').pop()!] = text as string;
+  pages[file.split('/').pop()!] = load;
 }
 
 // Every image the guide references, bundled too; keyed by the docs-relative
@@ -55,10 +55,22 @@ export function InstructionsApp() {
   const [pos, setPos] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const page = history[pos];
+  // The text of the page shown; the previous one stays until the next has loaded.
+  const [text, setText] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = 'Instructions';
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    const load = pages[page];
+    if (!load) setText('Page not found.');
+    else void load().then((t) => current && setText(t));
+    return () => {
+      current = false;
+    };
+  }, [page]);
 
   const back = () => setPos((p) => Math.max(0, p - 1));
   const forward = () => setPos((p) => Math.min(history.length - 1, p + 1));
@@ -77,7 +89,7 @@ export function InstructionsApp() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, 0);
-  }, [page]);
+  }, [text]);
 
   // Alt+arrows and the mouse back/forward buttons, as in a browser.
   useEffect(() => {
@@ -113,12 +125,14 @@ export function InstructionsApp() {
         {button(ICONS.home, 'Home', () => open(HOME), page !== HOME)}
       </div>
       <div className="instructions" ref={scrollRef}>
-        <Markdown
-          text={pages[page] ?? 'Page not found.'}
-          breaks={false}
-          onNavigate={onNavigate}
-          resolveImage={(src) => images[src.replace(/^\.\//, '')]}
-        />
+        {text !== null && (
+          <Markdown
+            text={text}
+            breaks={false}
+            onNavigate={onNavigate}
+            resolveImage={(src) => images[src.replace(/^\.\//, '')]}
+          />
+        )}
       </div>
     </div>
   );

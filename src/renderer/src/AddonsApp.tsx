@@ -3,6 +3,7 @@ import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type Add
 import type { Environment } from '@shared/types';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { useDialogKeys } from './components/hooks';
+import { useFitWindow } from './fit-window';
 import { SelectList } from './components/SelectList';
 import { EditorFooter, Field } from './components/ui';
 
@@ -47,6 +48,17 @@ export function AddonsApp() {
             empty="No addons"
             onSelect={(a) => setSelected(a.id)}
             onOpen={(a) => void window.looper.addons.edit(a.id)}
+            autoFocus
+            menu={(a) => {
+              const on = a.status === 'running' || a.status === 'starting';
+              return [
+                { label: 'Edit…', run: () => void window.looper.addons.edit(a.id) },
+                { label: on ? 'Stop' : 'Start', run: () => void window.looper.addons.setEnabled(a.id, !on) },
+                { label: 'Restart', enabled: a.enabled, run: () => void window.looper.addons.restart(a.id) },
+                { label: 'Remove', run: () => void window.looper.addons.remove(a.id) },
+              ];
+            }}
+            onDelete={(a) => void window.looper.addons.remove(a.id)}
           />
           <div className="env-actions">
             <button className="btn" onClick={() => void window.looper.addons.install()}>
@@ -138,6 +150,7 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
   const [draft, setDraft] = useState<RunDraft | null>(null);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [saving, setSaving] = useState(false);
+  useFitWindow();
 
   useEffect(() => {
     void Promise.all([window.looper.addons.list(), window.looper.info()]).then(([list, info]) => {
@@ -146,9 +159,12 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
       if (!a) return;
       setEnvironments(environmentsFor(a.ownRun.on, info.settings.environments, info.host));
       setDraft(toDraft(a.environmentId, a.localRun ?? a.ownRun));
-      document.title = a.name;
     });
   }, [addonId]);
+
+  useEffect(() => {
+    document.title = 'Edit Addon';
+  }, []);
 
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
@@ -201,7 +217,7 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
           <Field label="Command">
             <input autoFocus className="mono" value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
           </Field>
-          <Field label="Working folder">
+          <Field label="Working directory">
             <input className="mono" value={draft.cwd} onChange={(e) => patch({ cwd: e.target.value })} />
           </Field>
           <Field label="Environment variables">

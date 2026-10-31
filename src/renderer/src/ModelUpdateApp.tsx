@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
-import { applyModelUpdate, buildUpdateRows, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
+import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
+import { Chevron } from './components/icons';
 import { EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 
@@ -40,25 +41,8 @@ function usageCounts(tasks: Task[], env: Environment, harness: Harness): Record<
   return counts;
 }
 
-/** The task list's folder chevron, pointing right and rotating open. */
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`mu-chev${open ? ' open' : ''}`}
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3.5 1.5 7 5l-3.5 3.5" />
-    </svg>
-  );
-}
+/** An error message starts with a capital, like the rest of the window's text. */
+const sentence = (s = ''): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 function rowNote(row: ModelUpdateRow, used: number): string {
   const parts: string[] = [];
@@ -193,12 +177,12 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
                     : undefined
                 }
               >
-                {expandable ? <Chevron open={g.open} /> : <span className="mu-chev-space" />}
+                {expandable ? <Chevron open={g.open} className="mu-chev" /> : <span className="mu-chev-space" />}
                 <span className="mu-group-name">{g.label}</span>
                 {g.status === 'loading' && <span className="mu-group-note">checking…</span>}
                 {g.status === 'error' && (
                   <>
-                    <span className="mu-group-note">{g.error}</span>
+                    <span className="mu-group-note">{sentence(g.error)}</span>
                     <button
                       className="link"
                       onClick={(e) => {
@@ -247,7 +231,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
         onPrimary={() => void doUpdate()}
         onCancel={() => window.close()}
         saving={saving}
-        primaryDisabled={loading}
+        primaryDisabled={loading || !groups.some((g) => g.status === 'ready' && hasModelChange(g.rows, g.actions))}
       />
     </div>
   );

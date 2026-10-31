@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { Attachment } from '@shared/chat';
 import type { MessageRow, SentFile, SentFileInfo, SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
@@ -149,7 +149,29 @@ export function SentMessage({ sent, ctx, onContextMenu }: { sent: SentFiles; ctx
   );
 }
 
-export function ChatRow({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
+/**
+ * Whether two copies of a row show the same thing. Rows reach the renderer
+ * through IPC, so every update brings new objects even for the rows that
+ * didn't change; comparing their fields (objects by their JSON) keeps a
+ * streamed update from re-rendering the whole conversation.
+ */
+function sameRow(a: MessageRow, b: MessageRow): boolean {
+  if (a === b) return true;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof MessageRow>;
+  for (const k of keys) {
+    const x = a[k];
+    const y = b[k];
+    if (Object.is(x, y)) continue;
+    if (typeof x === 'object' && typeof y === 'object' && x !== null && y !== null && JSON.stringify(x) === JSON.stringify(y)) continue;
+    return false;
+  }
+  return true;
+}
+
+const sameCtx = (a: RowCtx, b: RowCtx): boolean =>
+  a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu);
+
+function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   // The innermost row answers: a tool call inside its group, not the group.
   const onContextMenu = ctx.onContextMenu
     ? (e: React.MouseEvent) => {
@@ -179,6 +201,22 @@ export function ChatRow({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <MessageBody text={row.text} />
         </details>
       );
+    case 'task':
+      // The task a workflow script computed for its agent: not the user's message, so a muted block.
+      return (
+        <details className="chat-aside" onContextMenu={onContextMenu}>
+          <summary>
+            Task <span className="chat-tool-preview">{row.preview}</span>
+          </summary>
+          <MessageBody text={row.text} />
+        </details>
+      );
+    case 'error':
+      return (
+        <div className="chat-msg chat-agent error-text" onContextMenu={onContextMenu}>
+          {row.text}
+        </div>
+      );
     case 'tool':
       if (row.sent) return <SentMessage sent={row.sent} ctx={ctx} onContextMenu={onContextMenu} />;
       return (
@@ -202,6 +240,8 @@ export function ChatRow({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   }
 }
 
+export const ChatRow = memo(ChatRowView, (prev, next) => sameRow(prev.row, next.row) && sameCtx(prev.ctx, next.ctx));
+
 export type ChatItem = { kind: 'row'; row: MessageRow } | { kind: 'tools'; rows: MessageRow[] };
 
 /** Messages stay as they are (a delivered SendUserFile call is the agent's message); each run of tool calls (and the thinking between them) becomes one group. */
@@ -218,7 +258,7 @@ export function groupRows(rows: MessageRow[]): ChatItem[] {
 }
 
 /** "5 tool uses, 1 failed": closed, the group is one line; open, it lists each call, and each call opens to its details. */
-export function ToolGroup({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
+function ToolGroupView({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
   const tools = rows.filter((r) => r.kind === 'tool');
   if (tools.length === 0) return <>{rows.map((r) => <ChatRow key={r.id} row={r} ctx={ctx} />)}</>;
   const failed = tools.filter((r) => r.resultError).length;
@@ -236,3 +276,10 @@ export function ToolGroup({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
     </details>
   );
 }
+
+/** groupRows builds a new `rows` array on every call, so the group compares its rows one by one. */
+export const ToolGroup = memo(
+  ToolGroupView,
+  (prev, next) =>
+    sameCtx(prev.ctx, next.ctx) && prev.rows.length === next.rows.length && prev.rows.every((r, i) => sameRow(r, next.rows[i])),
+);

@@ -238,7 +238,7 @@ describe('Session', () => {
     await expect(session.invoke('w', 'c', [])).rejects.toThrow(NOT_CONNECTED);
   });
 
-  it('reconnects after 1 s, 2 s, 5 s, 10 s, 10 s, and starts over once welcomed', () => {
+  it('reconnects after 0.5 s, 1 s, 2 s, 3 s, 3 s while visible, and starts over once welcomed', () => {
     session.start();
     expect(FakeSocket.all.length).toBe(1);
     const gaps: number[] = [];
@@ -252,11 +252,11 @@ describe('Session', () => {
       }
       gaps.push(waited);
     }
-    expect(gaps).toEqual([1000, 2000, 5000, 10000, 10000]);
+    expect(gaps).toEqual([500, 1000, 2000, 3000, 3000]);
     connect();
     const n = FakeSocket.all.length;
     last().drop();
-    vi.advanceTimersByTime(999);
+    vi.advanceTimersByTime(499);
     expect(FakeSocket.all.length).toBe(n);
     vi.advanceTimersByTime(1);
     expect(FakeSocket.all.length).toBe(n + 1);
@@ -288,7 +288,9 @@ describe('Session', () => {
     last().receive({ t: 'pong' });
     expect(seen.map((m) => m.t)).toEqual(['welcome', 'clipboard']);
     vi.advanceTimersByTime(25_000);
+    last().receive({ t: 'pong' });
     vi.advanceTimersByTime(25_000);
+    last().receive({ t: 'pong' });
     expect(last().sent.filter((m) => m.t === 'ping').length).toBe(2);
     last().drop();
     expect(conn).toEqual([true, false]);

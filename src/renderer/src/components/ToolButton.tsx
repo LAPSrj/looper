@@ -1,29 +1,36 @@
 import { Icon } from './Icon';
 
-/** An icon button of a toolbar, with its tooltip; `pressed` makes it a toggle. */
+/**
+ * An icon button of a toolbar, with its tooltip; `pressed` makes it a toggle.
+ * `labeled` shows the title beside the icon instead of as a tooltip.
+ */
 export function ToolButton({
   icon,
   title,
   enabled,
   onClick,
   pressed,
+  labeled,
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   title: string;
   enabled: boolean;
   onClick: () => void;
   pressed?: boolean;
+  labeled?: boolean;
 }) {
+  const className = [labeled ? 'labeled' : '', pressed ? 'pressed' : ''].filter(Boolean).join(' ') || undefined;
   return (
     <button
-      title={title}
-      aria-label={title}
+      title={labeled ? undefined : title}
+      aria-label={labeled ? undefined : title}
       disabled={!enabled}
       onClick={onClick}
-      className={pressed ? 'pressed' : undefined}
+      className={className}
       {...(pressed !== undefined ? { 'aria-pressed': pressed } : {})}
     >
-      <Icon>{icon}</Icon>
+      {icon && <Icon>{icon}</Icon>}
+      {labeled && title}
     </button>
   );
 }

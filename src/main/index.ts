@@ -46,8 +46,24 @@ import {
 } from './platform';
 import { RemoteAccess, wanted } from './remote-access';
 import { pwaIcons } from './pwa-icons';
+import { pwaStartup } from './pwa-startup';
 import { SOURCE_NAMES, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState } from '../shared/remote-access';
-import { paneVisibilityItems, taskListMenu } from './view-menu';
+import { groupProjectsByMenu, paneVisibilityItems, taskListMenu } from './view-menu';
+import { PROJECT_COMMANDS, projectMenuItems, type ProjectCommand } from './project-menu';
+import { zoomMenuItems } from './platform/zoom';
+
+/** The main window's UI command for each Project menu item. */
+const PROJECT_UI_ACTIONS: Record<ProjectCommand, string> = {
+  'new-task': 'new-task',
+  'new-chat': 'open-chat',
+  'new-terminal': 'open-terminal',
+  edit: 'edit-project',
+  'open-folder': 'open-project-folder',
+  delete: 'delete-project',
+};
+import { hideOffPlatform } from './platform/menus';
+import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
+import { SHORTCUTS } from '../shared/shortcuts';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
@@ -203,6 +219,7 @@ if (!app.requestSingleInstanceLock()) {
       version: app.getVersion(),
       ipc,
       icon: pwaIcons(appIcon),
+      startup: pwaStartup,
       savePort: (port) => {
         const ra = eng.settings.remoteAccess;
         if (ra.port === 0) eng.updateSettings({ remoteAccess: { ...ra, port } });
@@ -596,6 +613,8 @@ const appIcon = path.join(__dirname, '../../assets/icon.png');
 const trayIcon = process.platform === 'win32'
   ? path.join(__dirname, '../../assets/icon.ico')
   : appIcon;
+/** Scaling the 1254x1254 PNG costs 150-300 ms per window opened; on Windows the .ico has the small sizes. appIcon stays the PNG for the PWA icons and notifications. */
+const windowIcon = trayIcon;
 
 /** macOS menu-bar icons are ~18pt; the full-size PNG would render huge there. */
 function trayImage(): Electron.NativeImage {
@@ -765,6 +784,13 @@ function loadRenderer(target: AppWindow, hash?: string): void {
     return;
   }
   if (!(target instanceof BrowserWindow)) return;
+  // Only the main window is titled "Looper": loading index.html fires its static
+  // <title>, which must not replace the title a child window was created with.
+  if (hash) {
+    target.on('page-title-updated', (e, title) => {
+      if (title === 'Looper') e.preventDefault();
+    });
+  }
   if (process.env.ELECTRON_RENDERER_URL) {
     void target.loadURL(process.env.ELECTRON_RENDERER_URL + (hash ? `#${hash}` : ''));
   } else {
@@ -790,6 +816,13 @@ function macTemplate(template: Electron.MenuItemConstructorOptions[]): Electron.
   return [{ role: 'appMenu' }, file, { role: 'editMenu' }, ...rest];
 }
 
+/** A menu for the desktop's own menu bar: without the items marked for other platforms. */
+function desktopMenu(template: Electron.MenuItemConstructorOptions[]): Menu {
+  const menu = Menu.buildFromTemplate(template);
+  hideOffPlatform(menu, 'desktop');
+  return menu;
+}
+
 /**
  * Attach a window's own menu: per-window on Windows/Linux; on macOS
  * (where BrowserWindow.setMenu does not exist) the global menu bar shows it
@@ -802,7 +835,7 @@ function attachWindowMenu(child: AppWindow, template: Electron.MenuItemConstruct
     setWindowMenu(child, menu);
     return menu;
   }
-  const menu = Menu.buildFromTemplate(macTemplate(template));
+  const menu = desktopMenu(macTemplate(template));
   macWindowMenus.set(child, menu);
   child.on('closed', () => rebuildMenu());
   if (child.isFocused()) Menu.setApplicationMenu(menu);
@@ -815,7 +848,7 @@ function replaceWindowMenu(child: AppWindow, template: Electron.MenuItemConstruc
     setWindowMenu(child, Menu.buildFromTemplate(template));
     return;
   }
-  const menu = Menu.buildFromTemplate(macTemplate(template));
+  const menu = desktopMenu(macTemplate(template));
   macWindowMenus.set(child, menu);
   if (child.isFocused()) Menu.setApplicationMenu(menu);
 }
@@ -829,7 +862,7 @@ function createWindow(): void {
       minWidth: 900,
       minHeight: 600,
       title: 'Looper',
-      icon: appIcon,
+      icon: windowIcon,
       backgroundColor: windowBackground(),
       autoHideMenuBar: false,
       webPreferences: webPreferences(),
@@ -900,7 +933,7 @@ function openChildWindow(
       minWidth: opts?.minWidth ?? 520,
       minHeight: opts?.minHeight ?? 420,
       title,
-      icon: appIcon,
+      icon: windowIcon,
       backgroundColor: windowBackground(),
       maximizable: false,
       resizable: opts?.resizable ?? true,
@@ -1028,7 +1061,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       minWidth: 560,
       minHeight: 420,
       title,
-      icon: appIcon,
+      icon: windowIcon,
       backgroundColor: windowBackground(),
       maximizable: true,
       webPreferences: webPreferences(),
@@ -1134,6 +1167,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       ];
   const template: Electron.MenuItemConstructorOptions[] = [
     {
+      id: 'file',
       label: '&File',
       submenu: [
         { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', click: () => void saveMarkdown() },
@@ -1141,6 +1175,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         ...runItems,
         {
           label: 'Open &Run Folder',
+          platforms: DESKTOP_ONLY,
           click: () => {
             if (engine) void openHostPath(engine.runDir(taskId, runId));
           },
@@ -1153,6 +1188,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
         },
         {
           label: 'Open &Working Directory',
+          platforms: DESKTOP_ONLY,
           enabled: !!task?.cwd,
           click: () => {
             if (task?.cwd) void openHostPath(task.cwd);
@@ -1161,6 +1197,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
       ],
     },
     {
+      id: 'view',
       label: '&View',
       submenu: [
         {
@@ -1242,7 +1279,7 @@ function openImageWindow(taskId: string, runId: string, rowId: string, agentId?:
       minWidth: 420,
       minHeight: 320,
       title: `Image – ${name}`,
-      icon: appIcon,
+      icon: windowIcon,
       backgroundColor: windowBackground(),
       maximizable: true,
       webPreferences: webPreferences(),
@@ -1343,8 +1380,16 @@ function openSettingsWindow(): void {
   openChildWindow('settings', 'Settings', 720, 660, win, { contentSize: true });
 }
 
+const templatesWindows = new WindowSlots();
+
+/** One Templates window (per client): opening it again brings the open one forward. */
 function openTemplatesWindow(): void {
-  openChildWindow('templates', 'Templates', 560, 520);
+  const open = templatesWindows.get();
+  if (open) {
+    open.focus();
+    return;
+  }
+  templatesWindows.set(openChildWindow('templates', 'Templates', 560, 520));
 }
 
 /** The caller's main window: a browser tab's own, or the desktop's. */
@@ -1399,7 +1444,7 @@ function openEngineLogWindow(): void {
       minWidth: 640,
       minHeight: 420,
       title: 'Engine Log',
-      icon: appIcon,
+      icon: windowIcon,
       backgroundColor: windowBackground(),
       maximizable: true,
       webPreferences: webPreferences(),
@@ -1426,9 +1471,11 @@ function openEngineLogWindow(): void {
     checked: true,
     click: toggle(set, key),
   });
-  child.setMenu(
+  setWindowMenu(
+    child,
     Menu.buildFromTemplate([
       {
+        id: 'view',
         label: '&View',
         submenu: [
           check('&Looper', hiddenSources, ENGINE_LOG_LOOPER),
@@ -1483,9 +1530,12 @@ function openModelEditorWindow(
   harnessId: string,
   index?: number,
   parent?: AppWindow | null,
+  /** A new model that starts as a copy of the model at this index (Duplicate). */
+  copyOf?: number,
 ): void {
+  const slot = index !== undefined ? String(index) : Number.isInteger(copyOf) && copyOf! >= 0 ? `copy-${copyOf}` : 'new';
   openChildWindow(
-    `model-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}/${index === undefined ? 'new' : index}`,
+    `model-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}/${slot}`,
     index === undefined ? 'New Model' : 'Edit Model',
     // Page size: all four fields of a claude-code/codex model, without a scroll bar.
     406,
@@ -1614,9 +1664,16 @@ async function openRemoteConversation(id: string): Promise<void> {
   else openTerminalWindow(conv.id, `${conv.title ?? conv.name} – Remote Control`);
 }
 
-/** Advanced → Remote Control → Helpers: modal, like the settings windows. */
+const remoteHelpersWindows = new WindowSlots();
+
+/** Advanced → Remote Control → Helpers: one modeless window per client, like the other collection lists. */
 function openRemoteHelpersWindow(): void {
-  openChildWindow('remote-helpers', 'Helpers', 640, 440, win, { contentSize: true });
+  const open = remoteHelpersWindows.get();
+  if (open) {
+    open.focus();
+    return;
+  }
+  remoteHelpersWindows.set(openChildWindow('remote-helpers', 'Helpers', 640, 440, undefined, { contentSize: true }));
 }
 
 // Page sizes: every field shows without a scroll bar.
@@ -1637,12 +1694,27 @@ function applyRemoteAccess(): void {
 const remoteAccessOn = (): boolean => !!engine && wanted(engine.settings.remoteAccess) !== null;
 
 /** Advanced → Remote Access → Turn On / Turn Off. With no source chosen yet, Turn On opens Set Up instead. */
-function toggleRemoteAccess(): void {
+async function toggleRemoteAccess(): Promise<void> {
   if (!engine) return;
   const ra = engine.settings.remoteAccess;
   if (remoteAccessOn()) {
+    // Asked from a paired device, turning it off cuts that device off too: it asks first.
+    const ctx = caller();
+    if (ctx) {
+      const { response } = await showMessageBox(undefined, {
+        type: 'question',
+        title: 'Looper',
+        message: 'Turn off Remote Access?',
+        detail: `${ctx.client.device.name} disconnects, and so does every other device, until Remote Access is turned on again on the computer.`,
+        buttons: ['Turn Off', 'Cancel'],
+        noLink: true,
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (response !== 0 || !engine) return;
+    }
     pairWhenRunning = null;
-    engine.updateSettings({ remoteAccess: { ...ra, enabled: false } });
+    engine.updateSettings({ remoteAccess: { ...engine.settings.remoteAccess, enabled: false } });
   } else if (!ra.sources.length) openRemoteAccessSetupWindow();
   else engine.updateSettings({ remoteAccess: { ...ra, enabled: true } });
 }
@@ -1725,7 +1797,7 @@ function openRemoteAccessDevicesWindow(): void {
     open.focus();
     return;
   }
-  remoteAccessDevicesWindows.set(openChildWindow('remote-access-devices', 'Paired Devices', 520, 440));
+  remoteAccessDevicesWindows.set(openChildWindow('remote-access-devices', 'Paired Devices', 520, 391, undefined, { minHeight: 340 }));
 }
 
 /** The desktop's main window, for the dialogs Remote Access raises on its own. */
@@ -1923,6 +1995,10 @@ function forkChat(chatId: string, index: number): void {
 /** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
 const menuText = (s: string): string => s.replace(/&/g, '&&');
 
+/** Menu items are in title case, like the rest of the menus ("Extra high" reads "Extra High"). */
+const titled = (options: readonly (readonly [string, string])[]): [string, string][] =>
+  options.map(([value, label]) => [value, label.replace(/(^|\s)[a-z]/g, (m) => m.toUpperCase())]);
+
 /** A radio list for a Chat submenu; a current value the list doesn't offer shows too, checked. */
 function radioItems(
   options: [string, string][],
@@ -1974,13 +2050,13 @@ function chatSettingItems(
       (v) => configure({ model: v || undefined }),
     ),
     effort: radioItems(
-      [['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered],
+      titled([['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered]),
       s.settings.effort ?? '',
       () => canReplace,
       (v) => configure({ effort: v || undefined }),
     ),
     permission: radioItems(
-      PERMISSION_MODES[s.harnessKind],
+      titled(PERMISSION_MODES[s.harnessKind]),
       s.settings.permissionMode,
       (v) => !ended && (v !== 'bypassPermissions' || bypassLive || canReplace),
       (v) => configure({ permissionMode: v }),
@@ -1998,17 +2074,18 @@ function chatMenu(
   harnessSession: string | null,
 ): Electron.MenuItemConstructorOptions {
   return {
+    id: 'chat',
     label: '&Chat',
     submenu: [
       // Esc, as in Claude Code's own terminal: it ends the agent's turn. The window handles
       // the key itself, so Esc in the find bar closes that instead.
-      { label: '&Stop', accelerator: 'Esc', registerAccelerator: false, enabled: s.status === 'working', click: stop },
+      { id: 'chat-stop', label: '&Stop', accelerator: 'Esc', registerAccelerator: false, glyph: 'stopChat', enabled: s.status === 'working', click: stop },
       // The queued messages go now: the agent's turn ends first.
-      { label: 'Send &Now', accelerator: 'CmdOrCtrl+Enter', enabled: s.queued.length > 0, click: sendNow },
+      { id: 'chat-send-now', label: 'Send &Now', accelerator: 'CmdOrCtrl+Enter', glyph: 'sendNow', enabled: s.queued.length > 0, click: sendNow },
       { type: 'separator' },
       ...chatSettingSubmenus(chatSettingItems(s, configure, setHarness)),
       { type: 'separator' },
-      { label: 'Copy Session &ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
+      { id: 'chat-copy-session-id', label: 'Copy Session &ID', glyph: 'copy', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
     ],
   };
 }
@@ -2016,10 +2093,10 @@ function chatMenu(
 /** The chat's settings as submenus: the Chat menu's, and a narrow chat's one settings button. */
 function chatSettingSubmenus(items: Record<ChatSettingMenu, Electron.MenuItemConstructorOptions[]>): Electron.MenuItemConstructorOptions[] {
   return [
-    { label: '&Harness', submenu: items.harness },
-    { label: '&Model', submenu: items.model },
-    { label: '&Effort', submenu: items.effort },
-    { label: '&Permission Mode', submenu: items.permission },
+    { id: 'chat-harness', label: '&Harness', submenu: items.harness },
+    { id: 'chat-model', label: '&Model', submenu: items.model },
+    { id: 'chat-effort', label: '&Effort', submenu: items.effort },
+    { id: 'chat-permission-mode', label: '&Permission Mode', submenu: items.permission },
   ];
 }
 
@@ -2089,7 +2166,8 @@ function openSessionsWindow(select?: string): void {
     return;
   }
   const child = openChildWindow(select ? `sessions/${encodeURIComponent(select)}` : 'sessions', 'Chats', 1388, 895, undefined, {
-    minWidth: 900,
+    // The list's and the Activity pane's smallest widths (200, 280) beside a 480 px conversation.
+    minWidth: 970,
     minHeight: 500,
     contentSize: true,
   });
@@ -2322,6 +2400,8 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
     { label: 'Other &Folder…', click: () => void openInFolder(kind, child).catch(showError) },
   ];
   const closeConversation: Electron.MenuItemConstructorOptions = {
+    id: 'chat-close',
+    glyph: 'closeChat',
     label: 'Close C&onversation',
     accelerator: 'CmdOrCtrl+W',
     registerAccelerator: false,
@@ -2329,53 +2409,67 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
     click: () => id && void closeSessionAsk(id, child).catch(showError),
   };
   const file: Electron.MenuItemConstructorOptions = {
+    id: 'file',
     label: '&File',
     submenu: [
-      // The page handles Ctrl+T, Ctrl+W and Ctrl+F4, so in a terminal session Ctrl+T and Ctrl+W stay the agent's.
+      // The page handles Ctrl+T, Ctrl+Shift+T, Ctrl+W and Ctrl+F4, so in a terminal session Ctrl+T and Ctrl+W stay the agent's.
       ...(sv.single
         ? []
         : [
             {
+              id: 'chat-new-in-project',
               label: shownProject ? `New Chat in ${menuText(shownProject.name)}` : 'New Chat in Project',
-              accelerator: 'CmdOrCtrl+T',
+              accelerator: SHORTCUTS.newChat,
               registerAccelerator: false,
               enabled: !!shownProject,
+              glyph: 'newChat',
               click: () => shownProject && openProjectChat(shownProject.id),
             },
-            { label: 'New &Chat', submenu: newIn('chat', openProjectChat) },
-            { label: 'New &Terminal', submenu: newIn('terminal', (pid) => void openTerminal(projectTaskId(pid)).catch(showError)) },
-            { label: 'New P&roject…', click: () => openProjectEditor() },
+            {
+              id: 'chat-new-terminal-in-project',
+              label: shownProject ? `New Terminal in ${menuText(shownProject.name)}` : 'New Terminal in Project',
+              accelerator: SHORTCUTS.newTerminal,
+              registerAccelerator: false,
+              enabled: !!shownProject,
+              glyph: 'terminal',
+              click: () => shownProject && void openTerminal(projectTaskId(shownProject.id)).catch(showError),
+            },
+            { id: 'chat-new-chat', label: 'New &Chat', glyph: 'newChat', submenu: newIn('chat', openProjectChat) },
+            { id: 'chat-new-terminal', label: 'New &Terminal', glyph: 'terminal', submenu: newIn('terminal', (pid) => void openTerminal(projectTaskId(pid)).catch(showError)) },
+            { id: 'chat-new-project', label: 'New P&roject…', glyph: 'newProject', click: () => openProjectEditor() },
             sep,
           ]),
       // Chat-only: in a terminal these keys belong to the agent.
-      { label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', enabled: !!chat && chat.status !== 'ended', click: () => void attachFiles().catch(showError) },
-      { label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', enabled: !!chat, click: () => void saveMarkdown().catch(showError) },
+      { id: 'chat-attach', label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', glyph: 'attach', enabled: !!chat && chat.status !== 'ended', click: () => void attachFiles().catch(showError) },
+      { id: 'chat-save-markdown', label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', enabled: !!chat, click: () => void saveMarkdown().catch(showError) },
       sep,
       ...(sv.single
         ? []
-        : [{ label: 'Open in &New Window', enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
-      { label: 'Open &Working Directory', enabled: !!kind, click: openWorkingDirectory },
-      ...(sv.single ? [] : [{ label: 'Send to C&hats…', enabled: anySessions, click: openSendToSessionsWindow }]),
+        : [{ label: 'Open in &New Window', platforms: NOT_MOBILE, enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
+      { label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: !!kind, click: openWorkingDirectory },
+      ...(sv.single ? [] : [{ id: 'chat-send-to-chats', label: 'Send to C&hats…', glyph: 'bullhorn', enabled: anySessions, click: openSendToSessionsWindow }]),
       sep,
       closeConversation,
-      ...(sv.single ? [] : [{ label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk().catch(showError) }]),
+      ...(sv.single ? [] : [{ id: 'chat-close-all', label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk().catch(showError) }]),
       sep,
-      { label: 'Close &Window', accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
+      { label: 'Close &Window', platforms: NOT_MOBILE, accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
     ],
   };
   // The page handles these keys itself, so a terminal still gets Ctrl+C and the rest.
+  // A phone has its own text editing menu, so the clipboard items stay off it.
   const edit: Electron.MenuItemConstructorOptions = {
+    id: 'edit',
     label: '&Edit',
     submenu: [
-      { role: 'undo', label: '&Undo', registerAccelerator: false },
-      { role: 'redo', label: '&Redo', registerAccelerator: false },
+      { role: 'undo', label: '&Undo', registerAccelerator: false, platforms: NOT_MOBILE },
+      { role: 'redo', label: '&Redo', registerAccelerator: false, platforms: NOT_MOBILE },
       { type: 'separator' },
-      { role: 'cut', label: 'Cu&t', registerAccelerator: false },
-      { role: 'copy', label: '&Copy', registerAccelerator: false },
-      { role: 'paste', label: '&Paste', registerAccelerator: false },
-      { role: 'selectAll', label: 'Select &All', registerAccelerator: false },
+      { role: 'cut', label: 'Cu&t', registerAccelerator: false, platforms: NOT_MOBILE },
+      { role: 'copy', label: '&Copy', registerAccelerator: false, platforms: NOT_MOBILE },
+      { role: 'paste', label: '&Paste', registerAccelerator: false, platforms: NOT_MOBILE },
+      { role: 'selectAll', label: 'Select &All', registerAccelerator: false, platforms: NOT_MOBILE },
       { type: 'separator' },
-      { label: '&Find…', accelerator: 'CmdOrCtrl+F', enabled: !!chat, click: () => send({ type: 'chat-find' }) },
+      { id: 'chat-find', label: '&Find…', accelerator: 'CmdOrCtrl+F', glyph: 'search', enabled: !!chat, click: () => send({ type: 'chat-find' }) },
     ],
   };
   const nav = (dir: 1 | -1, waiting: boolean) => () => send({ type: 'sessions-nav', dir, waiting });
@@ -2383,32 +2477,37 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
   const setShown = (patch: Partial<Settings['view']['sessions']>) => updateView({ sessions: { ...shown, ...patch } });
   // The page handles F6 too, so a terminal never gets it.
   const panes: Electron.MenuItemConstructorOptions[] = [
-    { label: 'Next Pan&e', accelerator: 'F6', registerAccelerator: false, click: () => send({ type: 'sessions-pane', dir: 1 }) },
-    { label: 'Previous Pane', accelerator: 'Shift+F6', registerAccelerator: false, click: () => send({ type: 'sessions-pane', dir: -1 }) },
+    { label: 'Next Pan&e', accelerator: 'F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: 1 }) },
+    { label: 'Previous Pane', accelerator: 'Shift+F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: -1 }) },
   ];
   const view: Electron.MenuItemConstructorOptions = {
+    id: 'view',
     label: '&View',
     submenu: sv.single
       ? [
           {
             label: 'A&ctivity Pane',
+            platforms: NOT_MOBILE,
             type: 'checkbox',
             checked: shown.windowActivityPane,
             click: (item) => setShown({ windowActivityPane: item.checked }),
           },
+          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.windowStatusBar, click: (item) => setShown({ windowStatusBar: item.checked }) },
           // A browser tab can't stay above the device's other windows.
           ...(child instanceof BrowserWindow
             ? [{ label: 'Always on &Top', type: 'checkbox' as const, checked: child.isAlwaysOnTop(), click: (item: Electron.MenuItem) => child.setAlwaysOnTop(item.checked) }]
             : []),
           sep,
           ...panes,
+          sep,
+          ...zoomMenuItems(),
         ]
       : [
-          { label: '&Dashboard', click: () => send({ type: 'sessions-dashboard' }) },
+          { id: 'chats-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => send({ type: 'sessions-dashboard' }) },
           sep,
-          { label: '&Toolbar', type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
-          { label: 'A&ctivity Pane', type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
-          { label: 'Status &Bar', type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
+          { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
+          { label: 'A&ctivity Pane', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
+          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
           sep,
           { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
           { label: '&Waiting Chats First', type: 'checkbox', checked: shown.waitingFirst, click: (item) => setShown({ waitingFirst: item.checked }) },
@@ -2419,6 +2518,8 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
           { label: '&Next Chat', accelerator: 'Shift+F9', click: nav(1, false) },
           sep,
           ...panes,
+          sep,
+          ...zoomMenuItems(),
         ],
   };
   const menus = process.platform === 'darwin' ? [file, view] : [file, edit, view];
@@ -2912,10 +3013,10 @@ function buildMenu(...selection: Partial<MenuSelection>): void {
     // browser-window-focus handler restores the main menu on the next switch.
     const focused = BrowserWindow.getFocusedWindow();
     if (!focused || !macWindowMenus.has(focused)) {
-      Menu.setApplicationMenu(Menu.buildFromTemplate(macTemplate(template)));
+      Menu.setApplicationMenu(desktopMenu(macTemplate(template)));
     }
   } else if (win && !win.isDestroyed()) {
-    win.setMenu(Menu.buildFromTemplate(template));
+    setWindowMenu(win, Menu.buildFromTemplate(template));
   }
 }
 
@@ -2940,19 +3041,20 @@ function mainMenuTemplate(
   const addonToolbars = addons ? addonToolbarsMenu(addons.list(), view, updateView) : [];
   const template: Electron.MenuItemConstructorOptions[] = [
     {
+      id: 'file',
       label: '&File',
       submenu: [
-        { label: '&New Task…', accelerator: 'CmdOrCtrl+N', click: () => openEditorWindow() },
-        { label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
-        { label: 'New Task with A&gent…', click: () => openBuilderSetupWindow() },
-        { label: 'New &Folder…', click: () => openNewFolderWindow() },
-        { label: 'New P&roject…', click: () => openProjectEditor() },
+        { id: 'new-task', label: '&New Task…', accelerator: 'CmdOrCtrl+N', glyph: 'newTask', click: () => openEditorWindow() },
+        { id: 'new-task-template', label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
+        { id: 'new-task-agent', label: 'New Task with A&gent…', click: () => openBuilderSetupWindow() },
+        { id: 'new-folder', label: 'New &Folder…', glyph: 'folder', click: () => openNewFolderWindow() },
+        { id: 'new-project', label: 'New P&roject…', glyph: 'newProject', click: () => openProjectEditor() },
         { type: 'separator' },
-        { label: '&Import Task…', click: () => void importTask() },
+        { id: 'import-task', label: '&Import Task…', click: () => void importTask() },
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
         { type: 'separator' },
-        { label: 'Temp&lates…', click: () => openTemplatesWindow() },
-        { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { id: 'templates', label: 'Temp&lates', click: () => openTemplatesWindow() },
+        { id: 'settings', label: 'S&ettings', accelerator: 'CmdOrCtrl+,', glyph: 'settings', click: () => openSettingsWindow() },
         // macOS: Quit lives in the app menu that macTemplate prepends.
         ...(process.platform === 'darwin'
           ? []
@@ -2960,116 +3062,136 @@ function mainMenuTemplate(
       ],
     },
     {
+      id: 'task',
       label: '&Task',
       submenu: [
-        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', enabled: hasTask && runNow, click: () => sendUi('run-now') },
-        { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', enabled: hasTask && active, click: () => sendUi('stop-task') },
-        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: 'CmdOrCtrl+P', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: () => sendUi('pause-resume') },
-        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
-        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', enabled: hasTask && (taskCompleted || allowComplete), click: () => sendUi('complete-reopen') },
-        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', enabled: hasTask, click: () => sendUi('edit-task') },
+        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', glyph: 'run', enabled: hasTask && runNow, click: () => sendUi('run-now') },
+        { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', glyph: 'stop', enabled: hasTask && active, click: () => sendUi('stop-task') },
+        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: SHORTCUTS.pauseResume, glyph: taskPaused ? 'resume' : 'pause', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: () => sendUi('pause-resume') },
+        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', glyph: 'power', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
+        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', glyph: 'complete', enabled: hasTask && (taskCompleted || allowComplete), click: () => sendUi('complete-reopen') },
+        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', glyph: 'edit', enabled: hasTask, click: () => sendUi('edit-task') },
         { id: 'task-edit-agent', label: 'Edit with &Agent…', enabled: hasTask, click: () => sendUi('edit-with-agent') },
-        { id: 'task-versions', label: '&Version History…', enabled: hasTask, click: () => sendUi('version-history') },
-        { id: 'task-delete', label: 'De&lete Task', enabled: hasTask, click: () => sendUi('delete-task') },
+        { id: 'task-versions', label: '&Version History', enabled: hasTask, click: () => sendUi('version-history') },
+        { id: 'task-delete', label: 'De&lete Task', glyph: 'delete', enabled: hasTask, click: () => sendUi('delete-task') },
         { type: 'separator' },
-        { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', enabled: hasTask, click: () => sendUi('edit-note') },
+        { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', glyph: 'guidance', enabled: hasTask, click: () => sendUi('edit-note') },
         { id: 'task-note-clear', label: 'Clear Guidance', enabled: hasTask && hasNote, click: () => sendUi('clear-note') },
         { type: 'separator' },
-        { id: 'task-move-folder', label: 'Move to &Folder…', enabled: hasTask, click: () => sendUi('move-to-folder') },
+        { id: 'task-move-folder', label: 'Move to &Folder…', glyph: 'folder', enabled: hasTask, click: () => sendUi('move-to-folder') },
         { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
         { type: 'separator' },
-        { id: 'task-work-folder', label: 'Open &Working Directory', enabled: hasTask, click: () => sendUi('open-work-folder') },
+        { id: 'task-work-folder', label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: hasTask, click: () => sendUi('open-work-folder') },
       ],
     },
     {
       // The selected project, or the selected task's.
+      id: 'project',
       label: '&Project',
-      submenu: [
-        { id: 'project-new-task', label: 'New &Task in Project…', enabled: hasProject, click: () => sendUi('new-task') },
-        { id: 'project-new-chat', label: 'New &Chat', enabled: hasProject, click: () => sendUi('open-chat') },
-        { id: 'project-new-terminal', label: 'New Ter&minal', accelerator: 'CmdOrCtrl+T', enabled: hasProject, click: () => sendUi('open-terminal') },
-        { type: 'separator' },
-        { id: 'project-edit', label: '&Edit Project…', enabled: hasProject, click: () => sendUi('edit-project') },
-        { id: 'project-folder', label: 'Open &Folder', enabled: hasProject, click: () => sendUi('open-project-folder') },
-        { id: 'project-delete', label: '&Delete Project…', enabled: hasProject, click: () => sendUi('delete-project') },
-      ],
+      submenu: projectMenuItems(
+        (command) => sendUi(PROJECT_UI_ACTIONS[command]),
+        Object.fromEntries(
+          PROJECT_COMMANDS.map((c) => [
+            c,
+            {
+              enabled: hasProject,
+              ...(c === 'new-chat' ? { accelerator: SHORTCUTS.newChat } : c === 'new-terminal' ? { accelerator: SHORTCUTS.newTerminal } : {}),
+            },
+          ]),
+        ),
+      ),
     },
     {
+      id: 'view',
       label: '&View',
       submenu: [
-        { label: '&Dashboard', click: () => sendUi('show-dashboard') },
-        { label: '&Chats', click: () => openSessionsWindow() },
+        { id: 'view-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => sendUi('show-dashboard') },
+        { id: 'view-chats', label: '&Chats', glyph: 'chat', click: () => openSessionsWindow() },
         { type: 'separator' },
         ...paneVisibilityItems(view, updateView, addonPanes),
+        groupProjectsByMenu(view, updateView),
         { type: 'separator' },
         { label: 'Task &List Options', submenu: taskListMenu(view, updateView) },
         { label: 'Hide Task Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
         { type: 'separator' },
-        { label: '&Toolbar', type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
+        { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
+        // The phone shows the addons' main-toolbar buttons on its Tasks tab, so their toggles stay.
         ...addonToolbars,
-        { label: 'Status &Bar', type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
+        { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
+        { type: 'separator' },
+        ...zoomMenuItems(),
       ],
     },
     {
+      id: 'tools',
       label: 'T&ools',
       submenu: [
-        { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
+        { id: 'recycle-bin', label: 'Recycle &Bin', glyph: 'delete', click: () => openRecycleBinWindow() },
         ...(tools.length ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions, ...tools] : []),
       ],
     },
     {
+      id: 'advanced',
       label: '&Advanced',
       submenu: [
         {
+          id: 'remote-access',
           label: 'Remote Acc&ess',
           submenu: [
             {
+              id: 'remote-access-toggle',
               label: remoteAccessOn() ? 'Turn &Off Remote Access' : 'Turn &On Remote Access',
-              click: () => toggleRemoteAccess(),
+              glyph: 'power',
+              click: () => void toggleRemoteAccess(),
             },
-            { label: 'Set &Up…', click: () => openRemoteAccessSetupWindow() },
+            { id: 'remote-access-setup', label: 'Set &Up…', click: () => openRemoteAccessSetupWindow() },
             { type: 'separator' },
-            { label: '&Pair Device…', enabled: remoteAccessPhase === 'running', click: () => openRemoteAccessPairWindow() },
-            { label: 'Paired &Devices…', click: () => openRemoteAccessDevicesWindow() },
+            { id: 'pair-device', label: '&Pair Device…', glyph: 'add', enabled: remoteAccessPhase === 'running', click: () => openRemoteAccessPairWindow() },
+            { id: 'paired-devices', label: 'Paired &Devices', click: () => openRemoteAccessDevicesWindow() },
             ...tailscaleMenuItems(),
             { type: 'separator' },
-            { label: 'S&ettings…', click: () => openRemoteAccessSettingsWindow() },
+            { id: 'remote-access-settings', label: 'S&ettings', glyph: 'settings', click: () => openRemoteAccessSettingsWindow() },
           ],
         },
         {
+          id: 'remote-control',
           label: 'Remote &Control',
           submenu: [
             {
               label: engine?.settings.remote.enabled ? 'Turn &Off Remote Control' : 'Turn &On Remote Control',
+              glyph: 'power',
               click: () => void toggleRemote(),
             },
             { type: 'separator' },
-            { label: '&Conversations…', click: () => openRemoteConversationsWindow() },
-            { label: '&Helpers…', click: () => openRemoteHelpersWindow() },
+            { label: '&Conversations', click: () => openRemoteConversationsWindow() },
+            { label: '&Helpers', click: () => openRemoteHelpersWindow() },
           ],
         },
-        { label: '&Addons…', click: () => openAddonsWindow() },
+        { id: 'addons', label: '&Addons', click: () => openAddonsWindow() },
         { type: 'separator' },
         ...restMenuItems(),
         { label: 'Prevent &Sleep', submenu: preventSleepMenu() },
         { type: 'separator' },
-        { label: 'Update &Models…', click: () => openModelUpdateWindow() },
+        { label: 'Update &Models…', glyph: 'refresh', click: () => openModelUpdateWindow() },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },
         {
           label: 'Open &Data Directory',
+          platforms: DESKTOP_ONLY,
           click: () => {
             if (engine) void openPath(engine.dataDir);
           },
         },
-        { role: 'reload', label: '&Reload UI' },
+        // A phone reloads Looper's pages by itself when they lose their connection.
+        { role: 'reload', label: '&Reload UI', platforms: NOT_MOBILE },
       ],
     },
     {
+      id: 'help',
       label: '&Help',
       submenu: [
-        { label: '&Instructions', accelerator: 'F1', click: () => openInstructionsWindow() },
+        { id: 'instructions', label: '&Instructions', accelerator: 'F1', click: () => openInstructionsWindow() },
         { type: 'separator' },
-        { label: '&About Looper', click: () => openAboutWindow() },
+        { id: 'about', label: '&About Looper', click: () => openAboutWindow() },
       ],
     },
   ];

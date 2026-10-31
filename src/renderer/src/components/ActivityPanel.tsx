@@ -5,18 +5,23 @@ import { EFFORT_LEVELS } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { waitedText } from '@shared/sessions';
+import { WORKFLOW_STATUS_TEXT, tabStatus, workflowAgents, type WorkflowRun } from '@shared/workflows';
 import { stripAnsi } from '../format';
+import { MINUTE, useNow } from '../useNow';
 import { AttachmentList } from './ChatRows';
 import { changeLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
 import { MessageBody } from './Markdown';
+import { isPhone } from '../web/page-nav';
+import { StatusMark } from './StatusMark';
 import { ToolButton } from './ToolButton';
 import { CodeBlock, CodeText, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
 
-type Tab = 'now' | 'background' | 'subagents' | 'files' | 'git';
+export type ActivityTab = 'now' | 'background' | 'subagents' | 'files' | 'git';
+type Tab = ActivityTab;
 
 /** Tools that change a file (Delete and Patch are Codex's). */
 const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
@@ -271,13 +276,11 @@ function BackgroundItem({
   b,
   sessionId,
   taskId,
-  now,
   onOpenWorkflow,
 }: {
   b: BackgroundTask;
   sessionId: string;
   taskId: string;
-  now: number;
   /** A workflow's item opens its tab beside the conversation. */
   onOpenWorkflow: (runId: string) => void;
 }) {
@@ -297,7 +300,10 @@ function BackgroundItem({
       if (timer) clearInterval(timer);
     };
   }, [open, b.outputFile, b.status, sessionId, b.id]);
+  const activate = b.workflowRunId ? () => onOpenWorkflow(b.workflowRunId!) : b.outputFile ? () => setOpen((o) => !o) : undefined;
   const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
+  // The text counts whole minutes, from a minute on.
+  const now = useNow(b.status === 'running' && !Number.isNaN(started) ? MINUTE : null);
   const status =
     b.status === 'running'
       ? `Running${Number.isNaN(started) || now - started < 60_000 ? '' : ` for ${waitedText(now - started)}`}`
@@ -316,14 +322,27 @@ function BackgroundItem({
     >
       <div
         className="bg-item-head"
-        onClick={() => {
-          if (b.workflowRunId) onOpenWorkflow(b.workflowRunId);
-          else if (b.outputFile) setOpen((o) => !o);
-        }}
+        role={activate ? 'button' : undefined}
+        tabIndex={activate ? 0 : undefined}
+        aria-expanded={b.workflowRunId || !b.outputFile ? undefined : open}
+        onClick={activate}
+        onKeyDown={
+          activate &&
+          ((e) => {
+            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+            e.preventDefault();
+            activate();
+          })
+        }
       >
-        <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}`}>{status}</span>
+        <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}${b.status === 'running' ? ' live-only' : ''}`}>{status}</span>
         <span className="bg-label">{b.label}</span>
         <span className="muted bg-kind">{b.kind === 'agent' ? 'Subagent' : b.kind === 'workflow' ? 'Workflow' : ''}</span>
+        {isPhone && b.workflowRunId && (
+          <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
+            <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </div>
       {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
       {open && <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>}
@@ -369,10 +388,13 @@ export function ActivityPanel({
   following,
   onFollow,
   onOpenWorkflow,
+  workflowRun,
+  onOpenWorkflowAgent,
+  working,
   pos,
   onPos,
-  now,
   gitProject,
+  initialTab = 'now',
 }: {
   sessionId: string;
   taskId: string;
@@ -387,14 +409,21 @@ export function ActivityPanel({
   onFollow: (agentId: string | null) => void;
   /** Show a workflow run's tab beside the conversation (its Background item was clicked). */
   onOpenWorkflow: (runId: string) => void;
+  /** The workflow run open beside the conversation: its agents are listed in Subagents. */
+  workflowRun?: WorkflowRun | null;
+  /** Show one of its agents' conversations. */
+  onOpenWorkflowAgent?: (runId: string, agentId: string) => void;
+  /** The session is working: Subagents says "No subagents yet." while one may still start. */
+  working?: boolean;
   /** The tool call Now shows; null follows the latest. */
   pos: number | null;
   onPos: (pos: number | null) => void;
-  now: number;
   /** The session's project, when its folder is in a git repository: the Git tab shows it. */
   gitProject?: string;
+  /** The tab it opens on (the phone's Subagents row opens it on Subagents). */
+  initialTab?: Tab;
 }) {
-  const [picked, setTab] = useState<Tab>('now');
+  const [picked, setTab] = useState<Tab>(initialTab);
   const tab = picked === 'git' && !gitProject ? 'now' : picked;
   const git = useGitStatus(gitProject);
   const addons = useAddonList();
@@ -431,6 +460,7 @@ export function ActivityPanel({
         active={tab}
         onSelect={setTab}
         className="activity-tabs"
+        label="Activity"
       />
       <div className="activity-body">
         {tab === 'now' &&
@@ -451,9 +481,14 @@ export function ActivityPanel({
           ))}
         {tab === 'background' && (
           <div className="background-tab">
-            {running.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
-            {[...running, ...finished].map((b) => (
-              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} now={now} onOpenWorkflow={onOpenWorkflow} />
+            {running.length === 0 && finished.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
+            {running.length > 0 && <div className="pane-title files-heading">Running</div>}
+            {running.map((b) => (
+              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} onOpenWorkflow={onOpenWorkflow} />
+            ))}
+            {finished.length > 0 && <div className="pane-title files-heading">Finished</div>}
+            {finished.map((b) => (
+              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} onOpenWorkflow={onOpenWorkflow} />
             ))}
           </div>
         )}
@@ -489,7 +524,32 @@ export function ActivityPanel({
                 </dl>
               </div>
             ))}
-            {subagents.length === 0 && <div className="empty">No subagents yet.</div>}
+            {workflowRun && workflowAgents(workflowRun).length > 0 && (
+              <>
+                <div className="pane-title files-heading">Workflow</div>
+                {workflowAgents(workflowRun).map((a) => (
+                  <div
+                    key={a.agentId}
+                    className="subagent-item"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onOpenWorkflowAgent?.(workflowRun.runId, a.agentId)}
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                      e.preventDefault();
+                      onOpenWorkflowAgent?.(workflowRun.runId, a.agentId);
+                    }}
+                  >
+                    <div className="subagent-head">
+                      <StatusMark status={tabStatus(a.status)} />
+                      <span className="subagent-desc">{a.label}</span>
+                      <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[a.status]}</span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+            {subagents.length === 0 && !workflowRun?.phases.some((p) => p.agents.length > 0) && <div className="empty">{working ? 'No subagents yet.' : 'No subagents.'}</div>}
           </div>
         )}
         {tab === 'files' && (

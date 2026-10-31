@@ -3,8 +3,9 @@ import type { Environment, Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
-import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
+import { Field, NumberField, StepFields, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
+import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 
 type EnvTab = 'general' | 'harnesses' | 'advanced';
@@ -31,6 +32,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
   const [saving, setSaving] = useState(false);
   /** "Custom" chosen in the Shell dropdown; the free-text field shows regardless of its value. */
   const [customShell, setCustomShell] = useState(false);
+  useFitWindow();
 
   // Create-on-add: a new environment already exists in settings so this window
   // could open; closing without saving removes it again.
@@ -59,7 +61,6 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
       setDraft({ name, kind, distro, shell, mountPrefix, maxConcurrentTasks });
       setCustomShell(!!shell && !SHELL_PRESETS.some(([cmd]) => cmd === shell));
       setSelected(env.harnesses[0]?.id ?? null);
-      if (!isNew) document.title = env.name;
     });
     return window.looper.onEvent((e) => {
       if (e.type !== 'settings') return;
@@ -128,17 +129,18 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     setSelected(h.id);
     void window.looper.openHarnessEditor(envId, h.id, true);
   };
-  const duplicateHarness = async () => {
-    if (!harness) return;
-    const copy: Harness = { ...JSON.parse(JSON.stringify(harness)), id: `h-${rid()}`, name: `${harness.name} (copy)` };
+  // Each command takes the harness it acts on (the selected one for a button, the clicked row for the menu).
+  const duplicateHarness = async (from: Harness | undefined = harness) => {
+    if (!from) return;
+    const copy: Harness = { ...JSON.parse(JSON.stringify(from)), id: `h-${rid()}`, name: `${from.name} (copy)` };
     await saveHarnesses([...harnesses, copy]);
     setSelected(copy.id);
   };
-  const removeHarness = async () => {
-    if (!harness || harnesses.length <= 1) return;
-    if (!(await window.looper.confirm(`Remove harness "${harness.name}"?`))) return;
-    await saveHarnesses(harnesses.filter((h) => h.id !== harness.id));
-    setSelected(harnesses.find((h) => h.id !== harness.id)?.id ?? null);
+  const removeHarness = async (target: Harness | undefined = harness) => {
+    if (!target || harnesses.length <= 1) return;
+    if (!(await window.looper.confirm(`Remove harness "${target.name}"?`))) return;
+    await saveHarnesses(harnesses.filter((h) => h.id !== target.id));
+    setSelected(harnesses.find((h) => h.id !== target.id)?.id ?? null);
   };
 
   const doSave = async (): Promise<boolean> => {
@@ -218,15 +220,15 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
               />
               Limit concurrent tasks
             </label>
-            {draft.maxConcurrentTasks !== undefined && (
+            <StepFields on={draft.maxConcurrentTasks !== undefined}>
               <NumberField
                 label="Maximum concurrent tasks"
                 suffix="tasks"
                 min={1}
-                value={draft.maxConcurrentTasks}
+                value={draft.maxConcurrentTasks ?? 1}
                 onChange={(n) => patch({ maxConcurrentTasks: n })}
               />
-            )}
+            </StepFields>
           </div>
         )}
 
@@ -242,6 +244,12 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
               itemSub={(h) => harnessKindLabel(h.kind)}
               onSelect={(h) => setSelected(h.id)}
               onOpen={(h) => void window.looper.openHarnessEditor(envId, h.id)}
+              menu={(h) => [
+                { label: 'Edit…', run: () => void window.looper.openHarnessEditor(envId, h.id) },
+                { label: 'Duplicate', run: () => void duplicateHarness(h) },
+                { label: 'Remove', enabled: harnesses.length > 1, run: () => void removeHarness(h) },
+              ]}
+              onDelete={(h) => void removeHarness(h)}
             />
             <ListActions
               onAdd={() => void addHarness()}

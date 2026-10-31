@@ -1,8 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { DragEvent, LiHTMLAttributes, ReactNode } from 'react';
 import { useListNav } from './hooks';
+import { listContextMenu } from './list-nav';
+
+/** One command of a row's context menu: the same as the button of that name under the list. */
+export interface ListMenuItem {
+  label: string;
+  enabled?: boolean;
+  run: () => void;
+}
 
 interface SelectListProps<T> {
+  /** The row's right-click menu (and Shift+F10, the Menu key): its commands, in the order of the buttons under the list. */
+  menu?: (item: T, i: number) => ListMenuItem[];
+  /** Delete on the selected row: its Remove command. */
+  onDelete?: (item: T, i: number) => void;
+  /** F2 on the selected row: its Rename command. */
+  onRename?: (item: T, i: number) => void;
+  /** Focus the list when the window opens, so the keys work at once. */
+  autoFocus?: boolean;
   items: T[];
   /** aria-label of the listbox. */
   label: string;
@@ -24,13 +40,38 @@ interface SelectListProps<T> {
 }
 
 /** The classic list-then-window listbox: click selects, double-click/Enter opens. */
-export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, onContextMenu, empty }: SelectListProps<T>) {
+export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, onContextMenu, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
   const index = selectedKey === null ? -1 : items.findIndex((it, i) => itemKey(it, i) === selectedKey);
+
+  // The menu is the main process's; a pick comes back as an event carrying this list's token.
+  const token = useId();
+  const shown = useRef<ListMenuItem[]>([]);
+  useEffect(
+    () =>
+      window.looper.onUi((e) => {
+        if (e.type === 'list-menu' && e.token === token) shown.current[Number(e.id)]?.run();
+      }),
+    [token],
+  );
+  const openMenu = (item: T, i: number) => {
+    if (menu) {
+      shown.current = menu(item, i);
+      window.looper.showListContextMenu(
+        token,
+        shown.current.map((m, n) => ({ id: String(n), label: m.label, enabled: m.enabled })),
+      );
+    } else onContextMenu?.(item, i);
+  };
+  const hasMenu = !!(menu || onContextMenu);
+
   const nav = useListNav({
     count: items.length,
     index,
     onIndex: (i) => onSelect(items[i], i),
     onActivate: onOpen ? (i) => onOpen(items[i], i) : undefined,
+    onDelete: onDelete ? (i) => onDelete(items[i], i) : undefined,
+    onRename: onRename ? (i) => onRename(items[i], i) : undefined,
+    onMenu: hasMenu ? (i) => openMenu(items[i], i) : undefined,
   });
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ key: string; pos: 'before' | 'after' } | null>(null);
@@ -73,11 +114,13 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
       role="listbox"
       aria-label={label}
       tabIndex={0}
+      autoFocus={autoFocus}
       onKeyDown={nav}
+      onContextMenu={hasMenu ? (e) => listContextMenu(e, index, (i) => openMenu(items[i], i)) : undefined}
       aria-activedescendant={index >= 0 ? `${idPrefix}-${selectedKey}` : undefined}
     >
       {items.length === 0 && empty !== undefined && (
-        <li className="env-item muted" style={{ textAlign: 'center', cursor: 'default' }}>
+        <li role="option" aria-disabled="true" aria-selected={false} className="env-item muted" style={{ textAlign: 'center', cursor: 'default' }}>
           {empty}
         </li>
       )}
@@ -95,11 +138,12 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
             onClick={() => onSelect(item, i)}
             onDoubleClick={onOpen ? () => onOpen(item, i) : undefined}
             onContextMenu={
-              onContextMenu
+              hasMenu
                 ? (e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     onSelect(item, i);
-                    onContextMenu(item, i);
+                    openMenu(item, i);
                   }
                 : undefined
             }

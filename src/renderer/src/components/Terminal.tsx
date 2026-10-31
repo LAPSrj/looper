@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ActiveRun, TaskRuntime } from '@shared/types';
 import { subscribe } from '../events';
+import { terminalOverlay } from '../phone-lists';
+import { isPhone } from '../web/page-nav';
+import { TERMINAL_STAGE as STAGE, TerminalOverlay } from './phone/TerminalOverlay';
 import { usePhoneTerminal } from './phone/TerminalKeys';
 import { InfoBar } from './ui';
 import { openXterm } from './xterm';
@@ -24,6 +27,9 @@ const RUN_STATE_LABELS: Record<ActiveRun['state'], string> = {
   running: 'Running',
 };
 
+/** The empty view's line: its output appears here once one starts. */
+const pinnedMessage = (pinned: boolean) => (pinned ? 'Output appears here when this run starts.' : 'Output appears here when one starts.');
+
 function runOptionLabel(run: ActiveRun): string {
   const state = run.held || run.question !== null ? 'Needs attention' : RUN_STATE_LABELS[run.state];
   return `Run ${run.runId} · ${state}`;
@@ -36,6 +42,8 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
   const phone = usePhoneTerminal((d) => sendTo.current(d));
   /** The run whose output is on screen (from the buffer replay or the live stream). */
   const [attachedRun, setAttachedRun] = useState<string | null>(null);
+  /** Whether the terminal has printed anything: unknown until the buffer answers. */
+  const [output, setOutput] = useState<'unknown' | 'none' | 'some'>('unknown');
 
   const runs = runtime?.runs ?? [];
   const runsNewestFirst = useMemo(() => [...runs].sort((a, b) => b.startedAt - a.startedAt), [runs]);
@@ -74,15 +82,21 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
     const detachPhone = phone.attach(term, el, refit);
     setAttachedRun(currentRun);
 
+    setOutput('unknown');
     void window.looper.agent.buffer(taskId, attachTo ?? undefined).then((buf) => {
       if (buf) {
         currentRun = buf.runId;
         setAttachedRun(buf.runId);
         term.write(buf.data);
+        setOutput(buf.data ? 'some' : 'none');
       } else {
-        term.write(
-          `${DIM}${pinned ? 'No agent session for this run yet.' : 'No agent session for this task yet.'} Output appears here when one starts.${RESET}\r\n`,
-        );
+        // A phone shows its empty view over the terminal; the desktop writes the line into it.
+        if (!isPhone) {
+          term.write(
+            `${DIM}${pinned ? 'No agent session for this run yet.' : 'No agent session for this task yet.'} Output appears here when one starts.${RESET}\r\n`,
+          );
+        }
+        setOutput('none');
       }
       loaded = true;
       window.looper.agent.resize(taskId, term.cols, term.rows, currentRun ?? undefined);
@@ -101,6 +115,7 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
           window.looper.agent.resize(taskId, term.cols, term.rows, currentRun);
         }
         term.write(e.data);
+        setOutput('some');
       } else if (e.type === 'agent:end' && e.taskId === taskId && e.runId === currentRun) {
         term.write(`\r\n${DIM}── session ended ──${RESET}\r\n`);
       }
@@ -125,6 +140,8 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
   // The question of the run on screen, or with no run attached yet, the newest run's.
   const asking = attachedActiveRun ?? runsNewestFirst[0];
   const question = headless ? null : (asking?.question ?? null);
+  // A phone's view over a terminal with nothing in it: starting while a run is on its way, else empty (and Run Now when it can).
+  const overlay = isPhone ? terminalOverlay({ loaded: output !== 'unknown', hasOutput: output === 'some', sessionActive: runs.length > 0 }) : null;
 
   return (
     <div className="terminal-wrap">
@@ -163,7 +180,16 @@ export function Terminal({ taskId, runtime, headless, selectedRun, onSelectRun }
           )}
         </div>
       )}
-      <div className="terminal" ref={ref} />
+      <div className="terminal-stage" style={STAGE}>
+        <div className="terminal" ref={ref} />
+        {overlay && (
+          <TerminalOverlay
+            kind={overlay}
+            message={pinnedMessage(attachTo !== null)}
+            action={runtime?.state === 'idle' ? { label: 'Run Now', run: () => void window.looper.runtime.runNow(taskId).catch(() => undefined) } : undefined}
+          />
+        )}
+      </div>
       {phone.row}
     </div>
   );

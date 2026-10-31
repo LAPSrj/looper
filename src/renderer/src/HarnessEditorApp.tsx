@@ -4,8 +4,9 @@ import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
+import { Field, NumberField, StepFields, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
+import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 
 const DEFAULT_COMMANDS: Record<Harness['kind'], string> = {
@@ -31,6 +32,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   const [selectedModel, setSelectedModel] = useState<number | null>(null);
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+  useFitWindow();
 
   // Create-on-add: a new harness already exists in settings so this window
   // could open; closing without saving removes it again.
@@ -59,7 +61,6 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
       setDraft(copy);
       setArgsText(joinTokens(copy.args ?? []));
       setEnvText(envToLine(copy.env ?? {}));
-      if (!isNew) document.title = copy.name;
     });
     // The Models tab edits the live harness through its own editor window.
     return window.looper.onEvent((e) => {
@@ -92,16 +93,17 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   const patch = (p: Partial<Harness>) => setDraft((d) => (d ? { ...d, ...p } : d));
   const patchOptions = (p: NonNullable<Harness['options']>) => setDraft((d) => (d ? { ...d, options: { ...d.options, ...p } } : d));
 
-  const removeModel = async () => {
-    if (modelIdx === null) return;
-    const next = models.filter((_, i) => i !== modelIdx);
+  // Takes the model it removes: the selected one for the button, the clicked row for the menu.
+  const removeModel = async (at: number | null = modelIdx) => {
+    if (at === null) return;
+    const next = models.filter((_, i) => i !== at);
     const value = sameModels(next, DEFAULT_MODELS[draft.kind]) ? undefined : next;
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? { ...h, models: value } : h)) } : e,
     );
     try {
       await window.looper.updateSettings({ environments });
-      setSelectedModel(next.length ? Math.min(modelIdx, next.length - 1) : null);
+      setSelectedModel(next.length ? Math.min(at, next.length - 1) : null);
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
@@ -193,7 +195,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           <Field label="Default arguments">
             <input className="mono" value={argsText} onChange={(e) => setArgsText(e.target.value)} />
           </Field>
-          <Field label="Shell environment variables">
+          <Field label="Environment variables">
             <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
           </Field>
           <label className="checkbox-field">
@@ -204,15 +206,15 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
             />
             Limit concurrent tasks
           </label>
-          {draft.maxConcurrentTasks !== undefined && (
+          <StepFields on={draft.maxConcurrentTasks !== undefined}>
             <NumberField
               label="Maximum concurrent tasks"
               suffix="tasks"
               min={1}
-              value={draft.maxConcurrentTasks}
+              value={draft.maxConcurrentTasks ?? 1}
               onChange={(n) => patch({ maxConcurrentTasks: n })}
             />
-          )}
+          </StepFields>
           {draft.kind !== 'custom' && (
             <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
               <select
@@ -258,11 +260,20 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               itemSub={(m) => m.id}
               onSelect={(_, i) => setSelectedModel(i)}
               onOpen={(_, i) => void window.looper.openModelEditor(envId, harnessId, i)}
+              menu={(_, i) => [
+                { label: 'Edit…', run: () => void window.looper.openModelEditor(envId, harnessId, i) },
+                { label: 'Duplicate', run: () => void window.looper.openModelEditor(envId, harnessId, undefined, i) },
+                { label: 'Remove', run: () => void removeModel(i) },
+              ]}
+              onDelete={(_, i) => void removeModel(i)}
             />
             <ListActions
               onAdd={() => void window.looper.openModelEditor(envId, harnessId)}
               onEdit={() => modelIdx !== null && void window.looper.openModelEditor(envId, harnessId, modelIdx)}
               editDisabled={modelIdx === null}
+              // A New Model window starting from this model; nothing is added until Create.
+              onDuplicate={() => modelIdx !== null && void window.looper.openModelEditor(envId, harnessId, undefined, modelIdx)}
+              duplicateDisabled={modelIdx === null}
               onRemove={() => void removeModel()}
               removeDisabled={modelIdx === null}
             >

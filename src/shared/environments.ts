@@ -270,3 +270,8 @@ export const HARNESS_KINDS: [Harness['kind'], string][] = [
 export function harnessKindLabel(kind: Harness['kind']): string {
   return HARNESS_KINDS.find(([k]) => k === kind)?.[1] ?? kind;
 }
+
+/** "Name (Kind)", or just the name when it already says the kind ("WSL" for a WSL environment). */
+export function withKind(name: string, kind: string): string {
+  return name.trim().toLowerCase() === kind.trim().toLowerCase() ? name : `${name} (${kind})`;
+}

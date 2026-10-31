@@ -71,7 +71,7 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
   if (missing) return <div className="empty">This task no longer exists.</div>;
 
   const items: { id: string; name: string }[] = [
-    { id: TOP_LEVEL, name: '' },
+    { id: TOP_LEVEL, name: 'Top level' },
     ...folderTree(folders).map(({ folder, depth }) => ({ id: folder.id, name: ' '.repeat(depth * 3) + folder.name })),
   ];
 
@@ -90,6 +90,7 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
               itemName={(f) => f.name}
               onSelect={(f) => setSelected(f.id)}
               onOpen={() => void move()}
+              autoFocus
             />
           </div>
           <div className="field" style={{ flex: 'none', marginTop: 12 }}>

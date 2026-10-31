@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
 import { subscribe } from '../events';
+import { enterPressesDefault, listNavKey, type ListNavModel } from './list-nav';
 
 /** Whether the project's folder is in a git repository; it's checked again whenever the project changes. */
 export function useGitRepo(projectId: string | undefined): boolean {
@@ -43,7 +44,7 @@ export function useDialogKeys<T extends string = string>(opts: DialogKeysOpts<T>
         o.onCancel();
         return;
       }
-      if (e.key === 'Enter' && o.onSave && (o.enterAnywhere || e.ctrlKey || e.target instanceof HTMLInputElement)) {
+      if (e.key === 'Enter' && o.onSave && (o.enterAnywhere || e.ctrlKey || enterPressesDefault(e.target)) && !e.isComposing && !e.defaultPrevented) {
         e.preventDefault();
         void o.onSave();
         return;
@@ -67,50 +68,29 @@ export function useDialogKeys<T extends string = string>(opts: DialogKeysOpts<T>
   }, []);
 }
 
-interface ListNavOpts {
-  count: number;
-  /** Current selection, -1 when nothing is selected. */
-  index: number;
-  onIndex: (i: number) => void;
-  /** Enter activates the selected item (preventDefault + stopPropagation). */
-  onActivate?: (i: number) => void;
-  /** DOM id of the selected item; scrolled into view when it changes. */
+interface ListNavOpts extends ListNavModel {
+  /** DOM id of the active row; scrolled into view when it changes. */
   scrollToId?: string | null;
 }
 
-/** ArrowUp/ArrowDown/Home/End selection movement and Enter activation for a listbox. */
-export function useListNav({ count, index, onIndex, onActivate, scrollToId }: ListNavOpts): (e: ReactKeyboardEvent) => void {
+/**
+ * A list's keyboard: Up, Down, Home, End; Enter (onActivate), Delete (onDelete),
+ * F2 (onRename); Shift+F10 and the Menu key (onMenu); in a tree, Left and Right
+ * close and open a row (or step to its parent or first child) and Space toggles.
+ * The model is in list-nav.ts. Returns the list's `onKeyDown`.
+ */
+export function useListNav({ scrollToId, ...model }: ListNavOpts): (e: ReactKeyboardEvent) => void {
   useEffect(() => {
     if (!scrollToId) return;
     document.getElementById(scrollToId)?.scrollIntoView({ block: 'nearest' });
   }, [scrollToId]);
   return (e: ReactKeyboardEvent) => {
-    if (!count) return;
-    let next: number;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = index < 0 ? 0 : Math.min(count - 1, index + 1);
-        break;
-      case 'ArrowUp':
-        next = index < 0 ? 0 : Math.max(0, index - 1);
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = count - 1;
-        break;
-      case 'Enter':
-        if (!onActivate) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (index >= 0) onActivate(index);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    onIndex(next);
+    // A text box or drop-down inside the list keeps its own editing keys, and a button its Space.
+    const t = e.target as HTMLElement;
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable;
+    if (typing && !['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) return;
+    if (t.tagName === 'BUTTON' && e.key === ' ') return;
+    listNavKey(e, model);
   };
 }
 

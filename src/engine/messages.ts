@@ -127,6 +127,68 @@ export function slashCommandText(text: string): string | null {
   return args ? `${name} ${args}` : name;
 }
 
+/** A "completed" task notification of a subagent that still waits on work it started itself. */
+const WAITING_ON_OWN_WORK = /waiting on its own background work|background work of its own still running/;
+
+/** A message's text: the string itself, or its text blocks joined by newlines. */
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return (content as Rec[])
+    .map((b) => (b?.type === 'text' && typeof b.text === 'string' ? b.text : ''))
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** What a workflow agent's first message says before the task: "[Workflow harness — computed task] …" (an em dash, claude 2.1.314). */
+const WORKFLOW_FRAME = /^\[Workflow harness\s*[—–-]\s*computed task\]/;
+const WORKFLOW_FRAME_END = 'The computed task text follows:';
+
+/**
+ * The task in the message a workflow script's agent starts with: the harness's
+ * framing (up to "The computed task text follows:") is cut, and the two spaces
+ * it indents every line of the task with are taken off. Null for any other text.
+ */
+export function workflowTaskText(text: string): string | null {
+  const t = text.trimStart();
+  if (!WORKFLOW_FRAME.test(t)) return null;
+  const end = t.indexOf(WORKFLOW_FRAME_END);
+  const body = end === -1 ? t.replace(WORKFLOW_FRAME, '') : t.slice(end + WORKFLOW_FRAME_END.length);
+  return body
+    .split('\n')
+    .map((l) => l.replace(/^ {1,2}/, ''))
+    .join('\n')
+    .trim();
+}
+
+const isScalar = (v: unknown): v is string | number | boolean => ['string', 'number', 'boolean'].includes(typeof v);
+
+/**
+ * A workflow agent's StructuredOutput input as the agent's reply: its string
+ * fields as text (labelled with their names when there are several), then any
+ * other field as a "name: value" list. Empty when it has nothing to show.
+ */
+export function structuredOutputText(input: unknown): string {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return '';
+  const entries = Object.entries(input as Rec).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  const strings = entries.filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].trim() !== '');
+  const others = entries.filter(
+    (e) => typeof e[1] !== 'string' && !(Array.isArray(e[1]) && e[1].length === 0) && !(typeof e[1] === 'object' && Object.keys(e[1] as object).length === 0),
+  );
+  const parts = strings.map(([k, v]) => (strings.length > 1 ? `**${k}**\n\n${v}` : v));
+  const list = others.map(([k, v]) => {
+    if (isScalar(v)) return `- **${k}**: ${String(v)}`;
+    if (Array.isArray(v) && v.length > 0 && v.every(isScalar)) return `- **${k}**:\n${v.map((x) => `  - ${String(x)}`).join('\n')}`;
+    try {
+      return `- **${k}**: ${JSON.stringify(v)}`;
+    } catch {
+      return `- **${k}**: ${String(v)}`;
+    }
+  });
+  if (list.length > 0) parts.push(list.join('\n'));
+  return parts.join('\n\n');
+}
+
 /** Diff-line budget across a row's hunks; a patch past it is cut off. */
 const MAX_PATCH_LINES = 2000;
 
@@ -279,6 +341,8 @@ export class TranscriptAccumulator {
   private byToolId = new Map<string, MessageRow>();
   /** Rows that started background work, by Claude's background task id (a subagent's is its agent id). */
   private byBackgroundId = new Map<string, MessageRow>();
+  /** The agent rows StructuredOutput calls became, by the call's tool_use id, until their results arrive. */
+  private structuredAnswers = new Map<string, MessageRow>();
   /** The id of the record addLine is folding: its rows get it. */
   private recordUuid: string | undefined;
 
@@ -289,6 +353,7 @@ export class TranscriptAccumulator {
     this.dropped = 0;
     this.nextId = 0;
     this.byToolId.clear();
+    this.structuredAnswers.clear();
     this.byBackgroundId.clear();
     this.images.clear();
   }
@@ -312,11 +377,22 @@ export class TranscriptAccumulator {
     this.byBackgroundId.set(id, row);
   }
 
-  /** A background command's or subagent's task notification: its row gets how it ended. */
+  /**
+   * A background command's or subagent's task notification: its row gets how it ended.
+   * A subagent that stopped with background work of its own still running is reported
+   * as completed ("… is waiting on its own background work", with a note that it may
+   * resume and notify again, claude 2.1.316), but it's still running.
+   */
   private takeNotification(text: string): void {
     const n = parseTaskNotification(text);
     const row = n ? this.byBackgroundId.get(n.id) : undefined;
-    if (n && row?.background) row.background = { ...row.background, status: n.status, ...(n.summary ? { summary: n.summary } : {}) };
+    if (!n || !row?.background) return;
+    if (n.status === 'completed' && WAITING_ON_OWN_WORK.test(text)) {
+      row.background = { ...row.background, status: 'running' };
+      delete row.background.summary;
+      return;
+    }
+    row.background = { ...row.background, status: n.status, ...(n.summary ? { summary: n.summary } : {}) };
   }
 
   addLine(line: string): void {
@@ -363,8 +439,12 @@ export class TranscriptAccumulator {
     if (msg === null || typeof msg !== 'object') return;
     const content = (msg as Rec).content;
     if (rec.isMeta === true) {
-      if (rec.type === 'user' && this.takeSkill(rec, content)) return;
-      if (rec.type === 'user' && typeof content === 'string') this.pushGuidance(content, ts);
+      if (rec.type !== 'user') return;
+      if (this.takeSkill(rec, content)) return;
+      const text = textOf(content);
+      // A background job's end can come as a meta record too (a stream's isSynthetic).
+      if (text.trimStart().startsWith('<task-notification>')) this.takeNotification(text);
+      else if (text) this.pushGuidance(text, ts);
       return;
     }
 
@@ -384,12 +464,22 @@ export class TranscriptAccumulator {
       }
       if (typeof content === 'string') {
         // Guidance typed into an idle interactive session arrives as a plain prompt.
-        if (!this.pushGuidance(content, ts)) this.push({ kind: 'prompt', ts, text: content });
+        if (!this.pushGuidance(content, ts)) this.pushPrompt(content, ts);
         return;
       }
       if (!Array.isArray(content)) return;
       for (const block of content as Rec[]) {
         if (block?.type === 'tool_result') {
+          // A StructuredOutput call already became the agent's reply; a rejected one (schema mismatch) is retried, so its reply goes.
+          const answer = typeof block.tool_use_id === 'string' ? this.structuredAnswers.get(block.tool_use_id) : undefined;
+          if (answer) {
+            this.structuredAnswers.delete(block.tool_use_id as string);
+            if (block.is_error === true) {
+              const at = this.rows.indexOf(answer);
+              if (at !== -1) this.rows.splice(at, 1);
+            }
+            continue;
+          }
           const row = typeof block.tool_use_id === 'string' ? this.byToolId.get(block.tool_use_id) : undefined;
           if (!row) continue;
           row.result = cap(resultText(block.content), MAX_TEXT);
@@ -411,7 +501,7 @@ export class TranscriptAccumulator {
             }
           }
         } else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-          if (!this.pushGuidance(block.text, ts)) this.push({ kind: 'prompt', ts, text: block.text });
+          if (!this.pushGuidance(block.text, ts)) this.pushPrompt(block.text, ts);
         } else if (block?.type === 'image') {
           const row = this.push({ kind: 'prompt', ts, text: '(image)' });
           this.takeImage(row, [block]);
@@ -421,11 +511,23 @@ export class TranscriptAccumulator {
     }
 
     if (!Array.isArray(content)) return;
+    // Claude Code records an API error (usage limit, overloaded…) as an assistant message: a transcript
+    // marks it isApiErrorMessage, a stream-json line is_api_error_message (claude 2.1.316).
+    const apiError = rec.isApiErrorMessage === true || rec.is_api_error_message === true;
+    if (apiError) {
+      const text = textOf(content) || (typeof rec.error === 'string' && rec.error ? `API error: ${rec.error}` : 'The request failed.');
+      this.push({ kind: 'error', ts, text });
+      return;
+    }
     for (const block of content as Rec[]) {
       if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
         this.push({ kind: 'agent', ts, text: block.text });
       } else if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
         this.push({ kind: 'thinking', ts, text: block.thinking });
+      } else if (block?.type === 'tool_use' && block.name === 'StructuredOutput' && structuredOutputText(block.input)) {
+        // A workflow agent's answer: the script reads this call, and the conversation shows it as the agent's reply.
+        const row = this.push({ kind: 'agent', ts, text: structuredOutputText(block.input) });
+        if (typeof block.id === 'string' && block.id) this.structuredAnswers.set(block.id, row);
       } else if (block?.type === 'tool_use') {
         const row = this.push({
           kind: 'tool',
@@ -478,26 +580,31 @@ export class TranscriptAccumulator {
    * hidden. True when the record was the call's skill content.
    */
   private takeSkill(rec: Rec, content: unknown): boolean {
-    const text =
-      typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? (content as Rec[])
-              .map((b) => (b?.type === 'text' && typeof b.text === 'string' ? b.text : ''))
-              .filter(Boolean)
-              .join('\n')
-          : '';
+    const text = textOf(content);
     if (!text.trim()) return false;
     const source = typeof rec.sourceToolUseID === 'string' ? this.byToolId.get(rec.sourceToolUseID) : undefined;
     const last = this.rows[this.rows.length - 1];
+    // A stream has no sourceToolUseID, and a built-in skill's text has no "Base directory" line, so any
+    // meta text right after a Skill call that has none yet is its skill, unless it's hook feedback or a task notification.
     const row =
       source ??
-      (text.startsWith('Base directory for this skill:') && last?.kind === 'tool' && last.tool === 'Skill' && last.skill === undefined
+      (last?.kind === 'tool' &&
+      last.tool === 'Skill' &&
+      last.skill === undefined &&
+      guidanceText(text) === null &&
+      !text.trimStart().startsWith('<task-notification>')
         ? last
         : undefined);
     if (row?.tool !== 'Skill') return false;
     row.skill = cap(text, MAX_TEXT);
     return true;
+  }
+
+  /** The user's prompt row, or a task row when a workflow script computed the text for one of its agents. */
+  private pushPrompt(text: string, ts?: string): void {
+    const task = workflowTaskText(text);
+    if (task !== null) this.push({ kind: 'task', ts, text: task });
+    else this.push({ kind: 'prompt', ts, text });
   }
 
   /** The image a tool call's result carried, by the call's tool_use id. */

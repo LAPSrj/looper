@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Project } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { folderName } from '@shared/projects';
+import { windowTitle } from '@shared/window-title';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { AgentFields } from './components/RemoteFields';
 import { EditorFooter, Field } from './components/ui';
 import { useDialogKeys } from './components/hooks';
+import { useFitWindow } from './fit-window';
 
 type Draft = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'mode' | 'remote'>;
 
@@ -19,12 +21,13 @@ export function ProjectEditorApp({ id }: { id?: string }) {
   const [envText, setEnvText] = useState('');
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+  useFitWindow();
 
   useEffect(() => {
     void Promise.all([window.looper.info(), window.looper.projects.list()]).then(([info, list]) => {
       setEnvironments(info.settings.environments);
       setHost(info.host);
-      document.title = id ? (list.find((x) => x.id === id)?.name ?? 'Edit Project') : 'New Project';
+      document.title = id ? windowTitle('Edit Project', list.find((x) => x.id === id)?.name) : 'New Project';
       if (!id) {
         const env = info.settings.environments.find((e) => e.id === info.settings.defaultEnvironmentId) ?? info.settings.environments[0];
         setDraft({ name: '', environmentId: env?.id ?? '', harnessId: env?.harnesses[0]?.id, cwd: '', permissionMode: 'auto', mode: 'interactive', remote: false });
@@ -57,31 +60,6 @@ export function ProjectEditorApp({ id }: { id?: string }) {
   const env = environments.find((e) => e.id === draft.environmentId);
   const harnesses = env?.harnesses ?? [];
   const harness = harnesses.find((h) => h.id === draft.harnessId) ?? harnesses[0];
-  const kind = harness && harness.kind !== 'custom' ? harness.kind : undefined;
-  const models = harness ? harnessModels(harness) : [];
-  const entry = models.find((m) => m.id === draft.model);
-  const kindEfforts = kind ? EFFORT_LEVELS[kind] : [];
-  const efforts = entry?.efforts ? kindEfforts.filter(([v]) => entry.efforts!.includes(v)) : kindEfforts;
-  const defaultEffort = entry?.defaultEffort ? (kindEfforts.find(([v]) => v === entry.defaultEffort)?.[1] ?? entry.defaultEffort) : undefined;
-  const modes = kind ? PERMISSION_MODES[kind] : [];
-
-  const browse = async () => {
-    const picked = await window.looper.pickDirectory({
-      current: draft.cwd || undefined,
-      flavor: env ? pathFlavor(env, host) : undefined,
-      distro: env?.kind === 'wsl' ? env.distro : undefined,
-    });
-    if (picked) set({ cwd: picked, ...(draft.name.trim() ? {} : { name: folderName(picked) }) });
-  };
-
-  /** A harness of another kind has its own models, efforts and modes: the draft's go back to the defaults. */
-  const pickHarness = (harnessId: string | undefined, envId = draft.environmentId) => {
-    const nextEnv = environments.find((e) => e.id === envId);
-    const h = nextEnv?.harnesses.find((x) => x.id === harnessId) ?? nextEnv?.harnesses[0];
-    const k = h && h.kind !== 'custom' ? h.kind : undefined;
-    const keepMode = !k || PERMISSION_MODES[k].some(([v]) => v === draft.permissionMode);
-    set({ environmentId: envId, harnessId: h?.id, model: undefined, effort: undefined, ...(keepMode ? {} : { permissionMode: 'auto' }) });
-  };
 
   const doSave = async (): Promise<boolean> => {
     const cwd = draft.cwd.trim();
@@ -124,85 +102,15 @@ export function ProjectEditorApp({ id }: { id?: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Name">
-            <input autoFocus value={draft.name} placeholder={draft.cwd.trim() ? folderName(draft.cwd) : undefined} onChange={(e) => set({ name: e.target.value })} />
-          </Field>
-          <Field label="Working directory">
-            <div className="browse-row">
-              <input className="mono" value={draft.cwd} onChange={(e) => set({ cwd: e.target.value })} />
-              <button className="btn" onClick={() => void browse()}>
-                Browse…
-              </button>
-            </div>
-          </Field>
-          <div className="row">
-            <Field label="Environment">
-              <select value={draft.environmentId} onChange={(e) => pickHarness(undefined, e.target.value)}>
-                {!env && <option value={draft.environmentId}>Unknown environment ({draft.environmentId || 'none'})</option>}
-                {environments.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Harness">
-              <select value={harness?.id ?? ''} onChange={(e) => pickHarness(e.target.value)}>
-                {!harnesses.length && <option value="">No harnesses in this environment</option>}
-                {harnesses.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name} ({harnessKindLabel(h.kind)})
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          {kind && (
-            <>
-              <div className="row">
-                <Field label="Model">
-                  <select value={draft.model ?? ''} onChange={(e) => set({ model: e.target.value || undefined, effort: undefined })}>
-                    <option value="">Default</option>
-                    {draft.model && !entry && <option value={draft.model}>{draft.model}</option>}
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Effort">
-                  <select value={draft.effort ?? ''} onChange={(e) => set({ effort: e.target.value || undefined })}>
-                    <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Default'}</option>
-                    {efforts.map(([v, label]) => (
-                      <option key={v} value={v}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-            </>
-          )}
-          <div className="row">
-            <Field label="Session type">
-              <select value={draft.mode} onChange={(e) => set({ mode: e.target.value as Draft['mode'] })}>
-                <option value="interactive">Interactive terminal (default)</option>
-                <option value="headless">Headless{kind === 'codex' ? ' (codex exec)' : ''}</option>
-              </select>
-            </Field>
-            {kind && (
-              <Field label="Permission mode">
-                <select value={draft.permissionMode} onChange={(e) => set({ permissionMode: e.target.value })}>
-                  {modes.map(([v, label]) => (
-                    <option key={v} value={v}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-          </div>
+          <AgentFields
+            draft={draft}
+            environments={environments}
+            host={host}
+            harnesses="any"
+            namePlaceholder={draft.cwd.trim() ? folderName(draft.cwd) : undefined}
+            onBrowsed={(picked) => (draft.name.trim() ? {} : { name: folderName(picked) })}
+            onChange={set}
+          />
           <div className="row">
             <Field label="Extra command-line arguments">
               <input className="mono" value={argsText} onChange={(e) => setArgsText(e.target.value)} />

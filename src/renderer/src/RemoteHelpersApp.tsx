@@ -58,17 +58,18 @@ export function RemoteHelpersApp() {
     setHelper(h.id);
     void window.looper.remote.openHelperEditor(h.id, true);
   };
-  const duplicateHelper = async () => {
-    if (!selHelper) return;
-    const copy: RemoteHelper = { ...selHelper, id: `h-${rid()}`, name: `${selHelper.name} (copy)` };
+  // Each command takes the helper it acts on (the selected one for a button, the clicked row for the menu).
+  const duplicateHelper = async (from: RemoteHelper | undefined = selHelper) => {
+    if (!from) return;
+    const copy: RemoteHelper = { ...from, id: `h-${rid()}`, name: `${from.name} (copy)` };
     await update({ ...r, helpers: [...helpers, copy] });
     setHelper(copy.id);
   };
-  const removeHelper = async () => {
-    if (!selHelper) return;
-    if (!(await window.looper.confirm(`Remove helper "${selHelper.name}"?`))) return;
-    await update({ ...r, helpers: helpers.filter((h) => h.id !== selHelper.id) });
-    setHelper(helpers.find((h) => h.id !== selHelper.id)?.id ?? null);
+  const removeHelper = async (target: RemoteHelper | undefined = selHelper) => {
+    if (!target) return;
+    if (!(await window.looper.confirm(`Remove helper "${target.name}"?`))) return;
+    await update({ ...r, helpers: helpers.filter((h) => h.id !== target.id) });
+    setHelper(helpers.find((h) => h.id !== target.id)?.id ?? null);
   };
 
   /** A row's second line: where it runs, then why it has no conversation when Remote Control can't start one. */
@@ -89,6 +90,13 @@ export function RemoteHelpersApp() {
             empty="No helpers"
             onSelect={(h) => setHelper(h.id)}
             onOpen={(h) => void window.looper.remote.openHelperEditor(h.id)}
+            autoFocus
+            menu={(h) => [
+              { label: 'Edit…', run: () => void window.looper.remote.openHelperEditor(h.id) },
+              { label: 'Duplicate', run: () => void duplicateHelper(h) },
+              { label: 'Remove', run: () => void removeHelper(h) },
+            ]}
+            onDelete={(h) => void removeHelper(h)}
           />
           <ListActions
             onAdd={() => void addHelper()}

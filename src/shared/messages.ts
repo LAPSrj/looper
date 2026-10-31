@@ -6,8 +6,12 @@ export interface MessageRow {
   id: string;
   /** ISO timestamp of the transcript record, when it carries one. */
   ts?: string;
-  /** guidance: text the user sent the agent mid-run (see GUIDANCE_PREFIX). */
-  kind: 'prompt' | 'guidance' | 'agent' | 'thinking' | 'tool' | 'raw';
+  /**
+   * guidance: text the user sent the agent mid-run (see GUIDANCE_PREFIX).
+   * task: the task a workflow script computed for one of its agents (not the user's own message).
+   * error: an API error Claude Code recorded as the assistant's reply (usage limit, overloaded…).
+   */
+  kind: 'prompt' | 'guidance' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
   /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
   source?: 'classifier';
   /** Tool rows: the tool name (Bash, Read, Task…). Raw rows: the record's type. */

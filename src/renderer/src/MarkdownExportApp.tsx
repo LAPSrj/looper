@@ -32,7 +32,7 @@ export function MarkdownExportApp({
       <div className="editor-body">
         <div className="form">
           <label className="checkbox-field">
-            <input type="checkbox" checked={includeThinking} onChange={(e) => setIncludeThinking(e.target.checked)} />
+            <input autoFocus type="checkbox" checked={includeThinking} onChange={(e) => setIncludeThinking(e.target.checked)} />
             Include thinking
           </label>
           <label className="checkbox-field">

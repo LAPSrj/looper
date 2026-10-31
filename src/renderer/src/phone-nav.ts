@@ -14,6 +14,8 @@ export const PHONE_TABS: readonly (readonly [PhoneTab, string])[] = [
 export type PhoneScreen =
   | { kind: 'task'; id: string }
   | { kind: 'project'; id: string }
+  /** The Tasks tab inside a folder: its subfolders and tasks. Not a selection: the main window selects nothing while it shows. */
+  | { kind: 'folder'; id: string }
   | { kind: 'addon'; addonId: string; pane: string; item: string };
 
 /** Each tab keeps its own stack, as iOS's tab bar and Material's navigation bar do. */
@@ -54,6 +56,13 @@ export function pushScreen(nav: PhoneNav, screen: PhoneScreen): PhoneNav {
   return withStack(nav, [...nav.stacks[nav.tab], screen]);
 }
 
+/** iPad: a row of the list column tapped; its screen replaces what the detail column shows. */
+export function rootScreen(nav: PhoneNav, screen: PhoneScreen): PhoneNav {
+  const stack = nav.stacks[nav.tab];
+  if (stack.length === 1 && sameScreen(stack[0], screen)) return nav;
+  return withStack(nav, [screen]);
+}
+
 /** Back: the screen under the current one, or the tab's list. */
 export function popScreen(nav: PhoneNav): PhoneNav {
   const stack = nav.stacks[nav.tab];
@@ -73,7 +82,7 @@ export function showTabRoot(nav: PhoneNav, tab: PhoneTab): PhoneNav {
 
 /** What the main window selects to show a screen; null shows the tab's list. */
 export function selectionOf(screen: PhoneScreen | null): MainSelection {
-  if (!screen) return { task: null, project: null, addon: null };
+  if (!screen || screen.kind === 'folder') return { task: null, project: null, addon: null };
   if (screen.kind === 'task') return { task: screen.id, project: null, addon: null };
   if (screen.kind === 'project') return { task: null, project: screen.id, addon: null };
   return { task: null, project: null, addon: { addonId: screen.addonId, pane: screen.pane, item: screen.item } };
@@ -90,10 +99,16 @@ export function screenOf(sel: MainSelection): PhoneScreen | null {
 /**
  * The window's selection changed on its own (a notification opened a task, a
  * list row was tapped, an addon picked an item, the shown task was deleted):
- * a new selection pushes its screen, and a cleared one takes the shown screen away.
+ * a new selection pushes its screen, and a cleared one takes the shown screen away
+ * (a folder's screen selects nothing, so it stays). `replace`: the selection
+ * came from an iPad's list column, so its screen replaces the detail column's
+ * stack instead of going over it.
  */
-export function followSelection(nav: PhoneNav, sel: MainSelection): PhoneNav {
+export function followSelection(nav: PhoneNav, sel: MainSelection, replace = false): PhoneNav {
   const screen = screenOf(sel);
-  if (sameScreen(screen, topScreen(nav))) return nav;
+  const top = topScreen(nav);
+  if (!screen && top?.kind === 'folder') return nav;
+  if (screen && replace) return rootScreen(nav, screen);
+  if (sameScreen(screen, top)) return nav;
   return screen ? pushScreen(nav, screen) : popScreen(nav);
 }

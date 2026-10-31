@@ -79,6 +79,8 @@ export function RecycleBinApp() {
             empty="The Recycle Bin is empty"
             onSelect={(e) => setSelected(e.task.id)}
             onContextMenu={() => window.looper.showRecycleBinContextMenu()}
+            onDelete={() => void remove()}
+            autoFocus
           />
           <div className="env-actions">
             <button className="btn" disabled={!entry} onClick={() => void restore()}>

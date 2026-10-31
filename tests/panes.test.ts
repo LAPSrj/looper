@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, it } from 'vitest';
-import { paneMenuItems, paneVisibilityItems, projectsPaneMenuItems, singleMenuItems, taskListMenu } from '../src/main/view-menu';
+import { groupProjectsByMenu, paneMenuItems, paneVisibilityItems, projectsPaneMenuItems, singleMenuItems, taskListMenu } from '../src/main/view-menu';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { ALL_FILTERS, PANES, passesFilter, sidebarHasPanes } from '../src/shared/panes';
 import { TaskFilterSchema, TaskSchema, ViewSchema, type TaskInput, type View } from '../src/shared/types';
@@ -101,7 +101,7 @@ describe('sidebar panes', () => {
     expect(patch.panes?.goals).toEqual(view.panes.goals);
   });
 
-  it('offers the Projects pane its Group By choices in its header menu and View > Task List Options', () => {
+  it('offers the Projects pane its Group By choices in its header menu and as View > Group Projects By, at most two submenu levels deep', () => {
     let patch: Partial<View> = {};
     const view = ViewSchema.parse({});
     expect(view.projectsPane.groupBy).toBe('none');
@@ -112,10 +112,19 @@ describe('sidebar panes', () => {
     groupBy(header)[2].click!({} as never, undefined as never, undefined as never);
     expect(patch.projectsPane).toEqual({ ...view.projectsPane, groupBy: 'harness' });
 
+    // View's own item: the choices one level down, and Task List Options no longer holds them.
+    const viewItem = groupProjectsByMenu(view, (p) => (patch = p));
+    expect(viewItem.label).toBe('&Group Projects By');
+    expect((viewItem.submenu as MenuItemConstructorOptions[]).map((i) => i.label)).toEqual(['&None', '&Folder', '&Harness']);
+    (viewItem.submenu as MenuItemConstructorOptions[])[1].click!({} as never, undefined as never, undefined as never);
+    expect(patch.projectsPane).toEqual({ ...view.projectsPane, groupBy: 'folder' });
     for (const sidebar of ['single', 'multiple'] as const) {
       const menu = taskListMenu(ViewSchema.parse({ sidebar }), () => undefined);
-      const pane = menu.find((i) => i.label === '&Projects Pane')!.submenu as MenuItemConstructorOptions[];
-      expect(pane.map((i) => i.label)).toEqual(['&Group By']);
+      expect(menu.some((i) => i.label === '&Projects Pane')).toBe(false);
+      // View > Task List Options > pane > item: no menu in the list opens a third level.
+      const depth = (items: MenuItemConstructorOptions[]): number =>
+        Math.max(0, ...items.map((i) => (Array.isArray(i.submenu) ? 1 + depth(i.submenu) : 0)));
+      expect(depth(menu)).toBeLessThanOrEqual(1);
     }
   });
 

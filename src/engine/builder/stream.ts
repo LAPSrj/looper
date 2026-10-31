@@ -15,8 +15,12 @@ function parse(line: string): Rec | null {
 
 /**
  * Claude's stream-json lines are transcript records under other names: a tool
- * result's details ride `tool_use_result` instead of `toolUseResult`. Renaming
- * it lets the transcript accumulator attach edit diffs as it does for runs.
+ * result's details ride `tool_use_result` instead of `toolUseResult`, and the
+ * transcript's `isMeta` (a skill's content, hook feedback), `isCompactSummary`
+ * and `isVisibleInTranscriptOnly` all become `isSynthetic: true` (claude
+ * 2.1.316: `isSynthetic: isMeta || isVisibleInTranscriptOnly || isCompactSummary
+ * || undefined`). Renaming them lets the transcript accumulator attach edit
+ * diffs as it does for runs, and keep those records out of the user's messages.
  */
 export class ClaudeStreamAccumulator extends TranscriptAccumulator {
   addLine(line: string): void {
@@ -25,8 +29,16 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
     if (rec && typeof rec.parent_tool_use_id === 'string' && rec.parent_tool_use_id) return;
     // A replayed message is one Looper sent: it shows as a prompt row of its own (addPrompt).
     if (rec?.isReplay === true) return;
-    if (rec && rec.tool_use_result !== undefined && rec.toolUseResult === undefined) {
-      super.addLine(JSON.stringify({ ...rec, toolUseResult: rec.tool_use_result }));
+    const renameResult = rec !== null && rec.tool_use_result !== undefined && rec.toolUseResult === undefined;
+    const meta = rec !== null && rec.type === 'user' && rec.isSynthetic === true && rec.isMeta === undefined;
+    if (rec && (renameResult || meta)) {
+      super.addLine(
+        JSON.stringify({
+          ...rec,
+          ...(renameResult ? { toolUseResult: rec.tool_use_result } : {}),
+          ...(meta ? { isMeta: true } : {}),
+        }),
+      );
       return;
     }
     super.addLine(line);

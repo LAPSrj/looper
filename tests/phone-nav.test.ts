@@ -4,6 +4,7 @@ import {
   initialPhoneNav,
   popScreen,
   pushScreen,
+  rootScreen,
   sameScreen,
   screenOf,
   selectTab,
@@ -117,5 +118,80 @@ describe('phone navigation', () => {
     expect(sameScreen(a, { ...a, item: '2' })).toBe(false);
     expect(sameScreen(a, { kind: 'task', id: '1' })).toBe(false);
     expect(sameScreen(null, null)).toBe(true);
+  });
+
+  describe('folder screens (the Tasks tab drilling down)', () => {
+    const folder = (id: string) => ({ kind: 'folder' as const, id });
+
+    it('pushes a folder over a folder, and Back goes up one level at a time', () => {
+      let nav = selectTab(initialPhoneNav(), 'tasks');
+      nav = pushScreen(nav, folder('dev'));
+      nav = pushScreen(nav, folder('dev'));
+      nav = pushScreen(nav, folder('nightly'));
+      expect(nav.stacks.tasks).toEqual([folder('dev'), folder('nightly')]);
+      expect(sameScreen(folder('a'), folder('a'))).toBe(true);
+      expect(sameScreen(folder('a'), { kind: 'task', id: 'a' })).toBe(false);
+      nav = popScreen(nav);
+      expect(topScreen(nav)).toEqual(folder('dev'));
+    });
+
+    it('selects nothing while it shows, and the window’s empty selection does not take it away', () => {
+      let nav = pushScreen(selectTab(initialPhoneNav(), 'tasks'), folder('dev'));
+      expect(selectionOf(topScreen(nav))).toEqual(none);
+      expect(followSelection(nav, none)).toBe(nav);
+      const settled = settle(nav, none);
+      expect(settled.nav.stacks.tasks).toEqual([folder('dev')]);
+      nav = settled.nav;
+    });
+
+    it('a task opened in a folder comes back to the folder on Back, and deleting it does too', () => {
+      let { nav } = settle(pushScreen(selectTab(initialPhoneNav(), 'tasks'), folder('dev')), task('t'));
+      expect(nav.stacks.tasks).toEqual([folder('dev'), { kind: 'task', id: 't' }]);
+      expect(followSelection(nav, none).stacks.tasks).toEqual([folder('dev')]);
+      nav = popScreen(nav);
+      const after = settle(nav, selectionOf(topScreen(nav)));
+      expect(after.nav.stacks.tasks).toEqual([folder('dev')]);
+    });
+
+    it('tapping the Tasks tab again goes back to its top level', () => {
+      let nav = pushScreen(pushScreen(selectTab(initialPhoneNav(), 'tasks'), folder('dev')), folder('nightly'));
+      nav = selectTab(nav, 'tasks');
+      expect(topScreen(nav)).toBeNull();
+    });
+  });
+});
+
+describe('iPad split view (list column and detail column)', () => {
+  it('a row of the list column replaces the detail stack instead of going over it', () => {
+    let nav = selectTab(initialPhoneNav(), 'tasks');
+    nav = rootScreen(nav, { kind: 'folder', id: 'dev' });
+    nav = pushScreen(nav, { kind: 'task', id: 'a' });
+    expect(nav.stacks.tasks).toHaveLength(2);
+    nav = followSelection(nav, task('b'), true);
+    expect(nav.stacks.tasks).toEqual([{ kind: 'task', id: 'b' }]);
+    nav = rootScreen(nav, { kind: 'folder', id: 'ops' });
+    expect(nav.stacks.tasks).toEqual([{ kind: 'folder', id: 'ops' }]);
+  });
+
+  it('opening the row already shown changes nothing', () => {
+    const nav = rootScreen(selectTab(initialPhoneNav(), 'projects'), { kind: 'project', id: 'p' });
+    expect(rootScreen(nav, { kind: 'project', id: 'p' })).toBe(nav);
+    expect(followSelection(nav, project('p'), true)).toBe(nav);
+  });
+
+  it('a selection from the detail column still pushes, and Back pops within it', () => {
+    let nav = rootScreen(selectTab(initialPhoneNav(), 'projects'), { kind: 'project', id: 'p' });
+    nav = followSelection(nav, task('t'));
+    expect(nav.stacks.projects).toEqual([
+      { kind: 'project', id: 'p' },
+      { kind: 'task', id: 't' },
+    ]);
+    nav = popScreen(nav);
+    expect(topScreen(nav)).toEqual({ kind: 'project', id: 'p' });
+  });
+
+  it('a cleared selection from the list column leaves a folder shown', () => {
+    const nav = rootScreen(selectTab(initialPhoneNav(), 'tasks'), { kind: 'folder', id: 'dev' });
+    expect(followSelection(nav, none, true)).toBe(nav);
   });
 });

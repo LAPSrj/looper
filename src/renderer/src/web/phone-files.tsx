@@ -64,23 +64,20 @@ export function FileRows({ os, browser, onFile, emptyText }: { os: PhoneOs; brow
                 {heading}
               </div>
             )}
-            <button
-              role="listitem"
-              className={`ph-file-row${selected ? ' selected' : ''}`}
-              aria-selected={selected}
-              onClick={() => (entry.dir ? browser.go(entry.path) : onFile(entry))}
-            >
-              <span className={`ph-file-icon${entry.dir ? ' dir' : ''}${entry.place ? ' place' : ''}`}>
-                {entry.place ? <PlaceGlyph place={entry.place} /> : entry.dir ? FOLDER_GLYPH : FILE_GLYPH}
-              </span>
-              <span className="ph-file-text">
-                <span className="ph-file-name">{entry.name}</span>
-                {!entry.dir && (entry.modifiedAt || entry.size !== undefined) && (
-                  <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
-                )}
-              </span>
-              <span className="ph-file-end">{entry.dir ? (os === 'ios' ? CHEVRON_RIGHT : null) : selected ? CHECK : null}</span>
-            </button>
+            <div role="listitem" className="ph-file-item">
+              <button className={`ph-file-row${selected ? ' selected' : ''}`} aria-pressed={entry.dir ? undefined : selected} onClick={() => (entry.dir ? browser.go(entry.path) : onFile(entry))}>
+                <span className={`ph-file-icon${entry.dir ? ' dir' : ''}${entry.place ? ' place' : ''}`}>
+                  {entry.place ? <PlaceGlyph place={entry.place} /> : entry.dir ? FOLDER_GLYPH : FILE_GLYPH}
+                </span>
+                <span className="ph-file-text">
+                  <span className="ph-file-name">{entry.name}</span>
+                  {!entry.dir && (entry.modifiedAt || entry.size !== undefined) && (
+                    <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
+                  )}
+                </span>
+                <span className="ph-file-end">{entry.dir ? (os === 'ios' ? CHEVRON_RIGHT : null) : selected ? CHECK : null}</span>
+              </button>
+            </div>
           </Fragment>
         );
       })}

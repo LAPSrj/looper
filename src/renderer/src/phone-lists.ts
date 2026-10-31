@@ -1,0 +1,190 @@
+// Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
+import type { AttentionRow } from '../../shared/dashboard';
+import { waitedText, waitingOf, type SessionKind, type SessionSummary } from '../../shared/sessions';
+import type { MoreGroup } from './web/more-menu';
+
+// ---------- lists by day ----------
+
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+/** A day's header: Today, Yesterday, else "19 Oct" (with the year when it isn't this year's). */
+export function dayTitle(ts: number, now: number): string {
+  const d = new Date(ts);
+  const today = new Date(now);
+  if (sameDay(d, today)) return 'Today';
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString([], d.getFullYear() === today.getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+export interface DayGroup<T> {
+  /** The local date, unique per group. */
+  key: string;
+  title: string;
+  items: T[];
+}
+
+/**
+ * A list split into one group per day, in the list's own order (a run of
+ * items from the same day is one group; a later run from that day starts
+ * another only if the list isn't sorted by time). An item without a time
+ * (NaN) stays in the group before it.
+ */
+export function dayGroups<T>(items: readonly T[], tsOf: (item: T) => number, now: number): DayGroup<T>[] {
+  const groups: DayGroup<T>[] = [];
+  for (const item of items) {
+    const ts = tsOf(item);
+    const last = groups[groups.length - 1];
+    if (!Number.isFinite(ts)) {
+      if (last) last.items.push(item);
+      else groups.push({ key: '', title: '', items: [item] });
+      continue;
+    }
+    const d = new Date(ts);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    if (last && last.key === key) last.items.push(item);
+    else if (last && last.key === '' && groups.length === 1) {
+      // The first items had no time: they belong to the first day that has one.
+      last.key = key;
+      last.title = dayTitle(ts, now);
+      last.items.push(item);
+    } else groups.push({ key, title: dayTitle(ts, now), items: [item] });
+  }
+  return groups;
+}
+
+/** The color of a run's result as plain text: Error in red, Warning in orange, anything else the ordinary secondary gray. */
+export function resultTone(result: string): 'error' | 'warning' | undefined {
+  if (result === 'error' || result === 'max-runtime' || result === 'idle-timeout') return 'error';
+  if (result === 'warning' || result === 'held') return 'warning';
+  return undefined;
+}
+
+/** A run window's title is "<task> – <run id>"; a phone's bar names the task only. */
+export function taskNameOf(windowTitle: string, runId: string): string {
+  const suffix = ` – ${runId}`;
+  return windowTitle.endsWith(suffix) && windowTitle.length > suffix.length ? windowTitle.slice(0, -suffix.length) : windowTitle;
+}
+
+/** "22:40" (24-hour, no seconds) for a row's subtitle. */
+export function clockTime(ts: number | string): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** A row's metadata line: its time, then its duration when it has one. */
+export function timeAndDuration(ts: number | string, durationText: string): string {
+  return durationText ? `${clockTime(ts)} · ${durationText}` : clockTime(ts);
+}
+
+// ---------- the Dashboard ----------
+
+/** One row of the Dashboard's "Waiting for You": a chat, or a task run, that needs an answer. */
+export type WaitingItem =
+  | { kind: 'chat'; key: string; title: string; sub: string; since: number; session: SessionSummary }
+  | { kind: 'run'; key: string; title: string; sub: string; since: number; attention: AttentionRow };
+
+/** The waiting runs and the rest of the Needs Attention rows: a run that waits for the user is `Waiting for You`'s. */
+export function splitAttention(rows: AttentionRow[]): { waiting: AttentionRow[]; rest: AttentionRow[] } {
+  return { waiting: rows.filter((r) => r.runId !== null), rest: rows.filter((r) => r.runId === null) };
+}
+
+/**
+ * What waits for the user: every chat or terminal session whose agent waits for
+ * an answer, a permission or a look (the one that waited longest first), then
+ * every task run that asks a question or holds for them. The row's subtitle is
+ * the question, or what the wait is about.
+ */
+export function waitingForYou(sessions: SessionSummary[], attention: AttentionRow[]): WaitingItem[] {
+  const chats = waitingOf(sessions.filter((s) => s.kind !== 'run')).map(
+    (s): WaitingItem => ({
+      kind: 'chat',
+      key: `chat-${s.id}`,
+      title: s.title,
+      // A finished turn's text says nothing: the agent's last message is what it wants to be asked about.
+      sub: s.waiting!.reason === 'turn' && s.latest ? s.latest : s.waiting!.text,
+      since: s.waiting!.since,
+      session: s,
+    }),
+  );
+  const runs = splitAttention(attention).waiting.map(
+    (r): WaitingItem => ({ kind: 'run', key: `run-${r.task.id}-${r.runId}`, title: r.task.name, sub: r.problem, since: r.at ?? 0, attention: r }),
+  );
+  return [...chats, ...runs];
+}
+
+/** How long a waiting item has waited, for a row's trailing text; empty when it isn't known. */
+export function waitedFor(item: WaitingItem, now: number): string {
+  return item.since > 0 ? waitedText(Math.max(0, now - item.since)) : '';
+}
+
+export interface TaskCounts {
+  running: number;
+  paused: number;
+  enabled: number;
+  disabled: number;
+  completed: number;
+}
+
+/**
+ * The Dashboard's one summary row in place of six count rows: "1 running · 7
+ * enabled · 1 addon running". A count of zero is left out, and a part whose data
+ * hasn't loaded yet isn't counted (`null`), so the row doesn't change shape as
+ * it fills in. Empty until the tasks have loaded.
+ */
+export function taskSummary(input: { counts: TaskCounts; loaded: boolean; addonsRunning: number | null; remoteSessions: number | null }): string {
+  if (!input.loaded) return '';
+  const { counts } = input;
+  const parts: string[] = [];
+  const add = (n: number, text: string) => n > 0 && parts.push(`${n} ${text}`);
+  add(counts.running, 'running');
+  add(counts.paused, 'paused');
+  add(counts.enabled, 'enabled');
+  add(counts.disabled, 'disabled');
+  add(counts.completed, 'completed');
+  if (input.addonsRunning !== null) add(input.addonsRunning, input.addonsRunning === 1 ? 'addon running' : 'addons running');
+  if (input.remoteSessions !== null) add(input.remoteSessions, input.remoteSessions === 1 ? 'Remote Control session' : 'Remote Control sessions');
+  return parts.join(' · ');
+}
+
+// ---------- a chat's More menu ----------
+
+/**
+ * A conversation screen's More menu on a phone: the Chats window's commands that
+ * apply to what it shows, flattened, with Close Conversation last. Not here, and why:
+ * Stop and Send Now are in the message box; Harness, Model, Effort and Permission Mode
+ * are in the Usage panel; Open in New Window and Open Working Directory are for a
+ * computer; Edit, View and pane commands are the desktop window's. A terminal session
+ * has no message box and no transcript to export: its text size and its project's
+ * New Chat instead. A task run's agent can only be exported or left.
+ */
+export function chatMore(kind: SessionKind): MoreGroup[] {
+  const conversation: MoreGroup =
+    kind === 'terminal'
+      ? [{ toolbar: TEXT_SMALLER }, { toolbar: TEXT_LARGER }]
+      : kind === 'chat'
+        ? [{ item: 'chat-find' }, { item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }]
+        : [{ item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }];
+  return [conversation, [{ item: 'chat-new-in-project' }, { item: 'chat-send-to-chats' }], [{ item: 'chat-close' }]];
+}
+
+// ---------- terminals ----------
+
+/** The Smaller Text and Larger Text items a terminal puts in its screen's More menu (toolbar item ids). */
+export const TEXT_SMALLER = 'terminal-text-smaller';
+export const TEXT_LARGER = 'terminal-text-larger';
+
+/** A terminal session's title on a phone: its name, with its project when the name is the plain "Terminal". */
+export function terminalTitle(s: { title: string; groupName: string }): string {
+  return s.title === 'Terminal' && s.groupName ? `Terminal – ${s.groupName}` : s.title;
+}
+
+/**
+ * What covers a terminal on a phone: nothing once it has output, "Starting" while
+ * a session is on its way and hasn't printed yet, and the empty view when no
+ * session exists (`idle`: the task could run now).
+ */
+export function terminalOverlay(input: { loaded: boolean; hasOutput: boolean; sessionActive: boolean }): 'starting' | 'empty' | null {
+  if (!input.loaded || input.hasOutput) return null;
+  return input.sessionActive ? 'starting' : 'empty';
+}

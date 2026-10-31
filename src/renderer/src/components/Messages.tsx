@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MessagesShowKey } from '@shared/api';
 import type { MessageRow, MessagesResult } from '@shared/messages';
+import { groupRuns } from '@shared/runs';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
+import { clockTime, dayGroups, resultTone, timeAndDuration } from '../phone-lists';
+import { isPhone, usePageNav } from '../web/page-nav';
 import { SentFileList } from './ChatRows';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown, MessageBody, PromptBody } from './Markdown';
+import { EmptyRow, Group, Row as ListRow } from './phone/PhoneList';
 import { ToolInputView, ToolResultView } from './ToolContent';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 
@@ -148,6 +152,10 @@ function typeLabel(row: Row): string {
       return row.source === 'classifier' ? 'Classifier' : 'Agent';
     case 'thinking':
       return 'Thinking';
+    case 'task':
+      return 'Task';
+    case 'error':
+      return 'Error';
     default:
       return row.sent ? 'Agent' : (row.tool ?? '');
   }
@@ -182,6 +190,8 @@ function categoryOf(r: Row): MessagesShowKey | null {
     case 'prompt':
     case 'guidance':
     case 'agent':
+    case 'task':
+    case 'error':
       return 'messages';
     case 'thinking':
       return 'thinking';
@@ -219,6 +229,8 @@ interface ViewProps {
   focusReport?: boolean;
   /** Shown at the top of the detail panel, scrolling with the selected row's content below it. */
   notice?: ReactNode;
+  /** A phone's bar title for the list screen (the task's name); a message's own screen is titled by its type. */
+  phoneTitle?: string;
 }
 
 /**
@@ -226,7 +238,7 @@ interface ViewProps {
  * conversation in one table, full content in the panel below. A subagent's
  * window (agentId set) shows only its conversation.
  */
-export function MessagesView({ taskId, runId, agentId, running, refreshKey, focusReport, notice }: ViewProps) {
+export function MessagesView({ taskId, runId, agentId, running, refreshKey, focusReport, notice, phoneTitle }: ViewProps) {
   const [result, setResult] = useState<MessagesResult | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [mode, setMode] = useState<AgentMode>('interactive');
@@ -338,7 +350,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   useEffect(() => {
     const prevLast = prevLastRef.current;
     prevLastRef.current = lastId;
-    if (!autoScroll || lastId === null || selected === lastId) return;
+    // A phone's selection opens a message: the list doesn't follow the newest one.
+    if (isPhone || !autoScroll || lastId === null || selected === lastId) return;
     if (selected !== null && selected !== prevLast) return;
     setSelected(lastId);
     atBottomRef.current = true;
@@ -350,7 +363,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   // select the report row (an error run may have none: then its last step).
   const reportFocused = useRef(false);
   useEffect(() => {
-    if (!focusReport || reportFocused.current || result === null || steps.length === 0) return;
+    // A phone's list shows the run's result first: there's no row to select.
+    if (isPhone || !focusReport || reportFocused.current || result === null || steps.length === 0) return;
     reportFocused.current = true;
     const report = steps.findLast((s) => s.record.phase === 'result') ?? steps[steps.length - 1];
     setSelected(report.id);
@@ -443,9 +457,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
   });
 
-  const onRowContextMenu = (e: React.MouseEvent, r: Row) => {
-    e.preventDefault();
-    setSelected(r.id);
+  /** The row's menu; it doesn't select the row (on a phone a selection opens the message). */
+  const showRowMenu = (r: Row) => {
     if (r.kind === 'step') {
       const text = r.record.body || r.record.stdoutTail || r.record.error || r.preview;
       window.looper.showMessageContextMenu({ taskId, runId, label: r.preview, text });
@@ -460,6 +473,29 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       text: (r.kind === 'tool' ? (r.result ?? r.text) : r.text) || undefined,
     });
   };
+  const onRowContextMenu = (e: React.MouseEvent, r: Row) => {
+    e.preventDefault();
+    setSelected(r.id);
+    showRowMenu(r);
+  };
+
+  // A phone: the list screen, and a message's detail pushed over it (Back returns to the list where it was).
+  const listRef = useRef<HTMLDivElement>(null);
+  const listScroll = useRef(0);
+  const showingDetail = isPhone && current !== null;
+  useLayoutEffect(() => {
+    if (isPhone && !showingDetail && listRef.current) listRef.current.scrollTop = listScroll.current;
+  }, [showingDetail]);
+  usePageNav(
+    isPhone
+      ? {
+          title: current ? typeLabel(current) : phoneTitle,
+          back: current ? () => setSelected(null) : undefined,
+        }
+      : null,
+    10,
+  );
+  const run = useMemo(() => (agentId ? undefined : groupRuns(records)[0]), [records, agentId]);
 
   const emptyText = (): string => {
     if (result === null) return '';
@@ -546,6 +582,79 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     r.kind === 'step'
       ? `msg-row msg-step result-${r.record.result}`
       : `msg-row msg-${r.kind}${r.resultError ? ' msg-error' : ''}`;
+
+  if (isPhone) {
+    if (current) {
+      return (
+        <div className="messages messages-phone">
+          <div className="messages-detail">{detail(current)}</div>
+        </div>
+      );
+    }
+    const now = Date.now();
+    const days = dayGroups(visible, (r) => (r.ts ? Date.parse(r.ts) : NaN), now);
+    const toneOf = (r: Row) => (r.kind === 'step' ? resultTone(r.record.result) : r.resultError || r.kind === 'error' ? 'error' : undefined);
+    return (
+      <div
+        className="messages messages-phone"
+        ref={containerRef}
+      >
+        <div
+          className="messages-phone-scroll"
+          ref={listRef}
+          onScroll={(e) => {
+            listScroll.current = e.currentTarget.scrollTop;
+          }}
+        >
+          {notice}
+          {run?.resultText && (
+            <Group title="Result">
+              <div className="pg-result">
+                <Markdown text={run.resultText} />
+              </div>
+            </Group>
+          )}
+          {run && (
+            <Group>
+              <ListRow
+                title="Outcome"
+                sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
+                value={running ? 'Running' : resultLabel(run.result)}
+                valueTone={resultTone(run.result)}
+              />
+            </Group>
+          )}
+          {(result?.dropped ?? 0) > 0 && <p className="pg-group-footer">{result!.dropped} earlier messages not shown</p>}
+          {visible.length === 0 ? (
+            <Group title="Messages">
+              <EmptyRow>{rows.length > 0 ? 'No messages match the current view or filter.' : emptyText()}</EmptyRow>
+            </Group>
+          ) : (
+            days.map((day) => (
+              <Group key={day.key} title={days.length > 1 ? `Messages, ${day.title}` : 'Messages'}>
+                {day.items.map((r) => (
+                  <ListRow
+                    key={r.id}
+                    title={r.preview}
+                    sub={<span className="pg-oneline">{[r.ts ? clockTime(r.ts) : '', typeLabel(r)].filter(Boolean).join(' · ')}</span>}
+                    tone={toneOf(r)}
+                    chevron
+                    onOpen={() => setSelected(r.id)}
+                    onMenu={() => showRowMenu(r)}
+                  />
+                ))}
+              </Group>
+            ))
+          )}
+          {result?.pendingGuidance && (
+            <Group>
+              <ListRow title={<span className="pg-empty">{`Waiting for the agent: ${result.pendingGuidance.replace(/\s+/g, ' ')}`}</span>} sub="Guidance" />
+            </Group>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="messages" ref={containerRef}>

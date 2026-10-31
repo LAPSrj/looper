@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { toDataURL } from 'qrcode';
+import type { QRCodeToDataURLOptions } from 'qrcode';
 import icon from '../../../assets/icon.png';
 import {
   REMOTE_ACCESS_SOURCES,
@@ -12,13 +12,18 @@ import {
   type RemoteAccessState,
 } from '@shared/remote-access';
 import type { RemoteAccessSettings } from '@shared/types';
-import { EditorFooter, Field } from './components/ui';
+import { EditorFooter, Field, NumberInput } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
+import { useFitWindow } from './fit-window';
+import { isPhone } from './web/page-nav';
 
 const showError = (e: unknown) => void window.looper.showError((e as Error).message);
+
+/** The QR code library loads when a window first draws one, not with the app. */
+const toDataURL = (text: string, options: QRCodeToDataURLOptions) => import('qrcode').then((m) => m.toDataURL(text, options));
 
 function deviceSub(d: PairedDevice): string {
   const via = SOURCE_NAMES[d.provider];
@@ -70,6 +75,7 @@ export function RemoteAccessSettingsApp() {
   const [draft, setDraft] = useState<RemoteAccessSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const state = useRemoteAccessState();
+  useFitWindow();
 
   useEffect(() => {
     document.title = 'Remote Access';
@@ -128,17 +134,7 @@ export function RemoteAccessSettingsApp() {
               </Field>
             )}
             <Field label="Port">
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={draft.port}
-                onChange={(e) => {
-                  if (e.target.value === '') return;
-                  const n = Number(e.target.value);
-                  if (Number.isInteger(n)) set({ port: n });
-                }}
-              />
+              <NumberInput min={1} max={65535} value={draft.port} onChange={(n) => Number.isInteger(n) && set({ port: n })} />
             </Field>
           </div>
         </div>
@@ -167,11 +163,12 @@ export function RemoteAccessDevicesApp() {
 
   const device = state.devices.find((d) => d.id === selected);
 
-  const remove = async () => {
-    if (!device) return;
-    if (!(await window.looper.confirm(`Remove "${device.name}"? It needs a new pairing code to connect again.`))) return;
+  // Takes the device it removes: the selected one for the button, the clicked row for the menu.
+  const remove = async (target: PairedDevice | undefined = device) => {
+    if (!target) return;
+    if (!(await window.looper.confirm(`Remove "${target.name}"? It needs a new pairing code to connect again.`))) return;
     try {
-      await window.looper.remoteAccess.removeDevice(device.id);
+      await window.looper.remoteAccess.removeDevice(target.id);
       setSelected(null);
     } catch (e) {
       showError(e);
@@ -193,6 +190,13 @@ export function RemoteAccessDevicesApp() {
             empty="No paired devices"
             onSelect={(d) => setSelected(d.id)}
             onOpen={(d) => void window.looper.remoteAccess.openRename(d.id)}
+            autoFocus
+            menu={(d) => [
+              { label: 'Rename…', run: () => void window.looper.remoteAccess.openRename(d.id) },
+              { label: 'Remove', run: () => void remove(d) },
+            ]}
+            onRename={(d) => void window.looper.remoteAccess.openRename(d.id)}
+            onDelete={(d) => void remove(d)}
           />
           <div className="env-actions">
             <button className="btn" disabled={state.phase !== 'running'} onClick={() => void window.looper.remoteAccess.openPair()}>
@@ -338,11 +342,14 @@ export function RemoteAccessPairApp() {
           {body}
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn primary" autoFocus onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      {/* A phone closes the sheet from the xmark in its bar. */}
+      {!isPhone && (
+        <div className="editor-footer">
+          <button className="btn primary" autoFocus onClick={() => window.close()}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -352,13 +359,22 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
   const [name, setName] = useState('');
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // The current name starts selected, so typing replaces it.
+  useEffect(() => {
+    if (loaded) nameRef.current?.select();
+  }, [loaded]);
 
   useEffect(() => {
     document.title = 'Rename Device';
     void window.looper.remoteAccess.state().then((s) => {
       const d = s.devices.find((x) => x.id === id);
-      if (d) setName(d.name);
-      else setMissing(true);
+      if (d) {
+        setName(d.name);
+        setLoaded(true);
+      } else setMissing(true);
     }, showError);
     // Keep the draft; only track the device itself (removal).
     return window.looper.onEvent((e) => {
@@ -387,7 +403,7 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
       <div className="editor-body">
         <div className="form">
           <Field label="Name">
-            <input autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
+            <input ref={nameRef} autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
           </Field>
         </div>
       </div>
@@ -419,6 +435,7 @@ export function RemoteAccessSetupApp() {
   const [busy, setBusy] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const state = useRemoteAccessState();
+  useFitWindow();
 
   useEffect(() => {
     document.title = 'Set Up Remote Access';

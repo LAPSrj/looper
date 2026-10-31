@@ -9,7 +9,7 @@ function findHarness(settings: Settings, envId: string, harnessId: string): Harn
 }
 
 /** Standalone model editor window (Harness → Models → Add/Edit). No index = add. */
-export function ModelEditorApp({ envId, harnessId, index }: { envId: string; harnessId: string; index?: number }) {
+export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: string; harnessId: string; index?: number; copyOf?: number }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
@@ -41,7 +41,13 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
         setName(model.name);
         setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
         setDefaultEffort(model.defaultEffort ?? '');
-        document.title = model.name;
+      } else if (copyOf !== undefined && harnessModels(harness)[copyOf]) {
+        // Duplicate: a new model that starts as a copy; its id must be changed before Create.
+        const model = harnessModels(harness)[copyOf];
+        setId(model.id);
+        setName(`${model.name} (copy)`);
+        setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
+        setDefaultEffort(model.defaultEffort ?? '');
       } else {
         // New entries start fully offered with an explicit Medium default, so
         // runs are predictable out of the box; "CLI default" is a deliberate choice.
@@ -55,7 +61,7 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
       const harness = findHarness(e.settings, envId, harnessId);
       if (!harness || (index !== undefined && index >= harnessModels(harness).length)) setMissing(true);
     });
-  }, [envId, harnessId, index, isNew]);
+  }, [envId, harnessId, index, isNew, copyOf]);
 
   const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
@@ -84,6 +90,11 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
       return false;
     }
     const list = harnessModels(harness).slice();
+    // Task and project pickers find a model by its id, so each id appears once.
+    if (list.some((m, i) => m.id === trimmedId && i !== index)) {
+      void window.looper.showError('A model with this id already exists.');
+      return false;
+    }
     // The full kind list is stored as unset, and the order is the kind's, not click order.
     const ordered = kindLevels.map(([v]) => v).filter((v) => efforts.includes(v));
     const entry: HarnessModel = {
@@ -129,10 +140,11 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
           {kindLevels.length > 0 && (
             <>
               <Field label="Effort levels">
-                <div className="day-row">
+                <div className="day-row" role="group" aria-label="Effort levels">
                   {kindLevels.map(([value, label]) => (
                     <button
                       key={value}
+                      aria-pressed={efforts.includes(value)}
                       className={`btn small day-toggle ${efforts.includes(value) ? 'selected' : ''}`}
                       onClick={() => toggleEffort(value)}
                     >
@@ -157,7 +169,7 @@ export function ModelEditorApp({ envId, harnessId, index }: { envId: string; har
           )}
         </div>
       </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
+      <EditorFooter primaryLabel={isNew ? 'Create' : 'Save'} onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
     </div>
   );
 }

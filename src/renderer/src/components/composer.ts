@@ -1,5 +1,15 @@
 import type { SlashCommand } from '../../../shared/sessions';
 
+/**
+ * Whether a key press in a chat message box sends. On the desktop that's Enter
+ * (Shift adds a line break; Ctrl is Send Now's key). On a phone or tablet Enter
+ * adds a line break and Ctrl+Enter or Cmd+Enter, from a hardware keyboard, sends.
+ */
+export function sendsOnEnter(e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }, mobile: boolean): boolean {
+  if (e.key !== 'Enter') return false;
+  return mobile ? e.ctrlKey || e.metaKey : !e.shiftKey && !e.ctrlKey;
+}
+
 /** Selected text as a Markdown quote for the message box: each line after "> ", then an empty line. */
 export function quoteText(selection: string): string {
   const body = selection.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, '');

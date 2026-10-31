@@ -1,17 +1,37 @@
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../../format';
-import { preventSleepStatus, restStatus, type MainWindow } from '../../useMainWindow';
+import { splitAttention, taskSummary, waitingForYou } from '../../phone-lists';
+import { preventSleepStatus, type MainWindow } from '../../useMainWindow';
 import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners } from '../Dashboard';
+import { Elapsed, RestStatusText, WaitedFor } from '../Live';
 import { showTaskMenu } from '../TaskList';
 import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
+import { useSessionsState } from './useSessionsState';
 
 /**
- * The main window's dashboard on a phone: the status bar's counts, then the
- * desktop dashboard's tables as lists. A tap opens a row as a double-click
- * does; a long press shows its menu, which acts on that row's task.
+ * The main window's dashboard on a phone, in the order of what needs a
+ * decision: what waits for you (chats and runs), what needs attention, what is
+ * running, the latest runs, then one summary row of the task counts that opens
+ * Tasks. A tap opens a row as a double-click does; a long press shows its menu,
+ * which acts on that row's task.
  */
-export function PhoneDashboard({ m }: { m: MainWindow }) {
-  const { counts, now, rest, remoteOpen, addons, runtimes } = m;
+export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks: () => void }) {
+  const { counts, loaded, rest, remoteOpen, addons, runtimes } = m;
+  // Only names the day of a time: the waited and running times tick in their own components.
+  const now = Date.now();
   const opens = dashboardOpeners(m.openFromDashboard);
+  const sessions = useSessionsState();
+  // What waits for the user comes first: chats and terminals, then runs that ask or hold.
+  const waiting = waitingForYou(sessions?.sessions ?? [], m.attention);
+  const waitingRunIds = new Set(waiting.flatMap((w) => (w.kind === 'run' ? [w.attention.runId] : [])));
+  const attention = splitAttention(m.attention).rest;
+  const running = m.running.filter((r) => !waitingRunIds.has(r.runId));
+  // Zero before the data arrives is wrong, not empty: each part joins the summary only once it has answered.
+  const summary = taskSummary({
+    counts,
+    loaded,
+    addonsRunning: m.addonsLoaded && addons.length > 0 ? m.runningAddons : null,
+    remoteSessions: m.remoteLoaded && remoteOpen ? remoteOpen.length : null,
+  });
   const taskMenu = (taskId: string, list: 'attention' | 'running', runId: string | null) => () => {
     const task = m.tasks.find((t) => t.id === taskId);
     if (!task) return;
@@ -23,39 +43,30 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
   return (
     <div className="pg-scroll">
       <LargeTitle>Dashboard</LargeTitle>
-      <Group title="Tasks" footer={[rest?.armed ? restStatus(rest, now) : null, m.preventSleep ? preventSleepStatus(m.preventSleep) : null].filter(Boolean).join(' · ') || undefined}>
-        <Row title="Running" value={counts.running} />
-        <Row title="Paused" value={counts.paused} />
-        <Row title="Enabled" value={counts.enabled} />
-        <Row title="Disabled" value={counts.disabled} />
-        <Row title="Completed" value={counts.completed} />
-        {remoteOpen && <Row title="Remote Control sessions" value={remoteOpen.length} />}
-        {addons.length > 0 && <Row title="Addons running" value={m.runningAddons} />}
-      </Group>
-
-      <Group title="Running Now">
-        {m.running.length === 0 ? (
-          <EmptyRow>Nothing is running.</EmptyRow>
-        ) : (
-          m.running.map((r) => (
+      {waiting.length > 0 && (
+        <Group title="Waiting for You">
+          {waiting.map((w) => (
             <Row
-              key={r.runId}
-              title={r.task.name}
-              sub={`${r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]} · ${TRIGGER_LABELS[r.run.trigger]} · ${fmtClock(r.run.startedAt, now)}`}
-              value={now - r.run.startedAt < 1000 ? '0s' : formatDuration(now - r.run.startedAt)}
+              key={w.key}
+              lead={<StatusIcon level="warning" />}
+              title={w.title}
+              sub={w.sub}
+              value={w.since > 0 ? <span className="live-only"><WaitedFor since={w.since} /></span> : undefined}
+              tone="warning"
               chevron
-              onOpen={() => opens.running(r)}
-              onMenu={taskMenu(r.task.id, 'running', r.runId)}
+              // A chat opens on its conversation, ready to answer; a run on its run window (the question) or its terminal.
+              onOpen={() => (w.kind === 'chat' ? window.looper.sessions.openWindow(w.session.id) : opens.attention(w.attention))}
+              onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskMenu(w.attention.task.id, 'attention', w.attention.runId)}
             />
-          ))
-        )}
-      </Group>
+          ))}
+        </Group>
+      )}
 
       <Group title="Needs Attention">
-        {m.attention.length === 0 ? (
+        {attention.length === 0 ? (
           <EmptyRow>Nothing needs attention.</EmptyRow>
         ) : (
-          m.attention.map((r) => (
+          attention.map((r) => (
             <Row
               key={`${r.task.id}-${r.runId ?? 'last'}`}
               lead={<StatusIcon level={r.level} />}
@@ -64,6 +75,24 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
               chevron
               onOpen={() => opens.attention(r)}
               onMenu={taskMenu(r.task.id, 'attention', r.runId)}
+            />
+          ))
+        )}
+      </Group>
+
+      <Group title="Running Now">
+        {running.length === 0 ? (
+          <EmptyRow>Nothing is running.</EmptyRow>
+        ) : (
+          running.map((r) => (
+            <Row
+              key={r.runId}
+              title={r.task.name}
+              sub={`${STEP_LABELS[r.run.state]} · ${TRIGGER_LABELS[r.run.trigger]} · ${fmtClock(r.run.startedAt, now)}`}
+              value={<span className="live-only"><Elapsed since={r.run.startedAt} /></span>}
+              chevron
+              onOpen={() => opens.running(r)}
+              onMenu={taskMenu(r.task.id, 'running', r.runId)}
             />
           ))
         )}
@@ -89,6 +118,19 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
             />
           ))
         )}
+      </Group>
+
+      <Group title="Tasks" footer={
+        rest?.armed || m.preventSleep ? (
+          <>
+            {rest?.armed && <RestStatusText rest={rest} />}
+            {rest?.armed && m.preventSleep && preventSleepStatus(m.preventSleep) ? ' · ' : null}
+            {m.preventSleep ? preventSleepStatus(m.preventSleep) : null}
+          </>
+        ) : undefined
+      }
+    >
+        <Row title="All Tasks" sub={summary || undefined} chevron onOpen={onOpenTasks} />
       </Group>
 
       {remoteOpen && (

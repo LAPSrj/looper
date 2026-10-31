@@ -2,6 +2,7 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../shared/panes';
 import type { ProjectGroupBy } from '../shared/projects';
 import type { TaskFilter, TaskListOptions, View } from '../shared/types';
+import { NOT_MOBILE } from '../shared/ui-platform';
 
 export type ViewUpdate = (patch: Partial<View>) => void;
 
@@ -47,7 +48,8 @@ function showPaneItem(view: View, id: PaneId, update: ViewUpdate, label: string)
 /**
  * View's pane group: a check box for every pane in the order the sidebar shows
  * them (Projects, the task panes or the single task list, then `addonPanes`).
- * With none showing, the main window has no sidebar.
+ * With none showing, the main window has no sidebar. A phone has tabs instead
+ * of Looper's own panes, so only the addons' (on its Tasks tab) stay there.
  */
 export function paneVisibilityItems(
   view: View,
@@ -57,15 +59,17 @@ export function paneVisibilityItems(
   return [
     {
       label: '&Projects',
+      platforms: NOT_MOBILE,
       type: 'checkbox',
       checked: view.projectsPane.visible,
       click: (item) => update({ projectsPane: { ...view.projectsPane, visible: item.checked } }),
     },
     ...(view.sidebar === 'multiple'
-      ? PANES.map((p) => showPaneItem(view, p.id, update, SHOW_LABELS[p.id]))
+      ? PANES.map((p) => ({ ...showPaneItem(view, p.id, update, SHOW_LABELS[p.id]), platforms: NOT_MOBILE }))
       : [
           {
             label: SHOW_LABELS.tasks,
+            platforms: NOT_MOBILE,
             type: 'checkbox',
             checked: view.single.visible,
             click: (item) => update({ single: { ...view.single, visible: item.checked } }),
@@ -89,26 +93,32 @@ export function paneMenuItems(view: View, id: PaneId, update: ViewUpdate, withSh
 
 const GROUP_LABELS: Record<ProjectGroupBy, string> = { none: '&None', folder: '&Folder', harness: '&Harness' };
 
-/** The Projects pane's items: whether it shows (unless `withShow` is off), then its Group By choices. Used by its header's context menu and View > Task List Options. */
-export function projectsPaneMenuItems(view: View, update: ViewUpdate, withShow = true): MenuItemConstructorOptions[] {
+/** The Projects pane's Group By choices as a submenu named `label`. */
+function groupByMenu(view: View, update: ViewUpdate, label: string): MenuItemConstructorOptions {
   const pane = view.projectsPane;
-  const set = (patch: Partial<View['projectsPane']>) => update({ projectsPane: { ...pane, ...patch } });
+  return {
+    label,
+    submenu: (Object.keys(GROUP_LABELS) as ProjectGroupBy[]).map((k): MenuItemConstructorOptions => ({
+      label: GROUP_LABELS[k],
+      type: 'radio',
+      checked: pane.groupBy === k,
+      click: () => update({ projectsPane: { ...pane, groupBy: k } }),
+    })),
+  };
+}
+
+/** View > Group Projects By: one submenu level, next to the pane's Show check box (a desktop pane: the phone has tabs). */
+export function groupProjectsByMenu(view: View, update: ViewUpdate): MenuItemConstructorOptions {
+  return { ...groupByMenu(view, update, '&Group Projects By'), platforms: NOT_MOBILE };
+}
+
+/** The Projects pane's items for its header's context menu: whether it shows, then its Group By choices. */
+export function projectsPaneMenuItems(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
+  const pane = view.projectsPane;
   return [
-    ...(withShow
-      ? [
-          { label: 'Show &Pane', type: 'checkbox', checked: pane.visible, click: (item) => set({ visible: item.checked }) } as MenuItemConstructorOptions,
-          { type: 'separator' } as MenuItemConstructorOptions,
-        ]
-      : []),
-    {
-      label: '&Group By',
-      submenu: (Object.keys(GROUP_LABELS) as ProjectGroupBy[]).map((k): MenuItemConstructorOptions => ({
-        label: GROUP_LABELS[k],
-        type: 'radio',
-        checked: pane.groupBy === k,
-        click: () => set({ groupBy: k }),
-      })),
-    },
+    { label: 'Show &Pane', type: 'checkbox', checked: pane.visible, click: (item) => update({ projectsPane: { ...pane, visible: item.checked } }) },
+    { type: 'separator' },
+    groupByMenu(view, update, '&Group By'),
   ];
 }
 
@@ -117,25 +127,27 @@ export function singleMenuItems(view: View, update: ViewUpdate): MenuItemConstru
   return listItems(view.single, ALL_FILTERS, (patch) => update({ single: { ...view.single, ...patch } }));
 }
 
-/** View > Task List Options: how the task list looks and what it lists. Which panes show is in View itself. */
+/**
+ * View > Task List Options: how the task list looks and what it lists. Which panes show is in View itself.
+ * The phone's Tasks tab is one standard list with the single list's options, so the pane layout,
+ * the Compact look and the separate panes' options stay off it.
+ */
 export function taskListMenu(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
   const multiple = view.sidebar === 'multiple';
-  const projects: MenuItemConstructorOptions = { label: '&Projects Pane', submenu: projectsPaneMenuItems(view, update, false) };
   return [
-    { label: 'S&ingle Pane', type: 'radio', checked: !multiple, click: () => update({ sidebar: 'single' }) },
-    { label: 'M&ultiple Panes', type: 'radio', checked: multiple, click: () => update({ sidebar: 'multiple' }) },
+    { label: 'S&ingle Pane', platforms: NOT_MOBILE, type: 'radio', checked: !multiple, click: () => update({ sidebar: 'single' }) },
+    { label: 'M&ultiple Panes', platforms: NOT_MOBILE, type: 'radio', checked: multiple, click: () => update({ sidebar: 'multiple' }) },
     { type: 'separator' },
-    { label: '&Standard', type: 'radio', checked: view.taskList !== 'compact', click: () => update({ taskList: 'standard' }) },
-    { label: '&Compact', type: 'radio', checked: view.taskList === 'compact', click: () => update({ taskList: 'compact' }) },
+    { label: '&Standard', platforms: NOT_MOBILE, type: 'radio', checked: view.taskList !== 'compact', click: () => update({ taskList: 'standard' }) },
+    { label: '&Compact', platforms: NOT_MOBILE, type: 'radio', checked: view.taskList === 'compact', click: () => update({ taskList: 'compact' }) },
     { type: 'separator' },
     // The single list's folder options end its items, so Open Folders Automatically joins them.
     ...(multiple
       ? [
-          projects,
-          ...PANES.map((p): MenuItemConstructorOptions => ({ label: p.menuLabel, submenu: paneMenuItems(view, p.id, update, false) })),
+          ...PANES.map((p): MenuItemConstructorOptions => ({ label: p.menuLabel, platforms: NOT_MOBILE, submenu: paneMenuItems(view, p.id, update, false) })),
           { type: 'separator' } as MenuItemConstructorOptions,
         ]
-      : [projects, { type: 'separator' } as MenuItemConstructorOptions, ...singleMenuItems(view, update)]),
+      : singleMenuItems(view, update)),
     { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => update({ autoOpenFolders: item.checked }) },
   ];
 }

@@ -80,18 +80,18 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
           </Field>
           {task.check?.enabled && (
             <label className="checkbox-field">
-              <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />
+              <input autoFocus type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />
               Check
             </label>
           )}
           {task.classifier?.enabled && (
             <label className="checkbox-field">
-              <input type="checkbox" checked={classifier} onChange={(e) => setClassifier(e.target.checked)} />
+              <input autoFocus={!task.check?.enabled} type="checkbox" checked={classifier} onChange={(e) => setClassifier(e.target.checked)} />
               Classifier
             </label>
           )}
           <label className="checkbox-field">
-            <input type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} />
+            <input autoFocus={!task.check?.enabled && !task.classifier?.enabled} type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} />
             Agent
           </label>
         </div>

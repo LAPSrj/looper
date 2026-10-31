@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { groupRuns, runShown } from '@shared/runs';
 import type { RunRecord, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
+import { dayGroups, resultTone, timeAndDuration } from '../phone-lists';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
+import { EmptyRow, Group, Row } from './phone/PhoneList';
 import { ResizableColumns, type TableCol } from './ui';
 import { isPhone } from '../web/page-nav';
 
@@ -81,6 +83,39 @@ export function RunLog({ records, runtime, sessions = false, hideNoAction = fals
     onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
   });
 
+  if (isPhone) {
+    // iOS list rows by day: what happened, when and how long, and the result as text. A tap opens the run's screen.
+    const now = Date.now();
+    return (
+      <div className="runlog runlog-phone">
+        <div className="runlog-phone-scroll">
+          {groups.length === 0 ? (
+            <Group>
+              <EmptyRow>{sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}</EmptyRow>
+            </Group>
+          ) : (
+            dayGroups(groups, (g) => Date.parse(g.startTs), now).map((day) => (
+              <Group key={day.key} title={day.title}>
+                {day.items.map((g) => (
+                  <Row
+                    key={g.runId}
+                    title={g.details || (sessions ? 'Session' : resultLabel(g.result))}
+                    sub={<span className="pg-oneline">{timeAndDuration(g.startTs, g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : '')}</span>}
+                    value={sessions ? undefined : isRunning(g.runId) ? 'Running' : resultLabel(g.result)}
+                    valueTone={resultTone(g.result)}
+                    chevron
+                    onOpen={() => void window.looper.openMessages(taskOf(g), g.runId)}
+                    onMenu={() => window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details })}
+                  />
+                ))}
+              </Group>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="runlog" ref={containerRef}>
       <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
@@ -92,11 +127,7 @@ export function RunLog({ records, runtime, sessions = false, hideNoAction = fals
                 key={g.runId}
                 id={`run-${g.runId}`}
                 className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
-                onClick={() => {
-                  setSelected(g.runId);
-                  // A phone has no double-click: a tap opens the run window.
-                  if (isPhone) void window.looper.openMessages(taskOf(g), g.runId);
-                }}
+                onClick={() => setSelected(g.runId)}
                 onDoubleClick={() => void window.looper.openMessages(taskOf(g), g.runId)}
                 onContextMenu={(e) => {
                   e.preventDefault();

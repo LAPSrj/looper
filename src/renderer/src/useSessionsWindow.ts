@@ -81,7 +81,6 @@ export function useSessionsWindow(initial?: string, single = false) {
   // The tool call Now shows; null follows the latest.
   const [nowPos, setNowPos] = useState<number | null>(null);
   useEffect(() => setNowPos(null), [selected, watchedAgent]);
-  const [now, setNow] = useState(Date.now());
   const [view, setView] = useState<View | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -95,7 +94,6 @@ export function useSessionsWindow(initial?: string, single = false) {
       setLoaded(true);
     });
     void window.looper.info().then((i) => setView(i.settings.view));
-    const tick = setInterval(() => setNow(Date.now()), 15_000);
     const unsub = subscribe((e) => {
       if (e.type === 'sessions') setState(e.state);
       else if (e.type === 'chat' && e.state.id === selectedRef.current) setChat(e.state);
@@ -144,6 +142,10 @@ export function useSessionsWindow(initial?: string, single = false) {
       } else if (e.ctrlKey && !e.shiftKey && e.key === 'F4') {
         take();
         if (shown) void window.looper.sessions.close(shown.id);
+      } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't' && shown?.kind !== 'terminal') {
+        // Ctrl+Shift+T is New Terminal in the project, as in the main window.
+        take();
+        if (shown?.projectId) void window.looper.projects.newTerminal(shown.projectId);
       } else if (e.ctrlKey && !e.shiftKey && (e.key === 't' || e.key === 'w') && shown?.kind !== 'terminal') {
         // In a terminal session Ctrl+T and Ctrl+W are the agent's (and the shell's).
         take();
@@ -153,7 +155,6 @@ export function useSessionsWindow(initial?: string, single = false) {
     };
     window.addEventListener('keydown', onKey, true);
     return () => {
-      clearInterval(tick);
       unsub();
       unsubUi();
       window.removeEventListener('keydown', onKey, true);
@@ -273,7 +274,6 @@ export function useSessionsWindow(initial?: string, single = false) {
     workflows: activity?.workflows ?? [],
     nowPos,
     setNowPos,
-    now,
     view,
     shown,
     setShown,

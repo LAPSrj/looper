@@ -320,6 +320,25 @@ describe('the session hub', () => {
     expect(h.state().sessions[0].waiting).toBeUndefined();
   });
 
+  it('marks a chat whose turn ended on an API error as failed with its text, until the user looks', () => {
+    let now = 9000;
+    const limit = "You've hit your 5-hour limit · resets 12:10am (America/Vancouver)";
+    const c = chat({
+      turnEndedAt: 4000,
+      rows: [
+        { id: '0', kind: 'prompt', text: 'Fix the footer', preview: '' },
+        { id: '1', kind: 'error', text: limit, preview: '', ts: new Date(5000).toISOString() },
+      ],
+    });
+    const { h } = hub({ chats: [c], now: () => now });
+    expect(h.state().sessions[0]).toMatchObject({ status: 'ready', latest: limit, waiting: { reason: 'error', text: limit, since: 5000 } });
+    now = 10_000;
+    h.seen('c1');
+    const seen = h.state().sessions[0];
+    expect(seen.waiting).toBeUndefined();
+    expect(seen.latest).toBe(limit);
+  });
+
   it("waits on a chat's permission request until it's answered", () => {
     const { h } = hub({ chats: [chat({ status: 'working', permissions: [{ id: 'r1', tool: 'Bash', input: {} }] })] });
     expect(h.state().sessions[0]).toMatchObject({ waiting: { reason: 'permission', text: 'Wants to run a command' }, permissionId: 'r1' });

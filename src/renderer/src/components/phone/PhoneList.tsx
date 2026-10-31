@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { platform } from '../../platform';
+import { tabKeyTarget, tabStop } from '../tabs-model';
 
 /**
  * A phone's list section: iOS's inset grouped table section, Material's list
@@ -47,29 +48,37 @@ export function Row({
   lead,
   chevron,
   tone,
+  valueTone,
+  selected,
   onOpen,
   onMenu,
 }: {
   title: ReactNode;
+  /** iPad: what the split view's detail column shows. */
+  selected?: boolean;
   sub?: ReactNode;
   value?: ReactNode;
   lead?: ReactNode;
   /** It opens another screen (iOS shows a disclosure chevron). */
   chevron?: boolean;
   tone?: 'error' | 'warning' | 'muted';
-  onOpen?: () => void;
+  /** The value's color (a limit close to its end). */
+  valueTone?: 'error' | 'warning';
+  /** `row` is the row's element, which a menu it opens anchors to. */
+  onOpen?: (row: HTMLElement) => void;
   onMenu?: () => void;
 }) {
   return (
     <div
-      className={`pg-row${onOpen ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}`}
+      className={`pg-row${onOpen ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}`}
       role={onOpen ? 'button' : undefined}
+      aria-current={selected || undefined}
       tabIndex={onOpen ? 0 : undefined}
-      onClick={onOpen}
+      onClick={onOpen && ((e) => onOpen(e.currentTarget))}
       onKeyDown={
         onOpen &&
         ((e) => {
-          if (e.key === 'Enter') onOpen();
+          if (e.key === 'Enter') onOpen(e.currentTarget);
         })
       }
       onContextMenu={
@@ -122,10 +131,30 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
   label: string;
 }) {
+  const ids = items.map(([id]) => id);
   return (
-    <div className="pg-segmented" role="tablist" aria-label={label}>
+    <div
+      className="pg-segmented"
+      role="tablist"
+      aria-label={label}
+      // The ARIA tabs pattern as in Tabs.tsx: one Tab stop, the arrow keys, Home and End move to a segment and select it.
+      onKeyDown={(e) => {
+        const to = tabKeyTarget(ids, value, e);
+        if (to === null) return;
+        e.preventDefault();
+        onChange(to as T);
+        e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[ids.indexOf(to as T)]?.focus();
+      }}
+    >
       {items.map(([id, text]) => (
-        <button key={id} role="tab" aria-selected={value === id} className={value === id ? 'active' : undefined} onClick={() => onChange(id)}>
+        <button
+          key={id}
+          role="tab"
+          aria-selected={value === id}
+          tabIndex={tabStop(ids, value) === id ? 0 : -1}
+          className={value === id ? 'active' : undefined}
+          onClick={() => onChange(id)}
+        >
           {text}
         </button>
       ))}

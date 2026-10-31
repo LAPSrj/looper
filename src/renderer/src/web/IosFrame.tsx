@@ -1,27 +1,35 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
+import { useConnection } from './connection';
+import { tabKeyTarget, tabStop } from '../components/tabs-model';
+import { darkColor } from './nav-stack';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
+import { OfflineBanner } from './OfflineBanner';
+import { PUSH_HINTS } from './push-client';
 import { HOST_COMPUTER, messageCancelId, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
 import { CHECK, CHEVRON_RIGHT, FileRows, FileViewBody } from './phone-files';
+import { isDestructive, phoneMenu } from './more-menu';
 import {
+  ActionGlyph,
   deviceNoun,
-  isLongMenu,
   menuGroups,
+  moreFor,
   NavIcon,
   PhoneWindows,
+  pickMore,
   plainLabel,
-  rootMoreItems,
-  THIS_DEVICE_ITEM,
   usePhoneShell,
   useSubmenus,
   type BackLayer,
+  type OpenMore,
   type PhoneShell,
   type Screen,
 } from './phone-shell';
+import type { PageNavAction, PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
 import './ios.css';
 
@@ -61,7 +69,7 @@ const NEW_FOLDER = (
 
 /** iOS (iPhone and iPad), after the Human Interface Guidelines: windows as a navigation stack and sheets. */
 export function IosFrame({ controller }: { controller: ShellController }) {
-  const [more, setMore] = useState<{ w: string; items: MenuItemSpec[]; anchor: DOMRect } | null>(null);
+  const [more, setMore] = useState<OpenMore | null>(null);
   const [device, setDevice] = useState(false);
   const local: BackLayer[] = [];
   if (device) local.push(() => setDevice(false));
@@ -74,11 +82,15 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
   }, []);
-  // iOS colors the status bar from the fixed element under it (the root), not from theme-color: the color of
-  // the topmost full screen's bar, or black while a phone's page sheet shrinks the screen behind it.
+  // iOS colors the status bar from the fixed element at the top (the served page's .ios-top-edge strip), not from
+  // theme-color: the color of the topmost full screen's bar, or black while a phone's page sheet shrinks the screen behind it.
   const full = shell.screens.filter((x) => !x.leaving && (x.pres === 'root' || x.pres === 'push')).sort((a, b) => b.depth - a.depth)[0];
   const fullEdge = full ? shell.edges.get(full.win.w) : undefined;
   const statusBar = !full || (!shell.tablet && shell.top?.pres === 'page-sheet') ? '#000' : !fullEdge ? 'var(--ios-bg)' : fullEdge.scrolled ? 'var(--ios-bar)' : fullEdge.color;
+  useEffect(() => {
+    const edge = document.querySelector<HTMLElement>('.ios-top-edge');
+    if (edge) edge.style.backgroundColor = statusBar;
+  }, [statusBar]);
   const overlay = !!more || device;
   useEffect(() => {
     if (!overlay) return;
@@ -86,10 +98,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     return () => controller.setOverlay(false);
   }, [overlay, controller]);
 
-  const openMore = (sc: Screen, button: HTMLElement) => {
-    const items = sc.pres === 'root' ? rootMoreItems(sc.win.menu, 'This Device') : (sc.win.menu ?? []);
-    setMore({ w: sc.win.w, items, anchor: button.getBoundingClientRect() });
-  };
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
     <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
@@ -100,9 +109,9 @@ export function IosFrame({ controller }: { controller: ShellController }) {
         renderBar={(sc) => <IosBar shell={shell} controller={controller} sc={sc} onMore={openMore} />}
         dragToDismiss={(p) => p === 'page-sheet' || p === 'form-sheet'}
       />
-      {!s.connected && (
+      {!s.connected && !s.everConnected && (
         <div className="ph-connection" role="status">
-          {s.everConnected ? 'Reconnecting…' : 'Connecting…'}
+          Connecting…
         </div>
       )}
       {device && <DeviceSheet controller={controller} shell={shell} onClose={() => setDevice(false)} />}
@@ -123,8 +132,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
           onClose={() => setMore(null)}
           onPick={(item) => {
             setMore(null);
-            if (item.id === THIS_DEVICE_ITEM) setDevice(true);
-            else controller.pick(more.w, more.w, item);
+            pickMore(controller, more, item, () => setDevice(true));
           }}
         />
       )}
@@ -138,20 +146,114 @@ export function IosFrame({ controller }: { controller: ShellController }) {
 
 // ---------- the navigation bar ----------
 
+/** The label of This Device in the main window's More menu. */
+const DEVICE_LABEL = 'This Device';
+
+/** Confirm labels iOS draws as its checkmark (a prominent glass button); others show as text. */
+const CHECKMARK_LABELS = /^(save|done|ok|apply)$/i;
+
 function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controller: ShellController; sc: Screen; onMore: (sc: Screen, button: HTMLElement) => void }) {
   const nav = sc.nav;
   const title = plainLabel(nav?.title ?? sc.win.title);
   const sheet = sc.pres === 'page-sheet' || sc.pres === 'form-sheet';
   const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
-  const hasMore = sc.pres === 'root' || !!sc.win.menu?.length;
+  const hasMore = moreFor(sc, DEVICE_LABEL).items.length > 0;
+  const cancel = nav?.cancel;
+  const confirm = nav?.confirm;
+  const confirmLabel = plainLabel(confirm?.label ?? 'Save');
   // The bar has no fill of its own: it's the page's top color, with the hard scroll edge once the page scrolls.
   const edge = shell.edges.get(sc.win.w);
+  const connection = useConnection(controller);
+  const split = shell.tablet ? nav?.split : undefined;
+  const buttons = (actions: PageNavAction[] | undefined) =>
+    actions?.map((a) => (
+      <button key={a.id} className={a.icon || a.ring ? 'ios-icon-btn' : 'ios-text-btn'} aria-label={a.label} disabled={a.disabled} onClick={() => a.run()}>
+        {a.icon || a.ring ? <ActionGlyph action={a} /> : a.label}
+      </button>
+    ));
+  const trail = (
+    <div className="ios-bar-trail">
+      {buttons(nav?.actions)}
+      {hasMore && (
+        <button className="ios-icon-btn" aria-label="More" aria-haspopup="menu" onClick={(e) => onMore(sc, e.currentTarget)}>
+          {ELLIPSIS}
+        </button>
+      )}
+      {confirm &&
+        (CHECKMARK_LABELS.test(confirmLabel) ? (
+          <button className="ios-icon-btn prominent" aria-label={confirmLabel} disabled={confirm.disabled} onClick={() => confirm.run()}>
+            {CHECKMARK}
+          </button>
+        ) : (
+          <button className="ios-text-btn bold" disabled={confirm.disabled} onClick={() => confirm.run()}>
+            {confirmLabel}
+          </button>
+        ))}
+    </div>
+  );
+  if (split) {
+    // iPad's split view: the tab bar near the top, then a bar over each column. The list's bar has the
+    // window's own Back; the detail's has the page's (a deeper screen in that column).
+    return (
+      <header className="ios-bar split" style={{ background: !edge ? undefined : edge.scrolled ? 'var(--ios-bar)' : edge.color }}>
+        {nav?.tabs && <IosTabBar tabs={nav.tabs} />}
+        <div className="ios-bar-split">
+          <div className={`ios-bar-row ios-bar-list${edge?.scrolled ? ' edge' : ''}`} style={{ width: split.width }}>
+            <div className="ios-bar-lead">
+              {sc.pres === 'push' && (
+                <button className="ios-back" aria-label="Back" onClick={() => controller.close(sc.win.w)}>
+                  {BACK}
+                </button>
+              )}
+            </div>
+            <h2 className={`ios-bar-title${!split.largeTitle || shell.scrolledPast.has(sc.win.w) ? '' : ' faded'}`}>{plainLabel(split.title)}</h2>
+            <div className="ios-bar-trail">{buttons(split.actions)}</div>
+          </div>
+          <div
+            className={`ios-bar-row ios-bar-detail${edge?.detail?.scrolled ? ' edge' : ''}${edge?.detail && !edge.detail.scrolled && darkColor(edge.detail.color) ? ' on-dark' : ''}`}
+            style={edge?.detail ? { background: edge.detail.scrolled ? 'var(--ios-bar)' : edge.detail.color } : undefined}
+          >
+            <div className="ios-bar-lead">
+              {nav?.back && (
+                <button className="ios-back" aria-label="Back" onClick={() => shell.goBack()}>
+                  {BACK}
+                </button>
+              )}
+            </div>
+            <h1 className="ios-bar-title">{plainLabel(nav?.title ?? '')}</h1>
+            {trail}
+          </div>
+          {split.inspector && (
+            <div className="ios-bar-row ios-bar-inspector" style={{ width: split.inspector.width }}>
+              <div className="ios-bar-lead" />
+              <h2 className="ios-bar-title">{plainLabel(split.inspector.title)}</h2>
+              <div className="ios-bar-trail" />
+            </div>
+          )}
+        </div>
+        <OfflineBanner connection={connection} />
+      </header>
+    );
+  }
   return (
-    <header className={`ios-bar${edge?.scrolled ? ' edge' : ''}`} style={edge && !edge.scrolled ? { background: edge.color } : undefined}>
+    <header
+      className={`ios-bar${edge?.scrolled ? ' edge' : ''}${edge && !edge.scrolled && darkColor(edge.color) ? ' on-dark' : ''}`}
+      style={edge && !edge.scrolled ? { background: edge.color } : undefined}
+    >
       {sc.pres === 'page-sheet' && !shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
       <div className="ios-bar-row">
         <div className="ios-bar-lead">
-          {nav?.back || sc.pres === 'push' ? (
+          {/* A page's own deeper screen (an editor's section) comes before the editor's Cancel. */}
+          {nav?.back ? (
+            <button className="ios-back" aria-label="Back" onClick={() => shell.goBack()}>
+              {BACK}
+            </button>
+          ) : cancel ? (
+            // An editor's Cancel takes Back's or Close's place (HIG: Sheets).
+            <button className="ios-icon-btn" aria-label={plainLabel(cancel.label ?? 'Cancel')} disabled={cancel.disabled} onClick={() => cancel.run()}>
+              {XMARK}
+            </button>
+          ) : sc.pres === 'push' ? (
             <button className="ios-back" aria-label="Back" onClick={() => shell.goBack()}>
               {BACK}
             </button>
@@ -162,20 +264,25 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
           ) : null}
         </div>
         <h1 className={`ios-bar-title${showTitle ? '' : ' faded'}`}>{title}</h1>
-        <div className="ios-bar-trail">
-          {nav?.actions?.map((a) => (
-            <button key={a.id} className={a.icon ? 'ios-icon-btn' : 'ios-text-btn'} aria-label={a.label} disabled={a.disabled} onClick={() => a.run()}>
-              {a.icon ? <NavIcon name={a.icon} /> : a.label}
-            </button>
-          ))}
-          {hasMore && (
-            <button className="ios-icon-btn" aria-label="More" aria-haspopup="menu" onClick={(e) => onMore(sc, e.currentTarget)}>
-              {ELLIPSIS}
-            </button>
-          )}
-        </div>
+        {trail}
       </div>
+      <OfflineBanner connection={connection} />
     </header>
+  );
+}
+
+/** iPadOS's tab bar: the tabs' names in a glass capsule centered near the top of the screen (HIG: Tab bars). */
+function IosTabBar({ tabs }: { tabs: PageNavTabs }) {
+  return (
+    <div className="ios-tabbar-row">
+      <nav className="ios-tabbar" aria-label="Looper">
+        {tabs.items.map(([id, label]) => (
+          <button key={id} className={`ios-tab${id === tabs.value ? ' active' : ''}`} aria-current={id === tabs.value ? 'page' : undefined} onClick={() => tabs.select(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+    </div>
   );
 }
 
@@ -183,7 +290,11 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
 
 const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'radio';
 
-/** One level of a menu as iOS draws it: groups split by a thick gap, a check before chosen items, a chevron on submenus. */
+/**
+ * One level of a menu as iOS draws it: groups split by a thick gap, a check
+ * before chosen items, the item's symbol at its end (a chevron on submenus),
+ * destructive items in red.
+ */
 function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
   const checks = items.some(isChoice);
   return (
@@ -202,13 +313,21 @@ function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
               role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
               aria-checked={isChoice(it) ? !!it.checked : undefined}
               aria-haspopup={it.type === 'submenu' || undefined}
-              className="ios-menu-item"
+              className={`ios-menu-item${it.type !== 'submenu' && isDestructive(it.label) ? ' destructive' : ''}`}
               disabled={!it.enabled}
               onClick={() => onItem(it)}
             >
               {checks && <span className="ios-menu-check">{it.checked ? CHECK : null}</span>}
               <span className="ios-menu-label">{plainLabel(it.label)}</span>
-              {it.type === 'submenu' && <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>}
+              {it.type === 'submenu' ? (
+                <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>
+              ) : (
+                it.icon && (
+                  <span className="ios-menu-icon">
+                    <NavIcon name={it.icon} size={20} />
+                  </span>
+                )
+              )}
             </button>
           ))}
         </div>
@@ -217,11 +336,13 @@ function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
   );
 }
 
-/** Where a menu of `width` × about its height goes so it stays on screen, below or above `y`. */
+/** Where a menu of `width` × about its height goes so it stays on screen: below `y` when it fits, else on the roomier side, capped to that room (it scrolls). */
 function placeMenu(x: number, y: number, width: number, height: number, vw: number, vh: number): React.CSSProperties {
   const left = Math.max(8, Math.min(x, vw - width - 8));
-  const below = y + height + 8 <= vh;
-  return below ? { left, top: Math.max(8, y), width } : { left, bottom: Math.max(8, vh - y), width };
+  const top = Math.max(8, y);
+  const bottom = Math.max(8, vh - y);
+  const below = top + height + 8 <= vh || vh - top >= vh - bottom;
+  return below ? { left, top, width, maxHeight: vh - top - 8 } : { left, bottom, width, maxHeight: vh - bottom - 8 };
 }
 
 /** The More button's pull-down menu, under the button. */
@@ -237,28 +358,17 @@ function PullDown({ items, anchor, onPick, onClose }: { items: MenuItemSpec[]; a
   );
 }
 
-/** A menu the computer popped up (a long press): a context menu by the finger, or an action sheet when long. */
+/**
+ * A menu the computer popped up (a long press): a context menu by the finger,
+ * scrolling when it's long (HIG: Action sheets shouldn't scroll, so a long menu
+ * isn't one), with what can't be done now hidden and destructive items last.
+ */
 function PopupMenu({ controller, shell, menu: m }: { controller: ShellController; shell: PhoneShell; menu: OpenMenu }) {
   const at = useMemo(() => controller.popupPoint(m), [controller, m]);
-  const sub = useSubmenus(m.items);
-  // An iPad shows an action sheet as a popover by the finger, which the menu list already is.
-  const long = !shell.tablet && isLongMenu(sub.level, shell.vp.height);
+  const items = useMemo(() => phoneMenu(m.items), [m.items]);
+  const sub = useSubmenus(items);
   const pick = (it: MenuItemSpec) => (it.type === 'submenu' ? sub.open(it) : controller.pick(m.menuId, m.w, it));
   const dismiss = () => controller.dismissMenu(m.menuId);
-  if (long) {
-    return (
-      <div className="ios-sheet-layer" onPointerDown={(e) => e.target === e.currentTarget && dismiss()}>
-        <div className="ios-action-sheet">
-          <div className="ios-action-group">
-            <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={pick} />
-          </div>
-          <button className="ios-action-cancel" onClick={dismiss}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
   const rows = sub.level.length + (sub.title ? 1 : 0);
   return (
     <div className="ios-menu-layer dim" onPointerDown={(e) => e.target === e.currentTarget && dismiss()} onContextMenu={(e) => e.preventDefault()}>
@@ -270,8 +380,6 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
 }
 
 // ---------- alerts ----------
-
-const DESTRUCTIVE = /^(delete|remove|discard|don.t save|unpair|end|stop|clear|overwrite|replace|move to recycle bin)\b/i;
 
 /**
  * UIAlertController's look: the message as the bold title, the detail under
@@ -312,7 +420,7 @@ export function Alert({ spec, onAnswer, input }: { spec: MessageBoxSpec; onAnswe
         </div>
         <div className={`ios-alert-buttons${row ? ' row' : ''}`}>
           {order.map((i) => (
-            <button key={i} className={`ios-alert-btn${i === preferred && (i !== cancel || spec.buttons.length === 1) ? ' bold' : ''}${DESTRUCTIVE.test(spec.buttons[i]) && i !== cancel ? ' destructive' : ''}`} onClick={() => onAnswer(i, checked)}>
+            <button key={i} className={`ios-alert-btn${i === preferred && (i !== cancel || spec.buttons.length === 1) ? ' bold' : ''}${isDestructive(spec.buttons[i]) && i !== cancel ? ' destructive' : ''}`} onClick={() => onAnswer(i, checked)}>
               {plainLabel(spec.buttons[i])}
             </button>
           ))}
@@ -435,10 +543,29 @@ function FolderBar({ browser, onNewFolder }: { browser: HostBrowser; onNewFolder
 }
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+  const ids = options.map((o) => o.value);
   return (
-    <div className="ios-segmented" role="tablist">
+    <div
+      className="ios-segmented"
+      role="tablist"
+      // The ARIA tabs pattern as in Tabs.tsx: one Tab stop, the arrow keys, Home and End move to a segment and select it.
+      onKeyDown={(e) => {
+        const to = tabKeyTarget(ids, value, e);
+        if (to === null) return;
+        e.preventDefault();
+        onChange(to as T);
+        e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[ids.indexOf(to as T)]?.focus();
+      }}
+    >
       {options.map((o) => (
-        <button key={o.value} role="tab" aria-selected={o.value === value} className={o.value === value ? 'on' : ''} onClick={() => onChange(o.value)}>
+        <button
+          key={o.value}
+          role="tab"
+          aria-selected={o.value === value}
+          tabIndex={tabStop(ids, value) === o.value ? 0 : -1}
+          className={o.value === value ? 'on' : ''}
+          onClick={() => onChange(o.value)}
+        >
           {o.label}
         </button>
       ))}
@@ -643,7 +770,7 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
             <Switch on={d.push === 'on'} disabled={!usable || d.busy} label="Notifications" onChange={d.setNotifications} />
           </div>
         </div>
-        {d.push === 'home-screen' && <div className="ios-group-footer">Add Looper to the Home Screen to get notifications.</div>}
+        {d.push && PUSH_HINTS[d.push] && <div className="ios-group-footer">{PUSH_HINTS[d.push]}</div>}
         <div className="ios-group">
           <button className="ios-cell ios-cell-button destructive" onClick={d.unpair}>
             Unpair This Device

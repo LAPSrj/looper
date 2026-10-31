@@ -97,7 +97,7 @@ function trackWindow(addonId: string, w: AppWindow): void {
   w.on('closed', () => set.delete(w));
 }
 
-/** Tools → <tool>…: its window, or the open one brought forward. */
+/** Tools → <tool>: its window, or the open one brought forward. */
 function openTool(deps: AddonUiDeps, addon: AddonInfo, tool: AddonTool): void {
   const key = `${addon.id}/${tool.id}`;
   const open = toolWindows.get(key);
@@ -123,8 +123,9 @@ function openTool(deps: AddonUiDeps, addon: AddonInfo, tool: AddonTool): void {
 export function addonToolsMenu(deps: AddonUiDeps, addons: AddonInfo[]): Electron.MenuItemConstructorOptions[] {
   return addons.filter((a) => a.enabled).flatMap((a) =>
     a.tools.map((t): Electron.MenuItemConstructorOptions => ({
-      label: `${menuText(t.label)}…`,
+      label: menuText(t.label),
       enabled: a.status === 'running',
+      platforms: t.platforms,
       click: () => openTool(deps, a, t),
     })),
   );
@@ -226,7 +227,7 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
     m.description ?? '',
     adds.length ? `It adds:\n${adds.map((a) => `•  ${a}`).join('\n')}` : '',
     where,
-    changed ? 'This is how you set it to run in Advanced → Addons… → Edit…, which installing doesn’t change.' : '',
+    changed ? 'This is how you set it to run in Advanced → Addons → Edit…, which installing doesn’t change.' : '',
     'Install it only if you trust where it came from.',
   ]
     .filter(Boolean)
@@ -410,7 +411,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
       setWindowMenu(
         sender,
         menuBar?.length
-          ? Menu.buildFromTemplate(menuBar.map((m) => ({ label: m.label, submenu: menuItems(deps, sender, id, source, m.items, item) })))
+          ? Menu.buildFromTemplate(menuBar.map((m) => ({ label: m.label, platforms: m.platforms, submenu: menuItems(deps, sender, id, source, m.items, item) })))
           : null,
       );
     },
@@ -448,7 +449,10 @@ function menuItems(
     'separator' in m
       ? { type: 'separator' }
       : {
+          // The addon's id names the item in a designed phone More menu (mobileMore).
+          id: m.id,
           label: m.label,
+          platforms: m.platforms,
           ...(m.checked !== undefined ? { type: m.radio ? 'radio' : 'checkbox', checked: m.checked } : {}),
           enabled: (m.enabled ?? true) && commandOn(m, item),
           click: () => void runEvent(deps, sender, addonId, { source, kind: 'menu', id: m.id, item: item?.id }, m.confirm),

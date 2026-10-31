@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Environment } from '@shared/types';
-import { EFFORT_LEVELS, harnessModels, pathFlavor } from '@shared/environments';
-import { Field, EditorFooter } from './components/ui';
+import { AgentFields } from './components/RemoteFields';
+import { EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 
 /** New Task with Agent: what the task builder runs with. Start turns this window into the conversation. */
@@ -30,13 +30,6 @@ export function BuilderSetupApp() {
   const env = environments?.find((e) => e.id === envId);
   const harnesses = env?.harnesses.filter((h) => h.kind !== 'custom') ?? [];
   const harness = harnesses.find((h) => h.id === harnessId);
-  const models = harness ? harnessModels(harness) : [];
-  const modelEntry = models.find((m) => m.id === model);
-  const kindEfforts = harness && harness.kind !== 'custom' ? EFFORT_LEVELS[harness.kind] : [];
-  const efforts = modelEntry?.efforts ? kindEfforts.filter(([v]) => modelEntry.efforts!.includes(v)) : kindEfforts;
-  const defaultEffort = modelEntry?.defaultEffort
-    ? (kindEfforts.find(([v]) => v === modelEntry.defaultEffort)?.[1] ?? modelEntry.defaultEffort)
-    : undefined;
 
   function pickEnvironment(next: Environment) {
     setEnvId(next.id);
@@ -49,15 +42,6 @@ export function BuilderSetupApp() {
     setModel('');
     setEffort('');
   }
-
-  const browse = async () => {
-    const picked = await window.looper.pickDirectory({
-      current: cwd || undefined,
-      flavor: env ? pathFlavor(env, host) : undefined,
-      distro: env?.kind === 'wsl' ? env.distro : undefined,
-    });
-    if (picked) setCwd(picked);
-  };
 
   const start = async () => {
     if (starting) return;
@@ -91,66 +75,19 @@ export function BuilderSetupApp() {
     <div className="editor">
       <div className="editor-body">
         <div className="form setup-form">
-          <Field label="Environment">
-            <select
-              value={envId}
-              onChange={(e) => {
-                const next = environments.find((x) => x.id === e.target.value);
-                if (next) pickEnvironment(next);
-              }}
-            >
-              {environments.map((e) => (
-                <option key={e.id} value={e.id} disabled={!e.harnesses.some((h) => h.kind !== 'custom')}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Harness">
-            <select value={harnessId} onChange={(e) => pickHarness(e.target.value)}>
-              {harnesses.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="row">
-            <Field label="Model">
-              <select
-                value={model}
-                onChange={(e) => {
-                  setModel(e.target.value);
-                  setEffort('');
-                }}
-              >
-                <option value="">Default</option>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Effort">
-              <select value={effort} onChange={(e) => setEffort(e.target.value)}>
-                <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Default'}</option>
-                {efforts.map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <Field label="Working directory">
-            <div className="browse-row">
-              <input className="mono" value={cwd} onChange={(e) => setCwd(e.target.value)} autoFocus />
-              <button className="btn" onClick={() => void browse()}>
-                Browse…
-              </button>
-            </div>
-          </Field>
+          <AgentFields
+            draft={{ environmentId: envId, harnessId, model: model || undefined, effort: effort || undefined, cwd }}
+            environments={environments}
+            host={host}
+            harnesses="agents"
+            onChange={(p) => {
+              if ('environmentId' in p) setEnvId(p.environmentId ?? '');
+              if ('harnessId' in p) setHarnessId(p.harnessId ?? '');
+              if ('model' in p) setModel(p.model ?? '');
+              if ('effort' in p) setEffort(p.effort ?? '');
+              if ('cwd' in p) setCwd(p.cwd ?? '');
+            }}
+          />
         </div>
       </div>
       <EditorFooter primaryLabel="Start" onPrimary={() => void start()} onCancel={() => window.close()} saving={starting} />

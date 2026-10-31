@@ -137,7 +137,7 @@ const COMMANDS = {
   },
   async 'click-text'(text) {
     const r = await page.evaluate((t) => {
-      const els = [...document.querySelectorAll('button, a, [role="button"], [role="option"], summary, .tab')];
+      const els = [...document.querySelectorAll('button, a, [role="button"], [role="option"], [role="treeitem"], summary, .tab')];
       const el = els.find((e) => e.textContent?.trim() === t) ?? els.find((e) => e.textContent?.includes(t));
       if (!el) return 'NOT_FOUND';
       el.click();

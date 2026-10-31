@@ -4,6 +4,7 @@ import { describeEnvironment } from '@shared/environments';
 import { folderTree } from '@shared/folders';
 import { Field, NumberField, RadioField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
+import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 
 type SettingsTab = 'general' | 'rest' | 'environments' | 'advanced';
@@ -56,6 +57,7 @@ export function SettingsApp() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  useFitWindow();
   const initTasksFile = useRef<string | undefined>(undefined);
   const initTemplatesFile = useRef<string | undefined>(undefined);
   const initStartWithSystem = useRef<boolean | undefined>(undefined);
@@ -140,13 +142,14 @@ export function SettingsApp() {
     }
   };
 
-  const duplicateEnv = async () => {
-    if (!env) return;
+  // Each command takes the environment it acts on (the selected one for a button, the clicked row for the menu).
+  const duplicateEnv = async (from: Environment | undefined = env) => {
+    if (!from) return;
     const copy: Environment = {
-      ...JSON.parse(JSON.stringify(env)),
+      ...JSON.parse(JSON.stringify(from)),
       id: `env-${rid()}`,
-      name: `${env.name} (copy)`,
-      harnesses: env.harnesses.map((h) => ({ ...h, id: `h-${rid()}` })),
+      name: `${from.name} (copy)`,
+      harnesses: from.harnesses.map((h) => ({ ...h, id: `h-${rid()}` })),
     };
     try {
       await window.looper.updateSettings({ environments: [...envs, copy] });
@@ -156,14 +159,14 @@ export function SettingsApp() {
     }
   };
 
-  const removeEnv = async () => {
-    if (!env || envs.length <= 1) return;
-    const n = usedBy(env.id);
+  const removeEnv = async (target: Environment | undefined = env) => {
+    if (!target || envs.length <= 1) return;
+    const n = usedBy(target.id);
     const warning = n > 0 ? ` ${n} task${n === 1 ? '' : 's'} still use${n === 1 ? 's' : ''} it and will fail until reassigned.` : '';
-    if (!(await window.looper.confirm(`Remove environment "${env.name}"?${warning}`))) return;
-    const rest = envs.filter((e) => e.id !== env.id);
+    if (!(await window.looper.confirm(`Remove environment "${target.name}"?${warning}`))) return;
+    const rest = envs.filter((e) => e.id !== target.id);
     const patch: Partial<Settings> = { environments: rest };
-    if (live.defaultEnvironmentId === env.id) patch.defaultEnvironmentId = rest[0].id;
+    if (live.defaultEnvironmentId === target.id) patch.defaultEnvironmentId = rest[0].id;
     try {
       await window.looper.updateSettings(patch);
     } catch (e) {
@@ -259,7 +262,7 @@ export function SettingsApp() {
 
   return (
     <div className="editor">
-      <TabBar tabs={visibleTabs} active={tab} onSelect={setTab} className="editor-tabs" />
+      <TabBar tabs={visibleTabs} active={tab} onSelect={setTab} className="editor-tabs" label="Settings" sections>
       <div className="editor-body">
         {tab === 'general' && (
           <div className="form">
@@ -371,6 +374,12 @@ export function SettingsApp() {
               }}
               onSelect={(e) => setSelected(e.id)}
               onOpen={(e) => void window.looper.openEnvironmentEditor(e.id)}
+              menu={(e) => [
+                { label: 'Edit…', run: () => void window.looper.openEnvironmentEditor(e.id) },
+                { label: 'Duplicate', run: () => void duplicateEnv(e) },
+                { label: 'Remove', enabled: envs.length > 1, run: () => void removeEnv(e) },
+              ]}
+              onDelete={(e) => void removeEnv(e)}
             />
             <ListActions
               onAdd={() => void addEnv()}
@@ -432,6 +441,7 @@ export function SettingsApp() {
         )}
 
       </div>
+      </TabBar>
       <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
     </div>
   );

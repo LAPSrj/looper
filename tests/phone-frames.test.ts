@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { AxisDrag, LongPress, LONG_PRESS_MS } from '../src/renderer/src/web/gestures';
-import { BACK_SETTLE_MS, BackStack, coversScreen, presentation } from '../src/renderer/src/web/nav-stack';
+import { BACK_SETTLE_MS, BackStack, coversScreen, darkColor, INSPECTOR_WIDTH, presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
+
+describe('the bar over a page top color', () => {
+  it('takes a light title over a dark color only', () => {
+    expect(darkColor('rgb(0, 0, 0)')).toBe(true);
+    expect(darkColor('rgb(30, 30, 30)')).toBe(true);
+    expect(darkColor('rgb(242, 242, 247)')).toBe(false);
+    expect(darkColor('rgb(255, 255, 255)')).toBe(false);
+    expect(darkColor('rgba(0, 0, 0, 0.2)')).toBe(false);
+    expect(darkColor('transparent')).toBe(false);
+    expect(darkColor(undefined)).toBe(false);
+  });
+});
 
 /** A browser history: entries with a looperDepth, and popstates delivered when the test says. */
 class FakeHistory {
@@ -269,5 +281,30 @@ describe('presentation', () => {
     expect(coversScreen('full-dialog')).toBe(true);
     expect(coversScreen('page-sheet')).toBe(false);
     expect(coversScreen('bottom-sheet')).toBe(false);
+  });
+});
+
+describe('splitLayout', () => {
+  const portrait = { width: 1032, height: 1376 };
+  const landscape = { width: 1376, height: 1032 };
+
+  it('splits on an iPad in both orientations: 320 pt list in portrait, 375 pt in landscape', () => {
+    expect(splitLayout(1032, portrait)).toEqual({ lead: 320, inspector: 0 });
+    expect(splitLayout(1376, landscape)).toEqual({ lead: 375, inspector: INSPECTOR_WIDTH });
+  });
+
+  it('puts the inspector beside the detail only when the detail keeps 600 pt', () => {
+    // 1194 wide (iPad Pro 11 landscape): 320 + 360 leaves 514.
+    expect(splitLayout(1194, { width: 1194, height: 834 })).toEqual({ lead: 320, inspector: 0 });
+    // 1366 (iPad Pro 12.9 landscape): 375 + 360 leaves 631.
+    expect(splitLayout(1366, { width: 1366, height: 1024 })?.inspector).toBe(INSPECTOR_WIDTH);
+  });
+
+  it('shows one column on a phone, and in a narrow window on an iPad', () => {
+    expect(splitLayout(402, { width: 402, height: 874 })).toBeNull();
+    expect(splitLayout(874, { width: 874, height: 402 })).toBeNull();
+    // Split View multitasking: half of a landscape iPad.
+    expect(splitLayout(678, landscape)).toBeNull();
+    expect(splitLayout(744, { width: 744, height: 1133 })).toEqual({ lead: 320, inspector: 0 });
   });
 });
