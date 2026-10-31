@@ -983,6 +983,23 @@ describe('providers', () => {
     expect(seen.at(-1)).toEqual({ phase: 'error', message: 'boom' });
   }, 10_000);
 
+  it.skipIf(process.platform === 'win32')('logs each line the helper writes to stderr while it runs', async () => {
+    const helper = fakeHelper(`
+      process.stderr.write('netcheck: report\\n\\nmagicsock: new contact\\n');
+      process.stdin.resume();
+      process.stdin.on('end', () => process.exit(0));
+    `);
+    const log = memLog();
+    const p = new TailscaleProvider(log, helper);
+    p.start({ port: 1, secret: 's', hostname: 'h', stateDir: tmp() });
+    await waitFor(() => log.lines.includes('[debug] remote access: tailscale helper: magicsock: new contact'));
+    expect(log.lines.filter((l) => l.includes('tailscale helper:'))).toEqual([
+      '[debug] remote access: tailscale helper: netcheck: report',
+      '[debug] remote access: tailscale helper: magicsock: new contact',
+    ]);
+    await p.stop();
+  });
+
   it('turning off stops the server and says so', async () => {
     const s = await setup('local');
     await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, sources: ['local'] }));

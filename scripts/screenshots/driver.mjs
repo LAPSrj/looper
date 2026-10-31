@@ -5,6 +5,7 @@
 import { _electron as electron } from 'playwright-core';
 import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -65,7 +66,8 @@ const COMMANDS = {
     }
     clearSavedZoom();
     app = await electron.launch({
-      executablePath: path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe'),
+      // The electron package downloads its binary the first time it's loaded, not at npm install.
+      executablePath: createRequire(import.meta.url)('electron'),
       // Chromium keeps painting while covered, so captures never need the window in front.
       args: [
         `--user-data-dir=${path.join(ROOT, 'profile')}`,

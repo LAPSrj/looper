@@ -157,9 +157,13 @@ export class TailscaleProvider extends BaseProvider implements AccessProvider {
     }
     this.child = child;
     const startedAt = Date.now();
-    let stderr = '';
+    let lastStderr = '';
     child.stdin?.on('error', () => undefined);
-    child.stderr?.on('data', (d: Buffer) => (stderr = tail(stderr + d.toString('utf8'), 4000)));
+    readline.createInterface({ input: child.stderr! }).on('line', (line) => {
+      if (!line.trim()) return;
+      lastStderr = line.trim();
+      this.log.debug(`remote access: tailscale helper: ${line.slice(0, 2000)}`);
+    });
     readline.createInterface({ input: child.stdout! }).on('line', (line) => this.onLine(line));
     this.exited = new Promise<void>((resolve) => {
       let done = false;
@@ -167,15 +171,13 @@ export class TailscaleProvider extends BaseProvider implements AccessProvider {
         if (done) return;
         done = true;
         if (this.child === child) this.child = null;
-        if (stderr.trim()) this.log.warn(`remote access: tailscale helper stderr: ${stderr.trim()}`);
         resolve();
         if (this.stopping) return;
         const how = spawnError ? spawnError.message : signal ? `signal ${signal}` : `exit code ${code}`;
         this.log.warn(`remote access: tailscale helper stopped (${how})`);
         this.failures = Date.now() - startedAt < QUICK_FAILURE_MS ? this.failures + 1 : 1;
         if (this.failures >= MAX_QUICK_FAILURES) {
-          const lastLine = stderr.trim().split('\n').pop();
-          this.status({ phase: 'error', message: this.lastError ?? (lastLine || `The Tailscale helper stopped (${how}).`) });
+          this.status({ phase: 'error', message: this.lastError ?? (lastStderr || `The Tailscale helper stopped (${how}).`) });
           return;
         }
         this.restartTimer = setTimeout(() => {
