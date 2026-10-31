@@ -3,7 +3,7 @@
 // launch`). Each launch runs on a fresh copy of demo/home with its own profile, so the installed
 // Looper is untouched. Shots land in %TEMP%\looper-shots\shots.
 import { _electron as electron } from 'playwright-core';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -83,7 +83,13 @@ const COMMANDS = {
     console.log('launched', app.windows().map((w) => w.url()).join(' | '), 'data', data);
   },
   async quit() {
-    await app?.close();
+    if (app) {
+      const closing = app.close();
+      // With a session open, Looper asks before it quits; Electron numbers a message box's buttons from 100, so Quit is 100.
+      const answer = execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, 'dialog.ps1'), '-Title', 'Looper', '-Click', '100'], () => undefined);
+      await closing;
+      answer.kill();
+    }
     app = null;
     console.log('closed');
   },
