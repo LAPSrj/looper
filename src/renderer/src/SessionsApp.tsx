@@ -16,7 +16,7 @@ import { DESKTOP_ONLY, NOT_MOBILE } from '@shared/ui-platform';
 import { SHORTCUTS, hint } from '@shared/shortcuts';
 import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
 import { ChatView } from './components/ChatView';
-import { sendsOnEnter } from './components/composer';
+import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
 import { useAutoGrow } from './components/phone/auto-grow';
 import { Group, LargeTitle, Row, Segmented } from './components/phone/PhoneList';

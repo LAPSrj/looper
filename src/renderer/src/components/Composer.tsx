@@ -4,7 +4,7 @@ import { harnessKindLabel } from '@shared/environments';
 import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList } from './ChatRows';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from './chat-settings';
-import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer';
+import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
 import { ICONS } from './icons';
 import { useAutoGrow } from './phone/auto-grow';
 import { ToolButton } from './ToolButton';

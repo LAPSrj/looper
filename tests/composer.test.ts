@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commandAt, insertCommand, matchCommands, quoteText } from '../src/renderer/src/components/composer';
+import { commandAt, insertCommand, matchCommands, quoteText } from '../src/renderer/src/components/composer-text';
 
 describe('quoteText', () => {
   it('prefixes each line with "> " and ends with an empty line', () => {

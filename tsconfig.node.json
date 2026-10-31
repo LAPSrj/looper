@@ -39,7 +39,7 @@
     "src/renderer/src/menu-target.ts",
     "src/renderer/src/components/terminal-keys.ts",
     "src/renderer/src/components/blank-draft.ts",
-    "src/renderer/src/components/composer.ts",
+    "src/renderer/src/components/composer-text.ts",
     "src/renderer/src/components/usage.ts",
     "src/renderer/src/components/subagents.ts",
     "src/renderer/src/components/tabs-model.ts",

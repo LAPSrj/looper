@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sendsOnEnter } from '../src/renderer/src/components/composer';
+import { sendsOnEnter } from '../src/renderer/src/components/composer-text';
 import { draggedHeight, settleSheet } from '../src/renderer/src/components/phone/sheet-detents';
 import { groupStatusText, subagentTabs } from '../src/renderer/src/components/subagents';
 import { cacheText, contextValue, limitFacts, sessionFacts, usageLabel, usageTone } from '../src/renderer/src/components/usage';
