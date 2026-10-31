@@ -6,7 +6,7 @@ import { useThisDevice } from './device-flows';
 import { messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
-import { CHECK, FileRows } from './phone-files';
+import { CHECK, FileRows, FileViewBody } from './phone-files';
 import {
   deviceNoun,
   isLongMenu,
@@ -409,7 +409,7 @@ function FileScreen({ controller, shell, dialog }: { controller: ShellController
         <div className="md-tabs" role="tablist">
           {(['device', 'computer'] as const).map((src) => (
             <button key={src} role="tab" aria-selected={f.source === src} className={`md-tab${f.source === src ? ' on' : ''}`} onClick={() => f.setSource(src)}>
-              <span>{src === 'device' ? `This ${noun.toLowerCase()}` : 'This computer'}</span>
+              <span>{src === 'device' ? `This ${noun.toLowerCase()}` : 'Host computer'}</span>
             </button>
           ))}
         </div>
@@ -466,6 +466,22 @@ function FileScreen({ controller, shell, dialog }: { controller: ShellController
 
 function PathScreen({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  if (p.view) {
+    return (
+      <FullDialog shell={shell} title={p.name} onClose={p.close}>
+        <FileViewBody view={p.view} name={p.name} />
+        <div className="md-bottom-actions">
+          <button className="md-text-btn" onClick={p.view.toHost}>
+            Download to host computer
+          </button>
+          <button className="md-text-btn" onClick={p.view.toDevice}>
+            Download to this {deviceNoun('android', shell.tablet).toLowerCase()}
+          </button>
+        </div>
+        <LocalDialog msg={p.message} />
+      </FullDialog>
+    );
+  }
   if (!p.browser) return <LocalDialog msg={p.message} />;
   const browser = p.browser;
   return (
@@ -483,7 +499,7 @@ function PathScreen({ controller, shell, req }: { controller: ShellController; s
       <FileRows os="android" browser={browser} onFile={(entry) => browser.select(entry)} />
       <div className="md-bottom-actions">
         <button className="md-text-btn" onClick={p.openOnComputer}>
-          Open on computer
+          Open on host computer
         </button>
       </div>
       <LocalDialog msg={p.message} />

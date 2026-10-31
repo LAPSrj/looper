@@ -1,5 +1,10 @@
-/** Where a Remote Control conversation came from. */
-export type RemoteSource = 'helper' | 'project' | 'opened';
+/**
+ * Where a Remote Control conversation came from: Remote Control's own sessions
+ * (a helper, a project that keeps one open, one a helper opened), or a chat or
+ * Looper terminal that started on a harness with "Start new conversations with
+ * Remote Control" (the user's own: they close it in its window).
+ */
+export type RemoteSource = 'helper' | 'project' | 'opened' | 'chat' | 'terminal';
 
 /**
  * One Remote Control conversation: a Claude Code session on this computer,
@@ -38,7 +43,7 @@ export interface RemoteMessage {
 }
 
 export interface RemoteState {
-  /** Remote Control is on in this run of Looper. */
+  /** Remote Control is on (Advanced → Remote Control → Turn On). */
   running: boolean;
   /** Open conversations first (newest first), then ended ones. */
   conversations: RemoteConversation[];

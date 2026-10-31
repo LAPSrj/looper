@@ -112,6 +112,8 @@ class BuilderSession {
   private dirtyTimer: NodeJS.Timeout | null = null;
   /** The new task's starting draft: until the draft differs from it, there is nothing to save. */
   private initialJson = '';
+  /** The draft file as the editor's Create/Update last got it: if it still holds that when the editor saves, the agent hasn't touched it since. */
+  private handedOut: string | null = null;
   /**
    * Undo/Redo: the work in progress after each change, oldest first. A step
    * is added when an agent turn (or, in the terminal view, a burst of the
@@ -766,10 +768,19 @@ class BuilderSession {
     this.scheduleEmit();
   }
 
+  private readDraftText(): string | null {
+    try {
+      return fs.readFileSync(this.draftHostPath(), 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
   /** The draft as Create/Update hands it to the editor. */
   draftForEditor(): Record<string, unknown> {
     this.readDraft(true);
     if (!this.draft.raw) throw new Error(this.draft.errors[0] ?? 'The draft is empty.');
+    this.handedOut = this.readDraftText();
     const draft: Record<string, unknown> = this.draft.task ? { ...this.draft.task } : { ...this.draft.raw };
     // The draft is the definition only: Update keeps the stored task's status
     // (a disabled task stays disabled, a completed one completed).
@@ -789,12 +800,28 @@ class BuilderSession {
     this.taskId = task.id;
     this.changedSinceSave.clear();
     this.readDraft(true);
+    await this.adoptSaved(task);
     for (const p of this.files) {
       const now = await this.readNow(p);
       if (now !== undefined) this.savedContent.set(p, now);
     }
     this.changedFiles = [];
     this.scheduleEmit();
+  }
+
+  /**
+   * The editor Create/Update may save the task with changes of its own (a
+   * rename). Unless the agent changed the draft since the editor opened, the
+   * task as saved becomes the draft: it differs from the stored task otherwise,
+   * and closing would ask to save what is already saved.
+   */
+  private async adoptSaved(task: Task): Promise<void> {
+    const handed = this.handedOut;
+    this.handedOut = null;
+    if (handed === null || !this.draft.changed?.length || this.readDraftText() !== handed) return;
+    writeJsonAtomic(this.draftHostPath(), definitionOf(task));
+    this.readDraft(true);
+    await this.queueStep(() => this.commitStep());
   }
 
   /** Saving a loaded version unchanged restores that version. Takes a pending step first. */

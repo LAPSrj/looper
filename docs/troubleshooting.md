@@ -213,8 +213,10 @@ When Remote Access can't start, a dialog says what's wrong:
   Settings…** to another number.
 - **Sign in to Tailscale to finish:** click **Sign In…**, or choose **Advanced
   → Remote Access → Sign In to Tailscale…**.
-- **A device says it isn't paired:** pair it again with a new code, at the
-  address it was paired at, under the provider that's on now.
+- **A device says it isn't paired:** a device connects only through the source
+  it was paired through (Tailscale or Host Computer), so check that source is
+  still on in **Advanced → Remote Access → Settings…**. If it is, pair the
+  device again with a new code.
 
 See [Remote Access](remote-access.md#troubleshooting) for the rest.
 

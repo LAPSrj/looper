@@ -2,28 +2,37 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { MenuItemSpec, ServerMessage } from '../src/shared/remote-access';
-import { makeDir, type HostFilesDeps } from '../src/main/platform/host-files';
+import type { HostDirEntry, MenuItemSpec, ServerMessage } from '../src/shared/remote-access';
+import { copyIntoFolder, makeDir, type HostFilesDeps } from '../src/main/platform/host-files';
+import { attachmentName } from '../src/shared/chat';
 import { RemoteClient } from '../src/main/platform/remote-window';
 import { withConnectSrc } from '../src/main/remote-access/server';
 import {
   acceptAttr,
   allowedExtensions,
   breadcrumbs,
+  emptyHistory,
   fileSources,
   filterLabel,
   folderNameError,
+  groupPlaces,
+  imageType,
   initialSource,
   joinPath,
   messageCancelId,
   messageDefaultId,
   messageResult,
+  navMove,
+  navTarget,
+  navVisit,
   openCanceled,
   openResult,
+  placeGroup,
   saveCanceled,
   saveToComputer,
   saveToDevice,
   splitDefaultPath,
+  viewerKind,
   visibleEntries,
   withExtension,
 } from '../src/renderer/src/web/dialog-flows';
@@ -269,20 +278,64 @@ describe('file dialog choice flow', () => {
     expect(joinPath('/home', 'x')).toBe('/home/x');
   });
 
-  it('shows the path as clickable parts after This Computer', () => {
-    expect(breadcrumbs(null)).toEqual([{ label: 'This Computer', path: null }]);
+  it('shows the path as clickable parts after Host Computer', () => {
+    expect(breadcrumbs(null)).toEqual([{ label: 'Host Computer', path: null }]);
     expect(breadcrumbs('C:\\Users\\me').map((c) => [c.label, c.path])).toEqual([
-      ['This Computer', null],
+      ['Host Computer', null],
       ['C:', 'C:\\'],
       ['Users', 'C:\\Users'],
       ['me', 'C:\\Users\\me'],
     ]);
     expect(breadcrumbs('\\\\wsl.localhost\\Ubuntu\\home').map((c) => [c.label, c.path])).toEqual([
-      ['This Computer', null],
+      ['Host Computer', null],
       ['wsl.localhost\\Ubuntu', '\\\\wsl.localhost\\Ubuntu\\'],
       ['home', '\\\\wsl.localhost\\Ubuntu\\home'],
     ]);
     expect(breadcrumbs('/home/me').map((c) => c.path)).toEqual([null, '/', '/home', '/home/me']);
+  });
+
+  it('keeps the folders visited for Back and Forward', () => {
+    let h = navVisit(emptyHistory, null);
+    h = navVisit(h, 'C:\\');
+    h = navVisit(h, 'C:\\Users');
+    expect(navTarget(h, 1)).toBeUndefined();
+    expect(navTarget(h, -1)).toBe('C:\\');
+    h = navMove(h, -1);
+    h = navMove(h, -1);
+    expect([h.stack[h.at], navTarget(h, -1), navTarget(h, 1)]).toEqual([null, undefined, 'C:\\']);
+    expect(navMove(h, -1)).toBe(h);
+    h = navMove(h, 1);
+    // Opening another folder drops what Forward would have gone to; the one shown again changes nothing.
+    h = navVisit(h, 'D:\\');
+    expect(h.stack).toEqual([null, 'C:\\', 'D:\\']);
+    expect(navTarget(h, 1)).toBeUndefined();
+    expect(navVisit(h, 'D:\\')).toBe(h);
+  });
+
+  it('groups the starting places under their headings', () => {
+    const e = (name: string, place: HostDirEntry['place']): HostDirEntry => ({ name, path: name, dir: true, place });
+    const rows = groupPlaces([e('Home', 'home'), e('Documents', 'documents'), e('Drive (C:)', 'drive'), e('Ubuntu', 'linux'), e('Looper', 'project'), e('Site', 'project')]);
+    expect(rows.map((r) => [r.heading, r.entry.name])).toEqual([
+      ['Folders', 'Home'],
+      [null, 'Documents'],
+      ['Drives', 'Drive (C:)'],
+      ['Linux', 'Ubuntu'],
+      ['Projects', 'Looper'],
+      [null, 'Site'],
+    ]);
+    expect(placeGroup(undefined)).toBe('Folders');
+  });
+
+  it('shows images and text files in the viewer, Markdown rendered', () => {
+    expect(viewerKind('shot.PNG')).toBe('image');
+    expect(viewerKind('a.jpeg')).toBe('image');
+    expect(viewerKind('notes.md')).toBe('markdown');
+    expect(viewerKind('log.txt')).toBe('text');
+    expect(viewerKind('data.json')).toBeNull();
+    expect(viewerKind('README')).toBeNull();
+    expect(imageType('a.jpg')).toBe('image/jpeg');
+    expect(imageType('a.svg')).toBe('image/svg+xml');
+    expect(imageType('a.webp')).toBe('image/webp');
   });
 
   it('checks a new folder name before asking the computer', () => {
@@ -404,6 +457,39 @@ describe('New Folder on the computer', () => {
     fs.mkdirSync(path.join(dir, 'taken'));
     await expect(makeDir(deps, dir, 'taken')).rejects.toThrow(/already/);
     expect(fs.readdirSync(dir)).toEqual(['taken']);
+  });
+});
+
+describe('Download to Host Computer', () => {
+  it('copies the file into the folder under a name not taken there, replacing nothing', async () => {
+    const src = tmp();
+    const downloads = path.join(tmp(), 'Downloads');
+    fs.writeFileSync(path.join(src, 'shot.png'), 'new');
+    expect(await copyIntoFolder(path.join(src, 'shot.png'), downloads)).toBe(path.join(downloads, 'shot.png'));
+    expect(await copyIntoFolder(path.join(src, 'shot.png'), downloads)).toBe(path.join(downloads, 'shot (2).png'));
+    fs.writeFileSync(path.join(downloads, 'shot (3).png'), 'mine');
+    expect(await copyIntoFolder(path.join(src, 'shot.png'), downloads)).toBe(path.join(downloads, 'shot (4).png'));
+    expect(fs.readFileSync(path.join(downloads, 'shot (3).png'), 'utf8')).toBe('mine');
+    expect(fs.readFileSync(path.join(downloads, 'shot (4).png'), 'utf8')).toBe('new');
+  });
+
+  it("names an attachment copy's download by the file's own name", async () => {
+    const src = tmp();
+    const downloads = path.join(tmp(), 'Downloads');
+    const copy = path.join(src, '20261030-182304-73ow-setup.md');
+    fs.writeFileSync(copy, '# Setup');
+    expect(attachmentName(copy)).toBe('setup.md');
+    expect(await copyIntoFolder(copy, downloads, attachmentName(copy))).toBe(path.join(downloads, 'setup.md'));
+    expect(await copyIntoFolder(copy, downloads, attachmentName(copy))).toBe(path.join(downloads, 'setup (2).md'));
+    // Not an attachment copy's name: left as it is.
+    expect(attachmentName('C:\\Users\\me\\20261030-notes.md')).toBe('20261030-notes.md');
+  });
+
+  it('refuses a folder or a file that is gone', async () => {
+    const dir = tmp();
+    await expect(copyIntoFolder(dir, path.join(dir, 'out'))).rejects.toThrow(/isn't a file/);
+    await expect(copyIntoFolder(path.join(dir, 'gone.txt'), dir)).rejects.toThrow(/doesn't exist/);
+    await expect(copyIntoFolder('', dir)).rejects.toThrow(/No file/);
   });
 });
 

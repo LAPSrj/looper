@@ -59,6 +59,25 @@ describe('messagesToMarkdown', () => {
     expect(md).not.toContain('Bash');
   });
 
+  it("exports a sent file as the agent's message, even without tool usage", () => {
+    const md = messagesToMarkdown(
+      [
+        row({
+          kind: 'tool',
+          tool: 'SendUserFile',
+          text: 'files: shot.png',
+          result: 'sent',
+          sent: { caption: 'The **new** layout.', files: [{ path: '/tmp/shot.png', name: 'shot.png', inline: true }] },
+        }),
+      ],
+      { ...opts, includeTools: false },
+    );
+    expect(md).toContain('## Agent');
+    expect(md).toContain('The **new** layout.');
+    expect(md).toContain('- `/tmp/shot.png`');
+    expect(md).not.toContain('Tool: SendUserFile');
+  });
+
   it('grows the fence past backtick runs in the content', () => {
     const md = messagesToMarkdown([row({ kind: 'tool', tool: 'Read', text: 'x', result: 'a\n```md\nnested\n```\nb' })], opts);
     expect(md).toContain('````\na\n```md\nnested\n```\nb\n````');

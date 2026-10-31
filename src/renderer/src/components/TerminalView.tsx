@@ -6,6 +6,8 @@ import { openXterm } from './xterm';
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
 const ENDED = `\r\n${DIM}── session ended ──${RESET}\r\n`;
+/** Quitting Looper stopped the harness: the next key starts it again on the conversation (the key itself isn't sent). */
+const STOPPED = `\r\n${DIM}── stopped when Looper quit · press any key to go on ──${RESET}\r\n`;
 
 const reportError = (e: Error) => void window.looper.showError(e.message);
 
@@ -29,7 +31,8 @@ export function TerminalView({ id }: { id: string }) {
     let loaded = false;
     void window.looper.terminalSession.output(id).then((out) => {
       if (out?.data) term.write(out.data);
-      if (!out || out.ended) term.write(ENDED);
+      if (out?.stopped) term.write(STOPPED);
+      else if (!out || out.ended) term.write(ENDED);
       loaded = true;
       window.looper.terminalSession.resize(id, term.cols, term.rows);
     });

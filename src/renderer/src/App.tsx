@@ -3,12 +3,15 @@ import { AddonScreenView, AddonToolbarButtons } from './components/AddonScreen';
 import { Dashboard } from './components/Dashboard';
 import { ProjectDetail } from './components/ProjectDetail';
 import { Sidebar } from './components/Sidebar';
+import { sidebarHasPanes } from '@shared/panes';
 import { TaskDetail } from './components/TaskDetail';
 import { TaskToolbar } from './components/TaskToolbar';
 import { useDragResize } from './components/hooks';
 import { PhoneMain } from './components/phone/PhoneMain';
 import { isPhone } from './web/page-nav';
-import { restStatus, useMainWindow, type MainWindow } from './useMainWindow';
+import { preventSleepStatus, restStatus, useMainWindow, type MainWindow } from './useMainWindow';
+import { useRemoteAccessState } from './useRemoteAccess';
+import { remoteAccessStatusItems } from '@shared/remote-access';
 
 /** The main window: the shared state and commands, drawn for the desktop or a phone. */
 export function App() {
@@ -23,6 +26,10 @@ function DesktopMain({ m }: { m: MainWindow }) {
   const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const appRef = useRef<HTMLDivElement>(null);
+  // With every pane hidden (View menu) there is no sidebar: the main view takes the whole width.
+  const sidebar = !view || sidebarHasPanes(view, addons);
+  const preventSleepText = m.preventSleep ? preventSleepStatus(m.preventSleep) : null;
+  const remoteAccess = useRemoteAccessState();
 
   const onSidebarDragStart = useDragResize({
     axis: 'x',
@@ -60,12 +67,13 @@ function DesktopMain({ m }: { m: MainWindow }) {
           addonSlot={setToolbarSlot}
         />
       )}
-      <div className="app" ref={appRef} style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
-        {view ? (
+      <div className="app" ref={appRef} style={{ gridTemplateColumns: sidebar ? `${sidebarWidth}px 5px 1fr` : '1fr' }}>
+        {!sidebar ? null : view ? (
           <Sidebar
             projects={projects}
             projectSelected={project ? project.id : null}
             onProjectSelect={m.selectProject}
+            environments={m.info?.settings.environments ?? []}
             tasks={tasks}
             folders={m.folders}
             layout={m.layout}
@@ -84,7 +92,7 @@ function DesktopMain({ m }: { m: MainWindow }) {
         ) : (
           <aside className="sidebar" />
         )}
-        <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />
+        {sidebar && <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />}
         <main className="main">
           {task ? (
             <TaskDetail
@@ -98,7 +106,6 @@ function DesktopMain({ m }: { m: MainWindow }) {
               tab={m.tab}
               onTab={m.setTab}
               hideNoActionRuns={view?.hideNoActionRuns ?? false}
-              hideChatsAndTerminals={view?.hideChatsAndTerminals ?? false}
               focusRun={m.focusRun}
               terminalRun={m.terminalRun}
               onTerminalRun={m.setTerminalRun}
@@ -141,15 +148,16 @@ function DesktopMain({ m }: { m: MainWindow }) {
       </div>
       {(view?.statusBar ?? true) && (
         <div className="statusbar">
-          {rest?.armed && <span>{restStatus(rest, now)}</span>}
-          {m.info?.settings.remoteAccess.enabled && <span>Remote Access enabled</span>}
-          <span className="spacer" />
           <span>
             {counts.enabled} enabled · {counts.disabled} disabled · {counts.completed} completed · {counts.paused} paused ·{' '}
             {counts.running} running
             {remoteOpen && ` · ${remoteOpen.length} Remote Control session${remoteOpen.length === 1 ? '' : 's'}`}
             {addons.length > 0 && ` · ${m.runningAddons} addon${m.runningAddons === 1 ? '' : 's'} running`}
           </span>
+          <span className="spacer" />
+          {rest?.armed && <span>{restStatus(rest, now)}</span>}
+          {preventSleepText && <span>{preventSleepText}</span>}
+          {remoteAccess && remoteAccessStatusItems(remoteAccess).map((text) => <span key={text}>{text}</span>)}
         </div>
       )}
     </div>

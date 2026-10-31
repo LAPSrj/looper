@@ -1,5 +1,5 @@
 import type { SessionSummary } from '@shared/sessions';
-import { waitedText } from '@shared/sessions';
+import { waitedText, waitingOf } from '@shared/sessions';
 
 /** Status and context in one icon: the ring fills with the context, the dot says what the agent is doing. */
 export function SessionIcon({ s }: { s: SessionSummary }) {
@@ -67,10 +67,6 @@ function Row({
   );
 }
 
-/** The sessions waiting for the user, the one that waited longest first. */
-export const waitingOf = (sessions: SessionSummary[]): SessionSummary[] =>
-  sessions.filter((s) => s.waiting).sort((a, b) => a.waiting!.since - b.waiting!.since);
-
 /** The key a group's collapsed state is saved under. */
 const WAITING_KEY = '@waiting';
 
@@ -99,15 +95,16 @@ function GroupHeader({ name, open, count, onToggle }: { name: string; open: bool
 }
 
 /**
- * The Chats window's list: Waiting for you, then each project's sessions,
- * each group closable. Up and Down move through the sessions shown, and a
- * click on the empty space below shows the dashboard.
+ * The Chats window's list: Waiting for you (with `waitingFirst`), then each
+ * project's or folder's sessions, each group closable. Up and Down move
+ * through the sessions shown, and a click on the empty space below shows the dashboard.
  */
 export function SessionList({
   sessions,
   selected,
   now,
   collapsed,
+  waitingFirst,
   onToggle,
   onSelect,
   selectOnMenu = true,
@@ -117,12 +114,14 @@ export function SessionList({
   now: number;
   /** The closed groups' keys: a project's id, or its name without one. */
   collapsed: string[];
+  /** The sessions waiting for the user show again at the top, in Waiting for you. */
+  waitingFirst: boolean;
   onToggle: (key: string) => void;
   onSelect: (id: string | null) => void;
   /** A right-click (a long press) selects the row before its menu shows; off where selecting opens it. */
   selectOnMenu?: boolean;
 }) {
-  const waiting = waitingOf(sessions);
+  const waiting = waitingFirst ? waitingOf(sessions) : [];
   const groups: { key: string; name: string; items: SessionSummary[] }[] = [];
   for (const s of sessions) {
     const key = s.projectId ?? s.groupName;

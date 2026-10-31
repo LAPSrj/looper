@@ -556,6 +556,21 @@ html[data-platform='ios'] {
 .ios .ph-files-empty {
   color: var(--ios-label2);
 }
+.ios .ph-files-group {
+  background: var(--ios-sheet);
+  color: var(--ios-label2);
+}
+.ios .ph-file-icon.place {
+  color: var(--ios-tint);
+}
+.ios .ph-viewer-note {
+  color: var(--ios-label2);
+}
+/* The viewer's two downloads, one above the other: their names don't fit side by side on an iPhone. */
+.ios-toolbar.stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
 /* A bottom toolbar: its buttons float as glass capsules over the list. */
 .ios-toolbar {
   display: flex;

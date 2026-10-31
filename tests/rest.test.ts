@@ -40,6 +40,8 @@ interface Harness {
   ctl: RestController;
   clock: { now: number };
   runtimes: TaskRuntime[];
+  /** Work besides task runs (a chat working, with While a Session Is Working on). */
+  other: { busy: boolean };
   events: { state: RestState; disarmReason?: 'user-wake' }[];
   ops: { registered: number[]; suspends: number; cleared: number; failRegister: boolean };
   adapter: { blocked: boolean; suspend: () => void; resume: () => void };
@@ -57,6 +59,7 @@ function makeHarness(rest: Partial<{ minSleepMin: number; graceSec: number; disa
   const settings = SettingsSchema.parse({ rest: { minSleepMin: 30, graceSec: 60, disarmOnUserWake: true, ...rest } });
   const clock = { now: 1_000_000_000 };
   const runtimes: TaskRuntime[] = [];
+  const other = { busy: false };
   const events: Harness['events'] = [];
   const ops = { registered: [] as number[], suspends: 0, cleared: 0, failRegister: false };
   let suspendCb: () => void = () => undefined;
@@ -84,6 +87,7 @@ function makeHarness(rest: Partial<{ minSleepMin: number; graceSec: number; disa
   const ctl = new RestController({
     settings,
     runtimes: () => runtimes,
+    busy: () => other.busy,
     adapter: powerAdapter,
     ops: powerOps,
     log: new Logger(),
@@ -91,7 +95,7 @@ function makeHarness(rest: Partial<{ minSleepMin: number; graceSec: number; disa
     now: () => clock.now,
   });
   disposeQueue.push(ctl);
-  return { ctl, clock, runtimes, events, ops, adapter, settings, last: () => events[events.length - 1].state };
+  return { ctl, clock, runtimes, other, events, ops, adapter, settings, last: () => events[events.length - 1].state };
 }
 
 /** Arm and run the grace countdown to the point of sleeping. */
@@ -169,6 +173,17 @@ describe('rest controller', () => {
       held: true,
       runs: [activeRun('running', true), { ...activeRun('running'), runId: 'r2', held: true }],
     });
+    h.ctl.poke();
+    expect(h.last().phase).toBe('countdown');
+  });
+
+  it('other work (a session working, for Prevent Sleep) blocks the countdown like a run', () => {
+    const h = makeHarness();
+    h.other.busy = true;
+    h.ctl.arm();
+    expect(h.last().phase).toBe('waiting');
+
+    h.other.busy = false;
     h.ctl.poke();
     expect(h.last().phase).toBe('countdown');
   });

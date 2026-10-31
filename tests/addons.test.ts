@@ -11,10 +11,14 @@ import {
   AddonScreenSchema,
   commandOn,
   engineLogSource,
+  findToolCall,
   matchesSearch,
   readAddonManifest,
+  toolCallMatches,
+  toolCallTitle,
   withAddonDir,
   type AddonInfo,
+  type AddonToolCall,
   type AddonManifest,
   type AddonLocalRun,
   type AddonRun,
@@ -157,6 +161,46 @@ describe('addonAdditions', () => {
       }),
     ).toEqual(['Servers, Keys and Logs panes in the sidebar']);
     expect(addonAdditions({ panes: [], toolbar: [], tools: [] })).toEqual([]);
+    expect(addonAdditions({ panes: [], toolbar: [], tools: [], toolCalls: [{ tool: 'a' }, { tool: 'b' }] })).toEqual([
+      'How 2 tools’ calls show on the Now tab',
+    ]);
+  });
+});
+
+describe('toolCalls', () => {
+  const info = (id: string, toolCalls: AddonToolCall[], enabled = true) => ({ id, enabled, toolCalls }) as unknown as AddonInfo;
+
+  it('takes how tool calls show, and refuses a misplaced "*", an unknown result or one tool twice', () => {
+    const calls = [
+      { tool: 'mcp__servers__deploy', title: 'Deploy {server}', params: ['server'], result: 'markdown' },
+      { tool: 'mcp__servers__*', result: { view: 'call' } },
+      { tool: 'mcp__servers__logs', result: 'code', language: 'json' },
+    ];
+    const r = readAddonManifest({ ...MANIFEST, toolCalls: calls });
+    expect(r.ok && r.manifest.toolCalls).toEqual(calls);
+    expect(readAddonManifest(MANIFEST).ok && (readAddonManifest(MANIFEST) as { manifest: AddonManifest }).manifest.toolCalls).toEqual([]);
+    expect(readAddonManifest({ ...MANIFEST, toolCalls: [{ tool: 'a*b' }] }).ok).toBe(false);
+    expect(readAddonManifest({ ...MANIFEST, toolCalls: [{ tool: 'a', result: 'html' }] }).ok).toBe(false);
+    const twice = readAddonManifest({ ...MANIFEST, toolCalls: [{ tool: 'a' }, { tool: 'a' }] });
+    expect(!twice.ok && twice.error).toBe('toolCalls: "a" is there twice');
+  });
+
+  it('picks the exact name first, then the longest "*", and skips addons stopped in the Addons window', () => {
+    const exact = { tool: 'mcp__s__deploy', result: 'markdown' } as const;
+    const broad = { tool: 'mcp__*', result: 'text' } as const;
+    const narrow = { tool: 'mcp__s__*', result: 'table' } as const;
+    const addons = [info('a', [broad]), info('b', [narrow, exact])];
+    expect(findToolCall(addons, 'mcp__s__deploy')?.call).toBe(exact);
+    expect(findToolCall(addons, 'mcp__s__logs')?.call).toBe(narrow);
+    expect(findToolCall(addons, 'mcp__other__x')?.addon.id).toBe('a');
+    expect(findToolCall(addons, 'Bash')).toBeUndefined();
+    expect(findToolCall([info('a', [exact], false)], 'mcp__s__deploy')).toBeUndefined();
+    expect(toolCallMatches({ tool: 'Read' }, 'ReadMore')).toBe(false);
+  });
+
+  it("fills a title's {name} with the call's parameters", () => {
+    expect(toolCallTitle('Deploy {server} to {env}', { server: 'db-1', env: 'prod' })).toBe('Deploy db-1 to prod');
+    expect(toolCallTitle('Run {n} ({missing})', { n: 3 })).toBe('Run 3 ()');
   });
 });
 

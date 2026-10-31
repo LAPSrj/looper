@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { isLooperFileName } from '../../../shared/files';
-import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type MeResponse, type MenuItemSpec, type OpenTarget } from '../../../shared/remote-access';
+import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type HostFileView, type MeResponse, type MenuItemSpec, type OpenTarget } from '../../../shared/remote-access';
 import { ClipboardBridge } from './clipboard';
 import { runEditRole } from './edit-roles';
 import { findAccelerator, pickChecked } from './menu-model';
@@ -285,6 +285,23 @@ export class ShellController {
   openOnHost(path: string): Promise<void> {
     const w = this.anyWindow();
     return w ? this.invoke(w, REMOTE_CHANNELS.openOnHost, path) : Promise.reject(new Error('Not connected to Looper.'));
+  }
+
+  /** Download to Host Computer: a copy in the host user's Downloads folder; resolves its path. */
+  saveOnHost(path: string): Promise<string> {
+    const w = this.anyWindow();
+    return w ? this.invoke(w, REMOTE_CHANNELS.saveOnHost, path) : Promise.reject(new Error('Not connected to Looper.'));
+  }
+
+  /** A file on the host computer read into this page (the file viewer); null when it's bigger than maxBytes. */
+  async readHostFile(path: string, maxBytes: number): Promise<Blob | null> {
+    const w = this.anyWindow();
+    if (!w) throw new Error('Not connected to Looper.');
+    const v = await this.invoke<HostFileView>(w, REMOTE_CHANNELS.view, path, maxBytes);
+    if (!v.token) return null;
+    const r = await fetch(`/api/download/${encodeURIComponent(v.token)}`);
+    if (!r.ok) throw new Error(`The host computer didn't send ${v.name}.`);
+    return r.blob();
   }
 
   // ---------- toasts, downloads, drops ----------

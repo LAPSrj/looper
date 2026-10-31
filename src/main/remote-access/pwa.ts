@@ -13,6 +13,8 @@ const MOBILE_HEAD = [
   '<meta name="apple-mobile-web-app-capable" content="yes">',
   // No black-translucent: under it, iOS 26+ blurs the top ~110 px of a Home Screen app, the bar's title and buttons included.
   '<meta name="apple-mobile-web-app-title" content="Looper">',
+  // The tab's icon: without it a desktop browser asks for /favicon.ico, which there isn't, and shows a blank one.
+  '<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">',
   '<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">',
   '<link rel="manifest" href="/manifest.webmanifest">',
 ].join('');

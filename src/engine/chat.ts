@@ -10,6 +10,7 @@ import {
   usageLimitsOf,
   type Attachment,
   type ChatContext,
+  type ChatDraft,
   type ChatInfo,
   type ChatPermissionRequest,
   type ChatSettings,
@@ -35,8 +36,9 @@ import { errMsg, type Logger } from './log';
 import { findCodexRollout, transcriptHostPath } from './messages';
 import { childEnv, writeLauncher, type RunContext } from './steps/common';
 import { recordCodexHome } from './steps/session';
-import { writeJsonAtomic, writeText } from './store/fsutil';
+import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
+import type { OpenConversation } from './store/state';
 import { createTarget, type Target } from './target';
 import { killHostTree } from './target/kill';
 import { joinTarget } from './target/paths';
@@ -306,11 +308,52 @@ export interface ChatDeps {
   taskVersion: (taskId: string) => number | undefined;
   /** Claude reported the account's usage limits. */
   onLimits: (limits: UsageLimits) => void;
+  /**
+   * Remote Control for a Claude chat starting on the harness: the name the
+   * Claude app lists it under, or undefined to start without it.
+   */
+  remoteName?: (task: Task, harness: Harness) => string | undefined;
+  /** Claude Code turned Remote Control on for the chat: its claude.ai address. */
+  onRemote?: (chat: { id: string; taskId: string; name: string; cwd: string; dir: string; link: string }) => void;
+  /** The chat closed (Close Conversation, or a move to another harness); quitting Looper keeps it for the next start. */
+  onClose?: (chatId: string) => void;
+}
+
+/** Claude's stream-json control request that turns Remote Control on (with the name the Claude app lists the session under) or off. */
+export function remoteControlRequest(requestId: string, name: string | undefined): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: requestId,
+    request: name ? { subtype: 'remote_control', enabled: true, name } : { subtype: 'remote_control', enabled: false },
+  });
+}
+
+/** The text of a user record's message: its content string, or its text blocks joined. */
+export function userRecordText(rec: Record<string, unknown>): string {
+  const content = (rec.message as { content?: unknown } | undefined)?.content;
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((c) => (c && typeof c === 'object' && (c as Rec).type === 'text' && typeof (c as Rec).text === 'string' ? ((c as Rec).text as string) : ''))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }
 
 interface Pending {
   text: string;
   attachments: Attachment[];
+}
+
+/**
+ * The earlier conversation's rows (a run's transcript, or a forked chat's
+ * copy) with ids of their own: `h` and the position. The chat's live rows are
+ * numbered from 0 by their accumulator, and the transcript's rows are too, so
+ * without this the two lists share ids, and one list of both (the Sessions
+ * window's) repeats React keys.
+ */
+export function historyRows(rows: MessageRow[]): MessageRow[] {
+  return rows.map((r, i) => ({ ...r, id: `h${i}` }));
 }
 
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
@@ -355,8 +398,8 @@ export type ChatOpening =
   | { kind: 'new' }
   /** Continue in Chat on a run that isn't a chat: a new chat that goes on with the run's conversation. */
   | { kind: 'continue'; runId: string; sessionId: string }
-  /** Continue in Chat on a chat's run: the chat again, in its own run. */
-  | { kind: 'reopen'; runId: string; info: ChatInfo; sessionId: string }
+  /** Continue in Chat on a chat's run, or a chat Looper opens again at its start: the chat again, in its own run. */
+  | { kind: 'reopen'; runId: string; info: ChatInfo; sessionId?: string }
   /** Fork from Here. */
   | {
       kind: 'fork';
@@ -367,6 +410,12 @@ export type ChatOpening =
       history: MessageRow[];
       draft?: ChatState['draft'];
     };
+
+/** A chat that was in the Chats window when Looper quit: Looper opens it again at its start. */
+export type SavedChat = Extract<OpenConversation, { kind: 'chat' }>;
+
+/** A chat's folder holds how it opened until its first message makes it a run (chat.json then says). */
+const OPENING_FILE = 'opening.json';
 
 class ChatSession {
   readonly id: string;
@@ -396,7 +445,9 @@ class ChatSession {
   private openedAt?: number;
   private title: string;
   private fork?: ForkSource;
-  private readonly draft?: ChatState['draft'];
+  private draft?: ChatDraft;
+  /** Opened again at Looper's start: its agent starts with the next message, not before. */
+  private readonly restored: boolean;
   private settings: ChatSettings;
   private activeModel?: string;
   private context?: ChatContext;
@@ -433,9 +484,11 @@ class ChatSession {
   /** Permission mode changes claude hasn't confirmed yet: request id → the mode to go back to. */
   private readonly modeRequests = new Map<string, string>();
   private controlSeq = 0;
+  /** Remote Control: the name the Claude app lists the chat under, while it's on. */
+  private remoteName?: string;
   private commands: SlashCommand[] = [];
   private turnEndedAt?: number;
-  private readonly startedAt = Date.now();
+  private readonly startedAt: number;
   /** Stop asked claude to end its turn: the process ends if the turn doesn't. */
   private stopTimer: NodeJS.Timeout | null = null;
   private closed = false;
@@ -447,13 +500,16 @@ class ChatSession {
     private readonly task: Task,
     opening: ChatOpening,
     choice?: HarnessChoice,
+    saved?: SavedChat,
   ) {
     this.taskId = task.id;
     this.opening = opening;
+    this.restored = !!saved;
+    this.startedAt = saved?.startedAt ?? Date.now();
     const env = resolveEnvironment(task, d.settings);
     const own = resolveHarness(task, env);
     const info = opening.kind === 'reopen' ? opening.info : undefined;
-    const wanted = choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' ? opening.harnessId : undefined);
+    const wanted = saved?.harnessId ?? choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' ? opening.harnessId : undefined);
     const harness = wanted ? env.harnesses.find((h) => h.id === wanted) : own;
     if (!harness) throw new Error(`The environment "${env.name}" no longer has the harness this chat ran on.`);
     if (harness.kind === 'custom') throw new Error('A chat needs a Claude Code or Codex harness.');
@@ -465,14 +521,16 @@ class ChatSession {
     this.extraArgs = harness.kind === own.kind ? agentArgs(task) : [];
     this.claude = harness.kind === 'claude-code';
     this.acc = this.claude ? new ClaudeStreamAccumulator() : new CodexExecAccumulator();
-    this.id = choice?.id ?? (opening.kind === 'reopen' ? opening.runId : newRunId());
+    this.id = saved?.id ?? choice?.id ?? (opening.kind === 'reopen' ? opening.runId : newRunId());
     this.reopened = opening.kind === 'reopen';
     this.recorded = this.reopened;
     this.title = info?.title ?? '';
     const taskSettings: ChatSettings = { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '' };
-    this.settings = choice
-      ? chatSettingsOn(harness, choice.from, { id: own.id, settings: taskSettings })
-      : (info?.settings ?? (opening.kind === 'fork' ? opening.settings : taskSettings));
+    this.settings = saved
+      ? (info?.settings ?? saved.settings)
+      : choice
+        ? chatSettingsOn(harness, choice.from, { id: own.id, settings: taskSettings })
+        : (info?.settings ?? (opening.kind === 'fork' ? opening.settings : taskSettings));
     this.context = info?.context;
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
@@ -486,8 +544,19 @@ class ChatSession {
       this.forkedFrom = opening.from;
       this.historyLabel = `Forked from run ${opening.from}`;
       this.fork = opening.fork;
-      this.history = opening.history;
+      this.history = historyRows(opening.history);
       this.draft = opening.draft;
+    }
+    if (saved) {
+      this.sessionId ??= saved.sessionId;
+      // What waited for the agent's turn comes back in the message box, ahead of what the box held.
+      const parts = [...(saved.queued ?? []), ...(saved.draft ? [saved.draft] : [])];
+      const text = parts.map((p) => p.text).filter(Boolean).join('\n\n');
+      const attachments = parts.flatMap((p) => p.attachments);
+      this.draft = text || attachments.length ? { text, attachments } : undefined;
+      this.commands = saved.commands ?? [];
+      // Quitting cut the turn short: it shows as stopped, as Stop leaves it.
+      if (saved.working) this.acc.addNote('Stopped.');
     }
     this.dir = d.runDir(task.id, this.id);
     this.target = createTarget(task, { host: d.host, settings: d.settings });
@@ -509,13 +578,15 @@ class ChatSession {
   start(): void {
     fs.mkdirSync(path.join(this.dir, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(this.dir, 'permissions'), { recursive: true });
+    // Until its first message, how it opened is what Looper's next start opens it again with.
+    if (!this.recorded) writeJsonAtomic(path.join(this.dir, OPENING_FILE), this.opening);
     // Continue in Chat shows the run's conversation; a chat opened again, its own.
     const historyRun = this.reopened ? this.id : this.historyLabel && this.fromRunId ? this.fromRunId : undefined;
     if (historyRun) {
       void this.d
         .readHistory(this.taskId, historyRun)
         .then((rows) => {
-          this.history = rows;
+          this.history = historyRows(rows);
           this.scheduleEmit();
         })
         .catch(() => undefined);
@@ -523,9 +594,13 @@ class ChatSession {
     if (this.claude) {
       const hook = path.join(this.dir, 'bin', this.target.permissionHookFile);
       writeText(hook, this.target.renderPermissionHook(this.targetFile('permissions')), 0o755);
+      this.remoteName = this.d.remoteName?.(this.task, this.harness);
+      const pipe = (file: string) => [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile(file)) }] }];
       writeJsonAtomic(path.join(this.dir, 'settings.json'), {
         ...projectMcpApproval(this.harness),
         hooks: {
+          // With Remote Control: each message and finished turn, from here or the Claude app, for its Conversations list.
+          ...(this.remoteName ? { UserPromptSubmit: pipe('prompt.json'), Stop: pipe('stop.json') } : {}),
           // As in a run: the payload names the session and its transcript, which the run window and Continue read.
           SessionStart: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('session.json')) }] }],
           // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
@@ -545,11 +620,13 @@ class ChatSession {
         },
       });
       this.timers.push(setInterval(() => this.pollPermissions(), 300));
-      this.startClaude();
+      // A chat opened again at Looper's start runs nothing until its next message (writeClaude starts claude then).
+      if (this.restored) this.setStatus('ready');
+      else this.startClaude();
     } else {
       if (this.sessionId) writeJsonAtomic(path.join(this.dir, 'codex-session.json'), { thread_id: this.sessionId });
       this.setStatus('ready');
-      this.loadCodexSkills();
+      if (!this.restored) this.loadCodexSkills();
     }
   }
 
@@ -568,7 +645,12 @@ class ChatSession {
       });
   }
 
-  async close(): Promise<void> {
+  /**
+   * End the chat's processes and forget it. `keep` (quitting Looper): the
+   * folder stays, chat nobody wrote in or not, so the next start opens the
+   * chat again.
+   */
+  async close(keep = false): Promise<void> {
     if (this.closed) return;
     if (this.openedAt !== undefined) this.record('closed', Date.now() - this.openedAt);
     this.save();
@@ -579,7 +661,7 @@ class ChatSession {
     this.forkProc?.kill();
     await this.kill();
     // A chat nobody wrote in leaves nothing behind; a run keeps its folder, minus the permission requests.
-    const gone = this.recorded ? path.join(this.dir, 'permissions') : this.dir;
+    const gone = this.recorded || keep ? path.join(this.dir, 'permissions') : this.dir;
     try {
       fs.rmSync(gone, { recursive: true, force: true });
     } catch (err) {
@@ -748,7 +830,16 @@ class ChatSession {
     });
     // The command list, before any message: Claude answers it without calling the model.
     this.proc?.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `init-${++this.controlSeq}`, request: { subtype: 'initialize' } }) + '\n');
+    // Each process connects anew, under a new claude.ai address.
+    if (this.remoteName) this.proc?.stdin?.write(remoteControlRequest(`rc-${++this.controlSeq}`, this.remoteName) + '\n');
     if (this.status !== 'working') this.setStatus('ready');
+  }
+
+  /** Remote Control was turned off: the chat goes on without it. */
+  remoteOff(): void {
+    if (!this.remoteName) return;
+    this.remoteName = undefined;
+    this.proc?.stdin?.write(remoteControlRequest(`rc-${++this.controlSeq}`, undefined) + '\n');
   }
 
   /** One codex turn: `codex exec`, resuming the thread after the first. */
@@ -916,9 +1007,19 @@ class ChatSession {
       const calls = rec.type === 'assistant' ? toolUseIds(rec, 'tool_use') : [];
       for (const id of calls) this.toolsRunning.add(id);
       if (calls.length) this.writeQueued();
+      // A turn the Claude app started: the chat is working too.
+      if (rec.type === 'assistant' && this.remoteName && this.status === 'ready') this.setStatus('working');
     } else if (rec.type === 'user' && rec.parent_tool_use_id == null) {
       for (const id of toolUseIds(rec, 'tool_result')) this.toolsRunning.delete(id);
-      if (rec.isReplay === true) {
+      if (rec.isReplay === true && this.unreplayed.length === 0 && this.remoteName && rec.isSynthetic !== true) {
+        // Nothing of Looper's is waiting to be read: a message sent from the Claude app.
+        const text = userRecordText(rec);
+        if (text) {
+          this.acc.addPrompt(text);
+          this.markOpened();
+          this.setStatus('working');
+        }
+      } else if (rec.isReplay === true) {
         // Claude read a message: a queued one joins the conversation here.
         const id = this.unreplayed.shift();
         const m = id ? this.queued.find((q) => q.id === id) : undefined;
@@ -933,6 +1034,15 @@ class ChatSession {
       if (id.startsWith('init-')) {
         const list = slashCommandsOf(obj(res?.response)?.commands);
         if (list.length) this.commands = list;
+        return;
+      }
+      if (id.startsWith('rc-')) {
+        const link = obj(res?.response)?.session_url;
+        if (res?.subtype === 'error') {
+          if (this.remoteName) this.acc.addNote(`Couldn't turn on Remote Control: ${String(res.error ?? 'unknown error')}`);
+        } else if (this.remoteName && typeof link === 'string' && link) {
+          this.d.onRemote?.({ id: this.id, taskId: this.taskId, name: this.remoteName, cwd: this.task.cwd, dir: this.dir, link });
+        }
         return;
       }
       const back = this.modeRequests.get(id);
@@ -1111,6 +1221,8 @@ class ChatSession {
     if (!this.recorded) {
       this.recorded = true;
       this.title = chatTitle(this.acc.rows);
+      // chat.json says how it opens again from now on.
+      fs.rmSync(path.join(this.dir, OPENING_FILE), { force: true });
     }
     this.record('opened');
     this.save();
@@ -1207,6 +1319,28 @@ class ChatSession {
     return this.harness.id;
   }
 
+  /** The message box's unsent message, as the window reported it. */
+  setDraft(draft: ChatDraft): void {
+    this.draft = draft.text || draft.attachments.length ? draft : undefined;
+  }
+
+  /** What Looper's next start opens the chat again with. */
+  saved(): SavedChat {
+    return {
+      kind: 'chat',
+      id: this.id,
+      taskId: this.taskId,
+      startedAt: this.startedAt,
+      harnessId: this.harness.id,
+      settings: this.settings,
+      ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+      ...(this.draft ? { draft: this.draft } : {}),
+      ...(this.queued.length ? { queued: this.queued.map((q) => ({ text: q.text, attachments: q.attachments })) } : {}),
+      ...(this.commands.length ? { commands: this.commands } : {}),
+      ...(this.status === 'working' ? { working: true as const } : {}),
+    };
+  }
+
   /** The chat is doing something closing would cut short: a turn, or a question to the user. */
   busy(): boolean {
     return this.status === 'working' || this.permissions.length > 0;
@@ -1269,6 +1403,30 @@ export class ChatManager {
   }
 
   /**
+   * Open again a chat that was open when Looper quit, as it was, without
+   * starting its agent: a chat with a message reopens its run (chat.json,
+   * `info`), one without opens the way it first did. Throws with the reason
+   * it can't (its folder or harness is gone).
+   */
+  restore(task: Task, saved: SavedChat, info: ChatInfo | null): ChatState {
+    const first = info ? null : readJson<ChatOpening | null>(path.join(this.d.runDir(task.id, saved.id), OPENING_FILE), null);
+    if (!info && (!first || first.kind === 'reopen')) throw new Error('Its folder no longer says how it opened.');
+    const opening: ChatOpening = info
+      ? { kind: 'reopen', runId: saved.id, info, ...(saved.sessionId ? { sessionId: saved.sessionId } : {}) }
+      : first!;
+    return this.open(new ChatSession(this.d, task, opening, undefined, saved));
+  }
+
+  /** The open chats as Looper's next start opens them again, oldest first. */
+  saved(): SavedChat[] {
+    return [...this.sessions.values()].map((s) => s.saved());
+  }
+
+  setDraft(id: string, draft: ChatDraft): void {
+    this.sessions.get(id)?.setDraft(draft);
+  }
+
+  /**
    * The open chat holding a run's conversation: the run's own chat, a chat
    * that went on with the run, or one on the same session.
    */
@@ -1300,6 +1458,7 @@ export class ChatManager {
     await old.close();
     if (this.sessions.get(chatId) !== old) return;
     this.sessions.delete(chatId);
+    this.d.onClose?.(chatId);
     this.open(next);
   }
 
@@ -1362,7 +1521,7 @@ export class ChatManager {
     this.sessions.get(id)?.answerPermission(requestId, allow);
   }
 
-  /** Chats in the middle of a turn or waiting on the user: quitting would cut them short. */
+  /** Chats in the middle of a turn or waiting on the user: quitting would stop their agents. */
   busy(): number {
     let n = 0;
     for (const s of this.sessions.values()) if (s.busy()) n++;
@@ -1373,10 +1532,23 @@ export class ChatManager {
     const s = this.sessions.get(id);
     if (!s) return;
     this.sessions.delete(id);
+    this.d.onClose?.(id);
     await s.close();
+  }
+
+  /** Remote Control was turned off: every chat goes on without it. */
+  remoteOff(): void {
+    for (const s of this.sessions.values()) s.remoteOff();
   }
 
   async closeAll(): Promise<void> {
     await Promise.all([...this.sessions.keys()].map((id) => this.close(id)));
+  }
+
+  /** Quitting Looper: every chat's agent stops, and its folder stays for the next start to open it again (restore). */
+  async suspendAll(): Promise<void> {
+    const all = [...this.sessions.values()];
+    this.sessions.clear();
+    await Promise.all(all.map((s) => s.close(true)));
   }
 }

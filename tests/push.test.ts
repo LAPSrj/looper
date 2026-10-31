@@ -120,7 +120,13 @@ describe('home-screen app', () => {
     const html = '<!doctype html><html><head><meta charset="UTF-8" /><title>Looper</title></head><body></body></html>';
     const out = withMobileHead(html);
     expect(out).toContain('<head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">');
-    for (const tag of ['name="theme-color"', 'apple-mobile-web-app-capable', 'rel="apple-touch-icon" href="/icons/apple-touch-icon.png"', 'rel="manifest" href="/manifest.webmanifest"']) {
+    for (const tag of [
+      'name="theme-color"',
+      'apple-mobile-web-app-capable',
+      'rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png"',
+      'rel="apple-touch-icon" href="/icons/apple-touch-icon.png"',
+      'rel="manifest" href="/manifest.webmanifest"',
+    ]) {
       expect(out).toContain(tag);
     }
     expect(withMobileHead(out)).toBe(out);
@@ -170,7 +176,7 @@ async function setup() {
   const staticDir = path.join(root, 'static');
   fs.mkdirSync(staticDir, { recursive: true });
   fs.writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><html><head><title>Looper</title></head><body></body></html>');
-  const settings = RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'local' });
+  const settings = RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['local'] });
   const pushes: { endpoint: string; body: PushPayload }[] = [];
   const ra = new RemoteAccess({
     dataDir,

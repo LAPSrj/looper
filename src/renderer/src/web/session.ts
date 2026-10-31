@@ -231,7 +231,7 @@ export class Session {
   async upload(file: File): Promise<{ name: string; path: string }> {
     const name = file.name || 'upload';
     const res = await this.env.fetch(`/api/upload?name=${encodeURIComponent(name)}`, { method: 'POST', headers: requestHeaders(), body: file });
-    if (!res.ok) throw new Error(`Couldn't send ${name} to the computer (${res.status}).`);
+    if (!res.ok) throw new Error(`Couldn't send ${name} to the host computer (${res.status}).`);
     const { path } = (await res.json()) as UploadResponse;
     return { name, path };
   }

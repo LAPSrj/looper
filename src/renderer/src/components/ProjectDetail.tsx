@@ -3,6 +3,7 @@ import type { RemoteState } from '@shared/remote';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, describeEnvironment, harnessKindLabel, harnessModels } from '@shared/environments';
 import { projectTaskId } from '@shared/projects';
+import { isSessionRun } from '@shared/runs';
 import { envToLine, joinTokens } from '@shared/cmdline';
 import { fmtClock, resultLabel, stateLabel } from '../format';
 import { gitTabLabel } from '@shared/git';
@@ -55,13 +56,25 @@ export function ProjectDetail({
   const [picked, setPicked] = useState<string | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const standIn = projectTaskId(project.id);
+  const mine = tasks.filter((t) => t.projectId === project.id);
+  // The Chats tab lists the project's own sessions and the ones that went on from its tasks' runs.
+  const taskKey = mine.map((t) => t.id).join('\n');
 
   useEffect(() => {
-    void window.looper.runs.list(standIn, MAX_RECORDS).then(setRecords);
-    return window.looper.onEvent((e) => {
-      if (e.type === 'record' && e.record.taskId === standIn) setRecords((list) => [...list, e.record].slice(-MAX_RECORDS));
+    const taskIds = new Set(taskKey ? taskKey.split('\n') : []);
+    const mineRecord = (r: RunRecord) => r.taskId === standIn || (taskIds.has(r.taskId) && isSessionRun(r));
+    let live = true;
+    void Promise.all([standIn, ...taskIds].map((id) => window.looper.runs.list(id, MAX_RECORDS))).then((lists) => {
+      if (live) setRecords(lists.flat().filter(mineRecord));
     });
-  }, [standIn]);
+    const off = window.looper.onEvent((e) => {
+      if (e.type === 'record' && mineRecord(e.record)) setRecords((list) => [...list, e.record].slice(-MAX_RECORDS));
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [standIn, taskKey]);
 
   const env = environments.find((e) => e.id === project.environmentId);
   const harness = env ? (project.harnessId ? env.harnesses.find((h) => h.id === project.harnessId) : env.harnesses[0]) : undefined;
@@ -77,7 +90,6 @@ export function ProjectDetail({
       : problem
         ? `No conversation: ${problem}`
         : 'Keeps a conversation open';
-  const mine = tasks.filter((t) => t.projectId === project.id);
   const pickedIndex = mine.findIndex((t) => t.id === picked);
   const taskKeys = useListNav({
     count: mine.length,
@@ -164,9 +176,7 @@ export function ProjectDetail({
             </div>
           </div>
         )}
-        {tab === 'sessions' && (
-          <RunLog taskId={standIn} records={records} runtime={undefined} hideNoAction={false} hideChatsAndTerminals={false} />
-        )}
+        {tab === 'sessions' && <RunLog records={records} sessions />}
         {tab === 'git' && <GitView projectId={project.id} watch={git} narrow={isPhone} />}
       </section>
     </div>

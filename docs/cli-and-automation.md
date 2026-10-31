@@ -247,14 +247,18 @@ tasks.json             every task definition, and the deleted tasks in the
                        Recycle Bin
 projects.json          the projects, in the Projects pane's order
 state.json             runtime snapshot: current state, next run time, last
-                       result — what `looper list` reads
+                       result — what `looper list` reads — and the Chats
+                       window's open chats and terminal sessions, which
+                       Looper opens again when it starts
+windows.json           where each kind of window was last: its size,
+                       position and maximized state
 engine.lock            the running Looper's heartbeat: one Looper per data dir
 engine.log             diagnostics; entries older than Settings -> Engine
                        log retention (default 10 days) are pruned
 addons/<id>.looperaddon  the installed addons' manifests (see addons.md)
 remote-access/         Remote Access: devices.json (the paired devices),
                        push.json (notification keys and subscriptions), the
-                       provider's folder (tailscale/, with the computer's
+                       Tailscale's folder (tailscale/, with the computer's
                        sign-in), and uploads/ (files sent from a device)
 inbox/                 JSON drop folder for the CLI and scripts
 inbox/processed/       handled files, timestamp-prefixed

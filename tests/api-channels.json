@@ -1002,6 +1002,19 @@
    "err": "Error invoking remote method 'rest:state': Error: boom rest:state"
   }
  },
+ "preventSleepState": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "prevent-sleep:state",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'prevent-sleep:state': Error: boom prevent-sleep:state"
+  }
+ },
  "openPath": {
   "arity": 1,
   "calls": [
@@ -1210,6 +1223,21 @@
   "result": {
    "err": "Error invoking remote method 'chat:unqueue': Error: boom chat:unqueue"
   }
+ },
+ "chat.setDraft": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "chat:draft",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
  },
  "chat.showSettingMenu": {
   "arity": 4,
@@ -1575,6 +1603,40 @@
    "err": "Error invoking remote method 'sessions:fileThumbnail': Error: boom sessions:fileThumbnail"
   }
  },
+ "sessions.sentFile": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:sentFile",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:sentFile': Error: boom sessions:sentFile"
+  }
+ },
+ "sessions.openFile": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "sessions:openFile",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom sessions:openFile"
+  }
+ },
  "attachment.open": {
   "arity": 1,
   "calls": [
@@ -1887,6 +1949,50 @@
   ],
   "result": {
    "err": "boom remoteAccess:openRename"
+  }
+ },
+ "remoteAccess.beginSignIn": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:beginSignIn",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:beginSignIn"
+  }
+ },
+ "remoteAccess.endSignIn": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:endSignIn",
+    []
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:endSignIn"
+  }
+ },
+ "remoteAccess.finishSetup": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:finishSetup",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:finishSetup"
   }
  },
  "continueRun": {

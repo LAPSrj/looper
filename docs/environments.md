@@ -70,7 +70,12 @@ A harness has a Type:
   conversations, and a per-harness "Folder trust and MCP server dialogs"
   setting — "Answer automatically (recommended)" or "Wait for user" — for the
   first-run trust prompt Claude Code shows for a new working directory and
-  its prompt to approve the folder's project MCP servers (`.mcp.json`).
+  its prompt to approve the folder's project MCP servers (`.mcp.json`). Two
+  more settings go with [Remote Control](monitoring.md#remote-control):
+  **Start new conversations with Remote Control** (chats and Looper
+  terminals on the harness start with it while it's on, so the Claude app can
+  drive them) and **Close idle Remote Control conversations once their
+  prompt cache expires** (on by default).
 - **Codex** gets the same level of integration through its own mechanisms:
   `--model` and sandbox/approval flags from the Agent tab, headless runs
   through `codex exec --json`, idle detection and the final report through

@@ -13,6 +13,12 @@ export interface Attachment {
   image: boolean;
 }
 
+/** A file's own name: its base name without the stamp Looper puts in front of an attachment copy's. */
+export function attachmentName(file: string): string {
+  const base = file.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || file;
+  return base.replace(/^\d{8}-\d{6}-[a-z0-9]{4}-/, '');
+}
+
 /** A file handed to Looper to attach: a pasted image's bytes, or a dropped or picked file's host path. */
 export type AttachmentInput = { name: string; data: Uint8Array } | { name: string; path: string };
 
@@ -63,8 +69,12 @@ export interface ChatState {
   harnessLocked: boolean;
   /** The divider above the earlier conversation ("Earlier in run …"); unset shows it without one. */
   historyLabel?: string;
-  /** Fork from Here on the user's own message: the message, waiting in the new chat's message box. */
-  draft?: { text: string; attachments: Attachment[] };
+  /**
+   * What the message box starts with: the message box's unsent message as
+   * the window last reported it (also across a restart of Looper), or with
+   * Fork from Here on the user's own message, that message.
+   */
+  draft?: ChatDraft;
   settings: ChatSettings;
   /** The harness's model presets: the Chat menu's Model list and the status bar's names. */
   models: HarnessModel[];
@@ -91,6 +101,12 @@ export interface ChatState {
   /** When the agent last finished a turn (ms since the epoch). */
   turnEndedAt?: number;
   startedAt: number;
+}
+
+/** A message box's unsent message and files. */
+export interface ChatDraft {
+  text: string;
+  attachments: Attachment[];
 }
 
 export interface QueuedMessage {

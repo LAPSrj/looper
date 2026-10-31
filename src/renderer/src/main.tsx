@@ -35,8 +35,8 @@ import { RecycleBinApp } from './RecycleBinApp';
 import { RemoteConversationsApp } from './RemoteConversationsApp';
 import { RemoteHelperEditorApp } from './RemoteEditorApps';
 import { ProjectEditorApp } from './ProjectEditorApp';
-import { RemoteSettingsApp } from './RemoteSettingsApp';
-import { RemoteAccessDevicesApp, RemoteAccessPairApp, RemoteAccessRenameApp, RemoteAccessSettingsApp } from './RemoteAccessApps';
+import { RemoteHelpersApp } from './RemoteHelpersApp';
+import { RemoteAccessDevicesApp, RemoteAccessPairApp, RemoteAccessRenameApp, RemoteAccessSettingsApp, RemoteAccessSetupApp } from './RemoteAccessApps';
 import { RunOptionsApp } from './RunOptionsApp';
 import { SendToSessionsApp } from './SendToSessionsApp';
 import { SessionsApp } from './SessionsApp';
@@ -44,7 +44,7 @@ import { SettingsApp } from './SettingsApp';
 import { TemplatePickerApp } from './TemplatePickerApp';
 import { TemplatesApp } from './TemplatesApp';
 import { TerminalSessionApp } from './TerminalSessionApp';
-import type { MeResponse } from '@shared/remote-access';
+import { waitForPairing } from './web/boot';
 import { PairPage } from './web/PairPage';
 import { Shell } from './web/Shell';
 import { attachFrame, startSession } from './web/start';
@@ -109,9 +109,10 @@ function pickRoot() {
   if (hash === 'template-picker') return <TemplatePickerApp />;
   if (hash === 'templates') return <TemplatesApp />;
   if (hash === 'recycle-bin') return <RecycleBinApp />;
-  if (hash === 'remote-settings') return <RemoteSettingsApp />;
+  if (hash === 'remote-helpers') return <RemoteHelpersApp />;
   if (hash === 'remote-conversations') return <RemoteConversationsApp />;
   if (hash === 'remote-access-settings') return <RemoteAccessSettingsApp />;
+  if (hash === 'remote-access-setup') return <RemoteAccessSetupApp />;
   if (hash === 'remote-access-devices') return <RemoteAccessDevicesApp />;
   if (hash === 'remote-access-pair') return <RemoteAccessPairApp />;
   if (remoteAccessRenameMatch) return <RemoteAccessRenameApp id={decodeURIComponent(remoteAccessRenameMatch[1])} />;
@@ -264,10 +265,12 @@ if (platform === 'electron' || window !== window.top) {
 /** A browser's top frame: the pairing page until this device is paired, then the shell that shows the windows. */
 async function bootWebTop() {
   const root = createRoot(document.getElementById('root')!);
-  const me = (await fetch('/api/me')
-    .then((r) => r.json())
-    .catch(() => null)) as MeResponse | null;
-  if (!me?.paired) {
+  // No answer (Looper restarting, a source still starting) isn't "not paired": wait for one.
+  const answer = await waitForPairing(() => fetch('/api/me'), {
+    retryMs: 3000,
+    onWaiting: () => root.render(<div className="empty">Can't reach Looper on the host computer. Trying again…</div>),
+  });
+  if (answer === 'unpaired') {
     root.render(<PairPage />);
     return;
   }

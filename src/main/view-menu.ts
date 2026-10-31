@@ -1,5 +1,6 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../shared/panes';
+import type { ProjectGroupBy } from '../shared/projects';
 import type { TaskFilter, TaskListOptions, View } from '../shared/types';
 
 export type ViewUpdate = (patch: Partial<View>) => void;
@@ -32,23 +33,21 @@ function listItems(
 /** The label of a task pane's Show check box in View. */
 const SHOW_LABELS: Record<PaneId, string> = { tasks: 'Ta&sks', goals: 'Go&als', watchers: '&Watchers' };
 
-/** A task pane's Show check box. The last pane showing can't be hidden: the sidebar would be empty. */
+/** A task pane's Show check box. */
 function showPaneItem(view: View, id: PaneId, update: ViewUpdate, label: string): MenuItemConstructorOptions {
   const pane = view.panes[id];
-  const lastVisible = PANES.filter((p) => view.panes[p.id].visible).length === 1 && pane.visible;
   return {
     label,
     type: 'checkbox',
     checked: pane.visible,
-    enabled: !lastVisible,
     click: (item) => update({ panes: { ...view.panes, [id]: { ...pane, visible: item.checked } } }),
   };
 }
 
 /**
  * View's pane group: a check box for every pane in the order the sidebar shows
- * them (Projects, the task panes, then `addonPanes`). The single task list is
- * one pane that always shows.
+ * them (Projects, the task panes or the single task list, then `addonPanes`).
+ * With none showing, the main window has no sidebar.
  */
 export function paneVisibilityItems(
   view: View,
@@ -64,7 +63,14 @@ export function paneVisibilityItems(
     },
     ...(view.sidebar === 'multiple'
       ? PANES.map((p) => showPaneItem(view, p.id, update, SHOW_LABELS[p.id]))
-      : [{ label: SHOW_LABELS.tasks, type: 'checkbox', checked: true, enabled: false } as MenuItemConstructorOptions]),
+      : [
+          {
+            label: SHOW_LABELS.tasks,
+            type: 'checkbox',
+            checked: view.single.visible,
+            click: (item) => update({ single: { ...view.single, visible: item.checked } }),
+          } as MenuItemConstructorOptions,
+        ]),
     ...addonPanes,
   ];
 }
@@ -81,6 +87,31 @@ export function paneMenuItems(view: View, id: PaneId, update: ViewUpdate, withSh
   ];
 }
 
+const GROUP_LABELS: Record<ProjectGroupBy, string> = { none: '&None', folder: '&Folder', harness: '&Harness' };
+
+/** The Projects pane's items: whether it shows (unless `withShow` is off), then its Group By choices. Used by its header's context menu and View > Task List Options. */
+export function projectsPaneMenuItems(view: View, update: ViewUpdate, withShow = true): MenuItemConstructorOptions[] {
+  const pane = view.projectsPane;
+  const set = (patch: Partial<View['projectsPane']>) => update({ projectsPane: { ...pane, ...patch } });
+  return [
+    ...(withShow
+      ? [
+          { label: 'Show &Pane', type: 'checkbox', checked: pane.visible, click: (item) => set({ visible: item.checked }) } as MenuItemConstructorOptions,
+          { type: 'separator' } as MenuItemConstructorOptions,
+        ]
+      : []),
+    {
+      label: '&Group By',
+      submenu: (Object.keys(GROUP_LABELS) as ProjectGroupBy[]).map((k): MenuItemConstructorOptions => ({
+        label: GROUP_LABELS[k],
+        type: 'radio',
+        checked: pane.groupBy === k,
+        click: () => set({ groupBy: k }),
+      })),
+    },
+  ];
+}
+
 /** The single list's filters and folder options. */
 export function singleMenuItems(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
   return listItems(view.single, ALL_FILTERS, (patch) => update({ single: { ...view.single, ...patch } }));
@@ -89,6 +120,7 @@ export function singleMenuItems(view: View, update: ViewUpdate): MenuItemConstru
 /** View > Task List Options: how the task list looks and what it lists. Which panes show is in View itself. */
 export function taskListMenu(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
   const multiple = view.sidebar === 'multiple';
+  const projects: MenuItemConstructorOptions = { label: '&Projects Pane', submenu: projectsPaneMenuItems(view, update, false) };
   return [
     { label: 'S&ingle Pane', type: 'radio', checked: !multiple, click: () => update({ sidebar: 'single' }) },
     { label: 'M&ultiple Panes', type: 'radio', checked: multiple, click: () => update({ sidebar: 'multiple' }) },
@@ -99,10 +131,11 @@ export function taskListMenu(view: View, update: ViewUpdate): MenuItemConstructo
     // The single list's folder options end its items, so Open Folders Automatically joins them.
     ...(multiple
       ? [
+          projects,
           ...PANES.map((p): MenuItemConstructorOptions => ({ label: p.menuLabel, submenu: paneMenuItems(view, p.id, update, false) })),
           { type: 'separator' } as MenuItemConstructorOptions,
         ]
-      : singleMenuItems(view, update)),
+      : [projects, { type: 'separator' } as MenuItemConstructorOptions, ...singleMenuItems(view, update)]),
     { label: '&Open Folders Automatically', type: 'checkbox', checked: view.autoOpenFolders, click: (item) => update({ autoOpenFolders: item.checked }) },
   ];
 }

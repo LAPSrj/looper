@@ -12,12 +12,14 @@ A watcher task reads "Watching" while its watcher command is up, "Watcher
 restarting" while Looper waits to restart it, and "Idle" outside its active
 hours. Disabled and completed tasks are
 shown faded. Selecting a task opens its detail pane with three tabs — Status,
-Runs, Terminal — plus a status bar at the bottom counting
+Runs, Terminal — plus a status bar at the bottom. Its left end counts
 enabled, disabled, completed, paused, and running tasks, and, once an addon is
-installed, the running [addons](addons.md). While Rest Mode is
-on, the status bar also shows what it's doing (see [Rest Mode](#rest-mode)),
-and while [Remote Access](remote-access.md) is on, it says **Remote Access
-enabled**.
+installed, the running [addons](addons.md). Its right end shows what's on:
+while Rest Mode is on, what it's doing (see [Rest Mode](#rest-mode)); while a
+[Prevent Sleep](#prevent-sleep) timer is on, until when; and while
+[Remote Access](remote-access.md) is on, each of its sources with its address
+(for example **Tailscale: https://looper.example.ts.net**) or what it's
+waiting for.
 
 Double-clicking a task opens its Edit Task window.
 
@@ -33,9 +35,10 @@ one of their items shows the addon's screen for it in the detail pane.
 
 The View menu lists every pane in one group of check boxes, in the order the
 sidebar shows them: Projects, Tasks (or Tasks, Goals and Watchers with
-multiple panes), then each addon's panes. The single task list always shows,
-and the last of the task panes showing can't be hidden. **View → Task List
-Options** has the rest of the task list's settings.
+multiple panes), then each addon's panes. Each check box shows or hides its
+pane, and with every pane hidden the window has no sidebar: the detail pane
+takes the whole width. **View → Task List Options** has the rest of the task
+list's settings.
 
 ## The dashboard
 
@@ -70,12 +73,14 @@ Disabled and completed tasks aren't listed.
 **Recent runs** lists the 10 latest finished runs across every task and
 project, newest first: the task or project, its result, its
 details, when it started, and how long it took. A run shows here once it
-ends, and a run that Needs attention lists isn't repeated here. It follows
-the same Task Logs filters as the Runs tab (Hide Runs with No Action, Hide
-Chats and Terminals).
+ends, and a run that Needs attention lists isn't repeated here. It lists
+task runs only: chats and terminal sessions show in their project's Chats tab
+instead. It follows the same View filter as the Runs tab (Hide Task Runs with
+No Action).
 
 **Remote Control** shows while Remote Control is on and lists its open
-sessions: the session, its status, its last message, and when it started.
+sessions (with the chats and terminals that started with it): the session,
+its status, its last message, and when it started.
 
 While the dashboard shows, the toolbar's task buttons are off. Clicking a
 row picks it, and the Task menu and the row's right-click menu then act on
@@ -110,15 +115,15 @@ window shows; **Task List Options** holds a Standard or Compact task
 list (Compact drops the status line), whether disabled, completed, scheduled,
 manual, and watcher tasks are listed at all, whether
 folders open automatically (folders start open, and opening one opens its
-whole subtree; unchecked, folders start closed), whether every task's Runs
-tab and the dashboard's Recent runs hide runs with no action (Task Logs → Hide Runs with No Action) and the
-[chats](#chats) and [terminal sessions](#terminal-sessions) you started (Task
-Logs → Hide Chats and Terminals), and whether the toolbar and status bar
-themselves are shown.
+whole subtree; unchecked, folders start closed), how the Projects pane
+groups its list (**Projects Pane → Group By**, see [Projects](projects.md#the-projects-pane)), whether every task's Runs
+tab and the dashboard's Recent runs hide runs with no action (Hide Task Runs
+with No Action), and whether the toolbar and status bar themselves are shown.
 
-The Advanced menu has Remote Control (see [below](#remote-control)), Remote
-Access (see [Remote Access](remote-access.md)), Addons… (see
-[addons](addons.md)), Update Models… (see
+The Advanced menu has Remote Access (see [Remote Access](remote-access.md)),
+Remote Control (see [below](#remote-control)), Addons… (see
+[addons](addons.md)), Start Rest Mode (Windows only, see
+[Rest Mode](#rest-mode)), Prevent Sleep (see [below](#prevent-sleep)), Update Models… (see
 [Models](environments.md#models)), Engine Log (described below), Open Data
 Directory, which opens the [data directory](cli-and-automation.md#the-data-directory)
 in your file manager, and Reload UI. **Help → Instructions** (F1) opens this
@@ -150,7 +155,8 @@ buttons are greyed out. Buttons, left to right, with their tooltips:
 
 New Chat and New Terminal start the session in the selected project, or the
 selected task's project. With neither, or from the arrow beside the button,
-they list your projects to pick one.
+they list your projects to pick one, then **Other Folder…** and **New
+Project…** (see [the Chats window](#the-chats-window)).
 
 Running Now on a disabled or completed task asks '"<task name>" is disabled.
 Run it anyway?' first — the run happens, and the task goes straight back to
@@ -179,7 +185,8 @@ sessions](#terminal-sessions) for where it opens.
 
 Chats and Looper terminal sessions open in the **Chats** window. It lists
 every open session on the left, grouped by [project](projects.md) in the
-Projects pane's order, shows the selected one in the middle, and shows what
+Projects pane's order (then by folder, for the ones opened in another folder),
+shows the selected one in the middle, and shows what
 its agent is doing on the right. The main toolbar's Chats button, **View →
 Chats** in the main window and **Show Chats** in the tray menu open it,
 and starting a chat or a terminal
@@ -187,15 +194,40 @@ session anywhere in Looper opens it on that session.
 
 Closing the window leaves every session running, and opening it again shows
 them where they are. **File → Close Conversation** (Ctrl+W or Ctrl+F4, the
-toolbar, or right-click a session) ends one session, and **File → Close All
-Conversations** ends them all. Both ask first, except that a chat with no
-messages yet closes without asking. Quitting Looper ends every
-session, after asking while one is open. **File → New Chat in
+toolbar, or right-click a session) ends one session for good, and **File →
+Close All Conversations** ends them all. Both ask first, except that a chat
+with no messages yet closes without asking.
+
+Quitting Looper doesn't close them: it stops every session's agent (asking
+first while a chat's agent works or a terminal session runs), and the next
+time Looper starts the Chats window lists the same chats and terminal
+sessions, in the same groups and order, with their conversations, settings
+and unsent messages. Nothing runs until you go on with one: a chat's agent
+starts again with your next message, and a terminal session shows its output
+from before and "stopped when Looper quit · press any key to go on"; the key
+you press starts the harness again on the conversation (it isn't typed into
+it), at the window's size. A turn that quitting cut short shows as stopped,
+as Stop leaves it, and a message waiting in a chat's queue comes back in its
+message box. A terminal session that quitting stopped isn't listed in Send to
+Chats until a key starts it again. A custom harness's terminal sessions,
+which have no conversation to go on with, close when Looper quits.
+
+**File → New Chat in
 &lt;project&gt;** (Ctrl+T) opens a chat in the shown session's project. In a
 terminal session, Ctrl+T and Ctrl+W go to the terminal, and Ctrl+F4 still
 closes it.
 
-**File → Copy Session ID** (or right-click a session) copies the harness's own
+**File → New Chat** and **File → New Terminal** (and the arrows beside the
+toolbar's New Chat and New Terminal buttons) list your projects, then **Other
+Folder…**, which asks for a folder and starts the session there without a
+project. It runs in your default environment, or on Windows a folder in WSL
+(`\\wsl.localhost\<distro>\…`) runs in that distro's WSL environment, with
+the harness, model and permission mode a new project there would get. The
+list groups such sessions under their folder, and a folder that already has a
+project opens in that project. **File → New Project…** (also in those button
+menus) opens the New Project window.
+
+**Chat → Copy Session ID** (or right-click a session) copies the harness's own
 id for the conversation: Claude Code's session id, or Codex's thread id, the
 one `claude --resume` or `codex resume` takes. It's greyed out until the
 harness has started the conversation.
@@ -212,7 +244,10 @@ presses Esc for you.
 **File → Open in New Window** (or right-click a chat) opens the chat in a
 window of its own, titled with the chat's name. It shows the conversation like
 the Chats window's middle pane, without the list; **View → Activity Pane**
-shows the [activity pane](#the-activity-pane) on its right (it starts hidden).
+shows the [activity pane](#the-activity-pane) on its right (it starts hidden),
+and Looper remembers the pane's width apart from the Chats window's. **View →
+Always on Top** keeps the window above your other windows until you turn it
+off or close the window.
 The chat stays in the Chats window too, and you can write in either one: both
 show the same conversation as it happens. Its File, Edit and Chat menus have
 the commands about the chat. Opening it again brings its window to the front,
@@ -238,7 +273,10 @@ that has waited longest first, with the reason and how long it has waited:
 - the session ended without you seeing it.
 
 Looking at the session takes it off the list, except a permission request,
-which stays until you answer it.
+which stays until you answer it. **View → Waiting Chats First** (on at first)
+shows Waiting for you, and puts the waiting sessions' cards first on the
+[dashboard](#the-dashboard); turned off, the list shows only the projects'
+groups. Looper remembers the setting.
 
 Clicking a group's name closes or opens it, and Looper remembers which groups
 are closed. Up and Down move through the sessions shown, and a click on the
@@ -266,7 +304,11 @@ Send to Chats doesn't list it. Looper remembers the setting.
 ![The dashboard: a card per session](img/sessions-dashboard.png)
 
 The dashboard shows every session as a card, in the list's order, so a card
-stays in place while you work in it. A card's title bar shows the session's
+stays in place while you work in it. Drag a card by its title to another place
+(a bar shows which side of a card it goes to), and Looper remembers the order;
+a new session's card comes after the ones you placed. With **View → Waiting
+Chats First** on, the sessions waiting for you come first, the one that has
+waited longest first, and go back to their place once they stop waiting. A card's title bar shows the session's
 project and harness, its state, and how many commands or subagents it runs in
 the background; a session waiting for your answer has a yellow border.
 
@@ -290,7 +332,7 @@ Clicking a chat's title bar (or anywhere on another card) opens the session,
 and right-clicking it has the session's menu. The toolbar's Dashboard button,
 **View → Dashboard**, or a click below the list shows the dashboard.
 
-### Subagents
+### Subagents and workflows
 
 Once the agent starts a subagent, tabs appear above the conversation:
 **Conversation** for the session's own, then one per subagent, named by what
@@ -298,25 +340,50 @@ it does. A subagent's dot pulses while it runs and turns red if it failed.
 Clicking its tab shows its conversation as it happens, and Now follows its
 tool calls.
 
+A workflow the agent runs (Claude Code's Workflow tool, a script that starts
+many subagents in phases) gets one tab after them, named by the workflow, with
+the same dot for the whole run. Its tab has tabs of its own: **Overview**, then
+one per agent the workflow started.
+
+- **Overview** shows whether the run is still running and how many of its
+  agents are done, how long it has run, and its phases in order. Each phase
+  lists its agents with what each one does, whether it's running, done, failed
+  or stopped, the model it runs on and how long it has taken. A running agent
+  shows its latest tool call and its context, and a finished one the tokens and
+  tool calls it used and the first line of its result, or its error. A phase
+  no agent has started yet reads "Not started". Once the run ends, the
+  workflow's log lines and its result follow the phases: Claude Code writes
+  them only then. Clicking an agent shows its tab, and right-clicking it has
+  **Open Subagent Conversation**.
+- An agent's tab shows its conversation as it happens, and Now follows its
+  tool calls. On the Overview, Now shows the session's own.
+
 ### The activity pane
 
 The pane on the right has four tabs, and a fifth for a project in a git
-repository. **View → Activity Pane** shows or hides
-it.
+repository. **View → Activity Pane** (or the toolbar's Activity Pane button)
+shows or hides it.
 
 - **Now** shows the agent's latest tool call the way it looks on its screen. A
-  command shows in a terminal, the command line and then its output. A file it
-  read shows in an editor with its line numbers, and a change it made shows the
-  same way, with the added lines in green and the removed ones in red. Other
-  tools show their input and result. It follows each new call. The tab's **Previous Tool Call** and **Next Tool
+  command shows in a terminal, the command line and then its output, under its
+  description as the title. A file it read shows in an editor with its line
+  numbers and its code in color, and a change it made shows the same way, with
+  the added lines marked in green and the removed ones in red. An image it
+  read shows as the image. A skill it loaded shows the skill's instructions as
+  formatted text. Other tools show their parameters in a table, names on the
+  left and values on the right, and then their result. An addon can change how
+  its own tools show here (see [Addons](addons.md#how-tool-calls-show)). It
+  follows each new call. The tab's **Previous Tool Call** and **Next Tool
   Call** buttons go back through the earlier ones, and **Follow the Latest
   Tool Call** goes back to following.
-- **Background** lists the commands and subagents the agent runs in the
-  background, with how long each has been running, and the last few that
+- **Background** lists the commands, subagents and workflows the agent runs in
+  the background, with how long each has been running, and the last few that
   ended, with how they ended. Its title counts the ones running. Clicking a
-  command shows the end of its output. Right-clicking it has Open File (its
-  output file), Copy Path and Copy Content (the command).
-- **Subagents** lists the subagents the agent started: what each one does,
+  command shows the end of its output, and clicking a workflow shows its tab
+  above the conversation. Right-clicking a command has Open File (its output
+  file), Copy Path and Copy Content (the command).
+- **Subagents** lists the subagents the agent started (a workflow's agents are
+  in the workflow's tab): what each one does,
   whether it's running, its agent type, the model and effort it runs on, how
   many tokens its context holds, and whether it runs in the background. The
   model, effort and context come from its latest reply, so they read "Not
@@ -338,12 +405,13 @@ The toolbar's buttons, left to right, with their tooltips:
 |---|---|---|
 | Grid | Dashboard (stays pressed while the dashboard shows) | — |
 | Bullhorn | Send to Chats | — |
-| Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects | Ctrl+T |
-| Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects | — |
+| Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects, Other Folder… and New Project… | Ctrl+T |
+| Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects, Other Folder… and New Project… | — |
 | Bubble with a square | Stop (greyed out while the agent isn't working) | Esc in a chat |
 | Bubble with fast-forward | Send Now: stops the turn, and the agent goes on with the chat's queued messages | Ctrl+Enter |
 | Bubble with an X | Close Conversation | Ctrl+W, Ctrl+F4 |
 | Folder | Open Working Directory | — |
+| Window with a right column | Activity Pane (stays pressed while the pane shows) | — |
 
 The status bar shows the session's harness, then how much of the context the conversation uses, when
 the agent last replied, and with Claude Code whether that reply's prompt cache
@@ -356,7 +424,9 @@ used. **View → Toolbar** and **View → Status Bar** show or hide them.
 ### Send to Chats
 
 **File → Send to Chats…** sends one message to several chats at once.
-Its window lists the open chats and terminal sessions by project, with check
+Its window lists the open chats and terminal sessions by project (not a
+terminal session that quitting Looper stopped, until a key in it starts it
+again), with check
 boxes to pick every chat, every chat of a harness, or a project's chats. A
 chat that's working gets the message in its queue, and a terminal session gets
 it typed in and sent.
@@ -371,7 +441,9 @@ session where **Settings → General → Open terminal sessions in** says:
 
 - **Looper** (the default) opens it in the [Chats
   window](#the-chats-window). When the harness exits, the terminal shows
-  "session ended".
+  "session ended". Quitting Looper stops the harness and keeps the session
+  for Looper's next start, where a key starts it again on the conversation
+  (see [the Chats window](#the-chats-window)).
 - **Default terminal** opens a window of the system's terminal instead. On
   Windows that's the default terminal application set in Windows (Settings
   → System → For developers → Terminal); on Linux, `$TERMINAL` or the first
@@ -379,13 +451,14 @@ session where **Settings → General → Open terminal sessions in** says:
   Looper and stays open when Looper quits.
 
 With Claude Code or Codex, a session in Looper becomes a run when the agent
-finishes its first turn: a run of the project for a new session, which shows
-in the project's Sessions tab, or of the task for Continue in Terminal on a
-task's run, which shows in the task's Runs tab. It shows with **Terminal** as
-its result and its first message as the details, and it has no time limits
+finishes its first turn: a run of the project for a new session, or of the
+task for Continue in Terminal on a task's run. Either shows in the project's
+Chats tab, not in the task's Runs tab. It shows with its first message as the
+details, and it has no time limits
 and no dashboard row. Its records note when it opened and closed ("Terminal
-opened", "Terminal closed after 12m"). A session closed before the agent's
-first turn leaves nothing behind. Sessions in the system's terminal aren't
+opened", "Terminal closed after 12m"; quitting Looper closes the record, and
+the session's first turn after the next start opens a new one). A session
+closed before the agent's first turn leaves nothing behind. Sessions in the system's terminal aren't
 recorded, because Looper can't tell when they end, and neither are a custom
 harness's.
 
@@ -424,8 +497,9 @@ where the run left off.
 
 Once you send the first message, the chat is a run of the project (or, for
 Continue in Chat on a task's run, of the task): it shows in the project's
-Sessions tab or the task's Runs tab with **Chat** as its result and its first
-message as the details, and its records note when it opened and closed. It has
+Chats tab (also when it continues a task's run, which keeps it out of the
+task's Runs tab) with its first message as the details, and its records note
+when it opened and closed. It has
 no time limits and no dashboard row. Double-click it for the run window, and
 right-click it for the same Continue items as any run. Continue in Chat opens
 the chat again with its conversation and settings, and goes on from where it
@@ -435,8 +509,7 @@ or a terminal session holds a conversation, the runs whose conversation it is
 offer only the Continue item that shows that session, so nothing else writes to
 the conversation at the same time. A chat closed without a message sent leaves
 nothing behind. Chats and terminal sessions are deleted by **Run log
-retention** (Settings → General), like other runs, and **View → Task Logs →
-Hide Chats and Terminals** hides them from the Runs tab.
+retention** (Settings → General), like other runs.
 
 Enter sends the message (Shift+Enter starts a new line). **Stop**, under the
 Send button, ends the agent's turn while it works. While the agent works, or
@@ -539,7 +612,22 @@ them, each with a Remove link. An image (PNG, JPEG, GIF or WebP) goes to the age
 the message, so it sees it at once; any other file, or an image over 3.75 MB,
 goes as a path the agent reads itself. In the conversation, images show as
 thumbnails and other files by name, and clicking one opens it in its default
-app.
+app. From a browser or phone, through [Remote Access](remote-access.md#files),
+an image or a text file opens in Looper's own viewer instead.
+
+### Files the agent sends
+
+When Claude Code sends you a file (its SendUserFile tool, for a diagram, a
+report or a screenshot), the conversation shows it as a message from the agent:
+the caption as its text, then each file under it, instead of a collapsed tool
+call. An image (PNG, JPEG, GIF, WebP or SVG) shows as a thumbnail, and clicking
+it opens the image window. Any other file, and an image the agent asked to
+attach rather than display, shows as a card with the file's name and size, and
+clicking it opens the file in its default app. From a browser or phone, both
+open in Looper's own viewer, as an attachment does, with **Download to This
+Device** and **Download to Host Computer**. A file that no longer exists shows
+its name and "File not found". The agent's tool call itself still shows in the
+activity pane's **Now** tab and in the Messages view's raw mode.
 
 ## Attachments
 
@@ -564,7 +652,7 @@ Folder…, Clear Run History…, Open Project in Terminal, Open Project in
 Delete Task moves the task to the Recycle Bin: it stops (a run in flight is
 stopped, and only then does Delete ask first), never runs again, and leaves
 the task list. Deleting a folder with **Also delete tasks inside** checked
-does the same to each of its tasks. **File → Recycle Bin…** opens a window
+does the same to each of its tasks. **Tools → Recycle Bin…** opens a window
 listing the deleted tasks, most recently deleted first. **Restore** puts the
 selected task back as it was, in its folder if that still exists. It can't
 be restored while another task has its id, or when its environment or
@@ -648,8 +736,8 @@ The Runs tab lists every past run of the task as a table: Date, Start,
 End, Result, Duration, Details. Each row is one full run (check, classify,
 and agent steps collapsed together, showing the most significant result);
 a run still in progress shows Running in the Result column. A
-[chat](#chats) or [terminal session](#terminal-sessions) you started shows as
-Chat or Terminal, with its first message as the details.
+[chat](#chats) or [terminal session](#terminal-sessions) you started isn't a
+task run: it shows in the project's Chats tab instead.
 Selecting a row shows that run's final report below in a resizable split
 pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
 choosing "Open" opens the run window described below. The
@@ -731,6 +819,10 @@ Result tab shows the image itself, fitted to the pane. Double-clicking the
 image or its row opens it in an image window with zoom controls (−, +, and
 an editable percentage; it opens fitted to the window).
 
+A file the agent sent you with Claude Code's SendUserFile tool shows as an
+Agent row (under Show Messages, not Show Tool Usage): its details are the
+caption and the files, which open as they do in a [chat](#files-the-agent-sends).
+
 When the agent delegates work with the Task tool, that row can be opened as
 its own conversation: double-click it, or use the "Open Subagent
 Conversation" button in its detail pane. The subagent window is the same
@@ -795,7 +887,7 @@ hasn't been closed since it showed the toast. No toast fires while any Looper wi
 
 Rest Mode (Windows only) puts the computer to sleep between runs and wakes
 it for the next one, so an overnight schedule doesn't keep the machine on.
-**File → Start Rest Mode** (also on the tray menu) turns it on; the same
+**Advanced → Start Rest Mode** (also on the tray menu) turns it on; the same
 item becomes **Stop Rest Mode** while it's on, and the status bar shows what
 it's doing.
 
@@ -829,8 +921,29 @@ The status bar shows the phase: "Rest Mode — waiting for tasks to finish",
 sleeping until HH:MM" once the wake timer is set.
 
 A sleeping computer drops every [Remote Control](#remote-control) session,
-so **Start Rest Mode** is disabled while Remote Control is on, and starting
-Remote Control turns Rest Mode off.
+so **Start Rest Mode** is disabled while Remote Control is on, and turning
+Remote Control on turns Rest Mode off. It's also disabled while a
+[Prevent Sleep](#prevent-sleep) timer is on, and starting one turns Rest Mode
+off.
+
+## Prevent Sleep
+
+**Advanced → Prevent Sleep** keeps the computer from going to sleep on its
+own. Pick **30 Minutes**, **1 Hour** or **2 Hours** to keep it awake that
+long, **Until Turned Off** to keep it awake until you pick **Off**. While a
+timer is on, the status bar says "Preventing sleep until 3:45 PM" (or
+"Preventing sleep" until turned off). The timer lasts for this run of Looper:
+a fresh Looper always starts with it off.
+
+**While a Session Is Working**, in the same submenu, keeps the computer awake
+while any chat, terminal session or task run's agent is working, and lets it
+sleep again once they're all done or waiting for you. Looper remembers this
+choice. With Rest Mode on, it also keeps Rest Mode from putting the computer
+to sleep while a chat or terminal session works.
+
+Rest Mode puts the computer to sleep on purpose, so picking a timer turns Rest
+Mode off, and **Start Rest Mode** is disabled while a timer is on. Unlike Rest
+Mode, Prevent Sleep works on every system, not only Windows.
 
 ## Remote Control
 
@@ -841,20 +954,32 @@ started with `--remote-control`, and it shows in the app's session list under
 its name. Only Claude Code harnesses can run them, and you need to be signed
 in to Claude Code with a Claude subscription.
 
-**Advanced → Remote Control → Start Remote Control** turns it on for this
-run of Looper; the same item becomes **Stop Remote Control**, which ends
-every one of its sessions (it asks first while a conversation has had a
-message). Quitting Looper ends them too. Check **Start with Looper** in
-**Advanced → Remote Control → Settings…** to turn it on whenever Looper
-starts.
+**Advanced → Remote Control → Turn On Remote Control** turns it on, and
+Looper remembers it: Remote Control runs now and every time Looper starts,
+until **Turn Off Remote Control** (the same item) turns it off. Turning it off
+ends every one of its sessions (it asks first while a conversation has had a
+message). Quitting Looper ends them too, and they open again when it starts.
 
-**Close idle conversations once their prompt cache expires** (on by
-default) ends a conversation that has had no message since Claude's prompt
-cache for it expired: an hour after its last answer, or five minutes when
-Claude Code used the short cache (Looper reads which one from the
-conversation's transcript). A project then gets a fresh conversation, and
-the ended one can be resumed from a helper or the Conversations window.
-Helpers are never closed this way.
+Two options on a Claude Code harness (in its Edit Harness window, see
+[environments](environments.md#harnesses)) go with Remote Control:
+
+- **Start new conversations with Remote Control**: chats and Looper terminals
+  that start on the harness while Remote Control is on start with it, so the
+  Claude app can drive them too, and they're listed in the Conversations
+  window while they're open. They stay yours: they close in their own window,
+  and turning Remote Control off turns it off in open chats (an open terminal
+  keeps its connection until it closes, since Claude Code can't switch it off
+  from outside the terminal). A session opened in your system's own terminal
+  (**Settings → General → Open terminal sessions in**: Default terminal)
+  doesn't start with it.
+- **Close idle Remote Control conversations once their prompt cache expires**
+  (on by default) ends a conversation of Remote Control's own on the harness
+  that has had no message since Claude's prompt cache for it expired: an hour
+  after its last answer, or five minutes when Claude Code used the short cache
+  (Looper reads which one from the conversation's transcript). A project then
+  gets a fresh conversation, and the ended one can be resumed from a helper or
+  the Conversations window. Helpers, chats and terminals are never closed this
+  way.
 
 Two kinds of entries keep a conversation open:
 
@@ -864,7 +989,9 @@ Two kinds of entries keep a conversation open:
   named after the project and runs with its folder, environment, model,
   effort and permission mode, on its harness when that's Claude Code, and
   otherwise on the environment's first Claude Code harness.
-- **Helpers**, listed in the settings window, are conversations whose only job is to start sessions. Ask a
+- **Helpers**, listed in **Advanced → Remote Control → Helpers…** (Add,
+  Edit, Duplicate and Remove apply at once; Close closes the window), are
+  conversations whose only job is to start sessions. Ask a
   helper, for example, "open a session in the looper repo", and it runs
   `looper-remote open`, which starts a new session there and answers with
   its name and link, even when the folder is the helper's own. Tell it what
@@ -887,21 +1014,25 @@ Two kinds of entries keep a conversation open:
   replaced by a fresh, empty one, so the next request starts clean. A helper
   is never replaced while it's working.
 
-A helper that can't get a session says why under its name in the settings
+A helper that can't get a session says why under its name in the Helpers
 window's list, and a project says so on the Remote Control line of its view,
 for example an environment that was removed, or Claude Code exiting right
 after it starts (Looper stops trying after three times in a row, until the
-entry changes or Remote Control starts again).
+entry changes or Remote Control is turned on again).
 
 **Advanced → Remote Control → Conversations…** lists the conversations, open
 ones first, with their state: waiting for a message, working, idle, or
 ended. Opening an open conversation shows it in a Looper terminal window,
 where you can go on at the computer; closing that window leaves the session
-running. Opening an ended one shows its run window. The right-click menu has
-**Open in Browser** and **Copy Link** for the session's claude.ai page, and
-**Stop** to end it. Conversations are recorded as runs, like [terminal
+running. A chat or terminal that started with Remote Control opens in the
+Chats window instead. Opening an ended one shows its run window. The
+right-click menu has **Open in Browser** and **Copy Link** for the session's
+claude.ai page, **Restart** to go on with an ended conversation in a new
+session, and **Stop** to end it (not offered for a chat or terminal, which you
+close in its own window, and an ended chat goes on with Continue in Chat on
+its run). Conversations are recorded as runs, like [terminal
 sessions](#terminal-sessions), so a project's conversations also show in its
-Sessions tab, and those of a task a helper opened in the task's Runs tab.
+Chats tab.
 
 ## The tray icon and close-to-tray
 
@@ -913,14 +1044,18 @@ opens a new chat in it. Below them are Show Looper, Show Chats (the
 Start/Stop Rest Mode (Windows only), and Quit.
 
 By default, closing the main window quits Looper — and stops any running
-agents. Turning on **Settings → General → Close to system tray** changes
+agents (chats and terminal sessions stay for the next start, see [the Chats
+window](#the-chats-window)). Turning on **Settings → General → Close to system tray** changes
 that: closing the window just hides it, and the engine (and any running
 tasks) keeps going in the background. `looper --hidden` starts straight
 into the tray without opening the window, which is also what **Settings →
 General → Start with the computer** registers as a login item.
 
 Quitting while a task is running (window close, File → Exit, or the tray's
-Quit) asks first, because it stops those runs. **Settings → General → Ask
+Quit) asks first, because it stops those runs. It also asks, whatever the
+settings say, while a chat's agent works or a Looper terminal session runs:
+quitting stops their agents, and the chats and sessions stay in the Chats
+window for the next start. **Settings → General → Ask
 before quitting while tasks are running** turns that question off. Its
 sub-option **Also while tasks are watching for events** (off by default)
 asks as well when tasks with an events trigger have their watcher up, since

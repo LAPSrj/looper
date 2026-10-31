@@ -72,6 +72,13 @@ export function fmtClock(ts: number, now: number): string {
     : fmtDateTime(ts);
 }
 
+/** A file size: "812 B", "45 KB", "1.2 MB". */
+export function fmtSize(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${Math.round(bytes / 1000)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
 export function stripAnsi(s: string): string {
   return stripAnsiShared(s).replace(/\r(?!\n)/g, '\n');
 }

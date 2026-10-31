@@ -9,7 +9,25 @@ const BUBBLE_LOW = 'M3 5h8a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6.5L3
 
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
 export const ICONS: Record<
-  AddonIconName | 'dashboard' | 'resume' | 'power' | 'complete' | 'guidance' | 'chat' | 'newChat' | 'bullhorn' | 'sendNow' | 'stopChat' | 'closeChat' | 'attach' | 'skills' | 'newTask' | 'newProject' | 'doubleSize' | 'normalSize',
+  | AddonIconName
+  | 'dashboard'
+  | 'resume'
+  | 'power'
+  | 'complete'
+  | 'guidance'
+  | 'chat'
+  | 'newChat'
+  | 'bullhorn'
+  | 'sendNow'
+  | 'stopChat'
+  | 'closeChat'
+  | 'activity'
+  | 'attach'
+  | 'skills'
+  | 'newTask'
+  | 'newProject'
+  | 'doubleSize'
+  | 'normalSize',
   ReactNode
 > = {
   dashboard: (
@@ -92,6 +110,13 @@ export const ICONS: Record<
       </mask>
       <path d={BUBBLE_LOW} mask="url(#ico-cut-close)" />
       <path d="m10.6 1.6 3.8 3.8M14.4 1.6l-3.8 3.8" />
+    </>
+  ),
+  // A window with a column on its right: the activity pane, so it doesn't read as another chat button.
+  activity: (
+    <>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+      <path d="M10 2.5v11M11.8 5.5h1.2M11.8 7.8h1.2" />
     </>
   ),
   attach:<path d="m13 7.5-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.3 11.2a1 1 0 0 1-1.5-1.5L10 4.5" />,

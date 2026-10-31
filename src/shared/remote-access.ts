@@ -11,20 +11,44 @@
 
 // ---------- providers ----------
 
+/**
+ * A source: a way other devices reach the server. Several can be on at once
+ * (Remote Access's Sources setting); each is started and stopped on its own.
+ */
 export type RemoteAccessProviderId = 'tailscale' | 'local';
+
+/** Every source, in the order the windows list them. */
+export const REMOTE_ACCESS_SOURCES: readonly RemoteAccessProviderId[] = ['tailscale', 'local'];
+
+/** A source's name in the windows, menus and status bar. */
+export const SOURCE_NAMES: Record<RemoteAccessProviderId, string> = { tailscale: 'Tailscale', local: 'Host Computer' };
 
 export type RemoteAccessPhase = 'off' | 'starting' | 'needs-login' | 'running' | 'error';
 
-export interface RemoteAccessStatus {
+/** One source's status. */
+export interface RemoteAccessSourceStatus {
+  id: RemoteAccessProviderId;
   phase: RemoteAccessPhase;
-  provider: RemoteAccessProviderId;
-  /** running: the address other devices open. */
+  /** running: the address devices open through this source. */
   url?: string;
   /** needs-login: the page that signs this computer in (Tailscale's). */
   loginUrl?: string;
   /** running (tailscale): the account this computer is signed in as; only it may connect. */
   account?: string;
   /** error: what went wrong, for the user. */
+  message?: string;
+}
+
+export interface RemoteAccessStatus {
+  /**
+   * The whole: off; error when the server itself can't start (`message`) or
+   * every source failed; running while any source runs; else needs-login
+   * while a source waits for a sign-in, else starting.
+   */
+  phase: RemoteAccessPhase;
+  /** While on: each chosen source, in REMOTE_ACCESS_SOURCES order. */
+  sources: RemoteAccessSourceStatus[];
+  /** error: why the server itself couldn't start. */
   message?: string;
   /** The 127.0.0.1 port the server listens on, while it does. */
   port?: number;
@@ -33,7 +57,7 @@ export interface RemoteAccessStatus {
 export interface PairedDevice {
   id: string;
   name: string;
-  /** The provider it was paired under; it connects only while that one is on. */
+  /** The source it was paired through; it connects only through that one. */
   provider: RemoteAccessProviderId;
   pairedAt: string;
   lastSeenAt?: string;
@@ -41,12 +65,36 @@ export interface PairedDevice {
   connected: number;
 }
 
-/** A pairing code shown on the computer; it works once, until `expiresAt`. */
+/**
+ * A pairing code shown on the computer; it works once, until `expiresAt`,
+ * through any running source. Its QR code holds `<source url>/pair#<code>`.
+ */
 export interface PairingCode {
   code: string;
-  /** What the QR code holds: the address with the code (`<url>/pair#<code>`). */
-  link: string;
   expiresAt: number;
+}
+
+/** A source's status in a few words: its address while it runs. */
+export function sourceStatusText(s: RemoteAccessSourceStatus): string {
+  switch (s.phase) {
+    case 'running':
+      return s.url ?? 'On';
+    case 'starting':
+      return 'Starting…';
+    case 'needs-login':
+      return 'Waiting for sign-in';
+    case 'error':
+      return 'Not working';
+    default:
+      return 'Off';
+  }
+}
+
+/** The status bar's Remote Access items: one per source ("Tailscale: https://…"), nothing while off. */
+export function remoteAccessStatusItems(s: RemoteAccessStatus): string[] {
+  if (s.phase === 'off') return [];
+  if (!s.sources.length) return [s.phase === 'error' ? 'Remote Access: Not working' : 'Remote Access: Starting…'];
+  return s.sources.map((x) => `${SOURCE_NAMES[x.id]}: ${sourceStatusText(x)}`);
 }
 
 /** What the desktop windows show: the status, the paired devices, and whom the current code paired. */
@@ -56,6 +104,10 @@ export type RemoteAccessState = RemoteAccessStatus & {
   devices: PairedDevice[];
   /** The device the last pairing code paired, until a new code replaces it or pairing is canceled. */
   pairedWith?: { code: string; device: { id: string; name: string } };
+  /** The current pairing code, once wrong tries have locked it (it takes no more tries): the Pair Device window replaces it. */
+  lockedCode?: string;
+  /** Set Up's Tailscale sign-in while Remote Access isn't running Tailscale itself (RemoteAccess.beginSignIn). */
+  setup?: RemoteAccessSourceStatus;
 };
 
 /**
@@ -85,7 +137,7 @@ export const PROXY_LOGIN_HEADER = 'x-looper-login';
 // ---------- HTTP ----------
 
 /** Paired devices carry this cookie (HttpOnly, SameSite=Strict, Secure over HTTPS): `<deviceId>.<secret>`.
- * The server accepts it only while the provider the device was paired under is active. */
+ * The server accepts it only through the source the device was paired through. */
 export const DEVICE_COOKIE = 'looper_device';
 
 /**
@@ -308,7 +360,7 @@ export type ServerMessage =
    * the dialogs still waiting for an answer. Popup menus don't come back.
    */
   | { t: 'welcome'; device: { id: string; name: string }; version: string; clientId: string; resumed: boolean }
-  /** shell.openPath / showItemInFolder from this device: a folder opens in the computer's file browser, a file asks Open on Computer or Download. */
+  /** shell.openPath / showItemInFolder from this device: a folder opens in the host computer's file browser, an image or text file in the viewer, any other file asks Open on Host Computer or Download. */
   | { t: 'show-path'; path: string; isDir: boolean }
   | { t: 'result'; id: number; ok: true; value: unknown }
   | { t: 'result'; id: number; ok: false; error: string }
@@ -349,11 +401,18 @@ export const REMOTE_CHANNELS = {
   download: 'remote:download',
   /** (folder, name, flavor?, distro?) → the new folder's path: New Folder in the file browser. A name with \ or / is refused. */
   makeDir: 'remote:makeDir',
+  /** (path, maxBytes) → HostFileView: a file for the device to show (an image or text it opens); a token only when it's no bigger than maxBytes. */
+  view: 'remote:view',
+  /** (path) → the copy's path: Download to Host Computer, a copy in the host user's Downloads folder. */
+  saveOnHost: 'remote:saveOnHost',
   /** (taskId, runId | null) → void: a click on a `notify` toast opens what the desktop's toast opens, on this device. */
   openNotification: 'remote:openNotification',
   /** (sessionId) → void: a click on a "waiting for you" push opens the session in the Sessions window, on this device. */
   openSession: 'remote:openSession',
 } as const;
+
+/** What a starting place is, for its icon and its group (Folders, Drives, Linux, Projects). */
+export type HostPlace = 'home' | 'desktop' | 'documents' | 'downloads' | 'pictures' | 'music' | 'videos' | 'drive' | 'linux' | 'project';
 
 export interface HostDirEntry {
   name: string;
@@ -362,13 +421,25 @@ export interface HostDirEntry {
   dir: boolean;
   size?: number;
   modifiedAt?: number;
+  /** Only in the starting places. */
+  place?: HostPlace;
 }
 
 export interface HostDirListing {
-  /** null: the starting places (drives, home, project folders, recent folders). */
+  /** null: the starting places (Host Computer): home and its well-known folders, drives, WSL distros, project folders. */
   path: string | null;
   parent: string | null;
   entries: HostDirEntry[];
+  /** The host user's home folder in the requested flavor (the Home button), or null when that side can't reach it. */
+  home: string | null;
+}
+
+/** REMOTE_CHANNELS.view's answer: GET /api/download/<token> reads the file, when it isn't too big to show. */
+export interface HostFileView {
+  name: string;
+  size: number;
+  /** Unset: bigger than the asked maxBytes. */
+  token?: string;
 }
 
 /** Largest WebSocket message either side sends; bigger files go through /api/upload. */

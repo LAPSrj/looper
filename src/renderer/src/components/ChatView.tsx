@@ -246,12 +246,17 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
 
   const setText = (t: string) => {
     setTextState(t);
-    drafts.set(id, { text: t, pending: drafts.get(id)?.pending ?? pending });
+    const draft = { text: t, pending: drafts.get(id)?.pending ?? pending };
+    drafts.set(id, draft);
+    // The engine keeps it too, for the next start of Looper.
+    window.looper.chat.setDraft(id, draft.text, draft.pending);
   };
   const setPending = (fn: (p: Attachment[]) => Attachment[]) =>
     setPendingState((p) => {
       const next = fn(p);
-      drafts.set(id, { text: drafts.get(id)?.text ?? text, pending: next });
+      const draft = { text: drafts.get(id)?.text ?? text, pending: next };
+      drafts.set(id, draft);
+      window.looper.chat.setDraft(id, draft.text, next);
       return next;
     });
 

@@ -25,7 +25,6 @@ interface Props {
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
   hideNoActionRuns: boolean;
-  hideChatsAndTerminals: boolean;
   /** Run to select in the run log (notification click). */
   focusRun?: { runId: string } | null;
   /** The run the Terminal tab is pinned to when several are in flight (null = the newest). */
@@ -132,7 +131,6 @@ export function TaskDetail({
   tab,
   onTab,
   hideNoActionRuns,
-  hideChatsAndTerminals,
   focusRun,
   terminalRun,
   onTerminalRun,
@@ -252,14 +250,7 @@ export function TaskDetail({
           </div>
         )}
         {tab === 'runs' && (
-          <RunLog
-            taskId={task.id}
-            records={records}
-            runtime={runtime}
-            hideNoAction={hideNoActionRuns}
-            hideChatsAndTerminals={hideChatsAndTerminals}
-            focusRun={focusRun}
-          />
+          <RunLog records={records} runtime={runtime} hideNoAction={hideNoActionRuns} focusRun={focusRun} />
         )}
         {tab === 'terminal' && (
           <Terminal

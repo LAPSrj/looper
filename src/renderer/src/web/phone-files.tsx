@@ -1,8 +1,11 @@
-import { useRef } from 'react';
+import { Fragment, useRef } from 'react';
 import type { HostDirEntry } from '../../../shared/remote-access';
+import { Markdown } from '../components/Markdown';
 import { fmtDateTime } from '../format';
-import type { HostBrowser } from './file-flows';
+import { groupPlaces } from './dialog-flows';
+import type { FileView, HostBrowser } from './file-flows';
 import type { PhoneOs } from './nav-stack';
+import { PlaceGlyph } from './places';
 
 const fmtSize = (n: number | undefined): string => (n === undefined ? '' : n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.ceil(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -27,6 +30,16 @@ export const CHECK = (
   </svg>
 );
 
+/** A file shown before it's downloaded: an image fit to the screen, or a text file's text, Markdown rendered. */
+export function FileViewBody({ view, name }: { view: FileView; name: string }) {
+  let body;
+  if (view.error) body = <div className="ph-viewer-note">{view.error}</div>;
+  else if (view.kind === 'image') body = view.url ? <img className="ph-viewer-image" src={view.url} alt={name} /> : <div className="ph-viewer-note">Loading…</div>;
+  else if (view.text === null) body = <div className="ph-viewer-note">Loading…</div>;
+  else body = view.kind === 'markdown' ? <Markdown text={view.text} breaks={false} /> : <pre className="ph-viewer-text">{view.text}</pre>;
+  return <div className={`ph-viewer ph-scroll${view.kind === 'image' ? ' image' : ''}`}>{body}</div>;
+}
+
 /** What a tap on a row does: a folder opens (a push); a file is picked, toggled or named. */
 export type RowTap = (entry: HostDirEntry) => void;
 
@@ -42,25 +55,33 @@ export function FileRows({ os, browser, onFile, emptyText }: { os: PhoneOs; brow
   const dir = prev.current.dir;
   return (
     <div key={browser.path ?? ''} className={`ph-files ph-scroll slide-${dir}`} role="list">
-      {browser.entries.map((entry) => {
+      {(browser.path === null ? groupPlaces(browser.entries) : browser.entries.map((entry) => ({ heading: null, entry }))).map(({ heading, entry }) => {
         const selected = browser.selected.includes(entry.path);
         return (
-          <button
-            key={entry.path}
-            role="listitem"
-            className={`ph-file-row${selected ? ' selected' : ''}`}
-            aria-selected={selected}
-            onClick={() => (entry.dir ? browser.go(entry.path) : onFile(entry))}
-          >
-            <span className={`ph-file-icon${entry.dir ? ' dir' : ''}`}>{entry.dir ? FOLDER_GLYPH : FILE_GLYPH}</span>
-            <span className="ph-file-text">
-              <span className="ph-file-name">{entry.name}</span>
-              {!entry.dir && (entry.modifiedAt || entry.size !== undefined) && (
-                <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
-              )}
-            </span>
-            <span className="ph-file-end">{entry.dir ? (os === 'ios' ? CHEVRON_RIGHT : null) : selected ? CHECK : null}</span>
-          </button>
+          <Fragment key={entry.path}>
+            {heading && (
+              <div className="ph-files-group" role="presentation">
+                {heading}
+              </div>
+            )}
+            <button
+              role="listitem"
+              className={`ph-file-row${selected ? ' selected' : ''}`}
+              aria-selected={selected}
+              onClick={() => (entry.dir ? browser.go(entry.path) : onFile(entry))}
+            >
+              <span className={`ph-file-icon${entry.dir ? ' dir' : ''}${entry.place ? ' place' : ''}`}>
+                {entry.place ? <PlaceGlyph place={entry.place} /> : entry.dir ? FOLDER_GLYPH : FILE_GLYPH}
+              </span>
+              <span className="ph-file-text">
+                <span className="ph-file-name">{entry.name}</span>
+                {!entry.dir && (entry.modifiedAt || entry.size !== undefined) && (
+                  <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
+                )}
+              </span>
+              <span className="ph-file-end">{entry.dir ? (os === 'ios' ? CHEVRON_RIGHT : null) : selected ? CHECK : null}</span>
+            </button>
+          </Fragment>
         );
       })}
       {!browser.loading && browser.entries.length === 0 && <div className="ph-files-empty">{emptyText ?? 'This folder is empty.'}</div>}

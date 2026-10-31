@@ -1,4 +1,4 @@
-import { TaskSchema, type Environment, type Project, type Settings, type Task } from './types';
+import { TaskSchema, type Environment, type Project, type Settings, type Task, type View } from './types';
 
 /** What a session needs to know about where it runs: a project's or a Remote Control helper's values. */
 export type SessionPlace = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'> &
@@ -41,8 +41,27 @@ export const projectSessionTask = (project: Project, settings: Settings, claude 
 export const projectTaskId = (projectId: string): string => `@project-${projectId}`;
 export const projectIdOf = (taskId: string): string | undefined =>
   taskId.startsWith('@project-') ? taskId.slice('@project-'.length) : undefined;
-/** A stand-in id (a project's or a Remote Control helper's), not a task's. */
+/** A stand-in id (a project's, a folder's or a Remote Control helper's), not a task's. */
 export const isStandInTaskId = (taskId: string): boolean => taskId.startsWith('@');
+
+/** The start of the stand-in id the chats and terminals opened in a folder without a project (Other Folder…) are recorded under. */
+export const FOLDER_TASK_PREFIX = '@folder-';
+
+/**
+ * The environment a folder picked on the host opens in (Other Folder…): on a
+ * Windows host a \\wsl.localhost\<distro> (or \\wsl$) folder opens in that
+ * distro's WSL environment, else in one on the default distro; any other
+ * folder in the default environment. Undefined: no WSL environment fits.
+ */
+export function folderEnvironment(hostFolder: string, settings: Pick<Settings, 'environments' | 'defaultEnvironmentId'>, windowsHost: boolean): Environment | undefined {
+  const envs = settings.environments;
+  const unc = windowsHost ? /^\\\\wsl(?:\$|\.localhost)\\([^\\]+)/i.exec(hostFolder) : null;
+  if (unc) {
+    const wsl = envs.filter((e) => e.kind === 'wsl');
+    return wsl.find((e) => e.distro?.toLowerCase() === unc[1].toLowerCase()) ?? wsl.find((e) => !e.distro);
+  }
+  return envs.find((e) => e.id === settings.defaultEnvironmentId) ?? envs[0];
+}
 
 /** A folder path without its trailing separators, for comparing two folders. */
 export function normalizeFolder(cwd: string): string {
@@ -55,6 +74,56 @@ export function sameFolder(a: string, b: string): boolean {
   const x = normalizeFolder(a);
   const y = normalizeFolder(b);
   return /^[A-Za-z]:[\\/]|^\\\\/.test(x) ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/** The folder a folder is in, in its own path form; '' when it has no parent part (a bare name). */
+export function parentFolder(cwd: string): string {
+  const folder = normalizeFolder(cwd);
+  const i = Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\'));
+  if (i < 0) return '';
+  // The root's own parent is the root: "/", and a drive's "C:\".
+  if (i === 0) return folder.slice(0, 1);
+  const parent = folder.slice(0, i);
+  return /^[A-Za-z]:$/.test(parent) ? folder.slice(0, i + 1) : parent;
+}
+
+/** What the Projects pane groups its list by. */
+export type ProjectGroupBy = View['projectsPane']['groupBy'];
+
+/** The name of the harness a project's sessions start with (unset = the environment's first). */
+export function projectHarnessName(project: Project, environments: Environment[]): string {
+  const env = environments.find((e) => e.id === project.environmentId);
+  const harness = project.harnessId ? env?.harnesses.find((h) => h.id === project.harnessId) : env?.harnesses[0];
+  return harness?.name ?? '';
+}
+
+export interface ProjectGroup {
+  key: string;
+  /** Empty for the one group of an ungrouped list. */
+  title: string;
+  projects: Project[];
+}
+
+/**
+ * The projects in the Projects pane's groups. Groups go by title (a project
+ * with no folder or harness last), each keeping the user's order of its
+ * projects; Windows folders group without regard to case.
+ */
+export function groupProjects(projects: Project[], groupBy: ProjectGroupBy, environments: Environment[]): ProjectGroup[] {
+  if (groupBy === 'none') return [{ key: '', title: '', projects }];
+  const groups = new Map<string, ProjectGroup>();
+  for (const p of projects) {
+    const title = groupBy === 'folder' ? parentFolder(p.cwd) : projectHarnessName(p, environments);
+    const windows = groupBy === 'folder' && /^[A-Za-z]:[\\/]|^\\\\/.test(title);
+    const key = windows ? title.toLowerCase() : title;
+    const group = groups.get(key);
+    if (group) group.projects.push(p);
+    else groups.set(key, { key, title, projects: [p] });
+  }
+  const none = groupBy === 'folder' ? 'No folder' : 'No harness';
+  return [...groups.values()]
+    .sort((a, b) => (a.title === '' ? 1 : b.title === '' ? -1 : a.title.localeCompare(b.title)))
+    .map((g) => (g.title === '' ? { ...g, title: none } : g));
 }
 
 /** A new project's name: its folder's last part. */

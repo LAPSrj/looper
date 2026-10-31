@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
 import type { RemoteState } from '@shared/remote';
 import { isStandInTaskId, projectTaskId } from '@shared/projects';
-import type { Project, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { PreventSleepState, Project, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { subscribe } from './events';
@@ -25,6 +25,13 @@ export function restStatus(rest: RestState, now: number): string {
     return `Rest Mode — sleeping${wake}`;
   }
   return 'Rest Mode — waiting for tasks to finish';
+}
+
+/** The status bar's Prevent Sleep text while its timer is on; null while it's off. */
+export function preventSleepStatus(state: PreventSleepState): string | null {
+  if (state.timer === 'off') return null;
+  if (state.until === null) return 'Preventing sleep';
+  return `Preventing sleep until ${new Date(state.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 /**
@@ -51,6 +58,7 @@ export function useMainWindow() {
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [rest, setRest] = useState<RestState | null>(null);
+  const [preventSleep, setPreventSleep] = useState<PreventSleepState | null>(null);
   // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
   const [terminalRun, setTerminalRun] = useState<string | null>(null);
   const [remote, setRemote] = useState<RemoteState | null>(null);
@@ -285,6 +293,7 @@ export function useMainWindow() {
       setRuntimes(map);
     });
     void window.looper.restState().then(setRest);
+    void window.looper.preventSleepState().then(setPreventSleep);
     void window.looper.remote.state().then(setRemote);
     const unsub = subscribe((e) => {
       switch (e.type) {
@@ -310,6 +319,9 @@ export function useMainWindow() {
           break;
         case 'rest':
           setRest(e.rest);
+          break;
+        case 'prevent-sleep':
+          setPreventSleep(e.state);
           break;
         case 'record':
           setRunsChanged((n) => n + 1);
@@ -366,17 +378,16 @@ export function useMainWindow() {
 
   const infoLoaded = info !== null;
   const hideNoActionRuns = info?.settings.view.hideNoActionRuns ?? false;
-  const hideChatsAndTerminals = info?.settings.view.hideChatsAndTerminals ?? false;
   // Each run another list shows can hide one from Recent runs: read that many more.
   const recentLimit = RECENT_RUNS + listedRuns.size;
   useEffect(() => {
     if (selected || !infoLoaded) return;
     // A run writes its records in quick bursts: read once the burst is over.
     const t = setTimeout(() => {
-      void window.looper.runs.recent(recentLimit, { hideNoAction: hideNoActionRuns, hideChatsAndTerminals }).then(setRecent);
+      void window.looper.runs.recent(recentLimit, { hideNoAction: hideNoActionRuns }).then(setRecent);
     }, 200);
     return () => clearTimeout(t);
-  }, [selected, infoLoaded, hideNoActionRuns, hideChatsAndTerminals, runsChanged, recentLimit]);
+  }, [selected, infoLoaded, hideNoActionRuns, runsChanged, recentLimit]);
 
   const selectedState = target ? runtimes[target]?.state : undefined;
   const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
@@ -470,6 +481,7 @@ export function useMainWindow() {
     records,
     now,
     rest,
+    preventSleep,
     remote,
     remoteOpen,
     counts,

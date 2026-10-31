@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import type { SessionActivity, SessionsState, SessionSummary } from '@shared/sessions';
+import { dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
 import { ViewSchema, type View } from '@shared/types';
+import { openWorkflow } from '@shared/workflows';
 import { useGitRepo } from './components/hooks';
-import { waitingOf } from './components/SessionList';
 import { subscribe } from './events';
 
 /**
@@ -51,7 +51,7 @@ function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1
 /**
  * The Chats window's state and commands, shared by its desktop and phone
  * views: every session, the one shown (null: the Overview), its chat or
- * activity, the followed subagent, and the window's keys. `single`: a single
+ * activity, the followed subagent or open workflow, and the window's keys. `single`: a single
  * chat's window (Open in New Window), which shows `initial` only and takes no
  * keys that move through the list.
  */
@@ -61,11 +61,26 @@ export function useSessionsWindow(initial?: string, single = false) {
   const [selected, setSelected] = useState<string | null>(initial ?? null);
   const [chat, setChat] = useState<ChatState | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
-  const [follow, setFollow] = useState<string | null>(null);
+  const [follow, setFollowed] = useState<string | null>(null);
+  // The workflow run whose tab is open, and the agent whose tab is open inside it (null: its Overview).
+  const [workflowOpen, setWorkflowOpen] = useState<{ runId: string; agentId: string | null } | null>(null);
+  const workflow = openWorkflow(activity?.workflows ?? [], workflowOpen);
+  // The conversation shown instead of the session's, which Now follows: a subagent's or a workflow agent's.
+  const watchedAgent = follow ?? workflow?.agent?.agentId ?? null;
+  /** Show a subagent's tab (null: the conversation's). */
+  const setFollow = (id: string | null) => {
+    setFollowed(id);
+    setWorkflowOpen(null);
+  };
+  /** Show a workflow run's tab, at its Overview or one of its agents (null: the conversation's). */
+  const showWorkflow = (runId: string | null, agentId: string | null = null) => {
+    setFollowed(null);
+    setWorkflowOpen(runId ? { runId, agentId } : null);
+  };
   const [subRows, setSubRows] = useState<MessageRow[]>([]);
   // The tool call Now shows; null follows the latest.
   const [nowPos, setNowPos] = useState<number | null>(null);
-  useEffect(() => setNowPos(null), [selected, follow]);
+  useEffect(() => setNowPos(null), [selected, watchedAgent]);
   const [now, setNow] = useState(Date.now());
   const [view, setView] = useState<View | null>(null);
   const selectedRef = useRef(selected);
@@ -165,7 +180,8 @@ export function useSessionsWindow(initial?: string, single = false) {
     window.looper.sessions.show(selected);
     setChat(null);
     setActivity(null);
-    setFollow(null);
+    setFollowed(null);
+    setWorkflowOpen(null);
     if (!selected) return;
     window.looper.sessions.seen(selected);
     void window.looper.chat.get(selected).then((c) => {
@@ -191,13 +207,13 @@ export function useSessionsWindow(initial?: string, single = false) {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
-  // A followed subagent's conversation, read again while the window shows it.
+  // A followed subagent's (or open workflow agent's) conversation, read again while the window shows it.
   useEffect(() => {
     setSubRows([]);
-    if (!follow || !summary) return;
+    if (!watchedAgent || !summary) return;
     let live = true;
     const load = () =>
-      void window.looper.runs.messages(summary.taskId, summary.id, follow).then((r) => {
+      void window.looper.runs.messages(summary.taskId, summary.id, watchedAgent).then((r) => {
         if (live && r.status === 'ok') setSubRows(r.rows.filter((row) => row.kind !== 'raw'));
       });
     load();
@@ -207,24 +223,33 @@ export function useSessionsWindow(initial?: string, single = false) {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [follow, summary?.id]);
+  }, [watchedAgent, summary?.id]);
 
   const rows = summary?.kind === 'chat' ? (chat ? [...chat.history, ...chat.rows] : []) : (activity?.rows ?? []);
   const attachments = rows.flatMap((r) => r.attachments ?? []);
   const followed = activity?.subagents.find((a) => a.agentId === follow);
-  const watchedRows = follow ? subRows : rows;
+  const watchedRows = watchedAgent ? subRows : rows;
   const shown = view?.sessions ?? DEFAULT_SHOWN;
+  /** Change the window's saved View settings. */
+  const setShown = (patch: Partial<View['sessions']>) => {
+    if (view) void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, ...patch } } });
+  };
   const toggleGroup = (key: string) => {
-    if (!view) return;
-    const collapsed = shown.collapsed.includes(key) ? shown.collapsed.filter((k) => k !== key) : [...shown.collapsed, key];
-    void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, collapsed } } });
+    setShown({ collapsed: shown.collapsed.includes(key) ? shown.collapsed.filter((k) => k !== key) : [...shown.collapsed, key] });
   };
   /** A dashboard card at twice its size, or back; the closed sessions' ids go when one changes. */
   const toggleBig = (id: string) => {
-    if (!view) return;
     const big = shown.bigCards.includes(id);
     const bigCards = shown.bigCards.filter((x) => x !== id && state.sessions.some((s) => s.id === x));
-    void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, bigCards: big ? bigCards : [...bigCards, id] } } });
+    setShown({ bigCards: big ? bigCards : [...bigCards, id] });
+  };
+  /**
+   * A dashboard card dragged before (or `after`) another: the order is saved
+   * as every open session's, apart from the waiting ones put first, so the closed sessions' ids go.
+   */
+  const moveCard = (id: string, target: string, after: boolean) => {
+    const ids = dashboardOrder(state.sessions, shown.cardOrder, false).map((s) => s.id);
+    setShown({ cardOrder: placeCard(ids, id, target, after) });
   };
   const subagents = activity?.subagents ?? [];
   // Stop ends the agent's turn: while it works, or while it waits for a permission. A task run's agent isn't stopped here.
@@ -241,18 +266,24 @@ export function useSessionsWindow(initial?: string, single = false) {
     follow,
     setFollow,
     followed,
+    workflow,
+    showWorkflow,
     subRows,
     subagents,
+    workflows: activity?.workflows ?? [],
     nowPos,
     setNowPos,
     now,
     view,
     shown,
+    setShown,
     toggleGroup,
     toggleBig,
+    moveCard,
     gitRepo,
     attachments,
     watchedRows,
+    watchedAgent,
     stoppable,
   };
 }

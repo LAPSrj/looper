@@ -29,7 +29,7 @@ polling inside the agent, no context buildup, at most one agent per task.
   their models, and concurrency caps.
 - **[Monitoring](monitoring.md)**: the task list, the dashboard, toolbar and context-menu
   actions, the Recycle Bin, the live terminal tab, terminal sessions and
-  chats, the Runs tab and run window, the engine log, notifications, Rest Mode, the tray, and the
+  chats, the Runs tab and run window, the engine log, notifications, Rest Mode, Prevent Sleep, the tray, and the
   Settings window.
 - **[Remote Access](remote-access.md)**: Looper in a browser on your phone,
   tablet or another computer: turning it on with Tailscale, pairing a device,

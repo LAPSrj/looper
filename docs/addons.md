@@ -12,7 +12,8 @@ Looper's interface changes.
 An addon comes with a `.looperaddon` file. Double-click it, drop it on the
 Looper window, or use **Advanced → Addons… → Install…**. Looper asks first,
 showing the addon's description, the panes, toolbar buttons and Tools menu
-items it adds, and the command it runs, and installs it when you click
+items it adds, how many tools' calls it changes the look of on the Chats
+window's Now tab, and the command it runs, and installs it when you click
 **Install**. For an addon that's already installed, the button says
 **Replace** (another version) or **Reinstall** (the same version).
 
@@ -55,8 +56,8 @@ toolbar. Its commands stay in its menus and its own windows.
 
 ![Tools → Servers…: the pane's list and the selected server in their own window](img/addons-tool-window.png)
 
-An addon can also add items to the **Tools** menu, which shows once an
-installed addon has one. Each item opens a window: either one of the addon's
+An addon can also add items to the **Tools** menu, below Recycle Bin…. Each
+item opens a window: either one of the addon's
 screens, or one of its panes with the list on the left and the selected
 item's screen on the right, the way the main window shows a task. A pane
 window can have its own menu bar and toolbar, whose commands for an item act
@@ -144,6 +145,7 @@ noted in the engine log.
 | `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
 | `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool? }`. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
 | `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
+| `toolCalls` | How calls to some tools show on the Now tab of the Chats window's activity pane (below). |
 
 ### Requests from Looper
 
@@ -338,6 +340,37 @@ The answer can have:
 | `message` | `kind` (`info`, `warning`, `error`), `message`, `detail?` | Shows a dialog. |
 | `copy` | `text` | Copies the text to the clipboard. |
 | `select` | `pane`, `item` | Selects a pane item, such as one just created, in the window the event came from, or in the window that opened it. |
+
+### How tool calls show
+
+The Now tab of the Chats window's activity pane shows the agent's tool calls.
+An addon whose program the agent calls as a tool, such as an MCP server that
+comes with it, can say how those calls show there, with `toolCalls` in the
+manifest:
+
+```json
+"toolCalls": [
+  { "tool": "mcp__servers__deploy", "title": "Deploy {server}", "params": ["server", "branch"], "result": "markdown" },
+  { "tool": "mcp__servers__logs", "params": [], "result": "code", "language": "json" },
+  { "tool": "mcp__servers__*", "result": { "view": "tool-call" } }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `tool` | The tool's name as the agent calls it. An MCP server's tools are `mcp__<server>__<tool>`. A `*` at the end matches every name that starts with what comes before it. When several entries match, the one that names the tool wins, and then the longest `*` one. |
+| `title` | The title above the call instead of the tool's name. `{name}` in it is the call's parameter of that name. |
+| `params` | The parameters to list, in this order. Unset lists them all, and `[]` none. |
+| `result` | How the result shows: `text` (as it is, in monospace), `markdown` (formatted), `code` (with line numbers and colors), `image` (the picture the result carries), `table` (a JSON list of objects as a table, a JSON object as name and value rows), or `{ "view": "<id>" }`, one of the addon's screens. Unset shows it the way Looper shows any tool's result. |
+| `language` | With `"result": "code"`: the language to color it as, such as `typescript`, `json`, `python`, `bash`, `powershell`, `yaml`, `sql`, `xml` or `markdown`. Unset goes by the extension of the call's `file_path`. |
+
+For a `view`, Looper asks for the screen with `render` and these params:
+`{ tool, input, result, error }`, the tool's name, the call's parameters, the
+result's text and whether the call failed. The screen shows under the
+parameters without its title, toolbar or menu bar, and its buttons send events
+as on any screen. While the addon isn't running, the result shows the way
+Looper shows any tool's. An addon stopped in the Addons window changes no
+tool's look.
 
 ### Ids and limits
 

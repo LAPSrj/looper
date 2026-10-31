@@ -26,6 +26,15 @@ The Projects pane, above the task list, lists every project with its folder.
 Drag a project to change the order, which the tray icon's menu follows too.
 **View → Projects** shows or hides the pane.
 
+The pane can group its list. Right-click the pane's header, or open **View →
+Task List Options → Projects Pane**, and pick **Group By**: **None** (the
+default), **Folder** (the folder each project's working directory is in), or
+**Harness** (the harness its chats and terminal sessions start with). Each
+group has a header with its project count, and the groups are listed by name;
+inside a group the projects keep your order. While the list is grouped you
+can't drag projects to reorder them. The choice is saved with the other View
+settings.
+
 Selecting a project shows its view in the main window, and the
 [toolbar](monitoring.md#the-toolbar) then acts on the project: **New Task in
 &lt;project&gt;**, **Edit Project**, **New Chat**, **New Terminal** and **Open
@@ -33,8 +42,9 @@ Working Directory**. The **Status** tab shows the project's settings and
 whether it keeps a Remote Control conversation open. The **Tasks** tab lists
 the tasks that run in the project, in the same kind of table as a task's
 Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to select it. The **Chats** tab lists the
-project's chats, terminal sessions and Remote Control conversations, like a
-task's Runs tab: double-click one for its run window, or right-click it to
+project's chats, terminal sessions and Remote Control conversations, including
+those that went on from one of its tasks' runs, in a table like a task's Runs
+tab but without a Result column: double-click one for its run window, or right-click it to
 go on with it in a chat or a terminal. When the project's folder is in a git
 repository, a **Git** tab shows it (see [below](#the-git-tab)).
 

@@ -25,6 +25,10 @@ export interface MessageRow {
   background?: { id: string; status: 'running' | 'completed' | 'failed' | 'stopped'; summary?: string; outputFile?: string };
   /** The row carries an image (kept engine-side; fetch it via runs.messageImage). */
   image?: { mediaType: string };
+  /** Tool rows: the call's tool_use id (Claude); toolImageKey(it) fetches the result's image. */
+  toolUseId?: string;
+  /** Skill rows: the skill's content (its SKILL.md) the harness added to the conversation after the call. */
+  skill?: string;
   /** The file the tool operated on (file_path/notebook_path input), in the run target's path form. */
   file?: string;
   /** Tool rows: the structured input, for custom renders (omitted when oversized). */
@@ -35,7 +39,44 @@ export interface MessageRow {
   attachments?: Attachment[];
   /** Claude: the id of the transcript message the row came from (Fork from Here resumes the conversation at it). */
   uuid?: string;
+  /** A SendUserFile call whose result confirmed delivery: the views show it as the agent's message with these files, not as a tool call. */
+  sent?: SentFiles;
 }
+
+/** A file the agent sent the user (SendUserFile). */
+export interface SentFile {
+  /** In the session's own path form (relative to its folder only when the harness recorded it so). */
+  path: string;
+  /** The file's base name. */
+  name: string;
+  /** Shown inline as a thumbnail: an image file, unless the agent asked to attach it. Any other file is a card. */
+  inline: boolean;
+  /** Bytes, when the harness recorded them. */
+  size?: number;
+}
+
+/** What a SendUserFile call sent: the caption, then each file. */
+export interface SentFiles {
+  caption?: string;
+  files: SentFile[];
+}
+
+/** What the views learn about a sent file on the computer: its size, and a thumbnail when it's an image Looper can draw. */
+export interface SentFileInfo {
+  size: number;
+  thumbnail?: string;
+}
+
+/** The image types SendUserFile shows inline. */
+export const SENT_IMAGE_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
+
+const FILE_IMAGE = 'file:';
+
+/** runs.messageImage's row id for a sent image file, by its path in the session's own form. */
+export const fileImageKey = (file: string): string => FILE_IMAGE + file;
+
+/** The path in a fileImageKey; null for a plain row id. */
+export const fileImageId = (key: string): string | null => (key.startsWith(FILE_IMAGE) ? key.slice(FILE_IMAGE.length) : null);
 
 /** One hunk of a recorded file change; lines are prefixed ' ', '-' or '+'. */
 export interface PatchHunk {
@@ -45,6 +86,14 @@ export interface PatchHunk {
   newLines: number;
   lines: string[];
 }
+
+const TOOL_IMAGE = 'tool:';
+
+/** runs.messageImage's row id for the image a tool call's result carried, by the call's tool_use id. */
+export const toolImageKey = (toolUseId: string): string => TOOL_IMAGE + toolUseId;
+
+/** The tool_use id in a toolImageKey; null for a plain row id. */
+export const toolImageId = (key: string): string | null => (key.startsWith(TOOL_IMAGE) ? key.slice(TOOL_IMAGE.length) : null);
 
 export interface MessageImage {
   mediaType: string;

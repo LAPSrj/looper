@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneItem } from '@shared/addons';
-import type { Project, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { Environment, Project, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { PANES, passesFilter, type PaneId } from '@shared/panes';
 import { AddonPaneList, type AddonPaneState, type AddonSelection } from './AddonPane';
 import { ProjectList } from './ProjectList';
@@ -12,6 +12,7 @@ interface Props {
   projects: Project[];
   projectSelected: string | null;
   onProjectSelect: (id: string) => void;
+  environments: Environment[];
   tasks: Task[];
   folders: TaskFolder[];
   layout: Record<string, string[]>;
@@ -70,6 +71,7 @@ export function Sidebar({
   projects,
   projectSelected,
   onProjectSelect,
+  environments,
   tasks,
   folders,
   layout,
@@ -188,13 +190,20 @@ export function Sidebar({
           onToggle: () => onView({ projectsPane: { ...projectsPane, collapsed: !projectsPane.collapsed } }),
           onMenu: () => window.looper.projects.showContextMenu(''),
           body: (
-            <ProjectList projects={projects} selected={projectSelected} compact={view.taskList === 'compact'} onSelect={onProjectSelect} />
+            <ProjectList
+              projects={projects}
+              groupBy={projectsPane.groupBy}
+              environments={environments}
+              selected={projectSelected}
+              compact={view.taskList === 'compact'}
+              onSelect={onProjectSelect}
+            />
           ),
         },
       ]
     : [];
 
-  if (view.sidebar === 'single' && !addonEntries.length && !projectEntries.length) {
+  if (view.sidebar === 'single' && view.single.visible && !addonEntries.length && !projectEntries.length) {
     return (
       <aside className="sidebar">
         <div
@@ -223,7 +232,7 @@ export function Sidebar({
             onMenu: () => window.looper.showPaneContextMenu({}),
             body: <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders />,
           },
-        ]
+        ].filter(() => view.single.visible)
       : PANES.filter((p) => view.panes[p.id].visible).map((p, i) => {
           const options = view.panes[p.id];
           return {

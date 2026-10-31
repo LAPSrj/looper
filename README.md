@@ -116,8 +116,8 @@ The full user guide lives in [docs/](docs/README.md):
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
 - [Monitoring](docs/monitoring.md) — terminal tab, chats and terminal
-  sessions, Runs tab and run window, notifications, Rest Mode, Remote
-  Control, tray, settings.
+  sessions, Runs tab and run window, notifications, Rest Mode, Prevent
+  Sleep, Remote Control, tray, settings.
 - [Remote Access](docs/remote-access.md) — Looper in a browser on a phone,
   tablet or another computer, over Tailscale: pairing, notifications,
   security.

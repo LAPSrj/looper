@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { attachmentName } from '../../../shared/chat';
 import { REMOTE_CHANNELS, type HostDirEntry, type HostDirListing, type MessageBoxSpec } from '../../../shared/remote-access';
 import type { ShellController } from './controller';
 import {
   allowedExtensions,
   breadcrumbs,
+  emptyHistory,
   fileSources,
   folderNameError,
+  imageType,
   initialSource,
   joinPath,
   LAST_FOLDER_KEY,
+  navMove,
+  navTarget,
+  navVisit,
   openCanceled,
   openResult,
   picksFolders,
@@ -18,9 +24,13 @@ import {
   saveToDevice,
   sourceKey,
   splitDefaultPath,
+  viewerKind,
+  VIEWER_MAX_BYTES,
   visibleEntries,
   withExtension,
   type FileSource,
+  type NavHistory,
+  type ViewerKind,
 } from './dialog-flows';
 import type { OpenDialog, PathRequest } from './store';
 
@@ -96,6 +106,12 @@ export interface HostBrowser {
   clearSelection: () => void;
   go: (path: string | null) => void;
   up: () => void;
+  canBack: boolean;
+  canForward: boolean;
+  back: () => void;
+  forward: () => void;
+  /** The host user's home folder, or null when it isn't known yet (or can't be reached). */
+  home: string | null;
   refresh: () => void;
   /** Make a folder in the current one and select it; resolves its path, or null (onError has heard why). */
   makeDir: (name: string) => Promise<string | null>;
@@ -106,13 +122,17 @@ export function useHostBrowser(controller: ShellController, o: HostBrowserOption
   const [listing, setListing] = useState<HostDirListing | null>(null);
   const [loading, setLoading] = useState(!o.skip);
   const [selected, setSelected] = useState<string[]>([]);
+  const [history, setHistory] = useState<NavHistory>(emptyHistory);
   const seq = useRef(0);
   const onError = useRef(o.onError);
   onError.current = o.onError;
 
-  /** first: the folder to start in; when it's gone, the starting places, without a word. */
+  /**
+   * first: the folder to start in; when it's gone, the starting places, without a word.
+   * nav: how the history takes it: a visit (the default), Back or Forward, or not at all (a refresh).
+   */
   const load = useCallback(
-    (p: string | null, opts: { select?: string; first?: boolean } = {}) => {
+    (p: string | null, opts: { select?: string; first?: boolean; nav?: 'visit' | -1 | 1 | 'stay' } = {}) => {
       const n = ++seq.current;
       setLoading(true);
       controller
@@ -122,6 +142,9 @@ export function useHostBrowser(controller: ShellController, o: HostBrowserOption
           setListing(l);
           setSelected(opts.select ? [opts.select] : []);
           setLoading(false);
+          const nav = opts.nav ?? 'visit';
+          if (nav === 'visit') setHistory((h) => navVisit(h, l.path));
+          else if (nav !== 'stay') setHistory((h) => navMove(h, nav));
         })
         .catch((err) => {
           if (n !== seq.current) return;
@@ -157,14 +180,25 @@ export function useHostBrowser(controller: ShellController, o: HostBrowserOption
     up: () => {
       if (path !== null) load(listing?.parent ?? null);
     },
-    refresh: () => load(path),
+    canBack: navTarget(history, -1) !== undefined,
+    canForward: navTarget(history, 1) !== undefined,
+    back: () => {
+      const to = navTarget(history, -1);
+      if (to !== undefined) load(to, { nav: -1 });
+    },
+    forward: () => {
+      const to = navTarget(history, 1);
+      if (to !== undefined) load(to, { nav: 1 });
+    },
+    home: listing?.home ?? null,
+    refresh: () => load(path, { nav: 'stay' }),
     makeDir: async (name) => {
       try {
         const why = folderNameError(name);
         if (why) throw new Error(why);
         if (path === null) throw new Error('Open a folder first.');
         const made = await controller.invoke<string>(o.w, REMOTE_CHANNELS.makeDir, path, name.trim());
-        load(path, { select: made });
+        load(path, { select: made, nav: 'stay' });
         return made;
       } catch (err) {
         onError.current(err);
@@ -204,7 +238,7 @@ export interface FileDialogFlow {
   cancel: () => void;
 }
 
-/** The flow of a computer's open or save dialog: This Computer's browser or This Device, and the answer's shape. */
+/** The flow of a computer's open or save dialog: Host Computer's browser or This Device, and the answer's shape. */
 export function useFileDialog(controller: ShellController, dialog: Extract<OpenDialog, { kind: 'open' | 'save' }>): FileDialogFlow {
   const { kind, spec } = dialog;
   const folders = kind === 'open' && picksFolders(spec);
@@ -316,7 +350,7 @@ export function useFileDialog(controller: ShellController, dialog: Extract<OpenD
         const paths: string[] = [];
         try {
           for (const f of files) {
-            setBusy(`Sending ${f.name || 'file'} to the computer…`);
+            setBusy(`Sending ${f.name || 'file'} to the host computer…`);
             paths.push((await controller.upload(f)).path);
           }
         } catch (err) {
@@ -334,10 +368,25 @@ export function useFileDialog(controller: ShellController, dialog: Extract<OpenD
 
 // ---------- show-path ----------
 
+/** An image or text file shown in the app (a chat attachment clicked), with Download to This Device and to Host Computer. */
+export interface FileView {
+  kind: ViewerKind;
+  /** An image's data: URL; null while it loads or when it can't be shown. */
+  url: string | null;
+  /** A text file's text; null while it loads or when it can't be shown. */
+  text: string | null;
+  /** Why it can't be shown, or ''. */
+  error: string;
+  toDevice: () => void;
+  toHost: () => void;
+}
+
 export interface PathFlow {
   req: PathRequest;
   name: string;
   browser: HostBrowser | null;
+  /** A file the app shows itself; null: a folder, or a file asked about (Open on Host Computer, Download). */
+  view: FileView | null;
   message: LocalMessage | null;
   /** The selected file, or the request's file. */
   canDownload: boolean;
@@ -349,6 +398,15 @@ export interface PathFlow {
 
 const baseName = (p: string): string => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 
+function dataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error ?? new Error("The image couldn't be read."));
+    r.readAsDataURL(blob);
+  });
+}
+
 /** A path the computer showed this device: a folder to browse (download or open what's in it), or a file to open or download. */
 export function usePathRequest(controller: ShellController, req: PathRequest): PathFlow {
   const [w] = useState(() => controller.anyWindow() ?? '');
@@ -357,16 +415,43 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
   const browser = useHostBrowser(controller, { w, start: req.path, files: true, extensions: null, multi: false, skip: !req.isDir, onError: fail });
   const close = () => controller.closePath(req.id);
   const file = req.isDir ? browser.entries.find((e) => !e.dir && browser.selected.includes(e.path)) : undefined;
+  // A file by its own name: an attachment copy's without the stamp in front.
+  const name = req.isDir ? baseName(req.path) : attachmentName(req.path);
+  const kind = req.isDir ? null : viewerKind(name);
+  const [shown, setShown] = useState<{ url: string | null; text: string | null; error: string }>({ url: null, text: null, error: '' });
 
-  // A file: Open on Computer | Download | Cancel.
+  // An image or text file: read in and shown. An image as a data: URL, which the page's Content-Security-Policy allows (blob: it doesn't).
   useEffect(() => {
-    if (req.isDir) return;
+    if (!kind) return;
+    let live = true;
+    void controller
+      .readHostFile(req.path, VIEWER_MAX_BYTES[kind])
+      .then(async (blob) => {
+        if (!live) return;
+        if (!blob) return setShown({ url: null, text: null, error: `${name} is too big to show here.` });
+        if (kind === 'image') {
+          const url = await dataUrl(new Blob([blob], { type: imageType(req.path) }));
+          if (live) setShown({ url, text: null, error: '' });
+        } else {
+          const text = await blob.text();
+          if (live) setShown({ url: null, text, error: '' });
+        }
+      })
+      .catch((err) => live && setShown({ url: null, text: null, error: errorText(err) }));
+    return () => {
+      live = false;
+    };
+  }, [controller, req.path, kind]);
+
+  // Any other file: Open on Host Computer | Download | Cancel.
+  useEffect(() => {
+    if (req.isDir || kind) return;
     void ask({
       type: 'question',
       title: 'Looper',
-      message: baseName(req.path),
+      message: name,
       detail: req.path,
-      buttons: ['Open on Computer', 'Download', 'Cancel'],
+      buttons: ['Open on Host Computer', 'Download', 'Cancel'],
       defaultId: 0,
       cancelId: 2,
     }).then(async (r) => {
@@ -383,8 +468,20 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
 
   return {
     req,
-    name: baseName(req.path),
+    name,
     browser: req.isDir ? browser : null,
+    view: kind
+      ? {
+          kind,
+          ...shown,
+          toDevice: () => void controller.downloadHostFile(req.path).catch(fail),
+          toHost: () =>
+            void controller
+              .saveOnHost(req.path)
+              .then((saved) => ask({ type: 'info', title: 'Looper', message: `Downloaded ${baseName(saved)} to the host computer.`, detail: saved, buttons: ['OK'] }))
+              .catch(fail),
+        }
+      : null,
     message,
     canDownload: !!file,
     download: () => {

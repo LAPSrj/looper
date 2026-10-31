@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,8 +18,10 @@ import { fmtDateTime } from '../format';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
 import './desktop-device.css';
-import { filterLabel, messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
-import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
+import { filterLabel, groupPlaces, HOST_COMPUTER, messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
+import { useFileDialog, usePathRequest, type FileView, type HostBrowser, type LocalMessage } from './file-flows';
+import { Markdown } from '../components/Markdown';
+import { PLACE_ICONS } from './places';
 import { shortcutText, type MenuNav } from './menu-model';
 import { useMenuState } from './menu-state';
 import { childStack, frontWindow, isBlocked, mainWindow, topModal, useShellState, windowSrc, type OpenDialog, type OpenMenu, type PathRequest, type WebWindow } from './store';
@@ -392,7 +395,8 @@ function ChildWindow({ controller, win, rect, area, z, active, blocked, minimize
         </div>
         {win.menu && <MenuBar controller={controller} win={win} />}
         <WindowFrame controller={controller} win={win} />
-        {win.resizable && EDGES.map((edge) => <div key={edge} className={`ws-resize ws-resize-${edge}`} onPointerDown={(e) => drag(e, edge)} />)}
+        {/* Maximized, it fills the page: its edges don't resize it, as on Windows. */}
+        {win.resizable && !rect.restore && EDGES.map((edge) => <div key={edge} className={`ws-resize ws-resize-${edge}`} onPointerDown={(e) => drag(e, edge)} />)}
       </div>
     </>
   );
@@ -721,8 +725,19 @@ const fmtSize = (n: number | undefined): string => (n === undefined ? '' : `${Ma
 
 const FILE_ICON = <path d="M4 1.5h5l3 3v10H4Z M9 1.5v3h3" />;
 const UP_ICON = <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" />;
+const BACK_ICON = <path d="M13 8H3M7.5 3.5L3 8l4.5 4.5" />;
+const FORWARD_ICON = <path d="M3 8h10M8.5 3.5L13 8l-4.5 4.5" />;
 
-/** The computer's folders: Up, the path, New Folder, and the list. */
+/** An icon button in the browser's bar; its label shows as its tooltip too. */
+function BarButton({ label, icon, disabled, onClick }: { label: string; icon: ReactNode; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button className="ws-icon-btn" aria-label={label} title={label} disabled={disabled} onClick={onClick}>
+      <Icon>{icon}</Icon>
+    </button>
+  );
+}
+
+/** The host computer's folders: Back, Forward, Up, Home, the path, New Folder, and the list. */
 function HostBrowserView({
   browser,
   multi,
@@ -753,7 +768,13 @@ function HostBrowserView({
       e.preventDefault();
       if (n) browser.select(browser.entries[clamp(i, 0, n - 1)]);
     };
-    if (e.key === 'ArrowDown') go(index + 1);
+    // Alt+Left, Alt+Right and Alt+Up: Back, Forward and Up, as in File Explorer.
+    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      if (e.key === 'ArrowLeft') browser.back();
+      else if (e.key === 'ArrowRight') browser.forward();
+      else browser.up();
+    } else if (e.key === 'ArrowDown') go(index + 1);
     else if (e.key === 'ArrowUp') go(index < 0 ? 0 : index - 1);
     else if (e.key === 'Home') go(0);
     else if (e.key === 'End') go(n - 1);
@@ -775,9 +796,10 @@ function HostBrowserView({
   return (
     <div className="ws-browser">
       <div className="ws-browser-bar">
-        <button className="ws-icon-btn" aria-label="Up" disabled={browser.path === null} onClick={browser.up}>
-          <Icon>{UP_ICON}</Icon>
-        </button>
+        <BarButton label="Back" icon={BACK_ICON} disabled={!browser.canBack} onClick={browser.back} />
+        <BarButton label="Forward" icon={FORWARD_ICON} disabled={!browser.canForward} onClick={browser.forward} />
+        <BarButton label="Up" icon={UP_ICON} disabled={browser.path === null} onClick={browser.up} />
+        <BarButton label="Home" icon={PLACE_ICONS.home} disabled={browser.home === null || browser.path === browser.home} onClick={() => browser.go(browser.home)} />
         <nav className="ws-crumbs" aria-label="Path">
           {browser.crumbs.map((c, i) => (
             <span key={c.path ?? ''} className="ws-crumb-part">
@@ -788,11 +810,7 @@ function HostBrowserView({
             </span>
           ))}
         </nav>
-        {newFolder && (
-          <button className="btn small" disabled={browser.path === null || naming !== null} onClick={() => setNaming('New folder')}>
-            New Folder
-          </button>
-        )}
+        {newFolder && <BarButton label="New Folder" icon={ICONS.newProject} disabled={browser.path === null || naming !== null} onClick={() => setNaming('New folder')} />}
       </div>
       <div ref={list} className="ws-files" role="listbox" aria-label="Files" aria-multiselectable={multi || undefined} tabIndex={0} onKeyDown={onKey}>
         {browser.path !== null && (
@@ -822,21 +840,27 @@ function HostBrowserView({
             />
           </div>
         )}
-        {browser.entries.map((entry) => (
-          <div
-            key={entry.path}
-            data-path={entry.path}
-            role="option"
-            aria-selected={browser.selected.includes(entry.path)}
-            className={`ws-file${browser.selected.includes(entry.path) ? ' selected' : ''}`}
-            onClick={(e) => browser.select(entry, { toggle: e.ctrlKey || e.metaKey })}
-            onDoubleClick={() => onActivate(entry)}
-          >
-            <Icon>{entry.dir ? ICONS.folder : FILE_ICON}</Icon>
-            <span className="ws-file-name">{entry.name}</span>
-            <span className="muted">{entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : ''}</span>
-            <span className="muted ws-file-size">{entry.dir ? '' : fmtSize(entry.size)}</span>
-          </div>
+        {(browser.path === null ? groupPlaces(browser.entries) : browser.entries.map((entry) => ({ heading: null, entry }))).map(({ heading, entry }) => (
+          <Fragment key={entry.path}>
+            {heading && (
+              <div className="ws-files-group" role="presentation">
+                {heading}
+              </div>
+            )}
+            <div
+              data-path={entry.path}
+              role="option"
+              aria-selected={browser.selected.includes(entry.path)}
+              className={`ws-file${browser.selected.includes(entry.path) ? ' selected' : ''}`}
+              onClick={(e) => browser.select(entry, { toggle: e.ctrlKey || e.metaKey })}
+              onDoubleClick={() => onActivate(entry)}
+            >
+              <Icon>{entry.place ? PLACE_ICONS[entry.place] : entry.dir ? ICONS.folder : FILE_ICON}</Icon>
+              <span className="ws-file-name">{entry.name}</span>
+              <span className="muted">{entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : ''}</span>
+              <span className="muted ws-file-size">{entry.dir ? '' : fmtSize(entry.size)}</span>
+            </div>
+          </Fragment>
         ))}
         {!browser.loading && browser.entries.length === 0 && naming === null && <div className="ws-files-empty muted">This folder is empty.</div>}
       </div>
@@ -854,7 +878,7 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
         <div className="tabs ws-sources" role="tablist">
           {f.sources.map((src) => (
             <button key={src} role="tab" aria-selected={f.source === src} className={`tab${f.source === src ? ' active' : ''}`} onClick={() => f.setSource(src)}>
-              {src === 'computer' ? 'This Computer' : 'This Device'}
+              {src === 'computer' ? HOST_COMPUTER : 'This Device'}
             </button>
           ))}
         </div>
@@ -949,7 +973,7 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
             <input autoFocus value={nameValue} maxLength={64} onChange={(e) => setName(e.target.value)} />
           </label>
           <div className="field">
-            <span className="field-label">Computer</span>
+            <span className="field-label">{HOST_COMPUTER}</span>
             <span className="ws-thisdevice-value">{d.computer || '\u00a0'}</span>
           </div>
           <label className="checkbox-field">
@@ -976,9 +1000,38 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
   );
 }
 
-/** A folder or file on the computer the user asked to see (Open Working Directory, Copy Path's neighbours…). */
+/** An image, or a text file (Markdown rendered), shown before it's downloaded. */
+function FileViewBody({ view, name }: { view: FileView; name: string }) {
+  if (view.error) return <div className="muted ws-viewer-note">{view.error}</div>;
+  if (view.kind === 'image') return view.url ? <img className="ws-viewer-image" src={view.url} alt={name} /> : <div className="muted ws-viewer-note">Loading…</div>;
+  if (view.text === null) return <div className="muted ws-viewer-note">Loading…</div>;
+  return view.kind === 'markdown' ? <Markdown text={view.text} breaks={false} /> : <pre className="ws-viewer-text">{view.text}</pre>;
+}
+
+/** A folder or file on the host computer the user asked to see (Open Working Directory, an attachment clicked…). */
 function PathDialog({ controller, req }: { controller: ShellController; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  if (p.view) {
+    return (
+      <ShellDialog title={p.name} width={900} height={680} className="ws-viewer" onClose={p.close}>
+        <div className={`ws-viewer-body${p.view.kind === 'image' ? ' image' : ''}`} tabIndex={0}>
+          <FileViewBody view={p.view} name={p.name} />
+        </div>
+        <div className="editor-footer">
+          <button className="btn primary" autoFocus onClick={p.view.toDevice}>
+            Download to This Device
+          </button>
+          <button className="btn" onClick={p.view.toHost}>
+            Download to {HOST_COMPUTER}
+          </button>
+          <button className="btn" onClick={p.close}>
+            Close
+          </button>
+        </div>
+        <LocalMessageBox msg={p.message} />
+      </ShellDialog>
+    );
+  }
   if (!p.browser) return <LocalMessageBox msg={p.message} />;
   return (
     <ShellDialog title={p.name} width={760} height={540} className="ws-filedialog" onClose={p.close}>
@@ -988,7 +1041,7 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
           Download
         </button>
         <button className="btn" onClick={p.openOnComputer}>
-          Open on Computer
+          Open on {HOST_COMPUTER}
         </button>
         <button className="btn" onClick={p.close}>
           Close

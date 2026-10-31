@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Harness, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
-import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, sameModels } from '@shared/environments';
+import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { Field, NumberField, TabBar, EditorFooter } from './components/ui';
 import { useDialogKeys } from './components/hooks';
@@ -90,6 +90,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   const modelIdx = selectedModel !== null && selectedModel < models.length ? selectedModel : null;
 
   const patch = (p: Partial<Harness>) => setDraft((d) => (d ? { ...d, ...p } : d));
+  const patchOptions = (p: NonNullable<Harness['options']>) => setDraft((d) => (d ? { ...d, options: { ...d.options, ...p } } : d));
 
   const removeModel = async () => {
     if (modelIdx === null) return;
@@ -125,7 +126,8 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
       env: parsedEnv,
       models: live?.models,
     };
-    if (folded.kind === 'custom' || folded.options?.autoTrustWorkspace !== false) delete folded.options;
+    folded.options = harnessOptions(folded);
+    if (!folded.options) delete folded.options;
     if (!folded.models || sameModels(folded.models, DEFAULT_MODELS[folded.kind])) delete folded.models;
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? folded : h)) } : e,
@@ -215,14 +217,32 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
             <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
               <select
                 value={draft.options?.autoTrustWorkspace === false ? 'manual' : 'auto'}
-                onChange={(e) =>
-                  patch({ options: e.target.value === 'auto' ? undefined : { autoTrustWorkspace: false } })
-                }
+                onChange={(e) => patchOptions({ autoTrustWorkspace: e.target.value === 'auto' ? undefined : false })}
               >
                 <option value="auto">Answer automatically (recommended)</option>
                 <option value="manual">Wait for user</option>
               </select>
             </Field>
+          )}
+          {draft.kind === 'claude-code' && (
+            <>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={draft.options?.remoteControl === true}
+                  onChange={(e) => patchOptions({ remoteControl: e.target.checked || undefined })}
+                />
+                Start new conversations with Remote Control
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={draft.options?.closeWhenCacheExpires !== false}
+                  onChange={(e) => patchOptions({ closeWhenCacheExpires: e.target.checked ? undefined : false })}
+                />
+                Close idle Remote Control conversations once their prompt cache expires
+              </label>
+            </>
           )}
         </div>
         )}

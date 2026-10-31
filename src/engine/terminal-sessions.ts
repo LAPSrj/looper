@@ -30,6 +30,12 @@ interface Session {
   output: string;
   launcher: string;
   startedAt: number;
+  /** Opened again at Looper's start, its harness not running: the first input starts it (see restore). */
+  wake?: () => void;
+  /** Its harness started again after a restore: the session keeps its place in the list and its output. */
+  restored?: boolean;
+  /** The size the window asked for while nothing ran: the harness gets it once it starts. */
+  size?: { cols: number; rows: number };
 }
 
 /**
@@ -55,8 +61,12 @@ export class TerminalSessions {
       removeFile(launcher);
       throw err;
     }
-    const session: Session = { taskId, proc, output: '', launcher, startedAt: Date.now() };
+    // A restored session's harness starting again: it stays where the list had it, after the output it had.
+    const prev = this.sessions.get(id);
+    const was = prev?.restored && !prev.proc ? prev : undefined;
+    const session: Session = { taskId, proc, output: was?.output ?? '', launcher, startedAt: was?.startedAt ?? Date.now() };
     this.sessions.set(id, session);
+    if (was?.size) this.resize(id, was.size.cols, was.size.rows);
     // A closed session whose id a new one took (a restarted Remote Control conversation) speaks for it no longer.
     const replaced = () => {
       const now = this.sessions.get(id);
@@ -76,27 +86,64 @@ export class TerminalSessions {
     return id;
   }
 
+  /**
+   * A session that was open when Looper quit, listed again with the output it
+   * had, its harness not running. The first input typed into it calls `wake`,
+   * which starts the harness again under the same id (start); the input
+   * itself isn't sent, since the harness isn't there yet to read it. A wake
+   * that throws ends the session with the reason.
+   */
+  restore(id: string, taskId: string, startedAt: number, output: string, wake: () => void): void {
+    this.sessions.set(id, { taskId, proc: null, output, launcher: '', startedAt, wake, restored: true });
+  }
+
+  /** Quitting Looper stopped its harness: a key typed into it starts it again. */
+  isStopped(id: string): boolean {
+    const s = this.sessions.get(id);
+    return !!s && !s.proc && !!s.wake;
+  }
+
   write(id: string, data: string): void {
-    this.sessions.get(id)?.proc?.write(data);
+    const s = this.sessions.get(id);
+    if (!s) return;
+    if (s.proc) {
+      s.proc.write(data);
+      return;
+    }
+    const wake = s.wake;
+    if (!wake) return;
+    s.wake = undefined;
+    try {
+      wake();
+    } catch (err) {
+      const text = `\r\n${err instanceof Error ? err.message : String(err)}\r\n`;
+      s.output = (s.output + text).slice(-OUTPUT_BYTES);
+      this.d.log.warn(`[${s.taskId}] cannot start terminal session ${id} again: ${text.trim()}`);
+      this.d.emit({ type: 'terminal:data', id, data: text });
+      this.d.emit({ type: 'terminal:end', id });
+    }
   }
 
   resize(id: string, cols: number, rows: number): void {
+    const s = this.sessions.get(id);
+    if (s && !s.proc) s.size = { cols, rows };
     try {
-      this.sessions.get(id)?.proc?.resize(cols, rows);
+      s?.proc?.resize(cols, rows);
     } catch {
       /* the pty is gone */
     }
   }
 
-  /** The output so far, and whether the session has ended. Null for an unknown or closed session. */
-  output(id: string): { data: string; ended: boolean } | null {
+  /** The output so far, and whether the session has ended or quitting stopped it. Null for an unknown or closed session. */
+  output(id: string): { data: string; ended: boolean; stopped?: boolean } | null {
     const s = this.sessions.get(id);
-    return s ? { data: s.output, ended: !s.proc } : null;
+    if (!s) return null;
+    return { data: s.output, ended: !s.proc && !s.wake, ...(this.isStopped(id) ? { stopped: true } : {}) };
   }
 
   /** The open sessions, oldest first. */
-  list(): { id: string; taskId: string; startedAt: number; ended: boolean }[] {
-    return [...this.sessions].map(([id, s]) => ({ id, taskId: s.taskId, startedAt: s.startedAt, ended: !s.proc }));
+  list(): { id: string; taskId: string; startedAt: number; ended: boolean; stopped: boolean }[] {
+    return [...this.sessions].map(([id, s]) => ({ id, taskId: s.taskId, startedAt: s.startedAt, ended: !s.proc && !s.wake, stopped: !s.proc && !!s.wake }));
   }
 
   /** The task a session belongs to; undefined once it's closed. */

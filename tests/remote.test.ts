@@ -316,7 +316,7 @@ describe('Remote Control', () => {
 
   it("won't restart a helper, a conversation with nothing recorded, or one while Remote Control is off", async () => {
     const { rc, started } = setup({ helpers: [helper] }, { tasks: [task('t1')], projects: [p1()] });
-    expect(() => rc.restartConversation('r1')).toThrow('Start Remote Control first.');
+    expect(() => rc.restartConversation('r1')).toThrow('Turn on Remote Control first.');
     rc.start();
     expect(() => rc.restartConversation('r1')).toThrow(/replaces a helper/);
     expect(() => rc.restartConversation('r2')).toThrow(/No conversation was recorded/);
@@ -470,7 +470,7 @@ describe('Remote Control', () => {
     expect(rc.state().conversations.find((c) => c.id === p.runId)?.status).toBe('ended');
   });
 
-  it('gives a conversation whose transcript names no cache the long lifetime, and keeps it open while the option is off', async () => {
+  it("gives a conversation whose transcript names no cache the long lifetime, and keeps it open while its harness's option is off", async () => {
     const t0 = Date.now();
     let t = t0;
     const { rc, settings, started, closed } = setup({}, { tasks: [task('t1')], projects: [p1()], now: () => t });
@@ -479,13 +479,45 @@ describe('Remote Control', () => {
     t = t0 + 30 * 60_000;
     await sleep(80);
     expect(closed).toEqual([]);
-    settings.remote.closeWhenCacheExpires = false;
+    const harness = settings.environments[0].harnesses[0];
+    harness.options = { closeWhenCacheExpires: false };
     t = t0 + 2 * 60 * 60_000;
     await sleep(80);
     expect(closed).toEqual([]);
-    settings.remote.closeWhenCacheExpires = true;
+    harness.options = {};
     await sleep(80);
     expect(closed).toEqual(['r1']);
+  });
+
+  it("lists a chat or terminal that started with Remote Control while it's open, but leaves it to the user", async () => {
+    const t0 = Date.now();
+    let t = t0;
+    const { rc, root, started, closed, outputs } = setup({}, { tasks: [task('t1')], now: () => t });
+    const dir = path.join(root, 'tasks', 't1', 'runs', 'term1');
+    fs.mkdirSync(dir, { recursive: true });
+    // Not while Remote Control is off.
+    rc.attach({ id: 'term1', taskId: 't1', source: 'terminal', name: 'Task t1', cwd: '/home/me/proj', dir });
+    expect(rc.isAttached('term1')).toBe(false);
+    rc.start();
+    outputs.set('term1', 'connected https://claude.ai/code/session_term1');
+    rc.attach({ id: 'term1', taskId: 't1', source: 'terminal', name: 'Task t1', cwd: '/home/me/proj', dir });
+    rc.attach({ id: 'chat1', taskId: 't1', source: 'chat', name: 'Task t1', cwd: '/home/me/proj', dir: path.join(root, 'chat1'), link: 'https://claude.ai/code/session_chat1' });
+    expect(rc.owns('term1')).toBe(false);
+    await turn(dir);
+    const listed = rc.state().conversations;
+    expect(listed.find((c) => c.id === 'term1')).toMatchObject({ source: 'terminal', status: 'idle', link: 'https://claude.ai/code/session_term1', title: 'Fix the footer' });
+    expect(listed.find((c) => c.id === 'chat1')).toMatchObject({ source: 'chat', status: 'waiting', link: 'https://claude.ai/code/session_chat1' });
+    // Idle past any prompt cache: still open, since it's the user's.
+    t = t0 + 3 * 60 * 60_000;
+    await sleep(80);
+    expect(closed).toEqual([]);
+    expect(() => rc.restartConversation('term1')).toThrow(/open in Looper/);
+    expect(started).toEqual([]);
+    // It closed: a used one stays on the list as ended, an unused one goes.
+    rc.detach('term1');
+    rc.detach('chat1');
+    expect(rc.state().conversations.map((c) => [c.id, c.status])).toEqual([['term1', 'ended']]);
+    expect(() => rc.restartConversation('term1')).toThrow(/No conversation was recorded/);
   });
 
   it('looper-remote: opens with a prompt, lists the conversations, and resumes an ended one where it left off', async () => {

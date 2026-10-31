@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import { formatTokens, type Attachment } from '@shared/chat';
 import { EFFORT_LEVELS } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
@@ -9,8 +10,10 @@ import { AttachmentList } from './ChatRows';
 import { changeLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
+import { AddonScreenView } from './AddonScreen';
+import { MessageBody } from './Markdown';
 import { ToolButton } from './ToolButton';
-import { ToolInputView, ToolResultView, gutterLines } from './ToolContent';
+import { CodeBlock, CodeText, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
 
 type Tab = 'now' | 'background' | 'subagents' | 'files' | 'git';
@@ -33,17 +36,14 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v 
 const inputOf = (row: MessageRow): Record<string, unknown> =>
   row.input !== null && typeof row.input === 'object' && !Array.isArray(row.input) ? (row.input as Record<string, unknown>) : {};
 
-/** The file in an editor: its name on a tab, then its lines with their numbers, added and removed ones colored. */
+/** The file in an editor: its lines with their numbers, colored for its language, added and removed ones marked. */
 function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[]; note?: string }) {
+  const html = useHighlight(
+    lines.map((l) => l.text),
+    file,
+  );
   return (
     <div className="now-editor">
-      {file && (
-        <div className="now-editor-tabs">
-          <div className="now-editor-tab" title={file}>
-            {baseName(file)}
-          </div>
-        </div>
-      )}
       <div className="now-editor-lines">
         {lines.map((l, i) =>
           l.kind === 'gap' ? (
@@ -54,7 +54,7 @@ function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[
             <div key={i} className={`now-editor-line${l.kind === 'ctx' ? '' : ` diff-${l.kind}`}`}>
               <span className="now-editor-gutter">{l.n}</span>
               <span className="now-editor-mark">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ''}</span>
-              <span className="now-editor-text">{l.text || ' '}</span>
+              <CodeText className="now-editor-text" html={html?.[i]} text={l.text} />
             </div>
           ),
         )}
@@ -64,16 +64,14 @@ function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[
   );
 }
 
-/** A command in a terminal: the prompt and the command line, then its output; a cursor while it runs. */
+/** A command in a terminal: the prompt and the command line, then its output; a cursor while it runs. Its description is the screen's title. */
 function TerminalScreen({ row }: { row: MessageRow }) {
   const input = inputOf(row);
   const command = str(input.command) ?? row.text;
-  const description = str(input.description);
   const prompt = row.tool === 'PowerShell' ? 'PS> ' : '$ ';
   const output = row.result === undefined ? undefined : stripAnsi(row.result).replace(/\n+$/, '');
   return (
     <div className="now-terminal">
-      {description && <div className="now-term-comment"># {description}</div>}
       <div>
         <span className="now-term-prompt">{prompt}</span>
         {command}
@@ -98,19 +96,115 @@ function TerminalScreen({ row }: { row: MessageRow }) {
 
 const TERMINALS = new Set(['Bash', 'PowerShell']);
 
+const runningNote = (row: MessageRow) => (
+  <div className="muted now-result">{row.background ? 'Running in the background…' : 'Running…'}</div>
+);
+
+/** A result's JSON as a table: a list of objects with a column per field, an object with a row per field; null for anything else. */
+function resultTable(text: string): ReactNode {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (Array.isArray(value) && value.length > 0 && value.every((v) => v !== null && typeof v === 'object' && !Array.isArray(v))) {
+    const rows = value as Record<string, unknown>[];
+    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    const cell = (v: unknown) => (v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
+    return (
+      <table className="now-table">
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {cols.map((c) => (
+                <td key={c}>{cell(r[c])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) return <ParamTable entries={Object.entries(value)} />;
+  return null;
+}
+
+/** A tool call an addon says how to show (its toolCalls): its title, the parameters it picked, and the result in the form it asked for. */
+function AddonCallScreen({ row, ctx, addon, call }: { row: MessageRow; ctx: { taskId: string; runId: string; agentId?: string }; addon: AddonInfo; call: AddonToolCall }) {
+  const input = inputOf(row);
+  const params: [string, unknown][] = call.params ? call.params.filter((k) => k in input).map((k) => [k, input[k]]) : Object.entries(input);
+  const result = row.result ?? '';
+  let shown;
+  if (call.result === 'text') shown = <pre className="output">{result}</pre>;
+  else if (call.result === 'markdown') shown = <MessageBody text={result} />;
+  else if (call.result === 'code') shown = <CodeBlock text={result} file={row.file} language={call.language} />;
+  else if (call.result === 'image') shown = <ToolImage row={row} taskId={ctx.taskId} runId={ctx.runId} agentId={ctx.agentId} />;
+  else if (call.result === 'table') shown = resultTable(result) ?? <pre className="output">{result}</pre>;
+  else if (call.result && addon.status === 'running')
+    shown = (
+      <AddonScreenView
+        addonId={addon.id}
+        addonName={addon.name}
+        view={call.result.view}
+        params={{ tool: row.tool, input, result, error: !!row.resultError }}
+        mode="inline"
+      />
+    );
+  else shown = <ToolResultView row={row} ctx={ctx} />;
+  return (
+    <>
+      <ParamTable entries={params} />
+      {row.result === undefined && !row.image ? runningNote(row) : <div className={params.length ? 'now-result' : undefined}>{shown}</div>}
+    </>
+  );
+}
+
 /** One tool call as the agent's screen: the file it read, the change it made, the command and its output. */
-function NowScreen({ row, taskId, runId }: { row: MessageRow; taskId: string; runId: string }) {
-  const ctx = { taskId, runId };
+function NowScreen({ row, taskId, runId, agentId, addons }: { row: MessageRow; taskId: string; runId: string; agentId?: string; addons: AddonInfo[] }) {
+  const ctx = { taskId, runId, agentId };
   const running = row.result === undefined;
-  const subject = row.file ?? row.preview;
-  const lines = row.tool === 'Read' && !running && !row.image ? gutterLines(row.result ?? '') : null;
+  const custom = row.tool ? findToolCall(addons, row.tool) : undefined;
+  const title = custom?.call.title ? toolCallTitle(custom.call.title, inputOf(row)) : row.tool;
+  const subject = custom?.call.title ? '' : (row.file ?? row.preview);
+  const image = row.tool === 'Read' && !running && (!!row.image || (!row.resultError && IMAGE_RE.test(row.file ?? '')));
+  const lines = row.tool === 'Read' && !running && !image ? gutterLines(row.result ?? '') : null;
   const changed = row.tool && CHANGES.has(row.tool) ? changeLines(row) : null;
   let body;
   let screen = true;
-  if (row.tool && TERMINALS.has(row.tool)) {
+  if (custom) {
+    screen = false;
+    body = <AddonCallScreen row={row} ctx={ctx} addon={custom.addon} call={custom.call} />;
+  } else if (row.tool && TERMINALS.has(row.tool)) {
     body = <TerminalScreen row={row} />;
   } else if (row.tool === 'Read' && running) {
     body = <EditorScreen file={row.file} lines={[]} note="Reading…" />;
+  } else if (image) {
+    screen = false;
+    body = <ToolImage row={row} taskId={taskId} runId={runId} agentId={agentId} />;
+  } else if (row.tool === 'Skill') {
+    // The skill's name is the title; its content is the result.
+    screen = false;
+    const rest = Object.entries(inputOf(row)).filter(([k]) => k !== 'skill');
+    body = (
+      <>
+        <ParamTable entries={rest} />
+        {running ? (
+          runningNote(row)
+        ) : (
+          <div className={rest.length ? 'now-result' : undefined}>
+            <ToolResultView row={row} ctx={ctx} />
+          </div>
+        )}
+      </>
+    );
   } else if (lines) {
     body = <EditorScreen file={row.file} lines={lines.map((l) => ({ ...l, kind: 'ctx' }))} />;
   } else if (changed) {
@@ -130,7 +224,7 @@ function NowScreen({ row, taskId, runId }: { row: MessageRow; taskId: string; ru
             <ToolResultView row={row} ctx={ctx} />
           </div>
         ) : (
-          <div className="muted now-result">{row.background ? 'Running in the background…' : 'Running…'}</div>
+          runningNote(row)
         )}
       </>
     );
@@ -138,8 +232,8 @@ function NowScreen({ row, taskId, runId }: { row: MessageRow; taskId: string; ru
   return (
     <div className="now-screen">
       <div className="now-title">
-        <span className="now-tool">{row.tool}</span>
-        <span className="mono now-subject">{subject}</span>
+        <span className={`now-tool${subject ? '' : ' now-tool-only'}`}>{title}</span>
+        {subject && <span className="mono now-subject">{subject}</span>}
         {row.resultError && <span className="error-text">Failed</span>}
       </div>
       <div className={`now-body${screen ? ' now-body-screen' : ''}`}>{body}</div>
@@ -173,7 +267,20 @@ function FileItem({ path, taskId, runId, onShow }: { path: string; taskId: strin
 }
 
 /** One background command or subagent; opened, the end of its output, read again every few seconds. */
-function BackgroundItem({ b, sessionId, taskId, now }: { b: BackgroundTask; sessionId: string; taskId: string; now: number }) {
+function BackgroundItem({
+  b,
+  sessionId,
+  taskId,
+  now,
+  onOpenWorkflow,
+}: {
+  b: BackgroundTask;
+  sessionId: string;
+  taskId: string;
+  now: number;
+  /** A workflow's item opens its tab beside the conversation. */
+  onOpenWorkflow: (runId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   useEffect(() => {
@@ -207,15 +314,36 @@ function BackgroundItem({ b, sessionId, taskId, now }: { b: BackgroundTask; sess
         window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: b.outputFile, text: b.command });
       }}
     >
-      <div className="bg-item-head" onClick={() => b.outputFile && setOpen((o) => !o)}>
+      <div
+        className="bg-item-head"
+        onClick={() => {
+          if (b.workflowRunId) onOpenWorkflow(b.workflowRunId);
+          else if (b.outputFile) setOpen((o) => !o);
+        }}
+      >
         <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}`}>{status}</span>
         <span className="bg-label">{b.label}</span>
-        <span className="muted bg-kind">{b.kind === 'agent' ? 'Subagent' : ''}</span>
+        <span className="muted bg-kind">{b.kind === 'agent' ? 'Subagent' : b.kind === 'workflow' ? 'Workflow' : ''}</span>
       </div>
       {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
       {open && <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>}
     </div>
   );
+}
+
+/** The installed addons, kept current: their toolCalls say how some tool calls show on Now. */
+function useAddonList(): AddonInfo[] {
+  const [addons, setAddons] = useState<AddonInfo[]>([]);
+  useEffect(() => {
+    void window.looper.addons
+      .list()
+      .then(setAddons)
+      .catch(() => undefined);
+    return window.looper.addons.onEvent((e) => {
+      if (e.type === 'addons') setAddons(e.addons);
+    });
+  }, []);
+  return addons;
 }
 
 /** The tool call Now shows: the one at `pos`, or the latest when it's null. */
@@ -228,17 +356,19 @@ export function nowIndex(count: number, pos: number | null): number {
  * like its screen (the toolbar goes back through earlier ones, and the last
  * one follows new calls), Subagents lists each one's agent, model, effort and
  * context, Files lists what it worked on, and Background shows what runs in
- * the background.
+ * the background (a workflow's item opens its tab beside the conversation).
  */
 export function ActivityPanel({
   sessionId,
   taskId,
   rows,
+  rowsAgent,
   attachments,
   background,
   subagents,
   following,
   onFollow,
+  onOpenWorkflow,
   pos,
   onPos,
   now,
@@ -246,13 +376,17 @@ export function ActivityPanel({
 }: {
   sessionId: string;
   taskId: string;
-  /** The conversation being watched: the session's, or the followed subagent's. */
+  /** The conversation being watched: the session's, or the followed subagent's or open workflow agent's. */
   rows: MessageRow[];
+  /** Whose conversation `rows` is: the subagent's or workflow agent's id; null for the session's. */
+  rowsAgent: string | null;
   attachments: Attachment[];
   background: BackgroundTask[];
   subagents: SubagentInfo[];
   following: string | null;
   onFollow: (agentId: string | null) => void;
+  /** Show a workflow run's tab beside the conversation (its Background item was clicked). */
+  onOpenWorkflow: (runId: string) => void;
   /** The tool call Now shows; null follows the latest. */
   pos: number | null;
   onPos: (pos: number | null) => void;
@@ -263,6 +397,7 @@ export function ActivityPanel({
   const [picked, setTab] = useState<Tab>('now');
   const tab = picked === 'git' && !gitProject ? 'now' : picked;
   const git = useGitStatus(gitProject);
+  const addons = useAddonList();
   const tools = rows.filter((r) => r.kind === 'tool');
   const i = nowIndex(tools.length, pos);
   const row = tools[i];
@@ -309,7 +444,7 @@ export function ActivityPanel({
                   {i + 1} of {tools.length}
                 </span>
               </div>
-              <NowScreen row={row} taskId={taskId} runId={sessionId} />
+              <NowScreen row={row} taskId={taskId} runId={sessionId} agentId={rowsAgent ?? undefined} addons={addons} />
             </>
           ) : (
             <div className="empty">The agent hasn't used a tool yet.</div>
@@ -318,7 +453,7 @@ export function ActivityPanel({
           <div className="background-tab">
             {running.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
             {[...running, ...finished].map((b) => (
-              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} now={now} />
+              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} now={now} onOpenWorkflow={onOpenWorkflow} />
             ))}
           </div>
         )}

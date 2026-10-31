@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { stripAnsi } from '../shared/ansi';
-import { resolveEnvironment, resolveHarness } from '../shared/environments';
+import { closesWhenCacheExpires, resolveEnvironment, resolveHarness } from '../shared/environments';
 import {
   isRemoteTaskId,
   remoteTaskId,
@@ -82,6 +82,8 @@ interface Live {
   conv: RemoteConversation;
   /** `helper:<id>` or `project:<id>`: the entry that keeps this session open. */
   entryKey?: string;
+  /** Remote Control's own sessions: the task it runs as, whose harness says whether it ends once its prompt cache expires. */
+  task?: Task;
   dir: string;
   startedAt: number;
   promptAt: number | null;
@@ -136,16 +138,21 @@ const RECENT_MAX = 25;
  * app. Each helper and project entry in the settings gets a session; a project
  * that keeps a conversation ready gets another once its empty one is used; a
  * helper idle past its restart time is replaced by a fresh one; any other
- * conversation idle until its prompt cache expires ends (closeWhenCacheExpires),
- * and a helper can resume it. Every session
+ * conversation idle until its prompt cache expires ends when its harness says
+ * so (closeWhenCacheExpires), and a helper can resume it. Every session
  * is a terminal session of a task (a folder project's or helper's stand-in
  * task when no task supplies it), so its conversation is recorded as a run.
- * Remote Control runs only while this Looper does: Stop and quitting end
- * every session.
+ * Turning it off and quitting end every one of its sessions.
+ *
+ * Chats and Looper terminals that start on a harness with Remote Control
+ * (its remoteControl option) are listed too while they're open (`attach`),
+ * but they stay the user's: Remote Control doesn't end, restart or replace them.
  */
 export class RemoteControl {
   private running = false;
   private readonly live = new Map<string, Live>();
+  /** Open chats and Looper terminals with Remote Control on, by run id. */
+  private readonly attached = new Map<string, Live>();
   private readonly problems = new Map<string, string>();
   private readonly fails = new Map<string, number>();
   private readonly lastStart = new Map<string, number>();
@@ -182,9 +189,62 @@ export class RemoteControl {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const runId of [...this.live.keys()]) this.end(runId);
+    this.attached.clear();
     this.problems.clear();
     this.d.log.info('remote control stopped');
     this.emitState();
+  }
+
+  /**
+   * A chat or Looper terminal that started with Remote Control on: listed
+   * with the conversations until it closes (`detach`). A terminal's link is
+   * read from its output; a chat gives its own, attaching again with it.
+   */
+  attach(c: { id: string; taskId: string; source: 'chat' | 'terminal'; name: string; cwd: string; dir: string; link?: string }): void {
+    if (!this.running || this.live.has(c.id)) return;
+    const known = this.attached.get(c.id);
+    if (known) {
+      if (c.link) known.conv.link = c.link;
+      this.emitState();
+      return;
+    }
+    const now = this.now();
+    this.attached.set(c.id, {
+      conv: {
+        id: c.id,
+        taskId: c.taskId,
+        source: c.source,
+        name: c.name,
+        cwd: c.cwd,
+        startedAt: new Date(now).toISOString(),
+        status: 'waiting',
+        ...(c.link ? { link: c.link } : {}),
+      },
+      dir: c.dir,
+      startedAt: now,
+      promptAt: null,
+      stopAt: null,
+      closing: false,
+      // The user is at the computer: Looper doesn't answer a terminal's dialogs for them.
+      trustAnswered: true,
+      taken: new Set(),
+    });
+    this.d.log.info(`remote control: listing ${c.source} ${c.id} "${c.name}"`);
+    this.emitState();
+  }
+
+  /** A listed chat or terminal closed or ended: it goes on the list of ended conversations once used. */
+  detach(id: string): void {
+    const l = this.attached.get(id);
+    if (!l) return;
+    this.watchTurns(l);
+    this.attached.delete(id);
+    this.emitState();
+  }
+
+  /** Whether a chat or terminal is listed as a conversation. */
+  isAttached(id: string): boolean {
+    return this.attached.has(id);
   }
 
   /** The settings changed: entries that went away lose their empty sessions, new ones get theirs. */
@@ -248,7 +308,9 @@ export class RemoteControl {
 
   /** `pruned`: drop ended conversations whose run folder is gone (run-log retention). */
   state(pruned = true): RemoteState {
-    const open = [...this.live.values()].map((l) => ({ ...l.conv })).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const open = [...this.live.values(), ...this.attached.values()]
+      .map((l) => ({ ...l.conv }))
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const ids = new Set(open.map((c) => c.id));
     if (pruned) this.prunePast();
     const past = this.pastList()
@@ -264,7 +326,7 @@ export class RemoteControl {
    * answer. Null before the first message, or once the run is gone.
    */
   lastMessage(id: string): RemoteMessage | null {
-    const conv = this.live.get(id)?.conv ?? this.pastList().find((c) => c.id === id);
+    const conv = (this.live.get(id) ?? this.attached.get(id))?.conv ?? this.pastList().find((c) => c.id === id);
     return conv ? readLastMessage(this.d.runDir(conv.taskId, id)) : null;
   }
 
@@ -275,7 +337,7 @@ export class RemoteControl {
    * replace. Throws with the reason.
    */
   restartConversation(id: string): void {
-    if (!this.running) throw new Error('Start Remote Control first.');
+    if (!this.running) throw new Error('Turn on Remote Control first.');
     this.resume(id);
     this.reconcile();
     this.emitState();
@@ -283,10 +345,13 @@ export class RemoteControl {
 
   /** A new session in the conversation's own run goes on with it; an open one ends first. `prompt` is its next message. */
   private resume(id: string, prompt?: string): Live {
+    if (this.attached.has(id)) throw new Error("This conversation is open in Looper: go on with it in its window.");
     const old = this.live.get(id);
     const conv = old?.conv ?? this.pastList().find((c) => c.id === id);
     if (!conv) throw new Error('This conversation no longer exists.');
     if (conv.source === 'helper') throw new Error('Looper replaces a helper by itself: Stop this one, and a fresh one starts.');
+    // A chat's run goes on in a chat: Continue in Chat on its run in Looper.
+    if (conv.source === 'chat') throw new Error("This was a chat in Looper: continue it from its run there.");
     const sessionId = readRunSessionId(this.d.runDir(conv.taskId, id), 'claude-code');
     if (!sessionId) throw new Error('No conversation was recorded for this session yet.');
     const task = this.d.getTask(conv.taskId) ?? this.standIn(conv.taskId);
@@ -294,7 +359,9 @@ export class RemoteControl {
     const entryKey = old?.entryKey;
     if (old) this.end(id);
     // Claude Code keeps a conversation under its folder: the same one resumes it.
-    const l = this.launch({ ...task, cwd: conv.cwd }, conv.source, conv.name, conv.entryId, () => ({ name: conv.name, prompt }), { runId: id, sessionId });
+    // A Looper terminal's conversation goes on as one of Remote Control's own sessions.
+    const source = conv.source === 'terminal' ? 'opened' : conv.source;
+    const l = this.launch({ ...task, cwd: conv.cwd }, source, conv.name, conv.entryId, () => ({ name: conv.name, prompt }), { runId: id, sessionId });
     l.conv.startedAt = conv.startedAt;
     if (conv.title) l.conv.title = conv.title;
     if (entryKey) l.entryKey = entryKey;
@@ -433,6 +500,7 @@ export class RemoteControl {
         startedAt: new Date(now).toISOString(),
         status: 'waiting',
       },
+      task,
       dir,
       startedAt: now,
       promptAt: null,
@@ -473,6 +541,10 @@ export class RemoteControl {
         void this.answerRequests(l);
         this.recycle(runId, l);
       } else this.closeExpired(runId, l);
+    }
+    for (const [runId, l] of this.attached) {
+      this.watchOutput(runId, l);
+      this.watchTurns(l);
     }
     this.reconcile();
     this.emitState();
@@ -541,9 +613,12 @@ export class RemoteControl {
     this.end(runId);
   }
 
-  /** A conversation idle until its prompt cache expired ends; the helper or the Conversations window can resume it. */
+  /**
+   * A conversation idle until its prompt cache expired ends when its harness
+   * says so; the helper or the Conversations window can resume it.
+   */
   private closeExpired(runId: string, l: Live): void {
-    if (!this.d.settings.remote.closeWhenCacheExpires || l.conv.status !== 'idle') return;
+    if (l.conv.status !== 'idle' || !this.closesWhenExpired(l)) return;
     if (l.expiresAt === undefined || l.expiryOf !== l.stopAt) {
       l.expiryOf = l.stopAt;
       l.expiresAt = this.cacheExpiry(l);
@@ -551,6 +626,17 @@ export class RemoteControl {
     if (this.now() < l.expiresAt) return;
     this.d.log.info(`remote control: closing ${runId} "${l.conv.name}": idle until its prompt cache expired`);
     this.end(runId);
+  }
+
+  /** The harness's "Close idle conversations once their prompt cache expires" (on when Looper can't tell the harness). */
+  private closesWhenExpired(l: Live): boolean {
+    const task = l.task ?? this.d.getTask(l.conv.taskId) ?? this.standIn(l.conv.taskId);
+    if (!task) return true;
+    try {
+      return closesWhenCacheExpires(resolveHarness(task, resolveEnvironment(task, this.d.settings)));
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -642,7 +728,7 @@ export class RemoteControl {
 
   /** `looper-remote resume`: an open conversation's link, or an ended one reopened. */
   private async resumeFor(id: string, prompt?: string): Promise<{ text: string; code: number }> {
-    const open = this.live.get(id);
+    const open = this.live.get(id) ?? this.attached.get(id);
     if (open?.conv.source === 'helper' || (!open && this.pastList().find((c) => c.id === id)?.source === 'helper')) {
       throw new Error("That's a helper's conversation; only other conversations can be resumed.");
     }
@@ -708,7 +794,7 @@ export class RemoteControl {
     }
     if (!home) return "Looper couldn't tell this environment's home folder, so it can't read Claude Code's list of folders.";
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
-    if (!entry) return 'This helper was removed from the Remote Control settings.';
+    if (!entry) return "This helper was removed from Remote Control's helpers.";
     const target = this.d.createTarget(remoteStandIn({ ...entry, permissionMode: '' }, this.d.settings));
     const host = (p: string): string | null => {
       try {
@@ -762,7 +848,7 @@ export class RemoteControl {
     const task = this.d.listTasks().find((t) => t.id === arg || t.name.toLowerCase() === want);
     if (task) return this.launchTask(task.id, prompt);
     const entry = this.d.settings.remote.helpers.find((h) => `helper:${h.id}` === helper.entryKey);
-    if (!entry) throw new Error('This helper was removed from the Remote Control settings.');
+    if (!entry) throw new Error("This helper was removed from Remote Control's helpers.");
     // A folder it opens runs on the helper's harness, with the harness's own model and effort (the
     // helper's are for its own small job): a normal session, in Auto mode.
     const { id, name: helperName, environmentId, harnessId, cwd } = entry;
@@ -787,7 +873,7 @@ export class RemoteControl {
   private async waitForLink(runId: string): Promise<string | undefined> {
     const until = this.now() + LINK_WAIT_MS;
     while (this.now() < until) {
-      const l = this.live.get(runId);
+      const l = this.live.get(runId) ?? this.attached.get(runId);
       if (!l) return undefined;
       this.watchOutput(runId, l);
       if (l.conv.link) return l.conv.link;

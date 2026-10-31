@@ -72,6 +72,14 @@ empty task list, a toolbar, the [dashboard](monitoring.md#the-dashboard) of
 tasks that need you and runs in progress, and a status bar showing how many
 tasks are enabled, disabled, completed, paused, or running.
 
+Each window opens where the last window of its kind was: the main window,
+the Chats window, a chat's or a run's own window and an addon's window
+come back at their size and position, on the same display, and maximized
+if they were. Editors open at their last size and position, and dialogs
+that belong to another window at their last size, centered on that window.
+When the display a window was on is no longer connected, it opens at its
+default place instead.
+
 ## Creating your first task
 
 Open File → New Task… (Ctrl+N) for a blank task, or File → New Task from

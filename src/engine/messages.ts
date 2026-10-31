@@ -1,6 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { guidanceText, type MessageImage, type MessageRow, type MessagesResult, type PatchHunk } from '../shared/messages';
+import {
+  SENT_IMAGE_RE,
+  guidanceText,
+  toolImageId,
+  type MessageImage,
+  type MessageRow,
+  type MessagesResult,
+  type PatchHunk,
+  type SentFiles,
+} from '../shared/messages';
 import { parseTaskNotification } from '../shared/sessions';
 import { readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
@@ -8,6 +17,8 @@ import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
 import { convertWslPath } from './host';
 import type { Logger } from './log';
+import type { WorkflowRun } from '../shared/workflows';
+import { SessionWorkflows, workflowAgentTranscript, type WorkflowLaunch } from './workflows';
 
 /** Oldest rows past this are dropped; a looper run rarely gets near it. */
 const MAX_ROWS = 1000;
@@ -72,7 +83,8 @@ function formatToolInput(input: unknown): string {
 
 /** Text of a tool_result content field: a string, or an array of text blocks.
  * Blocks without text (e.g. ToolSearch's tool_reference) fall back to JSON so
- * the result never renders empty. */
+ * the result never renders empty. Image blocks are left out: their payload
+ * stays engine-side (takeImage). */
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -81,9 +93,10 @@ function resultText(content: unknown): string {
       .filter(Boolean)
       .join('\n');
     if (text) return text;
-    if (content.length === 0) return '';
+    const rest = content.filter((b) => (b as Rec | null)?.type !== 'image');
+    if (rest.length === 0) return '';
     try {
-      return JSON.stringify(content, null, 2);
+      return JSON.stringify(rest, null, 2);
     } catch {
       return '';
     }
@@ -163,6 +176,40 @@ function takePatch(tur: unknown): PatchHunk[] | undefined {
     });
   }
   return hunks.length > 0 ? hunks : undefined;
+}
+
+/**
+ * The files a SendUserFile call sent. Its result's toolUseResult lists what was
+ * delivered, each with its absolute path and size ({caption, display,
+ * attachments: [{path, size, isImage, media_type, file_uuid}]}, claude 2.1.x);
+ * without it the call's own `files` stand in. Null when no file is named.
+ */
+function sentFilesOf(input: unknown, tur: unknown): SentFiles | null {
+  const inp = (input ?? {}) as Rec;
+  const delivered = (tur as Rec | undefined)?.attachments;
+  const items: { path: string; size?: number }[] = [];
+  if (Array.isArray(delivered)) {
+    for (const a of delivered as Rec[]) {
+      if (typeof a?.path === 'string' && a.path.trim()) {
+        items.push({ path: a.path.trim(), ...(typeof a.size === 'number' && a.size >= 0 ? { size: a.size } : {}) });
+      }
+    }
+  }
+  if (items.length === 0 && Array.isArray(inp.files)) {
+    for (const f of inp.files) if (typeof f === 'string' && f.trim()) items.push({ path: f.trim() });
+  }
+  if (items.length === 0) return null;
+  const attach = inp.display === 'attach' || (tur as Rec | undefined)?.display === 'attach';
+  const captionText = [inp.caption, (tur as Rec | undefined)?.caption].find((c): c is string => typeof c === 'string' && c.trim() !== '');
+  return {
+    ...(captionText ? { caption: captionText.trim() } : {}),
+    files: items.map((i) => ({
+      path: i.path,
+      name: i.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || i.path,
+      inline: !attach && SENT_IMAGE_RE.test(i.path),
+      ...(i.size !== undefined ? { size: i.size } : {}),
+    })),
+  };
 }
 
 export interface AccumulatorOpts {
@@ -248,12 +295,15 @@ export class TranscriptAccumulator {
 
   /**
    * A Bash call run in the background (its result names the task id and the
-   * file its output goes to), or an Agent call launched in the background.
+   * file its output goes to), an Agent call launched in the background, or a
+   * Workflow call (its result's toolUseResult is `{status:'async_launched',
+   * taskId, taskType:'local_workflow', runId, …}`, claude 2.1.314).
    */
   private takeBackground(row: MessageRow, tur: Rec | undefined, result: string | undefined): void {
     let id: string | undefined;
     if (typeof tur?.backgroundTaskId === 'string' && tur.backgroundTaskId) id = tur.backgroundTaskId;
     else if (tur?.isAsync === true && typeof tur.agentId === 'string' && tur.agentId) id = tur.agentId;
+    else if (tur?.taskType === 'local_workflow' && typeof tur.taskId === 'string' && tur.taskId) id = tur.taskId;
     if (!id) return;
     const outputFile =
       (typeof tur?.outputFile === 'string' && tur.outputFile ? tur.outputFile : undefined) ??
@@ -313,6 +363,7 @@ export class TranscriptAccumulator {
     if (msg === null || typeof msg !== 'object') return;
     const content = (msg as Rec).content;
     if (rec.isMeta === true) {
+      if (rec.type === 'user' && this.takeSkill(rec, content)) return;
       if (rec.type === 'user' && typeof content === 'string') this.pushGuidance(content, ts);
       return;
     }
@@ -351,6 +402,14 @@ export class TranscriptAccumulator {
           const agentId = tur?.agentId;
           if (typeof agentId === 'string' && agentId) row.agentId = agentId;
           this.takeBackground(row, tur, row.result);
+          // SendUserFile: the result confirms delivery, so the call becomes the agent's message with its files.
+          if (row.tool === 'SendUserFile' && block.is_error !== true) {
+            const sent = sentFilesOf(row.input, tur);
+            if (sent) {
+              row.sent = sent;
+              row.preview = sent.caption ? previewOf(sent.caption) : sent.files.map((f) => f.name).join(', ').slice(0, MAX_PREVIEW);
+            }
+          }
         } else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           if (!this.pushGuidance(block.text, ts)) this.push({ kind: 'prompt', ts, text: block.text });
         } else if (block?.type === 'image') {
@@ -375,6 +434,7 @@ export class TranscriptAccumulator {
           text: formatToolInput(block.input),
           preview: toolPreview(block.input),
         });
+        if (typeof block.id === 'string' && block.id) row.toolUseId = block.id;
         const input = block.input as Rec | undefined;
         const file = input?.file_path ?? input?.notebook_path;
         if (typeof file === 'string' && file.trim()) row.file = file.trim();
@@ -407,6 +467,43 @@ export class TranscriptAccumulator {
       /* torn or foreign line: keep it verbatim */
     }
     this.push({ kind: 'raw', ts, tool: type, text, preview: line.replace(/\s+/g, ' ').trim().slice(0, MAX_PREVIEW) });
+  }
+
+  /**
+   * The skill's content Claude Code adds after a Skill call, as a meta user
+   * record ("Base directory for this skill: …" and the SKILL.md text) naming
+   * the call in sourceToolUseID (seen in claude 2.1.x transcripts). Without
+   * that field, a skill text right after a Skill call is that call's. A skill
+   * the user ran as a slash command has no Skill call, so its content stays
+   * hidden. True when the record was the call's skill content.
+   */
+  private takeSkill(rec: Rec, content: unknown): boolean {
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? (content as Rec[])
+              .map((b) => (b?.type === 'text' && typeof b.text === 'string' ? b.text : ''))
+              .filter(Boolean)
+              .join('\n')
+          : '';
+    if (!text.trim()) return false;
+    const source = typeof rec.sourceToolUseID === 'string' ? this.byToolId.get(rec.sourceToolUseID) : undefined;
+    const last = this.rows[this.rows.length - 1];
+    const row =
+      source ??
+      (text.startsWith('Base directory for this skill:') && last?.kind === 'tool' && last.tool === 'Skill' && last.skill === undefined
+        ? last
+        : undefined);
+    if (row?.tool !== 'Skill') return false;
+    row.skill = cap(text, MAX_TEXT);
+    return true;
+  }
+
+  /** The image a tool call's result carried, by the call's tool_use id. */
+  toolImage(toolUseId: string): MessageImage | null {
+    const row = this.byToolId.get(toolUseId);
+    return (row && this.images.get(row.id)) ?? null;
   }
 
   /** Keep the first image block's payload engine-side and mark the row. */
@@ -828,19 +925,32 @@ export class MessagesService {
     return { status: 'ok', rows, dropped, pendingGuidance };
   }
 
-  /** The image payload behind a row's marker, or null when unavailable. */
+  /**
+   * The image payload behind a row's marker, or null when unavailable. `rowId`
+   * is the row's id, or toolImageKey(tool_use id) for a tool call's image:
+   * that key holds in any list of rows (a chat's own, whose row ids aren't
+   * the transcript's), so every conversation of the run is searched for it.
+   */
   async readImage(taskId: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null> {
-    const reader =
-      agentId !== undefined
-        ? await this.subagentReader(taskId, runId, agentId, false)
-        : await this.mainReader(taskId, runId, rowSource(rowId), false);
-    if (typeof reader === 'string') return null;
-    try {
-      await reader.read();
-    } catch {
-      /* rows already parsed may still hold the image */
+    const toolId = toolImageId(rowId);
+    const sources: ('classifier' | 'agent' | number)[] = toolId
+      ? ['agent', ...endedSessions(this.deps.runDir(taskId, runId)).reverse(), 'classifier']
+      : [rowSource(rowId)];
+    for (const source of agentId !== undefined ? ['sub' as const] : sources) {
+      const reader =
+        source === 'sub'
+          ? await this.subagentReader(taskId, runId, agentId!, false)
+          : await this.mainReader(taskId, runId, source, false);
+      if (typeof reader === 'string') continue;
+      try {
+        await reader.read();
+      } catch {
+        /* rows already parsed may still hold the image */
+      }
+      const image = toolId ? reader.acc.toolImage(toolId) : (reader.acc.images.get(rowId) ?? null);
+      if (image) return image;
     }
-    return reader.acc.images.get(rowId) ?? null;
+    return null;
   }
 
   /**
@@ -884,7 +994,8 @@ export class MessagesService {
 
   /**
    * A subagent's reader. The parent may be either step's session, so both
-   * transcript dirs are candidates; the one whose file exists wins.
+   * transcript dirs are candidates; the one whose file exists wins. A
+   * workflow's agent keeps its transcript under its run's folder.
    */
   private async subagentReader(
     taskId: string,
@@ -904,6 +1015,10 @@ export class MessagesService {
         if (!hostPath) continue;
         const candidate = path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`);
         if (await exists(candidate)) candidates.push(candidate);
+        else {
+          const workflowAgent = await workflowAgentTranscript(hostPath, agentId);
+          if (workflowAgent) candidates.push(workflowAgent);
+        }
       }
       if (candidates.length === 0) return null; // not written yet; retried on the next poll
       return new TranscriptReader(candidates, { sidechain: true, raw });
@@ -978,6 +1093,30 @@ export class MessagesService {
       out.push(meta);
     }
     return out;
+  }
+
+  /** Each session's workflow runs, by transcript host path; the least recently used past MAX_READERS are dropped. */
+  private readonly workflowReaders = new Map<string, SessionWorkflows>();
+
+  /** The workflow runs (Claude Code's Workflow tool) a run's agent session started, newest first. */
+  async workflows(
+    taskId: string,
+    runId: string,
+    opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean } = {},
+  ): Promise<WorkflowRun[]> {
+    const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
+    const hostPath = ref ? await this.toHostPath(ref, taskId) : undefined;
+    if (!hostPath) return [];
+    let reader = this.workflowReaders.get(hostPath);
+    if (reader) this.workflowReaders.delete(hostPath);
+    else reader = new SessionWorkflows(hostPath);
+    this.workflowReaders.set(hostPath, reader);
+    while (this.workflowReaders.size > MAX_READERS) {
+      const oldest = this.workflowReaders.keys().next().value;
+      if (oldest === undefined) break;
+      this.workflowReaders.delete(oldest);
+    }
+    return reader.read(opts);
   }
 
   /** A subagent's model, effort and context, from its transcript's newest response; null before it has one. */

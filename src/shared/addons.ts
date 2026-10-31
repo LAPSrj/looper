@@ -87,6 +87,26 @@ export const AddonMainButtonSchema = z
   .strict();
 export type AddonMainButton = z.infer<typeof AddonMainButtonSchema>;
 
+/**
+ * How a tool call shows on the Now tab: an addon's own tools (an MCP server
+ * it comes with, say) can look the way the addon wants there.
+ */
+export const AddonToolCallSchema = z
+  .object({
+    /** The tool's name as the agent calls it; a "*" at the end matches every name that starts with what comes before it. */
+    tool: z.string().regex(/^[^*]+\*?$/, 'give a name, with "*" only at its end'),
+    /** The title instead of the tool's name; "{name}" is the call's parameter of that name. */
+    title: z.string().min(1).optional(),
+    /** The parameters to list, in this order; unset lists them all, and [] none. */
+    params: z.array(z.string().min(1)).optional(),
+    /** How the result shows; unset shows it as Looper shows any tool's. */
+    result: z.union([z.enum(['text', 'markdown', 'code', 'image', 'table']), z.object({ view: id }).strict()]).optional(),
+    /** With `result: "code"`: the language to color it as (typescript, json, python…). */
+    language: z.string().min(1).optional(),
+  })
+  .strict();
+export type AddonToolCall = z.infer<typeof AddonToolCallSchema>;
+
 export const AddonManifestSchema = z
   .object({
     $type: z.literal(ADDON_TYPE),
@@ -102,6 +122,8 @@ export const AddonManifestSchema = z
     toolbar: z.array(AddonMainButtonSchema).default([]),
     /** Names the toolbar buttons in "<toolbarName> Toolbar" (View menu); the addon's name otherwise. */
     toolbarName: z.string().min(1).optional(),
+    /** How tool calls show on the Now tab. */
+    toolCalls: z.array(AddonToolCallSchema).default([]),
   })
   .strict();
 export type AddonManifest = z.infer<typeof AddonManifestSchema>;
@@ -136,7 +158,41 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
     buttonIds.add(b.id);
     if (b.tool && !toolIds.has(b.tool)) return { ok: false, reason: 'invalid', error: `toolbar: "${b.id}" names no tool "${b.tool}"` };
   }
+  const callTools = new Set<string>();
+  for (const c of parsed.data.toolCalls) {
+    if (callTools.has(c.tool)) return { ok: false, reason: 'invalid', error: `toolCalls: "${c.tool}" is there twice` };
+    callTools.add(c.tool);
+  }
   return { ok: true, manifest: parsed.data };
+}
+
+/** Whether a toolCalls entry is for this tool: its name, or with a "*" at the end, any name it starts. */
+export const toolCallMatches = (c: AddonToolCall, tool: string): boolean =>
+  c.tool.endsWith('*') ? tool.startsWith(c.tool.slice(0, -1)) : c.tool === tool;
+
+/**
+ * The toolCalls entry, of an addon that isn't stopped in the Addons window,
+ * that says how this tool shows: the one naming it exactly, else the longest
+ * "*" one that matches; ties go to the addon listed first.
+ */
+export function findToolCall(addons: AddonInfo[], tool: string): { addon: AddonInfo; call: AddonToolCall } | undefined {
+  let found: { addon: AddonInfo; call: AddonToolCall } | undefined;
+  const rank = (c: AddonToolCall) => (c.tool.endsWith('*') ? c.tool.length - 1 : Infinity);
+  for (const addon of addons) {
+    if (!addon.enabled) continue;
+    for (const call of addon.toolCalls) {
+      if (toolCallMatches(call, tool) && (!found || rank(call) > rank(found.call))) found = { addon, call };
+    }
+  }
+  return found;
+}
+
+/** A toolCalls title with each "{name}" replaced by the call's parameter of that name (empty when it has none). */
+export function toolCallTitle(title: string, input: Record<string, unknown>): string {
+  return title.replace(/\{([^{}]+)\}/g, (_, name: string) => {
+    const v = input[name];
+    return v === undefined || v === null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+  });
 }
 
 /** In `run.command`, `run.cwd` and `run.env`: the folder the `.looperaddon` file was installed from. */
@@ -169,7 +225,7 @@ function listText(items: string[]): string {
 }
 
 /** What installing the addon adds to Looper, one line per place, for the install confirmation. */
-export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'>): string[] {
+export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'> & { toolCalls?: AddonToolCall[] }): string[] {
   const lines: string[] = [];
   const panes = m.panes.map((p) => p.title);
   if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} in the sidebar`);
@@ -177,6 +233,8 @@ export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'too
   if (buttons.length) lines.push(`${buttons.length === 1 ? 'A ' : ''}${listText(buttons)} button${buttons.length === 1 ? '' : 's'} on the toolbar`);
   const tools = m.tools.map((t) => `${t.label}…`);
   if (tools.length) lines.push(`${listText(tools)} in the Tools menu`);
+  const calls = m.toolCalls?.length ?? 0;
+  if (calls) lines.push(`How ${calls === 1 ? 'a tool’s calls show' : `${calls} tools’ calls show`} on the Now tab`);
   return lines;
 }
 
@@ -499,6 +557,8 @@ export interface AddonInfo {
   tools: AddonTool[];
   toolbar: AddonMainButton[];
   toolbarName?: string;
+  /** How tool calls show on the Now tab (findToolCall). */
+  toolCalls: AddonToolCall[];
   /** How its manifest says to run it. */
   ownRun: AddonRun;
   /** How this user changed that (Advanced → Addons… → Edit…), if they did. */

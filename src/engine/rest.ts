@@ -27,6 +27,8 @@ export interface PowerOps {
 export interface RestDeps {
   settings: Settings;
   runtimes: () => TaskRuntime[];
+  /** Other work that keeps the computer up: a chat or terminal working, with Prevent Sleep's While a Session Is Working on. */
+  busy?: () => boolean;
   adapter: PowerAdapter;
   ops: PowerOps;
   log: Logger;
@@ -43,7 +45,7 @@ const WAKE_WINDOW_AFTER_MS = 180_000;
  * A held agent is a parked session waiting for a human: it does not keep the
  * computer awake. With several runs in flight, one busy run is enough.
  */
-function isBusy(rt: TaskRuntime): boolean {
+export function isBusy(rt: TaskRuntime): boolean {
   return rt.runs.some((r) => (r.state === 'running' ? !r.held : true));
 }
 
@@ -101,7 +103,7 @@ export class RestController {
   /** Re-evaluate; called on every runtime event and on a coarse timer. */
   poke(): void {
     if (this.phase === 'off' || this.phase === 'sleeping' || this.suspending) return;
-    if (this.d.runtimes().some(isBusy)) {
+    if (this.busy()) {
       if (this.phase !== 'waiting') {
         this.phase = 'waiting';
         this.sleepAt = null;
@@ -116,6 +118,10 @@ export class RestController {
     } else if (this.phase === 'countdown' && this.sleepAt !== null && this.now() >= this.sleepAt) {
       void this.sleep();
     }
+  }
+
+  private busy(): boolean {
+    return this.d.runtimes().some(isBusy) || !!this.d.busy?.();
   }
 
   private async sleep(): Promise<void> {
@@ -140,7 +146,7 @@ export class RestController {
       return;
     }
     // A run may have started while the registration was in flight.
-    if (this.d.runtimes().some(isBusy)) {
+    if (this.busy()) {
       void this.d.ops.clearWake().catch(() => undefined);
       this.phase = 'waiting';
       this.sleepAt = null;

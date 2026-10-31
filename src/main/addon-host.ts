@@ -443,6 +443,7 @@ export class AddonHost {
         tools: p.manifest.tools,
         toolbar: p.manifest.toolbar,
         toolbarName: p.manifest.toolbarName,
+        toolCalls: p.manifest.toolCalls,
         enabled: this.enabled(p.manifest.id),
         status: p.status,
         error: p.error,

@@ -1,5 +1,5 @@
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../../format';
-import { restStatus, type MainWindow } from '../../useMainWindow';
+import { preventSleepStatus, restStatus, type MainWindow } from '../../useMainWindow';
 import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners } from '../Dashboard';
 import { showTaskMenu } from '../TaskList';
 import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
@@ -23,7 +23,7 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
   return (
     <div className="pg-scroll">
       <LargeTitle>Dashboard</LargeTitle>
-      <Group title="Tasks" footer={rest?.armed ? restStatus(rest, now) : undefined}>
+      <Group title="Tasks" footer={[rest?.armed ? restStatus(rest, now) : null, m.preventSleep ? preventSleepStatus(m.preventSleep) : null].filter(Boolean).join(' · ') || undefined}>
         <Row title="Running" value={counts.running} />
         <Row title="Paused" value={counts.paused} />
         <Row title="Enabled" value={counts.enabled} />

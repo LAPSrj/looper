@@ -1,4 +1,5 @@
-import type { Task, TaskFilter } from './types';
+import { addonPaneKey } from './addons';
+import type { Task, TaskFilter, View } from './types';
 
 /**
  * The panes of the multiple-pane sidebar. Membership comes from the task
@@ -56,6 +57,15 @@ export function passesFilter(t: Task, filter: TaskFilter, offered: (keyof TaskFi
   return (
     (t.completedAt ? on('showCompleted') : t.enabled || on('showDisabled')) &&
     (mode === 'schedule' ? on('showScheduled') : mode === 'watcher' ? on('showWatcher') : on('showManual'))
+  );
+}
+
+/** Whether any sidebar pane shows (View's pane check boxes): with none, the main window leaves the sidebar out. */
+export function sidebarHasPanes(view: View, addons: { id: string; enabled: boolean; panes: { id: string }[] }[]): boolean {
+  return (
+    view.projectsPane.visible ||
+    (view.sidebar === 'single' ? view.single.visible : PANES.some((p) => view.panes[p.id].visible)) ||
+    addons.some((a) => a.enabled && a.panes.some((p) => view.addonPanes[addonPaneKey(a.id, p.id)]?.visible ?? true))
   );
 }
 

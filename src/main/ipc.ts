@@ -3,19 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectedDefaultWslDistro, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
-import { REMOTE_CHANNELS } from '../shared/remote-access';
-import { listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
+import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
+import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
 import { projectTaskId } from '../shared/projects';
+import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
-import type { Attachment, AttachmentInput, ChatSettingMenu } from '../shared/chat';
+import { attachmentName, type Attachment, type AttachmentInput, type ChatSettingMenu } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
-import type { EngineEvent, Task, View } from '../shared/types';
+import { TailnetHostnameSchema, type EngineEvent, type Task, type View } from '../shared/types';
 import {
   allWindows,
   caller,
@@ -34,7 +35,7 @@ import {
   type AppWindow,
 } from './platform';
 import type { RemoteAccess } from './remote-access';
-import { paneMenuItems, singleMenuItems } from './view-menu';
+import { paneMenuItems, projectsPaneMenuItems, singleMenuItems } from './view-menu';
 
 export interface IpcHost {
   getWindow: () => AppWindow | null;
@@ -101,19 +102,23 @@ export interface IpcHost {
   openChatWindow: (sessionId: string) => void;
   /** A chat's Harness, Model, Effort or Permission Mode menu, as the Chat menu has them ('all': the four as submenus). */
   chatSettingMenu: (chatId: string, which: ChatSettingMenu | 'all') => Electron.MenuItemConstructorOptions[];
-  /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
+  /** A Remote Control conversation: an open one in a Looper terminal window (a chat or terminal it lists in the Chats window), an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
   openRemoteHelperEditor: (id: string, isNew: boolean, parent: AppWindow | null) => void;
   /** Remote Access, once it's created (after the engine). */
   remoteAccess: () => RemoteAccess | null;
   openRemoteAccessPair: (parent: AppWindow | null) => void;
   openRemoteAccessRename: (deviceId: string, parent: AppWindow | null) => void;
+  /** Set Up's Finish: save the sources and machine name, turn Remote Access on, and with `pair` open Pair Device once it runs. */
+  finishRemoteAccessSetup: (choice: { sources?: unknown; hostname?: unknown }, pair: boolean) => Promise<void>;
   /** A device's click on a task notification: what a click on the desktop's toast opens, on that device. */
   openNotification: (taskId: string, runId?: string) => void;
   /** The Edit Project window (no id = New Project). */
   openProjectEditor: (id?: string) => void;
   /** The New Task editor with the project picked. */
   openNewTaskIn: (projectId: string) => void;
+  /** Other Folder…: a chat or terminal in a folder the user picks over `parent`, with no project. Rejects with the reason. */
+  openInFolder: (kind: 'chat' | 'terminal', parent: AppWindow | null) => Promise<void>;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   updateTaskMenu: (
@@ -262,6 +267,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('file:openLooper', (_e, file: string) => host.openLooperFile(file));
 
   ipc.handle('rest:state', () => engine.restState());
+  ipc.handle('prevent-sleep:state', () => engine.preventSleepState());
 
   ipc.handle('runtime:list', () => engine.listRuntimes());
   // With the setting on, the run is started by the Run Options window instead.
@@ -282,9 +288,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) =>
     engine.readMessages(id, runId, agentId, raw),
   );
-  ipc.handle('runs:messageImage', (_e, id: string, runId: string, rowId: string, agentId?: string) =>
-    engine.readMessageImage(id, runId, rowId, agentId),
-  );
+  ipc.handle('runs:messageImage', async (_e, id: string, runId: string, rowId: string, agentId?: string) => {
+    // An image file the agent sent (SendUserFile) is read from disk; any other row's image is in the transcript.
+    const sent = fileImageId(String(rowId));
+    return sent !== null ? readSentImage(String(id), sent) : engine.readMessageImage(id, runId, rowId, agentId);
+  });
   ipc.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
     host.openMessages(taskId, runId, agentId, label),
   );
@@ -435,6 +443,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
   ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
+  ipc.on('chat:draft', (_e, id: string, text: string, attachments: Attachment[]) => {
+    // As with chat:send, only Looper's own copies.
+    const files = (Array.isArray(attachments) ? attachments : [])
+      .filter((a) => engine.isAttachment(String(a?.path)))
+      .map((a) => ({ name: String(a.name), path: String(a.path), image: !!a.image }));
+    engine.setChatDraft(String(id), String(text ?? ''), files);
+  });
 
   // ---------- the Chats window ----------
 
@@ -446,16 +461,21 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
-  /** New Chat's or New Terminal's drop-down: the projects, under the button that asked. */
+  /** New Chat's or New Terminal's drop-down, under the button that asked: the projects, another folder, and New Project. */
   ipc.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
     const sender = windowOf(e);
     if (!sender) return;
-    const open = kind === 'terminal' ? projectTerminal : projectChat;
+    const terminal = kind === 'terminal';
+    const open = terminal ? projectTerminal : projectChat;
     const items: Electron.MenuItemConstructorOptions[] = engine.listProjects().map((p) => ({
       label: p.name.replace(/&/g, '&&'),
       click: () => void open(p.id, sender),
     }));
-    if (items.length === 0) items.push({ label: 'No projects', enabled: false });
+    if (items.length > 0) items.push({ type: 'separator' });
+    items.push(
+      { label: 'Other &Folder…', click: () => void host.openInFolder(terminal ? 'terminal' : 'chat', sender).catch((err) => fail(sender, err)) },
+      { label: 'New P&roject…', click: () => host.openProjectEditor() },
+    );
     popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
   });
   /** The message box's Harness, Model, Effort and Permission Mode buttons, or the one button a narrow chat has for them ('all'). */
@@ -510,6 +530,39 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const { height } = img.getSize();
     return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
   });
+  /** A file the agent sent (SendUserFile): its size, and a thumbnail when it's an image; null when it's gone. */
+  ipc.handle('sessions:sentFile', async (_e, taskId: string, p: string): Promise<SentFileInfo | null> => {
+    const file = String(p);
+    const hostPath = await sentFileHostPath(String(taskId), file);
+    let size: number;
+    try {
+      const st = await fs.promises.stat(hostPath);
+      if (!st.isFile()) return null;
+      size = st.size;
+    } catch {
+      return null;
+    }
+    const thumbnail = SENT_IMAGE_RE.test(file) ? await sentThumbnail(hostPath, size).catch(() => null) : null;
+    return { size, ...(thumbnail ? { thumbnail } : {}) };
+  });
+  /**
+   * Click on a file the agent sent. `image`: an image shown inline opens in
+   * Looper's image window; a remote device and any other file get the path
+   * shown or opened the way an attachment is (the device's file viewer, or the
+   * default app on the computer).
+   */
+  ipc.handle('sessions:openFile', async (_e, taskId: string, runId: string, p: string, image: boolean) => {
+    const file = String(p);
+    const hostPath = await sentFileHostPath(String(taskId), file);
+    // The image window reads the image whole: a bigger one opens in the default app.
+    const st = await fs.promises.stat(hostPath).catch(() => null);
+    if (image && !caller() && SENT_IMAGE_RE.test(file) && st && st.size <= SENT_IMAGE_MAX) {
+      host.openMessageImage(String(taskId), String(runId), fileImageKey(file), undefined, path.basename(file.replace(/\\/g, '/')));
+      return;
+    }
+    const err = await openPath(hostPath);
+    if (err) throw new Error(err);
+  });
   /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
   ipc.handle('attachment:open', async (_e, p: string) => {
     if (!engine.isAttachment(String(p))) return;
@@ -537,6 +590,56 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (process.platform === 'win32' && p.startsWith('/')) return (await convertWslPath(p, 'windows', distro)) ?? p;
     if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) return (await convertWslPath(p, 'posix', distro)) ?? p;
     return p;
+  };
+
+  /** A file the agent sent, as the host opens it: a relative path is the session's folder's. */
+  const sentFileHostPath = async (taskId: string, p: string): Promise<string> => {
+    let file = p;
+    if (!/^(?:[A-Za-z]:[\\/]|[\\/])/.test(file)) {
+      const cwd = engine.findSessionTask(taskId)?.cwd;
+      if (cwd) file = (/^[A-Za-z]:/.test(cwd) ? path.win32 : path.posix).join(cwd, file);
+    }
+    return targetToHost(taskId, file);
+  };
+
+  const SENT_IMAGE_TYPES: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  /** The largest sent image read whole: for the image window, and for a thumbnail nativeImage can't draw (GIF, WebP, SVG). */
+  const SENT_IMAGE_MAX = 10_000_000;
+  const SENT_THUMB_RAW_MAX = 4_000_000;
+
+  /** A sent image file as a data URL for an <img>: PNG and JPEG shrunk to a thumbnail, the other types as they are when small enough. */
+  const sentThumbnail = async (hostPath: string, size: number): Promise<string | null> => {
+    const type = SENT_IMAGE_TYPES[path.extname(hostPath).slice(1).toLowerCase()];
+    if (!type) return null;
+    if (type === 'image/png' || type === 'image/jpeg') {
+      const img = nativeImage.createFromPath(hostPath);
+      if (!img.isEmpty()) {
+        const { height } = img.getSize();
+        return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
+      }
+    }
+    if (size > SENT_THUMB_RAW_MAX) return null;
+    return `data:${type};base64,${(await fs.promises.readFile(hostPath)).toString('base64')}`;
+  };
+
+  /** The payload of a sent image file, for the image window; null when it's gone, too big or not an image. */
+  const readSentImage = async (taskId: string, p: string): Promise<MessageImage | null> => {
+    const mediaType = SENT_IMAGE_TYPES[path.extname(p.replace(/\\/g, '/')).slice(1).toLowerCase()];
+    if (!mediaType) return null;
+    try {
+      const hostPath = await sentFileHostPath(taskId, p);
+      if ((await fs.promises.stat(hostPath)).size > SENT_IMAGE_MAX) return null;
+      return { mediaType, data: (await fs.promises.readFile(hostPath)).toString('base64') };
+    } catch {
+      return null;
+    }
   };
 
   /** Open a target-native path (file or folder) on the host, translating across the WSL boundary. */
@@ -580,13 +683,18 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
   ipc.handle('projects:newChat', (e, id: string) => projectChat(String(id), windowOf(e)));
   ipc.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), windowOf(e)));
-  // A project's menu; with no id, the Projects pane header's or empty space's.
+  // A project's menu; with no id, the Projects pane header's (its View options, then New Project).
   ipc.on('context-menu:project', (e, id: string) => {
     const sender = windowOf(e);
     if (!sender) return;
     const pid = String(id ?? '');
     if (!pid || !engine.getProject(pid)) {
-      popupMenu(Menu.buildFromTemplate([{ label: 'New P&roject…', click: () => host.openProjectEditor() }]), { window: sender });
+      const update = (patch: Partial<View>) => engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
+      popupMenu(Menu.buildFromTemplate([
+        ...projectsPaneMenuItems(engine.settings.view, update),
+        { type: 'separator' },
+        { label: 'New P&roject…', click: () => host.openProjectEditor() },
+      ]), { window: sender });
       return;
     }
     popupMenu(Menu.buildFromTemplate([
@@ -724,7 +832,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('remoteAccess:removeDevice', (_e, id: string) => remoteAccess().removeDevice(String(id)));
   ipc.handle('remoteAccess:renameDevice', (_e, id: string, name: string) => remoteAccess().renameDevice(String(id), String(name)));
   ipc.handle('remoteAccess:suggestPort', () => remoteAccess().suggestPort());
-  // The host side of a remote client's file browser, Open on Computer and Download.
+  ipc.handle('remoteAccess:beginSignIn', (_e, hostname: unknown) => {
+    const name = TailnetHostnameSchema.safeParse(hostname);
+    if (!name.success) throw new Error('Use lowercase letters, digits and hyphens in the machine name.');
+    return remoteAccess().beginSignIn(name.data);
+  });
+  ipc.handle('remoteAccess:endSignIn', () => remoteAccess().endSignIn());
+  ipc.handle('remoteAccess:finishSetup', (_e, choice: unknown, pair: unknown) => {
+    const c = choice && typeof choice === 'object' ? (choice as { sources?: unknown; hostname?: unknown }) : {};
+    return host.finishRemoteAccessSetup({ sources: c.sources, hostname: c.hostname }, pair === true);
+  });
+  // The host side of a remote client's file browser, file viewer, Open on Host Computer and the downloads.
   const hostFiles: HostFilesDeps = {
     host: process.platform === 'win32' ? 'windows' : 'posix',
     places: () =>
@@ -735,9 +853,31 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     distros: listWslDistros,
     defaultDistro: detectedDefaultWslDistro,
     convert: convertWslPath,
+    known: (k) => {
+      try {
+        return app.getPath(k);
+      } catch {
+        return undefined;
+      }
+    },
   };
   ipc.handle(REMOTE_CHANNELS.listDir, (_e, p?: string | null, flavor?: Flavor, distro?: string) => listDir(hostFiles, p, flavor, distro));
   ipc.handle(REMOTE_CHANNELS.makeDir, (_e, parent: unknown, name: unknown, flavor?: Flavor, distro?: string) => makeDir(hostFiles, parent, name, flavor, distro));
+  /** A file's name for a device: an attachment copy's own name, without the stamp in front. */
+  const fileName = (file: string): string => (engine.isAttachment(file) ? attachmentName(file) : path.basename(file.replace(/\\/g, '/')));
+  ipc.handle(REMOTE_CHANNELS.view, (_e, p: unknown, maxBytes: unknown): HostFileView => {
+    if (!caller()) throw new Error('Only a remote device can view a file this way.');
+    const file = String(p);
+    const st = fs.statSync(file);
+    if (!st.isFile()) throw new Error(`${file} isn't a file.`);
+    const name = fileName(file);
+    const fits = typeof maxBytes === 'number' && st.size <= maxBytes;
+    return { name, size: st.size, ...(fits ? { token: remoteAccess().offerDownload(file, name) } : {}) };
+  });
+  ipc.handle(REMOTE_CHANNELS.saveOnHost, (_e, p: unknown) => {
+    if (!caller()) throw new Error('Only a remote device can download a file to the host computer.');
+    return copyIntoFolder(p, app.getPath('downloads'), typeof p === 'string' ? fileName(p.trim()) : undefined);
+  });
   ipc.handle(REMOTE_CHANNELS.openNotification, (_e, taskId: unknown, runId: unknown) => {
     if (typeof taskId !== 'string' || !taskId) return;
     host.openNotification(taskId, typeof runId === 'string' && runId ? runId : undefined);
@@ -754,7 +894,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!ctx) throw new Error('Only a remote device can download a file.');
     const file = String(p);
     if (!fs.statSync(file).isFile()) throw new Error(`${file} isn't a file.`);
-    const name = path.basename(file.replace(/\\/g, '/'));
+    const name = fileName(file);
     ctx.client.send({ t: 'download', token: remoteAccess().offerDownload(file, name), name });
   });
   ipc.handle('remoteAccess:openPair', (e) => host.openRemoteAccessPair(windowOf(e)));
@@ -767,6 +907,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const conv = state.conversations.find((c) => c.id === id);
     if (!conv) return;
     const open = conv.status !== 'ended';
+    // A chat or Looper terminal it lists is the user's: it closes in its own window, and a chat goes on in a chat.
+    const users = conv.source === 'chat' || conv.source === 'terminal';
     const restart = () => {
       try {
         engine.restartRemoteConversation(id);
@@ -779,8 +921,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Open in Browser', enabled: !!conv.link, click: () => conv.link && void openExternal(conv.link) },
       { label: 'Copy Link', enabled: !!conv.link, click: () => conv.link && writeClipboard(conv.link) },
       { type: 'separator' },
-      { label: 'Restart', enabled: state.running && conv.source !== 'helper' && conv.status !== 'waiting', click: restart },
-      { label: 'Stop', enabled: open, click: () => engine.stopRemoteConversation(id) },
+      {
+        label: 'Restart',
+        enabled: state.running && conv.source !== 'helper' && conv.source !== 'chat' && !(users && open) && conv.status !== 'waiting',
+        click: restart,
+      },
+      { label: 'Stop', enabled: open && !users, click: () => engine.stopRemoteConversation(id) },
     ]), { window: sender });
   });
 

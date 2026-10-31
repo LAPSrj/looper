@@ -16,6 +16,8 @@ import {
   needsNewProcess,
   permissionAnswer,
   permissionModeRequest,
+  remoteControlRequest,
+  userRecordText,
   withFileList,
 } from '../src/engine/chat';
 import { codexWindowOfLine } from '../src/engine/context';
@@ -92,6 +94,26 @@ describe('chat settings', () => {
       request: { subtype: 'set_permission_mode', mode: 'acceptEdits' },
     });
     expect(JSON.parse(permissionModeRequest('mode-2', '')).request.mode).toBe('default');
+  });
+
+  it('turns Remote Control on (under a name) and off with a control request, as Claude Code 2.1.314 answers it', () => {
+    expect(JSON.parse(remoteControlRequest('rc-1', 'Website'))).toEqual({
+      type: 'control_request',
+      request_id: 'rc-1',
+      request: { subtype: 'remote_control', enabled: true, name: 'Website' },
+    });
+    expect(JSON.parse(remoteControlRequest('rc-2', undefined)).request).toEqual({ subtype: 'remote_control', enabled: false });
+  });
+
+  it("reads the text of a user record, whether its content is a string or blocks", () => {
+    expect(userRecordText({ type: 'user', message: { role: 'user', content: ' Fix the footer ' } })).toBe('Fix the footer');
+    expect(
+      userRecordText({
+        type: 'user',
+        message: { content: [{ type: 'text', text: 'Fix' }, { type: 'image', source: {} }, { type: 'text', text: 'the footer' }] },
+      }),
+    ).toBe('Fix\nthe footer');
+    expect(userRecordText({ type: 'user', message: { content: [{ type: 'tool_result', content: 'x' }] } })).toBe('');
   });
 
   it('needs a new claude process for a new model, effort or Bypass, and not for another mode', () => {

@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
-import { EditorFooter, Field } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { ListActions, SelectList } from './components/SelectList';
 import { claudeHarnesses } from './components/RemoteFields';
@@ -8,24 +7,19 @@ import { claudeHarnesses } from './components/RemoteFields';
 const rid = () => Math.random().toString(36).slice(2, 8);
 
 /**
- * Advanced → Remote Control → Settings. The helper list is managed live
- * through its editor windows; the checkboxes are a draft saved with Save or
- * Apply. Projects keep conversations open through their own Edit Project window.
+ * Advanced → Remote Control → Helpers. The list is managed live through the
+ * helper editor windows, so the window only closes. Projects keep
+ * conversations open through their own Edit Project window.
  */
-export function RemoteSettingsApp() {
+export function RemoteHelpersApp() {
   const [live, setLive] = useState<Settings | null>(null);
   const [problems, setProblems] = useState<Record<string, string>>({});
-  const [startWithLooper, setStartWithLooper] = useState<boolean | null>(null);
-  const [closeExpired, setCloseExpired] = useState<boolean | null>(null);
   const [helper, setHelper] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    document.title = 'Remote Control';
+    document.title = 'Helpers';
     void window.looper.info().then((info) => {
       setLive(info.settings);
-      setStartWithLooper((v) => v ?? info.settings.remote.startWithLooper);
-      setCloseExpired((v) => v ?? info.settings.remote.closeWhenCacheExpires);
       setHelper((s) => s ?? info.settings.remote.helpers[0]?.id ?? null);
     });
     void window.looper.remote.state().then((s) => setProblems(s.problems));
@@ -35,10 +29,9 @@ export function RemoteSettingsApp() {
     });
   }, []);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
+  useDialogKeys({ onCancel: () => window.close() });
 
-  if (!live || startWithLooper === null || closeExpired === null) return <div className="empty">Loading…</div>;
+  if (!live) return <div className="empty">Loading…</div>;
 
   const r = live.remote;
   const helpers = r.helpers;
@@ -78,51 +71,25 @@ export function RemoteSettingsApp() {
     setHelper(helpers.find((h) => h.id !== selHelper.id)?.id ?? null);
   };
 
-  const doSave = async (): Promise<boolean> => {
-    setSaving(true);
-    try {
-      await window.looper.updateSettings({ remote: { ...live.remote, startWithLooper, closeWhenCacheExpires: closeExpired } });
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-  saveRef.current = async () => {
-    if (await doSave()) window.close();
-  };
-
   /** A row's second line: where it runs, then why it has no conversation when Remote Control can't start one. */
   const sub = (where: string, key: string) => [where, problems[key]].filter(Boolean).join(' · ');
 
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="form">
-          <label className="checkbox-field">
-            <input type="checkbox" autoFocus checked={startWithLooper} onChange={(e) => setStartWithLooper(e.target.checked)} />
-            Start with Looper
-          </label>
-          <label className="checkbox-field">
-            <input type="checkbox" checked={closeExpired} onChange={(e) => setCloseExpired(e.target.checked)} />
-            Close idle conversations once their prompt cache expires
-          </label>
-          <Field label="Helpers">
-            <SelectList
-              items={helpers}
-              label="Helpers"
-              idPrefix="helper"
-              selectedKey={helper}
-              itemKey={(h) => h.id}
-              itemName={(h) => h.name}
-              itemSub={(h) => sub(`${envName(h.environmentId)} · ${h.cwd || 'no working directory'}`, `helper:${h.id}`)}
-              empty="No helpers"
-              onSelect={(h) => setHelper(h.id)}
-              onOpen={(h) => void window.looper.remote.openHelperEditor(h.id)}
-            />
-          </Field>
+        <div className="form env-tab">
+          <SelectList
+            items={helpers}
+            label="Helpers"
+            idPrefix="helper"
+            selectedKey={helper}
+            itemKey={(h) => h.id}
+            itemName={(h) => h.name}
+            itemSub={(h) => sub(`${envName(h.environmentId)} · ${h.cwd || 'no working directory'}`, `helper:${h.id}`)}
+            empty="No helpers"
+            onSelect={(h) => setHelper(h.id)}
+            onOpen={(h) => void window.looper.remote.openHelperEditor(h.id)}
+          />
           <ListActions
             onAdd={() => void addHelper()}
             onEdit={() => selHelper && void window.looper.remote.openHelperEditor(selHelper.id)}
@@ -134,7 +101,11 @@ export function RemoteSettingsApp() {
           />
         </div>
       </div>
-      <EditorFooter onPrimary={() => void saveRef.current()} onCancel={() => window.close()} onApply={() => void doSave()} saving={saving} />
+      <div className="editor-footer">
+        <button className="btn" onClick={() => window.close()}>
+          Close
+        </button>
+      </div>
     </div>
   );
 }

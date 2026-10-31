@@ -4,6 +4,7 @@ import type { MessageRow, MessagesResult } from '@shared/messages';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
+import { SentFileList } from './ChatRows';
 import { useDragResize, useListNav } from './hooks';
 import { Markdown, MessageBody, PromptBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
@@ -148,7 +149,7 @@ function typeLabel(row: Row): string {
     case 'thinking':
       return 'Thinking';
     default:
-      return row.tool ?? '';
+      return row.sent ? 'Agent' : (row.tool ?? '');
   }
 }
 
@@ -185,7 +186,8 @@ function categoryOf(r: Row): MessagesShowKey | null {
     case 'thinking':
       return 'thinking';
     case 'tool':
-      return r.tool === 'Task' || r.tool === 'Agent' ? 'subagents' : 'tools';
+      if (r.sent) return 'messages';
+      return r.tool === 'Task' || r.tool === 'Agent' || r.tool === 'Workflow' ? 'subagents' : 'tools';
     default:
       return null;
   }
@@ -525,6 +527,14 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
 
   const detail = (row: Row) => {
     if (row.kind === 'step') return stepDetail();
+    if (row.kind === 'tool' && row.sent) {
+      return (
+        <>
+          {row.sent.caption && <MessageBody text={row.sent.caption} />}
+          <SentFileList files={row.sent.files} ctx={{ taskId, runId }} />
+        </>
+      );
+    }
     if (row.kind === 'tool') return toolDetail(row);
     if (row.image) return imagePane(row);
     if (row.kind === 'thinking' || row.kind === 'raw') return <pre className="output">{row.text}</pre>;

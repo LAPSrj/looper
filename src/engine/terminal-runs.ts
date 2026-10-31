@@ -28,6 +28,11 @@ export interface TerminalRunOpts {
   info?: TerminalInfo;
   /** Continue in Terminal on another run: the run whose conversation the session goes on with. */
   fromRunId?: string;
+  /**
+   * Opened again at Looper's start: a finished turn its folder holds without
+   * `info` is one the session had before Looper quit and didn't record yet.
+   */
+  restored?: boolean;
 }
 
 interface Watch extends TerminalRunOpts {
@@ -79,7 +84,7 @@ export class TerminalRuns {
       ...opts,
       fromRunId: opts.fromRunId ?? opts.info?.fromRunId,
       dir,
-      initialTurn: turnTime(dir),
+      initialTurn: opts.restored && !opts.info ? null : turnTime(dir),
       recorded: !!opts.info,
       busy: false,
       timer: setInterval(() => void this.poll(watch), this.d.pollMs ?? POLL_MS),
@@ -105,8 +110,11 @@ export class TerminalRuns {
     return [...this.watches.values()].some((w) => w.taskId === taskId);
   }
 
-  /** The window closed: the session ends. */
-  close(runId: string): void {
+  /**
+   * The window closed: the session ends. `keep` (quitting Looper): its folder
+   * stays, run or not, for the next start to open the session again.
+   */
+  close(runId: string, keep = false): void {
     const w = this.watches.get(runId);
     if (!w) return;
     clearInterval(w.timer);
@@ -117,13 +125,19 @@ export class TerminalRuns {
       // The first turn ended before the poll saw it: the session is still a run.
       w.closing = true;
       void this.recordFirstTurn(w).then((ok) => {
-        if (!ok && !w.recorded) this.remove(w);
+        if (!ok && !w.recorded && !keep) this.remove(w);
       });
-    } else if (!w.recorded) this.remove(w);
+    } else if (!w.recorded && !keep) this.remove(w);
   }
 
   closeAll(): void {
     for (const id of [...this.watches.keys()]) this.close(id);
+  }
+
+  /** What Looper's next start needs to open the session again: its harness and the run it went on with. */
+  openInfo(runId: string): { harnessKind: 'claude-code' | 'codex'; fromRunId?: string } | undefined {
+    const w = this.watches.get(runId);
+    return w ? { harnessKind: w.harnessKind, ...(w.fromRunId ? { fromRunId: w.fromRunId } : {}) } : undefined;
   }
 
   private remove(w: Watch): void {

@@ -12,7 +12,7 @@ import {
 } from '../src/engine/messages';
 import { Logger } from '../src/engine/log';
 import { endAgentSession } from '../src/engine/steps/agent';
-import { guidanceMessage } from '../src/shared/messages';
+import { guidanceMessage, toolImageKey } from '../src/shared/messages';
 import { SettingsSchema } from '../src/shared/types';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
@@ -175,8 +175,30 @@ describe('TranscriptAccumulator', () => {
     expect(row.file).toBe('/x/shot.png');
     expect(row.image).toEqual({ mediaType: 'image/png' });
     expect(acc.images.get(row.id)).toEqual({ mediaType: 'image/png', data: 'aGVsbG8=' });
-    // The row itself must not carry the payload.
+    // The row itself must not carry the payload, in its marker or its result text.
     expect('data' in (row.image as object)).toBe(false);
+    expect(row.result).toBe('');
+    // The tool_use id finds the image whatever list of rows the caller has.
+    expect(row.toolUseId).toBe('tu1');
+    expect(acc.toolImage('tu1')).toEqual({ mediaType: 'image/png', data: 'aGVsbG8=' });
+    expect(acc.toolImage('nope')).toBeNull();
+  });
+
+  it("gives a Skill call the skill's content Claude Code adds after it", () => {
+    // As claude 2.1.x records a Skill call: the call, "Launching skill: …", then a meta record naming the call.
+    const acc = new TranscriptAccumulator();
+    const skill = 'Base directory for this skill: /home/me/.claude/skills/pick-up\n\n# Pick up\n\nThe argument is ``.';
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu1', name: 'Skill', input: { skill: 'pick-up' } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'Launching skill: pick-up' }] } }));
+    acc.addLine(rec({ type: 'user', isMeta: true, sourceToolUseID: 'tu1', message: { role: 'user', content: [{ type: 'text', text: skill }] } }));
+    // Without sourceToolUseID, a skill text right after a Skill call is that call's.
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu2', name: 'Skill', input: { skill: 'run' } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu2', content: 'Launching skill: run' }] } }));
+    acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: 'Base directory for this skill: /tmp/run\n\nRun it.' } }));
+    expect(acc.rows.map((r) => [r.kind, r.tool, r.result, r.skill])).toEqual([
+      ['tool', 'Skill', 'Launching skill: pick-up', skill],
+      ['tool', 'Skill', 'Launching skill: run', 'Base directory for this skill: /tmp/run\n\nRun it.'],
+    ]);
   });
 
   it('keeps the structured input and the recorded patch for custom renders', () => {
@@ -197,6 +219,63 @@ describe('TranscriptAccumulator', () => {
     const row = acc.rows[0];
     expect(row.input).toEqual({ file_path: '/x/a.md', old_string: 'a', new_string: 'b' });
     expect(row.patch).toEqual([{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] }]);
+  });
+
+  it('turns a delivered SendUserFile call into the agent sending files (claude 2.1.x transcript shape)', () => {
+    const acc = new TranscriptAccumulator();
+    const shots = '/mnt/c/Users/leand/AppData/Local/Temp/looper-round3/shots';
+    acc.addLine(
+      assistantBlock({
+        type: 'tool_use',
+        id: 'tu1',
+        name: 'SendUserFile',
+        input: { files: [`${shots}/a.png`, 'notes/report.pdf'], caption: 'Both views.', status: 'normal', display: 'render' },
+      }),
+    );
+    expect(acc.rows[0].sent).toBeUndefined(); // not delivered yet
+    acc.addLine(
+      rec({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { tool_use_id: 'tu1', type: 'tool_result', content: `2 files delivered to user.\n  ${shots}/a.png → file_uuid: 940290c9\n  /home/u/p/notes/report.pdf → file_uuid: fd00ff37` },
+          ],
+        },
+        toolUseResult: {
+          caption: 'Both views.',
+          display: 'render',
+          attachments: [
+            { path: `${shots}/a.png`, size: 89994, isImage: true, media_type: 'image/png', pathValidated: true, file_uuid: '940290c9' },
+            { path: '/home/u/p/notes/report.pdf', size: 2048, isImage: false, media_type: 'application/pdf', pathValidated: true, file_uuid: 'fd00ff37' },
+          ],
+        },
+      }),
+    );
+    expect(acc.rows).toHaveLength(1);
+    const row = acc.rows[0];
+    expect(row.kind).toBe('tool');
+    expect(row.tool).toBe('SendUserFile');
+    expect(row.preview).toBe('Both views.');
+    expect(row.sent).toEqual({
+      caption: 'Both views.',
+      files: [
+        { path: `${shots}/a.png`, name: 'a.png', inline: true, size: 89994 },
+        { path: '/home/u/p/notes/report.pdf', name: 'report.pdf', inline: false, size: 2048 },
+      ],
+    });
+  });
+
+  it("falls back to the SendUserFile call's own files, shows display attach as a card, and leaves a failed call a tool call", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu1', name: 'SendUserFile', input: { files: ['out/chart.svg'], status: 'proactive', display: 'attach' } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: '1 file delivered to user.' }] } }));
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu2', name: 'SendUserFile', input: { files: ['missing.png'], status: 'normal' } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu2', content: 'File not found', is_error: true }] } }));
+    expect(acc.rows[0].sent).toEqual({ files: [{ path: 'out/chart.svg', name: 'chart.svg', inline: false }] });
+    expect(acc.rows[0].preview).toBe('chart.svg');
+    expect(acc.rows[1].sent).toBeUndefined();
+    expect(acc.rows[1].resultError).toBe(true);
   });
 
   it('raw mode turns every line into a pretty-printed record row', () => {
@@ -370,6 +449,60 @@ describe('a run with context restarts', () => {
       ['0', 'second prompt'],
       ['1', 'second session finishes'],
     ]);
+  });
+
+  it("finds a tool call's image by its tool_use id in whichever session made the call", async () => {
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    const first = session('', 'first', 'reading');
+    fs.appendFileSync(
+      first,
+      [
+        assistantBlock({ type: 'tool_use', id: 'tu-img', name: 'Read', input: { file_path: '/x/a.png' } }),
+        rec({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'tu-img', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGk=' } }] }],
+          },
+        }),
+      ].join('\n') + '\n',
+    );
+    endAgentSession(runDir, 1);
+    session('', 'second', 'next');
+    const service = new MessagesService({
+      getTask: () => undefined,
+      runDir: () => runDir,
+      host: 'linux',
+      settings: SettingsSchema.parse({}),
+      log: new Logger(),
+    });
+    expect(await service.readImage('t1', 'r1', toolImageKey('tu-img'))).toEqual({ mediaType: 'image/png', data: 'aGk=' });
+    expect(await service.readImage('t1', 'r1', toolImageKey('tu-none'))).toBeNull();
+    // A plain row id still names the row in its own session.
+    expect(await service.readImage('t1', 'r1', 's1-2')).toEqual({ mediaType: 'image/png', data: 'aGk=' });
+  });
+
+  it("opens a workflow agent's conversation under its run's folder, and lists the session's workflow runs", async () => {
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    const transcript = session('', 'parent', 'starting a workflow');
+    const wf = path.join(transcript.replace(/\.jsonl$/, ''), 'subagents', 'workflows', 'wf_e83e0899-949');
+    fs.mkdirSync(wf, { recursive: true });
+    fs.writeFileSync(path.join(wf, 'journal.jsonl'), '{"type":"launched"}\n{"type":"started","key":"k","agentId":"a9a1cc7bb1018ff6b","label":"menus and power","phase":"Wave 1"}\n');
+    fs.writeFileSync(path.join(wf, 'agent-a9a1cc7bb1018ff6b.jsonl'), [userPrompt('[Workflow harness — computed task] Move the menu'), assistantBlock({ type: 'text', text: 'Moving it' })].join('\n') + '\n');
+    const service = new MessagesService({
+      getTask: () => undefined,
+      runDir: () => runDir,
+      host: 'linux',
+      settings: SettingsSchema.parse({}),
+      log: new Logger(),
+    });
+    const res = await service.read('t1', 'r1', 'a9a1cc7bb1018ff6b');
+    expect(res.status).toBe('ok');
+    expect(res.rows.map((r) => r.text)).toEqual(['[Workflow harness — computed task] Move the menu', 'Moving it']);
+    const runs = await service.workflows('t1', 'r1');
+    expect(runs.map((r) => [r.runId, r.status, r.phases.map((p) => p.agents.map((a) => a.label))])).toEqual([['wf_e83e0899-949', 'running', [['menus and power']]]]);
   });
 });
 

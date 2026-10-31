@@ -20,6 +20,7 @@ import {
   type PushKeyResponse,
   type PushSubscribeRequest,
   type PwaIconName,
+  type RemoteAccessProviderId,
   type RenameRequest,
   type ServerMessage,
   type UploadResponse,
@@ -97,8 +98,14 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-/** Who may reach the server: through the Tailscale helper's proxy, or this computer's browser. */
-export type AccessMode = { kind: 'local' } | { kind: 'tailscale'; secret: string; login: string | undefined };
+/** The Tailscale helper's proxy: its per-start secret, and the account it may pass on (none until it reports one). */
+export interface TailscaleAccess {
+  secret: string;
+  login: string | undefined;
+}
+
+/** The source a request came through, or why it may not come in. */
+type Via = { source: RemoteAccessProviderId; refused?: undefined } | { source?: undefined; refused: string };
 
 export type Platform = 'web' | 'ios' | 'android';
 
@@ -314,14 +321,18 @@ class Connection implements RemoteConnection {
 
 /**
  * Looper's UI for other devices: HTTP and a WebSocket on 127.0.0.1 only. Every
- * request passes the access check first; everything past pairing needs a
- * paired device's cookie.
+ * request passes the access check first, which also tells which source it came
+ * through (the Tailscale helper's proxy, or this computer's browser; both may
+ * be on at once); everything past pairing needs the cookie of a device paired
+ * through that source.
  */
 export class RemoteServer {
   private server: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private port = 0;
-  private access: AccessMode | null = null;
+  /** This computer's browser may come in (the local source is on). */
+  private local = false;
+  private tailscale: TailscaleAccess | null = null;
   private readonly conns = new Set<Connection>();
   /** Open sockets: whether each answered since the last ping, its device, and whether that device was removed. */
   private readonly sockets = new Map<WebSocket, { alive: boolean; deviceId: string; cut: boolean }>();
@@ -362,9 +373,14 @@ export class RemoteServer {
     return this.port;
   }
 
-  /** null: refuse every request (the provider isn't up). */
-  setAccess(mode: AccessMode | null): void {
-    this.access = mode;
+  /** Let this computer's browser in, or not. */
+  setLocalAccess(on: boolean): void {
+    this.local = on;
+  }
+
+  /** Let the Tailscale helper's proxy in; null: refuse it (Tailscale is off). */
+  setTailscaleAccess(access: TailscaleAccess | null): void {
+    this.tailscale = access;
   }
 
   async close(): Promise<void> {
@@ -376,7 +392,8 @@ export class RemoteServer {
     const server = this.server;
     this.server = null;
     this.wss = null;
-    this.access = null;
+    this.local = false;
+    this.tailscale = null;
     for (const d of this.downloads.values()) this.done(d);
     this.downloads.clear();
     if (server) {
@@ -437,26 +454,31 @@ export class RemoteServer {
 
   // ---------- access ----------
 
-  /** Why the request may not come in, or null when it may. */
-  private refusal(req: http.IncomingMessage): string | null {
-    const a = this.access;
-    if (!a) return 'not accepting connections';
-    if (a.kind === 'local') {
-      if (!isLoopback(req.socket.remoteAddress)) return `remote address ${req.socket.remoteAddress}`;
-      const host = header(req, 'host');
-      if (host !== `localhost:${this.port}` && host !== `127.0.0.1:${this.port}`) return `host ${JSON.stringify(host ?? '')}`;
-      return null;
-    }
+  /**
+   * The source the request came through, or why it may not come in. Only the
+   * Tailscale helper's proxy sets the proxy secret (it strips one a caller
+   * sends), so a request carrying it is judged as Tailscale's alone; any
+   * other is this computer's browser, which must use the server's own address.
+   */
+  private via(req: http.IncomingMessage): Via {
     const secret = header(req, PROXY_SECRET_HEADER);
-    if (!secret || !safeEqual(secret, a.secret)) return 'missing or wrong proxy secret';
-    const login = header(req, PROXY_LOGIN_HEADER);
-    if (!a.login || login !== a.login) return `login ${JSON.stringify(login ?? '')}`;
-    return null;
+    if (secret !== undefined) {
+      const t = this.tailscale;
+      if (!t || !safeEqual(secret, t.secret)) return { refused: 'missing or wrong proxy secret' };
+      const login = header(req, PROXY_LOGIN_HEADER);
+      if (!t.login || login !== t.login) return { refused: `login ${JSON.stringify(login ?? '')}` };
+      return { source: 'tailscale' };
+    }
+    if (!this.local) return { refused: this.tailscale ? 'missing or wrong proxy secret' : 'not accepting connections' };
+    if (!isLoopback(req.socket.remoteAddress)) return { refused: `remote address ${req.socket.remoteAddress}` };
+    const host = header(req, 'host');
+    if (host !== `localhost:${this.port}` && host !== `127.0.0.1:${this.port}`) return { refused: `host ${JSON.stringify(host ?? '')}` };
+    return { source: 'local' };
   }
 
   /** The page's own origin, as its WebSocket's Origin must be. */
-  private ownOrigin(req: http.IncomingMessage): string | null {
-    if (this.access?.kind === 'tailscale') {
+  private ownOrigin(req: http.IncomingMessage, source: RemoteAccessProviderId): string | null {
+    if (source === 'tailscale') {
       const host = header(req, 'x-forwarded-host');
       return host ? `https://${host}` : null;
     }
@@ -464,19 +486,19 @@ export class RemoteServer {
   }
 
   /** The host[:port] the browser loaded the page from, when it's a plain one. */
-  private pageHost(req: http.IncomingMessage): string | null {
-    const host = this.access?.kind === 'tailscale' ? header(req, 'x-forwarded-host') : header(req, 'host');
+  private pageHost(req: http.IncomingMessage, source: RemoteAccessProviderId | undefined): string | null {
+    const host = source === 'tailscale' ? header(req, 'x-forwarded-host') : header(req, 'host');
     return host && PLAIN_HOST.test(host) ? host : null;
   }
 
   /** Over HTTPS: only the Tailscale proxy says so. */
-  private secure(req: http.IncomingMessage): boolean {
-    return this.access?.kind === 'tailscale' && header(req, 'x-forwarded-proto') === 'https';
+  private secure(req: http.IncomingMessage, source: RemoteAccessProviderId): boolean {
+    return source === 'tailscale' && header(req, 'x-forwarded-proto') === 'https';
   }
 
-  private device(req: http.IncomingMessage): StoredDevice | undefined {
-    if (!this.access) return undefined;
-    return this.opts.devices.verify(readCookie(header(req, 'cookie'), DEVICE_COOKIE), this.access.kind);
+  /** The device whose cookie the request carries, when it was paired through the source the request came through. */
+  private device(req: http.IncomingMessage, source: RemoteAccessProviderId): StoredDevice | undefined {
+    return this.opts.devices.verify(readCookie(header(req, 'cookie'), DEVICE_COOKIE), source);
   }
 
   /**
@@ -512,22 +534,22 @@ export class RemoteServer {
   // ---------- HTTP ----------
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    res.setHeader('Content-Security-Policy', csp(this.pageHost(req)));
+    const via = this.via(req);
+    res.setHeader('Content-Security-Policy', csp(this.pageHost(req, via.source)));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     try {
-      const why = this.refusal(req);
-      if (why) {
-        this.logRejected(req, why);
+      if (via.refused !== undefined) {
+        this.logRejected(req, via.refused);
         return this.text(res, 403, 'Forbidden');
       }
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
         res.setHeader('Cache-Control', 'no-store');
-        return await this.api(req, res, url);
+        return await this.api(req, res, url, via.source);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return this.text(res, 405, 'Method Not Allowed');
-      return await this.serveStatic(req, res, url.pathname);
+      return await this.serveStatic(req, res, url.pathname, via.source);
     } catch (err) {
       // The browser went away mid-response (a closed tab, a canceled download): nothing went wrong here.
       const gone = (err as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE' || req.destroyed || res.destroyed;
@@ -547,7 +569,7 @@ export class RemoteServer {
     res.end(JSON.stringify(body));
   }
 
-  private async api(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  private async api(req: http.IncomingMessage, res: http.ServerResponse, url: URL, source: RemoteAccessProviderId): Promise<void> {
     const p = url.pathname;
     if (req.method !== 'GET') {
       const why = this.crossSite(req);
@@ -558,14 +580,14 @@ export class RemoteServer {
     }
     if (p === '/api/pair') {
       if (req.method !== 'POST') return this.text(res, 405, 'Method Not Allowed');
-      return this.pair(req, res);
+      return this.pair(req, res, source);
     }
     if (p === '/api/ws') return this.text(res, 426, 'Upgrade Required');
     const known =
       p === '/api/me' || p === '/api/upload' || p === '/api/unpair' || p === '/api/rename' || p.startsWith('/api/download/') || (!!this.opts.push && p.startsWith('/api/push/'));
     if (!known) return this.text(res, 404, 'Not Found');
 
-    const device = this.device(req);
+    const device = this.device(req, source);
     if (p === '/api/me') {
       if (req.method !== 'GET') return this.text(res, 405, 'Method Not Allowed');
       if (device) this.opts.devices.touch(device.id);
@@ -579,7 +601,7 @@ export class RemoteServer {
     }
     if (p === '/api/unpair') {
       if (req.method !== 'POST') return this.text(res, 405, 'Method Not Allowed');
-      res.writeHead(204, { 'Set-Cookie': `${DEVICE_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${this.secure(req) ? '; Secure' : ''}` });
+      res.writeHead(204, { 'Set-Cookie': `${DEVICE_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${this.secure(req, source) ? '; Secure' : ''}` });
       res.end();
       this.opts.onUnpair?.(device.id);
       return;
@@ -647,7 +669,8 @@ export class RemoteServer {
     });
   }
 
-  private async pair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  /** Pair a device through the source the request came through: its cookie works there only. */
+  private async pair(req: http.IncomingMessage, res: http.ServerResponse, source: RemoteAccessProviderId): Promise<void> {
     const body = await this.readBody(req, MAX_PAIR_BODY_BYTES);
     if (!body) return this.text(res, 413, 'Payload Too Large');
     let input: Record<string, unknown>;
@@ -660,12 +683,10 @@ export class RemoteServer {
     }
     if (typeof input.code !== 'string') return this.text(res, 400, 'Bad Request');
     const result = this.opts.pairing.check(input.code);
-    if (result === 'locked') return this.text(res, 429, 'Too many wrong codes. Make a new code on the computer.');
+    if (result === 'locked') return this.text(res, 429, 'Too many wrong codes. Make a new code on the host computer.');
     if (result !== 'ok') return this.text(res, 401, 'Wrong or expired code.');
-    const provider = this.access?.kind;
-    if (!provider) return this.text(res, 403, 'Forbidden');
-    const { device, cookie } = this.opts.devices.add(cleanDeviceName(input.name), provider);
-    const flags = `HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${this.secure(req) ? '; Secure' : ''}`;
+    const { device, cookie } = this.opts.devices.add(cleanDeviceName(input.name), source);
+    const flags = `HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${this.secure(req, source) ? '; Secure' : ''}`;
     this.json(res, 200, this.me(device), { 'Set-Cookie': `${DEVICE_COOKIE}=${cookie}; ${flags}` });
     this.opts.onPaired?.(device);
   }
@@ -775,7 +796,7 @@ export class RemoteServer {
     }
   }
 
-  private async serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): Promise<void> {
+  private async serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, source: RemoteAccessProviderId): Promise<void> {
     let rel: string;
     try {
       rel = decodeURIComponent(pathname);
@@ -806,7 +827,7 @@ export class RemoteServer {
     if (!stat.isFile()) return this.text(res, 404, 'Not Found');
     // The page itself must always be fresh; built assets carry a content hash.
     if (path.extname(file).toLowerCase() === '.html') {
-      const body = Buffer.from(withMobileHead(withConnectSrc(await fs.promises.readFile(file, 'utf8'), this.pageHost(req))), 'utf8');
+      const body = Buffer.from(withMobileHead(withConnectSrc(await fs.promises.readFile(file, 'utf8'), this.pageHost(req, source))), 'utf8');
       res.writeHead(200, { 'Content-Type': MIME['.html'], 'Content-Length': body.length, 'Cache-Control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : body);
       return;
@@ -836,19 +857,19 @@ export class RemoteServer {
 
   private upgrade(req: http.IncomingMessage, socket: Socket, head: Buffer, wss: WebSocketServer): void {
     socket.on('error', () => socket.destroy());
-    const why = this.refusal(req);
-    if (why) {
-      this.logRejected(req, why);
+    const via = this.via(req);
+    if (via.refused !== undefined) {
+      this.logRejected(req, via.refused);
       return this.refuseUpgrade(socket, 403, 'Forbidden');
     }
     if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/api/ws') return this.refuseUpgrade(socket, 404, 'Not Found');
-    const device = this.device(req);
+    const device = this.device(req, via.source);
     if (!device) {
       this.logRejected(req, 'WebSocket without a paired device');
       return this.refuseUpgrade(socket, 401, 'Unauthorized');
     }
     const origin = header(req, 'origin');
-    const own = this.ownOrigin(req);
+    const own = this.ownOrigin(req, via.source);
     if (!origin || !own || origin !== own) {
       this.logRejected(req, `WebSocket origin ${JSON.stringify(origin ?? '')}`);
       return this.refuseUpgrade(socket, 403, 'Forbidden');

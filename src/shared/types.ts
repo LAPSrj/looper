@@ -159,6 +159,18 @@ export const HarnessSchema = z.object({
        * servers (.mcp.json), whose dialog would block the same way.
        */
       autoTrustWorkspace: z.boolean().optional(),
+      /**
+       * claude-code. Chats and Looper terminals that start on this harness while
+       * Remote Control is turned on start with it, so the Claude app can drive
+       * them, and Remote Control lists them with its conversations.
+       */
+      remoteControl: z.boolean().optional(),
+      /**
+       * claude-code. A Remote Control conversation it keeps open, or one a helper
+       * opened, on this harness ends once it sits idle until its prompt cache
+       * expires (it can be resumed). Unset = on.
+       */
+      closeWhenCacheExpires: z.boolean().optional(),
     })
     .optional(),
 });
@@ -474,7 +486,7 @@ export const ViewSchema = z.object({
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
-  single: TaskListOptionsSchema.prefault({}),
+  single: TaskListOptionsSchema.extend({ visible: z.boolean().default(true) }).prefault({}),
   panes: z
     .object({
       tasks: SidebarPaneSchema.prefault({}),
@@ -499,6 +511,8 @@ export const ViewSchema = z.object({
       visible: z.boolean().default(true),
       collapsed: z.boolean().default(false),
       weight: z.number().positive().default(1),
+      /** The list's groups: none, the folder the projects' folders are in, or the harness their sessions start with. */
+      groupBy: z.enum(['none', 'folder', 'harness']).default('none'),
     })
     .prefault({}),
   /** Addons whose buttons the main toolbar leaves out (View → "<Addon> Toolbar"), by addon id. */
@@ -508,8 +522,6 @@ export const ViewSchema = z.object({
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: z.boolean().default(true),
   hideNoActionRuns: z.boolean().default(false),
-  /** Hide the runs that are chats and terminal sessions (the conversations the user started). */
-  hideChatsAndTerminals: z.boolean().default(false),
   /** The Chats window's View menu, and the project groups closed in its list (by project id or group name). */
   sessions: z
     .object({
@@ -523,6 +535,10 @@ export const ViewSchema = z.object({
       collapsed: z.array(z.string()).default([]),
       /** The dashboard's cards shown at twice their size, by session id. */
       bigCards: z.array(z.string()).default([]),
+      /** The dashboard's cards in the order they were dragged to, by session id. */
+      cardOrder: z.array(z.string()).default([]),
+      /** The sessions waiting for the user show first: the list's Waiting for you group, and the dashboard's first cards. */
+      waitingFirst: z.boolean().default(true),
     })
     .prefault({}),
 });
@@ -591,36 +607,41 @@ export type RemoteHelper = z.infer<typeof RemoteHelperSchema>;
 
 export const RemoteSettingsSchema = z
   .object({
-    /** Start Remote Control when Looper starts. */
-    startWithLooper: z.boolean().default(false),
-    /** End a conversation (not a helper) that sits idle until its prompt cache expires; it can be resumed. */
-    closeWhenCacheExpires: z.boolean().default(true),
+    /** Turned on: Remote Control runs now and every time Looper starts. */
+    enabled: z.boolean().default(false),
     helpers: z.array(RemoteHelperSchema).default([]),
   })
   .prefault({});
 export type RemoteSettings = z.infer<typeof RemoteSettingsSchema>;
 
+/** A machine name on the tailnet: the start of its ts.net address. */
+export const TailnetHostnameSchema = z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/, 'use lowercase letters, digits and hyphens');
+
 /**
  * Advanced → Remote Access: Looper's UI served to other devices. The server
- * listens on 127.0.0.1 only; the provider makes it reachable (tailscale: an
+ * listens on 127.0.0.1 only; each source makes it reachable (tailscale: an
  * HTTPS address on the user's tailnet; local: this computer's browser only).
+ *
+ * Not strict: loadSettings replaces the whole file with defaults when any
+ * part fails, so a field an older Looper wrote (`provider`) is dropped here
+ * rather than costing every other setting.
  */
 export const RemoteAccessSettingsSchema = z
   .object({
-    /** Turned on: it starts with Looper too. */
+    /** Turned on (Advanced → Remote Access → Turn On): it starts with Looper too, once a source is chosen. */
     enabled: z.boolean().default(false),
-    provider: z.enum(['tailscale', 'local']).default('tailscale'),
+    /** How devices reach it; none = not set up yet (Turn On opens Set Up). */
+    sources: z
+      .array(z.enum(['tailscale', 'local']))
+      .refine((s) => new Set(s).size === s.length, 'list each source once')
+      .default([]),
     /** The name paired devices show for this computer; '' = the OS computer name. */
     name: z.string().max(64, 'use at most 64 characters').default(''),
     /** The machine name on the tailnet: the start of its ts.net address. */
-    hostname: z
-      .string()
-      .regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/, 'use lowercase letters, digits and hyphens')
-      .default('looper'),
-    /** The 127.0.0.1 port the server listens on; 0 = a free one each start. */
+    hostname: TailnetHostnameSchema.default('looper'),
+    /** The 127.0.0.1 port the server listens on; 0 = a free one, which the first start then saves here. */
     port: z.number().int().min(0).max(65535).default(0),
   })
-  .strict()
   .prefault({});
 export type RemoteAccessSettings = z.infer<typeof RemoteAccessSettingsSchema>;
 
@@ -696,6 +717,8 @@ export const SettingsSchema = z.object({
     /** Turn Rest Mode off when something other than the wake timer wakes the computer. */
     disarmOnUserWake: z.boolean().default(true),
   }).prefault({}),
+  /** Advanced → Prevent Sleep → While a Session Is Working: keep the computer awake while a chat, terminal or task agent works. */
+  preventSleepWhileWorking: z.boolean().default(false),
   /** Main-window view options (View menu). */
   view: ViewSchema.prefault({}),
   /** Addons stopped in Advanced → Addons…, by id: they don't start with Looper and show nothing. */
@@ -823,6 +846,18 @@ export interface RestState {
   wakeAt: number | null;
 }
 
+/** Advanced → Prevent Sleep: how long its timer keeps the computer awake, in minutes, or until turned off. */
+export type PreventSleepTimer = 'off' | 30 | 60 | 120 | 'until-off';
+
+export interface PreventSleepState {
+  /** The timer's choice; it lasts for this run of Looper. */
+  timer: PreventSleepTimer;
+  /** Epoch ms the timer runs out; null when it's off or on until turned off. */
+  until: number | null;
+  /** The computer is kept awake now: by the timer, or by a session working (While a Session Is Working). */
+  active: boolean;
+}
+
 /**
  * `guidance`: text the user sent the running agent (sent, delivered, or
  * undelivered when it never got there). `question`: the agent asked the user
@@ -943,6 +978,7 @@ export type EngineEvent =
   | { type: 'git-repos'; ids: string[] }
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' }
+  | { type: 'prevent-sleep'; state: PreventSleepState }
   /** Remote Control started or stopped, or one of its conversations changed. */
   | { type: 'remote'; state: RemoteState }
   /** Remote Access started, stopped or changed status, or its paired devices changed. */

@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react';
-import type { MessageRow, PatchHunk } from '@shared/messages';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { toolImageKey, type MessageRow, type PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
-import { MessageBody, parseTagSections, TagSections } from './Markdown';
+import { Markdown, MessageBody, parseTagSections, TagSections } from './Markdown';
 
 type Rec = Record<string, unknown>;
 
@@ -9,19 +9,103 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim
 const inputOf = (row: MessageRow): Rec | null =>
   row.input !== null && typeof row.input === 'object' && !Array.isArray(row.input) ? (row.input as Rec) : null;
 
+const valueText = (v: unknown): string => (typeof v === 'string' ? v : (JSON.stringify(v, null, 2) ?? String(v)));
+
+/** A call's parameters as a table: names in the first column, and every value starting at the same place. */
+export function ParamTable({ entries }: { entries: [string, unknown][] }) {
+  if (entries.length === 0) return null;
+  return (
+    <table className="tc-params">
+      <tbody>
+        {entries.map(([k, v]) => (
+          <tr key={k}>
+            <th scope="row">{k}</th>
+            <td>{valueText(v)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 /** Fields already shown by a custom render; anything else still gets listed. */
 function restFields(input: Rec, shown: string[]): ReactNode {
-  const rest = Object.entries(input).filter(([k]) => !shown.includes(k));
-  if (rest.length === 0) return null;
-  return (
-    <div className="tc-fields">
-      {rest.map(([k, v]) => (
-        <div key={k}>
-          {k}: {typeof v === 'string' ? v : JSON.stringify(v)}
-        </div>
-      ))}
-    </div>
+  return <ParamTable entries={Object.entries(input).filter(([k]) => !shown.includes(k))} />;
+}
+
+/* ---------- Syntax highlighting ---------- */
+
+type Highlighter = typeof import('./highlight');
+let highlighter: Highlighter | null = null;
+let loadingHighlighter: Promise<Highlighter> | null = null;
+
+/**
+ * The lines as highlighted HTML, colored for the file's language (or the
+ * `language` given); null while the highlighter loads, or for a language it
+ * doesn't know. The highlighter loads on first use.
+ */
+export function useHighlight(lines: string[], file?: string, language?: string): string[] | null {
+  const [mod, setMod] = useState(highlighter);
+  useEffect(() => {
+    if (mod) return;
+    let live = true;
+    void (loadingHighlighter ??= import('./highlight')).then((m) => {
+      highlighter = m;
+      if (live) setMod(m);
+    });
+    return () => {
+      live = false;
+    };
+  }, [mod]);
+  const key = lines.join('\n');
+  return useMemo(
+    () => (mod ? mod.highlightLines(key.split('\n'), language ? mod.knownLanguage(language) : mod.languageOf(file)) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mod, key, file, language],
   );
+}
+
+/** One line of code: highlighted HTML when there is some (the highlighter escapes the text), else the text. */
+export function CodeText({ html, text, className }: { html?: string; text: string; className: string }) {
+  return html !== undefined && text ? (
+    <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
+  ) : (
+    <span className={className}>{text || ' '}</span>
+  );
+}
+
+/* ---------- Images ---------- */
+
+/**
+ * The image a tool call's result carried (a Read of a picture), from the
+ * transcript; for a call whose result has none, the file it names, read
+ * again from disk (as a thumbnail).
+ */
+export function ToolImage({ row, taskId, runId, agentId }: { row: MessageRow; taskId: string; runId: string; agentId?: string }) {
+  const [src, setSrc] = useState<string | null | 'none'>(null);
+  const hasImage = !!row.image;
+  useEffect(() => {
+    let live = true;
+    setSrc(null);
+    void (async () => {
+      const img =
+        hasImage && row.toolUseId
+          ? await window.looper.runs.messageImage(taskId, runId, toolImageKey(row.toolUseId), agentId).catch(() => null)
+          : null;
+      if (img) {
+        if (live) setSrc(`data:${img.mediaType};base64,${img.data}`);
+        return;
+      }
+      const thumb = row.file ? await window.looper.sessions.fileThumbnail(taskId, row.file).catch(() => null) : null;
+      if (live) setSrc(thumb ?? 'none');
+    })();
+    return () => {
+      live = false;
+    };
+  }, [taskId, runId, agentId, row.toolUseId, row.file, hasImage]);
+  if (src === null) return <div className="muted tc-image-note">Loading the image…</div>;
+  if (src === 'none') return <div className="muted tc-image-note">The image can’t be shown.</div>;
+  return <img className="tc-image" src={src} alt={row.file ?? ''} />;
 }
 
 /* ---------- Diff ---------- */
@@ -83,17 +167,28 @@ export function gutterLines(text: string): { n: string; text: string }[] | null 
   return matched >= lines.length * 0.6 ? parsed : null;
 }
 
-function CodeView({ lines }: { lines: { n: string; text: string }[] }) {
+function CodeView({ lines, file, language }: { lines: { n: string; text: string }[]; file?: string; language?: string }) {
+  const html = useHighlight(
+    lines.map((l) => l.text),
+    file,
+    language,
+  );
   return (
     <div className="code-view">
       {lines.map((l, i) => (
         <div key={i} className="code-line">
           <span className="code-gutter">{l.n}</span>
-          <span className="code-text">{l.text || ' '}</span>
+          <CodeText className="code-text" html={html?.[i]} text={l.text} />
         </div>
       ))}
     </div>
   );
+}
+
+/** Code with numbered lines; a Read result keeps the numbers it came with. */
+export function CodeBlock({ text, file, language }: { text: string; file?: string; language?: string }) {
+  const lines = gutterLines(text) ?? text.replace(/\n$/, '').split('\n').map((t, i) => ({ n: String(i + 1), text: t }));
+  return <CodeView lines={lines} file={file} language={language} />;
 }
 
 /* ---------- JSON tree ---------- */
@@ -157,6 +252,8 @@ const PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)\S.*$/;
 interface FileCtx {
   taskId: string;
   runId: string;
+  /** Rows of a subagent's conversation: its id. */
+  agentId?: string;
 }
 
 function FileList({ files, ctx }: { files: string[]; ctx: FileCtx }) {
@@ -301,15 +398,33 @@ export function ToolInputView({ row }: { row: MessageRow }) {
     case 'WebSearch':
       return <>{webInput(input)}</>;
     default:
-      return plain(row.text);
+      return Object.keys(input).length > 0 ? <ParamTable entries={Object.entries(input)} /> : plain(row.text);
   }
+}
+
+/* ---------- Skills ---------- */
+
+const SKILL_DIR = /^Base directory for this skill:[^\n]*\n*/;
+
+/** A skill the agent loaded: where it came from, then its SKILL.md as formatted text. */
+export function SkillView({ text }: { text: string }) {
+  const dir = SKILL_DIR.exec(text)?.[0].trim();
+  return (
+    <>
+      {dir && <div className="muted tc-caption mono">{dir}</div>}
+      <Markdown text={dir ? text.replace(SKILL_DIR, '') : text} breaks={false} />
+    </>
+  );
 }
 
 /* ---------- Result renders ---------- */
 
 export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) {
   const result = row.result ?? '';
+  if (row.image) return <ToolImage row={row} taskId={ctx.taskId} runId={ctx.runId} agentId={ctx.agentId} />;
   switch (row.tool) {
+    case 'Skill':
+      return row.skill ? <SkillView text={row.skill} /> : plain(result);
     case 'Task':
     case 'Agent':
       return <MessageBody text={result} />;
@@ -321,7 +436,7 @@ export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) 
     }
     case 'Read': {
       const lines = gutterLines(result);
-      return lines ? <CodeView lines={lines} /> : plain(result);
+      return lines ? <CodeView lines={lines} file={row.file} /> : plain(result);
     }
     case 'Grep':
     case 'Glob': {

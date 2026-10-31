@@ -1,5 +1,5 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, MessageBoxSpec } from '../../../shared/remote-access';
+import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, HostPlace, MessageBoxSpec } from '../../../shared/remote-access';
 
 // ---------- message boxes ----------
 
@@ -100,13 +100,16 @@ export function splitDefaultPath(p: string | undefined): { dir: string | null; n
 
 export interface Crumb {
   label: string;
-  /** null: the starting places ("This Computer"). */
+  /** null: the starting places ("Host Computer"). */
   path: string | null;
 }
 
-/** The path as clickable parts, after "This Computer". */
+/** What the file browser calls the computer Looper runs on, apart from the device the browser runs on. */
+export const HOST_COMPUTER = 'Host Computer';
+
+/** The path as clickable parts, after "Host Computer". */
 export function breadcrumbs(p: string | null): Crumb[] {
-  const out: Crumb[] = [{ label: 'This Computer', path: null }];
+  const out: Crumb[] = [{ label: HOST_COMPUTER, path: null }];
   if (!p) return out;
   if (isWindowsPath(p)) {
     const unc = /^(\\\\[^\\]+\\[^\\]+)(\\.*)?$/.exec(p);
@@ -140,3 +143,78 @@ export function folderNameError(name: string): string | null {
 }
 
 export const LAST_FOLDER_KEY = 'looper.lastFolder';
+
+// ---------- the browser's history (Back and Forward) ----------
+
+/** The folders visited, oldest first (null: the starting places), and the one shown. */
+export interface NavHistory {
+  stack: (string | null)[];
+  at: number;
+}
+
+export const emptyHistory: NavHistory = { stack: [], at: -1 };
+
+/** A folder opened (not by Back or Forward): it drops what Forward would go to. The one shown again changes nothing. */
+export function navVisit(h: NavHistory, p: string | null): NavHistory {
+  if (h.at >= 0 && h.stack[h.at] === p) return h;
+  return { stack: [...h.stack.slice(0, h.at + 1), p], at: h.at + 1 };
+}
+
+/** The folder Back (-1) or Forward (1) goes to; undefined when there's none. */
+export function navTarget(h: NavHistory, dir: -1 | 1): string | null | undefined {
+  const i = h.at + dir;
+  return i >= 0 && i < h.stack.length ? h.stack[i] : undefined;
+}
+
+export function navMove(h: NavHistory, dir: -1 | 1): NavHistory {
+  return navTarget(h, dir) === undefined ? h : { ...h, at: h.at + dir };
+}
+
+// ---------- the starting places ----------
+
+/** The heading a starting place is listed under. */
+export function placeGroup(place: HostPlace | undefined): string {
+  switch (place) {
+    case 'drive':
+      return 'Drives';
+    case 'linux':
+      return 'Linux';
+    case 'project':
+      return 'Projects';
+    default:
+      return 'Folders';
+  }
+}
+
+/** The starting places with each group's heading before its first entry, in their order. */
+export function groupPlaces(entries: HostDirEntry[]): { heading: string | null; entry: HostDirEntry }[] {
+  let last: string | null = null;
+  return entries.map((entry) => {
+    const g = placeGroup(entry.place);
+    const heading = g === last ? null : g;
+    last = g;
+    return { heading, entry };
+  });
+}
+
+// ---------- the file viewer ----------
+
+export type ViewerKind = 'image' | 'text' | 'markdown';
+
+/** How a file opened on the device shows in the app itself; null: it doesn't (Open on Host Computer or Download). */
+export function viewerKind(name: string): ViewerKind | null {
+  const ext = extensionOf(name);
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return 'image';
+  if (ext === 'md' || ext === 'markdown') return 'markdown';
+  if (ext === 'txt') return 'text';
+  return null;
+}
+
+/** The largest file the viewer reads in, by kind. */
+export const VIEWER_MAX_BYTES: Record<ViewerKind, number> = { image: 25 * 1024 * 1024, text: 5 * 1024 * 1024, markdown: 5 * 1024 * 1024 };
+
+/** An <img>'s type for an image read as bytes (the download comes as application/octet-stream; an SVG needs its own). */
+export function imageType(name: string): string {
+  const ext = extensionOf(name);
+  return ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+}

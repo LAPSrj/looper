@@ -151,7 +151,11 @@ export type PairCheck = 'ok' | 'wrong' | 'locked' | 'none';
 export class Pairing {
   private current: { code: string; expiresAt: number; wrong: number } | null = null;
 
-  constructor(private readonly now: Clock) {}
+  /** `onLocked` runs when a wrong try is the one that locks the code. */
+  constructor(
+    private readonly now: Clock,
+    private readonly onLocked?: () => void,
+  ) {}
 
   /** Make a new code, replacing the one before. */
   newCode(): { code: string; expiresAt: number } {
@@ -172,6 +176,12 @@ export class Pairing {
     return { code: c.code, expiresAt: c.expiresAt };
   }
 
+  /** The current code while it's locked by wrong tries (it doesn't expire out of this), else null. */
+  lockedCode(): string | null {
+    const c = this.current;
+    return c && c.wrong >= PAIRING_MAX_WRONG ? c.code : null;
+  }
+
   /** Try a code; 'ok' uses it up. */
   check(input: unknown): PairCheck {
     const c = this.current;
@@ -182,6 +192,7 @@ export class Pairing {
       return 'ok';
     }
     c.wrong++;
+    if (c.wrong >= PAIRING_MAX_WRONG) this.onLocked?.();
     return 'wrong';
   }
 }

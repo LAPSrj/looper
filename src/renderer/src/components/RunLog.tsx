@@ -16,18 +16,21 @@ const RUN_COLS: readonly TableCol[] = [
   { label: 'Details' },
 ];
 
+/** A project's chats and terminal sessions all share one result, so they have no Result column. */
+const SESSION_COLS: readonly TableCol[] = RUN_COLS.filter((c) => c.label !== 'Result');
+
 interface Props {
-  /** The task's id, or a project's stand-in id for its sessions. */
-  taskId: string;
+  /** The records to group into runs: a task's, or the chat and terminal records of a project's Chat tab. */
   records: RunRecord[];
-  runtime: TaskRuntime | undefined;
-  hideNoAction: boolean;
-  hideChatsAndTerminals: boolean;
+  runtime?: TaskRuntime;
+  /** A project's Chat tab: lists every run in `records` (sessions) without a Result column. */
+  sessions?: boolean;
+  hideNoAction?: boolean;
   /** Run to select (notification click); a fresh object per click re-triggers. */
   focusRun?: { runId: string } | null;
 }
 
-export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTerminals, focusRun }: Props) {
+export function RunLog({ records, runtime, sessions = false, hideNoAction = false, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,9 +40,12 @@ export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTer
   const containerRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(
-    () => groupRuns(records).filter((g) => runShown(g, { hideNoAction, hideChatsAndTerminals })),
-    [records, hideNoAction, hideChatsAndTerminals],
+    () => groupRuns(records).filter((g) => sessions || runShown(g, { hideNoAction })),
+    [records, hideNoAction, sessions],
   );
+  const cols = sessions ? SESSION_COLS : RUN_COLS;
+  // A run's records are all its own task's (a project's Chat tab mixes its tasks' sessions with its own).
+  const taskOf = (g: { records: RunRecord[] }) => g.records[0].taskId;
 
   useEffect(() => {
     // While records are still loading (groups empty) keep the selection: a
@@ -55,7 +61,7 @@ export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTer
     count: groups.length,
     index: idx,
     onIndex: (i) => setSelected(groups[i].runId),
-    onActivate: (i) => void window.looper.openMessages(taskId, groups[i].runId),
+    onActivate: (i) => void window.looper.openMessages(taskOf(groups[i]), groups[i].runId),
     scrollToId: selected ? `run-${selected}` : null,
   });
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -79,7 +85,7 @@ export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTer
     <div className="runlog" ref={containerRef}>
       <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
         <table className="runlog-table">
-          <ResizableColumns cols={RUN_COLS} storageKey="runlog" />
+          <ResizableColumns cols={cols} storageKey={sessions ? 'runlog-sessions' : 'runlog'} />
           <tbody>
             {groups.map((g) => (
               <tr
@@ -89,27 +95,27 @@ export function RunLog({ taskId, records, runtime, hideNoAction, hideChatsAndTer
                 onClick={() => {
                   setSelected(g.runId);
                   // A phone has no double-click: a tap opens the run window.
-                  if (isPhone) void window.looper.openMessages(taskId, g.runId);
+                  if (isPhone) void window.looper.openMessages(taskOf(g), g.runId);
                 }}
-                onDoubleClick={() => void window.looper.openMessages(taskId, g.runId)}
+                onDoubleClick={() => void window.looper.openMessages(taskOf(g), g.runId)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setSelected(g.runId);
-                  window.looper.showRunContextMenu({ taskId: taskId, runId: g.runId, details: g.details });
+                  window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details });
                 }}
               >
                 <td>{fmtDate(g.startTs)}</td>
                 <td>{fmtTime(g.startTs)}</td>
                 <td>{fmtTime(g.endTs)}</td>
-                <td>{isRunning(g.runId) ? 'Running' : resultLabel(g.result)}</td>
+                {!sessions && <td>{isRunning(g.runId) ? 'Running' : resultLabel(g.result)}</td>}
                 <td>{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
                 <td title={g.details}>{g.details}</td>
               </tr>
             ))}
             {groups.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">
-                  No runs yet.
+                <td colSpan={cols.length} className="muted">
+                  {sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}
                 </td>
               </tr>
             )}

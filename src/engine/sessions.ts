@@ -17,6 +17,8 @@ import type { EngineEvent, Project, Task } from '../shared/types';
 import type { SubagentStats } from './context';
 import type { Logger } from './log';
 import type { SubagentMeta } from './messages';
+import type { WorkflowRun } from '../shared/workflows';
+import { workflowLaunchesOf, type WorkflowLaunch } from './workflows';
 
 const POLL_MS = 1000;
 /** Transcripts are read every this many polls; a session's context size every CONTEXT_POLLS. */
@@ -28,6 +30,8 @@ export interface TerminalEntry {
   taskId: string;
   startedAt: number;
   ended: boolean;
+  /** Quitting Looper stopped its harness: it's ready for the key that starts it again. */
+  stopped?: boolean;
 }
 
 /** A task run whose agent step is in flight: the Chats window lists it while Show Task Runs is on. */
@@ -56,6 +60,12 @@ export interface SessionHubDeps {
   subagents: (taskId: string, runId: string) => Promise<SubagentMeta[]>;
   /** A subagent's model, effort and context from its transcript; null before its first response. */
   subagentStats: (taskId: string, runId: string, agentId: string) => Promise<SubagentStats | null>;
+  /** The session's workflow runs; `detail` reads their running agents' transcripts too. */
+  workflows: (
+    taskId: string,
+    runId: string,
+    opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean },
+  ) => Promise<WorkflowRun[]>;
   contextTokens: (taskId: string, runId: string) => Promise<number | null>;
   /** Claude: the last request's time and how long the cache it wrote lasts, from the transcript. */
   cacheUse: (taskId: string, runId: string) => Promise<{ at?: number; ttlMs?: number }>;
@@ -81,6 +91,7 @@ interface Track {
   subagentMetas: SubagentMeta[];
   /** What each subagent's transcript says, read while the window shows the session; a finished one's isn't read again. */
   subagentStats: Map<string, SubagentStats>;
+  workflows: WorkflowRun[];
   context?: ChatContext;
   reading: boolean;
   /** When the current permission request, and the session's end, were first seen. */
@@ -135,11 +146,24 @@ export function recentMessages(rows: MessageRow[]): string[] {
   return out;
 }
 
-/** The background commands and subagents a conversation's rows started, newest first. */
+/** The background commands, subagents and workflows a conversation's rows started, newest first. */
 export function backgroundOf(rows: MessageRow[]): BackgroundTask[] {
   const out: BackgroundTask[] = [];
   for (const r of rows) {
     if (!r.background) continue;
+    if (r.tool === 'Workflow') {
+      const launch = workflowLaunchesOf([r])[0];
+      out.push({
+        id: r.background.id,
+        kind: 'workflow',
+        label: launch?.summary ?? 'Workflow',
+        ...(launch ? { workflowRunId: launch.runId } : {}),
+        status: r.background.status,
+        ...(r.background.summary ? { summary: r.background.summary } : {}),
+        ...(r.ts ? { startedAt: r.ts } : {}),
+      });
+      continue;
+    }
     const input = (r.input ?? {}) as Record<string, unknown>;
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
     const agent = r.tool === 'Agent' || r.tool === 'Task';
@@ -267,11 +291,17 @@ export class SessionHub {
     this.changed();
   }
 
-  /** Stop sent a terminal session Esc: the agent's turn is over. */
+  /** Stop sent a terminal session Esc, or a stopped one started again: the agent's turn is over. */
   stopped(id: string): void {
     const t = this.tracks.get(id);
     if (!t) return;
     t.stoppedAt = this.now();
+    this.changed();
+  }
+
+  /** Sessions opened again at Looper's start: what they did before it quit isn't news (no turn or notification waits for you). */
+  restored(ids: Iterable<string>): void {
+    for (const id of ids) this.track(id, this.now());
     this.changed();
   }
 
@@ -301,6 +331,7 @@ export class SessionHub {
       ...(entry.kind !== 'chat' ? { rows: t.rows } : {}),
       background: backgroundOf(t.rows),
       subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats),
+      workflows: t.workflows,
     };
   }
 
@@ -336,6 +367,7 @@ export class SessionHub {
         rows: [],
         subagentMetas: [],
         subagentStats: new Map(),
+        workflows: [],
         reading: false,
       };
       this.tracks.set(id, t);
@@ -394,6 +426,9 @@ export class SessionHub {
           const stats = await this.d.subagentStats(e.taskId, e.id, a.agentId);
           if (stats) t.subagentStats.set(a.agentId, stats);
         }
+        // Only a session on screen shows its workflows, so only its runs are read.
+        const sessionEnded = e.kind === 'chat' ? e.chat.status === 'ended' : e.kind === 'terminal' && (e.ended || !!e.stopped);
+        t.workflows = await this.d.workflows(e.taskId, e.id, { launches: workflowLaunchesOf(t.rows), detail: true, sessionEnded });
       }
       const now = force || this.watched.has(id) || this.polls % CONTEXT_POLLS === 0;
       if (kind === 'claude-code' && now) t.cache = await this.d.cacheUse(e.taskId, e.id);
@@ -419,7 +454,7 @@ export class SessionHub {
     for (const id of this.watched) {
       const activity = this.activity(id);
       if (!activity) continue;
-      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.background, activity.subagents]);
+      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.background, activity.subagents, activity.workflows]);
       if (aKey === this.lastActivity.get(id)) continue;
       this.lastActivity.set(id, aKey);
       this.d.emit({ type: 'session:activity', activity });
@@ -501,7 +536,11 @@ export class SessionHub {
     const stop = stopHook?.at ?? 0;
     // A turn the user stopped (Looper's Stop, or Esc in the terminal) gets no Stop hook.
     const turnOver = Math.max(stop, t.stoppedAt ?? 0, interruptedAt(t.rows));
-    const status: SessionSummary['status'] = e.ended ? 'ended' : harness.kind === 'claude-code' && prompt > turnOver ? 'working' : 'ready';
+    const status: SessionSummary['status'] = e.ended
+      ? 'ended'
+      : !e.stopped && harness.kind === 'claude-code' && prompt > turnOver
+        ? 'working'
+        : 'ready';
     if (e.ended) t.endedAt ??= this.now();
     let waiting: SessionSummary['waiting'];
     if (e.ended) {
@@ -522,6 +561,7 @@ export class SessionHub {
       harnessKind: harness.kind,
       harnessName: harness.name,
       status,
+      ...(e.stopped ? { stopped: true } : {}),
       ...(waiting ? { waiting } : {}),
       ...(latest ? { latest } : {}),
       ...(recent.length ? { recent } : {}),

@@ -663,6 +663,14 @@ button.md-list-item {
 .android .ph-files-empty {
   color: var(--md-on-surface-variant);
 }
+.android .ph-files-group {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--md-primary);
+}
+.android .ph-viewer-note {
+  color: var(--md-on-surface-variant);
+}
 .md-fab {
   position: absolute;
   right: 16px;
@@ -700,6 +708,7 @@ button.md-list-item {
 }
 .md-bottom-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   padding: 8px 12px;
   border-top: 1px solid var(--md-outline-variant);

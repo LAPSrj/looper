@@ -1972,12 +1972,14 @@ describe('watcher runOnStart', () => {
     expect(h.sched.get('t1')!.watcher).toBe('watching');
     h.clock.now = 84_000_000; // 23:20 UTC
     await h.tickN(1);
-    // The window-close kill is awaited off the tick; give it a moment.
-    for (let i = 0; i < 500 && h.sched.get('t1')!.watcher !== null; i++) {
+    // The window-close kill is awaited off the tick, and killLeftovers alone
+    // takes a few seconds (two process scans 1.5 s apart); give it time.
+    const deadline = Date.now() + 12_000;
+    while (h.sched.get('t1')!.watcher !== null && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(h.sched.get('t1')!.watcher).toBeNull();
-  });
+  }, 15_000);
 
   it('a pause lifted by resume owes a fresh catch-up', async () => {
     await remake(watcherInput());

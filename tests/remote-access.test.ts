@@ -16,12 +16,13 @@ import {
   PROXY_SECRET_HEADER,
   REQUEST_HEADER,
   REQUEST_HEADER_VALUE,
+  remoteAccessStatusItems,
   type MeResponse,
   type RemoteAccessProviderId,
   type RemoteAccessState,
   type ServerMessage,
 } from '../src/shared/remote-access';
-import { RemoteAccessSettingsSchema, type RemoteAccessSettings } from '../src/shared/types';
+import { RemoteAccessSettingsSchema, SettingsSchema, type RemoteAccessSettings } from '../src/shared/types';
 
 const TS_HOST = 'looper.example.ts.net';
 const TS_ACCOUNT = 'me@example.com';
@@ -84,7 +85,7 @@ interface Setup {
   staticDir: string;
   log: ReturnType<typeof memLog>;
   clock: { t: number };
-  fake?: FakeTailscale;
+  fake: FakeTailscale;
   states: RemoteAccessState[];
   /** The settings RemoteAccess reads; tests may change them. */
   settings: RemoteAccessSettings;
@@ -92,20 +93,31 @@ interface Setup {
 
 async function setup(
   provider: RemoteAccessProviderId,
-  opts: { autoRun?: boolean; beforeStart?: (dataDir: string) => void; ipc?: IpcTable } = {},
+  opts: {
+    autoRun?: boolean;
+    beforeStart?: (dataDir: string) => void;
+    ipc?: IpcTable;
+    /** Every source to turn on (default: just `provider`). */
+    sources?: RemoteAccessProviderId[];
+    /** Another run on the same data: a restart. */
+    root?: string;
+    port?: number;
+    savePort?: (port: number) => void;
+  } = {},
 ): Promise<Setup> {
-  const root = tmp();
+  const root = opts.root ?? tmp();
   const dataDir = path.join(root, 'data');
   const staticDir = path.join(root, 'static');
   fs.mkdirSync(path.join(staticDir, 'assets'), { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><title>Looper</title>');
   fs.writeFileSync(path.join(staticDir, 'assets', 'app.js'), 'console.log(1)');
   fs.writeFileSync(path.join(root, 'secret.txt'), 'TOP SECRET');
   opts.beforeStart?.(dataDir);
   const log = memLog();
   const clock = { t: Date.parse('2026-10-29T12:00:00Z') };
-  const fake = provider === 'tailscale' ? new FakeTailscale(opts.autoRun ?? true) : undefined;
-  const settings = RemoteAccessSettingsSchema.parse({ enabled: true, provider });
+  const fake = new FakeTailscale(opts.autoRun ?? true);
+  const settings = RemoteAccessSettingsSchema.parse({ enabled: true, sources: opts.sources ?? [provider], port: opts.port ?? 0 });
   const states: RemoteAccessState[] = [];
   const ra = new RemoteAccess({
     dataDir,
@@ -115,8 +127,9 @@ async function setup(
     version: '9.9.9',
     now: () => clock.t,
     staticDir,
-    createProvider: (id) => (id === 'tailscale' ? fake! : new LocalProvider()),
+    createProvider: (id) => (id === 'tailscale' ? fake : new LocalProvider()),
     ...(opts.ipc ? { ipc: opts.ipc } : {}),
+    ...(opts.savePort ? { savePort: opts.savePort } : {}),
   });
   cleanups.push(() => ra.dispose());
   await ra.apply(settings);
@@ -133,7 +146,8 @@ interface Res {
 
 function request(port: number, o: { method?: string; path: string; headers?: Record<string, string>; body?: string | Buffer }): Promise<Res> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, method: o.method ?? 'GET', path: o.path, headers: o.headers }, (res) => {
+    // No shared keep-alive agent: a test that restarts the server on the same port would reuse a dead socket.
+    const req = http.request({ host: '127.0.0.1', port, method: o.method ?? 'GET', path: o.path, headers: o.headers, agent: false }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode!, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -226,6 +240,22 @@ describe('pairing code', () => {
     expect(p.active()).toBeNull();
   });
 
+  it('tells when a wrong try locks the code, and a new code lifts the lock', () => {
+    let locks = 0;
+    const p = new Pairing(() => 0, () => locks++);
+    const { code } = p.newCode();
+    for (let i = 0; i < 4; i++) p.check('WRONGONE');
+    expect(p.lockedCode()).toBeNull();
+    expect(locks).toBe(0);
+    p.check('WRONGONE');
+    expect(p.lockedCode()).toBe(code);
+    expect(locks).toBe(1);
+    expect(p.check(code)).toBe('locked');
+    expect(locks).toBe(1);
+    p.newCode();
+    expect(p.lockedCode()).toBeNull();
+  });
+
   it('ignores case, spaces and dashes', () => {
     expect(normalizeCode(' ab cd-ef gh ')).toBe('ABCDEFGH');
     const p = new Pairing(() => 0);
@@ -238,11 +268,20 @@ describe('pairing code', () => {
     const h = localHeaders(s.port, { 'Content-Type': 'application/json' });
     const { code } = s.ra.newPairingCode();
     for (let i = 0; i < 5; i++) {
+      expect(s.ra.state().lockedCode).toBeUndefined();
       const r = await request(s.port, { method: 'POST', path: '/api/pair', headers: h, body: JSON.stringify({ code: 'ZZZZZZZZ', name: 'x' }) });
       expect(r.status).toBe(401);
     }
+    // The state (and its event, for the Pair Device window) names the locked code.
+    expect(s.ra.state().lockedCode).toBe(code);
+    expect(s.states.at(-1)?.lockedCode).toBe(code);
     const locked = await request(s.port, { method: 'POST', path: '/api/pair', headers: h, body: JSON.stringify({ code, name: 'x' }) });
     expect(locked.status).toBe(429);
+    // A new code lifts it, and the state says so.
+    const next = s.ra.newPairingCode();
+    expect(s.ra.state().lockedCode).toBeUndefined();
+    expect(s.states.at(-1)?.lockedCode).toBeUndefined();
+    expect(next.code).not.toBe(code);
 
     const { res } = await pair(s, localHeaders(s.port), 'My Phone');
     expect(JSON.parse(String(res.body))).toMatchObject({ paired: true, device: { name: 'My Phone' } });
@@ -355,7 +394,7 @@ describe('device cookie', () => {
 describe('local mode', () => {
   it('takes localhost and 127.0.0.1 at its port only', async () => {
     const s = await setup('local');
-    expect(s.ra.state()).toMatchObject({ phase: 'running', url: `http://localhost:${s.port}` });
+    expect(s.ra.state()).toMatchObject({ phase: 'running', sources: [{ id: 'local', phase: 'running', url: `http://localhost:${s.port}` }] });
     for (const host of [`localhost:${s.port}`, `127.0.0.1:${s.port}`]) {
       expect((await request(s.port, { path: '/api/me', headers: { Host: host } })).status).toBe(200);
     }
@@ -377,14 +416,14 @@ describe('local mode', () => {
     const s = await setup('local');
     expect(await s.ra.suggestPort()).toBe(s.port);
     const before = s.states.length;
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'local', port: s.port }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['local'], port: s.port }));
     expect(s.states.slice(before).map((st) => st.phase)).not.toContain('starting');
     expect(s.ra.state()).toMatchObject({ phase: 'running', port: s.port });
   });
 
   it('while off, suggests a port nothing listens on', async () => {
     const s = await setup('local');
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, provider: 'local' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, sources: ['local'] }));
     const port = await s.ra.suggestPort();
     expect(port).toBeGreaterThan(0);
     const probe = http.createServer();
@@ -397,7 +436,7 @@ describe('tailscale mode', () => {
   it('needs the proxy secret and the signed-in account', async () => {
     const s = await setup('tailscale');
     expect(s.fake!.started).toMatchObject({ hostname: 'looper', stateDir: path.join(s.dataDir, 'remote-access', 'tailscale'), port: s.port });
-    expect(s.ra.state()).toMatchObject({ phase: 'running', url: `https://${TS_HOST}`, account: TS_ACCOUNT });
+    expect(s.ra.state()).toMatchObject({ phase: 'running', sources: [{ id: 'tailscale', phase: 'running', url: `https://${TS_HOST}`, account: TS_ACCOUNT }] });
     const ok = tsHeaders(s);
     expect((await request(s.port, { path: '/api/me', headers: ok })).status).toBe(200);
     expect((await request(s.port, { path: '/', headers: { ...ok, [PROXY_SECRET_HEADER]: '' } })).status).toBe(403);
@@ -412,7 +451,7 @@ describe('tailscale mode', () => {
     expect(s.ra.state().phase).toBe('starting');
     expect((await request(s.port, { path: '/', headers: tsHeaders(s) })).status).toBe(403);
     s.fake!.emit({ phase: 'needs-login', loginUrl: 'https://login.tailscale.com/a/x' });
-    expect(s.ra.state()).toMatchObject({ phase: 'needs-login', loginUrl: 'https://login.tailscale.com/a/x' });
+    expect(s.ra.state()).toMatchObject({ phase: 'needs-login', sources: [{ id: 'tailscale', phase: 'needs-login', loginUrl: 'https://login.tailscale.com/a/x' }] });
     expect((await request(s.port, { path: '/', headers: tsHeaders(s) })).status).toBe(403);
     s.fake!.emit({ phase: 'running', url: `https://${TS_HOST}`, account: TS_ACCOUNT });
     expect((await request(s.port, { path: '/', headers: tsHeaders(s) })).status).toBe(200);
@@ -519,11 +558,11 @@ describe('WebSocket', () => {
       return (await welcome) as Extract<ServerMessage, { t: 'welcome' }>;
     };
     const first = await hello(s.port);
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, provider: 'local' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, sources: ['local'] }));
     expect(s.ra.clients.list()).toHaveLength(1);
     expect(s.ra.clients.list()[0].connected).toBe(false);
     expect(s.ra.clients.list()[0].disposed).toBe(false);
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'local' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['local'] }));
     const again = await hello(s.ra.state().port!, first.clientId);
     expect(again).toMatchObject({ clientId: first.clientId, resumed: true });
   });
@@ -636,7 +675,7 @@ describe('provider-bound devices', () => {
     const s = await setup('tailscale');
     const { cookie: tsCookie } = await pair(s, tsHeaders(s));
     expect(s.ra.state().devices.map((d) => d.provider)).toEqual(['tailscale']);
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'local' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['local'] }));
     const port = s.ra.state().port!;
     const me = await request(port, { path: '/api/me', headers: localHeaders(port, { Cookie: tsCookie }) });
     expect(JSON.parse(String(me.body))).toEqual({ paired: false });
@@ -644,9 +683,159 @@ describe('provider-bound devices', () => {
     expect(ws.status).toBe(401);
     // It stays in the list, and works again once Tailscale is back.
     expect(s.ra.state().devices.map((d) => d.provider)).toEqual(['tailscale']);
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, provider: 'tailscale' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: true, sources: ['tailscale'] }));
     const back = await request(s.ra.state().port!, { path: '/api/me', headers: tsHeaders(s, { Cookie: tsCookie }) });
     expect(JSON.parse(String(back.body))).toMatchObject({ paired: true });
+  });
+});
+
+describe('several sources at once', () => {
+  it('serves this computer and Tailscale together, each device through its own source', async () => {
+    const s = await setup('tailscale', { sources: ['local', 'tailscale'] });
+    expect(s.ra.state()).toMatchObject({
+      phase: 'running',
+      port: s.port,
+      sources: [
+        { id: 'tailscale', phase: 'running', url: `https://${TS_HOST}`, account: TS_ACCOUNT },
+        { id: 'local', phase: 'running', url: `http://localhost:${s.port}` },
+      ],
+    });
+    expect(remoteAccessStatusItems(s.ra.state())).toEqual([`Tailscale: https://${TS_HOST}`, `Host Computer: http://localhost:${s.port}`]);
+
+    const { cookie: local } = await pair(s, localHeaders(s.port), 'Laptop');
+    const { cookie: ts, res } = await pair(s, tsHeaders(s), 'Phone');
+    expect(String(res.headers['set-cookie'])).toMatch(/; Secure/);
+    expect(s.ra.state().devices.map((d) => [d.name, d.provider])).toEqual([
+      ['Laptop', 'local'],
+      ['Phone', 'tailscale'],
+    ]);
+    const me = async (headers: Record<string, string>) => JSON.parse(String((await request(s.port, { path: '/api/me', headers })).body)) as MeResponse;
+    expect(await me(localHeaders(s.port, { Cookie: local }))).toMatchObject({ paired: true, device: { name: 'Laptop' } });
+    expect(await me(tsHeaders(s, { Cookie: ts }))).toMatchObject({ paired: true, device: { name: 'Phone' } });
+    // A cookie works only through the source it was paired through.
+    expect(await me(localHeaders(s.port, { Cookie: ts }))).toEqual({ paired: false });
+    expect(await me(tsHeaders(s, { Cookie: local }))).toEqual({ paired: false });
+    // A request carrying the proxy secret header is judged as Tailscale's alone, even from this computer.
+    expect((await request(s.port, { path: '/api/me', headers: localHeaders(s.port, { [PROXY_SECRET_HEADER]: 'guess' }) })).status).toBe(403);
+
+    const ws = await openWs(s.port, tsHeaders(s, { Cookie: ts, Origin: `https://${TS_HOST}` }));
+    expect(ws.status).toBeUndefined();
+    cleanups.push(() => ws.ws.terminate());
+    const local401 = await openWs(s.port, { Origin: `http://localhost:${s.port}`, Host: `localhost:${s.port}`, Cookie: ts });
+    expect(local401.status).toBe(401);
+  });
+
+  it('a pairing code works through every running source', async () => {
+    const s = await setup('tailscale', { sources: ['local', 'tailscale'] });
+    const c = s.ra.newPairingCode();
+    // The Pair Device window offers each running source's address.
+    expect(s.ra.state().sources.map((x) => [x.id, x.url])).toEqual([
+      ['tailscale', `https://${TS_HOST}`],
+      ['local', `http://localhost:${s.port}`],
+    ]);
+    // While Tailscale waits for a sign-in, the code still works through this computer.
+    s.fake.emit({ phase: 'needs-login', loginUrl: 'https://login.tailscale.com/a/x' });
+    expect(s.ra.state().phase).toBe('running');
+    const r = await request(s.port, {
+      method: 'POST',
+      path: '/api/pair',
+      headers: localHeaders(s.port, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ code: c.code, name: 'Laptop' }),
+    });
+    expect(r.status).toBe(200);
+    expect(s.ra.state().sources.filter((x) => x.phase === 'running').map((x) => x.id)).toEqual(['local']);
+  });
+
+  it('adds and removes a source without restarting the server or cutting the other source', async () => {
+    const s = await setup('local');
+    const { cookie } = await pair(s, localHeaders(s.port));
+    const { ws } = await openWs(s.port, { Origin: `http://localhost:${s.port}`, Host: `localhost:${s.port}`, Cookie: cookie });
+    cleanups.push(() => ws.terminate());
+    ws.send(JSON.stringify({ t: 'hello', platform: 'web' }));
+    await waitFor(() => s.ra.state().devices[0]?.connected === 1);
+
+    s.settings.sources = ['tailscale', 'local'];
+    await s.ra.apply(s.settings);
+    expect(s.ra.state()).toMatchObject({ phase: 'running', port: s.port });
+    expect(s.ra.state().sources.map((x) => [x.id, x.phase])).toEqual([
+      ['tailscale', 'running'],
+      ['local', 'running'],
+    ]);
+    expect(s.fake.started?.port).toBe(s.port);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+
+    s.settings.sources = ['tailscale'];
+    await s.ra.apply(s.settings);
+    // This computer's browser is refused now, and its connection is cut.
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+    expect((await request(s.port, { path: '/api/me', headers: localHeaders(s.port) })).status).toBe(403);
+    expect((await request(s.port, { path: '/api/me', headers: tsHeaders(s) })).status).toBe(200);
+    expect(s.ra.state().sources.map((x) => x.id)).toEqual(['tailscale']);
+  });
+
+  it('turned on with no source chosen stays off', async () => {
+    const s = await setup('local');
+    s.settings.sources = [];
+    await s.ra.apply(s.settings);
+    expect(s.ra.state()).toMatchObject({ phase: 'off', sources: [] });
+    expect(remoteAccessStatusItems(s.ra.state())).toEqual([]);
+  });
+});
+
+describe('restarts and updates', () => {
+  it('saves the port it picked, so the address stays the same', async () => {
+    const saved: number[] = [];
+    const s = await setup('local', { savePort: (p) => saved.push(p) });
+    expect(saved).toEqual([s.port]);
+    const before = s.states.length;
+    s.settings.port = s.port;
+    await s.ra.apply(s.settings);
+    expect(s.states.slice(before).map((st) => st.phase)).not.toContain('starting');
+  });
+
+  it('a device paired before a restart still works after it, at the same address', async () => {
+    const first = await setup('local');
+    const root = path.dirname(first.dataDir);
+    const { cookie } = await pair(first, localHeaders(first.port), 'Laptop');
+    const port = first.port;
+    await first.ra.dispose();
+    // Looper starts again (an update installs and relaunches it): same data, the port the first start saved.
+    const again = await setup('local', { root, port });
+    expect(again.port).toBe(port);
+    const me = await request(port, { path: '/api/me', headers: localHeaders(port, { Cookie: cookie }) });
+    expect(JSON.parse(String(me.body))).toMatchObject({ paired: true, device: { name: 'Laptop' } });
+    const ws = await openWs(port, { Origin: `http://localhost:${port}`, Host: `localhost:${port}`, Cookie: cookie });
+    expect(ws.status).toBeUndefined();
+    cleanups.push(() => ws.ws.terminate());
+  });
+
+  it('keeps settings an older Looper wrote: its provider field is dropped, not the whole settings', () => {
+    const old = SettingsSchema.safeParse({ remoteAccess: { enabled: true, provider: 'tailscale', name: 'PC', hostname: 'pc-looper', port: 60123 } });
+    expect(old.success).toBe(true);
+    expect(old.data?.remoteAccess).toEqual({ enabled: true, sources: [], name: 'PC', hostname: 'pc-looper', port: 60123 });
+    expect(RemoteAccessSettingsSchema.safeParse({ sources: ['local', 'local'] }).success).toBe(false);
+  });
+});
+
+describe('Set Up sign-in', () => {
+  it('runs Tailscale alone until Remote Access runs it, and stops on endSignIn', async () => {
+    const s = await setup('local');
+    await s.ra.beginSignIn('my-pc');
+    expect(s.fake.started).toMatchObject({ hostname: 'my-pc', stateDir: path.join(s.dataDir, 'remote-access', 'tailscale') });
+    expect(s.fake.started?.port).not.toBe(s.port);
+    expect(s.ra.state().setup).toMatchObject({ id: 'tailscale', phase: 'running', account: TS_ACCOUNT });
+    // Remote Access's own state doesn't count it as a source.
+    expect(s.ra.state().sources.map((x) => x.id)).toEqual(['local']);
+    await s.ra.endSignIn();
+    expect(s.ra.state().setup).toBeUndefined();
+
+    await s.ra.beginSignIn('my-pc');
+    s.settings.sources = ['tailscale', 'local'];
+    s.settings.hostname = 'my-pc';
+    await s.ra.apply(s.settings);
+    // Tailscale as a source takes the helper's place.
+    expect(s.ra.state().setup).toBeUndefined();
+    expect(s.fake.started?.port).toBe(s.port);
   });
 });
 
@@ -796,7 +985,7 @@ describe('providers', () => {
 
   it('turning off stops the server and says so', async () => {
     const s = await setup('local');
-    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, provider: 'local' }));
+    await s.ra.apply(RemoteAccessSettingsSchema.parse({ enabled: false, sources: ['local'] }));
     expect(s.ra.state().phase).toBe('off');
     expect(s.states.at(-1)?.phase).toBe('off');
     await expect(request(s.port, { path: '/', headers: localHeaders(s.port) })).rejects.toThrow();

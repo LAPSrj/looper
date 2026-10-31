@@ -1044,6 +1044,14 @@ html.phone-window .phone-conversation .sessions-center {
   flex: 1;
   min-height: 0;
 }
+/* A workflow's page: its log and result inside a list section. */
+html.phone-window .pg-list .workflow-log {
+  margin: 0;
+  padding: 10px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
 html.phone-window .chat-app,
 html.phone-window .messages-app,
 html.phone-window .builder-app,

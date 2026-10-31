@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   autoTrustWorkspace,
   availableEnvironmentKinds,
+  closesWhenCacheExpires,
+  harnessOptions,
+  startsWithRemoteControl,
   harnessKindLabel,
   harnessModels,
   pathFlavor,
@@ -117,6 +120,19 @@ describe('resolution', () => {
   it('harness trust switch defaults on and can be turned off', () => {
     expect(autoTrustWorkspace(claude2)).toBe(true);
     expect(autoTrustWorkspace({ ...claude2, options: { autoTrustWorkspace: false } })).toBe(false);
+  });
+
+  it('Remote Control options: off and on by default, Claude Code only, and only non-defaults are saved', () => {
+    expect(startsWithRemoteControl(claude2)).toBe(false);
+    expect(startsWithRemoteControl({ ...claude2, options: { remoteControl: true } })).toBe(true);
+    expect(startsWithRemoteControl({ ...codex, options: { remoteControl: true } })).toBe(false);
+    expect(closesWhenCacheExpires(claude2)).toBe(true);
+    expect(closesWhenCacheExpires({ ...claude2, options: { closeWhenCacheExpires: false } })).toBe(false);
+    const all = { autoTrustWorkspace: false, remoteControl: true, closeWhenCacheExpires: false };
+    expect(harnessOptions({ ...claude2, options: all })).toEqual(all);
+    expect(harnessOptions({ ...claude2, options: { autoTrustWorkspace: true, remoteControl: undefined, closeWhenCacheExpires: true } })).toBeUndefined();
+    expect(harnessOptions({ ...codex, options: all })).toEqual({ autoTrustWorkspace: false });
+    expect(harnessOptions({ ...codex, kind: 'custom', options: all })).toBeUndefined();
   });
 
   it('offers the kind main models unless the harness sets its own', () => {

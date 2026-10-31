@@ -145,6 +145,27 @@ describe("task builder Undo/Redo, Save and Don't Save", { timeout: 60_000 }, () 
     expect(readFileSync(check, 'utf8')).toBe('v2\n');
   });
 
+  it('treats a task renamed in the editor as saved, unless the agent changed the draft meanwhile', async () => {
+    const t = await setUp();
+    engine = t.engine;
+    const { id, prompt } = t;
+    // Update… opens the editor on the draft; the user renames the task there and saves.
+    const draft = engine.builderDraft(id);
+    engine.saveTask({ ...draft, name: 'Renamed' }, { builderId: id });
+    await until(async () => !(await engine!.builderUnsaved(id)), 'the rename to count as saved');
+    expect(engine.getBuilder(id)?.draft.raw?.name).toBe('Renamed');
+    expect(prompt()).toBe('two');
+
+    // The agent rewrote the draft after the editor opened: its work is still unsaved.
+    const next = engine.builderDraft(id);
+    const file = join(engine.dataDir, 'builder', id, 'draft.json');
+    writeFileSync(file, JSON.stringify({ ...next, agent: { ...(next.agent as object), prompt: 'agent wrote this' } }));
+    engine.saveTask({ ...next, name: 'Renamed again' }, { builderId: id });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await engine.builderUnsaved(id)).toBe(true);
+    expect(prompt()).toBe('agent wrote this');
+  });
+
   it("saves the agent's work as its version, and Don't Save puts later changes back", async () => {
     const t = await setUp();
     engine = t.engine;

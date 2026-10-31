@@ -50,8 +50,9 @@ const SLOW_DRAW_MS = 500;
 
 /**
  * An addon's screen, drawn from the nodes it sent: in the main window's
- * detail area (`main`) or as the whole of an addon window (`window`, with its
- * footer as the window's Save | Cancel | Apply).
+ * detail area (`main`), as the whole of an addon window (`window`, with its
+ * footer as the window's Save | Cancel | Apply), or as its body alone inside
+ * another view (`inline`: a tool call's result on the Now tab).
  */
 export function AddonScreenView({
   addonId,
@@ -66,7 +67,7 @@ export function AddonScreenView({
   addonName: string;
   view: string;
   params: Record<string, unknown>;
-  mode: 'main' | 'window';
+  mode: 'main' | 'window' | 'inline';
   /** `main`: the end of the window's toolbar, where the screen's toolbar buttons go. */
   toolbarSlot?: HTMLElement | null;
   /** The slot follows other buttons: a separator comes first. */
@@ -405,6 +406,7 @@ export function AddonScreenView({
     <AddonToolbarButtons items={screen.toolbar} busy={busy} onClick={(id, confirm) => void send('click', id, confirm)} />
   ) : null;
 
+  if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || screen?.body.map(node)}</div>;
   if (mode === 'main') {
     return (
       <div className="detail addon-screen">

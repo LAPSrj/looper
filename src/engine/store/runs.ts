@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ChatInfo, TerminalInfo } from '../../shared/chat';
+import { attachmentName, type ChatInfo, type TerminalInfo } from '../../shared/chat';
 import { groupRuns, type RunSummary } from '../../shared/runs';
 import type { RunRecord } from '../../shared/types';
 import { ensureDir, writeJsonAtomic } from './fsutil';
@@ -62,7 +62,7 @@ export class RunStore {
 
   /** The file's own name, without the stamp saveAttachment put in front. */
   static attachmentName(file: string): string {
-    return path.basename(file).replace(/^\d{8}-\d{6}-[a-z0-9]{4}-/, '');
+    return attachmentName(file);
   }
 
   /** Delete attachments older than `cutoffMs`; returns how many. */

@@ -5,11 +5,11 @@ import { createEngine, type Engine } from '../engine/engine';
 import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
 import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
-import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
+import { ViewSchema, type EngineEvent, type PreventSleepTimer, type Settings } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
 import { projectTaskId } from '../shared/projects';
 import { chatIsEmpty, type ChatSettingMenu, type ChatSettings, type ChatState } from '../shared/chat';
-import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, startsWithRemoteControl } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
 import { FILE_KINDS, isAddonFileName, isLooperFileName, readLooperFile } from '../shared/files';
@@ -35,16 +35,18 @@ import {
   showMessageBox,
   showOpenDialog,
   showSaveDialog,
+  placeAs,
   useRemoteClients,
+  useWindowPlaces,
   windowOf,
   WindowSlots,
   writeClipboard,
   type AppWindow,
   type RemoteWindow,
 } from './platform';
-import { RemoteAccess } from './remote-access';
+import { RemoteAccess, wanted } from './remote-access';
 import { pwaIcons } from './pwa-icons';
-import type { RemoteAccessPhase } from '../shared/remote-access';
+import { SOURCE_NAMES, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState } from '../shared/remote-access';
 import { paneVisibilityItems, taskListMenu } from './view-menu';
 
 let win: BrowserWindow | null = null;
@@ -54,9 +56,15 @@ let tray: Tray | null = null;
 let quitting = false;
 /** Whether Remote Control was on at its last event: the menus change only when this does. */
 let remoteRunning = false;
+/** The Prevent Sleep timer at its last event: the menus change only when this does. */
+let preventSleepTimer: PreventSleepTimer = 'off';
 let remoteAccess: RemoteAccess | null = null;
-/** Remote Access's phase at its last event: the menu changes only when this does. */
+/** Remote Access's phase at its last event. */
 let remoteAccessPhase: RemoteAccessPhase = 'off';
+/** What the Remote Access menu shows from the state (its phase, Tailscale's sign-in): the menu changes only when this does. */
+let remoteAccessMenuKey = '';
+/** Each source's phase at the last event, and the server's error: a sign-in or error dialog comes once per change. */
+const remoteAccessSourcePhases = new Map<RemoteAccessProviderId | 'server', RemoteAccessPhase>();
 
 // The engine must survive anything the UI or a child process throws at it.
 process.on('uncaughtException', (err) => {
@@ -99,8 +107,10 @@ if (!app.requestSingleInstanceLock()) {
     engine = createEngine({
       dataDir,
       ...(process.platform === 'win32' ? { power: createPowerAdapter() } : {}),
+      keepAwake: createKeepAwake(),
     });
     engine.start();
+    useWindowPlaces(path.join(dataDir, 'windows.json'));
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
       else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
@@ -117,14 +127,19 @@ if (!app.requestSingleInstanceLock()) {
         if (event.disarmReason === 'user-wake') showRestDisarmNotification();
         tray?.setContextMenu(trayMenu());
         rebuildMenu();
+      } else if (event.type === 'prevent-sleep' && event.state.timer !== preventSleepTimer) {
+        // The Prevent Sleep choice and the Rest Mode item follow the timer.
+        preventSleepTimer = event.state.timer;
+        tray?.setContextMenu(trayMenu());
+        rebuildMenu();
       } else if (event.type === 'remote' && event.state.running !== remoteRunning) {
-        // Start/Stop Remote Control and the Rest Mode item follow it.
+        // Turn On/Off Remote Control and the Rest Mode item follow it.
         remoteRunning = event.state.running;
         tray?.setContextMenu(trayMenu());
         rebuildMenu();
       }
     });
-    // Start with Looper turned it on before the listener above was there.
+    // Turned on, it started with the engine, before the listener above was there.
     remoteRunning = engine.remoteState().running;
     registerIpc(engine, {
       getWindow: () => win,
@@ -171,9 +186,11 @@ if (!app.requestSingleInstanceLock()) {
       remoteAccess: () => remoteAccess,
       openRemoteAccessPair: openRemoteAccessPairWindow,
       openRemoteAccessRename: openRemoteAccessRenameWindow,
+      finishRemoteAccessSetup,
       openNotification,
       openProjectEditor,
       openNewTaskIn,
+      openInFolder,
       takeImportDraft,
       openLooperFile,
       updateTaskMenu,
@@ -186,14 +203,13 @@ if (!app.requestSingleInstanceLock()) {
       version: app.getVersion(),
       ipc,
       icon: pwaIcons(appIcon),
+      savePort: (port) => {
+        const ra = eng.settings.remoteAccess;
+        if (ra.port === 0) eng.updateSettings({ remoteAccess: { ...ra, port } });
+      },
       emit: (state) => {
         broadcastEvent({ type: 'remote-access', state });
-        if (state.phase !== remoteAccessPhase) {
-          remoteAccessPhase = state.phase;
-          rebuildMenu();
-          if (state.phase === 'needs-login') void askTailscaleSignIn();
-          else if (state.phase === 'error') void remoteAccessErrorBox(state.message);
-        }
+        remoteAccessChanged(state);
       },
     });
     useRemoteClients(remoteAccess.clients);
@@ -334,8 +350,8 @@ function quitWarning(): { message: string; detail: string } | null {
   const message: string[] = [];
   const stops: string[] = [];
   if (terminals > 0) {
-    message.push(terminals === 1 ? 'A terminal session is still open.' : `${terminals} terminal sessions are still open.`);
-    stops.push(terminals === 1 ? 'the session' : 'the sessions');
+    message.push(terminals === 1 ? 'A terminal session is still running.' : `${terminals} terminal sessions are still running.`);
+    stops.push(terminals === 1 ? "the session's agent" : "the sessions' agents");
   }
   if (remote > 0) {
     message.push(remote === 1 ? 'A Remote Control conversation is still open.' : `${remote} Remote Control conversations are still open.`);
@@ -343,7 +359,7 @@ function quitWarning(): { message: string; detail: string } | null {
   }
   if (chats > 0) {
     message.push(chats === 1 ? 'An agent in a chat is still working.' : `Agents in ${chats} chats are still working.`);
-    stops.push(chats === 1 ? 'the chat' : 'the chats');
+    stops.push(chats === 1 ? 'the agent' : 'the agents');
   }
   if (running > 0) {
     message.push(running === 1 ? 'A task is still running.' : `${running} tasks are still running.`);
@@ -353,7 +369,9 @@ function quitWarning(): { message: string; detail: string } | null {
     message.push(watching === 1 ? 'A task is watching for events.' : `${watching} tasks are watching for events.`);
     stops.push(watching === 1 ? 'the watcher until Looper starts again' : 'the watchers until Looper starts again');
   }
-  return { message: message.join(' '), detail: `Quitting Looper stops ${stops.join(' and ')}.` };
+  // The chats and terminal sessions themselves stay: the next start lists them again with their conversations.
+  const stay = terminals > 0 || chats > 0 ? ' The chats and terminal sessions stay in the Chats window, with their conversations, for when Looper starts again.' : '';
+  return { message: message.join(' '), detail: `Quitting Looper stops ${stops.join(' and ')}.${stay}` };
 }
 
 /** Set once a quit was confirmed against active runs, so no quit path asks twice. */
@@ -438,6 +456,19 @@ function createPowerAdapter(): PowerAdapter {
   };
 }
 
+/** Prevent Sleep's blocker, apart from Rest Mode's. */
+function createKeepAwake(): (on: boolean) => void {
+  let blockerId: number | null = null;
+  return (on) => {
+    if (on) {
+      if (blockerId === null || !powerSaveBlocker.isStarted(blockerId)) blockerId = powerSaveBlocker.start('prevent-app-suspension');
+      return;
+    }
+    if (blockerId !== null && powerSaveBlocker.isStarted(blockerId)) powerSaveBlocker.stop(blockerId);
+    blockerId = null;
+  };
+}
+
 /** Arm (with a wake-timer preflight) or disarm Rest Mode from a menu. */
 async function toggleRestMode(): Promise<void> {
   if (!engine) return;
@@ -474,23 +505,61 @@ async function toggleRestMode(): Promise<void> {
 function restMenuItems(): Electron.MenuItemConstructorOptions[] {
   if (engine?.host !== 'windows') return [];
   const armed = engine.restState().armed;
-  // A sleeping computer drops Remote Control's sessions: Rest Mode waits until it stops.
-  const enabled = armed || !engine.remoteState().running;
-  return [{ label: armed ? 'Stop &Rest Mode' : 'Start &Rest Mode', enabled, click: () => void toggleRestMode() }];
+  // A sleeping computer drops Remote Control's sessions, and a Prevent Sleep timer
+  // keeps the computer awake: Rest Mode waits until both are off.
+  const enabled = armed || (!engine.remoteState().running && engine.preventSleepState().timer === 'off');
+  return [{ label: armed ? 'Stop Res&t Mode' : 'Start Res&t Mode', enabled, click: () => void toggleRestMode() }];
 }
 
-/** Advanced → Remote Control → Start/Stop: for this run of Looper only. */
+/** Advanced → Prevent Sleep: the timer's choices (for this run of Looper), then the saved While a Session Is Working. */
+function preventSleepMenu(): Electron.MenuItemConstructorOptions[] {
+  const timer = engine?.preventSleepState().timer ?? 'off';
+  const choices: [PreventSleepTimer, string][] = [
+    ['off', '&Off'],
+    [30, '&30 Minutes'],
+    [60, '&1 Hour'],
+    [120, '&2 Hours'],
+    ['until-off', '&Until Turned Off'],
+  ];
+  return [
+    ...choices.map(([value, label]): Electron.MenuItemConstructorOptions => ({
+      label,
+      type: 'radio',
+      checked: timer === value,
+      click: () => engine?.setPreventSleep(value),
+    })),
+    { type: 'separator' },
+    {
+      label: 'While a Session Is &Working',
+      type: 'checkbox',
+      checked: engine?.settings.preventSleepWhileWorking ?? false,
+      click: (item) => engine?.updateSettings({ preventSleepWhileWorking: item.checked }),
+    },
+  ];
+}
+
+/** Advanced → Remote Control → Turn On / Turn Off: saved, so it starts with Looper while it's on. */
 async function toggleRemote(): Promise<void> {
   if (!engine) return;
-  if (!engine.remoteState().running) {
-    engine.startRemote();
-    if (engine.settings.remote.helpers.length === 0 && !engine.listProjects().some((p) => p.remote)) {
+  const setEnabled = (enabled: boolean): boolean => {
+    try {
+      engine!.updateSettings({ remote: { ...engine!.settings.remote, enabled } });
+      return true;
+    } catch (err) {
+      void showMessageBox(undefined, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+      return false;
+    }
+  };
+  if (!engine.settings.remote.enabled) {
+    if (!setEnabled(true)) return;
+    const harnessUsesIt = engine.settings.environments.some((e) => e.harnesses.some(startsWithRemoteControl));
+    if (engine.settings.remote.helpers.length === 0 && !engine.listProjects().some((p) => p.remote) && !harnessUsesIt) {
       await showMessageBox(undefined, {
         type: 'info',
         title: 'Looper',
         message: 'Remote Control is on, but no helper or project keeps a conversation open yet.',
         detail:
-          'Add a helper in Advanced → Remote Control → Settings, or check "Keep a Remote Control conversation open" in a project\'s Edit Project window.',
+          'Add a helper in Advanced → Remote Control → Helpers, check "Keep a Remote Control conversation open" in a project\'s Edit Project window, or check "Start new conversations with Remote Control" in a Claude Code harness.',
         buttons: ['OK'],
       });
     }
@@ -502,15 +571,15 @@ async function toggleRemote(): Promise<void> {
       type: 'question',
       title: 'Looper',
       message: used === 1 ? 'A Remote Control conversation is still open.' : `${used} Remote Control conversations are still open.`,
-      detail: 'Stopping Remote Control ends every one of its sessions.',
-      buttons: ['Stop', 'Cancel'],
+      detail: 'Turning off Remote Control ends every one of its sessions.',
+      buttons: ['Turn Off', 'Cancel'],
       noLink: true,
       defaultId: 1,
       cancelId: 1,
     });
     if (r.response !== 0) return;
   }
-  engine.stopRemote();
+  setEnabled(false);
 }
 
 function showRestDisarmNotification(): void {
@@ -1531,18 +1600,23 @@ function openTerminalWindow(sessionId: string, title: string): void {
 
 // ---------- Remote Control ----------
 
-/** An open conversation in a Looper terminal window (it keeps running when the window closes), an ended one in its run window. */
+/**
+ * An open conversation of Remote Control's own in a Looper terminal window (it
+ * keeps running when the window closes), an open chat or terminal it lists in
+ * the Chats window, an ended one in its run window.
+ */
 async function openRemoteConversation(id: string): Promise<void> {
   if (!engine) return;
   const conv = engine.remoteState().conversations.find((c) => c.id === id);
   if (!conv) return;
   if (conv.status === 'ended') openMessagesWindow(conv.taskId, conv.id);
+  else if (conv.source === 'chat' || conv.source === 'terminal') openSessionsWindow(conv.id);
   else openTerminalWindow(conv.id, `${conv.title ?? conv.name} – Remote Control`);
 }
 
-/** Advanced → Remote Control → Settings: modal, like the other settings windows. */
-function openRemoteSettingsWindow(): void {
-  openChildWindow('remote-settings', 'Remote Control', 640, 360, win, { contentSize: true });
+/** Advanced → Remote Control → Helpers: modal, like the settings windows. */
+function openRemoteHelpersWindow(): void {
+  openChildWindow('remote-helpers', 'Helpers', 640, 440, win, { contentSize: true });
 }
 
 // Page sizes: every field shows without a scroll bar.
@@ -1559,15 +1633,87 @@ function applyRemoteAccess(): void {
   remoteAccess.apply(engine.settings.remoteAccess).catch((err: unknown) => engine?.log.error(`remote access: ${String(err)}`));
 }
 
-/** Advanced → Remote Access → Turn On / Turn Off. */
+/** Remote Access is on: turned on, with a source chosen. */
+const remoteAccessOn = (): boolean => !!engine && wanted(engine.settings.remoteAccess) !== null;
+
+/** Advanced → Remote Access → Turn On / Turn Off. With no source chosen yet, Turn On opens Set Up instead. */
 function toggleRemoteAccess(): void {
   if (!engine) return;
   const ra = engine.settings.remoteAccess;
-  engine.updateSettings({ remoteAccess: { ...ra, enabled: !ra.enabled } });
+  if (remoteAccessOn()) {
+    pairWhenRunning = null;
+    engine.updateSettings({ remoteAccess: { ...ra, enabled: false } });
+  } else if (!ra.sources.length) openRemoteAccessSetupWindow();
+  else engine.updateSettings({ remoteAccess: { ...ra, enabled: true } });
+}
+
+/** Every Remote Access event: the menu, Set Up's pending Pair Device, and a dialog for a source that waits for a sign-in or fails. */
+function remoteAccessChanged(state: RemoteAccessState): void {
+  remoteAccessPhase = state.phase;
+  const tailscale = state.sources.find((s) => s.id === 'tailscale');
+  const menuKey = `${state.phase}|${tailscale?.phase ?? ''}|${tailscale?.account ?? ''}`;
+  if (menuKey !== remoteAccessMenuKey) {
+    remoteAccessMenuKey = menuKey;
+    rebuildMenu();
+  }
+  if (pairWhenRunning && (state.phase === 'running' || state.phase === 'error')) {
+    const { parent } = pairWhenRunning;
+    pairWhenRunning = null;
+    if (state.phase === 'running') openRemoteAccessPairWindow(parent && !parent.isDestroyed() ? parent : mainWin());
+  }
+  const now = new Map<RemoteAccessProviderId | 'server', RemoteAccessPhase>(state.sources.map((s) => [s.id, s.phase]));
+  if (state.phase === 'error' && !state.sources.length) now.set('server', 'error');
+  for (const [id, phase] of now) {
+    if (remoteAccessSourcePhases.get(id) === phase) continue;
+    // Set Up shows Tailscale's sign-in itself.
+    if (id === 'tailscale' && phase === 'needs-login' && !remoteAccessSetupWindows.all().length) void askTailscaleSignIn();
+    else if (phase === 'error') {
+      const s = state.sources.find((x) => x.id === id);
+      void remoteAccessErrorBox(id === 'server' ? state.message : `${SOURCE_NAMES[id]}: ${s?.message ?? 'it stopped working.'}`);
+    }
+  }
+  remoteAccessSourcePhases.clear();
+  for (const [id, phase] of now) remoteAccessSourcePhases.set(id, phase);
 }
 
 function openRemoteAccessSettingsWindow(): void {
-  openChildWindow('remote-access-settings', 'Remote Access', 560, 344, win, { contentSize: true, minHeight: 344 });
+  openChildWindow('remote-access-settings', 'Remote Access', 560, 400, win, { contentSize: true, minHeight: 400 });
+}
+
+const remoteAccessSetupWindows = new WindowSlots();
+/** Set Up's Finish asked for Pair Device: it opens once Remote Access runs (Tailscale takes a few seconds). */
+let pairWhenRunning: { parent: AppWindow | null } | null = null;
+
+/** Advanced → Remote Access → Set Up: the wizard that chooses the sources, signs in to Tailscale and turns Remote Access on. */
+function openRemoteAccessSetupWindow(): void {
+  const open = remoteAccessSetupWindows.get();
+  if (open) {
+    open.focus();
+    return;
+  }
+  const child = openChildWindow('remote-access-setup', 'Set Up Remote Access', 560, 460, win, { contentSize: true, minHeight: 460, resizable: false });
+  remoteAccessSetupWindows.set(child);
+  child.on('closed', () => {
+    if (!remoteAccessSetupWindows.all().length) void remoteAccess?.endSignIn();
+  });
+}
+
+/** Set Up's Finish: save its choices and turn Remote Access on; with `pair`, Pair Device follows once it runs. */
+async function finishRemoteAccessSetup(choice: { sources?: unknown; hostname?: unknown }, pair: boolean): Promise<void> {
+  if (!engine || !remoteAccess) throw new Error("Remote Access isn't ready yet.");
+  const parent = mainWin();
+  await remoteAccess.endSignIn();
+  engine.updateSettings({
+    remoteAccess: {
+      ...engine.settings.remoteAccess,
+      ...(choice.sources !== undefined ? { sources: choice.sources } : {}),
+      ...(choice.hostname !== undefined ? { hostname: choice.hostname } : {}),
+      enabled: true,
+    },
+  });
+  if (!pair) return;
+  if (remoteAccess.state().phase === 'running') openRemoteAccessPairWindow(parent);
+  else pairWhenRunning = { parent };
 }
 
 const remoteAccessDevicesWindows = new WindowSlots();
@@ -1624,15 +1770,18 @@ async function remoteAccessErrorBox(message: string | undefined): Promise<void> 
 
 /** Advanced → Remote Access → Sign In to Tailscale: Tailscale's sign-in page, in the browser. */
 async function openTailscaleSignIn(): Promise<void> {
-  const url = remoteAccess?.state().loginUrl;
+  const url = tailscaleStatus()?.loginUrl;
   if (url && /^https:\/\//i.test(url)) await openExternal(url);
 }
 
-/** With Tailscale chosen: Sign Out while signed in, else Sign In, which works while Tailscale asks for it. */
+/** Tailscale's status while it's a running source. */
+const tailscaleStatus = () => remoteAccess?.state().sources.find((s) => s.id === 'tailscale');
+
+/** With Tailscale among the sources: Sign Out while signed in, else Sign In, which works while Tailscale asks for it. */
 function tailscaleMenuItems(): Electron.MenuItemConstructorOptions[] {
-  if (engine?.settings.remoteAccess.provider !== 'tailscale') return [];
-  const s = remoteAccess?.state();
-  const signedIn = s?.phase === 'running' && s.provider === 'tailscale' && !!s.account;
+  if (!engine?.settings.remoteAccess.sources.includes('tailscale')) return [];
+  const s = tailscaleStatus();
+  const signedIn = s?.phase === 'running' && !!s.account;
   return [
     { type: 'separator' },
     signedIn
@@ -1645,7 +1794,7 @@ function tailscaleMenuItems(): Electron.MenuItemConstructorOptions[] {
 async function signOutOfTailscale(): Promise<void> {
   const ra = remoteAccess;
   if (!ra) return;
-  const account = ra.state().account;
+  const account = tailscaleStatus()?.account;
   const parent = mainWin();
   const { response } = await showMessageBox(parent, {
     type: 'question',
@@ -1674,9 +1823,9 @@ function openRemoteAccessPairWindow(parent: AppWindow | null = mainWin()): void 
     open.focus();
     return;
   }
-  const child = openChildWindow('remote-access-pair', 'Pair Device', 420, 520, parent, {
+  const child = openChildWindow('remote-access-pair', 'Pair Device', 420, 590, parent, {
     minWidth: 420,
-    minHeight: 520,
+    minHeight: 590,
     resizable: false,
     contentSize: true,
   });
@@ -1724,6 +1873,20 @@ function openProjectChat(projectId: string): void {
   void openChat(projectTaskId(projectId)).catch((err: unknown) => {
     void showMessageBox(undefined, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
   });
+}
+
+/**
+ * Other Folder…: a new chat or terminal in a folder picked over `parent`, with
+ * no project (a project on the folder gets it). Rejects with the reason.
+ */
+async function openInFolder(kind: 'chat' | 'terminal', parent: AppWindow | null): Promise<void> {
+  if (!engine) return;
+  const title = kind === 'chat' ? 'New Chat in Folder' : 'New Terminal in Folder';
+  const r = await showOpenDialog(parent, { title, properties: ['openDirectory'] });
+  const folder = r.canceled ? undefined : r.filePaths[0];
+  if (!folder) return;
+  const taskId = engine.folderTaskId(folder);
+  await (kind === 'chat' ? openChat(taskId) : openTerminal(taskId));
 }
 
 const remoteConversationsWindows = new WindowSlots();
@@ -1831,6 +1994,8 @@ function chatMenu(
   sendNow: () => void,
   configure: (patch: Partial<ChatSettings>) => void,
   setHarness: (harnessId: string) => void,
+  /** The harness's own id for the conversation, once it has started it. */
+  harnessSession: string | null,
 ): Electron.MenuItemConstructorOptions {
   return {
     label: '&Chat',
@@ -1842,6 +2007,8 @@ function chatMenu(
       { label: 'Send &Now', accelerator: 'CmdOrCtrl+Enter', enabled: s.queued.length > 0, click: sendNow },
       { type: 'separator' },
       ...chatSettingSubmenus(chatSettingItems(s, configure, setHarness)),
+      { type: 'separator' },
+      { label: 'Copy Session &ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
     ],
   };
 }
@@ -1911,7 +2078,8 @@ function bringForward(w: AppWindow): void {
 /**
  * The Chats window, opened or brought forward, showing the session
  * `select` when given. Closing it leaves every session running: only Close
- * Conversation, Close All Conversations and quitting Looper end them.
+ * Conversation and Close All Conversations end them. Quitting Looper stops
+ * their agents and keeps them for its next start.
  */
 function openSessionsWindow(select?: string): void {
   const open = sessionsWindows.get();
@@ -2146,9 +2314,13 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
     const cwd = taskId ? engine?.findSessionTask(taskId)?.cwd : undefined;
     if (cwd) void openHostPath(cwd);
   };
-  const perProject = (open: (projectId: string) => void): Electron.MenuItemConstructorOptions[] =>
-    projects.map((p) => ({ label: menuText(p.name), click: () => open(p.id) }));
   const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  /** New Chat's or New Terminal's submenu: the projects, then another folder. */
+  const newIn = (kind: 'chat' | 'terminal', open: (projectId: string) => void): Electron.MenuItemConstructorOptions[] => [
+    ...projects.map((p) => ({ label: menuText(p.name), click: () => open(p.id) })),
+    ...(projects.length > 0 ? [sep] : []),
+    { label: 'Other &Folder…', click: () => void openInFolder(kind, child).catch(showError) },
+  ];
   const closeConversation: Electron.MenuItemConstructorOptions = {
     label: 'Close C&onversation',
     accelerator: 'CmdOrCtrl+W',
@@ -2170,12 +2342,9 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
               enabled: !!shownProject,
               click: () => shownProject && openProjectChat(shownProject.id),
             },
-            { label: 'New &Chat', enabled: projects.length > 0, submenu: perProject(openProjectChat) },
-            {
-              label: 'New &Terminal',
-              enabled: projects.length > 0,
-              submenu: perProject((pid) => void openTerminal(projectTaskId(pid)).catch(showError)),
-            },
+            { label: 'New &Chat', submenu: newIn('chat', openProjectChat) },
+            { label: 'New &Terminal', submenu: newIn('terminal', (pid) => void openTerminal(projectTaskId(pid)).catch(showError)) },
+            { label: 'New P&roject…', click: () => openProjectEditor() },
             sep,
           ]),
       // Chat-only: in a terminal these keys belong to the agent.
@@ -2186,7 +2355,6 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         ? []
         : [{ label: 'Open in &New Window', enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
       { label: 'Open &Working Directory', enabled: !!kind, click: openWorkingDirectory },
-      { label: 'Copy Session &ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
       ...(sv.single ? [] : [{ label: 'Send to C&hats…', enabled: anySessions, click: openSendToSessionsWindow }]),
       sep,
       closeConversation,
@@ -2228,6 +2396,10 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
             checked: shown.windowActivityPane,
             click: (item) => setShown({ windowActivityPane: item.checked }),
           },
+          // A browser tab can't stay above the device's other windows.
+          ...(child instanceof BrowserWindow
+            ? [{ label: 'Always on &Top', type: 'checkbox' as const, checked: child.isAlwaysOnTop(), click: (item: Electron.MenuItem) => child.setAlwaysOnTop(item.checked) }]
+            : []),
           sep,
           ...panes,
         ]
@@ -2239,8 +2411,9 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
           { label: 'Status &Bar', type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
           sep,
           { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
+          { label: '&Waiting Chats First', type: 'checkbox', checked: shown.waitingFirst, click: (item) => setShown({ waitingFirst: item.checked }) },
           sep,
-          { label: 'Previous &Waiting Chat', accelerator: 'F8', click: nav(-1, true) },
+          { label: 'Pre&vious Waiting Chat', accelerator: 'F8', click: nav(-1, true) },
           { label: 'Next W&aiting Chat', accelerator: 'F9', click: nav(1, true) },
           { label: '&Previous Chat', accelerator: 'Shift+F8', click: nav(-1, false) },
           { label: '&Next Chat', accelerator: 'Shift+F9', click: nav(1, false) },
@@ -2258,6 +2431,7 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         // The menu shows the chat's settings as they are once the change is through (or refused).
         (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
         (harnessId) => void engine?.setChatHarness(id, harnessId).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
+        harnessSession,
       ),
     );
   }
@@ -2475,6 +2649,8 @@ function startBuilderInWindow(setupWindow: AppWindow | null, setup: BuilderSetup
   setupWindow.setMinimumSize(760, 480);
   setupWindow.setContentSize(BUILDER_SIZE.width, BUILDER_SIZE.height);
   setupWindow.center();
+  // It's a builder window now: it opens, and saves, where builder windows do.
+  if (setupWindow instanceof BrowserWindow) placeAs(setupWindow, `builder/${state.id}`);
   setupWindow.setTitle(builderTitle(false));
   // Same page, new hash: an in-page navigation the router never sees, so reload once it lands.
   setupWindow.webContents.once('did-navigate-in-page', () => {
@@ -2776,17 +2952,11 @@ function mainMenuTemplate(
         { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
         { type: 'separator' },
         { label: 'Temp&lates…', click: () => openTemplatesWindow() },
-        { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
         { label: 'S&ettings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         // macOS: Quit lives in the app menu that macTemplate prepends.
         ...(process.platform === 'darwin'
           ? []
-          : ([
-              { type: 'separator' },
-              ...restMenuItems(),
-              ...(engine?.host === 'windows' ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions] : []),
-              { role: 'quit', label: 'E&xit' },
-            ] as Electron.MenuItemConstructorOptions[])),
+          : ([{ type: 'separator' }, { role: 'quit', label: 'E&xit' }] as Electron.MenuItemConstructorOptions[])),
       ],
     },
     {
@@ -2833,47 +3003,31 @@ function mainMenuTemplate(
         ...paneVisibilityItems(view, updateView, addonPanes),
         { type: 'separator' },
         { label: 'Task &List Options', submenu: taskListMenu(view, updateView) },
-        {
-          label: 'Task Lo&gs',
-          submenu: [
-            { label: 'Hide Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
-            {
-              label: 'Hide &Chats and Terminals',
-              type: 'checkbox',
-              checked: view.hideChatsAndTerminals,
-              click: (item) => updateView({ hideChatsAndTerminals: item.checked }),
-            },
-          ],
-        },
+        { label: 'Hide Task Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
         { type: 'separator' },
         { label: '&Toolbar', type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
         ...addonToolbars,
         { label: 'Status &Bar', type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
       ],
     },
-    ...(tools.length ? [{ label: 'T&ools', submenu: tools }] : []),
+    {
+      label: 'T&ools',
+      submenu: [
+        { label: 'Recycle &Bin…', click: () => openRecycleBinWindow() },
+        ...(tools.length ? [{ type: 'separator' } as Electron.MenuItemConstructorOptions, ...tools] : []),
+      ],
+    },
     {
       label: '&Advanced',
       submenu: [
         {
-          label: 'Remote &Control',
-          submenu: [
-            {
-              label: engine?.remoteState().running ? '&Stop Remote Control' : '&Start Remote Control',
-              click: () => void toggleRemote(),
-            },
-            { type: 'separator' },
-            { label: '&Conversations…', click: () => openRemoteConversationsWindow() },
-            { label: 'S&ettings…', click: () => openRemoteSettingsWindow() },
-          ],
-        },
-        {
           label: 'Remote Acc&ess',
           submenu: [
             {
-              label: engine?.settings.remoteAccess.enabled ? 'Turn &Off Remote Access' : 'Turn &On Remote Access',
+              label: remoteAccessOn() ? 'Turn &Off Remote Access' : 'Turn &On Remote Access',
               click: () => toggleRemoteAccess(),
             },
+            { label: 'Set &Up…', click: () => openRemoteAccessSetupWindow() },
             { type: 'separator' },
             { label: '&Pair Device…', enabled: remoteAccessPhase === 'running', click: () => openRemoteAccessPairWindow() },
             { label: 'Paired &Devices…', click: () => openRemoteAccessDevicesWindow() },
@@ -2882,7 +3036,22 @@ function mainMenuTemplate(
             { label: 'S&ettings…', click: () => openRemoteAccessSettingsWindow() },
           ],
         },
+        {
+          label: 'Remote &Control',
+          submenu: [
+            {
+              label: engine?.settings.remote.enabled ? 'Turn &Off Remote Control' : 'Turn &On Remote Control',
+              click: () => void toggleRemote(),
+            },
+            { type: 'separator' },
+            { label: '&Conversations…', click: () => openRemoteConversationsWindow() },
+            { label: '&Helpers…', click: () => openRemoteHelpersWindow() },
+          ],
+        },
         { label: '&Addons…', click: () => openAddonsWindow() },
+        { type: 'separator' },
+        ...restMenuItems(),
+        { label: 'Prevent &Sleep', submenu: preventSleepMenu() },
         { type: 'separator' },
         { label: 'Update &Models…', click: () => openModelUpdateWindow() },
         { label: 'Engine &Log', click: () => openEngineLogWindow() },

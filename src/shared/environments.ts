@@ -102,6 +102,29 @@ export function autoTrustWorkspace(harness: Harness): boolean {
   return harness.options?.autoTrustWorkspace ?? true;
 }
 
+/** claude-code: whether chats and terminals on this harness start with Remote Control (while it's turned on). */
+export function startsWithRemoteControl(harness: Harness): boolean {
+  return harness.kind === 'claude-code' && harness.options?.remoteControl === true;
+}
+
+/** claude-code: whether Remote Control ends a conversation on this harness once its prompt cache expires. */
+export function closesWhenCacheExpires(harness: Harness): boolean {
+  return harness.options?.closeWhenCacheExpires ?? true;
+}
+
+/** A harness's options as the editor saves them: only those its kind uses, and none left at its default. Undefined when none is left. */
+export function harnessOptions(harness: Harness): Harness['options'] {
+  if (harness.kind === 'custom') return undefined;
+  const o = harness.options ?? {};
+  const out: NonNullable<Harness['options']> = {};
+  if (o.autoTrustWorkspace === false) out.autoTrustWorkspace = false;
+  if (harness.kind === 'claude-code') {
+    if (o.remoteControl === true) out.remoteControl = true;
+    if (o.closeWhenCacheExpires === false) out.closeWhenCacheExpires = false;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
  * claude-code: the settings keys that approve the folder's project MCP
  * servers (its .mcp.json and those above it), whose dialog would otherwise

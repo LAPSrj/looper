@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { addonPaneKey, matchesSearch } from '@shared/addons';
+import { groupProjects } from '@shared/projects';
 import type { SessionsState } from '@shared/sessions';
+import type { Project } from '@shared/types';
 import { subscribe } from '../../events';
 import { platform } from '../../platform';
 import {
@@ -141,7 +143,6 @@ function screenFor(m: MainWindow, tab: PhoneTab): { title: string; actions: Page
             tab={m.tab}
             onTab={m.setTab}
             hideNoActionRuns={m.view?.hideNoActionRuns ?? false}
-            hideChatsAndTerminals={m.view?.hideChatsAndTerminals ?? false}
             focusRun={m.focusRun}
             terminalRun={m.terminalRun}
             onTerminalRun={m.setTerminalRun}
@@ -235,28 +236,35 @@ function taskMenuAt(e: React.MouseEvent, m: MainWindow) {
 
 function PhoneProjects({ m }: { m: MainWindow }) {
   const projectsMenu = () => window.looper.projects.showContextMenu('');
+  const groups = groupProjects(m.projects, m.view?.projectsPane.groupBy ?? 'none', m.info?.settings.environments ?? []);
+  const rows = (list: Project[]) =>
+    list.map((p) => (
+      <Row
+        key={p.id}
+        title={p.name}
+        sub={<span className="mono">{p.cwd}</span>}
+        chevron
+        onOpen={() => m.selectProject(p.id)}
+        onMenu={() => {
+          m.selectProject(p.id);
+          window.looper.projects.showContextMenu(p.id);
+        }}
+      />
+    ));
   return (
     <div className="pg-scroll">
       <LargeTitle>Projects</LargeTitle>
-      <Group onTitleMenu={projectsMenu}>
-        {m.projects.length === 0 ? (
+      {m.projects.length === 0 ? (
+        <Group onTitleMenu={projectsMenu}>
           <EmptyRow onMenu={projectsMenu}>No projects yet.</EmptyRow>
-        ) : (
-          m.projects.map((p) => (
-            <Row
-              key={p.id}
-              title={p.name}
-              sub={<span className="mono">{p.cwd}</span>}
-              chevron
-              onOpen={() => m.selectProject(p.id)}
-              onMenu={() => {
-                m.selectProject(p.id);
-                window.looper.projects.showContextMenu(p.id);
-              }}
-            />
-          ))
-        )}
-      </Group>
+        </Group>
+      ) : (
+        groups.map((g) => (
+          <Group key={g.key} title={g.title || undefined} onTitleMenu={projectsMenu}>
+            {rows(g.projects)}
+          </Group>
+        ))
+      )}
     </div>
   );
 }
@@ -393,6 +401,7 @@ function PhoneSessionsTab({ m }: { m: MainWindow }) {
             selected={null}
             now={m.now}
             collapsed={shown.collapsed}
+            waitingFirst={shown.waitingFirst}
             onToggle={toggleGroup}
             onSelect={(id) => {
               if (id) window.looper.sessions.openWindow(id);

@@ -1,5 +1,6 @@
 import type { ChatContext } from './chat';
 import type { MessageRow } from './messages';
+import type { WorkflowRun } from './workflows';
 
 /** A chat, a terminal session, or (with Show Task Runs on) a task run's agent, in the Chats window. */
 export type SessionKind = 'chat' | 'terminal' | 'run';
@@ -22,6 +23,8 @@ export interface SessionSummary {
   harnessName: string;
   /** A terminal session on Codex or a custom harness reports no turns, so it stays 'ready' while it runs. */
   status: 'starting' | 'working' | 'ready' | 'ended';
+  /** A terminal session that quitting Looper stopped: the next key typed into it starts its harness again. */
+  stopped?: boolean;
   waiting?: { reason: WaitReason; text: string; since: number };
   /** A chat's oldest permission request, which the Overview can answer. */
   permissionId?: string;
@@ -56,13 +59,15 @@ export interface SessionsState {
   limits: UsageLimits;
 }
 
-/** A command or subagent the agent started in the background. */
+/** A command, subagent or workflow the agent started in the background. */
 export interface BackgroundTask {
   /** Claude's background task id. */
   id: string;
-  kind: 'command' | 'agent';
-  /** What it does: the command's description, else the command; the subagent's description. */
+  kind: 'command' | 'agent' | 'workflow';
+  /** What it does: the command's description, else the command; the subagent's description; the workflow's summary. */
   label: string;
+  /** A workflow's run id, which its tab beside the conversation shows. */
+  workflowRunId?: string;
   command?: string;
   status: 'running' | 'completed' | 'failed' | 'stopped';
   /** Claude's summary when it ended ("… completed (exit code 0)"). */
@@ -96,6 +101,8 @@ export interface SessionActivity {
   rows?: MessageRow[];
   background: BackgroundTask[];
   subagents: SubagentInfo[];
+  /** The workflow runs the session started (Claude Code's Workflow tool), newest first. */
+  workflows: WorkflowRun[];
 }
 
 /** A slash command or skill the message box offers after "/". */
@@ -112,6 +119,34 @@ export function sessionsInOrder(sessions: SessionSummary[], projectOrder: string
     return i === -1 ? projectOrder.length : i;
   };
   return [...sessions].sort((a, b) => rank(a) - rank(b) || a.groupName.localeCompare(b.groupName) || a.startedAt - b.startedAt);
+}
+
+/** The sessions waiting for the user, the one that waited longest first. */
+export const waitingOf = (sessions: SessionSummary[]): SessionSummary[] =>
+  sessions.filter((s) => s.waiting).sort((a, b) => a.waiting!.since - b.waiting!.since);
+
+/**
+ * The dashboard's cards: the ones dragged into place in that order (`order`,
+ * by session id), then the others in the list's order. `waitingFirst`: the
+ * ones waiting for the user come first, the one that waited longest first.
+ */
+export function dashboardOrder(sessions: SessionSummary[], order: string[], waitingFirst: boolean): SessionSummary[] {
+  const at = new Map(order.map((id, i) => [id, i]));
+  const rank = (s: SessionSummary) => at.get(s.id) ?? order.length;
+  const placed = sessions
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
+    .map((x) => x.s);
+  return waitingFirst ? [...waitingOf(placed), ...placed.filter((s) => !s.waiting)] : placed;
+}
+
+/** The card order `ids` with the card `id` dropped before (or `after`) the card `target`. */
+export function placeCard(ids: string[], id: string, target: string, after: boolean): string[] {
+  const rest = ids.filter((x) => x !== id);
+  const at = rest.indexOf(target);
+  if (at === -1) return ids;
+  rest.splice(after ? at + 1 : at, 0, id);
+  return rest;
 }
 
 /** "3 min", "1 h 5 min": how long something has waited. */

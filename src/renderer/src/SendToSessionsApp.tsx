@@ -4,8 +4,12 @@ import { subscribe } from './events';
 import { useDialogKeys } from './components/hooks';
 import { EditorFooter } from './components/ui';
 
-/** The chats and terminal sessions a message can go to: open ones, and no task runs. */
-const sendable = (sessions: SessionSummary[]) => sessions.filter((x) => x.status !== 'ended' && x.kind !== 'run');
+/**
+ * The chats and terminal sessions a message can go to: open ones, and no task
+ * runs. A terminal that quitting stopped has no harness to type it into until
+ * a key in it starts one again.
+ */
+const sendable = (sessions: SessionSummary[]) => sessions.filter((x) => x.status !== 'ended' && x.kind !== 'run' && !x.stopped);
 
 /**
  * Send to Chats: one message to the chats picked here. A chat that's

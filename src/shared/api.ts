@@ -16,13 +16,13 @@ import type { RunFilter } from './runs';
 import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
-import type { MessageImage, MessagesResult } from './messages';
+import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
-import type { PairingCode, RemoteAccessState } from './remote-access';
-import type { EngineEvent, Project, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
+import type { PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
+import type { EngineEvent, PreventSleepState, Project, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -172,6 +172,8 @@ export interface LooperApi {
   };
   /** Current Rest Mode state; live updates arrive as `rest` engine events. */
   restState(): Promise<RestState>;
+  /** Current Prevent Sleep state; live updates arrive as `prevent-sleep` engine events. */
+  preventSleepState(): Promise<PreventSleepState>;
   openPath(p: string): Promise<void>;
   /** Open a dropped Looper document (.loopertask/.loopertpl) as if it were double-clicked. */
   openLooperFile(file: File): Promise<void>;
@@ -194,6 +196,8 @@ export interface LooperApi {
     sendNow(id: string): Promise<void>;
     /** Take a message out of the queue (Cancel; Edit puts it back in the message box). */
     unqueue(id: string, messageId: string): Promise<QueuedMessage | null>;
+    /** The message box's unsent message changed: the chat keeps it for the next start of Looper. */
+    setDraft(id: string, text: string, attachments: Attachment[]): void;
     /** Allow or deny the agent's permission request. */
     answer(id: string, requestId: string, allow: boolean): void;
     /** End the agent's turn (Esc). */
@@ -253,6 +257,10 @@ export interface LooperApi {
     backgroundOutput(id: string, taskId: string): Promise<string | null>;
     /** A thumbnail of an image file the agent read or wrote (a path in the session's own form); null for any other file. */
     fileThumbnail(taskId: string, path: string): Promise<string | null>;
+    /** A file the agent sent (a path in the session's own form): its size, and a thumbnail for an image; null when the file is gone. */
+    sentFile(taskId: string, path: string): Promise<SentFileInfo | null>;
+    /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
+    openFile(taskId: string, runId: string, path: string, image: boolean): Promise<void>;
   };
   /** A project's git repository, read-only, for the Git tabs. */
   git: {
@@ -282,8 +290,12 @@ export interface LooperApi {
     attachFiles(id: string, files: File[]): Promise<string>;
     /** The terminal's right-click menu: Copy, Paste, Attach Files…; the choice comes back as a ui event. */
     showContextMenu(id: string, hasSelection: boolean): void;
-    /** The output so far and whether the session ended; null once it's closed. */
-    output(id: string): Promise<{ data: string; ended: boolean } | null>;
+    /**
+     * The output so far and whether the session ended; null once it's closed.
+     * `stopped`: quitting Looper stopped its harness, and the next key typed
+     * into it starts the harness again on the conversation.
+     */
+    output(id: string): Promise<{ data: string; ended: boolean; stopped?: boolean } | null>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
   };
@@ -313,6 +325,11 @@ export interface LooperApi {
     suggestPort(): Promise<number>;
     openPair(): Promise<void>;
     openRename(id: string): Promise<void>;
+    /** Set Up: run Tailscale's helper with this machine name until the computer is signed in (state.setup, or Tailscale's own status while it runs). */
+    beginSignIn(hostname: string): Promise<void>;
+    endSignIn(): Promise<void>;
+    /** Set Up's Finish: save the sources and machine name and turn Remote Access on; with `pair`, Pair Device opens once it runs. */
+    finishSetup(choice: { sources: RemoteAccessProviderId[]; hostname?: string }, pair: boolean): Promise<void>;
   };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;

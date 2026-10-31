@@ -674,9 +674,37 @@ describe('host file browser', () => {
       ['a-file.txt', false, 3],
     ]);
     expect(r.entries[0].path).toBe(path.join(dir, 'b-folder'));
-    const start = await listDir({ ...posix, home: dir, places: () => [{ name: 'Proj', cwd: path.join(dir, 'b-folder') }] });
+    expect(r.home).toBe(posix.home ?? os.homedir());
+  });
+
+  it('starts at Host Computer: home and its well-known folders, the drives, then the projects, each once', async () => {
+    const dir = tmp();
+    fs.mkdirSync(path.join(dir, 'Documents'));
+    fs.mkdirSync(path.join(dir, 'Downloads'));
+    fs.mkdirSync(path.join(dir, 'proj'));
+    const posix: HostFilesDeps = {
+      ...win,
+      host: 'posix',
+      home: dir,
+      places: () => [
+        { name: 'Proj', cwd: path.join(dir, 'proj') },
+        { name: 'At home', cwd: dir },
+      ],
+    };
+    const start = await listDir(posix);
     expect(start.path).toBeNull();
-    expect(start.entries.map((e) => e.name)).toEqual(['/', 'Home', 'Proj']);
+    expect(start.home).toBe(dir);
+    expect(start.entries.map((e) => [e.name, e.place])).toEqual([
+      ['Home', 'home'],
+      ['Documents', 'documents'],
+      ['Downloads', 'downloads'],
+      ['File System', 'drive'],
+      ['Proj', 'project'],
+    ]);
+    // Electron's own place for a well-known folder wins over the one in home.
+    const moved = path.join(dir, 'proj');
+    const withKnown = await listDir({ ...posix, places: () => [], known: (k) => (k === 'documents' ? moved : undefined) });
+    expect(withKnown.entries.find((e) => e.place === 'documents')?.path).toBe(moved);
   });
 });
 

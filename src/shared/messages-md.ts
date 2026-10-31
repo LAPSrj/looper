@@ -105,7 +105,11 @@ export function messagesToMarkdown(rows: readonly MessageRow[], opts: MessagesMa
         if (opts.includeThinking) parts.push(heading(3, 'Thinking', row.ts, plain), blockquote(prose(row.text), plain));
         break;
       case 'tool':
-        if (opts.includeTools) parts.push(...toolSection(row, plain));
+        if (row.sent) {
+          parts.push(heading(2, 'Agent', row.ts, plain));
+          if (row.sent.caption?.trim()) parts.push(prose(row.sent.caption));
+          parts.push(row.sent.files.map((f) => (plain ? `- ${f.path}` : `- \`${f.path}\``)).join('\n'));
+        } else if (opts.includeTools) parts.push(...toolSection(row, plain));
         break;
     }
   }

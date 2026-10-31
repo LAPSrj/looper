@@ -94,7 +94,7 @@ export function useThisDevice(controller: ShellController): ThisDevice {
         type: 'warning',
         title: 'Unpair This Device',
         message: 'Unpair this device?',
-        detail: 'To use Looper here again, pair it with a new code from the computer.',
+        detail: 'To use Looper here again, pair it with a new code from the host computer.',
         buttons: ['Unpair', 'Cancel'],
         defaultId: 1,
         cancelId: 1,

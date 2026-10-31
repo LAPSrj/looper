@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom';
 import type { MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
-import { messageCancelId, messageResult } from './dialog-flows';
+import { HOST_COMPUTER, messageCancelId, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
-import { CHECK, CHEVRON_RIGHT, FileRows } from './phone-files';
+import { CHECK, CHEVRON_RIGHT, FileRows, FileViewBody } from './phone-files';
 import {
   deviceNoun,
   isLongMenu,
@@ -476,7 +476,7 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
           value={f.source}
           options={[
             { value: 'device', label: `This ${noun}` },
-            { value: 'computer', label: 'This Computer' },
+            { value: 'computer', label: HOST_COMPUTER },
           ]}
           onChange={f.setSource}
         />
@@ -529,9 +529,34 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
   );
 }
 
-/** A folder or file on the computer the user asked to see. */
+/** A folder or file on the host computer the user asked to see: a folder to browse, an image or text file to look at. */
 function PathSheet({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  if (p.view) {
+    return (
+      <Sheet
+        shell={shell}
+        label={p.name}
+        onClose={p.close}
+        lead={
+          <button className="ios-icon-btn" aria-label="Close" onClick={p.close}>
+            {XMARK}
+          </button>
+        }
+      >
+        <FileViewBody view={p.view} name={p.name} />
+        <div className="ios-toolbar stacked">
+          <button className="ios-text-btn" onClick={p.view.toDevice}>
+            Download to This {deviceNoun('ios', shell.tablet)}
+          </button>
+          <button className="ios-text-btn" onClick={p.view.toHost}>
+            Download to {HOST_COMPUTER}
+          </button>
+        </div>
+        <LocalAlert msg={p.message} />
+      </Sheet>
+    );
+  }
   if (!p.browser) return <LocalAlert msg={p.message} />;
   const browser = p.browser;
   return (
@@ -549,7 +574,7 @@ function PathSheet({ controller, shell, req }: { controller: ShellController; sh
       <FileRows os="ios" browser={browser} onFile={(entry) => browser.select(entry)} />
       <div className="ios-toolbar">
         <button className="ios-text-btn" onClick={p.openOnComputer}>
-          Open on Computer
+          Open on {HOST_COMPUTER}
         </button>
         <button className="ios-text-btn" disabled={!p.canDownload} onClick={p.download}>
           Download

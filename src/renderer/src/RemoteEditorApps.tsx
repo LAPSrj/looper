@@ -7,7 +7,7 @@ import { useDialogKeys } from './components/hooks';
 import { RemoteFolderFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
 
 /**
- * Save a changed Remote Control settings block through the full settings
+ * Save a changed Remote Control helper list through the full settings
  * schema, so a bad value is reported before anything is written. True when saved.
  */
 async function saveRemote(live: Settings, remote: Settings['remote']): Promise<boolean> {
@@ -64,7 +64,7 @@ function useLiveSettings(found: (s: Settings) => boolean) {
   return { live, host, missing };
 }
 
-/** Advanced → Remote Control → Settings → Helpers → Add/Edit. */
+/** Advanced → Remote Control → Helpers → Add/Edit. */
 export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boolean }) {
   const { live, host, missing } = useLiveSettings((s) => s.remote.helpers.some((h) => h.id === id));
   const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);

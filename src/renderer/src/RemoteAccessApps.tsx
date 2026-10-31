@@ -1,29 +1,78 @@
 import { useEffect, useRef, useState } from 'react';
 import { toDataURL } from 'qrcode';
-import type { PairedDevice, PairingCode, RemoteAccessState } from '@shared/remote-access';
+import icon from '../../../assets/icon.png';
+import {
+  REMOTE_ACCESS_SOURCES,
+  SOURCE_NAMES,
+  sourceStatusText,
+  type PairedDevice,
+  type PairingCode,
+  type RemoteAccessProviderId,
+  type RemoteAccessSourceStatus,
+  type RemoteAccessState,
+} from '@shared/remote-access';
 import type { RemoteAccessSettings } from '@shared/types';
 import { EditorFooter, Field } from './components/ui';
 import { useDialogKeys } from './components/hooks';
 import { SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
+import { useRemoteAccessState } from './useRemoteAccess';
 
 const showError = (e: unknown) => void window.looper.showError((e as Error).message);
 
 function deviceSub(d: PairedDevice): string {
-  const via = d.provider === 'tailscale' ? 'Tailscale' : 'This computer only';
+  const via = SOURCE_NAMES[d.provider];
   if (d.connected > 0) return `Connected · ${via}`;
   return `${d.lastSeenAt ? `Last used ${fmtDateTime(d.lastSeenAt)}` : 'Not used yet'} · ${via}`;
 }
 
-/** Advanced → Remote Access → Settings: a draft, saved with Save or Apply. */
+/** The Sources checkboxes, each with its status when `status` is given. */
+function SourcesField({
+  sources,
+  onChange,
+  status,
+  autoFocus,
+}: {
+  sources: RemoteAccessProviderId[];
+  onChange: (id: RemoteAccessProviderId, on: boolean) => void;
+  status?: (id: RemoteAccessProviderId) => string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <Field label="Sources">
+      {REMOTE_ACCESS_SOURCES.map((id, i) => (
+        <div key={id} className="ra-source">
+          <label className="checkbox-field">
+            <input type="checkbox" autoFocus={autoFocus && i === 0} checked={sources.includes(id)} onChange={(e) => onChange(id, e.target.checked)} />
+            {SOURCE_NAMES[id]}
+          </label>
+          {status && <span className="ra-source-status">{status(id)}</span>}
+        </div>
+      ))}
+    </Field>
+  );
+}
+
+/** A source's status for the windows: off while it isn't running, the reason when it fails. */
+function sourceLine(state: RemoteAccessState | null, id: RemoteAccessProviderId): string {
+  const s = state?.sources.find((x) => x.id === id);
+  if (!s) return 'Off';
+  if (s.phase === 'error') return s.message ?? 'Not working';
+  return sourceStatusText(s);
+}
+
+/**
+ * Advanced → Remote Access → Settings: a draft, saved with Save or Apply.
+ * Remote Access's Turn On / Turn Off menu item is its only switch; this sets
+ * how it runs, and shows each source's status as it changes.
+ */
 export function RemoteAccessSettingsApp() {
   const [draft, setDraft] = useState<RemoteAccessSettings | null>(null);
   const [saving, setSaving] = useState(false);
-  const [defaultName, setDefaultName] = useState('');
+  const state = useRemoteAccessState();
 
   useEffect(() => {
     document.title = 'Remote Access';
-    void window.looper.remoteAccess.state().then((s) => setDefaultName(s.defaultName), showError);
     void window.looper.info().then(async (info) => {
       const saved = info.settings.remoteAccess;
       const port =
@@ -46,7 +95,9 @@ export function RemoteAccessSettingsApp() {
   const doSave = async (): Promise<boolean> => {
     setSaving(true);
     try {
-      await window.looper.updateSettings({ remoteAccess: { ...draft, name: draft.name.trim() } });
+      // On/off is the menu's (Turn On / Turn Off), not this window's: keep whatever it is now.
+      const { enabled } = (await window.looper.info()).settings.remoteAccess;
+      await window.looper.updateSettings({ remoteAccess: { ...draft, enabled, name: draft.name.trim() } });
       return true;
     } catch (e) {
       showError(e);
@@ -59,25 +110,19 @@ export function RemoteAccessSettingsApp() {
     if (await doSave()) window.close();
   };
 
+  const setSource = (id: RemoteAccessProviderId, on: boolean) =>
+    set({ sources: REMOTE_ACCESS_SOURCES.filter((s) => (s === id ? on : draft.sources.includes(s))) });
+
   return (
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <label className="checkbox-field">
-            <input type="checkbox" autoFocus checked={draft.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-            Turn on Remote Access
-          </label>
           <Field label="Name">
-            <input value={draft.name} maxLength={64} placeholder={defaultName} onChange={(e) => set({ name: e.target.value })} />
+            <input autoFocus value={draft.name} maxLength={64} placeholder={state?.defaultName} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <Field label="Provider">
-            <select value={draft.provider} onChange={(e) => set({ provider: e.target.value as RemoteAccessSettings['provider'] })}>
-              <option value="tailscale">Tailscale</option>
-              <option value="local">This computer only</option>
-            </select>
-          </Field>
+          <SourcesField sources={draft.sources} onChange={setSource} status={(id) => sourceLine(state, id)} />
           <div className="row">
-            {draft.provider === 'tailscale' && (
+            {draft.sources.includes('tailscale') && (
               <Field label="Machine name">
                 <input value={draft.hostname} spellCheck={false} onChange={(e) => set({ hostname: e.target.value })} />
               </Field>
@@ -174,22 +219,30 @@ export function RemoteAccessDevicesApp() {
 /** "ABCD EFGH". */
 const groupCode = (code: string) => `${code.slice(0, 4)} ${code.slice(4)}`;
 
-function fmtRemaining(ms: number): string {
-  const s = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+/** The addresses a device can pair at (one code works at all of them), each a choice in the Pair Device window. */
+function pairAddresses(state: RemoteAccessState | null): { label: string; url: string }[] {
+  return (state?.sources ?? []).flatMap((s) => (s.phase === 'running' && s.url ? [{ label: SOURCE_NAMES[s.id], url: s.url }] : []));
 }
 
-/** Pair Device: a one-time code, as text and as a QR code of its link. Closing the window cancels it. */
+/** Pair Device: a one-time code, as text and as a QR code of its link, renewed as it expires. Closing the window cancels it. */
 export function RemoteAccessPairApp() {
   const [code, setCode] = useState<PairingCode | null>(null);
+  /** How long the current code lives, for the progress bar. */
+  const [lifetime, setLifetime] = useState(0);
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<RemoteAccessState | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [copied, setCopied] = useState(false);
+  const [addressIndex, setAddressIndex] = useState(0);
+  const addresses = pairAddresses(state);
+  const address = addresses[Math.min(addressIndex, addresses.length - 1)];
+  const link = code && address ? `${address.url}/pair#${code.code}` : null;
 
   const newCode = async () => {
     try {
-      setCode(await window.looper.remoteAccess.pairingCode());
+      const next = await window.looper.remoteAccess.pairingCode();
+      setLifetime(next.expiresAt - Date.now());
+      setCode(next);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -200,31 +253,50 @@ export function RemoteAccessPairApp() {
     document.title = 'Pair Device';
     void newCode();
     void window.looper.remoteAccess.state().then(setState, showError);
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    const off = window.looper.onEvent((e) => {
+    return window.looper.onEvent((e) => {
       if (e.type === 'remote-access') setState(e.state);
     });
-    return () => {
-      clearInterval(timer);
-      off();
-    };
   }, []);
 
   useEffect(() => {
     setQr(null);
-    if (!code) return;
+    if (!link) return;
     let current = true;
-    void toDataURL(code.link, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), showError);
+    void toDataURL(link, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), showError);
     return () => {
       current = false;
     };
-  }, [code]);
+  }, [link]);
 
   useDialogKeys({ onCancel: () => window.close() });
 
   const paired = code && state?.pairedWith?.code === code.code ? state.pairedWith.device : null;
   const off = state && state.phase !== 'running';
-  const expired = !!code && now >= code.expiresAt;
+  const renewing = !!code && !paired && !off;
+
+  const locked = !!code && state?.lockedCode === code.code;
+
+  // A code that runs out, or that wrong tries have locked, is replaced by a new one.
+  useEffect(() => {
+    if (!renewing || !code) return;
+    if (locked) {
+      void newCode();
+      return;
+    }
+    const timer = setTimeout(() => void newCode(), Math.max(0, code.expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [code, renewing, locked]);
+
+  const copyAddress = async () => {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      showError(e);
+    }
+  };
 
   let body;
   if (paired) body = <p className="pair-message">Paired with {paired.name}.</p>;
@@ -234,19 +306,26 @@ export function RemoteAccessPairApp() {
   else {
     body = (
       <>
-        <div className="pair-qr">{qr && <img src={qr} width={220} height={220} alt="QR code of the pairing link" />}</div>
-        <div className={`pair-code${expired ? ' expired' : ''}`}>{groupCode(code.code)}</div>
-        <div className="pair-address">{state?.url}</div>
-        {expired ? (
-          <div className="pair-expiry">
-            <span>This code expired.</span>
-            <button className="btn" onClick={() => void newCode()}>
-              New Code
-            </button>
-          </div>
-        ) : (
-          <div className="pair-expiry">Expires in {fmtRemaining(code.expiresAt - now)}</div>
+        {addresses.length > 1 && (
+          <select className="pair-source" value={Math.min(addressIndex, addresses.length - 1)} onChange={(e) => setAddressIndex(Number(e.target.value))} aria-label="Address">
+            {addresses.map((a, i) => (
+              <option key={a.url} value={i}>
+                {a.label}
+              </option>
+            ))}
+          </select>
         )}
+        <div className="pair-qr">{qr && <img src={qr} width={220} height={220} alt="QR code of the pairing link" />}</div>
+        <div className="pair-code">{groupCode(code.code)}</div>
+        <div className="pair-url">
+          <span className="pair-address">{address?.url}</span>
+          <button className="btn" onClick={() => void copyAddress()}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <div className="pair-progress" aria-hidden>
+          <div key={code.expiresAt} className="pair-progress-fill" style={{ animationDuration: `${lifetime}ms` }} />
+        </div>
       </>
     );
   }
@@ -254,7 +333,10 @@ export function RemoteAccessPairApp() {
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="pair-body">{body}</div>
+        <div className="pair-body">
+          <img className="pair-icon" src={icon} width={48} height={48} alt="" />
+          {body}
+        </div>
       </div>
       <div className="editor-footer">
         <button className="btn primary" autoFocus onClick={() => window.close()}>
@@ -310,6 +392,185 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
         </div>
       </div>
       <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} primaryDisabled={!name.trim()} />
+    </div>
+  );
+}
+
+type SetupStep = 'sources' | 'machine' | 'signin' | 'finish';
+
+const SOURCE_USES: Record<RemoteAccessProviderId, string> = {
+  tailscale: 'Your phone and other computers, from anywhere, over your tailnet.',
+  local: 'A browser on this computer.',
+};
+
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Advanced → Remote Access → Set Up (and Turn On while no source is chosen):
+ * choose the sources, name the machine on the tailnet and sign in to
+ * Tailscale; Finish saves the choices, turns Remote Access on and can open
+ * Pair Device. Closing it stops the sign-in.
+ */
+export function RemoteAccessSetupApp() {
+  const [sources, setSources] = useState<RemoteAccessProviderId[] | null>(null);
+  const [hostname, setHostname] = useState('');
+  const [step, setStep] = useState<SetupStep>('sources');
+  const [pair, setPair] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const state = useRemoteAccessState();
+
+  useEffect(() => {
+    document.title = 'Set Up Remote Access';
+    void window.looper.info().then((info) => {
+      const ra = info.settings.remoteAccess;
+      setSources(ra.sources.length ? ra.sources : ['tailscale']);
+      setHostname(ra.hostname);
+    }, showError);
+  }, []);
+
+  const tailscale = !!sources?.includes('tailscale');
+  const steps: SetupStep[] = tailscale ? ['sources', 'machine', 'signin', 'finish'] : ['sources', 'finish'];
+  const at = steps.indexOf(step);
+  // Remote Access's own Tailscale while it runs one, else Set Up's sign-in.
+  const ts: RemoteAccessSourceStatus | undefined = state?.sources.find((s) => s.id === 'tailscale') ?? state?.setup;
+  const signedIn = ts?.phase === 'running' && !!ts.account;
+  const loginUrl = ts?.phase === 'needs-login' ? ts.loginUrl : undefined;
+
+  // The sign-in step runs Tailscale under the chosen machine name.
+  useEffect(() => {
+    if (step === 'signin') void window.looper.remoteAccess.beginSignIn(hostname).catch(showError);
+  }, [step, hostname]);
+
+  useEffect(() => {
+    setQr(null);
+    if (!loginUrl) return;
+    let current = true;
+    void toDataURL(loginUrl, { margin: 1, width: 180, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), showError);
+    return () => {
+      current = false;
+    };
+  }, [loginUrl]);
+
+  const canNext =
+    step === 'sources' ? !!sources?.length : step === 'machine' ? HOSTNAME.test(hostname) : step === 'signin' ? signedIn : true;
+
+  const finish = async () => {
+    if (!sources) return;
+    setBusy(true);
+    try {
+      await window.looper.remoteAccess.finishSetup({ sources, ...(tailscale ? { hostname } : {}) }, pair);
+      window.close();
+    } catch (e) {
+      showError(e);
+      setBusy(false);
+    }
+  };
+
+  const next = () => {
+    if (busy || !canNext) return;
+    if (step === 'finish') void finish();
+    else setStep(steps[at + 1]);
+  };
+
+  useDialogKeys({ onSave: next, onCancel: () => window.close() });
+
+  if (!sources) return <div className="empty">Loading…</div>;
+
+  const toggle = (id: RemoteAccessProviderId, on: boolean) => setSources(REMOTE_ACCESS_SOURCES.filter((s) => (s === id ? on : sources.includes(s))));
+
+  let body;
+  if (step === 'sources') {
+    body = (
+      <>
+        <h2 className="ra-setup-title">How will devices reach this computer?</h2>
+        {REMOTE_ACCESS_SOURCES.map((id, i) => (
+          <div key={id} className="ra-source">
+            <label className="checkbox-field">
+              <input type="checkbox" autoFocus={i === 0} checked={sources.includes(id)} onChange={(e) => toggle(id, e.target.checked)} />
+              {SOURCE_NAMES[id]}
+            </label>
+            <span className="ra-source-status">{SOURCE_USES[id]}</span>
+          </div>
+        ))}
+      </>
+    );
+  } else if (step === 'machine') {
+    body = (
+      <>
+        <h2 className="ra-setup-title">Name this computer on your tailnet</h2>
+        <Field label="Machine name">
+          <input autoFocus value={hostname} spellCheck={false} onChange={(e) => setHostname(e.target.value.trim())} />
+        </Field>
+        {!HOSTNAME.test(hostname) && <p className="help error-text">Use lowercase letters, digits and hyphens.</p>}
+      </>
+    );
+  } else if (step === 'signin') {
+    let status;
+    if (signedIn) status = <p>Signed in as {ts?.account}.</p>;
+    else if (ts?.phase === 'error')
+      status = (
+        <>
+          <p className="error-text">{ts.message ?? "Tailscale isn't working."}</p>
+          <button className="btn" onClick={() => void window.looper.remoteAccess.beginSignIn(hostname).catch(showError)}>
+            Try Again
+          </button>
+        </>
+      );
+    else if (loginUrl)
+      status = (
+        <>
+          <p>Open the sign-in page, or scan the code with your phone, and sign in.</p>
+          <a className="ra-setup-link" href={loginUrl} target="_blank" rel="noreferrer">
+            {loginUrl}
+          </a>
+          <div className="pair-qr ra-setup-qr">{qr && <img src={qr} width={180} height={180} alt="QR code of the sign-in page" />}</div>
+          <p className="muted">Waiting for the sign-in…</p>
+        </>
+      );
+    else status = <p className="muted">Starting Tailscale…</p>;
+    body = (
+      <>
+        <h2 className="ra-setup-title">Sign in to Tailscale</h2>
+        {status}
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <h2 className="ra-setup-title">Ready to turn on Remote Access</h2>
+        <ul className="ra-setup-summary">
+          {sources.map((id) => (
+            <li key={id}>
+              {SOURCE_NAMES[id]}
+              {id === 'tailscale' ? ` as ${hostname}${ts?.account ? `, signed in as ${ts.account}` : ''}` : ''}
+            </li>
+          ))}
+        </ul>
+        <label className="checkbox-field">
+          <input type="checkbox" checked={pair} onChange={(e) => setPair(e.target.checked)} />
+          Pair a device after Finish
+        </label>
+      </>
+    );
+  }
+
+  return (
+    <div className="editor">
+      <div className="editor-body">
+        <div className="form ra-setup">{body}</div>
+      </div>
+      <div className="editor-footer">
+        <button className="btn" disabled={at === 0 || busy} onClick={() => setStep(steps[at - 1])}>
+          Back
+        </button>
+        <button className="btn primary" disabled={!canNext || busy} onClick={next}>
+          {step === 'finish' ? 'Finish' : 'Next'}
+        </button>
+        <button className="btn" disabled={busy} onClick={() => window.close()}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

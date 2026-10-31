@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ProjectStore } from '../src/engine/store/projects';
 import { TaskStore } from '../src/engine/store/tasks';
-import { agentArgs, deriveTask, folderName, projectHarnessIn, sameFolder, taskEnv } from '../src/shared/projects';
+import { agentArgs, deriveTask, folderName, groupProjects, parentFolder, projectHarnessIn, sameFolder, taskEnv } from '../src/shared/projects';
 import { EnvironmentSchema, type Environment, type Task } from '../src/shared/types';
 
 const envs: Environment[] = [
@@ -182,6 +182,40 @@ describe('projects', () => {
 
 describe('project helpers', () => {
   const project = { id: 'p', name: 'p', environmentId: 'wsl', cwd: '/home/me/p', harnessId: 'codex', permissionMode: 'auto', mode: 'interactive' as const, extraArgs: [], env: {}, remote: false };
+
+  it("finds a folder's parent in either path form", () => {
+    expect(parentFolder('/home/me/site/')).toBe('/home/me');
+    expect(parentFolder('/site')).toBe('/');
+    expect(parentFolder('C:\\Work\\Site')).toBe('C:\\Work');
+    expect(parentFolder('C:\\Site')).toBe('C:\\');
+    expect(parentFolder('\\\\wsl.localhost\\Ubuntu\\home\\me')).toBe('\\\\wsl.localhost\\Ubuntu\\home');
+    expect(parentFolder('site')).toBe('');
+  });
+
+  it("groups the Projects pane by parent folder or harness, keeping the user's order inside a group", () => {
+    const at = (id: string, cwd: string, extra: Record<string, unknown> = {}) => ({ ...project, id, name: id, cwd, ...extra });
+    const list = [
+      at('a', '/home/me/work/a'),
+      at('b', '/home/me/play/b', { harnessId: 'claude' }),
+      at('c', '/home/me/work/c', { harnessId: 'claude' }),
+      at('d', 'C:\\Repos\\d', { environmentId: 'gone' }),
+      at('e', 'c:\\repos\\e', { environmentId: 'gone' }),
+    ];
+    expect(groupProjects(list, 'none', envs)).toEqual([{ key: '', title: '', projects: list }]);
+    const byFolder = groupProjects(list, 'folder', envs).map((g) => [g.title, g.projects.map((p) => p.id)]);
+    expect(byFolder).toEqual([
+      ['/home/me/play', ['b']],
+      ['/home/me/work', ['a', 'c']],
+      ['C:\\Repos', ['d', 'e']],
+    ]);
+    // 'a' starts with Codex, 'b' and 'c' with Claude Code; a project whose environment is gone has no harness, and goes last.
+    const byHarness = groupProjects(list, 'harness', envs).map((g) => [g.title, g.projects.map((p) => p.id)]);
+    expect(byHarness).toEqual([
+      ['Claude Code', ['b', 'c']],
+      ['Codex', ['a']],
+      ['No harness', ['d', 'e']],
+    ]);
+  });
 
   it('compares folders without trailing separators, and Windows ones without case', () => {
     expect(sameFolder('/home/me/site/', '/home/me/site')).toBe(true);

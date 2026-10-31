@@ -18,7 +18,6 @@ export type RunSummary = Omit<RunGroup, 'records' | 'resultText'>;
 /** The run list's View filters. */
 export interface RunFilter {
   hideNoAction: boolean;
-  hideChatsAndTerminals: boolean;
 }
 
 const PRIORITY: string[] = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
@@ -79,8 +78,12 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
   return result.sort((a, b) => b.startTs.localeCompare(a.startTs));
 }
 
+/** Whether a run is a chat or terminal session, not a task run. */
+export const isSessionRun = (g: Pick<RunSummary, 'result'>): boolean => g.result === 'chat' || g.result === 'terminal';
+
+/** Whether a task run shows in the run lists (a task's Runs tab, Recent runs). Sessions show in their project's Chat tab instead. */
 export function runShown(g: RunSummary, filter: RunFilter): boolean {
+  if (isSessionRun(g)) return false;
   // "No action" to the user covers both no-action check runs and scheduler skips.
-  if (filter.hideNoAction && (g.result === 'skipped' || g.result === 'noop')) return false;
-  return !(filter.hideChatsAndTerminals && (g.result === 'chat' || g.result === 'terminal'));
+  return !(filter.hideNoAction && (g.result === 'skipped' || g.result === 'noop'));
 }

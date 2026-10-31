@@ -1,9 +1,21 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { HostDirEntry, HostDirListing } from '../../shared/remote-access';
+import type { HostDirEntry, HostDirListing, HostPlace } from '../../shared/remote-access';
 
 export type Flavor = 'windows' | 'posix';
+
+/** The home folder's well-known folders, in the order the starting places list them. */
+export type KnownFolder = 'desktop' | 'documents' | 'downloads' | 'pictures' | 'music' | 'videos';
+export const KNOWN_FOLDERS: KnownFolder[] = ['desktop', 'documents', 'downloads', 'pictures', 'music', 'videos'];
+const KNOWN_NAMES: Record<KnownFolder, string> = {
+  desktop: 'Desktop',
+  documents: 'Documents',
+  downloads: 'Downloads',
+  pictures: 'Pictures',
+  music: 'Music',
+  videos: 'Videos',
+};
 
 export interface HostFilesDeps {
   /** The computer's own path style. */
@@ -14,10 +26,11 @@ export interface HostFilesDeps {
   defaultDistro: () => string | undefined;
   convert: (p: string, to: Flavor, distro?: string) => Promise<string | undefined>;
   home?: string;
+  /** A well-known folder's host path (Electron's app.getPath, which follows a moved Documents); unset: the folder of that name in home. */
+  known?: (k: KnownFolder) => string | undefined;
 }
 
 const MAX_ENTRIES = 5000;
-const MAX_RECENT = 10;
 
 const UNC_WSL = /^\\\\wsl(?:\$|\.localhost)\\([^\\]+)(\\.*)?$/i;
 const DRIVE = /^([A-Za-z]):(?:[\\/](.*))?$/;
@@ -77,7 +90,7 @@ const flavorOf = (p: string): Flavor => (p.startsWith('/') ? 'posix' : 'windows'
 /** One folder's entries, folders first, with paths in `flavor`. */
 async function listFolder(p: string, flavor: Flavor, d: HostFilesDeps, distro?: string): Promise<HostDirListing> {
   const hostPath = await toHostPath(p, flavor, d, distro);
-  if (!hostPath) throw new Error(`Looper can't reach ${p} from this computer.`);
+  if (!hostPath) throw new Error(`Looper can't reach ${p} from the host computer.`);
   const dirents = await fs.promises.readdir(hostPath, { withFileTypes: true });
   const entries: HostDirEntry[] = [];
   for (const de of dirents.slice(0, MAX_ENTRIES)) {
@@ -96,8 +109,13 @@ async function listFolder(p: string, flavor: Flavor, d: HostFilesDeps, distro?: 
     entries.push({ name: de.name, path: joinFlavor(p, de.name, flavor), dir, ...(size !== undefined ? { size } : {}), ...(modifiedAt !== undefined ? { modifiedAt } : {}) });
   }
   entries.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) : a.dir ? -1 : 1));
-  return { path: p, parent: parentFlavor(p, flavor), entries };
+  return { path: p, parent: parentFlavor(p, flavor), entries, home: homeIn(flavor, d, distro) };
 }
+
+const hostHome = (d: HostFilesDeps): string => d.home ?? os.homedir();
+
+/** The host user's home folder in `flavor`. */
+const homeIn = (flavor: Flavor, d: HostFilesDeps, distro?: string): string | null => fromHostPath(hostHome(d), flavor, d, distro);
 
 const isDir = async (p: string): Promise<boolean> => {
   try {
@@ -107,70 +125,87 @@ const isDir = async (p: string): Promise<boolean> => {
   }
 };
 
-/** Claude Code's folders under one home (as this computer reads it), most recently used first. */
-async function claudeFolders(home: string, side: Flavor, d: HostFilesDeps, distro?: string): Promise<{ host: string; at: number }[]> {
-  let config: { projects?: Record<string, unknown> };
-  try {
-    config = JSON.parse(await fs.promises.readFile(path.join(home, '.claude.json'), 'utf8'));
-  } catch {
-    return [];
-  }
-  const out: { host: string; at: number }[] = [];
-  for (const raw of Object.keys(config?.projects ?? {})) {
-    const folder = raw.length > 1 ? raw.replace(/[\\/]+$/, '') : raw;
-    const host = await toHostPath(folder, side, d, distro);
-    if (!host || !(await isDir(host))) continue;
-    let at = 0;
-    try {
-      // Claude Code keeps a folder's transcripts under its path with every other character turned into "-".
-      at = (await fs.promises.stat(path.join(home, '.claude', 'projects', folder.replace(/[^A-Za-z0-9]/g, '-')))).mtimeMs;
-    } catch {
-      /* no transcripts */
-    }
-    out.push({ host, at });
-  }
-  return out;
-}
-
-/** The starting places: drives, home, project folders, WSL distros and recent Claude Code folders. */
+/**
+ * The starting places (Host Computer), as Windows' This PC: home and its
+ * well-known folders, then the drives (or the file system), the WSL distros
+ * and Looper's project folders. Each is listed once, in its first group.
+ */
 async function startingPlaces(flavor: Flavor, d: HostFilesDeps, distro?: string): Promise<HostDirListing> {
-  const found: { name: string; host: string }[] = [];
-  const home = d.home ?? os.homedir();
-  const distros = d.host === 'windows' ? await d.distros() : [];
+  const found: { name: string; host: string; place: HostPlace }[] = [];
+  const home = hostHome(d);
+  found.push({ name: 'Home', host: home, place: 'home' });
+  const known = await Promise.all(
+    KNOWN_FOLDERS.map(async (k) => {
+      const host = d.known?.(k) ?? path.join(home, KNOWN_NAMES[k]);
+      return (await isDir(host)) ? { name: KNOWN_NAMES[k], host, place: k } : null;
+    }),
+  );
+  for (const k of known) if (k) found.push(k);
   if (d.host === 'windows') {
     const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZAB'.split('');
     const drives = await Promise.all(letters.map(async (l) => ((await isDir(`${l}:\\`)) ? l : null)));
-    for (const l of drives) if (l) found.push({ name: `${l}:`, host: `${l}:\\` });
-  } else found.push({ name: '/', host: '/' });
-  found.push({ name: 'Home', host: home });
+    for (const l of drives) if (l) found.push({ name: `Drive (${l}:)`, host: `${l}:\\`, place: 'drive' });
+    for (const name of await d.distros()) found.push({ name, host: `\\\\wsl.localhost\\${name}\\`, place: 'linux' });
+  } else found.push({ name: 'File System', host: '/', place: 'drive' });
   for (const p of d.places()) {
     if (!p.cwd) continue;
     const host = await toHostPath(p.cwd, flavorOf(p.cwd), d, p.distro);
-    if (host) found.push({ name: p.name, host });
+    if (host) found.push({ name: p.name, host, place: 'project' });
   }
-  for (const name of distros) found.push({ name, host: `\\\\wsl.localhost\\${name}\\` });
-  const recent = await claudeFolders(home, d.host, d);
-  for (const name of distros) {
-    const root = `\\\\wsl.localhost\\${name}`;
-    let users: string[] = [];
-    try {
-      users = (await fs.promises.readdir(`${root}\\home`)).map((u) => `${root}\\home\\${u}`);
-    } catch {
-      /* not running, or no /home */
-    }
-    for (const h of [...users, `${root}\\root`]) recent.push(...(await claudeFolders(h, 'posix', d, name)));
-  }
-  recent.sort((a, b) => b.at - a.at);
-  for (const r of recent.slice(0, MAX_RECENT)) found.push({ name: path.basename(r.host.replace(/\\/g, '/')) || r.host, host: r.host });
   const seen = new Set<string>();
   const entries: HostDirEntry[] = [];
   for (const f of found) {
     const p = fromHostPath(f.host, flavor, d, distro);
     if (!p || seen.has(p.toLowerCase())) continue;
     seen.add(p.toLowerCase());
-    entries.push({ name: f.name, path: p, dir: true });
+    entries.push({ name: f.name, path: p, dir: true, place: f.place });
   }
-  return { path: null, parent: null, entries };
+  return { path: null, parent: null, entries, home: homeIn(flavor, d, distro) };
+}
+
+/** `name` in `dir`, or "name (2).ext" and on when that's taken, as a browser names a download. */
+async function freeName(dir: string, name: string): Promise<string> {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) {
+    const candidate = path.join(dir, n === 1 ? name : `${stem} (${n})${ext}`);
+    try {
+      await fs.promises.access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+}
+
+/**
+ * REMOTE_CHANNELS.saveOnHost: copy a file on this computer into `dir` (the
+ * host user's Downloads folder) as `as` (default: its own name), or a name
+ * not taken there like it; resolves the copy's path. Nothing already in
+ * `dir` is replaced.
+ */
+export async function copyIntoFolder(file: unknown, dir: string, as?: string): Promise<string> {
+  if (typeof file !== 'string' || !file.trim()) throw new Error('No file to download.');
+  const src = file.trim();
+  let st: fs.Stats;
+  try {
+    st = await fs.promises.stat(src);
+  } catch {
+    throw new Error(`${src} doesn't exist.`);
+  }
+  if (!st.isFile()) throw new Error(`${src} isn't a file.`);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const name = path.basename((as || src).replace(/\\/g, '/'));
+  for (;;) {
+    const dest = await freeName(dir, name);
+    try {
+      await fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL);
+      return dest;
+    } catch (err) {
+      // Taken between the check and the copy: the next free name.
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
 }
 
 /**
@@ -187,7 +222,7 @@ export async function makeDir(d: HostFilesDeps, parent: unknown, name: unknown, 
   const f = flavor === 'windows' || flavor === 'posix' ? flavor : d.host;
   const dir = parent.trim();
   const hostDir = await toHostPath(dir, f, d, typeof distro === 'string' && distro ? distro : undefined);
-  if (!hostDir) throw new Error(`Looper can't reach ${dir} from this computer.`);
+  if (!hostDir) throw new Error(`Looper can't reach ${dir} from the host computer.`);
   try {
     await fs.promises.mkdir(path.join(hostDir, n));
   } catch (err) {

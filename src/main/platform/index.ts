@@ -12,12 +12,14 @@ import type { RemoteClients } from './clients';
 import { caller } from './context';
 import { IpcTable, type IpcMainLike } from './ipc-table';
 import { RemoteWindow, RemoteWebContents, type AppWindow, type RemoteClient } from './remote-window';
+import { createPlacedWindow } from './window-places';
 
 export { caller, runAs, type CallContext } from './context';
 export { IpcTable } from './ipc-table';
 export { RemoteClients } from './clients';
 export { RemoteWindow, type AppWindow, type AppWebContents } from './remote-window';
 export { WindowSlots, clientKey, clientKeyOf, ofCaller, DESKTOP } from './slots';
+export { useWindowPlaces, placeAs } from './window-places';
 
 /** Every IPC handler and listener goes through this, so remote clients reach them too. */
 export const ipc = new IpcTable(ipcMain as unknown as IpcMainLike);
@@ -74,7 +76,7 @@ export function newWindow(options: WindowOptions, hash: string, opts?: { desktop
   const remoteParent = asked instanceof RemoteWindow ? asked : undefined;
   const client = opts?.desktop ? undefined : (ctx?.client ?? remoteParent?.client);
   if (!client || client.disposed) {
-    return new BrowserWindow({ ...options, parent: asked as BrowserWindow | undefined } as Electron.BrowserWindowConstructorOptions);
+    return createPlacedWindow({ ...options, parent: asked as BrowserWindow | undefined } as Electron.BrowserWindowConstructorOptions, hash);
   }
   const alive = (w: RemoteWindow | null | undefined) => (w && !w.isDestroyed() && w.client === client ? w : null);
   const parent = asked ? (alive(remoteParent) ?? alive(ctx?.window) ?? alive(client.main)) : null;

@@ -13,6 +13,8 @@ import { slashCommandsOf, usageLimitsOf, type ChatState } from '../src/shared/ch
 import type { MessageRow } from '../src/shared/messages';
 import { parseTaskNotification, waitedText } from '../src/shared/sessions';
 import { TaskSchema, type EngineEvent, type Project, type Task } from '../src/shared/types';
+import type { WorkflowLaunch } from '../src/engine/workflows';
+import type { WorkflowRun } from '../src/shared/workflows';
 
 const line = (rec: unknown) => JSON.stringify(rec);
 
@@ -93,6 +95,27 @@ describe('background work in a transcript', () => {
     );
     expect(acc.rows).toHaveLength(1);
     expect(acc.rows[0].background).toEqual({ id: 'a5', status: 'completed', summary: 'Agent "List files" completed', outputFile: '/tmp/t/a5.output' });
+  });
+
+  it("tracks a Workflow call by its task id, and ends it with the workflow's task notification", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu4', name: 'Workflow', input: { scriptPath: '/s/wf.js' } }] } }));
+    acc.addLine(
+      line({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu4', content: 'Workflow launched in background. Task ID: wsv0\nSummary: Do it\nTranscript dir: /p/s/subagents/workflows/wf_e8-949' }] },
+        toolUseResult: { status: 'async_launched', taskId: 'wsv0', taskType: 'local_workflow', workflowName: 'round', runId: 'wf_e8-949' },
+      }),
+    );
+    expect(acc.rows[0].background).toEqual({ id: 'wsv0', status: 'running' });
+    acc.addLine(
+      line({
+        type: 'user',
+        message: { content: '<task-notification>\n<task-id>wsv0</task-id>\n<status>completed</status>\n<summary>Dynamic workflow "Do it" completed</summary>\n<result>{}</result>\n</task-notification>' },
+      }),
+    );
+    expect(acc.rows[0].background).toMatchObject({ status: 'completed', summary: 'Dynamic workflow "Do it" completed' });
+    expect(backgroundOf(acc.rows)).toEqual([expect.objectContaining({ id: 'wsv0', kind: 'workflow', label: 'Do it', workflowRunId: 'wf_e8-949', status: 'completed' })]);
   });
 
   it('reads the status of a task notification', () => {
@@ -261,6 +284,7 @@ describe('the session hub', () => {
     now?: () => number;
     rows?: MessageRow[];
     cache?: { at?: number; ttlMs?: number };
+    workflows?: (opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean }) => WorkflowRun[];
   }) {
     const events: EngineEvent[] = [];
     const h = new SessionHub({
@@ -274,6 +298,7 @@ describe('the session hub', () => {
       readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0 }),
       subagents: async () => [],
       subagentStats: async () => null,
+      workflows: async (_taskId, _runId, o) => opts.workflows?.(o) ?? [],
       contextTokens: async () => null,
       cacheUse: async () => opts.cache ?? {},
       terminalTitle: () => undefined,
@@ -354,6 +379,27 @@ describe('the session hub', () => {
     h.watch(['c2']);
     await (h as unknown as { poll: () => Promise<void> }).poll();
     expect(shown()).not.toContain('c1');
+  });
+
+  it("gives a session on screen its workflow runs, from the Workflow calls in its conversation", async () => {
+    const rows: MessageRow[] = [
+      {
+        id: '0',
+        kind: 'tool',
+        tool: 'Workflow',
+        preview: '',
+        text: '',
+        result: 'Workflow launched in background. Task ID: w1\nSummary: Do the round\nTranscript dir: /c/s/subagents/workflows/wf_1-a',
+        background: { id: 'w1', status: 'running' },
+      },
+    ];
+    const run: WorkflowRun = { runId: 'wf_1-a', name: 'round', status: 'running', phases: [], logs: [] };
+    const asked: { launches?: WorkflowLaunch[]; sessionEnded?: boolean }[] = [];
+    const { h } = hub({ chats: [chat({ id: 'c1', status: 'ended' })], rows, workflows: (o) => (asked.push(o), [run]) });
+    await (h as unknown as { readSession: (id: string, force: boolean) => Promise<void> }).readSession('c1', true);
+    expect(h.activity('c1')?.workflows).toEqual([run]);
+    expect(asked[0]).toMatchObject({ launches: [{ runId: 'wf_1-a', taskId: 'w1', status: 'running' }], sessionEnded: true });
+    expect(h.activity('c1')?.background).toEqual([{ id: 'w1', kind: 'workflow', label: 'Do the round', workflowRunId: 'wf_1-a', status: 'running' }]);
   });
 
   it("gives a session's last reply and until when its prompt cache lasts", async () => {
