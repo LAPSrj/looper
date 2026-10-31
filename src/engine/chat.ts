@@ -327,6 +327,28 @@ const INTERRUPTED = '[Request interrupted by user]';
  */
 type ForkSource = { sessionId: string; claudeAt: string } | { sessionId: string; codexText: string; occurrence: number };
 
+/**
+ * A chat's settings once it moves to harness `to`: the task's own on the
+ * task's harness, the chat's on another harness of the same kind, else the
+ * defaults, since model ids, efforts and modes don't carry across kinds.
+ */
+export function chatSettingsOn(
+  to: Harness,
+  from: { kind: Harness['kind']; settings: ChatSettings },
+  own: { id: string; settings: ChatSettings },
+): ChatSettings {
+  if (to.id === own.id) return own.settings;
+  if (to.kind === from.kind) return from.settings;
+  return { permissionMode: 'auto' };
+}
+
+/** A new chat moved to another harness before its first message: its id, the harness, and the settings it had. */
+export interface HarnessChoice {
+  id: string;
+  harnessId: string;
+  from: { kind: Harness['kind']; settings: ChatSettings };
+}
+
 /** How a chat window starts. */
 export type ChatOpening =
   /** Open Project in Chat: a new conversation. */
@@ -340,6 +362,7 @@ export type ChatOpening =
       kind: 'fork';
       from: string;
       fork?: ForkSource;
+      harnessId: string;
       settings: ChatSettings;
       history: MessageRow[];
       draft?: ChatState['draft'];
@@ -350,6 +373,12 @@ class ChatSession {
   readonly taskId: string;
   private readonly dir: string;
   private readonly harness: Harness;
+  /** The environment's Claude Code and Codex harnesses. */
+  private readonly harnesses: { id: string; name: string }[];
+  /** The task's extra arguments: only a harness of the task's own kind gets them, since they're flags for that CLI. */
+  private readonly extraArgs: string[];
+  /** How the chat opened: a chat that moves to another harness opens the same way. */
+  readonly opening: ChatOpening;
   private readonly target: Target;
   private readonly ctx: RunContext;
   private readonly acc: ClaudeStreamAccumulator | CodexExecAccumulator;
@@ -417,25 +446,33 @@ class ChatSession {
     private readonly d: ChatDeps,
     private readonly task: Task,
     opening: ChatOpening,
+    choice?: HarnessChoice,
   ) {
     this.taskId = task.id;
-    const own = resolveHarness(task, resolveEnvironment(task, d.settings));
-    if (own.kind === 'custom') throw new Error('A chat needs a Claude Code or Codex harness.');
+    this.opening = opening;
+    const env = resolveEnvironment(task, d.settings);
+    const own = resolveHarness(task, env);
     const info = opening.kind === 'reopen' ? opening.info : undefined;
-    if (info && info.harnessKind !== own.kind) {
-      throw new Error(`This chat ran on ${harnessKindLabel(info.harnessKind)}, and the task now uses ${harnessKindLabel(own.kind)}.`);
+    const wanted = choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' ? opening.harnessId : undefined);
+    const harness = wanted ? env.harnesses.find((h) => h.id === wanted) : own;
+    if (!harness) throw new Error(`The environment "${env.name}" no longer has the harness this chat ran on.`);
+    if (harness.kind === 'custom') throw new Error('A chat needs a Claude Code or Codex harness.');
+    if (info && info.harnessKind !== harness.kind) {
+      throw new Error(`This chat ran on ${harnessKindLabel(info.harnessKind)}, and the task now uses ${harnessKindLabel(harness.kind)}.`);
     }
-    this.harness = task.agent.command ? { ...own, command: task.agent.command } : own;
-    this.claude = own.kind === 'claude-code';
+    this.harness = harness.id === own.id && task.agent.command ? { ...harness, command: task.agent.command } : harness;
+    this.harnesses = env.harnesses.filter((h) => h.kind !== 'custom').map((h) => ({ id: h.id, name: h.name }));
+    this.extraArgs = harness.kind === own.kind ? agentArgs(task) : [];
+    this.claude = harness.kind === 'claude-code';
     this.acc = this.claude ? new ClaudeStreamAccumulator() : new CodexExecAccumulator();
-    this.id = opening.kind === 'reopen' ? opening.runId : newRunId();
+    this.id = choice?.id ?? (opening.kind === 'reopen' ? opening.runId : newRunId());
     this.reopened = opening.kind === 'reopen';
     this.recorded = this.reopened;
     this.title = info?.title ?? '';
-    this.settings = info?.settings ??
-      (opening.kind === 'fork'
-        ? opening.settings
-        : { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '' });
+    const taskSettings: ChatSettings = { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '' };
+    this.settings = choice
+      ? chatSettingsOn(harness, choice.from, { id: own.id, settings: taskSettings })
+      : (info?.settings ?? (opening.kind === 'fork' ? opening.settings : taskSettings));
     this.context = info?.context;
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
@@ -703,7 +740,7 @@ class ChatSession {
     // Replays echo each message when Claude reads it: a queued one shows in the conversation where the agent took it in.
     parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages');
     for (const arg of this.harness.args) parts.push(q(arg));
-    for (const extra of agentArgs(this.task)) parts.push(q(extra));
+    for (const extra of this.extraArgs) parts.push(q(extra));
     this.launched = { model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
     this.spawnProc(this.launcher('chat', parts.join(' ')), (_code, stderr) => {
       // The one process is the whole conversation: once it is gone, so is the chat.
@@ -736,7 +773,7 @@ class ChatSession {
     // The equals form: `exec`'s --image takes several values and would swallow the prompt.
     for (const img of images) parts.push(q(`--image=${this.target.toTargetPath(img.path)}`));
     for (const arg of this.harness.args) parts.push(q(arg));
-    for (const extra of agentArgs(this.task)) parts.push(q(extra));
+    for (const extra of this.extraArgs) parts.push(q(extra));
     parts.push(this.target.catFile(this.targetFile(promptFile)));
     // The rollout behind the context size lives under codex's home, which only the target knows.
     const prelude = recordCodexHome(this.target.kind, q(this.targetFile('codex-home')));
@@ -1103,6 +1140,7 @@ class ChatSession {
     if (this.closed || !this.recorded) return;
     try {
       this.d.writeInfo(this.taskId, this.id, {
+        harnessId: this.harness.id,
         harnessKind: this.claude ? 'claude-code' : 'codex',
         title: this.title,
         settings: this.settings,
@@ -1136,6 +1174,7 @@ class ChatSession {
       kind: 'fork',
       from: this.id,
       ...(fork ? { fork } : {}),
+      harnessId: this.harness.id,
       settings: this.settings,
       history: rows.slice(0, point.keep),
       ...(point.draft ? { draft: { text: point.draft.text, attachments: point.draft.attachments ?? [] } } : {}),
@@ -1150,6 +1189,24 @@ class ChatSession {
     }, 100);
   }
 
+  /**
+   * Whether the chat can move to another harness: nothing has been said in
+   * it yet, and it doesn't go on with another conversation, since a
+   * conversation can't move between harnesses.
+   */
+  harnessFree(): boolean {
+    return !this.recorded && !this.sessionId && !this.fork && this.history.length === 0 && this.queued.length === 0 && this.status !== 'working';
+  }
+
+  /** What a chat on another harness needs from this one. */
+  harnessFrom(): HarnessChoice['from'] {
+    return { kind: this.harness.kind, settings: this.settings };
+  }
+
+  get harnessId(): string {
+    return this.harness.id;
+  }
+
   /** The chat is doing something closing would cut short: a turn, or a question to the user. */
   busy(): boolean {
     return this.status === 'working' || this.permissions.length > 0;
@@ -1160,8 +1217,11 @@ class ChatSession {
       id: this.id,
       taskId: this.taskId,
       taskName: this.task.name,
+      harnessId: this.harness.id,
       harnessName: this.harness.name,
       harnessKind: this.claude ? 'claude-code' : 'codex',
+      harnesses: this.harnesses,
+      harnessLocked: !this.harnessFree(),
       ...(this.historyLabel ? { historyLabel: this.historyLabel } : {}),
       ...(this.draft ? { draft: this.draft } : {}),
       settings: this.settings,
@@ -1225,6 +1285,22 @@ export class ChatManager {
     const source = this.sessions.get(chatId);
     if (!source) throw new Error('This chat is closed.');
     return this.start(task, source.forkAt(index));
+  }
+
+  /**
+   * Harness menu: a chat nothing has been said in moves to another harness of
+   * the task's environment. It's a new session under the same id, opened the
+   * same way; the old one ends and leaves nothing behind.
+   */
+  async setHarness(task: Task, chatId: string, harnessId: string): Promise<void> {
+    const old = this.sessions.get(chatId);
+    if (!old || old.harnessId === harnessId) return;
+    if (!old.harnessFree()) throw new Error('The conversation has started, so it stays on its harness.');
+    const next = new ChatSession(this.d, task, old.opening, { id: chatId, harnessId, from: old.harnessFrom() });
+    await old.close();
+    if (this.sessions.get(chatId) !== old) return;
+    this.sessions.delete(chatId);
+    this.open(next);
   }
 
   private open(session: ChatSession): ChatState {

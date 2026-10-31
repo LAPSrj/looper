@@ -12,7 +12,7 @@ import { projectTaskId } from '../shared/projects';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
-import type { Attachment, AttachmentInput } from '../shared/chat';
+import type { Attachment, AttachmentInput, ChatSettingMenu } from '../shared/chat';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
 import type { EngineEvent, Task, View } from '../shared/types';
@@ -99,8 +99,8 @@ export interface IpcHost {
   openSessions: (select?: string) => void;
   /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
   openChatWindow: (sessionId: string) => void;
-  /** A chat's Model, Effort or Permission Mode menu, as the Chat menu has them. */
-  chatSettingMenu: (chatId: string, which: 'model' | 'effort' | 'permission') => Electron.MenuItemConstructorOptions[];
+  /** A chat's Harness, Model, Effort or Permission Mode menu, as the Chat menu has them ('all': the four as submenus). */
+  chatSettingMenu: (chatId: string, which: ChatSettingMenu | 'all') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window, an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
   openRemoteHelperEditor: (id: string, isNew: boolean, parent: AppWindow | null) => void;
@@ -458,10 +458,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (items.length === 0) items.push({ label: 'No projects', enabled: false });
     popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
   });
-  /** The message box's Model, Effort and Permission Mode buttons. */
+  /** The message box's Harness, Model, Effort and Permission Mode buttons, or the one button a narrow chat has for them ('all'). */
   ipc.on('context-menu:chat-setting', (e, chatId: string, which: string, x: number, y: number) => {
     const sender = windowOf(e);
-    if (!sender || (which !== 'model' && which !== 'effort' && which !== 'permission')) return;
+    if (!sender || (which !== 'all' && which !== 'harness' && which !== 'model' && which !== 'effort' && which !== 'permission')) return;
     const items = host.chatSettingMenu(String(chatId), which);
     if (items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
   });

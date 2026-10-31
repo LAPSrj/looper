@@ -23,7 +23,7 @@ export interface ChatPermissionRequest {
   input: unknown;
 }
 
-/** The chat's own model, effort and permission mode: the task's to start with, then the Chat menu's. */
+/** The chat's own model, effort and permission mode: the task's to start with (on the task's harness), then the Chat menu's. */
 export interface ChatSettings {
   /** Unset: the CLI's default model. */
   model?: string;
@@ -32,6 +32,9 @@ export interface ChatSettings {
   /** A PERMISSION_MODES value; '' passes no mode. */
   permissionMode: string;
 }
+
+/** The menus above a chat's message box, each one of the Chat menu's lists. */
+export type ChatSettingMenu = 'harness' | 'model' | 'effort' | 'permission';
 
 /** How full the conversation is: tokens in context, and the model's window when the CLI reports it. */
 export interface ChatContext {
@@ -51,8 +54,13 @@ export interface ChatState {
   id: string;
   taskId: string;
   taskName: string;
+  harnessId: string;
   harnessName: string;
   harnessKind: 'claude-code' | 'codex';
+  /** The Claude Code and Codex harnesses of the task's environment: the Harness menu's list. */
+  harnesses: { id: string; name: string }[];
+  /** The conversation has started (or goes on with another one), so it stays on its harness. */
+  harnessLocked: boolean;
   /** The divider above the earlier conversation ("Earlier in run …"); unset shows it without one. */
   historyLabel?: string;
   /** Fork from Here on the user's own message: the message, waiting in the new chat's message box. */
@@ -95,6 +103,8 @@ export interface QueuedMessage {
 
 /** What a chat's run folder records about it (chat.json): Continue in Chat opens the chat again from it. */
 export interface ChatInfo {
+  /** The harness the chat ran on, from the task's environment; unset: the task's own. */
+  harnessId?: string;
   harnessKind: 'claude-code' | 'codex';
   /** The first line of the chat's first message. */
   title: string;

@@ -186,6 +186,63 @@ describe('a chat queue on Claude', { timeout: 30_000 }, () => {
   });
 });
 
+describe("a chat's harness", { timeout: 30_000 }, () => {
+  let engine: Engine | null = null;
+  afterEach(async () => {
+    await engine?.stop();
+    engine = null;
+  });
+
+  it('moves to another harness until the first message, then stays on it, and opens again on it', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
+    const ownDir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const otherDir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    engine = createEngine({ dataDir });
+    engine.start();
+    engine.updateSettings({
+      environments: engine.settings.environments.map((e) =>
+        e.id === 'local'
+          ? {
+              ...e,
+              harnesses: [
+                { id: 'own', name: 'Own', kind: 'claude-code' as const, command: fakeClaude(ownDir) },
+                { id: 'other', name: 'Other', kind: 'claude-code' as const, command: fakeClaude(otherDir) },
+              ],
+            }
+          : e,
+      ),
+    });
+    engine.saveTask(
+      TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: ownDir, agent: { harnessId: 'own', prompt: 'x' } }),
+    );
+    const e = engine;
+    const chatId = e.startChat('t1').id;
+    expect(e.getChat(chatId)).toMatchObject({ harnessId: 'own', harnessLocked: false, harnesses: [{ id: 'own' }, { id: 'other' }] });
+
+    await e.setChatHarness(chatId, 'other');
+    await until(() => e.getChat(chatId)?.harnessId === 'other' && e.getChat(chatId)?.status === 'ready', 'the chat on the other harness');
+    e.sendChat(chatId, 'hello', []);
+    touch(otherDir, 'call-1');
+    touch(otherDir, 'release-1');
+    await until(() => e.getChat(chatId)?.status === 'ready' && lines(join(otherDir, 'turns')).length === 1, 'the turn to end');
+    expect(lines(join(otherDir, 'received'))).toEqual(['hello']);
+    expect(lines(join(ownDir, 'received'))).toEqual([]);
+
+    expect(e.getChat(chatId)?.harnessLocked).toBe(true);
+    await expect(e.setChatHarness(chatId, 'own')).rejects.toThrow('stays on its harness');
+    const runDir = join(dataDir, 'tasks', 't1', 'runs', chatId);
+    expect(JSON.parse(readFileSync(join(runDir, 'chat.json'), 'utf8'))).toMatchObject({ harnessId: 'other', harnessKind: 'claude-code' });
+
+    // The fake doesn't run hooks: the session record stands in for its SessionStart hook.
+    writeFileSync(join(runDir, 'session.json'), JSON.stringify({ session_id: 's1' }));
+    await e.closeChat(chatId);
+    // A terminal and a run of the task would use the task's harness: only a chat goes on with it.
+    expect(e.canContinueRun('t1', chatId)).toEqual({ chat: true, terminal: false, guidance: false });
+    expect(() => e.startTerminalSession('t1', chatId)).toThrow('only Continue in Chat');
+    expect(e.startChat('t1', chatId)).toMatchObject({ id: chatId, harnessId: 'other', harnessLocked: true });
+  });
+});
+
 describe('queue and Git helpers', () => {
   it("reads a claude record's tool calls and the calls its results answer", () => {
     expect(toolUseIds({ message: { content: [{ type: 'text', text: 'x' }, { type: 'tool_use', id: 'a' }, { type: 'tool_use', id: 'b' }] } }, 'tool_use')).toEqual(['a', 'b']);

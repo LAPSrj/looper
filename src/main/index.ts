@@ -8,7 +8,7 @@ import type { PowerAdapter } from '../engine/rest';
 import { ViewSchema, type EngineEvent, type Settings } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
 import { projectTaskId } from '../shared/projects';
-import { chatIsEmpty, type ChatSettings, type ChatState } from '../shared/chat';
+import { chatIsEmpty, type ChatSettingMenu, type ChatSettings, type ChatState } from '../shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
@@ -1778,14 +1778,16 @@ function radioItems(
 }
 
 /**
- * The chat window's Chat menu: Stop, and the chat's own model, effort and
- * permission mode. Claude replaces its process for a new model, effort or
- * Bypass, which would cut a turn short, so those wait for the turn to end.
+ * The chat window's Chat menu: Stop, and the chat's own harness, model,
+ * effort and permission mode. The harness changes only until the first
+ * message. Claude replaces its process for a new model, effort or Bypass,
+ * which would cut a turn short, so those wait for the turn to end.
  */
 function chatSettingItems(
   s: ChatState,
   configure: (patch: Partial<ChatSettings>) => void,
-): Record<'model' | 'effort' | 'permission', Electron.MenuItemConstructorOptions[]> {
+  setHarness: (harnessId: string) => void,
+): Record<ChatSettingMenu, Electron.MenuItemConstructorOptions[]> {
   const ended = s.status === 'ended';
   const claude = s.harnessKind === 'claude-code';
   const busy = s.status === 'working' || s.status === 'starting' || s.permissions.length > 0;
@@ -1796,6 +1798,12 @@ function chatSettingItems(
   const defaultEffort = entry?.defaultEffort ? levels.find(([v]) => v === entry.defaultEffort)?.[1] ?? entry.defaultEffort : undefined;
   const bypassLive = s.settings.permissionMode === 'bypassPermissions';
   return {
+    harness: radioItems(
+      s.harnesses.map((h): [string, string] => [h.id, h.name]),
+      s.harnessId,
+      () => !s.harnessLocked,
+      setHarness,
+    ),
     model: radioItems(
       [['', 'Default'], ...s.models.map((m): [string, string] => [m.id, m.name])],
       s.settings.model ?? '',
@@ -1822,8 +1830,8 @@ function chatMenu(
   stop: () => void,
   sendNow: () => void,
   configure: (patch: Partial<ChatSettings>) => void,
+  setHarness: (harnessId: string) => void,
 ): Electron.MenuItemConstructorOptions {
-  const items = chatSettingItems(s, configure);
   return {
     label: '&Chat',
     submenu: [
@@ -1833,15 +1841,23 @@ function chatMenu(
       // The queued messages go now: the agent's turn ends first.
       { label: 'Send &Now', accelerator: 'CmdOrCtrl+Enter', enabled: s.queued.length > 0, click: sendNow },
       { type: 'separator' },
-      { label: '&Model', submenu: items.model },
-      { label: '&Effort', submenu: items.effort },
-      { label: '&Permission Mode', submenu: items.permission },
+      ...chatSettingSubmenus(chatSettingItems(s, configure, setHarness)),
     ],
   };
 }
 
-/** The message box's Model, Effort or Permission Mode menu: the Chat menu's list, which then rebuilds the menu bar. */
-function chatSettingMenu(chatId: string, which: 'model' | 'effort' | 'permission'): Electron.MenuItemConstructorOptions[] {
+/** The chat's settings as submenus: the Chat menu's, and a narrow chat's one settings button. */
+function chatSettingSubmenus(items: Record<ChatSettingMenu, Electron.MenuItemConstructorOptions[]>): Electron.MenuItemConstructorOptions[] {
+  return [
+    { label: '&Harness', submenu: items.harness },
+    { label: '&Model', submenu: items.model },
+    { label: '&Effort', submenu: items.effort },
+    { label: '&Permission Mode', submenu: items.permission },
+  ];
+}
+
+/** The message box's Harness, Model, Effort or Permission Mode menu ('all': the four as submenus): the Chat menu's lists, which then rebuild the menu bar. */
+function chatSettingMenu(chatId: string, which: ChatSettingMenu | 'all'): Electron.MenuItemConstructorOptions[] {
   const chat = engine?.getChat(chatId);
   if (!chat) return [];
   const parent = sessionsWindows.get();
@@ -1849,7 +1865,12 @@ function chatSettingMenu(chatId: string, which: 'model' | 'effort' | 'permission
     const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
     void showMessageBox(parent, opts);
   };
-  return chatSettingItems(chat, (patch) => void engine?.configureChat(chatId, patch).catch(showError).finally(() => refreshSessionsMenus(true)))[which];
+  const items = chatSettingItems(
+    chat,
+    (patch) => void engine?.configureChat(chatId, patch).catch(showError).finally(() => refreshSessionsMenus(true)),
+    (harnessId) => void engine?.setChatHarness(chatId, harnessId).catch(showError).finally(() => refreshSessionsMenus(true)),
+  );
+  return which === 'all' ? chatSettingSubmenus(items) : items[which];
 }
 
 // ---------- the Chats window ----------
@@ -1984,7 +2005,7 @@ function sessionsMenuState(view: SessionsView): string {
     id,
     id ? engine?.sessionKind(id) : null,
     id ? !!engine?.harnessSessionId(id) : false,
-    chat ? [chat.settings, chat.status, chat.permissions.length > 0, chat.models, chat.queued.length > 0] : null,
+    chat ? [chat.harnessId, chat.harnessLocked, chat.harnesses, chat.settings, chat.status, chat.permissions.length > 0, chat.models, chat.queued.length > 0] : null,
     engine?.listProjects().map((p) => p.name),
     engine?.sessionsState().sessions.length ?? 0,
     engine?.settings.view.sessions,
@@ -2236,6 +2257,7 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         () => void engine?.sendNowChat(id).catch(showError),
         // The menu shows the chat's settings as they are once the change is through (or refused).
         (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
+        (harnessId) => void engine?.setChatHarness(id, harnessId).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
       ),
     );
   }

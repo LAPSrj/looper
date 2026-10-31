@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import type { MessageImage, MessagesResult } from '../shared/messages';
 import { runShown, type RunFilter } from '../shared/runs';
-import type { EngineEvent, InboxCommand, Project, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, Harness, InboxCommand, Project, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import { projectIdOf, projectSessionTask } from '../shared/projects';
 import { ProjectStore } from './store/projects';
 import { SettingsSchema } from '../shared/types';
@@ -238,6 +238,8 @@ export interface Engine {
   stopChat(chatId: string): Promise<void>;
   /** Chat menu: the chat's own model, effort or permission mode. */
   configureChat(chatId: string, patch: Partial<ChatSettings>): Promise<void>;
+  /** Harness menu: a chat nothing has been said in moves to another harness of the task's environment. Throws with the reason. */
+  setChatHarness(chatId: string, harnessId: string): Promise<void>;
   /** Answer the agent's permission request. */
   answerChat(chatId: string, requestId: string, allow: boolean): void;
   /** End a chat (its window closed). */
@@ -519,9 +521,27 @@ export function createEngine(opts: EngineOptions): Engine {
     log,
   });
 
+  /** The harness a run's conversation is on: a chat's own (its chat.json), else the task's. Throws when it's gone. */
+  const runHarness = (task: Task, runId: string): Harness => {
+    const env = resolveEnvironment(task, settings);
+    const id = runs.readChatInfo(task.id, runId)?.harnessId;
+    if (!id) return resolveHarness(task, env);
+    const h = env.harnesses.find((x) => x.id === id);
+    if (!h) throw new Error(`The environment "${env.name}" no longer has the harness this chat ran on.`);
+    return h;
+  };
+
+  /** A terminal or a run of the task goes on with a conversation on the task's own harness: a chat on another one can only go on in a chat. */
+  const requireOwnHarness = (task: Task, runId: string): void => {
+    const h = runHarness(task, runId);
+    if (h.id !== resolveHarness(task, resolveEnvironment(task, settings)).id) {
+      throw new Error(`This chat ran on ${h.name}, which isn't the task's harness, so only Continue in Chat can go on with it.`);
+    }
+  };
+
   /** Continue in Terminal: the session id the run's conversation was recorded under. */
   const resumeIdOf = (task: Task, runId: string): string => {
-    const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+    const kind = runHarness(task, runId).kind;
     if (kind !== 'claude-code' && kind !== 'codex') {
       throw new Error('Only Claude Code and Codex conversations can be continued.');
     }
@@ -670,10 +690,16 @@ export function createEngine(opts: EngineOptions): Engine {
    * one that went on with it. One per conversation.
    */
   const holderOf = (task: Task, runId: string, sessionId: string, kind: 'chat' | 'terminal'): string | undefined => {
-    const harness = resolveHarness(task, resolveEnvironment(task, settings)).kind;
     const ids = kind === 'chat' ? runs.listChatRunIds(task.id) : runs.listTerminalRunIds(task.id);
     if (ids.includes(runId)) return runId;
-    return ids.reverse().find((id) => readRunSessionId(runs.runDir(task.id, id), harness) === sessionId);
+    const kindOf = (id: string): Harness['kind'] => {
+      try {
+        return runHarness(task, id).kind;
+      } catch {
+        return 'custom'; // its harness is gone: it holds no conversation that can go on
+      }
+    };
+    return ids.reverse().find((id) => readRunSessionId(runs.runDir(task.id, id), kindOf(id)) === sessionId);
   };
 
   /** Which kind of open window holds a run's conversation, if any (the other kind keeps off it). */
@@ -713,6 +739,7 @@ export function createEngine(opts: EngineOptions): Engine {
     runId?: string,
   ): { runId: string; open?: boolean; resume?: string; info?: TerminalInfo; fromRunId?: string } => {
     if (!runId) return { runId: newRunId() };
+    requireOwnHarness(task, runId);
     const sessionId = resumeIdOf(task, runId);
     const open = terminalRuns.findOpen(task.id, runId, sessionId);
     if (open) return { runId: open, open: true };
@@ -1206,6 +1233,7 @@ export function createEngine(opts: EngineOptions): Engine {
     openTaskTerminal(id: string, runId?: string): Promise<void> {
       const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
+      if (runId) requireOwnHarness(task, runId);
       const resumeSessionId = runId ? resumeIdOf(task, runId) : undefined;
       return openTaskTerminal(task, { host, settings, log }, runs.taskDir(id), resumeSessionId);
     },
@@ -1277,6 +1305,12 @@ export function createEngine(opts: EngineOptions): Engine {
     sendChat: (chatId, text, attachments) => chats.send(chatId, text, attachments),
     stopChat: (chatId) => chats.stop(chatId),
     configureChat: (chatId, patch) => chats.configure(chatId, patch),
+    async setChatHarness(chatId: string, harnessId: string): Promise<void> {
+      const taskId = chats.taskOf(chatId);
+      const task = taskId ? taskOrProject(taskId) : undefined;
+      if (!task) throw new Error('This chat is closed.');
+      await chats.setHarness(task, chatId, harnessId);
+    },
     answerChat: (chatId, requestId, allow) => chats.answer(chatId, requestId, allow),
     closeChat: (chatId) => chats.close(chatId),
     busyChats: () => chats.busy(),
@@ -1297,6 +1331,9 @@ export function createEngine(opts: EngineOptions): Engine {
       return sessionHub.runTask(id) ? 'run' : undefined;
     },
     harnessSessionId(id: string): string | null {
+      // A chat may run on another harness than its task's.
+      const chat = chats.get(id);
+      if (chat) return readRunSessionId(runs.runDir(chat.taskId, id), chat.harnessKind);
       const taskId = chats.taskOf(id) ?? (remote.owns(id) ? undefined : terminals.taskOf(id)) ?? sessionHub.runTask(id);
       const task = taskId ? lookup(taskId) : undefined;
       if (!taskId || !task) return null;
@@ -1350,17 +1387,23 @@ export function createEngine(opts: EngineOptions): Engine {
       if (!task) return none;
       if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return none;
       try {
-        const kind = recordedKind(task);
-        if (!kind) return none;
-        if (readRunSessionId(runs.runDir(id, runId), kind) === null) return none;
+        const harness = runHarness(task, runId);
+        if (harness.kind === 'custom') return none;
+        if (readRunSessionId(runs.runDir(id, runId), harness.kind) === null) return none;
         const open = openHolder(task, runId);
+        // A terminal and a run of the task use the task's harness: a chat on another one goes on only in a chat.
+        const own = harness.id === resolveHarness(task, resolveEnvironment(task, settings)).id;
         // Continue with Guidance starts a run of a task: a project's sessions have none.
-        return { chat: !open.terminal, terminal: !open.chat, guidance: !!tasks.get(id) && !open.chat && !open.terminal };
+        return { chat: !open.terminal, terminal: own && !open.chat, guidance: own && !!tasks.get(id) && !open.chat && !open.terminal };
       } catch {
         return none;
       }
     },
-    continueRun: (id, runId, guidance) => scheduler.continueRun(id, runId, guidance),
+    continueRun(id: string, runId: string, guidance: string): boolean {
+      const task = tasks.get(id);
+      if (task) requireOwnHarness(task, runId);
+      return scheduler.continueRun(id, runId, guidance);
+    },
     canGuideRun: (id, runId) => scheduler.canGuideRun(id, runId),
     sendGuidance: (id, runId, text) => scheduler.sendGuidance(id, runId, text),
     armRest(): void {

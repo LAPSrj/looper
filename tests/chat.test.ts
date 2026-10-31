@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_INLINE_IMAGE,
+  chatSettingsOn,
   claudeContextWindow,
   claudeUserMessage,
   codexForkThread,
@@ -102,6 +103,15 @@ describe('chat settings', () => {
     expect(needsNewProcess(launched, { ...s, permissionMode: 'bypassPermissions' }, 'medium')).toBe(true);
     // Started with Bypass, it switches to and from it in place.
     expect(needsNewProcess({ ...launched, bypass: true }, { ...s, permissionMode: 'bypassPermissions' }, 'medium')).toBe(false);
+  });
+
+  it("takes the task's settings on its harness, keeps the chat's on the same kind, and the defaults on another kind", () => {
+    const harness = (id: string, kind: 'claude-code' | 'codex') => ({ id, name: id, kind, command: id, args: [], env: {} });
+    const own = { id: 'claude', settings: { model: 'opus', effort: 'high', permissionMode: 'plan' } };
+    const from = { kind: 'claude-code' as const, settings: { model: 'sonnet', permissionMode: 'acceptEdits' } };
+    expect(chatSettingsOn(harness('claude', 'claude-code'), from, own)).toEqual(own.settings);
+    expect(chatSettingsOn(harness('claude-work', 'claude-code'), from, own)).toEqual(from.settings);
+    expect(chatSettingsOn(harness('codex', 'codex'), from, own)).toEqual({ permissionMode: 'auto' });
   });
 
   it("reads the context window from claude's result, by the model the init named", () => {

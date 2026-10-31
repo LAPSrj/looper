@@ -272,8 +272,9 @@ the background; a session waiting for your answer has a yellow border.
 
 A chat's card is the whole chat, as it shows when you open it but without the
 activity pane: its messages, its permission requests with Allow and Deny, the
-status line, and the message box with Attach Files, the skill list, the model,
-effort and permission mode, Send and Stop. So you can follow and answer
+status line, and the message box with Attach Files, the skill list, the
+harness, model, effort and permission mode (one button in a narrow card), Send
+and Stop. So you can follow and answer
 several chats at once without opening them. Working in a card counts as
 looking at the chat, and Esc stops the agent of the card you're typing in. A chat's card scrolled far out of view shows the agent's
 latest messages until it comes back.
@@ -458,8 +459,10 @@ stops the agent's turn, as Stop does, and the agent goes on with the queued
 messages at once.
 
 The bar above the message box has **Attach Files** (Ctrl+O) and **Skills and
-Commands** on the left, and the chat's model, effort and permission mode on the
-right. Clicking one of those opens the same list as the Chat menu.
+Commands** on the left, and the chat's harness, model, effort and permission
+mode on the right. Clicking one of those opens the same list as the Chat menu.
+In a narrow chat, such as a dashboard card or a phone, the four are one button
+named after the model, and its menu has them as submenus.
 
 Typing **/** at the start of the message box, or at the start of a word, lists
 the harness's commands and skills with their descriptions in a drop-down list
@@ -485,12 +488,22 @@ the search box, then closes the bar. Text inside a collapsed tool group or think
 
 The Chat menu has **Stop** (Esc), which ends the agent's turn while it works
 (the next message goes on with the same conversation), **Send Now**, and the
-**Model**, **Effort** and **Permission Mode** submenus. They change this chat
-only, and the task keeps its own settings. A new permission mode applies right
-away, even mid-turn. With Claude Code, a new model or effort, or switching to
-Bypass, restarts the session on the same conversation, so those wait until the
-agent finishes its turn. With Codex, every change applies from the next
-message.
+**Harness**, **Model**, **Effort** and **Permission Mode** submenus. They change
+this chat only, and the task keeps its own settings. A new permission mode
+applies right away, even mid-turn. With Claude Code, a new model or effort, or
+switching to Bypass, restarts the session on the same conversation, so those
+wait until the agent finishes its turn. With Codex, every change applies from
+the next message.
+
+**Harness** lists the Claude Code and Codex harnesses of the task's
+[environment](environments.md), so a chat can run on another one than its
+project's or task's. It changes only until you send the first message, because
+a conversation can't move to another harness; it's greyed out in a chat that
+goes on with a run's conversation or forks one. On a harness of another kind,
+the chat starts with the default model and effort and the Auto permission mode.
+Continue in Chat opens the chat again on its own harness. Continue in Terminal
+and Continue with Guidance use the task's harness, so a chat on another harness
+doesn't offer them.
 
 Right-click a message for Copy (the selected text) and Copy Message; on a tool
 call, Copy Input and Copy Result, plus Open File and Copy Path when it worked

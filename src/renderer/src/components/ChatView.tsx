@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AddonSearchBox } from './AddonPane';
-import { forkPoint, type Attachment, type ChatPermissionRequest, type ChatState } from '@shared/chat';
+import { forkPoint, type Attachment, type ChatPermissionRequest, type ChatSettingMenu, type ChatState } from '@shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
 import type { SlashCommand } from '@shared/sessions';
@@ -90,52 +90,77 @@ function ChatStatus({ state }: { state: ChatState }) {
 export const permissionLabel = (state: ChatState): string =>
   PERMISSION_MODES[state.harnessKind].find(([v]) => v === state.settings.permissionMode)?.[1] ?? state.settings.permissionMode;
 
-/** The chat's model, effort and permission mode as the command bar names them. */
-function settingLabels(state: ChatState): Record<'model' | 'effort' | 'permission', string> {
+/** The chat's harness, model, effort and permission mode as the command bar names them. */
+function settingLabels(state: ChatState): Record<ChatSettingMenu, string> {
   const s = state.settings;
   const entry = state.models.find((m) => m.id === s.model);
   // As resolveEffort: the chat's own, else the model entry's default.
   const effort = s.effort ?? (s.model ? entry?.defaultEffort : undefined);
   return {
+    harness: state.harnessName,
     model: entry?.name ?? s.model ?? state.activeModel ?? 'Default model',
     effort: effort ? (EFFORT_LEVELS[state.harnessKind].find(([v]) => v === effort)?.[1] ?? effort) : 'Default effort',
     permission: permissionLabel(state) || 'Default',
   };
 }
 
-const SETTING_TITLES ={ model: 'Model', effort: 'Effort', permission: 'Permission Mode' } as const;
+const SETTING_TITLES = { harness: 'Harness', model: 'Model', effort: 'Effort', permission: 'Permission Mode' } as const;
+const SETTINGS = ['harness', 'model', 'effort', 'permission'] as const;
+
+const MENU_ARROW = (
+  <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
+  </svg>
+);
 
 /**
  * The bar above the message box: Attach Files and the skill list on the left,
- * the chat's model, effort and permission mode on the right, each a menu.
+ * the chat's harness, model, effort and permission mode on the right, each a
+ * menu. The harness changes only until the first message. A narrow chat (a
+ * dashboard card, a phone) has one button instead, whose menu has the four
+ * as submenus; the stylesheet shows one or the other by the composer's width.
  */
 function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach: () => void; onSkills: () => void }) {
   const ended = state.status === 'ended';
   const labels = settingLabels(state);
+  // A chat whose harness didn't start can still move to another one.
+  const disabled = (which: ChatSettingMenu) => (which === 'harness' ? state.harnessLocked : ended);
+  const open = (which: ChatSettingMenu | 'all') => (e: React.MouseEvent<HTMLButtonElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    window.looper.chat.showSettingMenu(state.id, which, box.left, box.bottom);
+  };
   return (
     <div className="toolbar chat-commandbar">
       <ToolButton icon={ICONS.attach} title="Attach Files (Ctrl+O)" enabled={!ended} onClick={onAttach} />
       <ToolButton icon={ICONS.skills} title="Skills and Commands (/)" enabled={!ended && state.commands.length > 0} onClick={onSkills} />
       <span className="spacer" />
-      {(['model', 'effort', 'permission'] as const).map((which) => (
-        <button
-          key={which}
-          className="labeled commandbar-menu"
-          title={SETTING_TITLES[which]}
-          aria-label={`${SETTING_TITLES[which]}: ${labels[which]}`}
-          aria-haspopup="menu"
-          disabled={ended}
-          onClick={(e) => {
-            const box = e.currentTarget.getBoundingClientRect();
-            window.looper.chat.showSettingMenu(state.id, which, box.left, box.bottom);
-          }}
-        >
-          {labels[which]}
-          <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
-          </svg>
-        </button>
-      ))}
+      <span className="commandbar-full">
+        {SETTINGS.map((which) => (
+          <button
+            key={which}
+            className="labeled commandbar-menu"
+            title={SETTING_TITLES[which]}
+            aria-label={`${SETTING_TITLES[which]}: ${labels[which]}`}
+            aria-haspopup="menu"
+            disabled={disabled(which)}
+            onClick={open(which)}
+          >
+            {labels[which]}
+            {MENU_ARROW}
+          </button>
+        ))}
+      </span>
+      <button
+        className="labeled commandbar-menu commandbar-compact"
+        title="Chat Settings"
+        aria-label={`Chat Settings: ${SETTINGS.map((w) => labels[w]).join(', ')}`}
+        aria-haspopup="menu"
+        disabled={SETTINGS.every(disabled)}
+        onClick={open('all')}
+      >
+        {labels.model}
+        {MENU_ARROW}
+      </button>
     </div>
   );
 }

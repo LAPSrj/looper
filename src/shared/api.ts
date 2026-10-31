@@ -13,7 +13,7 @@ import type {
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
-import type { Attachment, ChatState, QueuedMessage } from './chat';
+import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { MessageImage, MessagesResult } from './messages';
@@ -198,8 +198,8 @@ export interface LooperApi {
     answer(id: string, requestId: string, allow: boolean): void;
     /** End the agent's turn (Esc). */
     stop(id: string): Promise<void>;
-    /** The message box's Model, Effort or Permission Mode menu, at (x, y) in the window. */
-    showSettingMenu(id: string, which: 'model' | 'effort' | 'permission', x: number, y: number): void;
+    /** The message box's Harness, Model, Effort or Permission Mode menu ('all': one menu with the four as submenus), at (x, y) in the window. */
+    showSettingMenu(id: string, which: ChatSettingMenu | 'all', x: number, y: number): void;
     /** Attach Files: the open dialog, then the picked files copied in like dropped ones. */
     pickFiles(id: string): Promise<Attachment[]>;
     /** Copy pasted or dropped files into the task's attachments, ready to send. */

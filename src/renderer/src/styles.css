@@ -3264,10 +3264,29 @@ button:focus-visible,
 }
 .toolbar button.commandbar-menu {
   width: auto;
+  white-space: nowrap;
   gap: 2px;
   padding: 0 4px 0 8px;
   font-size: 12px;
   color: var(--fg-muted);
+}
+/* A narrow chat (a dashboard card, a phone) has one settings button in place of the four. */
+.chat-composer {
+  container: composer / inline-size;
+}
+.commandbar-full {
+  display: contents;
+}
+.toolbar button.commandbar-compact {
+  display: none;
+}
+@container composer (max-width: 599px) {
+  .commandbar-full {
+    display: none;
+  }
+  .toolbar button.commandbar-compact {
+    display: flex;
+  }
 }
 .toolbar button.commandbar-menu:hover:not(:disabled) {
   color: var(--fg);
