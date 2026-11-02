@@ -10,11 +10,13 @@ import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files
 import { folderSubtree } from '../shared/folders';
 import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
 import { projectTaskId } from '../shared/projects';
+import { sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { attachmentName, type Attachment, type AttachmentInput, type ChatSettingMenu } from '../shared/chat';
+import { HISTORY_COMMANDS, type HistoryCommand } from '../shared/history';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task, type View } from '../shared/types';
@@ -96,6 +98,10 @@ export interface IpcHost {
   openChat: (taskId: string, runId?: string) => Promise<void>;
   /** Fork from Here: a new chat with the conversation up to the row at `index`. Throws with the reason. */
   forkChat: (chatId: string, index: number) => void;
+  /** Compact into New Chat: a new chat from the chat's messages, which takes its place. Rejects with the reason. */
+  compactChat: (chatId: string) => Promise<void>;
+  /** Continue Compacted: a new chat from the run's messages. Rejects with the reason. */
+  compactRun: (taskId: string, runId: string) => Promise<void>;
   /** The Chats windows and single chat's windows showing the session, which alone get its chat and activity events. */
   sessionWindow: (sessionId: string) => AppWindow[];
   /** That Chats window now shows this session (null: the Overview). */
@@ -104,7 +110,18 @@ export interface IpcHost {
   showCards: (window: AppWindow | null, chatIds: string[]) => void;
   /** Close Conversation: ends the chat or terminal session, asking first (over `from`) when it's working. */
   closeSession: (sessionId: string, from: AppWindow | null) => Promise<void>;
-  openSendToSessions: () => void;
+  /** Close All Conversations in a list group (sessionGroupKey), asking first over `from`. */
+  closeSessionGroup: (group: string, from: AppWindow | null) => Promise<void>;
+  /** Send to Chats; `group` (sessionGroupKey): with that list group's chats checked. */
+  openSendToSessions: (group?: string) => void;
+  /** The History window, opened or brought forward. */
+  openHistory: () => void;
+  /** That History window shows this conversation now (null: none): its menus act on it. */
+  historySelect: (window: AppWindow | null, id: string | null) => void;
+  /** A History window's command on a conversation, asking first over `from` when it may still be open elsewhere. Rejects with the reason. */
+  historyRun: (from: AppWindow | null, id: string, command: HistoryCommand) => Promise<void>;
+  /** A conversation's right-click menu in the History window. */
+  historyMenu: (from: AppWindow | null, id: string) => void;
   /** The Chats window, opened or brought forward; `select` shows that session in it. */
   openSessions: (select?: string) => void;
   /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
@@ -451,6 +468,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     return engine.attachToChat(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
   });
   ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
+  ipc.handle('chat:compact', (_e, id: string) => host.compactChat(String(id)));
   ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
   ipc.on('chat:draft', (_e, id: string, text: string, attachments: Attachment[]) => {
     // As with chat:send, only Looper's own copies.
@@ -469,6 +487,20 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:close', (e, id: string) => host.closeSession(String(id), windowOf(e)));
   ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
+
+  // ---------- the History window ----------
+
+  ipc.handle('history:list', (_e, fresh: unknown) => engine.historyList(fresh === true));
+  ipc.handle('history:search', (_e, query: unknown) => engine.historySearch(String(query ?? '')));
+  ipc.handle('history:read', (_e, id: unknown, agentId?: unknown) => engine.historyRead(String(id), typeof agentId === 'string' ? agentId : undefined));
+  ipc.handle('history:commands', (_e, id: unknown) => engine.historyCommands(String(id)));
+  ipc.handle('history:run', (e, id: unknown, command: unknown) => {
+    if (!HISTORY_COMMANDS.includes(command as HistoryCommand)) throw new Error(`unknown command ${String(command)}`);
+    return host.historyRun(windowOf(e), String(id), command as HistoryCommand);
+  });
+  ipc.on('history:select', (e, id: unknown) => host.historySelect(windowOf(e), typeof id === 'string' && id ? id : null));
+  ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
+  ipc.on('history:open', () => host.openHistory());
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
   /** New Chat's or New Terminal's drop-down, under the button that asked: the projects, another folder, and New Project. */
   ipc.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
@@ -528,6 +560,25 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
     ];
     popupMenu(Menu.buildFromTemplate(items), { window: sender });
+  });
+  // A list group's right-click menu: New Chat in its project, then its chats and terminal sessions, never its task runs.
+  ipc.on('context-menu:session-group', (e, group: string) => {
+    const sender = windowOf(e);
+    const key = String(group);
+    const listed = engine.sessionsState().sessions.filter((s) => s.kind !== 'run' && sessionGroupKey(s) === key);
+    if (!sender) return;
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (engine.getProject(key)) items.push({ label: 'New &Chat', click: () => void projectChat(key, sender) });
+    if (listed.length > 0) {
+      const sendable = listed.some((s) => s.status !== 'ended' && !s.stopped);
+      if (items.length > 0) items.push({ type: 'separator' });
+      items.push(
+        { label: 'Send to Chats…', enabled: sendable, click: () => host.openSendToSessions(key) },
+        { type: 'separator' },
+        { label: 'Close All Conversations', click: () => void host.closeSessionGroup(key, sender).catch((err) => fail(sender, err)) },
+      );
+    }
+    if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
   });
   /** An image the agent read or wrote, as a thumbnail; only image files are read. */
   ipc.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
@@ -1364,6 +1415,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         label: 'Continue in Chat',
         enabled: canContinue.chat,
         click: () => void host.openChat(info.taskId, info.runId).catch(showError),
+      },
+      {
+        label: 'Continue Compacted',
+        enabled: canContinue.compact,
+        click: () => void host.compactRun(info.taskId, info.runId).catch(showError),
       },
       {
         label: 'Continue with Guidance…',

@@ -11,6 +11,7 @@ import {
   type SentFiles,
 } from '../shared/messages';
 import { parseTaskNotification } from '../shared/sessions';
+import { compactRow, compactRows, withoutCompacted } from '../shared/compact';
 import { readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
 import type { Settings, Task } from '../shared/types';
@@ -335,6 +336,8 @@ export function endedSessions(runDir: string): number[] {
 export class TranscriptAccumulator {
   rows: MessageRow[] = [];
   dropped = 0;
+  /** The dropped rows a compacted conversation keeps (compactRow), oldest first: compaction gets the whole conversation. */
+  evicted: MessageRow[] = [];
   /** Image payloads by row id; the rows only carry a marker. */
   readonly images = new Map<string, MessageImage>();
   private nextId = 0;
@@ -351,6 +354,7 @@ export class TranscriptAccumulator {
   reset(): void {
     this.rows = [];
     this.dropped = 0;
+    this.evicted = [];
     this.nextId = 0;
     this.byToolId.clear();
     this.structuredAnswers.clear();
@@ -601,7 +605,10 @@ export class TranscriptAccumulator {
   }
 
   /** The user's prompt row, or a task row when a workflow script computed the text for one of its agents. */
-  private pushPrompt(text: string, ts?: string): void {
+  private pushPrompt(raw: string, ts?: string): void {
+    // A compacted chat's first message starts with the earlier conversation, which the chat keeps as rows of its own (compacted.json).
+    const text = withoutCompacted(raw);
+    if (!text.trim()) return;
     const task = workflowTaskText(text);
     if (task !== null) this.push({ kind: 'task', ts, text: task });
     else this.push({ kind: 'prompt', ts, text });
@@ -660,7 +667,8 @@ export class TranscriptAccumulator {
     if (this.recordUuid) row.uuid = this.recordUuid;
     this.rows.push(row);
     if (this.rows.length > MAX_ROWS) {
-      this.rows.shift();
+      const old = compactRow(this.rows.shift()!);
+      if (old) this.evicted.push(old);
       this.dropped++;
     }
     return row;
@@ -717,7 +725,8 @@ export class CodexAccumulator extends TranscriptAccumulator {
           // Injected context is one <tag>…</tag> block, after a heading line for the AGENTS.md
           // instructions ("# AGENTS.md instructions", seen live in codex-cli 0.163.0).
           if (/^(?:#[^\n]*\n+)?<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
-          this.push({ kind: 'prompt', ts, text });
+          const prompt = withoutCompacted(text);
+          if (prompt.trim()) this.push({ kind: 'prompt', ts, text: prompt });
         } else if (block.type === 'output_text' && p.role === 'assistant') {
           this.push({ kind: 'agent', ts, text });
         }
@@ -851,6 +860,18 @@ export class TranscriptReader {
     } finally {
       await fh.close();
     }
+  }
+}
+
+/** A compacted chat's run folder keeps the conversation it was compacted from, as rows, once its first message makes it a run. */
+export const COMPACTED_FILE = 'compacted.json';
+
+function readCompactedRows(runDir: string): MessageRow[] {
+  try {
+    const rows: unknown = JSON.parse(fs.readFileSync(path.join(runDir, COMPACTED_FILE), 'utf8'));
+    return Array.isArray(rows) ? (rows as MessageRow[]) : [];
+  } catch {
+    return []; // not a compacted chat
   }
 }
 
@@ -1004,7 +1025,8 @@ export class MessagesService {
       return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
     }
     const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
-    const rows: MessageRow[] = [];
+    // A compacted chat's run starts with the conversation it was compacted from.
+    const rows: MessageRow[] = raw ? [] : readCompactedRows(this.deps.runDir(taskId, runId));
     let dropped = 0;
     let refs = 0;
     let readable = 0;
@@ -1030,6 +1052,26 @@ export class MessagesService {
     if (refs === 0) return { ...none('no-session'), pendingGuidance };
     if (readable === 0) return { ...none('no-transcript'), pendingGuidance };
     return { status: 'ok', rows, dropped, pendingGuidance };
+  }
+
+  /**
+   * The run's whole conversation as a compacted one keeps it (compactRows),
+   * the rows its readers dropped included; empty when it recorded none.
+   */
+  async compactable(taskId: string, runId: string): Promise<MessageRow[]> {
+    const runDir = this.deps.runDir(taskId, runId);
+    const rows: MessageRow[] = readCompactedRows(runDir);
+    for (const source of [...endedSessions(runDir), 'agent' as const]) {
+      const reader = await this.mainReader(taskId, runId, source, false);
+      if (typeof reader === 'string') continue;
+      try {
+        await reader.read();
+      } catch {
+        continue;
+      }
+      rows.push(...reader.acc.evicted, ...reader.acc.rows);
+    }
+    return compactRows(rows);
   }
 
   /**
@@ -1171,7 +1213,11 @@ export class MessagesService {
   async subagents(taskId: string, runId: string): Promise<SubagentMeta[]> {
     const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
     const hostPath = ref ? await this.toHostPath(ref, taskId) : undefined;
-    if (!hostPath) return [];
+    return hostPath ? this.subagentsAt(hostPath) : [];
+  }
+
+  /** The subagents of the Claude transcript at a host path (a conversation from outside Looper's runs). */
+  async subagentsAt(hostPath: string): Promise<SubagentMeta[]> {
     const dir = path.join(hostPath.replace(/\.jsonl$/i, ''), 'subagents');
     const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
     const out: SubagentMeta[] = [];

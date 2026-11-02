@@ -195,8 +195,10 @@ session anywhere in Looper opens it on that session.
 Closing the window leaves every session running, and opening it again shows
 them where they are. **File → Close Conversation** (Ctrl+W or Ctrl+F4, the
 toolbar, or right-click a session) ends one session for good, and **File →
-Close All Conversations** ends them all. Both ask first, except that a chat
-with no messages yet closes without asking.
+Close All Conversations** ends them all. Right-clicking a project's group in
+the list has **Close All Conversations** too, which ends only that group's
+chats and terminal sessions. Close All Conversations always asks first, and
+Close Conversation asks unless the chat has no messages yet.
 
 Quitting Looper doesn't close them: it stops every session's agent (asking
 first while a chat's agent works or a terminal session runs), and the next
@@ -213,8 +215,9 @@ Chats until a key starts it again. A custom harness's terminal sessions,
 which have no conversation to go on with, close when Looper quits.
 
 **File → New Chat in
-&lt;project&gt;** (Ctrl+T) opens a chat in the shown session's project. In a
-terminal session, Ctrl+T and Ctrl+W go to the terminal, and Ctrl+F4 still
+&lt;project&gt;** (Ctrl+T) opens a chat in the shown session's project, and
+**New Chat** in a project group's right-click menu in the list opens one in
+that project. In a terminal session, Ctrl+T and Ctrl+W go to the terminal, and Ctrl+F4 still
 closes it.
 
 **File → New Chat** and **File → New Terminal** (and the arrows beside the
@@ -405,10 +408,12 @@ The toolbar's buttons, left to right, with their tooltips:
 |---|---|---|
 | Grid | Dashboard (stays pressed while the dashboard shows) | — |
 | Bullhorn | Send to Chats | — |
+| Clock with an arrow around it | History: opens the [History window](#the-history-window) | — |
 | Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects, Other Folder… and New Project… | Ctrl+T |
 | Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects, Other Folder… and New Project… | — |
 | Bubble with a square | Stop (greyed out while the agent isn't working) | Esc in a chat |
 | Bubble with fast-forward | Send Now: stops the turn, and the agent goes on with the chat's queued messages | Ctrl+Enter |
+| Bubble with two arrows meeting | Compact into New Chat (greyed out while the agent works, and until it has replied) | — |
 | Bubble with an X | Close Conversation | Ctrl+W, Ctrl+F4 |
 | Folder | Open Working Directory | — |
 | Window with a right column | Activity Pane (stays pressed while the pane shows) | — |
@@ -416,10 +421,13 @@ The toolbar's buttons, left to right, with their tooltips:
 The status bar shows the session's harness, then how much of the context the conversation uses, when
 the agent last replied, and with Claude Code whether that reply's prompt cache
 still lasts ("Cached for 4 min" or "Cache expired"). A message sent while the
-cache lasts costs less and starts faster. On the right are your Claude
-account's usage limits as Claude Code last reported them in a chat: how much of
-the 5-hour limit is used, when it resets, and how much of the weekly limit is
-used. **View → Toolbar** and **View → Status Bar** show or hide them.
+cache lasts costs less and starts faster. On the right are the usage limits of
+the Claude account the session's harness runs on, as Claude Code last reported
+them in a chat on that harness: how much of the 5-hour limit is used, when it
+resets, and how much of the weekly limit is used. Harnesses can run on
+different accounts, so each one shows its own limits, and a harness shows none
+until a chat on it has reported them. The dashboard shows no limits. **View →
+Toolbar** and **View → Status Bar** show or hide them.
 
 ### Send to Chats
 
@@ -427,11 +435,80 @@ used. **View → Toolbar** and **View → Status Bar** show or hide them.
 Its window lists the open chats and terminal sessions by project (not a
 terminal session that quitting Looper stopped, until a key in it starts it
 again), with check
-boxes to pick every chat, every chat of a harness, or a project's chats. A
-chat that's working gets the message in its queue, and a terminal session gets
-it typed in and sent.
+boxes to pick every chat, every chat of a harness, or a project's chats. To
+send an announcement to one project's chats, right-click its group in the
+Chats list and choose **Send to Chats…**, which opens the window with that
+group's chats checked. A chat that's working gets the message in its queue,
+and a terminal session gets it typed in and sent.
 
 ![The Send to Chats window](img/send-to-sessions.png)
+
+## The History window
+
+The **History** window lists the older conversations of every
+[project](projects.md), to read one or go on with it. **View → History** in the
+main window or the Chats window, or the Chats toolbar's History button, opens
+it. It isn't on phones.
+
+The list on the left has two kinds of conversation:
+
+- Looper's own runs of a project and its tasks: chats, terminal sessions,
+  Remote Control conversations and task runs, as long as the run recorded a
+  conversation.
+- Conversations started in Claude Code or Codex outside Looper, in the
+  project's own folder. Looper reads them from the folders each environment's
+  harnesses keep them in: Claude Code's config folder (`~/.claude`, or
+  `CLAUDE_CONFIG_DIR` when the harness or your shell sets it) and Codex's home
+  (`~/.codex`, or `CODEX_HOME`). A conversation started in a subfolder of the
+  project, or in a folder no project has, isn't listed.
+
+Each row has the conversation's title, then its project, when it was last
+active, and where it came from: Chat, Terminal, Remote Control, Task run and
+the task's name, Claude Code or Codex. The title is the one Claude Code gave
+the conversation (or the name you gave it with `/rename`), else its first
+message; a task run's is the run's summary. A conversation Looper started
+shows as Looper's even after run retention deleted its run folder, and a
+conversation from outside that you went on with in Looper shows once, as the
+chat. Reading a long conversation across WSL takes a while, so the list shows
+the conversations it read before at once, then updates; **View → Refresh**
+(F5) reads the folders again.
+
+**View → Group by Date** groups the list by Today, Yesterday, This Week, and
+then by month, and **View → Group by Project** by project. **View → Show Task
+Runs** (on at first) lists task runs too. Looper remembers these settings.
+The toolbar's project list shows one project's conversations, or All
+Projects. Typing in the search box keeps the conversations whose title has
+the text; Enter searches the whole text of your and the agent's messages
+(not tool calls) instead, until you change the text. **Edit → Find…**
+(Ctrl+F) goes to the search box.
+
+The middle shows the conversation as a chat shows it, without a message box,
+with a tab for each subagent it started above it. **View → Activity Pane**
+shows the [activity pane](#the-activity-pane) on the right, with only its Now
+and Files tabs; it's hidden each time the window opens.
+
+The toolbar, the File menu and a conversation's right-click menu have the
+commands. Enter or a double-click is Continue in Chat.
+
+- **Continue in Chat** goes on with the conversation in a chat. A run of
+  Looper's goes on the way its run's Continue in Chat does. A conversation
+  from outside opens in a chat in its project, with the project's model,
+  effort and permission mode, and resumes the harness's own session
+  (`claude --resume`, or `codex exec resume`); once you send a message it's a
+  run of the project. It needs a harness of the same kind as the one the
+  conversation ran on, and says so when the project's harness is another one.
+- **Continue Compacted** opens a new chat that starts from the conversation's
+  messages, without its tool calls, on any harness (see
+  [Continue Compacted](#chats)).
+- **Continue in Terminal** goes on with it in a terminal session, the same
+  way.
+- **Copy Session ID** copies Claude Code's session id or Codex's thread id.
+- **Open Working Directory** opens the project's folder.
+
+Looper can't see a Claude Code or Codex running in another terminal. When a
+conversation from outside changed in the last 5 minutes, Continue in Chat and
+Continue in Terminal ask first: "This conversation changed N min ago and may
+still be open elsewhere. Continue anyway?"
 
 ## Terminal sessions
 
@@ -560,8 +637,9 @@ the next match, Shift+Enter or Shift+F3 to the previous one, and Esc clears
 the search box, then closes the bar. Text inside a collapsed tool group or thinking block isn't searched.
 
 The Chat menu has **Stop** (Esc), which ends the agent's turn while it works
-(the next message goes on with the same conversation), **Send Now**, and the
-**Harness**, **Model**, **Effort** and **Permission Mode** submenus. They change
+(the next message goes on with the same conversation), **Send Now**, the
+**Harness**, **Model**, **Effort** and **Permission Mode** submenus,
+**Compact into New Chat** (see below) and **Copy Session ID**. The submenus change
 this chat only, and the task keeps its own settings. A new permission mode
 applies right away, even mid-turn. With Claude Code, a new model or effort, or
 switching to Bypass, restarts the session on the same conversation, so those
@@ -597,6 +675,24 @@ you can change it and send it on the other branch. Codex can only fork where
 the agent ended a turn, so with Codex the item is on the agent's last message
 of each turn (and on your messages), and not while the turn is running. The
 new chat becomes a run of its own once you send a message.
+
+**Compact into New Chat** (the toolbar or the Chat menu) replaces the chat with
+a new one that starts from its messages only: yours, the agent's replies, the
+files it sent, and each subagent's final report. Tool calls and their results,
+thinking and errors are left out, so the new conversation starts with far less
+context. The new chat shows those messages under "Compacted from run …", and
+they're exactly what the agent gets: they go to it as one block ahead of your
+text, with the first message you send. The old chat closes, and its run keeps
+the whole conversation, so Continue in Chat on it opens it again. Compact is
+greyed out while the agent works or waits for a permission answer, and until it
+has replied. The new chat keeps the old one's harness, model, effort and
+permission mode. Because it starts from text, its Harness menu works until the
+first message, so a Claude Code conversation can go on in Codex or the other way
+round.
+
+**Continue Compacted** on a finished run (right-click it in the Runs tab, or the
+run window's File menu) opens the same kind of chat from the run's
+conversation, and leaves the run as it is.
 
 With Claude Code, a tool call that the task's permission mode would ask about
 shows in the chat with **Allow** and **Deny**, and the agent waits for your
@@ -743,7 +839,7 @@ pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
 choosing "Open" opens the run window described below. The
 context menu also offers "Copy Details", "Send Guidance…" (while the run's agent is going; see
 [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
-"Continue in Terminal", "Continue in Chat" and "Continue with Guidance…" (for
+"Continue in Terminal", "Continue in Chat", "Continue Compacted" and "Continue with Guidance…" (for
 a finished Claude Code or Codex run; see [continuing a finished run](how-a-run-works.md#continuing-a-finished-run)),
 "Open Run Folder", and "Copy Run Folder Path". Ctrl+C copies the selected
 run's report, or its details text when it has no report.
@@ -796,8 +892,9 @@ Right-clicking a row offers Copy Content, and on rows for file tools
 Subagent Conversation.
 
 The window's menu bar has a File menu (Save as Markdown…, Open Output File,
-Continue in Terminal, Continue in Chat, Continue with Guidance…, Open Run
-Folder, Copy Run Folder Path, Open Working Directory) and a View menu. Save as Markdown… (Ctrl+S) asks for a file name,
+Continue in Terminal, Continue in Chat, Continue Compacted, Continue with
+Guidance…, Open Run Folder, Copy Run Folder Path, Open Working Directory) and a
+View menu. Save as Markdown… (Ctrl+S) asks for a file name,
 then opens an Export Options window with Include thinking, Include tool
 usage, and No formatting (plain text); it saves the conversation without the
 Run rows. View starts with Raw Messages — every

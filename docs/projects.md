@@ -83,9 +83,12 @@ The tab's title counts the uncommitted files: "Git (+2 ~3 −1)" means 2 new, 3
 changed (renamed and conflicted files included) and 1 deleted, and a count of
 zero is left out. Beside the Changes and History tabs (at the bottom in the
 Chats window), a line shows the branch and how far it is ahead of or behind
-the remote branch it tracks, or "no remote" when it doesn't track one. The tab reads the changes again every few seconds while Looper
-has the focus, and the history when the changes do or when you come back to
-the window. Right-click a file for Open File, Show in Folder and Copy Path, or
+the remote branch it tracks, or "no remote" when it doesn't track one. While
+Looper has the focus, the tab reads the changes again every 5 seconds while an
+agent works in the project, and every minute when none does. It also reads them as soon as the agent's work
+ends, and when you come back to the window a minute or more after it last
+read them. It reads the history again when the changes change, or when you
+come back after a minute. Right-click a file for Open File, Show in Folder and Copy Path, or
 a commit for Copy Commit ID and Copy Subject.
 
 Git runs in the project's environment, so a WSL project needs git installed in

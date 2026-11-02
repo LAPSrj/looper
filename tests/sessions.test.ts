@@ -258,6 +258,7 @@ describe('the session hub', () => {
     id: 'c1',
     taskId: 't1',
     taskName: 't1',
+    environmentId: 'e',
     harnessId: 'claude',
     harnessName: 'Claude Code',
     harnessKind: 'claude-code',
@@ -293,7 +294,7 @@ describe('the session hub', () => {
       runs: () => opts.runs ?? [],
       findTask: (id) => task(id, 'p1'),
       projects: () => [project('p1', 'Website')],
-      harnessOf: () => ({ kind: 'claude-code', name: 'Claude Code' }),
+      harnessOf: () => ({ kind: 'claude-code', name: 'Claude Code', limitsKey: 'e/claude' }),
       runDir: () => opts.dir ?? '/nowhere',
       readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0 }),
       subagents: async () => [],
@@ -444,10 +445,16 @@ describe('the session hub', () => {
     expect(h.state().sessions[0]).toMatchObject({ status: 'ready', waiting: { reason: 'notification', text: 'Waiting for your answer', since: 5000 } });
   });
 
-  it('records the usage limits Claude reports', () => {
-    const { h } = hub({});
-    h.setLimits({ fiveHour: { used: 0.2, resetsAt: 1 } });
-    h.setLimits({ sevenDay: { used: 0.5, resetsAt: 2 } });
-    expect(h.state().limits).toEqual({ fiveHour: { used: 0.2, resetsAt: 1 }, sevenDay: { used: 0.5, resetsAt: 2 } });
+  it('records the usage limits Claude reports for each harness apart, and tells each session its harness', () => {
+    const terminal: TerminalEntry = { id: 'x1', taskId: 't1', startedAt: 1000, ended: false };
+    const { h } = hub({ chats: [chat({ environmentId: 'w', harnessId: 'work' })], terminals: [terminal] });
+    h.setLimits('w/work', { fiveHour: { used: 0.2, resetsAt: 1 } });
+    h.setLimits('w/work', { sevenDay: { used: 0.5, resetsAt: 2 } });
+    h.setLimits('e/claude', { sevenDay: { used: 0.9, resetsAt: 3 } });
+    expect(h.state().limits).toEqual({
+      'w/work': { fiveHour: { used: 0.2, resetsAt: 1 }, sevenDay: { used: 0.5, resetsAt: 2 } },
+      'e/claude': { sevenDay: { used: 0.9, resetsAt: 3 } },
+    });
+    expect(Object.fromEntries(h.state().sessions.map((s) => [s.id, s.limitsKey]))).toEqual({ c1: 'w/work', x1: 'e/claude' });
   });
 });

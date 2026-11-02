@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { sendsOnEnter } from '../src/renderer/src/components/composer-text';
 import { draggedHeight, settleSheet } from '../src/renderer/src/components/phone/sheet-detents';
 import { groupStatusText, subagentTabs } from '../src/renderer/src/components/subagents';
-import { cacheText, contextValue, limitFacts, sessionFacts, usageLabel, usageTone } from '../src/renderer/src/components/usage';
-import type { SubagentInfo } from '../src/shared/sessions';
+import { cacheText, contextValue, limitFacts, sessionFacts, sessionLimits, usageLabel, usageTone } from '../src/renderer/src/components/usage';
+import type { SessionSummary, SubagentInfo } from '../src/shared/sessions';
 
 const NOW = Date.parse('2026-10-31T12:00:00');
 const clock = (ts: number) => `at ${ts}`;
@@ -40,6 +40,18 @@ describe('limitFacts', () => {
 
   it('has nothing for an account without limits', () => {
     expect(limitFacts({}, NOW)).toEqual([]);
+  });
+});
+
+describe('sessionLimits', () => {
+  it("takes the limits of the session's own harness, and none without a session or a report", () => {
+    const work = { sevenDay: { used: 0.4, resetsAt: 1 } };
+    const state = { sessions: [], limits: { 'local/work': work, 'local/home': { sevenDay: { used: 0.9, resetsAt: 1 } } } };
+    const session = (limitsKey?: string) => ({ limitsKey }) as SessionSummary;
+    expect(sessionLimits(state, session('local/work'))).toBe(work);
+    expect(sessionLimits(state, session('windows/work'))).toEqual({});
+    expect(sessionLimits(state, session())).toEqual({});
+    expect(sessionLimits(state, undefined)).toEqual({});
   });
 });
 

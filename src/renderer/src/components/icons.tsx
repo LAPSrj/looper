@@ -89,6 +89,7 @@ export const ICONS: Record<
   | 'newChat'
   | 'bullhorn'
   | 'sendNow'
+  | 'compact'
   | 'stopChat'
   | 'closeChat'
   | 'activity'
@@ -97,7 +98,8 @@ export const ICONS: Record<
   | 'newTask'
   | 'newProject'
   | 'doubleSize'
-  | 'normalSize',
+  | 'normalSize'
+  | 'history',
   ReactNode
 > = {
   dashboard: (
@@ -158,6 +160,17 @@ export const ICONS: Record<
       </mask>
       <path d={BUBBLE} mask="url(#ico-cut-ff)" />
       <path d="m9 9.4 2.6 2.6L9 14.6M12.3 9.4l2.6 2.6-2.6 2.6" />
+    </>
+  ),
+  // A speech bubble with two arrows meeting at its corner: the conversation pressed into a new, smaller one.
+  compact: (
+    <>
+      <mask id="ico-cut-compact" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <rect x="7.6" y="7.6" width="8.4" height="8.4" rx="2" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE} mask="url(#ico-cut-compact)" />
+      <path d="m9.6 8.8 2.4 2.4 2.4-2.4M9.6 15.2l2.4-2.4 2.4 2.4" />
     </>
   ),
   // A speech bubble with a stop square at its corner: the agent's turn stops.
@@ -230,6 +243,14 @@ export const ICONS: Record<
   // Arrows out to two corners, and back in: a dashboard card at twice its size, and at its normal size.
   doubleSize: <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />,
   normalSize: <path d="M13 7H9V3M9 7l4.5-4.5M3 9h4v4M7 9l-4.5 4.5" />,
+  // A clock face with an arrow going round it counter-clockwise, back in time.
+  history: (
+    <>
+      <path d="M2.5 8a5.5 5.5 0 1 0 5.5-5.5 6 6 0 0 0-4.1 1.7L2.5 5.6" />
+      <path d="M2.5 2.5v3.1h3.1" />
+      <path d="M8 5v3l2.2 1.4" />
+    </>
+  ),
   delete: <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9" />,
   copy: (
     <>

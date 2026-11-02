@@ -21,7 +21,8 @@ import { TabBar } from './ui';
 type Tab = 'changes' | 'history';
 
 const PAGE = 200;
-const POLL_MS = 5000;
+const WORKING_POLL_MS = 5000;
+const IDLE_POLL_MS = 60_000;
 
 const baseName = (p: string) => p.split('/').pop() || p;
 const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length - 1));
@@ -615,17 +616,21 @@ export interface GitWatch {
 }
 
 /**
- * A project's git status, read again every few seconds while the window has
- * the focus and when it gets it back; nothing is read without a project. The
- * Git tab's parent holds it, so the tab's title can count the changes.
+ * A project's git status, read again while the window has the focus: every 5 s
+ * while an agent works in the project (`active`), every minute otherwise, once
+ * when the work ends, and on getting the focus back after a minute or more;
+ * nothing is read without a project. The Git tab's parent holds it, so the
+ * tab's title can count the changes.
  */
-export function useGitStatus(projectId: string | undefined): GitWatch {
+export function useGitStatus(projectId: string | undefined, active: boolean): GitWatch {
   const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const lastStatus = useRef('');
+  const checkedAt = useRef(0);
 
   const loadStatus = useCallback(() => {
     if (!projectId) return;
+    checkedAt.current = Date.now();
     window.looper.git
       .status(projectId)
       .then((s) => {
@@ -645,18 +650,27 @@ export function useGitStatus(projectId: string | undefined): GitWatch {
     if (!projectId) return;
     loadStatus();
     const refresh = () => {
+      if (Date.now() - checkedAt.current < IDLE_POLL_MS) return;
       loadStatus();
       setRefreshKey((k) => k + 1);
     };
-    const poll = setInterval(() => {
-      if (document.hasFocus()) loadStatus();
-    }, POLL_MS);
     window.addEventListener('focus', refresh);
-    return () => {
-      clearInterval(poll);
-      window.removeEventListener('focus', refresh);
-    };
+    return () => window.removeEventListener('focus', refresh);
   }, [projectId, loadStatus]);
+
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (!projectId) return;
+    // The last changes of the agent's work show at once, not a minute later.
+    if (wasActive.current && !active) loadStatus();
+    wasActive.current = active;
+    const every = active ? WORKING_POLL_MS : IDLE_POLL_MS;
+    const poll = setInterval(() => {
+      // A focus or end-of-work check just now counts as this one.
+      if (document.hasFocus() && Date.now() - checkedAt.current >= every / 2) loadStatus();
+    }, every);
+    return () => clearInterval(poll);
+  }, [projectId, active, loadStatus]);
 
   return { status, refreshKey };
 }

@@ -60,6 +60,7 @@ export interface ChatState {
   id: string;
   taskId: string;
   taskName: string;
+  environmentId: string;
   harnessId: string;
   harnessName: string;
   harnessKind: 'claude-code' | 'codex';
@@ -130,6 +131,10 @@ export interface ChatInfo {
   fromRunId?: string;
   /** Fork from Here: the chat it was forked from. */
   forkedFrom?: string;
+  /** Compact into New Chat or Continue Compacted: the run it was compacted from. */
+  compactedFrom?: string;
+  /** Continue in Chat on a conversation from outside Looper (the History window): the Claude Code session or Codex thread it went on with. */
+  resumedSession?: string;
 }
 
 /**
@@ -231,6 +236,13 @@ export function contextText(c: ChatContext): string {
 export function chatIsEmpty(chat: Pick<ChatState, 'history' | 'rows' | 'queued'>): boolean {
   const said = (r: MessageRow) => r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent';
   return chat.queued.length === 0 && !chat.history.some(said) && !chat.rows.some(said);
+}
+
+/** Whether Compact into New Chat can start from the chat: the agent has replied, and isn't working or waiting on a permission answer. */
+export function chatCanCompact(chat: Pick<ChatState, 'history' | 'rows' | 'status' | 'permissions'>): boolean {
+  if (chat.status === 'working' || chat.permissions.length > 0) return false;
+  const replied = (r: MessageRow) => r.kind === 'agent' && !r.note && r.source !== 'classifier';
+  return chat.history.some(replied) || chat.rows.some(replied);
 }
 
 /** A chat's title: the first line of its first message, without Markdown markers. */

@@ -623,10 +623,12 @@ html:not(.phone-window) .session-group ~ .session-row {
   }
 }
 
+/* A strip sets its side padding with --tabs-pad, which the scroll buttons step back over to sit at its edges. */
 .tabs {
+  --tabs-pad: 18px;
   display: flex;
   gap: 2px;
-  padding: 0 18px;
+  padding: 0 var(--tabs-pad);
   border-bottom: 1px solid var(--border);
 }
 .tab {
@@ -737,12 +739,13 @@ html:not(.phone-window) .session-group ~ .session-row {
     background: var(--tabs-bg);
     color: var(--fg-muted);
   }
+  /* A sticky box stops inside the scroller's padding, which would leave a sliver of tab beyond the button. */
   .tabs-scroll-button.start {
-    left: 0;
+    left: calc(-1 * var(--tabs-pad));
     margin-right: -22px;
   }
   .tabs-scroll-button.end {
-    right: 0;
+    right: calc(-1 * var(--tabs-pad));
     margin-left: -22px;
   }
   .tabs-scroll-button:hover,
@@ -1299,7 +1302,7 @@ html:not(.phone-window) .session-group ~ .session-row {
   height: 100%;
 }
 .editor-tabs {
-  padding: 0 12px;
+  --tabs-pad: 12px;
   background: var(--bg-2);
 }
 .editor-body {
@@ -1954,7 +1957,7 @@ details[open] > summary::before {
   background: var(--bg-2);
 }
 .builder-tabs {
-  padding: 0 8px;
+  --tabs-pad: 8px;
   flex-shrink: 0;
 }
 .chat-composer {
@@ -2485,7 +2488,7 @@ button:focus-visible,
 }
 
 .msg-tool-detail .tabs {
-  padding: 0 14px;
+  --tabs-pad: 14px;
   flex: none;
 }
 
@@ -2909,6 +2912,16 @@ button:focus-visible,
   width: 240px;
 }
 
+/* The History window's toolbar: its commands, then the project picker and the search box at the right. */
+.history-toolbar .history-project {
+  margin-left: auto;
+  height: 28px;
+  max-width: 220px;
+}
+.history-toolbar .history-search .addon-search {
+  margin-left: 6px;
+}
+
 .addon-search input {
   width: 100%;
   height: 28px;
@@ -2973,7 +2986,7 @@ button:focus-visible,
 
 /* Tabs inside a screen line up with its other content. */
 .addon-tabs > .tabs {
-  padding: 0;
+  --tabs-pad: 0px;
   margin: 12px 0 4px;
 }
 
@@ -3299,7 +3312,7 @@ button:focus-visible,
   background: var(--bg-2);
 }
 .activity-tabs {
-  padding: 0 8px;
+  --tabs-pad: 8px;
   flex: none;
 }
 .activity-body {
@@ -3715,7 +3728,7 @@ button:focus-visible,
   --tabs-bg: var(--bg-2);
   flex: none;
   background: var(--bg-2);
-  padding: 0 10px;
+  --tabs-pad: 10px;
 }
 
 /* A workflow's tab: its Overview, or one agent's conversation under a bar that goes back to it. */
@@ -3925,7 +3938,7 @@ html.phone-window .workflow-text {
 }
 .git-head .tabs {
   flex: none;
-  padding: 0;
+  --tabs-pad: 0px;
   border-bottom: none;
 }
 .git-branch {
@@ -3997,7 +4010,7 @@ html.phone-window .workflow-text {
 }
 .git-subtabs {
   flex: none;
-  padding: 0 8px;
+  --tabs-pad: 8px;
 }
 .git-tabbody {
   flex: 1;
@@ -4567,7 +4580,7 @@ html.phone-window .workflow-text {
 }
 
 .ws-filedialog .tabs {
-  padding: 0 12px;
+  --tabs-pad: 12px;
 }
 .ws-device {
   flex: 1;

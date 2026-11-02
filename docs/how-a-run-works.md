@@ -405,13 +405,19 @@ window's File menu:
   own in the Runs tab. A conversation has one chat: when a chat already went
   on with it, Continue in Chat opens that chat again (or shows it while it's
   open).
+- **Continue Compacted** starts a new conversation in a chat from the run's
+  messages only, without its tool calls, their results or the agent's
+  thinking (see [Compact into New Chat](monitoring.md#chats)). The agent gets
+  those messages with the first message you send. The run's own
+  conversation stays as it was, and a chat or terminal open on it doesn't
+  matter.
 - **Continue with Guidance…** opens a Continue Run window with a Guidance
   box. **Continue** starts a new manual run that resumes the conversation
   with your guidance as its whole prompt. The check and classifier don't
   run, the task's one-off note is left untouched, and the run counts toward
   the task's Simultaneous runs cap like any Run Now.
 
-All three are greyed out while the run is still in progress, for custom
+All four are greyed out while the run is still in progress, for custom
 harnesses, and for runs that never recorded a conversation. While an open
-chat or terminal session holds the conversation, only the Continue item of
-that kind is available, and it shows that session.
+chat or terminal session holds the conversation, only Continue Compacted and
+the Continue item of that kind are available, and that item shows the session.

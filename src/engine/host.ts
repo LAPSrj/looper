@@ -133,12 +133,16 @@ export function detectWslMountPrefix(distro?: string): Promise<string | undefine
  * a Windows host, looper's own distro from WSL. Undefined when wslpath fails.
  */
 export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: string): Promise<string | undefined> {
+  // Starting wsl.exe can block the main process for hundreds of ms, and transcript polling converts the same paths several times a second.
+  const key = `${to}\0${distro ?? ''}\0${p}`;
+  const known = converted.get(key);
+  if (known) return known;
   const local = !distro && detectHost() === 'wsl';
   const flag = to === 'windows' ? '-w' : '-u';
   const cmd = local ? 'wslpath' : 'wsl.exe';
   // -e: without it wsl.exe runs the command through the shell, which drops a Windows path's backslashes.
   const args = local ? [flag, p] : [...(distro ? ['-d', distro] : []), '-e', 'wslpath', flag, p];
-  return new Promise((resolve) => {
+  const result = new Promise<string | undefined>((resolve) => {
     try {
       execFile(cmd, args, { timeout: 15_000, windowsHide: true }, (err, stdout) => {
         const out = stdout ? String(stdout).replace(/\0/g, '').trim() : '';
@@ -148,7 +152,13 @@ export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: stri
       resolve(undefined);
     }
   });
+  converted.set(key, result);
+  void result.then((out) => {
+    if (!out) converted.delete(key);
+  });
+  return result;
 }
+const converted = new Map<string, Promise<string | undefined>>();
 
 /**
  * Installed WSL distros via `wsl.exe --list --quiet` (works on a Windows host

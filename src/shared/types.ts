@@ -543,6 +543,14 @@ export const ViewSchema = z.object({
       waitingFirst: z.boolean().default(true),
     })
     .prefault({}),
+  /** The History window's View menu. */
+  history: z
+    .object({
+      groupBy: z.enum(['date', 'project']).default('date'),
+      /** The list shows task runs too. */
+      showRuns: z.boolean().default(true),
+    })
+    .prefault({}),
 });
 export type View = z.infer<typeof ViewSchema>;
 

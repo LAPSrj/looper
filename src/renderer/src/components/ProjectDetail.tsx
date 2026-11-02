@@ -9,6 +9,7 @@ import { fmtClock, resultLabel, stateLabel } from '../format';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { useGitRepo, useListNav } from './hooks';
+import { useSessionsState } from './phone/useSessionsState';
 import { RunLog } from './RunLog';
 import { ResizableColumns, TabBar, type TableCol } from './ui';
 import { isPhone } from '../web/page-nav';
@@ -50,7 +51,8 @@ export function ProjectDetail({
   const [shownTab, setTab] = useState<ProjectTab>('status');
   const gitRepo = useGitRepo(project.id);
   const tab = shownTab === 'git' && !gitRepo ? 'status' : shownTab;
-  const git = useGitStatus(gitRepo ? project.id : undefined);
+  const sessions = useSessionsState();
+  const git = useGitStatus(gitRepo ? project.id : undefined, !!sessions?.sessions.some((s) => s.projectId === project.id && s.status === 'working'));
   const [picked, setPicked] = useState<string | null>(null);
   const [records, setRecords] = useState<RunRecord[]>([]);
   const standIn = projectTaskId(project.id);

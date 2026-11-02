@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { SessionSummary } from '@shared/sessions';
+import { useEffect, useRef, useState } from 'react';
+import { sessionGroupKey, type SessionSummary } from '@shared/sessions';
 import { subscribe } from './events';
 import { useDialogKeys } from './components/hooks';
 import { EditorFooter } from './components/ui';
@@ -11,26 +11,43 @@ import { EditorFooter } from './components/ui';
  */
 const sendable = (sessions: SessionSummary[]) => sessions.filter((x) => x.status !== 'ended' && x.kind !== 'run' && !x.stopped);
 
+/** The ids of the sessions in a list group (sessionGroupKey). */
+const idsIn = (sessions: SessionSummary[], group: string) => new Set(sessions.filter((s) => sessionGroupKey(s) === group).map((s) => s.id));
+
 /**
  * Send to Chats: one message to the chats picked here. A chat that's
  * working gets it in its queue; a terminal session gets it typed in, then Enter.
+ * `group` (a list group's right-click menu): its chats start checked.
  */
-export function SendToSessionsApp() {
+export function SendToSessionsApp({ group }: { group?: string }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
+  const shown = useRef(sessions);
+  shown.current = sessions;
 
   useEffect(() => {
     document.title = 'Send to Chats';
-    void window.looper.sessions.state().then((s) => setSessions(sendable(s.sessions)));
-    return subscribe((e) => {
+    void window.looper.sessions.state().then((s) => {
+      const open = sendable(s.sessions);
+      setSessions(open);
+      if (group !== undefined) setPicked(idsIn(open, group));
+    });
+    const offUi = window.looper.onUi((e) => {
+      if (e.type === 'send-to-sessions-pick') setPicked(idsIn(shown.current, e.group));
+    });
+    const offEvents = subscribe((e) => {
       if (e.type !== 'sessions') return;
       const open = sendable(e.state.sessions);
       setSessions(open);
       // A session that closed can't be sent to.
       setPicked((p) => new Set([...p].filter((id) => open.some((s) => s.id === id))));
     });
-  }, []);
+    return () => {
+      offUi();
+      offEvents();
+    };
+  }, [group]);
 
   const groups: { name: string; items: SessionSummary[] }[] = [];
   for (const s of sessions) {

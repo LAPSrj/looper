@@ -14,6 +14,8 @@ export interface MessageRow {
   kind: 'prompt' | 'guidance' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
   /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
   source?: 'classifier';
+  /** An agent row that is Looper's own line in a chat ("Stopped.", why a turn failed), not the agent's. */
+  note?: boolean;
   /** Tool rows: the tool name (Bash, Read, Task…). Raw rows: the record's type. */
   tool?: string;
   /** One line for the table. */

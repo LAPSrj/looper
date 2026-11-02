@@ -21,6 +21,8 @@ export interface SessionSummary {
   title: string;
   harnessKind: 'claude-code' | 'codex' | 'custom';
   harnessName: string;
+  /** Its harness's entry in SessionsState.limits; unset when the task's harness can't be resolved. */
+  limitsKey?: string;
   /** A terminal session on Codex or a custom harness reports no turns, so it stays 'ready' while it runs. */
   status: 'starting' | 'working' | 'ready' | 'ended';
   /** A terminal session that quitting Looper stopped: the next key typed into it starts its harness again. */
@@ -54,9 +56,13 @@ export interface UsageLimits {
   sevenDay?: UsageWindow;
 }
 
+/** A harness's key in SessionsState.limits: harness ids are only unique within their environment. */
+export const limitsKey = (environmentId: string, harnessId: string): string => `${environmentId}/${harnessId}`;
+
 export interface SessionsState {
   sessions: SessionSummary[];
-  limits: UsageLimits;
+  /** Each harness's limits, by limitsKey: harnesses can run on different accounts. */
+  limits: Record<string, UsageLimits>;
 }
 
 /** A command, subagent or workflow the agent started in the background. */
@@ -120,6 +126,9 @@ export function sessionsInOrder(sessions: SessionSummary[], projectOrder: string
   };
   return [...sessions].sort((a, b) => rank(a) - rank(b) || a.groupName.localeCompare(b.groupName) || a.startedAt - b.startedAt);
 }
+
+/** The key of the list group a session is in: its project's id, or the group's name without one. */
+export const sessionGroupKey = (s: SessionSummary): string => s.projectId ?? s.groupName;
 
 /** The sessions waiting for the user, the one that waited longest first. */
 export const waitingOf = (sessions: SessionSummary[]): SessionSummary[] =>

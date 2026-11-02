@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { SessionSummary } from '@shared/sessions';
-import { waitingOf } from '@shared/sessions';
+import { sessionGroupKey, waitingOf } from '@shared/sessions';
 import { isPhone } from '../web/page-nav';
 import { ContextRing } from './ContextRing';
 import { GroupHeader } from './GroupHeader';
@@ -86,6 +86,7 @@ function Group({
   open,
   count,
   onToggle,
+  onMenu,
   children,
 }: {
   id: string;
@@ -95,11 +96,27 @@ function Group({
   open: boolean;
   count: number;
   onToggle: () => void;
+  /** The header's right-click menu; Waiting for you has none. */
+  onMenu?: () => void;
   children: ReactNode;
 }) {
   return (
     <div role="group" aria-label={name}>
-      <GroupHeader id={id} name={name} open={open} count={count} className={`session-group${active ? ' active' : ''}`} onToggle={onToggle} />
+      <GroupHeader
+        id={id}
+        name={name}
+        open={open}
+        count={count}
+        className={`session-group${active ? ' active' : ''}`}
+        onToggle={onToggle}
+        onContextMenu={
+          onMenu &&
+          ((e) => {
+            e.preventDefault();
+            onMenu();
+          })
+        }
+      />
       {open && children}
     </div>
   );
@@ -136,7 +153,7 @@ export function SessionList({
   const waiting = waitingFirst ? waitingOf(sessions) : [];
   const groups: { key: string; name: string; items: SessionSummary[] }[] = [];
   for (const s of sessions) {
-    const key = s.projectId ?? s.groupName;
+    const key = sessionGroupKey(s);
     const last = groups[groups.length - 1];
     if (last?.key === key) last.items.push(s);
     else groups.push({ key, name: s.groupName, items: [s] });
@@ -163,6 +180,11 @@ export function SessionList({
     setActiveGroup(null);
     onSelect(id);
   };
+  /** A row's right-click menu: a chat's, or a project group's (Waiting for you has none). */
+  const rowMenu = (r: NavRow) => {
+    if (r.kind === 'session') window.looper.sessions.showContextMenu(r.s.id);
+    else if (r.key !== WAITING_KEY) window.looper.sessions.showGroupContextMenu(r.key);
+  };
   const onKeyDown = useListNav({
     count: rows.length,
     index: at,
@@ -179,10 +201,7 @@ export function SessionList({
       const r = rows[i];
       if (r.kind === 'session') void window.looper.sessions.close(r.s.id);
     },
-    onMenu: (i) => {
-      const r = rows[i];
-      if (r.kind === 'session') window.looper.sessions.showContextMenu(r.s.id);
-    },
+    onMenu: (i) => rowMenu(rows[i]),
     tree: {
       expanded: (i) => {
         const r = rows[i];
@@ -208,11 +227,8 @@ export function SessionList({
       onClick={(e) => {
         if (e.target === e.currentTarget) pick(null);
       }}
-      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active chat's menu.
-      onContextMenu={(e) => listContextMenu(e, at, (i) => {
-        const r = rows[i];
-        if (r.kind === 'session') window.looper.sessions.showContextMenu(r.s.id);
-      })}
+      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active row's menu.
+      onContextMenu={(e) => listContextMenu(e, at, (i) => rowMenu(rows[i]))}
     >
       {waiting.length > 0 && (
         <Group id="session-group-w" active={groupAt >= 0 && activeGroup === WAITING_KEY} name="Waiting for you" open={isOpen(WAITING_KEY)} count={waiting.length} onToggle={() => { setActiveGroup(WAITING_KEY); onToggle(WAITING_KEY); }}>
@@ -246,6 +262,7 @@ export function SessionList({
             setActiveGroup(g.key);
             onToggle(g.key);
           }}
+          onMenu={() => window.looper.sessions.showGroupContextMenu(g.key)}
         >
           {g.items.map((s) => (
             <Row key={s.id} s={s} id={`session-${s.id}`} selected={selected === s.id} sub={kindText(s) + (s.latest ?? statusText(s))} onSelect={pick} selectOnMenu={selectOnMenu} />

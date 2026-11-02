@@ -4,14 +4,15 @@ import { chatTitle, type ChatContext, type ChatState } from '../shared/chat';
 import type { MessageRow, MessagesResult } from '../shared/messages';
 import { stripMarkdown } from '../shared/messages-md';
 import { projectIdOf } from '../shared/projects';
-import type {
-  BackgroundTask,
-  SessionActivity,
-  SessionSummary,
-  SessionsState,
-  SubagentInfo,
-  UsageLimits,
-  WaitReason,
+import {
+  limitsKey,
+  type BackgroundTask,
+  type SessionActivity,
+  type SessionSummary,
+  type SessionsState,
+  type SubagentInfo,
+  type UsageLimits,
+  type WaitReason,
 } from '../shared/sessions';
 import type { EngineEvent, Project, Task } from '../shared/types';
 import type { SubagentStats } from './context';
@@ -54,7 +55,7 @@ export interface SessionHubDeps {
   runs: () => RunEntry[];
   findTask: (taskId: string) => Task | undefined;
   projects: () => Project[];
-  harnessOf: (task: Task) => { kind: 'claude-code' | 'codex' | 'custom'; name: string };
+  harnessOf: (task: Task) => { kind: 'claude-code' | 'codex' | 'custom'; name: string; limitsKey?: string };
   runDir: (taskId: string, runId: string) => string;
   readRows: (taskId: string, runId: string) => Promise<MessagesResult>;
   subagents: (taskId: string, runId: string) => Promise<SubagentMeta[]>;
@@ -256,7 +257,7 @@ function permissionText(tool: string): string {
  */
 export class SessionHub {
   private readonly tracks = new Map<string, Track>();
-  private limits: UsageLimits = {};
+  private readonly limits: Record<string, UsageLimits> = {};
   private watched = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private emitTimer: NodeJS.Timeout | null = null;
@@ -291,8 +292,8 @@ export class SessionHub {
     }, 150);
   }
 
-  setLimits(limits: UsageLimits): void {
-    this.limits = { ...this.limits, ...limits };
+  setLimits(key: string, limits: UsageLimits): void {
+    this.limits[key] = { ...this.limits[key], ...limits };
     this.changed();
   }
 
@@ -331,7 +332,7 @@ export class SessionHub {
   }
 
   state(): SessionsState {
-    return { sessions: this.summaries(), limits: this.limits };
+    return { sessions: this.summaries(), limits: { ...this.limits } };
   }
 
   /** The watched session's activity as it stands. */
@@ -534,6 +535,7 @@ export class SessionHub {
       title: rows.some((r) => r.kind === 'prompt') ? chatTitle(rows) : 'New chat',
       harnessKind: c.harnessKind,
       harnessName: c.harnessName,
+      limitsKey: limitsKey(c.environmentId, c.harnessId),
       status: c.status,
       ...(waiting ? { waiting } : {}),
       ...(c.permissions.length > 0 ? { permissionId: c.permissions[0].id } : {}),
@@ -579,6 +581,7 @@ export class SessionHub {
       title,
       harnessKind: harness.kind,
       harnessName: harness.name,
+      ...(harness.limitsKey ? { limitsKey: harness.limitsKey } : {}),
       status,
       ...(e.stopped ? { stopped: true } : {}),
       ...(waiting ? { waiting } : {}),
@@ -612,6 +615,7 @@ export class SessionHub {
       title: task?.name ?? e.taskId,
       harnessKind: harness.kind,
       harnessName: harness.name,
+      ...(harness.limitsKey ? { limitsKey: harness.limitsKey } : {}),
       status: waits ? 'ready' : 'working',
       ...(waiting ? { waiting } : {}),
       ...(latest ? { latest } : {}),

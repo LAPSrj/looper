@@ -1,6 +1,6 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 import { contextText, type ChatContext } from '../../../shared/chat';
-import { waitedText, type UsageLimits } from '../../../shared/sessions';
+import { waitedText, type SessionSummary, type SessionsState, type UsageLimits } from '../../../shared/sessions';
 
 /** The usage ring turns to its warning color from here, and to its critical color from the next. */
 export const USAGE_WARNING = 0.8;
@@ -37,6 +37,11 @@ const toneOf = (used: number): Fact['tone'] => {
   const t = usageTone(used);
   return t === 'critical' ? 'error' : t === 'warning' ? 'warning' : undefined;
 };
+
+/** The limits of the account the session's harness runs on; none without a session. */
+export function sessionLimits(state: SessionsState, s: SessionSummary | undefined): UsageLimits {
+  return (s?.limitsKey && state.limits[s.limitsKey]) || {};
+}
 
 /** The account's limits: the 5-hour use and when it resets, then the weekly use. */
 export function limitFacts(limits: UsageLimits, now: number): Fact[] {

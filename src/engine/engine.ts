@@ -30,9 +30,11 @@ import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions';
 import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
-import { ChatManager, imageMediaType } from './chat';
+import { ChatManager, imageMediaType, kindMismatchText } from './chat';
+import { HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps } from './history';
+import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem } from '../shared/history';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
-import type { SessionActivity, SessionKind, SessionsState } from '../shared/sessions';
+import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
 import { SessionHub } from './sessions';
 import { GitService } from './git';
 import { createWindowsPowerOps } from './power-win';
@@ -75,6 +77,8 @@ export interface EngineOptions {
   keepAwake?: (on: boolean) => void;
   /** Tests replace the terminal sessions' pty. */
   spawnTerminal?: TerminalSessionsDeps['spawn'];
+  /** Tests give the folders the History window reads conversations from outside Looper in, instead of asking each environment. */
+  historyDirs?: HistoryDeps['configDirs'];
 }
 
 export interface Engine {
@@ -252,6 +256,32 @@ export interface Engine {
   startChat(id: string, runId?: string): ChatState;
   /** Fork from Here: a new chat with the conversation up to the row at `index` of the chat's history and rows. Throws with the reason. */
   forkChat(chatId: string, index: number): ChatState;
+  /** Compact into New Chat: a new chat that starts from the chat's messages, without its tool calls; the chat closes. Throws with the reason. */
+  compactChat(chatId: string): Promise<ChatState>;
+  /** Continue Compacted: a new chat that starts from the run's messages, without its tool calls. Throws with the reason. */
+  compactRun(id: string, runId: string): Promise<ChatState>;
+  // the History window
+  /** Every project's conversations: Looper's runs, and Claude Code and Codex conversations from outside Looper. `fresh`: read the folders again, else the cached ones. */
+  historyList(fresh: boolean): Promise<HistoryItem[]>;
+  /** The listed conversations whose user or agent messages contain the text. */
+  historySearch(query: string): Promise<string[]>;
+  /** A listed conversation's rows and subagents (a subagent's rows with `agentId`); null once it's no longer listed. */
+  historyRead(id: string, agentId?: string): Promise<HistoryConversation | null>;
+  historyItem(id: string): HistoryItem | undefined;
+  /** Which of the History window's commands a conversation offers; `outside`: one from outside Looper that no window of Looper's holds. */
+  historyCommands(id: string): HistoryCommands & { outside?: boolean };
+  /** When the transcript of a conversation from outside Looper last changed, read now. */
+  historyChangedAt(id: string): Promise<number | undefined>;
+  /**
+   * Continue in Chat on a conversation from outside Looper: a chat in its
+   * project that resumes it, or the open chat holding it. Throws with the
+   * reason (a project harness of another kind among them).
+   */
+  continueHistoryInChat(id: string): ChatState;
+  /** Continue in Terminal on a conversation from outside Looper: the Looper terminal session's id, or null in the system's terminal. Throws with the reason. */
+  continueHistoryInTerminal(id: string): Promise<string | null>;
+  /** Continue Compacted on a conversation from outside Looper: a new chat from its messages. Throws with the reason. */
+  compactHistory(id: string): Promise<ChatState>;
   getChat(chatId: string): ChatState | undefined;
   sendChat(chatId: string, text: string, attachments: Attachment[]): void;
   /** End the agent's turn; the conversation goes on with the next message. */
@@ -308,7 +338,7 @@ export interface Engine {
    * conversation, only the item of that kind is on (it brings the window
    * forward), so nothing else writes to the conversation meanwhile.
    */
-  canContinueRun(id: string, runId: string): { chat: boolean; terminal: boolean; guidance: boolean };
+  canContinueRun(id: string, runId: string): ContinueOptions;
   /** Start a manual run that resumes the run's conversation with `guidance` as its whole prompt (no check/classifier). */
   continueRun(id: string, runId: string, guidance: string): boolean;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
@@ -353,6 +383,15 @@ export function expiredCompletedTasks(tasks: Task[], cutoffMs: number): Task[] {
   });
 }
 
+/** Which of a finished run's Continue items can go on with its conversation now. */
+export interface ContinueOptions {
+  chat: boolean;
+  terminal: boolean;
+  guidance: boolean;
+  /** Continue Compacted. */
+  compact: boolean;
+}
+
 export function createEngine(opts: EngineOptions): Engine {
   const dataDir = opts.dataDir;
   ensureDir(dataDir);
@@ -369,6 +408,8 @@ export function createEngine(opts: EngineOptions): Engine {
   const runs = new RunStore(dataDir);
   const versions = new VersionStore(dataDir);
   const state = new StateStore(path.join(dataDir, 'state.json'));
+  // Every session Looper starts, kept past run retention: the History window doesn't list them as conversations from outside Looper.
+  const ledger = new SessionLedger(path.join(dataDir, LEDGER_FILE));
   const listeners = new Set<(e: EngineEvent) => void>();
 
   const emit = (e: EngineEvent) => {
@@ -565,6 +606,7 @@ export function createEngine(opts: EngineOptions): Engine {
     getTask: (id) => tasks.get(id),
     listTasks: () => tasks.list(),
     versions,
+    onSession: (sessionId) => ledger.add({ sessionId, kind: 'builder', taskId: '' }),
   });
 
   // Declared ahead: chats and terminal sessions tell it when they change.
@@ -648,10 +690,13 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     runDir: runDirOf,
     readHistory,
+    readCompactable: (taskId, runId) => messages.compactable(taskId, runId),
+    readTranscript: transcriptHistory,
+    onSession: (c) => ledger.add({ ...c, kind: 'chat', taskName: lookup(c.taskId)?.name }),
     writeInfo: (taskId, runId, info) => runs.writeChatInfo(taskId, runId, info),
     appendRecord,
     taskVersion,
-    onLimits: (limits) => hub?.setLimits(limits),
+    onLimits: (key, limits) => hub?.setLimits(key, limits),
     remoteName: (task, harness) => (remote.isRunning() && startsWithRemoteControl(harness) ? task.name : undefined),
     onRemote: (c) => remote.attach({ ...c, source: 'chat' }),
     onClose: (chatId) => {
@@ -667,6 +712,8 @@ export function createEngine(opts: EngineOptions): Engine {
     appendRecord,
     taskVersion,
     log,
+    onSession: (taskId, runId, sessionId) =>
+      ledger.add({ sessionId, kind: remote.owns(runId) ? 'remote' : 'terminal', taskId, taskName: lookup(taskId)?.name, runId }),
   });
 
   remote = new RemoteControl({
@@ -723,8 +770,9 @@ export function createEngine(opts: EngineOptions): Engine {
     projects: () => projects.list(),
     harnessOf(task) {
       try {
-        const h = resolveHarness(task, resolveEnvironment(task, settings));
-        return { kind: h.kind, name: h.name };
+        const env = resolveEnvironment(task, settings);
+        const h = resolveHarness(task, env);
+        return { kind: h.kind, name: h.name, limitsKey: limitsKey(env.id, h.id) };
       } catch {
         return { kind: 'custom', name: 'Terminal' };
       }
@@ -764,6 +812,39 @@ export function createEngine(opts: EngineOptions): Engine {
     log,
     onRepos: (ids) => emit({ type: 'git-repos', ids }),
   });
+
+  const history = new HistoryService({
+    dataDir,
+    host,
+    settings,
+    log,
+    projects: () => projects.list(),
+    runTaskIds: () => runs.listTaskIds(),
+    findTask: lookup,
+    summaries: (taskId) => runs.summaries(taskId),
+    runDir: runDirOf,
+    readChatInfo: (taskId, runId) => runs.readChatInfo(taskId, runId),
+    readTerminalInfo: (taskId, runId) => runs.readTerminalInfo(taskId, runId),
+    remoteRuns: () => new Set(remote.state(false).conversations.filter((c) => c.source !== 'chat' && c.source !== 'terminal').map((c) => c.id)),
+    readRun: async (taskId, runId, agentId) => {
+      const r = await messages.read(taskId, runId, agentId);
+      return r.status === 'ok' ? r.rows.filter((row) => row.kind !== 'raw') : [];
+    },
+    compactableRun: (taskId, runId) => messages.compactable(taskId, runId),
+    runSubagents: (taskId, runId) => messages.subagents(taskId, runId),
+    subagentsAt: (hostPath) => messages.subagentsAt(hostPath),
+    ledger,
+    configDirs: opts.historyDirs,
+  });
+
+  /** A conversation from outside Looper's runs, and its project's stand-in, which a chat or terminal on it runs as. Throws with the reason. */
+  const outsideOf = (id: string) => {
+    const t = history.transcript(id);
+    if (!t) throw new Error('This conversation is no longer in the History window’s list. Refresh the list and try again.');
+    const project = projects.get(t.projectId);
+    if (!project) throw new Error('Its project no longer exists.');
+    return { t, task: projectSessionTask(project, settings) };
+  };
 
   /**
    * The run of a kind (chat or terminal session) that already holds a run's
@@ -1067,6 +1148,14 @@ export function createEngine(opts: EngineOptions): Engine {
 
   scheduler.on('event', (e: EngineEvent) => {
     emit(e);
+    // A task run's sessions (its agent's, its classifier's) go in the ledger as its steps record them.
+    if (e.type === 'record') {
+      const { taskId, runId } = e.record;
+      for (const r of runSessionRefs(runs.runDir(taskId, runId))) {
+        ledger.add({ sessionId: r.sessionId, kind: r.classifier ? 'classifier' : 'run', taskId, taskName: tasks.get(taskId)?.name, runId });
+      }
+      return;
+    }
     if (e.type !== 'runtime') return;
     rest?.poke();
     preventSleep?.poke();
@@ -1543,6 +1632,77 @@ export function createEngine(opts: EngineOptions): Engine {
       if (!task) throw new Error('This chat is closed.');
       return chats.fork(task, chatId, index);
     },
+    async compactChat(chatId: string): Promise<ChatState> {
+      const taskId = chats.taskOf(chatId);
+      const task = taskId ? taskOrProject(taskId) : undefined;
+      if (!task) throw new Error('This chat is closed.');
+      return chats.compact(task, chatId);
+    },
+    async compactRun(id: string, runId: string): Promise<ChatState> {
+      const task = taskOrProject(id);
+      if (!task) throw new Error(`unknown task ${id}`);
+      const history = await messages.compactable(task.id, runId);
+      if (!history.some((r) => r.kind === 'agent')) throw new Error('No conversation was recorded for this run.');
+      // A chat's run goes on with its harness and settings, while the environment still has that harness.
+      const info = runs.readChatInfo(task.id, runId);
+      const kept = info?.harnessId && resolveEnvironment(task, settings).harnesses.some((h) => h.id === info.harnessId);
+      return chats.start(task, { kind: 'compact', from: runId, history, ...(kept ? { harnessId: info.harnessId, settings: info.settings } : {}) });
+    },
+    historyList: (fresh) => history.list(fresh),
+    historySearch: (query) => history.search(query),
+    historyRead: (id, agentId) => history.read(id, agentId),
+    historyItem: (id) => history.item(id),
+    historyCommands(id: string): HistoryCommands & { outside?: boolean } {
+      const item = history.item(id);
+      const project = item ? projects.get(item.projectId) : undefined;
+      if (!item || !project) return NO_HISTORY_COMMANDS;
+      const base = { sessionId: item.sessionId ?? null, folder: !!project.cwd };
+      if (item.runId) {
+        const c = this.canContinueRun(item.taskId, item.runId);
+        return { ...base, chat: c.chat, terminal: c.terminal, compact: c.compact };
+      }
+      const t = history.transcript(id);
+      if (!t) return NO_HISTORY_COMMANDS;
+      // A harness of another kind is refused when it's picked, saying why.
+      const task = projectSessionTask(project, settings);
+      const chat = chats.findOpen(task.id, '', t.sessionId);
+      const terminal = terminalRuns.findOpen(task.id, '', t.sessionId);
+      // A chat or terminal of Looper's holding it comes forward: there's nothing to ask about another one.
+      return { ...base, chat: !terminal, terminal: !chat, compact: true, outside: !chat && !terminal };
+    },
+    historyChangedAt: (id) => history.changedAt(id),
+    continueHistoryInChat(id: string): ChatState {
+      const { t, task } = outsideOf(id);
+      const open = chats.findOpen(task.id, '', t.sessionId);
+      if (open) return open;
+      if (terminalRuns.findOpen(task.id, '', t.sessionId)) throw new Error('The conversation is open in a terminal window.');
+      return chats.start(task, { kind: 'resume', sessionId: t.sessionId, harnessKind: t.harnessKind, transcript: t.path });
+    },
+    async continueHistoryInTerminal(id: string): Promise<string | null> {
+      const { t, task } = outsideOf(id);
+      const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
+      if (kind !== t.harnessKind) throw new Error(kindMismatchText(t.harnessKind, kind));
+      if (settings.terminal === 'system') {
+        await openTaskTerminal(task, { host, settings, log }, runs.taskDir(task.id), t.sessionId);
+        return null;
+      }
+      const open = terminalRuns.findOpen(task.id, '', t.sessionId);
+      if (open) return open;
+      if (chats.findOpen(task.id, '', t.sessionId)) throw new Error('The conversation is open in a chat window.');
+      const runId = newRunId();
+      const sessionId = launchTerminal(task.id, task, runId, t.harnessKind, t.sessionId);
+      terminalRuns.start({ taskId: task.id, runId, harnessKind: t.harnessKind });
+      terminalResume.set(sessionId, t.sessionId);
+      sessionHub.changed();
+      saveConversations();
+      return sessionId;
+    },
+    async compactHistory(id: string): Promise<ChatState> {
+      const { t, task } = outsideOf(id);
+      const rows = await history.compactable(id);
+      if (!rows.some((r) => r.kind === 'agent')) throw new Error('The conversation has no reply to compact yet.');
+      return chats.start(task, { kind: 'compact', from: t.sessionId, label: `Compacted from "${t.title}"`, history: rows });
+    },
     getChat: (chatId) => chats.get(chatId),
     sendChat: (chatId, text, attachments) => chats.send(chatId, text, attachments),
     stopChat: (chatId) => chats.stop(chatId),
@@ -1629,8 +1789,8 @@ export function createEngine(opts: EngineOptions): Engine {
       const parts = rel.split(path.sep);
       return !rel.startsWith('..') && !path.isAbsolute(rel) && parts.length === 3 && parts[1] === 'attachments';
     },
-    canContinueRun(id: string, runId: string): { chat: boolean; terminal: boolean; guidance: boolean } {
-      const none = { chat: false, terminal: false, guidance: false };
+    canContinueRun(id: string, runId: string): ContinueOptions {
+      const none = { chat: false, terminal: false, guidance: false, compact: false };
       const task = taskOrProject(id);
       if (!task) return none;
       if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return none;
@@ -1642,7 +1802,8 @@ export function createEngine(opts: EngineOptions): Engine {
         // A terminal and a run of the task use the task's harness: a chat on another one goes on only in a chat.
         const own = harness.id === resolveHarness(task, resolveEnvironment(task, settings)).id;
         // Continue with Guidance starts a run of a task: a project's sessions have none.
-        return { chat: !open.terminal, terminal: own && !open.chat, guidance: own && !!tasks.get(id) && !open.chat && !open.terminal };
+        // Continue Compacted only reads the conversation: a chat or terminal open on it doesn't matter.
+        return { chat: !open.terminal, terminal: own && !open.chat, guidance: own && !!tasks.get(id) && !open.chat && !open.terminal, compact: true };
       } catch {
         return none;
       }

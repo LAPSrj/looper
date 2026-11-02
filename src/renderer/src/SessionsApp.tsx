@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { contextText, type ChatState } from '@shared/chat';
+import { chatCanCompact, contextText, type ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SessionSummary, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
@@ -23,10 +23,10 @@ import { Group, LargeTitle, Row, Segmented } from './components/phone/PhoneList'
 import { PhoneSheet } from './components/phone/PhoneSheet';
 import { SplitEmpty, SplitView, useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
-import { AccountLimits, UsagePanel } from './components/phone/UsagePanel';
+import { UsagePanel } from './components/phone/UsagePanel';
 import { SessionIcon, SessionList, statusText } from './components/SessionList';
 import { groupStatusText, subagentTabs } from './components/subagents';
-import { contextFraction, limitFacts, usageLabel } from './components/usage';
+import { contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
 import { TerminalView } from './components/TerminalView';
 import { Tabs, type TabItem } from './components/Tabs';
 import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components/WorkflowView';
@@ -53,7 +53,7 @@ function replyParts(s: SessionSummary | undefined, now: number): string[] {
 
 const limitParts = (limits: UsageLimits, now: number): string[] => limitFacts(limits, now).map((f) => `${f.label} ${f.value}`);
 
-/** The window's bottom line: the session's harness and its context, then the account's usage limits. */
+/** The window's bottom line: the session's harness and its context, then the usage limits of the account its harness runs on. */
 function SessionsStatusBar({ summary, chat, limits }: { summary?: SessionSummary; chat: ChatState | null; limits: UsageLimits }) {
   // Every time on it counts minutes.
   const now = useNow(MINUTE);
@@ -578,6 +578,7 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !summary, run: () => s.setSelected(null) },
         { id: 'send-to-chats', label: 'Send to Chats', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
+        { id: 'history', label: 'History', icon: 'history', platforms: NOT_MOBILE, run: () => window.looper.history.open() },
       ],
     },
     {
@@ -619,6 +620,13 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
           icon: 'sendNow',
           enabled: (chat?.queued.length ?? 0) > 0,
           run: () => void window.looper.chat.sendNow(chat!.id).catch(fail),
+        },
+        {
+          id: 'compact',
+          label: 'Compact into New Chat',
+          icon: 'compact',
+          enabled: !!chat && chatCanCompact(chat),
+          run: () => void window.looper.chat.compact(chat!.id).catch(fail),
         },
         {
           id: 'close-conversation',
@@ -789,7 +797,7 @@ function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) 
           </>
         )}
       </div>
-      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={state.limits} />}
+      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={sessionLimits(state, summary)} />}
     </div>
   );
 }
@@ -811,6 +819,7 @@ const PHONE_LISTS: [PhoneList, string][] = [
  */
 function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boolean; opened: boolean }) {
   const { state, summary, chat, activity, subagents } = s;
+  const limits = sessionLimits(state, summary);
   const [list, setList] = useState<PhoneList>('sessions');
   const [sheet, setSheet] = useState<{ kind: 'activity'; tab: ActivityTab } | { kind: 'usage' } | null>(null);
   useEffect(() => setSheet(null), [summary?.id]);
@@ -854,8 +863,8 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
         { id: 'activity', label: 'Activity', icon: 'activity', run: toggleActivity },
         {
           id: 'usage',
-          label: usageLabel(chat?.context ?? summary.context, state.limits),
-          ring: { context: contextFraction(chat?.context ?? summary.context), used: state.limits.fiveHour?.used ?? null },
+          label: usageLabel(chat?.context ?? summary.context, limits),
+          ring: { context: contextFraction(chat?.context ?? summary.context), used: limits.fiveHour?.used ?? null },
           run: () => setSheet({ kind: 'usage' }),
         },
       ]
@@ -934,7 +943,6 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
       ) : (
         <Dashboard s={s} />
       )}
-      <AccountLimits limits={state.limits} />
     </div>
   );
   // Activity, in the sheet (closes when it opens a page) or the inspector (stays).
@@ -958,6 +966,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           s.showWorkflow(runId);
           if (closes) setSheet(null);
         }}
+        working={summary.status === 'working'}
         pos={s.nowPos}
         onPos={s.setNowPos}
         initialTab={tab}
@@ -967,7 +976,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     <>
       {sheet?.kind === 'usage' && (
         <PhoneSheet title="Usage" detent="medium" onClose={() => setSheet(null)}>
-          <UsagePanel summary={summary} chat={chat} limits={state.limits} />
+          <UsagePanel summary={summary} chat={chat} limits={limits} />
         </PhoneSheet>
       )}
       {sheet?.kind === 'activity' && (

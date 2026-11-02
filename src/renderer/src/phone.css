@@ -485,7 +485,7 @@ html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
   display: flex;
   flex: none;
   gap: 0;
-  padding: 0;
+  --tabs-pad: 0px;
   border-bottom: 1px solid var(--pg-sep);
   background: var(--pg-bg);
 }
@@ -1875,7 +1875,7 @@ html.phone-window .tabs {
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 0 8px;
+  --tabs-pad: 8px;
   background: var(--pg-bg);
 }
 html.phone-window .tabs::-webkit-scrollbar {

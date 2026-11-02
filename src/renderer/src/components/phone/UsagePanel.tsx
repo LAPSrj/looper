@@ -7,7 +7,7 @@ import { limitFacts, sessionFacts } from '../usage';
 import { Group, Row } from './PhoneList';
 
 /** The account's usage limits as an inset grouped list; nothing when the account reports none. */
-export function AccountLimits({ limits }: { limits: UsageLimits }) {
+function AccountLimits({ limits }: { limits: UsageLimits }) {
   const facts = limitFacts(limits, useNow(MINUTE));
   if (facts.length === 0) return null;
   return (

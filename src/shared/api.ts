@@ -16,6 +16,7 @@ import type { RunFilter } from './runs';
 import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
+import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryItem } from './history';
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -196,6 +197,8 @@ export interface LooperApi {
     send(id: string, text: string, attachments: Attachment[]): void;
     /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
     sendNow(id: string): Promise<void>;
+    /** Compact into New Chat: a new chat that starts from this one's messages takes its place. Rejects with the reason. */
+    compact(id: string): Promise<void>;
     /** Take a message out of the queue (Cancel; Edit puts it back in the message box). */
     unqueue(id: string, messageId: string): Promise<QueuedMessage | null>;
     /** The message box's unsent message changed: the chat keeps it for the next start of Looper. */
@@ -248,6 +251,8 @@ export interface LooperApi {
     stop(id: string): Promise<void>;
     /** A session's right-click menu; `card`: on its dashboard card, which adds Double Size or Normal Size. */
     showContextMenu(id: string, card?: boolean): void;
+    /** A list group's right-click menu (`group`: sessionGroupKey): New Chat in its project, Send to Chats… with its chats checked, and Close All Conversations in it. */
+    showGroupContextMenu(group: string): void;
     /** The Send to Sessions window. */
     openSend(): void;
     /** The Sessions window, opened or brought forward; `id` shows that session in it. */
@@ -263,6 +268,25 @@ export interface LooperApi {
     sentFile(taskId: string, path: string): Promise<SentFileInfo | null>;
     /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
     openFile(taskId: string, runId: string, path: string, image: boolean): Promise<void>;
+  };
+  /** The History window: every project's older conversations, to read or continue. */
+  history: {
+    /** The conversations; `fresh` reads the folders again (slow across WSL), else the cached ones come at once. */
+    list(fresh: boolean): Promise<HistoryItem[]>;
+    /** The ids of the listed conversations whose user or agent messages contain the text. */
+    search(query: string): Promise<string[]>;
+    /** A conversation's rows and subagents, or a subagent's rows with `agentId`; null once it isn't listed. */
+    read(id: string, agentId?: string): Promise<HistoryConversation | null>;
+    /** Which commands the conversation offers. */
+    commands(id: string): Promise<HistoryCommands>;
+    /** Continue in Chat, Continue Compacted, Continue in Terminal, Copy Session ID or Open Working Directory; asks first when the conversation may still be open elsewhere. Rejects with the reason. */
+    run(id: string, command: HistoryCommand): Promise<void>;
+    /** The window shows this conversation now (null: none): its menus act on it. */
+    select(id: string | null): void;
+    /** A conversation's right-click menu. */
+    showContextMenu(id: string): void;
+    /** The History window, opened or brought forward. */
+    open(): void;
   };
   /** A project's git repository, read-only, for the Git tabs. */
   git: {
@@ -565,7 +589,15 @@ export type UiEvent =
   /** Sessions window View menu: show the dashboard. */
   | { type: 'sessions-dashboard' }
   /** Sessions window View menu: move the focus to the next or previous pane (list, conversation, activity pane). */
-  | { type: 'sessions-pane'; dir: 1 | -1 };
+  | { type: 'sessions-pane'; dir: 1 | -1 }
+  /** Send to Chats window: check the open chats of this list group (sessionGroupKey) instead. */
+  | { type: 'send-to-sessions-pick'; group: string }
+  /** History window View menu: the Activity Pane shows or hides. */
+  | { type: 'history-activity'; checked: boolean }
+  /** History window: read the list again (View → Refresh). */
+  | { type: 'history-refresh' }
+  /** History window: put the focus in the search box (Edit → Find…). */
+  | { type: 'history-find' };
 
 /** run: the run's own step records (check, classifier, agent, result, guidance). */
 export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

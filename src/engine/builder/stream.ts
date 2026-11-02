@@ -52,7 +52,7 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
 
   /** Looper's own line in the conversation (why a turn failed). */
   addNote(text: string): void {
-    this.push({ kind: 'agent', ts: new Date().toISOString(), text });
+    this.push({ kind: 'agent', ts: new Date().toISOString(), text }).note = true;
   }
 }
 
@@ -85,7 +85,7 @@ export class CodexExecAccumulator extends TranscriptAccumulator {
 
   /** Looper's own line in the conversation (why a turn failed). */
   addNote(text: string): void {
-    this.push({ kind: 'agent', ts: new Date().toISOString(), text });
+    this.push({ kind: 'agent', ts: new Date().toISOString(), text }).note = true;
   }
 
   addLine(line: string): void {

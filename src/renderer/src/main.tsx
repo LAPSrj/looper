@@ -37,6 +37,7 @@ const HarnessEditorApp = lazy(() => import('./HarnessEditorApp').then((m) => ({ 
 const ModelEditorApp = lazy(() => import('./ModelEditorApp').then((m) => ({ default: m.ModelEditorApp })));
 const ModelUpdateApp = lazy(() => import('./ModelUpdateApp').then((m) => ({ default: m.ModelUpdateApp })));
 const FilterApp = lazy(() => import('./FilterApp').then((m) => ({ default: m.FilterApp })));
+const HistoryApp = lazy(() => import('./HistoryApp').then((m) => ({ default: m.HistoryApp })));
 const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));
 const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
@@ -91,6 +92,7 @@ const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
 const sessionsMatch = /^sessions(?:\/([^/]+)(\/window)?)?$/.exec(hash);
+const sendToSessionsMatch = /^send-to-sessions(?:\/([^/]+))?$/.exec(hash);
 const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
@@ -154,7 +156,9 @@ function pickRoot() {
   }
   if (hash === 'builder-setup') return <BuilderSetupApp />;
   if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} single={!!sessionsMatch[2]} />;
-  if (hash === 'send-to-sessions') return <SendToSessionsApp />;  if (terminalMatch) {
+  if (sendToSessionsMatch) return <SendToSessionsApp group={sendToSessionsMatch[1] ? decodeURIComponent(sendToSessionsMatch[1]) : undefined} />;
+  if (hash === 'history') return <HistoryApp />;
+  if (terminalMatch) {
     return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
   }
   if (builderMatch) return <BuilderApp id={decodeURIComponent(builderMatch[1])} />;

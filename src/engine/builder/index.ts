@@ -36,6 +36,8 @@ export interface BuilderDeps {
   listTasks: () => Task[];
   /** Undo/Redo reads the saved versions and their files. */
   versions: VersionStore;
+  /** The harness named the builder's conversation: Looper's ledger of sessions keeps it out of the History window. */
+  onSession?: (sessionId: string) => void;
 }
 
 const sameContent = (a: Buffer | null, b: Buffer | null): boolean => (a === null || b === null ? a === b : a.equals(b));
@@ -498,9 +500,13 @@ class BuilderSession {
     this.acc.addLine(line);
     if (this.harness.kind === 'claude-code') {
       if (rec.type === 'result') this.setStatus('ready', false);
+      if (rec.type === 'system' && rec.subtype === 'init' && typeof rec.session_id === 'string') this.d.onSession?.(rec.session_id);
       this.noteClaudeFiles(rec);
     } else {
-      if (rec.type === 'thread.started' && typeof rec.thread_id === 'string') this.codexThread = rec.thread_id;
+      if (rec.type === 'thread.started' && typeof rec.thread_id === 'string') {
+        this.codexThread = rec.thread_id;
+        this.d.onSession?.(rec.thread_id);
+      }
       this.noteCodexFiles(rec);
     }
     this.scheduleEmit();

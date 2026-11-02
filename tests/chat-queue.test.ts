@@ -236,8 +236,8 @@ describe("a chat's harness", { timeout: 30_000 }, () => {
     // The fake doesn't run hooks: the session record stands in for its SessionStart hook.
     writeFileSync(join(runDir, 'session.json'), JSON.stringify({ session_id: 's1' }));
     await e.closeChat(chatId);
-    // A terminal and a run of the task would use the task's harness: only a chat goes on with it.
-    expect(e.canContinueRun('t1', chatId)).toEqual({ chat: true, terminal: false, guidance: false });
+    // A terminal and a run of the task would use the task's harness: only a chat goes on with it, or a compacted one.
+    expect(e.canContinueRun('t1', chatId)).toEqual({ chat: true, terminal: false, guidance: false, compact: true });
     expect(() => e.startTerminalSession('t1', chatId)).toThrow('only Continue in Chat');
     expect(e.startChat('t1', chatId)).toMatchObject({ id: chatId, harnessId: 'other', harnessLocked: true });
   });

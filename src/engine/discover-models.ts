@@ -12,7 +12,7 @@ const posixQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 /** Which side of the WSL boundary the environment's commands run on. */
-function envSide(env: Environment, host: HostKind): 'posix' | 'windows' {
+export function envSide(env: Environment, host: HostKind): 'posix' | 'windows' {
   if (env.kind === 'windows') return 'windows';
   if (env.kind === 'wsl') return 'posix';
   return host === 'windows' ? 'windows' : 'posix';
@@ -38,7 +38,7 @@ function stderrSummary(stderr: string, side: 'posix' | 'windows'): string | unde
  * runs — nvm/bun installs included), crossing into WSL via wsl.exe when
  * needed; Windows targets run through powershell.exe (interop from WSL).
  */
-function runProbe(env: Environment, host: HostKind, script: string): Promise<string> {
+export function runProbe(env: Environment, host: HostKind, script: string): Promise<string> {
   const side = envSide(env, host);
   let argv: string[];
   if (side === 'windows') {
@@ -69,7 +69,7 @@ function runProbe(env: Environment, host: HostKind, script: string): Promise<str
 }
 
 /** `export K=V; ...` / `$env:K = 'V'; ...` prefix carrying the harness's env vars. */
-function envPrefix(side: 'posix' | 'windows', vars: Record<string, string>): string {
+export function envPrefix(side: 'posix' | 'windows', vars: Record<string, string>): string {
   const entries = Object.entries(vars);
   if (side === 'posix') return entries.map(([k, v]) => `export ${k}=${posixQuote(v)}; `).join('');
   return entries.map(([k, v]) => `$env:${k} = ${psQuote(v)}; `).join('');

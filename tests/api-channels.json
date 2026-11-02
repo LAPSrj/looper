@@ -1222,6 +1222,21 @@
    "err": "Error invoking remote method 'chat:sendNow': Error: boom chat:sendNow"
   }
  },
+ "chat.compact": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:compact",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:compact': Error: boom chat:compact"
+  }
+ },
  "chat.unqueue": {
   "arity": 2,
   "calls": [
@@ -1532,6 +1547,19 @@
   ],
   "result": {}
  },
+ "sessions.showGroupContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:session-group",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "sessions.openSend": {
   "arity": 0,
   "calls": [
@@ -1650,6 +1678,120 @@
   "result": {
    "err": "boom sessions:openFile"
   }
+ },
+ "history.list": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "history:list",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'history:list': Error: boom history:list"
+  }
+ },
+ "history.search": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "history:search",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'history:search': Error: boom history:search"
+  }
+ },
+ "history.read": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "history:read",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'history:read': Error: boom history:read"
+  }
+ },
+ "history.commands": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "history:commands",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'history:commands': Error: boom history:commands"
+  }
+ },
+ "history.run": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "history:run",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom history:run"
+  }
+ },
+ "history.select": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "history:select",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "history.showContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:history",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "history.open": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "history:open",
+    []
+   ]
+  ],
+  "result": {}
  },
  "attachment.open": {
   "arity": 1,

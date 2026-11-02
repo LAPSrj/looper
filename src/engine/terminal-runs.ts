@@ -18,6 +18,8 @@ export interface TerminalRunsDeps {
   taskVersion: (taskId: string) => number | undefined;
   log: Logger;
   pollMs?: number;
+  /** The session became a run: Looper's ledger of sessions keeps its conversation's id. */
+  onSession?: (taskId: string, runId: string, sessionId: string) => void;
 }
 
 export interface TerminalRunOpts {
@@ -199,6 +201,8 @@ export class TerminalRuns {
       this.d.log.warn(`terminal ${w.runId}: cannot save: ${errMsg(err)}`);
     }
     this.record(w, 'opened');
+    const sessionId = readRunSessionId(w.dir, w.harnessKind);
+    if (sessionId) this.d.onSession?.(w.taskId, w.runId, sessionId);
     if (w.closing) this.record(w, 'closed', 0);
   }
 

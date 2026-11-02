@@ -8,7 +8,9 @@ import type { PowerAdapter } from '../engine/rest';
 import { ViewSchema, type EngineEvent, type PreventSleepTimer, type Settings } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
 import { projectTaskId } from '../shared/projects';
-import { chatIsEmpty, type ChatSettingMenu, type ChatSettings, type ChatState } from '../shared/chat';
+import { sessionGroupKey } from '../shared/sessions';
+import type { UiEvent } from '../shared/api';
+import { chatCanCompact, chatIsEmpty, type ChatSettingMenu, type ChatSettings, type ChatState } from '../shared/chat';
 import { EFFORT_LEVELS, PERMISSION_MODES, startsWithRemoteControl } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
@@ -36,6 +38,7 @@ import {
   showOpenDialog,
   showSaveDialog,
   placeAs,
+  popupMenu,
   useRemoteClients,
   useWindowPlaces,
   windowOf,
@@ -64,6 +67,7 @@ const PROJECT_UI_ACTIONS: Record<ProjectCommand, string> = {
 import { hideOffPlatform } from './platform/menus';
 import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
 import { SHORTCUTS } from '../shared/shortcuts';
+import { NO_HISTORY_COMMANDS, type HistoryCommand } from '../shared/history';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
@@ -189,11 +193,18 @@ if (!app.requestSingleInstanceLock()) {
       terminalWindow: (id) => [...terminalWindows.all(id), ...sessionWindowsShowing(id)],
       openChat,
       forkChat,
+      compactChat,
+      compactRun,
       sessionWindow: sessionWindowsShowing,
       showSession,
       showCards,
       closeSession: (id, from) => closeSessionAsk(id, from),
+      closeSessionGroup: (group, from) => closeAllSessionsAsk(group, from),
       openSendToSessions: openSendToSessionsWindow,
+      openHistory: openHistoryWindow,
+      historySelect,
+      historyRun,
+      historyMenu,
       openSessions: (select) => openSessionsWindow(select),
       openChatWindow,
       chatSettingMenu,
@@ -1124,7 +1135,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
     return !rawOutput && fs.existsSync(clean) ? clean : path.join(dir, 'output.log');
   };
   // Snapshot at window open: a run still in flight keeps the Continue items off.
-  const none = { chat: false, terminal: false, guidance: false };
+  const none = { chat: false, terminal: false, guidance: false, compact: false };
   const canContinue = agentId ? none : (engine?.canContinueRun(taskId, runId) ?? none);
   // A subagent's window shows only its conversation; the run's own items are the run window's.
   const runItems: Electron.MenuItemConstructorOptions[] = agentId
@@ -1150,6 +1161,19 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
           enabled: canContinue.chat,
           click: () =>
             void openChat(taskId, runId).catch(async (err: unknown) => {
+              await showMessageBox(child, {
+                type: 'error',
+                title: 'Looper',
+                message: err instanceof Error ? err.message : String(err),
+                buttons: ['OK'],
+              });
+            }),
+        },
+        {
+          label: 'Continue Co&mpacted',
+          enabled: canContinue.compact,
+          click: () =>
+            void compactRun(taskId, runId).catch(async (err: unknown) => {
               await showMessageBox(child, {
                 type: 'error',
                 title: 'Looper',
@@ -1992,6 +2016,16 @@ function forkChat(chatId: string, index: number): void {
   if (engine) openSessionsWindow(engine.forkChat(chatId, index).id);
 }
 
+/** Compact into New Chat: the compacted chat takes the chat's place in the Chats window. Rejects with the reason. */
+async function compactChat(chatId: string): Promise<void> {
+  if (engine) openSessionsWindow((await engine.compactChat(chatId)).id);
+}
+
+/** Continue Compacted: a new chat from the run's messages, in the Chats window. Rejects with the reason. */
+async function compactRun(taskId: string, runId: string): Promise<void> {
+  if (engine) openSessionsWindow((await engine.compactRun(taskId, runId)).id);
+}
+
 /** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
 const menuText = (s: string): string => s.replace(/&/g, '&&');
 
@@ -2072,6 +2106,7 @@ function chatMenu(
   setHarness: (harnessId: string) => void,
   /** The harness's own id for the conversation, once it has started it. */
   harnessSession: string | null,
+  compact: () => void,
 ): Electron.MenuItemConstructorOptions {
   return {
     id: 'chat',
@@ -2085,6 +2120,7 @@ function chatMenu(
       { type: 'separator' },
       ...chatSettingSubmenus(chatSettingItems(s, configure, setHarness)),
       { type: 'separator' },
+      { id: 'chat-compact', label: '&Compact into New Chat', glyph: 'compact', enabled: chatCanCompact(s), click: compact },
       { id: 'chat-copy-session-id', label: 'Copy Session &ID', glyph: 'copy', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
     ],
   };
@@ -2314,17 +2350,22 @@ function openConversations() {
   return (engine?.sessionsState().sessions ?? []).filter((s) => s.kind !== 'run');
 }
 
-/** Close All Conversations: every chat and terminal session ends, after asking. */
-async function closeAllSessionsAsk(): Promise<void> {
+/**
+ * Close All Conversations: every chat and terminal session ends, after asking.
+ * `group` (sessionGroupKey): only the ones in that list group, asked over `from`.
+ */
+async function closeAllSessionsAsk(group?: string, from?: AppWindow | null): Promise<void> {
   if (!engine) return;
-  const sessions = openConversations();
+  const eng = engine;
+  const sessions = openConversations().filter((s) => group === undefined || sessionGroupKey(s) === group);
   if (sessions.length === 0) return;
   const working = sessions.filter((s) => sessionBusy(s.id)).length;
-  const parent = sessionsWindows.get();
+  const parent = from && !from.isDestroyed() ? from : sessionsWindows.get();
+  const where = group === undefined ? '' : ` in ${sessions[0].groupName}`;
   const opts = {
     type: 'question' as const,
     title: 'Chats',
-    message: sessions.length === 1 ? 'Close the conversation?' : `Close all ${sessions.length} conversations?`,
+    message: sessions.length === 1 ? `Close the conversation${where}?` : `Close all ${sessions.length} conversations${where}?`,
     detail:
       working === 0
         ? 'Each one ends, and stays in its project’s or task’s run history.'
@@ -2337,7 +2378,9 @@ async function closeAllSessionsAsk(): Promise<void> {
     cancelId: 1,
   };
   const { response } = await showMessageBox(parent, opts);
-  if (response === 0) await engine.closeAllSessions();
+  if (response !== 0) return;
+  if (group === undefined) await eng.closeAllSessions();
+  else await Promise.all(sessions.map((s) => eng.closeSession(s.id)));
 }
 
 /**
@@ -2447,7 +2490,7 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         ? []
         : [{ label: 'Open in &New Window', platforms: NOT_MOBILE, enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
       { label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: !!kind, click: openWorkingDirectory },
-      ...(sv.single ? [] : [{ id: 'chat-send-to-chats', label: 'Send to C&hats…', glyph: 'bullhorn', enabled: anySessions, click: openSendToSessionsWindow }]),
+      ...(sv.single ? [] : [{ id: 'chat-send-to-chats', label: 'Send to C&hats…', glyph: 'bullhorn', enabled: anySessions, click: () => openSendToSessionsWindow() }]),
       sep,
       closeConversation,
       ...(sv.single ? [] : [{ id: 'chat-close-all', label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk().catch(showError) }]),
@@ -2504,6 +2547,7 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         ]
       : [
           { id: 'chats-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => send({ type: 'sessions-dashboard' }) },
+          { id: 'chats-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
           sep,
           { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
           { label: 'A&ctivity Pane', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
@@ -2533,6 +2577,7 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
         (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
         (harnessId) => void engine?.setChatHarness(id, harnessId).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
         harnessSession,
+        () => void compactChat(id).catch(showError),
       ),
     );
   }
@@ -2544,14 +2589,233 @@ let sessionsExportOpts = { includeThinking: true, includeTools: true, plain: fal
 
 const sendToSessionsWindows = new WindowSlots();
 
-/** Send to Chats: one message to the chats and terminal sessions picked there. Modeless, one per client; opening it again brings it forward. */
-function openSendToSessionsWindow(): void {
+/**
+ * Send to Chats: one message to the chats and terminal sessions picked there. Modeless, one per client;
+ * opening it again brings it forward. `group` (sessionGroupKey): that list group's chats are the ones checked.
+ */
+function openSendToSessionsWindow(group?: string): void {
   const open = sendToSessionsWindows.get();
   if (open) {
+    if (group !== undefined) open.webContents.send('ui:event', { type: 'send-to-sessions-pick', group } satisfies UiEvent);
     open.focus();
     return;
   }
-  sendToSessionsWindows.set(openChildWindow('send-to-sessions', 'Send to Chats', 620, 560, undefined, { contentSize: true, minWidth: 480, minHeight: 420 }));
+  const hash = group === undefined ? 'send-to-sessions' : `send-to-sessions/${encodeURIComponent(group)}`;
+  sendToSessionsWindows.set(openChildWindow(hash, 'Send to Chats', 620, 560, undefined, { contentSize: true, minWidth: 480, minHeight: 420 }));
+}
+
+// ---------- the History window ----------
+
+/** A History window: the conversation it shows (its menus act on it), and whether its Activity Pane shows (hidden each time it opens). */
+interface HistoryWindowView {
+  w: AppWindow;
+  selected: string | null;
+  activity: boolean;
+  /** What its menu was last built from. */
+  menuKey: string;
+}
+
+/** One History window per client. */
+const historyWindows = new WindowSlots();
+const historyViews = new Map<AppWindow, HistoryWindowView>();
+
+/** How long after its transcript last changed a conversation from outside Looper may still be open in another terminal. */
+const STILL_OPEN_MS = 5 * 60_000;
+
+/**
+ * The History window: every project's older conversations, Looper's and the
+ * ones started in Claude Code or Codex outside it, to read or continue.
+ * Modeless; opening it again brings it forward.
+ */
+function openHistoryWindow(): void {
+  const open = historyWindows.get();
+  if (open) {
+    bringForward(open);
+    return;
+  }
+  const child = openChildWindow('history', 'History', 1388, 895, undefined, { minWidth: 970, minHeight: 500, contentSize: true });
+  child.setMaximizable(true);
+  historyWindows.set(child);
+  const view: HistoryWindowView = { w: child, selected: null, activity: false, menuKey: '' };
+  historyViews.set(child, view);
+  attachWindowMenu(child, historyTemplate(view));
+  view.menuKey = historyMenuState(view);
+  // The View menu follows the settings, and Continue what chats and terminals hold.
+  const unsubscribe = engine!.on((e) => {
+    if (e.type === 'settings' || e.type === 'sessions' || e.type === 'projects') refreshHistoryMenu(view);
+  });
+  child.on('closed', () => {
+    unsubscribe();
+    historyViews.delete(child);
+  });
+}
+
+function historyMenuState(view: HistoryWindowView): string {
+  return JSON.stringify([view.selected, view.selected ? engine?.historyCommands(view.selected) : null, view.activity, engine?.settings.view.history]);
+}
+
+function refreshHistoryMenu(view: HistoryWindowView, force = false): void {
+  if (view.w.isDestroyed()) return;
+  const key = historyMenuState(view);
+  if (key === view.menuKey && !force) return;
+  view.menuKey = key;
+  replaceWindowMenu(view.w, historyTemplate(view));
+}
+
+/** That History window shows this conversation now: its menus act on it. */
+function historySelect(w: AppWindow | null, id: string | null): void {
+  const view = w ? historyViews.get(w) : undefined;
+  if (!view) return;
+  view.selected = id;
+  refreshHistoryMenu(view, true);
+}
+
+/**
+ * Looper can't see a harness running in another terminal: a conversation
+ * from outside it whose transcript changed lately may still be open there.
+ * True to go on.
+ */
+async function stillOpenAsk(parent: AppWindow | null, changedAt: number): Promise<boolean> {
+  const ago = Date.now() - changedAt;
+  if (ago >= STILL_OPEN_MS) return true;
+  const mins = Math.max(1, Math.round(ago / 60_000));
+  const { response } = await showMessageBox(parent, {
+    type: 'question',
+    title: 'History',
+    message: `This conversation changed ${mins} min ago and may still be open elsewhere. Continue anyway?`,
+    buttons: ['Continue', 'Cancel'],
+    noLink: true,
+    defaultId: 1,
+    cancelId: 1,
+  });
+  return response === 0;
+}
+
+/**
+ * A History window's command on a conversation: a run's goes through the
+ * run's own Continue items, a conversation from outside Looper resumes in
+ * its project. Rejects with the reason.
+ */
+async function historyRun(from: AppWindow | null, id: string, command: HistoryCommand): Promise<void> {
+  if (!engine) return;
+  const item = engine.historyItem(id);
+  if (!item) throw new Error('This conversation is no longer in the list.');
+  const can = engine.historyCommands(id);
+  if (command === 'copy-id') {
+    if (can.sessionId) writeClipboard(can.sessionId);
+    return;
+  }
+  if (command === 'open-folder') {
+    const cwd = engine.findSessionTask(projectTaskId(item.projectId))?.cwd;
+    if (cwd) await openHostPath(cwd);
+    return;
+  }
+  if (!can[command]) return;
+  if (item.runId) {
+    if (command === 'chat') return openChat(item.taskId, item.runId);
+    if (command === 'terminal') return openTerminal(item.taskId, item.runId);
+    return compactRun(item.taskId, item.runId);
+  }
+  // Compacting only reads the conversation.
+  if (command === 'compact') {
+    openSessionsWindow((await engine.compactHistory(id)).id);
+    return;
+  }
+  const changedAt = can.outside ? await engine.historyChangedAt(id) : undefined;
+  if (changedAt !== undefined && !(await stillOpenAsk(from, changedAt))) return;
+  if (command === 'chat') {
+    openSessionsWindow(engine.continueHistoryInChat(id).id);
+    return;
+  }
+  const sessionId = await engine.continueHistoryInTerminal(id);
+  if (sessionId) openSessionsWindow(sessionId);
+}
+
+/** A History window's commands on its conversation, as menu items: the File menu's and a row's right-click menu. */
+function historyItems(from: AppWindow, id: string | null): Electron.MenuItemConstructorOptions[] {
+  const can = id && engine ? engine.historyCommands(id) : NO_HISTORY_COMMANDS;
+  const run = (command: HistoryCommand) => () => {
+    if (!id) return;
+    void historyRun(from, id, command).catch((err: unknown) => {
+      void showMessageBox(from, { type: 'error', title: 'Looper', message: err instanceof Error ? err.message : String(err), buttons: ['OK'] });
+    });
+  };
+  return [
+    { id: 'history-chat', label: 'Continue in &Chat', glyph: 'chat', enabled: can.chat, click: run('chat') },
+    { id: 'history-compact', label: 'Continue Co&mpacted', glyph: 'compact', enabled: can.compact, click: run('compact') },
+    { id: 'history-terminal', label: 'Continue in &Terminal', glyph: 'terminal', enabled: can.terminal, click: run('terminal') },
+    { type: 'separator' },
+    { id: 'history-copy-id', label: 'Copy Session &ID', glyph: 'copy', enabled: !!can.sessionId, click: run('copy-id') },
+    { id: 'history-folder', label: 'Open &Working Directory', glyph: 'folder', platforms: DESKTOP_ONLY, enabled: can.folder, click: run('open-folder') },
+  ];
+}
+
+/** A conversation's right-click menu in the History window. */
+function historyMenu(from: AppWindow | null, id: string): void {
+  if (!from || !engine?.historyItem(id)) return;
+  popupMenu(Menu.buildFromTemplate(historyItems(from, id)), { window: from });
+}
+
+/** The History window's menus: File (the commands on the shown conversation), Edit and View. */
+function historyTemplate(view: HistoryWindowView): Electron.MenuItemConstructorOptions[] {
+  const child = view.w;
+  const send = (payload: UiEvent) => {
+    if (!child.isDestroyed()) child.webContents.send('ui:event', payload);
+  };
+  const shown = engine?.settings.view.history ?? ViewSchema.parse({}).history;
+  const setShown = (patch: Partial<Settings['view']['history']>) => updateView({ history: { ...shown, ...patch } });
+  const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  const file: Electron.MenuItemConstructorOptions = {
+    id: 'file',
+    label: '&File',
+    submenu: [
+      ...historyItems(child, view.selected),
+      sep,
+      { label: 'Close &Window', platforms: NOT_MOBILE, accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
+    ],
+  };
+  const edit: Electron.MenuItemConstructorOptions = {
+    id: 'edit',
+    label: '&Edit',
+    submenu: [
+      { role: 'undo', label: '&Undo', platforms: NOT_MOBILE },
+      { role: 'redo', label: '&Redo', platforms: NOT_MOBILE },
+      sep,
+      { role: 'cut', label: 'Cu&t', platforms: NOT_MOBILE },
+      { role: 'copy', label: '&Copy', platforms: NOT_MOBILE },
+      { role: 'paste', label: '&Paste', platforms: NOT_MOBILE },
+      { role: 'selectAll', label: 'Select &All', platforms: NOT_MOBILE },
+      sep,
+      { id: 'history-find', label: '&Find…', accelerator: 'CmdOrCtrl+F', glyph: 'search', click: () => send({ type: 'history-find' }) },
+    ],
+  };
+  const viewMenu: Electron.MenuItemConstructorOptions = {
+    id: 'view',
+    label: '&View',
+    submenu: [
+      { label: 'Group by &Date', type: 'radio', checked: shown.groupBy === 'date', click: () => setShown({ groupBy: 'date' }) },
+      { label: 'Group by &Project', type: 'radio', checked: shown.groupBy === 'project', click: () => setShown({ groupBy: 'project' }) },
+      sep,
+      { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
+      sep,
+      {
+        label: 'A&ctivity Pane',
+        platforms: NOT_MOBILE,
+        type: 'checkbox',
+        checked: view.activity,
+        click: (item) => {
+          view.activity = item.checked;
+          send({ type: 'history-activity', checked: item.checked });
+          refreshHistoryMenu(view, true);
+        },
+      },
+      sep,
+      { label: 'Re&fresh', accelerator: 'F5', click: () => send({ type: 'history-refresh' }) },
+      sep,
+      ...zoomMenuItems(),
+    ],
+  };
+  return process.platform === 'darwin' ? [file, viewMenu] : [file, edit, viewMenu];
 }
 
 // ---------- task builder ----------
@@ -3107,6 +3371,7 @@ function mainMenuTemplate(
       submenu: [
         { id: 'view-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => sendUi('show-dashboard') },
         { id: 'view-chats', label: '&Chats', glyph: 'chat', click: () => openSessionsWindow() },
+        { id: 'view-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
         { type: 'separator' },
         ...paneVisibilityItems(view, updateView, addonPanes),
         groupProjectsByMenu(view, updateView),

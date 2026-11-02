@@ -395,6 +395,7 @@ export function ActivityPanel({
   onPos,
   gitProject,
   initialTab = 'now',
+  only,
 }: {
   sessionId: string;
   taskId: string;
@@ -422,10 +423,12 @@ export function ActivityPanel({
   gitProject?: string;
   /** The tab it opens on (the phone's Subagents row opens it on Subagents). */
   initialTab?: Tab;
+  /** The tabs it shows; unset: all of them. A past conversation (History) has nothing in the background. */
+  only?: Tab[];
 }) {
   const [picked, setTab] = useState<Tab>(initialTab);
   const tab = picked === 'git' && !gitProject ? 'now' : picked;
-  const git = useGitStatus(gitProject);
+  const git = useGitStatus(gitProject, !!working || background.some((b) => b.status === 'running') || subagents.some((a) => a.status === 'running'));
   const addons = useAddonList();
   const tools = rows.filter((r) => r.kind === 'tool');
   const i = nowIndex(tools.length, pos);
@@ -450,13 +453,15 @@ export function ActivityPanel({
   return (
     <aside className="activity-panel">
       <TabBar
-        tabs={[
-          ['now', 'Now'],
-          ['background', running.length ? `Background (${running.length})` : 'Background'],
-          ['subagents', subagents.length ? `Subagents (${subagents.length})` : 'Subagents'],
-          ['files', 'Files'],
-          ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
-        ]}
+        tabs={(
+          [
+            ['now', 'Now'],
+            ['background', running.length ? `Background (${running.length})` : 'Background'],
+            ['subagents', subagents.length ? `Subagents (${subagents.length})` : 'Subagents'],
+            ['files', 'Files'],
+            ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
+          ] as [Tab, string][]
+        ).filter(([t]) => !only || only.includes(t))}
         active={tab}
         onSelect={setTab}
         className="activity-tabs"

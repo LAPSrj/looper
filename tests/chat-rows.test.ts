@@ -78,6 +78,7 @@ describe('a chat opened again', { timeout: 30_000 }, () => {
       emit: () => undefined,
       runDir: (taskId, runId) => join(dataDir, 'runs', taskId, runId),
       readHistory: async () => transcriptRows(),
+      readCompactable: async () => [],
       writeInfo: () => undefined,
       appendRecord: () => undefined,
       taskVersion: () => undefined,
