@@ -192,7 +192,7 @@ describe('project helpers', () => {
     expect(parentFolder('site')).toBe('');
   });
 
-  it("groups the Projects pane by parent folder or harness, keeping the user's order inside a group", () => {
+  it("groups the Projects list by parent folder or harness, keeping the user's order inside a group", () => {
     const at = (id: string, cwd: string, extra: Record<string, unknown> = {}) => ({ ...project, id, name: id, cwd, ...extra });
     const list = [
       at('a', '/home/me/work/a'),

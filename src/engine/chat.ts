@@ -436,10 +436,12 @@ export type ChatOpening =
     }
   /**
    * Continue in Chat on a conversation from outside Looper (the History
-   * window): a chat in the project that resumes the harness's own session,
-   * its history read from the transcript at `transcript` (a host path).
+   * window): a chat in the project, or a folder's stand-in, that resumes the
+   * harness's own session, its history read from the transcript at
+   * `transcript` (a host path). `harnessId`: the environment's harness to go
+   * on with; unset: the project's.
    */
-  | { kind: 'resume'; sessionId: string; harnessKind: 'claude-code' | 'codex'; transcript: string };
+  | { kind: 'resume'; sessionId: string; harnessKind: 'claude-code' | 'codex'; transcript: string; harnessId?: string };
 
 /** Why a conversation on one kind of harness can't go on with the project's, which is another kind. */
 export function kindMismatchText(conversation: Harness['kind'], project: Harness['kind']): string {
@@ -554,7 +556,7 @@ class ChatSession {
     const own = resolveHarness(task, env);
     const info = opening.kind === 'reopen' ? opening.info : undefined;
     const wanted =
-      saved?.harnessId ?? choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' || opening.kind === 'compact' ? opening.harnessId : undefined);
+      saved?.harnessId ?? choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' || opening.kind === 'compact' || opening.kind === 'resume' ? opening.harnessId : undefined);
     const harness = wanted ? env.harnesses.find((h) => h.id === wanted) : own;
     if (!harness) throw new Error(`The environment "${env.name}" no longer has the harness this chat ran on.`);
     if (harness.kind === 'custom') throw new Error('A chat needs a Claude Code or Codex harness.');
@@ -892,6 +894,8 @@ class ChatSession {
     parts.push('--disallowedTools', 'AskUserQuestion');
     // Replays echo each message when Claude reads it: a queued one shows in the conversation where the agent took it in.
     parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages');
+    // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
+    parts.push('--thinking-display', 'summarized');
     for (const arg of this.harness.args) parts.push(q(arg));
     for (const extra of this.extraArgs) parts.push(q(extra));
     this.launched = { model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };

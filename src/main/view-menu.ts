@@ -31,8 +31,8 @@ function listItems(
   ];
 }
 
-/** The label of a task pane's Show check box in View. */
-const SHOW_LABELS: Record<PaneId, string> = { tasks: 'Ta&sks', goals: 'Go&als', watchers: '&Watchers' };
+/** The label of a task pane's Show check box in View (beside View → Tasks, which opens the Tasks window). */
+const SHOW_LABELS: Record<PaneId, string> = { tasks: 'Ta&sks Pane', goals: 'Go&als Pane', watchers: '&Watchers Pane' };
 
 /** A task pane's Show check box. */
 function showPaneItem(view: View, id: PaneId, update: ViewUpdate, label: string): MenuItemConstructorOptions {
@@ -46,10 +46,10 @@ function showPaneItem(view: View, id: PaneId, update: ViewUpdate, label: string)
 }
 
 /**
- * View's pane group: a check box for every pane in the order the sidebar shows
- * them (Projects, the task panes or the single task list, then `addonPanes`).
- * With none showing, the main window has no sidebar. A phone has tabs instead
- * of Looper's own panes, so only the addons' (on its Tasks tab) stay there.
+ * View's pane group: a check box for every pane of the Tasks tab's sidebar in
+ * the order it shows them (the task panes or the single task list, then
+ * `addonPanes`). With none showing, the tab has no sidebar. A phone has one
+ * task list, so only the addons' panes (on its Tasks tab) stay there.
  */
 export function paneVisibilityItems(
   view: View,
@@ -57,13 +57,6 @@ export function paneVisibilityItems(
   addonPanes: MenuItemConstructorOptions[] = [],
 ): MenuItemConstructorOptions[] {
   return [
-    {
-      label: '&Projects',
-      platforms: NOT_MOBILE,
-      type: 'checkbox',
-      checked: view.projectsPane.visible,
-      click: (item) => update({ projectsPane: { ...view.projectsPane, visible: item.checked } }),
-    },
     ...(view.sidebar === 'multiple'
       ? PANES.map((p) => ({ ...showPaneItem(view, p.id, update, SHOW_LABELS[p.id]), platforms: NOT_MOBILE }))
       : [
@@ -93,7 +86,7 @@ export function paneMenuItems(view: View, id: PaneId, update: ViewUpdate, withSh
 
 const GROUP_LABELS: Record<ProjectGroupBy, string> = { none: '&None', folder: '&Folder', harness: '&Harness' };
 
-/** The Projects pane's Group By choices as a submenu named `label`. */
+/** The Projects list's Group By choices as a submenu named `label`. */
 function groupByMenu(view: View, update: ViewUpdate, label: string): MenuItemConstructorOptions {
   const pane = view.projectsPane;
   return {
@@ -107,19 +100,14 @@ function groupByMenu(view: View, update: ViewUpdate, label: string): MenuItemCon
   };
 }
 
-/** View > Group Projects By: one submenu level, next to the pane's Show check box (a desktop pane: the phone has tabs). */
+/** View > Group Projects By, on the Projects tab; not on a phone, whose Projects tab shows the groups picked here. */
 export function groupProjectsByMenu(view: View, update: ViewUpdate): MenuItemConstructorOptions {
   return { ...groupByMenu(view, update, '&Group Projects By'), platforms: NOT_MOBILE };
 }
 
-/** The Projects pane's items for its header's context menu: whether it shows, then its Group By choices. */
+/** The Projects list header's context menu: its Group By choices. */
 export function projectsPaneMenuItems(view: View, update: ViewUpdate): MenuItemConstructorOptions[] {
-  const pane = view.projectsPane;
-  return [
-    { label: 'Show &Pane', type: 'checkbox', checked: pane.visible, click: (item) => update({ projectsPane: { ...pane, visible: item.checked } }) },
-    { type: 'separator' },
-    groupByMenu(view, update, '&Group By'),
-  ];
+  return [groupByMenu(view, update, '&Group By')];
 }
 
 /** The single list's filters and folder options. */

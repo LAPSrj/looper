@@ -45,6 +45,8 @@ export interface AddonUiDeps {
   /** Where Looper itself runs, for converting picked paths to the addon's side. */
   hostKind: HostKind;
   mainWindow: () => AppWindow | null;
+  /** Whether the window shows the main window's addon panes (a main window, or a Tasks window): a view window of another tab hasn't them. */
+  hasPanes: (w: AppWindow) => boolean;
   /** openChildWindow: a hash route in its own window; a parent makes it modal. */
   openWindow: (
     hash: string,
@@ -158,8 +160,12 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
       writeClipboard(a.text);
       return;
     case 'select': {
-      const target = (sender && openers.get(sender)) ?? sender ?? deps.mainWindow();
-      if (target && !target.isDestroyed()) sendAddonEvent({ type: 'select', addonId, pane: a.pane, item: a.item }, target);
+      const from = (sender && openers.get(sender)) ?? sender;
+      // A Dashboard, Projects or addon tab's own window has no panes: the main window shows the item.
+      const target = from && deps.hasPanes(from) ? from : deps.mainWindow();
+      if (!target || target.isDestroyed()) return;
+      sendAddonEvent({ type: 'select', addonId, pane: a.pane, item: a.item }, target);
+      if (target !== from) target.focus();
       return;
     }
   }

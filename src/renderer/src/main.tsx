@@ -97,6 +97,7 @@ const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
+const viewMatch = /^view\/(.+)$/.exec(hash);
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
 const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
 
@@ -262,6 +263,7 @@ function pickRoot() {
   if (hash === 'settings') return <SettingsApp />;
   if (hash === 'instructions') return <InstructionsApp />;
   if (hash === 'about') return <AboutApp />;
+  if (viewMatch) return <App fixed={decodeURIComponent(viewMatch[1])} />;
   return <App />;
 }
 

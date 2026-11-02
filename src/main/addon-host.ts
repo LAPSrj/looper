@@ -440,6 +440,7 @@ export class AddonHost {
         environmentId: l.environment?.id,
         defaultEnvironmentId: l.defaultEnvironment?.id,
         panes: p.manifest.panes,
+        tabs: p.manifest.tabs,
         tools: p.manifest.tools,
         toolbar: p.manifest.toolbar,
         toolbarName: p.manifest.toolbarName,

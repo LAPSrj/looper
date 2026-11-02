@@ -616,6 +616,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     parts.push('--settings', q(targetFile(ctx, f('settings.json'))));
     if (headless) {
       parts.push('-p', '--output-format', 'stream-json', '--verbose');
+      // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
+      parts.push('--thinking-display', 'summarized');
       if (opts.jsonSchema) parts.push('--json-schema', target.catFile(targetFile(ctx, f('schema.json'))));
     }
   } else if (codex) {

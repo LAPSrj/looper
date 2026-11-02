@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { chatTitle, type ChatInfo, type TerminalInfo } from '../shared/chat';
 import { compactRows } from '../shared/compact';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
-import type { HistoryConversation, HistoryItem, HistorySource } from '../shared/history';
+import { inFolderFilter, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions, type HistorySource } from '../shared/history';
 import type { MessageRow } from '../shared/messages';
 import { FOLDER_TASK_PREFIX, normalizeFolder, projectIdOf, projectTaskId, sameFolder } from '../shared/projects';
 import type { RunSummary } from '../shared/runs';
@@ -306,6 +306,16 @@ export async function probeConfigDirs(env: Environment, host: HostKind): Promise
 
 // ---------- the service ----------
 
+/**
+ * The stand-in id the chats and terminals opened in a folder without a
+ * project are recorded under: one per folder and environment, so its run
+ * history stays together. Windows paths compare without case.
+ */
+export function folderStandInId(environmentId: string, cwd: string): string {
+  const key = /^[A-Za-z]:[\\/]|^\\\\/.test(cwd) ? cwd.toLowerCase() : cwd;
+  return FOLDER_TASK_PREFIX + crypto.createHash('sha1').update(`${environmentId}\n${key}`).digest('hex').slice(0, 12);
+}
+
 export interface HistoryDeps {
   dataDir: string;
   host: HostKind;
@@ -332,14 +342,13 @@ export interface HistoryDeps {
   configDirs?: (env: Environment) => Promise<ConfigDirs>;
 }
 
-/** The list's cache of transcripts, by host path: valid while the size and modified time stay the same. */
+/** The list's cache of transcripts, by host path: what's read of one is valid while its size and modified time stay the same. */
 interface CacheEntry {
   size: number;
   mtimeMs: number;
   format: 'claude' | 'codex';
-  /** The environment it was found in, and the project folder it belongs to. */
-  envId?: string;
-  cwd?: string;
+  /** The environments whose folders it was found in (two can share one, a WSL distro's for each). */
+  envIds: string[];
   head?: CodexHead | null;
   meta?: TranscriptMeta;
 }
@@ -353,7 +362,10 @@ export interface HistoryTranscript {
   sessionId: string;
   harnessKind: 'claude-code' | 'codex';
   title: string;
-  projectId: string;
+  environmentId: string;
+  /** The folder it ran in, as the environment sees it. */
+  folder: string;
+  projectId?: string;
   mtimeMs: number;
 }
 
@@ -362,21 +374,61 @@ interface Entry {
   transcript?: HistoryTranscript;
 }
 
+/** A transcript file found in an environment's folders, before it's read. */
+interface FileRef {
+  path: string;
+  format: 'claude' | 'codex';
+  envIds: string[];
+  size: number;
+  mtimeMs: number;
+  /** A Claude transcript's folder under `projects`, named after the working directory (claudeProjectFolder). */
+  dir?: string;
+}
+
+/** What the list is built from: Looper's runs, the session ids they hold, and every transcript file found. */
+interface HistoryIndex {
+  runs: Entry[];
+  known: Set<string>;
+  files: FileRef[];
+}
+
 const LEDGER_SOURCES: Partial<Record<LedgerKind, HistorySource>> = { chat: 'chat', terminal: 'terminal', remote: 'remote', run: 'run' };
 
+/** Files read at a time: a stat or a transcript over \\wsl.localhost waits on the network more than the disk. */
+const STAT_AT_ONCE = 32;
+const READ_AT_ONCE = 8;
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+const readdir = (dir: string): Promise<string[]> => fs.promises.readdir(dir).catch(() => [] as string[]);
+
 /**
- * The History window's conversations: the recorded runs of every project and
- * its tasks, and the Claude Code and Codex conversations started outside
- * Looper in a project's own folder (not a subfolder). A transcript that one
- * of Looper's run folders or the ledger names isn't listed again. Reading a
- * transcript over \\wsl.localhost is slow, so each one's title, last
- * activity and message count are cached by its size and modified time.
+ * The History window's conversations: Looper's recorded runs, and every
+ * Claude Code and Codex conversation in the environments' config folders,
+ * whatever folder it ran in. A transcript that one of Looper's run folders or
+ * the ledger names isn't listed again. There can be thousands of transcripts
+ * of several MB each, so the list finds the files by modified time and reads
+ * only the newest it shows (Show More reads the next ones); what it read of
+ * each is cached by its size and modified time.
  */
 export class HistoryService {
   private entries = new Map<string, Entry>();
   private cache: Map<string, CacheEntry> | null = null;
+  private cacheDirty = false;
   private readonly dirs = new Map<string, Promise<ConfigDirs>>();
-  private scanning: Promise<HistoryItem[]> | null = null;
+  private index: HistoryIndex | null = null;
+  private scanning: Promise<HistoryIndex> | null = null;
 
   constructor(private readonly d: HistoryDeps) {}
 
@@ -389,7 +441,9 @@ export class HistoryService {
     const map = new Map<string, CacheEntry>();
     try {
       const raw = JSON.parse(fs.readFileSync(this.cacheFile(), 'utf8')) as Record<string, CacheEntry>;
-      for (const [k, v] of Object.entries(raw)) if (v && typeof v.size === 'number' && typeof v.mtimeMs === 'number') map.set(k, v);
+      for (const [k, v] of Object.entries(raw)) {
+        if (v && typeof v.size === 'number' && typeof v.mtimeMs === 'number' && Array.isArray(v.envIds) && v.envIds.length) map.set(k, v);
+      }
     } catch {
       /* none yet, or unreadable: it's only a cache */
     }
@@ -398,6 +452,8 @@ export class HistoryService {
   }
 
   private saveCache(): void {
+    if (!this.cacheDirty) return;
+    this.cacheDirty = false;
     try {
       writeJsonAtomic(this.cacheFile(), Object.fromEntries(this.loadCache()));
     } catch (err) {
@@ -424,18 +480,13 @@ export class HistoryService {
   }
 
   /** The project a task id's runs belong to: a project's stand-in, a task of a project, or a folder stand-in on a project's folder. */
-  private projectOf(taskId: string, projects: Project[]): Project | undefined {
-    const pid = projectIdOf(taskId);
+  private projectOf(taskId: string, task: Task, projects: Project[]): Project | undefined {
+    const pid = projectIdOf(taskId) ?? task.projectId;
     if (pid) return projects.find((p) => p.id === pid);
-    const task = this.d.findTask(taskId);
-    if (!task) return undefined;
-    if (task.projectId) return projects.find((p) => p.id === task.projectId);
-    if (taskId.startsWith(FOLDER_TASK_PREFIX)) return projects.find((p) => p.environmentId === task.environmentId && sameFolder(p.cwd, task.cwd));
-    return undefined;
+    return projects.find((p) => p.environmentId === task.environmentId && sameFolder(p.cwd, task.cwd));
   }
 
-  private taskKind(task: Task | undefined): 'claude-code' | 'codex' | null {
-    if (!task) return null;
+  private taskKind(task: Task): 'claude-code' | 'codex' | null {
     try {
       const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
       return kind === 'custom' ? null : kind;
@@ -444,15 +495,15 @@ export class HistoryService {
     }
   }
 
-  /** Looper's recorded runs of the projects and their tasks, and the session ids their folders name. */
-  private runEntries(projects: Project[]): { entries: Entry[]; known: Set<string> } {
-    const entries: Entry[] = [];
+  /** Looper's recorded runs, and the session ids their folders name. */
+  private runEntries(projects: Project[]): { runs: Entry[]; known: Set<string> } {
+    const runs: Entry[] = [];
     const known = new Set<string>();
     const remote = this.d.remoteRuns();
     for (const taskId of this.d.runTaskIds()) {
-      const project = this.projectOf(taskId, projects);
-      if (!project) continue;
       const task = this.d.findTask(taskId);
+      if (!task) continue;
+      const project = this.projectOf(taskId, task, projects);
       for (const s of this.d.summaries(taskId)) {
         const dir = this.d.runDir(taskId, s.runId);
         for (const r of runSessionRefs(dir)) known.add(r.sessionId);
@@ -464,173 +515,210 @@ export class HistoryService {
         // No conversation to show: a run that stopped at its check, or a folder retention took.
         if (!kind || !sessionId) continue;
         const source: HistorySource = s.result === 'chat' ? 'chat' : s.result === 'terminal' ? (remote.has(s.runId) ? 'remote' : 'terminal') : 'run';
-        const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task?.name || 'Untitled chat').trim();
-        entries.push({
+        const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task.name || 'Untitled chat').trim();
+        runs.push({
           item: {
             id: `run:${taskId}:${s.runId}`,
             source,
-            projectId: project.id,
+            ...(project ? { projectId: project.id } : {}),
+            folder: normalizeFolder(task.cwd),
+            environmentId: task.environmentId,
             title,
             lastActive: Date.parse(s.endTs) || Date.parse(s.startTs) || 0,
             harnessKind: kind,
             sessionId,
             taskId,
             runId: s.runId,
-            ...(source === 'run' ? { taskName: task?.name ?? taskId } : {}),
+            ...(source === 'run' ? { taskName: task.name } : {}),
           },
         });
       }
     }
-    return { entries, known };
+    return { runs, known };
   }
 
-  /** A transcript as an entry of the list, or null when it isn't listed (Looper's own, or one with no messages). */
-  private outsideEntry(file: string, format: 'claude' | 'codex', c: CacheEntry, project: Project, known: Set<string>): Entry | null {
+  /** Every transcript in the environments' folders, each file once (config folders can share a `projects` folder through a link). */
+  private async scanFiles(): Promise<FileRef[]> {
+    const refs: Omit<FileRef, 'size' | 'mtimeMs'>[] = [];
+    const names = new Set<string>();
+    /** Each folder read, by its real path, and the environments that use it: their files share the list. */
+    const roots = new Map<string, string[]>();
+    const add = (ref: Omit<FileRef, 'size' | 'mtimeMs'>) => {
+      // Claude names a transcript after its session and Codex after its time and thread: a name found twice is the same conversation.
+      const key = `${ref.format}:${path.basename(ref.path)}`;
+      if (names.has(key)) return;
+      names.add(key);
+      refs.push(ref);
+    };
+    /** The environments of a folder not read yet; null when another environment's read it, which now shares it. */
+    const newRoot = async (dir: string, envId: string): Promise<string[] | null> => {
+      const real = await fs.promises.realpath(dir).catch(() => dir);
+      const known = roots.get(real);
+      if (known) {
+        if (!known.includes(envId)) known.push(envId);
+        return null;
+      }
+      const envIds = [envId];
+      roots.set(real, envIds);
+      return envIds;
+    };
+    for (const env of this.d.settings.environments) {
+      const dirs = await this.configDirs(env).catch((): ConfigDirs => ({ claude: [], codex: [] }));
+      for (const config of dirs.claude) {
+        const root = path.join(config, 'projects');
+        const envIds = await newRoot(root, env.id);
+        if (!envIds) continue;
+        const folders = await readdir(root);
+        const lists = await mapLimit(folders, STAT_AT_ONCE, (dir) => readdir(path.join(root, dir)));
+        folders.forEach((dir, i) => {
+          for (const n of lists[i]) if (n.endsWith('.jsonl')) add({ path: path.join(root, dir, n), format: 'claude', envIds, dir });
+        });
+      }
+      for (const home of dirs.codex) {
+        const root = path.join(home, 'sessions');
+        const envIds = await newRoot(root, env.id);
+        if (!envIds) continue;
+        for (const file of await codexRollouts(root)) add({ path: file, format: 'codex', envIds });
+      }
+    }
+    const stats = await mapLimit(refs, STAT_AT_ONCE, (r) => fs.promises.stat(r.path).catch(() => null));
+    return refs.flatMap((r, i) => {
+      const st = stats[i];
+      return st?.isFile() ? [{ ...r, size: st.size, mtimeMs: st.mtimeMs }] : [];
+    });
+  }
+
+  /** The files the cache knows, without reading any folder. */
+  private cachedFiles(): FileRef[] {
+    return [...this.loadCache()].map(([file, c]) => ({
+      path: file,
+      format: c.format,
+      envIds: c.envIds,
+      size: c.size,
+      mtimeMs: c.mtimeMs,
+      ...(c.format === 'claude' ? { dir: path.basename(path.dirname(file)) } : {}),
+    }));
+  }
+
+  /** Read the folders again; the cache keeps what it read of the files still there. */
+  private rescan(): Promise<HistoryIndex> {
+    if (this.scanning) return this.scanning;
+    this.scanning = (async () => {
+      const { runs, known } = this.runEntries(this.d.projects());
+      const files = await this.scanFiles();
+      const old = this.loadCache();
+      const next = new Map<string, CacheEntry>();
+      for (const f of files) {
+        const c = old.get(f.path);
+        next.set(f.path, c && c.size === f.size && c.mtimeMs === f.mtimeMs && c.format === f.format ? { ...c, envIds: f.envIds } : { size: f.size, mtimeMs: f.mtimeMs, format: f.format, envIds: f.envIds });
+      }
+      this.cache = next;
+      this.cacheDirty = true;
+      this.index = { runs, known, files };
+      return this.index;
+    })().finally(() => {
+      this.scanning = null;
+    });
+    return this.scanning;
+  }
+
+  /** A transcript as an entry of the list, read when the cache doesn't have it; null when it isn't listed (Looper's own, a subagent's, or one with no messages). */
+  private async resolve(f: FileRef, known: Set<string>, projects: Project[]): Promise<Entry | null> {
+    const cache = this.loadCache();
+    const old = cache.get(f.path);
+    const c: CacheEntry = old && old.size === f.size && old.mtimeMs === f.mtimeMs && old.format === f.format ? old : { size: f.size, mtimeMs: f.mtimeMs, format: f.format, envIds: f.envIds };
+    try {
+      if (f.format === 'codex' && c.head === undefined) {
+        c.head = await codexHead(f.path);
+        this.cacheDirty = true;
+      }
+      if (f.format === 'codex' && (!c.head || c.head.subagent)) return null;
+      if (!c.meta) {
+        const meta = await transcriptMeta(f.path, f.format, f.mtimeMs);
+        c.meta = c.head ? { ...meta, sessionId: c.head.sessionId } : meta;
+        this.cacheDirty = true;
+      }
+    } catch (err) {
+      this.d.log.warn(`history: cannot read ${f.path}: ${errMsg(err)}`);
+      return null;
+    } finally {
+      cache.set(f.path, c);
+    }
     const meta = c.meta;
-    if (!meta || meta.messages === 0 || known.has(meta.sessionId)) return null;
+    if (meta.messages === 0 || known.has(meta.sessionId)) return null;
     const ledger = this.d.ledger.get(meta.sessionId);
-    const source: HistorySource | undefined = ledger ? LEDGER_SOURCES[ledger.kind] : format === 'claude' ? 'claude-code' : 'codex';
+    const source: HistorySource | undefined = ledger ? LEDGER_SOURCES[ledger.kind] : f.format === 'claude' ? 'claude-code' : 'codex';
     if (!source) return null;
-    const harnessKind = format === 'claude' ? 'claude-code' : 'codex';
-    const id = `file:${crypto.createHash('sha1').update(file).digest('hex').slice(0, 16)}`;
+    const folder = normalizeFolder((f.format === 'claude' ? meta.cwd : c.head?.cwd) ?? '');
+    const project = folder ? projects.find((p) => f.envIds.includes(p.environmentId) && sameFolder(p.cwd, folder)) : undefined;
+    const envId = project?.environmentId ?? f.envIds[0];
+    const harnessKind = f.format === 'claude' ? 'claude-code' : 'codex';
     const taskName = ledger?.kind === 'run' ? (this.d.findTask(ledger.taskId)?.name ?? ledger.taskName) : undefined;
+    const taskId = ledger?.taskId ?? (project ? projectTaskId(project.id) : folderStandInId(envId, folder));
     return {
       item: {
-        id,
+        id: `file:${crypto.createHash('sha1').update(f.path).digest('hex').slice(0, 16)}`,
         source,
-        projectId: project.id,
+        ...(project ? { projectId: project.id } : {}),
+        folder,
+        environmentId: envId,
         title: meta.title || 'Untitled chat',
         lastActive: meta.lastActive,
         harnessKind,
         sessionId: meta.sessionId,
-        taskId: ledger?.taskId ?? projectTaskId(project.id),
+        taskId,
         ...(source === 'run' ? { taskName: taskName ?? ledger?.taskId } : {}),
       },
-      transcript: { path: file, format, sessionId: meta.sessionId, harnessKind, title: meta.title, projectId: project.id, mtimeMs: c.mtimeMs },
+      transcript: {
+        path: f.path,
+        format: f.format,
+        sessionId: meta.sessionId,
+        harnessKind,
+        title: meta.title,
+        environmentId: envId,
+        folder,
+        ...(project ? { projectId: project.id } : {}),
+        mtimeMs: f.mtimeMs,
+      },
     };
-  }
-
-  /** The cache entry of a file as it is now: read again when its size or modified time changed. */
-  private async fresh(file: string, format: 'claude' | 'codex', seen: Map<string, CacheEntry>, full: (head: CodexHead | null | undefined) => boolean): Promise<CacheEntry | null> {
-    let st: fs.Stats;
-    try {
-      st = await fs.promises.stat(file);
-    } catch {
-      return null;
-    }
-    const old = this.loadCache().get(file);
-    const c: CacheEntry = old && old.size === st.size && old.mtimeMs === st.mtimeMs && old.format === format ? { ...old } : { size: st.size, mtimeMs: st.mtimeMs, format };
-    try {
-      if (format === 'codex' && c.head === undefined) c.head = await codexHead(file);
-      if (!c.meta && full(c.head)) {
-        const meta = await transcriptMeta(file, format, st.mtimeMs);
-        c.meta = c.head ? { ...meta, sessionId: c.head.sessionId } : meta;
-      }
-    } catch (err) {
-      this.d.log.warn(`history: cannot read ${file}: ${errMsg(err)}`);
-      return null;
-    }
-    seen.set(file, c);
-    return c;
-  }
-
-  private async listFiles(dir: string, match: (name: string) => boolean): Promise<string[]> {
-    const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
-    return names.filter(match).map((n) => path.join(dir, n));
-  }
-
-  /** `<codex home>/sessions/YYYY/MM/DD/rollout-*.jsonl`. */
-  private async codexRollouts(home: string): Promise<string[]> {
-    const root = path.join(home, 'sessions');
-    const out: string[] = [];
-    const sub = async (dir: string) => (await fs.promises.readdir(dir).catch(() => [] as string[])).map((n) => path.join(dir, n));
-    for (const year of await sub(root)) {
-      for (const month of await sub(year)) {
-        for (const day of await sub(month)) out.push(...(await this.listFiles(day, (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'))));
-      }
-    }
-    return out;
-  }
-
-  /** The conversations from outside Looper's runs, read from the environments' folders. */
-  private async scanOutside(projects: Project[], known: Set<string>): Promise<Entry[]> {
-    const seen = new Map<string, CacheEntry>();
-    const out: Entry[] = [];
-    const envs = new Map<string, Environment>();
-    for (const p of projects) {
-      const env = this.d.settings.environments.find((e) => e.id === p.environmentId);
-      if (env) envs.set(env.id, env);
-    }
-    for (const env of envs.values()) {
-      const inEnv = projects.filter((p) => p.environmentId === env.id);
-      const dirs = await this.configDirs(env).catch((): ConfigDirs => ({ claude: [], codex: [] }));
-      for (const config of dirs.claude) {
-        for (const project of inEnv) {
-          const folder = path.join(config, 'projects', claudeProjectFolder(project.cwd));
-          for (const file of await this.listFiles(folder, (n) => n.endsWith('.jsonl'))) {
-            const c = await this.fresh(file, 'claude', seen, () => true);
-            if (!c) continue;
-            c.envId = env.id;
-            c.cwd = c.meta?.cwd ?? project.cwd;
-            // The folder's name is lossy (a "-" and a "/" both become "-"): only the project's exact folder counts.
-            if (!sameFolder(c.cwd, project.cwd)) continue;
-            const e = this.outsideEntry(file, 'claude', c, project, known);
-            if (e) out.push(e);
-          }
-        }
-      }
-      for (const home of dirs.codex) {
-        for (const file of await this.codexRollouts(home)) {
-          const projectOf = (head: CodexHead | null | undefined) => (head && !head.subagent && head.cwd ? inEnv.find((p) => sameFolder(p.cwd, head.cwd!)) : undefined);
-          const c = await this.fresh(file, 'codex', seen, (head) => !!projectOf(head));
-          const project = c ? projectOf(c.head) : undefined;
-          if (!c || !project) continue;
-          c.envId = env.id;
-          c.cwd = project.cwd;
-          const e = this.outsideEntry(file, 'codex', c, project, known);
-          if (e) out.push(e);
-        }
-      }
-    }
-    this.cache = seen;
-    this.saveCache();
-    return out;
-  }
-
-  /** The cached conversations from outside Looper, without reading a folder. */
-  private cachedOutside(projects: Project[], known: Set<string>): Entry[] {
-    const out: Entry[] = [];
-    for (const [file, c] of this.loadCache()) {
-      if (!c.meta || !c.cwd || !c.envId) continue;
-      const project = projects.find((p) => p.environmentId === c.envId && sameFolder(p.cwd, c.cwd!));
-      const e = project ? this.outsideEntry(file, c.format, c, project, known) : null;
-      if (e) out.push(e);
-    }
-    return out;
   }
 
   /**
-   * The list. `fresh`: read the folders again (slow over \\wsl.localhost);
-   * else the cached conversations from outside Looper, which show first.
+   * The newest `limit` conversations that pass the View menu's filters.
+   * `fresh` reads the folders again (slow over \\wsl.localhost); else it
+   * lists the files found last, or the cached ones, which show at once.
    */
-  async list(fresh: boolean): Promise<HistoryItem[]> {
-    if (fresh && this.scanning) return this.scanning;
-    const run = async (): Promise<HistoryItem[]> => {
-      const projects = this.d.projects();
-      const { entries, known } = this.runEntries(projects);
-      const outside = fresh ? await this.scanOutside(projects, known) : this.cachedOutside(projects, known);
-      const all = [...entries, ...outside];
-      // An item the window shows keeps working until the next list.
-      const next = new Map(fresh ? [] : this.entries);
-      for (const e of all) next.set(e.item.id, e);
-      this.entries = next;
-      return all.map((e) => e.item);
-    };
-    if (!fresh) return run();
-    this.scanning = run().finally(() => {
-      this.scanning = null;
-    });
-    return this.scanning;
+  async list(o: HistoryListOptions): Promise<HistoryList> {
+    const projects = this.d.projects();
+    let index: HistoryIndex;
+    if (o.fresh) index = await this.rescan();
+    else if (this.index) index = this.index;
+    else index = this.index = { ...this.runEntries(projects), files: this.cachedFiles() };
+
+    const project = o.folder.startsWith('project:') ? projects.find((p) => `project:${p.id}` === o.folder) : undefined;
+    if (o.folder.startsWith('project:') && !project) return { items: [], more: false };
+    // Claude files a folder of their own: a project's are in its folder's (the exact folder is checked once read).
+    const projectDir = project ? claudeProjectFolder(project.cwd) : undefined;
+    const passes = (e: Entry) => (o.showRuns || e.item.source !== 'run') && inFolderFilter(e.item, o.folder);
+    type Candidate = { ts: number; run?: Entry; file?: FileRef };
+    const candidates: Candidate[] = [
+      ...index.runs.filter(passes).map((run) => ({ ts: run.item.lastActive, run })),
+      ...index.files.filter((f) => !projectDir || f.format !== 'claude' || f.dir === projectDir).map((file) => ({ ts: file.mtimeMs, file })),
+    ].sort((a, b) => b.ts - a.ts);
+
+    const found: Entry[] = [];
+    let at = 0;
+    while (at < candidates.length && found.length < o.limit) {
+      const batch = candidates.slice(at, at + Math.min(READ_AT_ONCE, o.limit - found.length));
+      at += batch.length;
+      const got = await Promise.all(batch.map((c) => (c.run ? Promise.resolve(c.run) : this.resolve(c.file!, index.known, projects))));
+      for (const e of got) if (e && passes(e)) found.push(e);
+    }
+    this.saveCache();
+    const shown = found.slice(0, o.limit);
+    // An item the window showed keeps working until it's listed again.
+    for (const e of shown) this.entries.set(e.item.id, e);
+    return { items: shown.map((e) => e.item), more: found.length > o.limit || at < candidates.length };
   }
 
   item(id: string): HistoryItem | undefined {
@@ -685,21 +773,27 @@ export class HistoryService {
     return compactRows([...acc.evicted, ...acc.rows]);
   }
 
-  /** The listed conversations whose user or agent messages (not tool calls) contain the text, without regard to case. */
-  async search(query: string): Promise<string[]> {
+  /** Of the conversations the window has listed, the ones whose user or agent messages (not tool calls) contain the text, without regard to case. */
+  async search(query: string, ids: string[]): Promise<string[]> {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    const ids = [...this.entries.keys()];
-    const found: string[] = [];
-    const BATCH = 4;
-    for (let i = 0; i < ids.length; i += BATCH) {
-      await Promise.all(
-        ids.slice(i, i + BATCH).map(async (id) => {
-          const rows = await this.compactable(id).catch(() => [] as MessageRow[]);
-          if (rows.some((r) => (r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent') && r.text.toLowerCase().includes(q))) found.push(id);
-        }),
-      );
-    }
-    return found;
+    const listed = ids.filter((id) => this.entries.has(id));
+    const hits = await mapLimit(listed, 4, async (id) => {
+      const rows = await this.compactable(id).catch(() => [] as MessageRow[]);
+      return rows.some((r) => (r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent') && r.text.toLowerCase().includes(q));
+    });
+    return listed.filter((_id, i) => hits[i]);
   }
+}
+
+/** `<codex home>/sessions/YYYY/MM/DD/rollout-*.jsonl`. */
+async function codexRollouts(root: string): Promise<string[]> {
+  const sub = async (dir: string) => (await readdir(dir)).map((n) => path.join(dir, n));
+  const out: string[] = [];
+  for (const year of await sub(root)) {
+    for (const month of await sub(year)) {
+      for (const day of await sub(month)) out.push(...(await readdir(day)).filter((n) => n.startsWith('rollout-') && n.endsWith('.jsonl')).map((n) => path.join(day, n)));
+    }
+  }
+  return out;
 }

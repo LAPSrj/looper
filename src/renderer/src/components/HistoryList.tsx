@@ -13,10 +13,11 @@ const fail = (e: Error) => void window.looper.showError(e.message);
 
 /**
  * The History window's list: the conversations in their groups (by date or
- * by project), each group closable. A row has the conversation's title, then
- * its project, when it was last active and where it came from. Up and Down
- * move through it, Enter and a double-click continue it in a chat, and a
- * right-click has its commands.
+ * by folder), each group closable. A row has the conversation's title, then
+ * (grouped by date) its project or its folder's name, when it was last
+ * active and where it came from. Up and Down move through it, Enter and a
+ * double-click continue it in a chat, and a right-click has its commands.
+ * Show More, at its end, reads the next older conversations.
  */
 export function HistoryList({
   groups,
@@ -24,12 +25,21 @@ export function HistoryList({
   selected,
   onSelect,
   emptyText,
+  showPlace,
+  more,
+  loadingMore,
+  onMore,
 }: {
   groups: HistoryGroup[];
   projects: Pick<Project, 'id' | 'name'>[];
   selected: string | null;
   onSelect: (id: string) => void;
   emptyText: string;
+  /** The row names its project or folder: the groups don't. */
+  showPlace: boolean;
+  more: boolean;
+  loadingMore: boolean;
+  onMore: () => void;
 }) {
   // Its second line counts minutes.
   const now = useNow(MINUTE);
@@ -80,7 +90,8 @@ export function HistoryList({
     },
     scrollToId: at >= 0 ? rows[at].id : null,
   });
-  const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? '';
+  const place = (item: HistoryItem) =>
+    !showPlace ? '' : ((item.projectId ? projects.find((p) => p.id === item.projectId)?.name : undefined) ?? item.folder.split(/[\\/]/).filter(Boolean).pop() ?? '');
   return (
     <div
       className="session-list history-list"
@@ -131,8 +142,8 @@ export function HistoryList({
                   <div className="session-title" title={item.title}>
                     {item.title}
                   </div>
-                  <div className="session-sub">
-                    {[projectName(item.projectId), fmtClock(item.lastActive, now), historySourceText(item)].filter(Boolean).join(' · ')}
+                  <div className="session-sub" title={item.folder || undefined}>
+                    {[place(item), fmtClock(item.lastActive, now), historySourceText(item)].filter(Boolean).join(' · ')}
                   </div>
                 </div>
               </div>
@@ -142,6 +153,13 @@ export function HistoryList({
       {groups.length === 0 && (
         <div className="empty session-empty" role="treeitem" aria-disabled="true" aria-selected={false}>
           {emptyText}
+        </div>
+      )}
+      {more && (
+        <div className="history-more">
+          <button className="btn small" disabled={loadingMore} onClick={onMore}>
+            {loadingMore ? 'Loading…' : 'Show More'}
+          </button>
         </div>
       )}
     </div>

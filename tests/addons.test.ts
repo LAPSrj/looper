@@ -24,6 +24,7 @@ import {
   type AddonRun,
 } from '../src/shared/addons';
 import { isAddonFileName, isLooperFileName } from '../src/shared/files';
+import { addonTabId, mainTabs } from '../src/shared/main-tabs';
 
 const MANIFEST = {
   $type: 'looper/addon',
@@ -101,6 +102,26 @@ describe('tabs, icon-only buttons and a toolbar name', () => {
     expect(toolbar({ id: 'r', label: 'Refresh', iconOnly: true })).toBe(false);
   });
 
+  it('takes tabs for the main window, each with a screen, and refuses one id twice', () => {
+    const tab = { id: 'monitor', title: 'Monitor', view: 'monitor', icon: 'search' };
+    const r = readAddonManifest({ ...MANIFEST, tabs: [tab] });
+    expect(r.ok && r.manifest.tabs).toEqual([tab]);
+    expect(readAddonManifest({ ...MANIFEST, tabs: [tab, { ...tab, title: 'Again' }] })).toMatchObject({ ok: false, error: 'tabs: duplicate id "monitor"' });
+    expect(readAddonManifest({ ...MANIFEST, tabs: [{ id: 'x', title: 'X' }] }).ok).toBe(false);
+    expect(readAddonManifest(MANIFEST).ok && (readAddonManifest(MANIFEST) as { manifest: { tabs: unknown[] } }).manifest.tabs).toEqual([]);
+  });
+
+  it("puts the started addons' tabs after Looper's own, with a window icon when they name none", () => {
+    const addon = (id: string, enabled: boolean) => ({ id, name: id.toUpperCase(), enabled, tabs: [{ id: 'main', title: `${id} tab`, view: 'v' }] });
+    expect(mainTabs([addon('a', true), addon('b', false)]).map((t) => [t.id, t.label, t.icon])).toEqual([
+      ['dashboard', 'Dashboard', 'dashboard'],
+      ['projects', 'Projects', 'folder'],
+      ['tasks', 'Tasks', 'tasks'],
+      ['chats', 'Chats', 'chat'],
+      [addonTabId('a', 'main'), 'a tab', 'window'],
+    ]);
+  });
+
   it('takes a name for the toolbar', () => {
     const r = readAddonManifest({ ...MANIFEST, toolbarName: 'Password' });
     expect(r.ok && r.manifest.toolbarName).toBe('Password');
@@ -148,7 +169,7 @@ describe('addonAdditions', () => {
           { id: 's', label: 'LAPM Settings', view: 'settings' },
         ],
       }),
-    ).toEqual(['A Passwords pane in the sidebar', 'A Passwords button on the toolbar', 'Passwords… and LAPM Settings… in the Tools menu']);
+    ).toEqual(['A Passwords pane on the Tasks tab', 'A Passwords button on the toolbar', 'Passwords… and LAPM Settings… in the Tools menu']);
     expect(
       addonAdditions({
         panes: [
@@ -159,7 +180,8 @@ describe('addonAdditions', () => {
         toolbar: [],
         tools: [],
       }),
-    ).toEqual(['Servers, Keys and Logs panes in the sidebar']);
+    ).toEqual(['Servers, Keys and Logs panes on the Tasks tab']);
+    expect(addonAdditions({ panes: [], toolbar: [], tools: [], tabs: [{ id: 'm', title: 'Monitor', view: 'monitor' }] })).toEqual(['A Monitor tab in the main window']);
     expect(addonAdditions({ panes: [], toolbar: [], tools: [] })).toEqual([]);
     expect(addonAdditions({ panes: [], toolbar: [], tools: [], toolCalls: [{ tool: 'a' }, { tool: 'b' }] })).toEqual([
       'How 2 tools’ calls show on the Now tab',

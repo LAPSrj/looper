@@ -118,7 +118,7 @@ export interface SlashCommand {
   argumentHint?: string;
 }
 
-/** Order of the list's groups: Waiting for you first, then the projects in the Projects pane's order. */
+/** Order of the list's groups: Waiting for you first, then the projects in the Projects tab's order. */
 export function sessionsInOrder(sessions: SessionSummary[], projectOrder: string[]): SessionSummary[] {
   const rank = (s: SessionSummary) => {
     const i = s.projectId ? projectOrder.indexOf(s.projectId) : -1;

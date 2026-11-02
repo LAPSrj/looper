@@ -26,8 +26,10 @@ export function preventSleepStatus(state: PreventSleepState): string | null {
  * The main window's state and commands, shared by its desktop and phone
  * views: the tasks, projects and runtimes it shows and keeps current, what is
  * selected, the dashboard's lists, and the toolbar and menu commands.
+ * `menuTab`: the desktop's shown tab, which the menu bar follows (a phone has
+ * every menu at once).
  */
-export function useMainWindow() {
+export function useMainWindow(menuTab?: string) {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   // False until the tasks and the runtimes have both answered: the counts before that are placeholders.
@@ -90,8 +92,10 @@ export function useMainWindow() {
       : list === 'recent'
         ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
         : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
+  // A row picked on the Dashboard tab counts only while it shows.
+  const onDashboard = menuTab === undefined || menuTab === 'dashboard';
   const livePick =
-    !selected && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
+    !selected && onDashboard && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
   // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
   const taskPick = livePick?.list === 'remote' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
@@ -106,10 +110,10 @@ export function useMainWindow() {
   const uiRef = useRef({ selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun });
   uiRef.current = { selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
 
-  const openTask = useCallback((e: { taskId: string; runId: string; view: 'terminal' | 'runs' }) => {
+  const openTask = useCallback((e: { taskId: string; runId: string; view: DetailTab }) => {
     setSelected(e.taskId);
     setTab(e.view);
-    setFocusRun(e.view === 'runs' ? { runId: e.runId } : null);
+    setFocusRun(e.view === 'runs' && e.runId ? { runId: e.runId } : null);
   }, []);
 
   // The task a long-pressed row's menu is open for: its command acts on it, not on the selection (which the press must not change).
@@ -367,7 +371,8 @@ export function useMainWindow() {
     if (projectSel && !projects.some((p) => p.id === projectSel)) setProjectSel(null);
   }, [projects, projectSel]);
 
-  useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: setTab });
+  // Ctrl+Tab and Ctrl+PageUp/PageDown step through a task's tabs where the task shows.
+  useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: menuTab === undefined || menuTab === 'tasks' ? setTab : undefined });
 
   useEffect(() => {
     if (!selected || records[selected]) return;
@@ -410,8 +415,9 @@ export function useMainWindow() {
       !!t?.completedAt,
       !!t?.completion.allowed,
       !!menuProject,
+      menuTab,
     );
-  }, [target, tasks, selectedState, selectedActiveRuns, menuProject]);
+  }, [target, tasks, selectedState, selectedActiveRuns, menuProject, menuTab]);
 
   // A terminal pick belongs to one task.
   useEffect(() => setTerminalRun(null), [selected]);

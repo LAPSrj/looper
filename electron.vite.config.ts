@@ -5,10 +5,13 @@ import pkg from './package.json';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundled because the terminal worker runs from app.asar.unpacked, where app.asar's node_modules can't be resolved.
+    plugins: [externalizeDepsPlugin({ exclude: ['@xterm/headless'] })],
     resolve: {
       alias: { '@shared': resolve(__dirname, 'src/shared'), '@engine': resolve(__dirname, 'src/engine') },
     },
+    // @xterm/headless's "module" field names a file the package doesn't ship.
+    ssr: { resolve: { mainFields: ['main'] } },
     build: {
       rollupOptions: {
         input: {

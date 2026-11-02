@@ -366,6 +366,9 @@ class BuilderSession {
       '--output-format',
       'stream-json',
       '--verbose',
+      // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
+      '--thinking-display',
+      'summarized',
       '--no-session-persistence',
       // Nobody answers a permission prompt in the chat view: deny it, as a run would.
       '--permission-prompts',

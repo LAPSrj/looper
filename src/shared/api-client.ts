@@ -137,12 +137,13 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       pickFiles: (id) => t.invoke('chat:pickFiles', id).catch(plainError),
     },
     history: {
-      list: (fresh) => t.invoke('history:list', fresh),
-      search: (query) => t.invoke('history:search', query),
+      list: (o) => t.invoke('history:list', o),
+      search: (query, ids) => t.invoke('history:search', query, ids),
       read: (id, agentId) => t.invoke('history:read', id, agentId),
       commands: (id) => t.invoke('history:commands', id),
       run: (id, command) => t.invoke('history:run', id, command).catch(plainError),
       select: (id) => t.send('history:select', id),
+      toggleActivity: () => t.send('history:toggleActivity'),
       showContextMenu: (id) => t.send('context-menu:history', id),
       open: () => t.send('history:open'),
     },
@@ -242,7 +243,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     showError: (message, detail) => t.invoke('dialog:error', message, detail),
     fitWindow: (contentHeight) => t.send('window:fit', contentHeight),
     confirm: (message) => t.invoke('dialog:confirm', message),
-    reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject) =>
+    reportSelection: (hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject, tab) =>
       t.send(
         'ui:selection',
         hasTask,
@@ -254,7 +255,9 @@ export function createLooperApi(t: LooperTransport): LooperApi {
         taskCompleted,
         allowComplete,
         hasProject,
+        tab,
       ),
+    showTaskInMain: (taskId, view) => t.send('ui:showTaskInMain', taskId, view),
     showTaskContextMenu: (info) => t.send('context-menu:task', info),
     showFolderContextMenu: (info) => t.send('context-menu:folder', info),
     showListContextMenu: (token, items) => t.send('context-menu:list', token, items),

@@ -483,6 +483,16 @@ export type SidebarPane = z.infer<typeof SidebarPaneSchema>;
 export const ViewSchema = z.object({
   toolbar: z.boolean().default(true),
   statusBar: z.boolean().default(true),
+  /** The main window's tabs: below the toolbar, down its left side, or above the status bar. */
+  tabs: z
+    .object({
+      position: z.enum(['top', 'left', 'bottom']).default('top'),
+      /** At the top or bottom: each tab shows its icon before its name. */
+      icons: z.boolean().default(true),
+      /** On the left: each tab shows its name below its icon. */
+      labels: z.boolean().default(true),
+    })
+    .prefault({}),
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
@@ -505,12 +515,9 @@ export const ViewSchema = z.object({
       }),
     )
     .default({}),
-  /** The Projects pane, above the task list. */
+  /** The Projects tab's list. */
   projectsPane: z
     .object({
-      visible: z.boolean().default(true),
-      collapsed: z.boolean().default(false),
-      weight: z.number().positive().default(1),
       /** The list's groups: none, the folder the projects' folders are in, or the harness their sessions start with. */
       groupBy: z.enum(['none', 'folder', 'harness']).default('none'),
     })
@@ -546,7 +553,7 @@ export const ViewSchema = z.object({
   /** The History window's View menu. */
   history: z
     .object({
-      groupBy: z.enum(['date', 'project']).default('date'),
+      groupBy: z.enum(['date', 'folder']).default('date'),
       /** The list shows task runs too. */
       showRuns: z.boolean().default(true),
     })

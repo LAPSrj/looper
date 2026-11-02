@@ -394,7 +394,7 @@ window's File menu:
   session](monitoring.md#terminal-sessions) in the task's environment and
   working directory with the harness resuming that conversation
   (`claude --resume <id>` / `codex resume <id>`), with the task's model and
-  permission mode. In the [Chats window](monitoring.md#the-chats-window),
+  permission mode. On the [Chats tab](monitoring.md#the-chats-window),
   the session is a run of its own in the Runs tab from the agent's first
   turn. A conversation has one such session: when one already went on with
   it, Continue in Terminal opens that session's run again (or shows it while

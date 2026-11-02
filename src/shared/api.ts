@@ -16,7 +16,7 @@ import type { RunFilter } from './runs';
 import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
-import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryItem } from './history';
+import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryFolderFilter, HistoryList, HistoryListOptions } from './history';
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -255,7 +255,7 @@ export interface LooperApi {
     showGroupContextMenu(group: string): void;
     /** The Send to Sessions window. */
     openSend(): void;
-    /** The Sessions window, opened or brought forward; `id` shows that session in it. */
+    /** `id`: that session, on the main window's Chats tab or in the Chats window (a phone's Chats window); none: the Chats window, opened or brought forward. */
     openWindow(id?: string): void;
     /** New Chat's or New Terminal's drop-down list of projects, at (x, y) in the window. */
     showNewMenu(kind: 'chat' | 'terminal', x: number, y: number): void;
@@ -269,12 +269,12 @@ export interface LooperApi {
     /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
     openFile(taskId: string, runId: string, path: string, image: boolean): Promise<void>;
   };
-  /** The History window: every project's older conversations, to read or continue. */
+  /** The History window: the conversations on this computer, to read or continue. */
   history: {
-    /** The conversations; `fresh` reads the folders again (slow across WSL), else the cached ones come at once. */
-    list(fresh: boolean): Promise<HistoryItem[]>;
-    /** The ids of the listed conversations whose user or agent messages contain the text. */
-    search(query: string): Promise<string[]>;
+    /** The newest conversations that pass the filters; `fresh` reads the folders again (slow across WSL), else the ones found last come at once. */
+    list(o: HistoryListOptions): Promise<HistoryList>;
+    /** Of the listed conversations `ids`, the ones whose user or agent messages contain the text. */
+    search(query: string, ids: string[]): Promise<string[]>;
     /** A conversation's rows and subagents, or a subagent's rows with `agentId`; null once it isn't listed. */
     read(id: string, agentId?: string): Promise<HistoryConversation | null>;
     /** Which commands the conversation offers. */
@@ -283,6 +283,8 @@ export interface LooperApi {
     run(id: string, command: HistoryCommand): Promise<void>;
     /** The window shows this conversation now (null: none): its menus act on it. */
     select(id: string | null): void;
+    /** The toolbar's Activity Pane button: the pane shows or hides, as View → Activity Pane does. */
+    toggleActivity(): void;
     /** A conversation's right-click menu. */
     showContextMenu(id: string): void;
     /** The History window, opened or brought forward. */
@@ -436,7 +438,11 @@ export interface LooperApi {
     allowComplete?: boolean,
     /** A project is selected, or the selected task has one: enables the Project menu. */
     hasProject?: boolean,
+    /** The main window's shown tab (main-tabs.ts), whose menus the menu bar shows; unset on a phone, which has them all. */
+    tab?: string,
   ): void;
+  /** Show the task on the main window's Tasks tab, at one of its tabs (from a Dashboard or Projects window). */
+  showTaskInMain(taskId: string, view: 'status' | 'runs' | 'terminal'): void;
   showTaskContextMenu(info: {
     enabled: boolean;
     /** The task is finished for good: the menu offers Reopen instead of Complete. */
@@ -558,8 +564,8 @@ export type UiEvent =
     }
   /** A list window's row menu (showListContextMenu): the item picked. */
   | { type: 'list-menu'; token: string; id: string }
-  /** A notification was clicked: select the task and show the right view. */
-  | { type: 'open-task'; taskId: string; runId: string; view: 'terminal' | 'runs' }
+  /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */
+  | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'terminal' | 'runs' }
   /** Conversation window View menu: a Show toggle changed. */
   | { type: 'messages-show'; key: MessagesShowKey; checked: boolean }
   /** Conversation window View menu: the Raw Messages toggle changed. */
@@ -596,8 +602,10 @@ export type UiEvent =
   | { type: 'history-activity'; checked: boolean }
   /** History window: read the list again (View → Refresh). */
   | { type: 'history-refresh' }
-  /** History window: put the focus in the search box (Edit → Find…). */
-  | { type: 'history-find' };
+  /** History window: show the find bar and put the focus in it (Edit → Find…). */
+  | { type: 'history-find' }
+  /** History window View menu: the folders the list shows (View → Folder). */
+  | { type: 'history-folder'; folder: HistoryFolderFilter };
 
 /** run: the run's own step records (check, classifier, agent, result, guidance). */
 export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';

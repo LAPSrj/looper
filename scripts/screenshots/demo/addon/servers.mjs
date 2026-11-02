@@ -70,6 +70,23 @@ function pane() {
 const field = (id, label, input, value, extra = {}) => ({ type: 'field', id, label, input, value, ...extra });
 
 function render({ view, params }) {
+  // The main window's Servers tab: every server by environment.
+  if (view === 'overview') {
+    return {
+      title: 'Servers',
+      toolbar: [{ id: 'new', label: 'New Server…', icon: 'add' }],
+      body: ['Production', 'Staging', 'Development'].map((env) => ({
+        type: 'section',
+        title: env,
+        body: [
+          {
+            type: 'props',
+            items: servers.filter((s) => s.env === env).map((s) => ({ label: s.name, value: `${s.user}@${s.host}:${s.port} (${s.os})`, mono: true })),
+          },
+        ],
+      })),
+    };
+  }
   if (view === 'server') {
     const s = find(params.id);
     return {

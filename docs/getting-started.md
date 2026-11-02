@@ -67,10 +67,12 @@ configuration for you:
   environment when it runs inside WSL.
 
 You can see and edit these under File → Settings…; see
-[environments](environments.md) for details. The main window opens with an
-empty task list, a toolbar, the [dashboard](monitoring.md#the-dashboard) of
-tasks that need you and runs in progress, and a status bar showing how many
-tasks are enabled, disabled, completed, paused, or running.
+[environments](environments.md) for details. The main window opens on its
+[Dashboard](monitoring.md#the-dashboard) tab, which lists the tasks that need
+you and the runs in progress. A toolbar is above it, the window's tabs
+(Dashboard, Projects, Tasks and Chats) are below the toolbar, and a status bar
+shows how many tasks are enabled, disabled, completed, paused, or running. See
+[the main window](monitoring.md#the-main-window) for what each tab shows.
 
 Each window opens where the last window of its kind was: the main window,
 the Chats window, a chat's or a run's own window and an addon's window
@@ -113,7 +115,7 @@ and field.
 
 ![The main window with a task selected](img/main-window.png)
 
-Select the task in the sidebar and click Run Now (or press F5, or use
+Open the Tasks tab, select the task in the sidebar and click Run Now (or press F5, or use
 Task → Run Now). Switch to the task's Terminal tab to watch the agent work
 in a real pty — you can type into it if the agent is waiting on you. The
 Status tab shows the task's current state and last result; the Runs tab

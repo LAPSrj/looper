@@ -16,7 +16,7 @@ import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentF
 import type { AppInfo } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { attachmentName, type Attachment, type AttachmentInput, type ChatSettingMenu } from '../shared/chat';
-import { HISTORY_COMMANDS, type HistoryCommand } from '../shared/history';
+import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryListOptions } from '../shared/history';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task, type View } from '../shared/types';
@@ -118,11 +118,12 @@ export interface IpcHost {
   openHistory: () => void;
   /** That History window shows this conversation now (null: none): its menus act on it. */
   historySelect: (window: AppWindow | null, id: string | null) => void;
+  historyToggleActivity: (window: AppWindow | null) => void;
   /** A History window's command on a conversation, asking first over `from` when it may still be open elsewhere. Rejects with the reason. */
   historyRun: (from: AppWindow | null, id: string, command: HistoryCommand) => Promise<void>;
   /** A conversation's right-click menu in the History window. */
   historyMenu: (from: AppWindow | null, id: string) => void;
-  /** The Chats window, opened or brought forward; `select` shows that session in it. */
+  /** `select`: that session, on the main window's Chats tab or in the Chats window (showChat); none: the Chats window, opened or brought forward. */
   openSessions: (select?: string) => void;
   /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
   openChatWindow: (sessionId: string) => void;
@@ -147,7 +148,11 @@ export interface IpcHost {
   openInFolder: (kind: 'chat' | 'terminal', parent: AppWindow | null) => Promise<void>;
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
+  /** A Dashboard or Projects window's task, shown on the caller's main window's Tasks tab. */
+  showTaskInMain: (taskId: string, view: 'status' | 'runs' | 'terminal') => void;
+  /** The selection a main window (`from`) reported, and the tab it shows: its menu bar follows them. */
   updateTaskMenu: (
+    from: AppWindow | null,
     hasTask: boolean,
     taskEnabled?: boolean,
     taskPaused?: boolean,
@@ -157,6 +162,7 @@ export interface IpcHost {
     taskCompleted?: boolean,
     allowComplete?: boolean,
     hasProject?: boolean,
+    tab?: string,
   ) => void;
 }
 
@@ -490,8 +496,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   // ---------- the History window ----------
 
-  ipc.handle('history:list', (_e, fresh: unknown) => engine.historyList(fresh === true));
-  ipc.handle('history:search', (_e, query: unknown) => engine.historySearch(String(query ?? '')));
+  ipc.handle('history:list', (_e, o: unknown) => {
+    const opts = (o ?? {}) as Partial<HistoryListOptions>;
+    const folder = typeof opts.folder === 'string' && (opts.folder === '' || opts.folder === 'other' || opts.folder.startsWith('project:')) ? opts.folder : '';
+    const limit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) ? Math.max(1, Math.floor(opts.limit)) : HISTORY_PAGE;
+    return engine.historyList({ fresh: opts.fresh === true, limit, showRuns: opts.showRuns !== false, folder });
+  });
+  ipc.handle('history:search', (_e, query: unknown, ids: unknown) =>
+    engine.historySearch(String(query ?? ''), Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []),
+  );
   ipc.handle('history:read', (_e, id: unknown, agentId?: unknown) => engine.historyRead(String(id), typeof agentId === 'string' ? agentId : undefined));
   ipc.handle('history:commands', (_e, id: unknown) => engine.historyCommands(String(id)));
   ipc.handle('history:run', (e, id: unknown, command: unknown) => {
@@ -499,6 +512,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     return host.historyRun(windowOf(e), String(id), command as HistoryCommand);
   });
   ipc.on('history:select', (e, id: unknown) => host.historySelect(windowOf(e), typeof id === 'string' && id ? id : null));
+  ipc.on('history:toggleActivity', (e) => host.historyToggleActivity(windowOf(e)));
   ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
   ipc.on('history:open', () => host.openHistory());
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
@@ -743,7 +757,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
   ipc.handle('projects:newChat', (e, id: string) => projectChat(String(id), windowOf(e)));
   ipc.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), windowOf(e)));
-  // A project's menu; with no id, the Projects pane header's (its View options, then New Project).
+  // A project's menu; with no id, the Projects tab's list header's (Group By, then New Project).
   ipc.on('context-menu:project', (e, id: string) => {
     const sender = windowOf(e);
     if (!sender) return;
@@ -1056,7 +1070,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on(
     'ui:selection',
     (
-      _e,
+      e,
       hasTask: boolean,
       taskEnabled?: boolean,
       taskPaused?: boolean,
@@ -1066,9 +1080,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       taskCompleted?: boolean,
       allowComplete?: boolean,
       hasProject?: boolean,
+      tab?: unknown,
     ) =>
-      host.updateTaskMenu(hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject),
+      host.updateTaskMenu(windowOf(e), hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject, typeof tab === 'string' ? tab : undefined),
   );
+  ipc.on('ui:showTaskInMain', (_e, taskId: unknown, view: unknown) => {
+    if (typeof taskId !== 'string' || !engine.getTask(taskId)) return;
+    host.showTaskInMain(taskId, view === 'runs' || view === 'terminal' ? view : 'status');
+  });
 
   // A dialog's page measures its content and asks for a window that fits it.
   ipc.on('window:fit', (e, contentHeight: number) => fitWindowHeight(windowOf(e), contentHeight));

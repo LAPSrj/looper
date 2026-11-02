@@ -15,7 +15,7 @@ polling inside the agent, no context buildup, at most one agent per task.
   plus task templates, import/export, version history, and the prompt
   template variables.
 - **[Projects](projects.md)**: the folders your tasks run in and your
-  chats and terminals open in, the Projects pane, project settings and
+  chats and terminals open in, the Projects tab, project settings and
   overrides, and starting a chat from the tray.
 - **[Building a task with an agent](task-builder.md)**: New Task with Agent
   and Edit with Agent, the draft panel, saving with Undo and Redo, and how
@@ -27,8 +27,8 @@ polling inside the agent, no context buildup, at most one agent per task.
 - **[Environments](environments.md)**: environment kinds (local shell,
   WSL, Windows), the WSL shell and mount-prefix settings, harnesses and
   their models, and concurrency caps.
-- **[Monitoring](monitoring.md)**: the task list, the dashboard, toolbar and context-menu
-  actions, the Recycle Bin, the live terminal tab, terminal sessions and
+- **[Monitoring](monitoring.md)**: the main window and its tabs, the task list,
+  the dashboard, toolbar and context-menu actions, the Recycle Bin, the live terminal tab, terminal sessions and
   chats, the Runs tab and run window, the engine log, notifications, Rest Mode, Prevent Sleep, the tray, and the
   Settings window.
 - **[Remote Access](remote-access.md)**: Looper in a browser on your phone,
@@ -38,7 +38,7 @@ polling inside the agent, no context buildup, at most one agent per task.
 - **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
   inbox drop-folder protocol for scripts and agents, `looper serve`, and a
   tour of the `~/looper` data directory.
-- **[Addons](addons.md)**: installing addons, their sidebar panes, the
+- **[Addons](addons.md)**: installing addons, their panes and tabs, the
   Tools menu and the Addons window, and the manifest and protocol for writing
   one.
 - **[Troubleshooting](troubleshooting.md)**: fixes for auto-pause, usage

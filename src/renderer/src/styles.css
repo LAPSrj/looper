@@ -128,6 +128,117 @@ code,
   min-height: 0;
   border-top: 1px solid var(--border);
 }
+.app.single {
+  grid-template-columns: 1fr;
+}
+/* The main window's views: the tab column on the left, when it's there, beside the shown view. */
+.app-views {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.app-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The main window's tabs (ViewTabs): an indicator bar on the selected one, unlike the underlined tab rows inside a view. */
+.view-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px 8px;
+  background: var(--bg-2);
+}
+.view-tabs.bottom {
+  border-top: 1px solid var(--border);
+}
+.view-tabs.left {
+  flex-direction: column;
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.view-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: default;
+}
+.view-tab:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.view-tab.active {
+  color: var(--fg);
+}
+.view-tab.active::after {
+  content: '';
+  position: absolute;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.view-tabs.top .view-tab.active::after,
+.view-tabs.bottom .view-tab.active::after {
+  left: 10px;
+  right: 10px;
+  height: 3px;
+}
+.view-tabs.top .view-tab.active::after {
+  bottom: 0;
+}
+.view-tabs.bottom .view-tab.active::after {
+  top: 0;
+}
+.view-tabs.left .view-tab {
+  flex-direction: column;
+  gap: 3px;
+  width: 72px;
+  padding: 8px 4px;
+  font-size: var(--font-caption);
+}
+.view-tabs.left.icons-only .view-tab {
+  width: auto;
+  padding: 8px;
+}
+.view-tabs.left .view-tab svg {
+  width: 20px;
+  height: 20px;
+}
+.view-tabs.left .view-tab.active {
+  background: var(--bg-3);
+}
+.view-tabs.left .view-tab.active::after {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+}
+.view-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (forced-colors: active) {
+  .view-tab.active::after {
+    background: Highlight;
+  }
+}
 .instructions-app {
   height: 100%;
   display: flex;
@@ -2912,14 +3023,9 @@ button:focus-visible,
   width: 240px;
 }
 
-/* The History window's toolbar: its commands, then the project picker and the search box at the right. */
-.history-toolbar .history-project {
-  margin-left: auto;
-  height: 28px;
-  max-width: 220px;
-}
-.history-toolbar .history-search .addon-search {
-  margin-left: 6px;
+/* Show More, under the History list's last conversation. */
+.history-more {
+  padding: 8px 12px 12px;
 }
 
 .addon-search input {

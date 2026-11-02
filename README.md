@@ -26,10 +26,11 @@ started. No idle burn, no context rot, at most one agent per task, ever.
   run window with each run's steps and full conversation, live status, and a
   real terminal tab you can watch *and type into* mid-run.
 - **Chats and terminals on demand** — open a project's agent in a chat or a
-  terminal, all in one Chats window that lists them by project, puts the
-  ones waiting for you first, and shows what each agent is doing; pick up a
-  finished run's conversation in either, and fork a chat from any message.
-  Each one you start is kept in the Runs tab with the task's runs.
+  terminal, all on one Chats tab (or in a Chats window) that lists them by
+  project, puts the ones waiting for you first, and shows what each agent is
+  doing; pick up a finished run's conversation in either, and fork a chat
+  from any message. Each one you start is kept in the Runs tab with the
+  task's runs.
 - **Git tab** — a project's uncommitted changes and commit history, with
   each file's diff, read in the project's own environment.
 - **System notifications** — each task picks what it toasts, from errors-only
@@ -81,8 +82,8 @@ On first launch Looper creates a Local Shell environment pointed at the
    working directory for a new project; on
    the **Agent** tab, write the prompt. Optionally add a check command on the
    **Check** tab. Save.
-3. Select the task and press **F5** (Run Now). Watch the agent work in the
-   **Terminal** tab.
+3. On the **Tasks** tab, select the task and press **F5** (Run Now). Watch
+   the agent work in the **Terminal** tab.
 
 The [Getting started guide](docs/getting-started.md) walks through this with
 more detail, including the packaged Windows installer and notification setup.
@@ -110,12 +111,12 @@ The full user guide lives in [docs/](docs/README.md):
 - [The task editor](docs/tasks.md) — every tab and field, templates,
   import/export, prompt template variables.
 - [Projects](docs/projects.md) — the folders tasks run in and chats open in,
-  the Projects pane, and new chats from the tray.
+  the Projects tab, and new chats from the tray.
 - [How a run works](docs/how-a-run-works.md) — the check → classify → agent
   cycle and every way a run ends.
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
-- [Monitoring](docs/monitoring.md) — terminal tab, chats and terminal
+- [Monitoring](docs/monitoring.md) — the main window's tabs, terminal tab, chats and terminal
   sessions, Runs tab and run window, notifications, Rest Mode, Prevent
   Sleep, Remote Control, tray, settings.
 - [Remote Access](docs/remote-access.md) — Looper in a browser on a phone,

@@ -55,26 +55,24 @@ describe('sidebar panes', () => {
   it('lists every pane in one View group, in the sidebar order', () => {
     const labels = (items: MenuItemConstructorOptions[]) => items.map((i) => i.label);
     const addon: MenuItemConstructorOptions[] = [{ label: 'Servers', type: 'checkbox' }];
-    expect(labels(paneVisibilityItems(ViewSchema.parse({}), () => undefined, addon))).toEqual(['&Projects', 'Ta&sks', 'Servers']);
+    expect(labels(paneVisibilityItems(ViewSchema.parse({}), () => undefined, addon))).toEqual(['Ta&sks Pane', 'Servers']);
     const multiple = ViewSchema.parse({ sidebar: 'multiple' });
-    expect(labels(paneVisibilityItems(multiple, () => undefined, addon))).toEqual(['&Projects', 'Ta&sks', 'Go&als', '&Watchers', 'Servers']);
+    expect(labels(paneVisibilityItems(multiple, () => undefined, addon))).toEqual(['Ta&sks Pane', 'Go&als Pane', '&Watchers Pane', 'Servers']);
   });
 
   it('hides the single task list like any pane, and changes only the pane it names', () => {
     let patch: Partial<View> = {};
     const singleView = ViewSchema.parse({ single: { showDisabled: false } });
     const single = paneVisibilityItems(singleView, (p) => (patch = p));
-    expect(single[1]).toMatchObject({ checked: true });
-    expect(single[1].enabled).toBeUndefined();
-    single[1].click!({ checked: false } as never, undefined as never, undefined as never);
+    expect(single[0]).toMatchObject({ checked: true });
+    expect(single[0].enabled).toBeUndefined();
+    single[0].click!({ checked: false } as never, undefined as never, undefined as never);
     expect(patch.single).toEqual({ ...singleView.single, visible: false });
 
 
     const view = ViewSchema.parse({ sidebar: 'multiple' });
     const items = paneVisibilityItems(view, (p) => (patch = p));
-    items[0].click!({ checked: false } as never, undefined as never, undefined as never);
-    expect(patch.projectsPane?.visible).toBe(false);
-    items[2].click!({ checked: false } as never, undefined as never, undefined as never);
+    items[1].click!({ checked: false } as never, undefined as never, undefined as never);
     expect(patch.panes?.goals.visible).toBe(false);
     expect(patch.panes?.tasks).toEqual(view.panes.tasks);
   });
@@ -91,7 +89,7 @@ describe('sidebar panes', () => {
     const view = ViewSchema.parse({ sidebar: 'multiple', panes: { tasks: { visible: false }, goals: { visible: false } } });
     const items = paneMenuItems(view, 'watchers', (p) => (patch = p));
     expect(items[0].enabled).toBeUndefined();
-    const last = paneVisibilityItems(view, (p) => (patch = p))[3];
+    const last = paneVisibilityItems(view, (p) => (patch = p))[2];
     expect(last.enabled).toBeUndefined();
     last.click!({ checked: false } as never, undefined as never, undefined as never);
     expect(patch.panes?.watchers.visible).toBe(false);
@@ -101,13 +99,13 @@ describe('sidebar panes', () => {
     expect(patch.panes?.goals).toEqual(view.panes.goals);
   });
 
-  it('offers the Projects pane its Group By choices in its header menu and as View > Group Projects By, at most two submenu levels deep', () => {
+  it('offers the Projects list its Group By choices in its header menu and as View > Group Projects By, at most two submenu levels deep', () => {
     let patch: Partial<View> = {};
     const view = ViewSchema.parse({});
     expect(view.projectsPane.groupBy).toBe('none');
     const groupBy = (items: MenuItemConstructorOptions[]) => items.find((i) => i.label === '&Group By')!.submenu as MenuItemConstructorOptions[];
     const header = projectsPaneMenuItems(view, (p) => (patch = p));
-    expect(header.map((i) => i.label ?? '-')).toEqual(['Show &Pane', '-', '&Group By']);
+    expect(header.map((i) => i.label ?? '-')).toEqual(['&Group By']);
     expect(groupBy(header).map((i) => [i.label, i.checked])).toEqual([['&None', true], ['&Folder', false], ['&Harness', false]]);
     groupBy(header)[2].click!({} as never, undefined as never, undefined as never);
     expect(patch.projectsPane).toEqual({ ...view.projectsPane, groupBy: 'harness' });
@@ -129,7 +127,7 @@ describe('sidebar panes', () => {
   });
 
   it('leaves the sidebar out only when no pane shows', () => {
-    const none = { projectsPane: { visible: false }, single: { visible: false } };
+    const none = { single: { visible: false } };
     expect(sidebarHasPanes(ViewSchema.parse({}), [])).toBe(true);
     expect(sidebarHasPanes(ViewSchema.parse(none), [])).toBe(false);
     // Multiple panes: the single list's flag doesn't count, the task panes do.

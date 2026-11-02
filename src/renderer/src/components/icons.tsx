@@ -99,7 +99,9 @@ export const ICONS: Record<
   | 'newProject'
   | 'doubleSize'
   | 'normalSize'
-  | 'history',
+  | 'history'
+  | 'tasks'
+  | 'window',
   ReactNode
 > = {
   dashboard: (
@@ -162,15 +164,16 @@ export const ICONS: Record<
       <path d="m9 9.4 2.6 2.6L9 14.6M12.3 9.4l2.6 2.6-2.6 2.6" />
     </>
   ),
-  // A speech bubble with two arrows meeting at its corner: the conversation pressed into a new, smaller one.
+  // A speech bubble with lines of text, and a small empty one at its corner: the conversation goes on in a new, shorter one.
   compact: (
     <>
       <mask id="ico-cut-compact" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
         <rect width="16" height="16" fill="white" stroke="none" />
-        <rect x="7.6" y="7.6" width="8.4" height="8.4" rx="2" fill="black" stroke="none" />
+        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
       </mask>
       <path d={BUBBLE} mask="url(#ico-cut-compact)" />
-      <path d="m9.6 8.8 2.4 2.4 2.4-2.4M9.6 15.2l2.4-2.4 2.4 2.4" />
+      <path d="M4.5 4.6h5M4.5 7.2h3" />
+      <path d="M10 9.6h4a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-2.2l-1.6 1.4V14H10a1 1 0 0 1-1-1v-2.4a1 1 0 0 1 1-1Z" />
     </>
   ),
   // A speech bubble with a stop square at its corner: the agent's turn stops.
@@ -249,6 +252,20 @@ export const ICONS: Record<
       <path d="M2.5 8a5.5 5.5 0 1 0 5.5-5.5 6 6 0 0 0-4.1 1.7L2.5 5.6" />
       <path d="M2.5 2.5v3.1h3.1" />
       <path d="M8 5v3l2.2 1.4" />
+    </>
+  ),
+  // Three checked rows: the task list.
+  tasks: (
+    <>
+      <path d="m1.8 3.8 1.2 1.2L5 3M1.8 8.3l1.2 1.2L5 7.5M1.8 12.8l1.2 1.2L5 12" />
+      <path d="M7.5 4h6.5M7.5 8.5h6.5M7.5 13h6.5" />
+    </>
+  ),
+  // A window with a title bar: an addon's tab, when it names no icon of its own.
+  window: (
+    <>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+      <path d="M1.5 5.5h13" />
     </>
   ),
   delete: <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9" />,

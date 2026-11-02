@@ -31,7 +31,6 @@ import {
   ofCaller,
   openExternal,
   openPath,
-  remoteMainWindows,
   runAs,
   setWindowMenu,
   showMessageBox,
@@ -52,6 +51,7 @@ import { pwaIcons } from './pwa-icons';
 import { pwaStartup } from './pwa-startup';
 import { SOURCE_NAMES, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState } from '../shared/remote-access';
 import { groupProjectsByMenu, paneVisibilityItems, taskListMenu } from './view-menu';
+import { mainTabs } from '../shared/main-tabs';
 import { PROJECT_COMMANDS, projectMenuItems, type ProjectCommand } from './project-menu';
 import { zoomMenuItems } from './platform/zoom';
 
@@ -67,7 +67,7 @@ const PROJECT_UI_ACTIONS: Record<ProjectCommand, string> = {
 import { hideOffPlatform } from './platform/menus';
 import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
 import { SHORTCUTS } from '../shared/shortcuts';
-import { NO_HISTORY_COMMANDS, type HistoryCommand } from '../shared/history';
+import { NO_HISTORY_COMMANDS, type HistoryCommand, type HistoryFolderFilter } from '../shared/history';
 
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
@@ -203,9 +203,10 @@ if (!app.requestSingleInstanceLock()) {
       openSendToSessions: openSendToSessionsWindow,
       openHistory: openHistoryWindow,
       historySelect,
+      historyToggleActivity,
       historyRun,
       historyMenu,
-      openSessions: (select) => openSessionsWindow(select),
+      openSessions: (select) => (select ? showChat(select) : openSessionsWindow()),
       openChatWindow,
       chatSettingMenu,
       openRemoteConversation,
@@ -220,6 +221,7 @@ if (!app.requestSingleInstanceLock()) {
       openInFolder,
       takeImportDraft,
       openLooperFile,
+      showTaskInMain: (taskId, view) => openTaskView(taskId, '', view),
       updateTaskMenu,
     });
     const eng = engine;
@@ -243,7 +245,10 @@ if (!app.requestSingleInstanceLock()) {
     useRemoteClients(remoteAccess.clients);
     // A new browser tab's main window gets the main window's menu bar.
     remoteAccess.clients.onMainWindow((w) => {
-      buildRemoteMenu(w);
+      const view: MainView = { w, fixed: false, selection: NO_SELECTION };
+      mainViews.set(w, view);
+      w.on('closed', () => mainViews.delete(w));
+      buildMainMenu(view);
       reopenRescuedBuilders(w);
     });
     applyRemoteAccess();
@@ -269,7 +274,7 @@ if (!app.requestSingleInstanceLock()) {
     registerAddonIpc(addonDeps());
     addons.start();
     // macOS keeps one global menu bar; elsewhere each window carries its own.
-    if (process.platform === 'darwin') buildMenu();
+    if (process.platform === 'darwin') rebuildMenu();
     else Menu.setApplicationMenu(null);
     createTray();
     if (!startHidden) createWindow();
@@ -751,7 +756,7 @@ function openToastTarget(t: ToastTarget): void {
   openTaskView(t.taskId, t.runId, t.view);
 }
 
-function openTaskView(taskId: string, runId: string, view: 'terminal' | 'runs'): void {
+function openTaskView(taskId: string, runId: string, view: 'status' | 'terminal' | 'runs'): void {
   const payload = { type: 'open-task', taskId, runId, view };
   if (caller()) {
     const main = mainWin();
@@ -908,7 +913,10 @@ function createWindow(): void {
       if (w !== win && !w.isDestroyed()) w.close();
     }
   });
+  const main = win;
+  mainViews.set(main, { w: main, fixed: false, selection: NO_SELECTION });
   win.on('closed', () => {
+    mainViews.delete(main);
     win = null;
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -922,7 +930,7 @@ function createWindow(): void {
   });
   // The window may be the first ever (tray start): give it a menu right away;
   // the renderer's selection report refines it.
-  buildMenu();
+  buildMainMenu(mainViews.get(main)!);
   loadRenderer(win);
 }
 
@@ -1450,6 +1458,10 @@ function addonDeps(): AddonUiDeps {
     host: addons!,
     hostKind: engine!.host,
     mainWindow: mainWin,
+    hasPanes: (w) => {
+      const view = mainViews.get(w);
+      return !view?.fixed || view.tab === 'tasks';
+    },
     openWindow: openChildWindow,
     view: () => engine?.settings.view ?? ViewSchema.parse({}),
     updateView,
@@ -1636,8 +1648,8 @@ function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _p
 const terminalWindows = new WindowSlots();
 
 /**
- * Open Project in Terminal, or Continue in Terminal with a run id: in the
- * Sessions window, or the system's default terminal when the setting says so.
+ * Open Project in Terminal, or Continue in Terminal with a run id: where
+ * showChat puts it, or the system's default terminal when the setting says so.
  * A Remote Control conversation holding the run's conversation shows in its own window.
  */
 async function openTerminal(taskId: string, runId?: string): Promise<void> {
@@ -1648,7 +1660,7 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
   }
   const sessionId = engine.startTerminalSession(taskId, runId);
   if (engine.isRemoteSession(sessionId)) openTerminalWindow(sessionId, `${engine.taskName(taskId) ?? taskId} – Remote Control`);
-  else openSessionsWindow(sessionId);
+  else showChat(sessionId);
 }
 
 /**
@@ -1684,7 +1696,7 @@ async function openRemoteConversation(id: string): Promise<void> {
   const conv = engine.remoteState().conversations.find((c) => c.id === id);
   if (!conv) return;
   if (conv.status === 'ended') openMessagesWindow(conv.taskId, conv.id);
-  else if (conv.source === 'chat' || conv.source === 'terminal') openSessionsWindow(conv.id);
+  else if (conv.source === 'chat' || conv.source === 'terminal') showChat(conv.id);
   else openTerminalWindow(conv.id, `${conv.title ?? conv.name} – Remote Control`);
 }
 
@@ -2003,27 +2015,27 @@ function openRemoteConversationsWindow(): void {
 
 /**
  * Open Project in Chat, or Continue in Chat with a run id: the task's harness
- * in a chat in the Sessions window. A chat already open on the run's
+ * in a chat, shown where showChat puts it. A chat already open on the run's
  * conversation is shown instead.
  */
 async function openChat(taskId: string, runId?: string): Promise<void> {
   if (!engine) return;
-  openSessionsWindow(engine.startChat(taskId, runId).id);
+  showChat(engine.startChat(taskId, runId).id);
 }
 
 /** Fork from Here: a new chat with the conversation up to the message. */
 function forkChat(chatId: string, index: number): void {
-  if (engine) openSessionsWindow(engine.forkChat(chatId, index).id);
+  if (engine) showChat(engine.forkChat(chatId, index).id);
 }
 
-/** Compact into New Chat: the compacted chat takes the chat's place in the Chats window. Rejects with the reason. */
+/** Compact into New Chat: the compacted chat shows where showChat puts it. Rejects with the reason. */
 async function compactChat(chatId: string): Promise<void> {
-  if (engine) openSessionsWindow((await engine.compactChat(chatId)).id);
+  if (engine) showChat((await engine.compactChat(chatId)).id);
 }
 
-/** Continue Compacted: a new chat from the run's messages, in the Chats window. Rejects with the reason. */
+/** Continue Compacted: a new chat from the run's messages, shown where showChat puts it. Rejects with the reason. */
 async function compactRun(taskId: string, runId: string): Promise<void> {
-  if (engine) openSessionsWindow((await engine.compactRun(taskId, runId)).id);
+  if (engine) showChat((await engine.compactRun(taskId, runId)).id);
 }
 
 /** Menu labels show `&` as a mnemonic marker: a literal one is doubled. */
@@ -2140,7 +2152,9 @@ function chatSettingSubmenus(items: Record<ChatSettingMenu, Electron.MenuItemCon
 function chatSettingMenu(chatId: string, which: ChatSettingMenu | 'all'): Electron.MenuItemConstructorOptions[] {
   const chat = engine?.getChat(chatId);
   if (!chat) return [];
-  const parent = sessionsWindows.get();
+  // The window whose message box asked: a Chats window or a main window's Chats tab.
+  const showing = sessionWindowsShowing(chatId);
+  const parent = showing.find((w) => w.isFocused()) ?? showing[0] ?? sessionsWindows.get();
   const showError = (err: unknown) => {
     const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
     void showMessageBox(parent, opts);
@@ -2168,6 +2182,8 @@ interface SessionsView {
   cards: string[];
   /** What its menu was last built from. */
   menuKey: string;
+  /** A main window's Chats tab: the menu is the main window's, which has the Chats parts while the tab shows. */
+  tab?: boolean;
 }
 
 /** One Chats window per client. */
@@ -2259,6 +2275,42 @@ function trackSessionsView(view: SessionsView): void {
   });
 }
 
+/** A main window's Chats tab, kept from the first time its page reports what it shows until the window closes. */
+function tabSessionsView(w: AppWindow): SessionsView | undefined {
+  const known = sessionsViews.get(w);
+  const main = mainViews.get(w);
+  // A view window has no Chats tab (View → Chats is the Chats window).
+  if (known || !main || main.fixed) return known;
+  const view: SessionsView = { w, shown: null, single: false, cards: [], menuKey: '', tab: true };
+  sessionsViews.set(w, view);
+  const unsubscribe = engine!.on((e) => {
+    if ((e.type === 'chat' && e.state.id === view.shown) || e.type === 'sessions' || e.type === 'projects' || e.type === 'settings') refreshSessionsMenu(view);
+  });
+  w.on('closed', () => {
+    unsubscribe();
+    sessionsViews.delete(w);
+    watchShownSessions();
+  });
+  return view;
+}
+
+/**
+ * A conversation that was started or picked: in the Chats window when it's
+ * open and the caller's main window isn't the one in front, else on the main
+ * window's Chats tab. A phone's main window has no conversation in it, so it
+ * opens a Chats window.
+ */
+function showChat(id: string): void {
+  const main = mainWin();
+  const phone = isRemote(main) && main.client.uiPlatform === 'mobile';
+  if (!main || main.isDestroyed() || phone || (sessionsWindows.get() && !main.isFocused())) {
+    openSessionsWindow(id);
+    return;
+  }
+  bringForward(main);
+  main.webContents.send('ui:event', { type: 'sessions-select', id } satisfies UiEvent);
+}
+
 /** The engine follows closely every session a Chats window shows, on any device. */
 function watchShownSessions(): void {
   engine?.watchSessions([...sessionsViews.values()].flatMap((v) => (v.shown === null ? [] : [v.shown])));
@@ -2266,8 +2318,10 @@ function watchShownSessions(): void {
 
 /** That Chats window now shows `id` (null: the Overview): its chat and terminal output go there. A single chat's window keeps its chat. */
 function showSession(w: AppWindow | null, id: string | null): void {
-  const target = w && sessionsViews.has(w) ? w : sessionsWindows.get();
-  const view = target ? sessionsViews.get(target) : undefined;
+  const own = w ? (sessionsViews.get(w) ?? tabSessionsView(w)) : undefined;
+  const chatsWindow = sessionsWindows.get();
+  // Another window's report is the Chats window's; a main window's never is, a view window's included.
+  const view = own ?? (w && mainViews.has(w) ? undefined : chatsWindow ? sessionsViews.get(chatsWindow) : undefined);
   if (view && !view.single) view.shown = id;
   watchShownSessions();
   if (view) refreshSessionsMenu(view, true);
@@ -2275,7 +2329,7 @@ function showSession(w: AppWindow | null, id: string | null): void {
 
 /** The chats that Chats window's dashboard shows as cards: their chat events go there too. */
 function showCards(w: AppWindow | null, ids: string[]): void {
-  const view = w ? sessionsViews.get(w) : undefined;
+  const view = w ? (sessionsViews.get(w) ?? tabSessionsView(w)) : undefined;
   if (view && !view.single) view.cards = ids;
 }
 
@@ -2296,10 +2350,17 @@ function sessionsMenuState(view: SessionsView): string {
 
 function refreshSessionsMenu(view: SessionsView, force = false): void {
   if (view.w.isDestroyed()) return;
+  const main = view.tab ? mainViews.get(view.w) : undefined;
+  // Another tab of the main window shows: its menu has no Chats parts, and the tab's rebuild it when they come back.
+  if (view.tab && main?.tab !== 'chats') {
+    view.menuKey = '';
+    return;
+  }
   const key = sessionsMenuState(view);
   if (key === view.menuKey && !force) return;
   view.menuKey = key;
-  replaceWindowMenu(view.w, sessionsTemplate(view));
+  if (main) buildMainMenu(main);
+  else replaceWindowMenu(view.w, sessionsTemplate(view));
 }
 
 function refreshSessionsMenus(force = false): void {
@@ -2388,6 +2449,86 @@ async function closeAllSessionsAsk(group?: string, from?: AppWindow | null): Pro
  * A single chat's window has the ones about its chat.
  */
 function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions[] {
+  const p = sessionsMenuParts(sv);
+  const child = sv.w;
+  const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  const file: Electron.MenuItemConstructorOptions = {
+    id: 'file',
+    label: '&File',
+    submenu: [
+      ...(sv.single ? [] : [...p.newItems, { id: 'chat-new-project', label: 'New P&roject…', glyph: 'newProject', click: () => openProjectEditor() }, sep]),
+      ...p.fileItems,
+      sep,
+      { label: 'Close &Window', platforms: NOT_MOBILE, accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
+    ],
+  };
+  const shown = engine?.settings.view.sessions ?? ViewSchema.parse({}).sessions;
+  const setShown = (patch: Partial<Settings['view']['sessions']>) => updateView({ sessions: { ...shown, ...patch } });
+  const view: Electron.MenuItemConstructorOptions = {
+    id: 'view',
+    label: '&View',
+    submenu: sv.single
+      ? [
+          {
+            label: 'A&ctivity Pane',
+            platforms: NOT_MOBILE,
+            type: 'checkbox',
+            checked: shown.windowActivityPane,
+            click: (item) => setShown({ windowActivityPane: item.checked }),
+          },
+          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.windowStatusBar, click: (item) => setShown({ windowStatusBar: item.checked }) },
+          // A browser tab can't stay above the device's other windows.
+          ...(child instanceof BrowserWindow
+            ? [{ label: 'Always on &Top', type: 'checkbox' as const, checked: child.isAlwaysOnTop(), click: (item: Electron.MenuItem) => child.setAlwaysOnTop(item.checked) }]
+            : []),
+          sep,
+          ...p.paneItems,
+          sep,
+          ...zoomMenuItems(),
+        ]
+      : [
+          { id: 'chats-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => p.send({ type: 'sessions-dashboard' }) },
+          { id: 'chats-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
+          sep,
+          { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
+          p.activityPane,
+          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
+          sep,
+          ...p.listItems,
+          sep,
+          ...p.navItems,
+          sep,
+          ...p.paneItems,
+          sep,
+          ...zoomMenuItems(),
+        ],
+  };
+  const menus = process.platform === 'darwin' ? [file, view] : [file, p.edit, view];
+  if (p.chat) menus.push(p.chat);
+  return menus;
+}
+
+/** What a Chats window's menus are made of, for its own menu bar and for a main window's Chats tab. */
+interface SessionsMenuParts {
+  /** Sends a UI event to the window. */
+  send: (payload: UiEvent) => void;
+  /** New Chat and New Terminal in the shown session's project (the page takes their keys), then New Chat and New Terminal in a project picked. */
+  newItems: Electron.MenuItemConstructorOptions[];
+  /** File: from Attach Files… to Close All Conversations (a single chat's window: the ones about its chat). */
+  fileItems: Electron.MenuItemConstructorOptions[];
+  edit: Electron.MenuItemConstructorOptions;
+  activityPane: Electron.MenuItemConstructorOptions;
+  /** Show Task Runs and Waiting Chats First. */
+  listItems: Electron.MenuItemConstructorOptions[];
+  /** F8, F9 and Shift with them: the previous and next (waiting) chat. */
+  navItems: Electron.MenuItemConstructorOptions[];
+  /** F6 and Shift+F6. */
+  paneItems: Electron.MenuItemConstructorOptions[];
+  /** The Chat menu, while a chat shows. */
+  chat?: Electron.MenuItemConstructorOptions;
+}
+
+function sessionsMenuParts(sv: SessionsView): SessionsMenuParts {
   const child = sv.w;
   const id = sv.shown;
   const kind = id ? engine?.sessionKind(id) : undefined;
@@ -2436,12 +2577,6 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
     if (cwd) void openHostPath(cwd);
   };
   const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
-  /** New Chat's or New Terminal's submenu: the projects, then another folder. */
-  const newIn = (kind: 'chat' | 'terminal', open: (projectId: string) => void): Electron.MenuItemConstructorOptions[] => [
-    ...projects.map((p) => ({ label: menuText(p.name), click: () => open(p.id) })),
-    ...(projects.length > 0 ? [sep] : []),
-    { label: 'Other &Folder…', click: () => void openInFolder(kind, child).catch(showError) },
-  ];
   const closeConversation: Electron.MenuItemConstructorOptions = {
     id: 'chat-close',
     glyph: 'closeChat',
@@ -2451,53 +2586,42 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
     enabled: conversation,
     click: () => id && void closeSessionAsk(id, child).catch(showError),
   };
-  const file: Electron.MenuItemConstructorOptions = {
-    id: 'file',
-    label: '&File',
-    submenu: [
-      // The page handles Ctrl+T, Ctrl+Shift+T, Ctrl+W and Ctrl+F4, so in a terminal session Ctrl+T and Ctrl+W stay the agent's.
-      ...(sv.single
-        ? []
-        : [
-            {
-              id: 'chat-new-in-project',
-              label: shownProject ? `New Chat in ${menuText(shownProject.name)}` : 'New Chat in Project',
-              accelerator: SHORTCUTS.newChat,
-              registerAccelerator: false,
-              enabled: !!shownProject,
-              glyph: 'newChat',
-              click: () => shownProject && openProjectChat(shownProject.id),
-            },
-            {
-              id: 'chat-new-terminal-in-project',
-              label: shownProject ? `New Terminal in ${menuText(shownProject.name)}` : 'New Terminal in Project',
-              accelerator: SHORTCUTS.newTerminal,
-              registerAccelerator: false,
-              enabled: !!shownProject,
-              glyph: 'terminal',
-              click: () => shownProject && void openTerminal(projectTaskId(shownProject.id)).catch(showError),
-            },
-            { id: 'chat-new-chat', label: 'New &Chat', glyph: 'newChat', submenu: newIn('chat', openProjectChat) },
-            { id: 'chat-new-terminal', label: 'New &Terminal', glyph: 'terminal', submenu: newIn('terminal', (pid) => void openTerminal(projectTaskId(pid)).catch(showError)) },
-            { id: 'chat-new-project', label: 'New P&roject…', glyph: 'newProject', click: () => openProjectEditor() },
-            sep,
-          ]),
-      // Chat-only: in a terminal these keys belong to the agent.
-      { id: 'chat-attach', label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', glyph: 'attach', enabled: !!chat && chat.status !== 'ended', click: () => void attachFiles().catch(showError) },
-      { id: 'chat-save-markdown', label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', enabled: !!chat, click: () => void saveMarkdown().catch(showError) },
-      sep,
-      ...(sv.single
-        ? []
-        : [{ label: 'Open in &New Window', platforms: NOT_MOBILE, enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
-      { label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: !!kind, click: openWorkingDirectory },
-      ...(sv.single ? [] : [{ id: 'chat-send-to-chats', label: 'Send to C&hats…', glyph: 'bullhorn', enabled: anySessions, click: () => openSendToSessionsWindow() }]),
-      sep,
-      closeConversation,
-      ...(sv.single ? [] : [{ id: 'chat-close-all', label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk().catch(showError) }]),
-      sep,
-      { label: 'Close &Window', platforms: NOT_MOBILE, accelerator: 'Alt+F4', registerAccelerator: false, click: () => child.close() },
-    ],
-  };
+  const newItems: Electron.MenuItemConstructorOptions[] = [
+    // The page handles Ctrl+T, Ctrl+Shift+T, Ctrl+W and Ctrl+F4, so in a terminal session Ctrl+T and Ctrl+W stay the agent's.
+    {
+      id: 'chat-new-in-project',
+      label: shownProject ? `New Chat in ${menuText(shownProject.name)}` : 'New Chat in Project',
+      accelerator: SHORTCUTS.newChat,
+      registerAccelerator: false,
+      enabled: !!shownProject,
+      glyph: 'newChat',
+      click: () => shownProject && openProjectChat(shownProject.id),
+    },
+    {
+      id: 'chat-new-terminal-in-project',
+      label: shownProject ? `New Terminal in ${menuText(shownProject.name)}` : 'New Terminal in Project',
+      accelerator: SHORTCUTS.newTerminal,
+      registerAccelerator: false,
+      enabled: !!shownProject,
+      glyph: 'terminal',
+      click: () => shownProject && void openTerminal(projectTaskId(shownProject.id)).catch(showError),
+    },
+    ...sessionNewMenus(child),
+  ];
+  const fileItems: Electron.MenuItemConstructorOptions[] = [
+    // Chat-only: in a terminal these keys belong to the agent.
+    { id: 'chat-attach', label: '&Attach Files…', accelerator: 'CmdOrCtrl+O', glyph: 'attach', enabled: !!chat && chat.status !== 'ended', click: () => void attachFiles().catch(showError) },
+    { id: 'chat-save-markdown', label: '&Save as Markdown…', accelerator: 'CmdOrCtrl+S', enabled: !!chat, click: () => void saveMarkdown().catch(showError) },
+    sep,
+    ...(sv.single
+      ? []
+      : [{ label: 'Open in &New Window', platforms: NOT_MOBILE, enabled: kind === 'chat' || kind === 'run', click: () => id && openChatWindow(id) }]),
+    { label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: !!kind, click: openWorkingDirectory },
+    ...(sv.single ? [] : [{ id: 'chat-send-to-chats', label: 'Send to C&hats…', glyph: 'bullhorn', enabled: anySessions, click: () => openSendToSessionsWindow() }]),
+    sep,
+    closeConversation,
+    ...(sv.single ? [] : [{ id: 'chat-close-all', label: 'Close A&ll Conversations', enabled: anySessions, click: () => void closeAllSessionsAsk(undefined, child).catch(showError) }]),
+  ];
   // The page handles these keys itself, so a terminal still gets Ctrl+C and the rest.
   // A phone has its own text editing menu, so the clipboard items stay off it.
   const edit: Electron.MenuItemConstructorOptions = {
@@ -2518,70 +2642,58 @@ function sessionsTemplate(sv: SessionsView): Electron.MenuItemConstructorOptions
   const nav = (dir: 1 | -1, waiting: boolean) => () => send({ type: 'sessions-nav', dir, waiting });
   const shown = engine?.settings.view.sessions ?? ViewSchema.parse({}).sessions;
   const setShown = (patch: Partial<Settings['view']['sessions']>) => updateView({ sessions: { ...shown, ...patch } });
-  // The page handles F6 too, so a terminal never gets it.
-  const panes: Electron.MenuItemConstructorOptions[] = [
-    { label: 'Next Pan&e', accelerator: 'F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: 1 }) },
-    { label: 'Previous Pane', accelerator: 'Shift+F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: -1 }) },
-  ];
-  const view: Electron.MenuItemConstructorOptions = {
-    id: 'view',
-    label: '&View',
-    submenu: sv.single
-      ? [
-          {
-            label: 'A&ctivity Pane',
-            platforms: NOT_MOBILE,
-            type: 'checkbox',
-            checked: shown.windowActivityPane,
-            click: (item) => setShown({ windowActivityPane: item.checked }),
-          },
-          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.windowStatusBar, click: (item) => setShown({ windowStatusBar: item.checked }) },
-          // A browser tab can't stay above the device's other windows.
-          ...(child instanceof BrowserWindow
-            ? [{ label: 'Always on &Top', type: 'checkbox' as const, checked: child.isAlwaysOnTop(), click: (item: Electron.MenuItem) => child.setAlwaysOnTop(item.checked) }]
-            : []),
-          sep,
-          ...panes,
-          sep,
-          ...zoomMenuItems(),
-        ]
-      : [
-          { id: 'chats-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => send({ type: 'sessions-dashboard' }) },
-          { id: 'chats-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
-          sep,
-          { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.toolbar, click: (item) => setShown({ toolbar: item.checked }) },
-          { label: 'A&ctivity Pane', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
-          { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.statusBar, click: (item) => setShown({ statusBar: item.checked }) },
-          sep,
-          { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
-          { label: '&Waiting Chats First', type: 'checkbox', checked: shown.waitingFirst, click: (item) => setShown({ waitingFirst: item.checked }) },
-          sep,
-          { label: 'Pre&vious Waiting Chat', accelerator: 'F8', click: nav(-1, true) },
-          { label: 'Next W&aiting Chat', accelerator: 'F9', click: nav(1, true) },
-          { label: '&Previous Chat', accelerator: 'Shift+F8', click: nav(-1, false) },
-          { label: '&Next Chat', accelerator: 'Shift+F9', click: nav(1, false) },
-          sep,
-          ...panes,
-          sep,
-          ...zoomMenuItems(),
-        ],
+  return {
+    send,
+    newItems,
+    fileItems,
+    edit,
+    activityPane: { label: 'A&ctivity Pane', platforms: NOT_MOBILE, type: 'checkbox', checked: shown.activityPane, click: (item) => setShown({ activityPane: item.checked }) },
+    listItems: [
+      { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
+      { label: '&Waiting Chats First', type: 'checkbox', checked: shown.waitingFirst, click: (item) => setShown({ waitingFirst: item.checked }) },
+    ],
+    navItems: [
+      { label: 'Pre&vious Waiting Chat', accelerator: 'F8', click: nav(-1, true) },
+      { label: 'Next W&aiting Chat', accelerator: 'F9', click: nav(1, true) },
+      { label: '&Previous Chat', accelerator: 'Shift+F8', click: nav(-1, false) },
+      { label: '&Next Chat', accelerator: 'Shift+F9', click: nav(1, false) },
+    ],
+    // The page handles F6 too, so a terminal never gets it.
+    paneItems: [
+      { label: 'Next Pan&e', accelerator: 'F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: 1 }) },
+      { label: 'Previous Pane', accelerator: 'Shift+F6', registerAccelerator: false, platforms: NOT_MOBILE, click: () => send({ type: 'sessions-pane', dir: -1 }) },
+    ],
+    chat:
+      chat && id
+        ? chatMenu(
+            chat,
+            () => void engine?.stopChat(id).catch(showError),
+            () => void engine?.sendNowChat(id).catch(showError),
+            // The menu shows the chat's settings as they are once the change is through (or refused).
+            (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
+            (harnessId) => void engine?.setChatHarness(id, harnessId).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
+            harnessSession,
+            () => void compactChat(id).catch(showError),
+          )
+        : undefined,
   };
-  const menus = process.platform === 'darwin' ? [file, view] : [file, edit, view];
-  if (chat && id) {
-    menus.push(
-      chatMenu(
-        chat,
-        () => void engine?.stopChat(id).catch(showError),
-        () => void engine?.sendNowChat(id).catch(showError),
-        // The menu shows the chat's settings as they are once the change is through (or refused).
-        (patch) => void engine?.configureChat(id, patch).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
-        (harnessId) => void engine?.setChatHarness(id, harnessId).catch(showError).finally(() => refreshSessionsMenu(sv, true)),
-        harnessSession,
-        () => void compactChat(id).catch(showError),
-      ),
-    );
-  }
-  return menus;
+}
+
+/** File → New Chat and New Terminal: a submenu each of the projects, then another folder. */
+function sessionNewMenus(child: AppWindow): Electron.MenuItemConstructorOptions[] {
+  const projects = engine?.listProjects() ?? [];
+  const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  const showError = (err: unknown) =>
+    void showMessageBox(child, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+  const newIn = (kind: 'chat' | 'terminal', open: (projectId: string) => void): Electron.MenuItemConstructorOptions[] => [
+    ...projects.map((p) => ({ label: menuText(p.name), click: () => open(p.id) })),
+    ...(projects.length > 0 ? [sep] : []),
+    { label: 'Other &Folder…', click: () => void openInFolder(kind, child).catch(showError) },
+  ];
+  return [
+    { id: 'chat-new-chat', label: 'New &Chat', glyph: 'newChat', submenu: newIn('chat', openProjectChat) },
+    { id: 'chat-new-terminal', label: 'New &Terminal', glyph: 'terminal', submenu: newIn('terminal', (pid) => void openTerminal(projectTaskId(pid)).catch(showError)) },
+  ];
 }
 
 /** The export options Save as Markdown last used in the Chats window. */
@@ -2606,11 +2718,12 @@ function openSendToSessionsWindow(group?: string): void {
 
 // ---------- the History window ----------
 
-/** A History window: the conversation it shows (its menus act on it), and whether its Activity Pane shows (hidden each time it opens). */
+/** A History window: the conversation it shows (its menus act on it), whether its Activity Pane shows (hidden each time it opens), and View → Folder. */
 interface HistoryWindowView {
   w: AppWindow;
   selected: string | null;
   activity: boolean;
+  folder: HistoryFolderFilter;
   /** What its menu was last built from. */
   menuKey: string;
 }
@@ -2623,8 +2736,8 @@ const historyViews = new Map<AppWindow, HistoryWindowView>();
 const STILL_OPEN_MS = 5 * 60_000;
 
 /**
- * The History window: every project's older conversations, Looper's and the
- * ones started in Claude Code or Codex outside it, to read or continue.
+ * The History window: the conversations on this computer, Looper's and every
+ * Claude Code and Codex one in the environments' folders, to read or continue.
  * Modeless; opening it again brings it forward.
  */
 function openHistoryWindow(): void {
@@ -2636,7 +2749,7 @@ function openHistoryWindow(): void {
   const child = openChildWindow('history', 'History', 1388, 895, undefined, { minWidth: 970, minHeight: 500, contentSize: true });
   child.setMaximizable(true);
   historyWindows.set(child);
-  const view: HistoryWindowView = { w: child, selected: null, activity: false, menuKey: '' };
+  const view: HistoryWindowView = { w: child, selected: null, activity: false, folder: '', menuKey: '' };
   historyViews.set(child, view);
   attachWindowMenu(child, historyTemplate(view));
   view.menuKey = historyMenuState(view);
@@ -2651,7 +2764,7 @@ function openHistoryWindow(): void {
 }
 
 function historyMenuState(view: HistoryWindowView): string {
-  return JSON.stringify([view.selected, view.selected ? engine?.historyCommands(view.selected) : null, view.activity, engine?.settings.view.history]);
+  return JSON.stringify([view.selected, view.selected ? engine?.historyCommands(view.selected) : null, view.activity, view.folder, engine?.settings.view.history, engine?.listProjects().map((p) => [p.id, p.name])]);
 }
 
 function refreshHistoryMenu(view: HistoryWindowView, force = false): void {
@@ -2668,6 +2781,18 @@ function historySelect(w: AppWindow | null, id: string | null): void {
   if (!view) return;
   view.selected = id;
   refreshHistoryMenu(view, true);
+}
+
+/** View → Activity Pane, and the toolbar's button: the pane shows or hides. */
+function setHistoryActivity(view: HistoryWindowView, checked: boolean): void {
+  view.activity = checked;
+  if (!view.w.isDestroyed()) view.w.webContents.send('ui:event', { type: 'history-activity', checked } satisfies UiEvent);
+  refreshHistoryMenu(view, true);
+}
+
+function historyToggleActivity(w: AppWindow | null): void {
+  const view = w ? historyViews.get(w) : undefined;
+  if (view) setHistoryActivity(view, !view.activity);
 }
 
 /**
@@ -2706,8 +2831,7 @@ async function historyRun(from: AppWindow | null, id: string, command: HistoryCo
     return;
   }
   if (command === 'open-folder') {
-    const cwd = engine.findSessionTask(projectTaskId(item.projectId))?.cwd;
-    if (cwd) await openHostPath(cwd);
+    if (item.folder) await openHostPath(item.folder);
     return;
   }
   if (!can[command]) return;
@@ -2724,7 +2848,7 @@ async function historyRun(from: AppWindow | null, id: string, command: HistoryCo
   const changedAt = can.outside ? await engine.historyChangedAt(id) : undefined;
   if (changedAt !== undefined && !(await stillOpenAsk(from, changedAt))) return;
   if (command === 'chat') {
-    openSessionsWindow(engine.continueHistoryInChat(id).id);
+    openSessionsWindow((await engine.continueHistoryInChat(id)).id);
     return;
   }
   const sessionId = await engine.continueHistoryInTerminal(id);
@@ -2765,6 +2889,19 @@ function historyTemplate(view: HistoryWindowView): Electron.MenuItemConstructorO
   const shown = engine?.settings.view.history ?? ViewSchema.parse({}).history;
   const setShown = (patch: Partial<Settings['view']['history']>) => updateView({ history: { ...shown, ...patch } });
   const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  const pickFolder = (folder: HistoryFolderFilter): Electron.MenuItemConstructorOptions['click'] => () => {
+    view.folder = folder;
+    send({ type: 'history-folder', folder });
+    refreshHistoryMenu(view, true);
+  };
+  const projectsList = engine?.listProjects() ?? [];
+  const folderItems: Electron.MenuItemConstructorOptions[] = [
+    { label: '&All Folders', type: 'radio', checked: view.folder === '', click: pickFolder('') },
+    ...(projectsList.length ? [sep] : []),
+    ...projectsList.map((p): Electron.MenuItemConstructorOptions => ({ label: menuText(p.name), type: 'radio', checked: view.folder === `project:${p.id}`, click: pickFolder(`project:${p.id}`) })),
+    sep,
+    { label: '&Outside Projects', type: 'radio', checked: view.folder === 'other', click: pickFolder('other') },
+  ];
   const file: Electron.MenuItemConstructorOptions = {
     id: 'file',
     label: '&File',
@@ -2794,21 +2931,12 @@ function historyTemplate(view: HistoryWindowView): Electron.MenuItemConstructorO
     label: '&View',
     submenu: [
       { label: 'Group by &Date', type: 'radio', checked: shown.groupBy === 'date', click: () => setShown({ groupBy: 'date' }) },
-      { label: 'Group by &Project', type: 'radio', checked: shown.groupBy === 'project', click: () => setShown({ groupBy: 'project' }) },
+      { label: 'Group by Fo&lder', type: 'radio', checked: shown.groupBy === 'folder', click: () => setShown({ groupBy: 'folder' }) },
       sep,
+      { label: 'Fold&er', submenu: folderItems },
       { label: 'Show Task &Runs', type: 'checkbox', checked: shown.showRuns, click: (item) => setShown({ showRuns: item.checked }) },
       sep,
-      {
-        label: 'A&ctivity Pane',
-        platforms: NOT_MOBILE,
-        type: 'checkbox',
-        checked: view.activity,
-        click: (item) => {
-          view.activity = item.checked;
-          send({ type: 'history-activity', checked: item.checked });
-          refreshHistoryMenu(view, true);
-        },
-      },
+      { label: 'A&ctivity Pane', platforms: NOT_MOBILE, type: 'checkbox', checked: view.activity, click: (item) => setHistoryActivity(view, item.checked) },
       sep,
       { label: 'Re&fresh', accelerator: 'F5', click: () => send({ type: 'history-refresh' }) },
       sep,
@@ -3190,9 +3318,9 @@ async function openLooperFile(file: string): Promise<void> {
   openChildWindow(`${route}/${key}${update ? '/update' : ''}`, `${update ? 'Edit' : 'New'} ${noun}`, 780, 800);
 }
 
-/** Send a UI command to the main window (menu accelerators act on the selected task there). */
-function sendUi(type: string): void {
-  const main = mainWin();
+/** Send a UI command to a main window (its menus act on the selection there): `target`, or the caller's. */
+function sendUi(target: AppWindow | null, type: string): void {
+  const main = target ?? mainWin();
   if (main && !main.isDestroyed()) {
     main.webContents.send('ui:event', { type });
     main.focus();
@@ -3212,12 +3340,26 @@ type MenuSelection = [
 ];
 const NO_SELECTION: MenuSelection = [false, undefined, undefined, undefined, false, undefined, false, false, false];
 
-/** Last selection reported by the renderer, so out-of-band rebuilds (rest events) keep the Task menu state. */
-let menuSelection: MenuSelection = NO_SELECTION;
-/** The same for each browser tab's main window. */
-const remoteSelections = new WeakMap<RemoteWindow, MenuSelection>();
+/**
+ * A window that shows the main window's views: the desktop's main window, a
+ * browser tab's, or a view window (View → Dashboard, Projects, Tasks or an
+ * addon's tab), which shows one of them. Its menu bar follows its selection
+ * and the tab it shows.
+ */
+interface MainView {
+  w: AppWindow;
+  /** The tab it shows (shared/main-tabs); unset until its page says, and on a phone, whose menu bar has every menu. */
+  tab?: string;
+  /** A view window: its one tab, and no Tabs menu. */
+  fixed: boolean;
+  /** The selection its page last reported, so rebuilds for other reasons (rest events) keep the Task menu's state. */
+  selection: MenuSelection;
+}
+
+const mainViews = new Map<AppWindow, MainView>();
 
 function updateTaskMenu(
+  from: AppWindow | null,
   hasTask: boolean,
   taskEnabled?: boolean,
   taskPaused?: boolean,
@@ -3227,41 +3369,22 @@ function updateTaskMenu(
   taskCompleted?: boolean,
   allowComplete?: boolean,
   hasProject?: boolean,
+  tab?: string,
 ): void {
-  const selection: MenuSelection = [
-    hasTask,
-    taskEnabled,
-    taskPaused,
-    taskState,
-    hasNote ?? false,
-    canRunNow,
-    taskCompleted ?? false,
-    allowComplete ?? false,
-    hasProject ?? false,
-  ];
-  // A browser tab's main window reported it: only that tab's menu bar follows.
-  const ctx = caller();
-  if (ctx) {
-    const main = ctx.client.main;
-    if (main && !main.isDestroyed()) {
-      remoteSelections.set(main, selection);
-      buildRemoteMenu(main);
-    }
-    return;
-  }
-  menuSelection = selection;
-  buildMenu(...menuSelection);
+  const view = from ? mainViews.get(from) : undefined;
+  if (!view) return;
+  view.selection = [hasTask, taskEnabled, taskPaused, taskState, hasNote ?? false, canRunNow, taskCompleted ?? false, allowComplete ?? false, hasProject ?? false];
+  if (!view.fixed) view.tab = tab;
+  buildMainMenu(view);
 }
 
+/** Every main window's menu bar again; on macOS with no main window, the global one. */
 function rebuildMenu(): void {
-  buildMenu(...menuSelection);
-  for (const w of remoteMainWindows()) buildRemoteMenu(w);
-}
-
-/** A browser tab's main window: the desktop main window's menu bar, from its own selection. */
-function buildRemoteMenu(w: RemoteWindow): void {
-  if (w.isDestroyed()) return;
-  setWindowMenu(w, Menu.buildFromTemplate(mainMenuTemplate(...(remoteSelections.get(w) ?? NO_SELECTION))));
+  for (const view of [...mainViews.values()]) buildMainMenu(view);
+  if (process.platform === 'darwin' && (!win || win.isDestroyed())) {
+    const focused = BrowserWindow.getFocusedWindow();
+    if (!focused || !macWindowMenus.has(focused)) Menu.setApplicationMenu(desktopMenu(macTemplate(mainMenuTemplate({ w: null, fixed: false, selection: NO_SELECTION }))));
+  }
 }
 
 /** Persist a View-menu option; the settings event carries it to the renderer. */
@@ -3270,123 +3393,231 @@ function updateView(patch: Partial<Settings['view']>): void {
   engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
 }
 
-function buildMenu(...selection: Partial<MenuSelection>): void {
-  const template = mainMenuTemplate(...selection);
+function buildMainMenu(view: MainView): void {
+  if (view.w.isDestroyed()) return;
+  const template = mainMenuTemplate(view);
+  if (view.w !== win) {
+    replaceWindowMenu(view.w, template);
+    return;
+  }
   if (process.platform === 'darwin') {
     // Don't stomp the menu of a focused run/subagent window; the
     // browser-window-focus handler restores the main menu on the next switch.
     const focused = BrowserWindow.getFocusedWindow();
-    if (!focused || !macWindowMenus.has(focused)) {
-      Menu.setApplicationMenu(desktopMenu(macTemplate(template)));
-    }
-  } else if (win && !win.isDestroyed()) {
+    if (!focused || !macWindowMenus.has(focused)) Menu.setApplicationMenu(desktopMenu(macTemplate(template)));
+  } else {
     setWindowMenu(win, Menu.buildFromTemplate(template));
   }
 }
 
-/** The main window's menu bar for a selection in its task list. */
-function mainMenuTemplate(
-  hasTask = false,
-  taskEnabled?: boolean,
-  taskPaused?: boolean,
-  taskState?: string,
-  hasNote = false,
-  canRunNow?: boolean,
-  taskCompleted = false,
-  allowComplete = false,
-  hasProject = false,
-): Electron.MenuItemConstructorOptions[] {
+/** One window per view and client (View → Dashboard, Projects, Tasks, an addon's tab). */
+const viewWindows = new WindowSlots();
+
+/**
+ * A window with one of the main window's views alone, its toolbar and status
+ * bar, and the menus the main window has on that tab; opening it again brings
+ * it forward. Chats is the Chats window.
+ */
+function openViewWindow(tab: string): void {
+  if (tab === 'chats') {
+    openSessionsWindow();
+    return;
+  }
+  const open = viewWindows.get(tab);
+  if (open) {
+    bringForward(open);
+    return;
+  }
+  const def = mainTabs(addons?.list() ?? []).find((t) => t.id === tab);
+  if (!def) return;
+  const child = openChildWindow(`view/${encodeURIComponent(tab)}`, def.label, 1388, 895, undefined, { minWidth: 900, minHeight: 500, contentSize: true });
+  child.setMaximizable(true);
+  viewWindows.set(child, tab);
+  const view: MainView = { w: child, tab, fixed: true, selection: NO_SELECTION };
+  mainViews.set(child, view);
+  child.on('closed', () => mainViews.delete(child));
+  attachWindowMenu(child, mainMenuTemplate(view));
+}
+
+/** View's item that opens each tab in a window of its own. */
+const VIEW_WINDOW_LABELS: Record<string, string> = { dashboard: '&Dashboard', projects: '&Projects', tasks: 'Tas&ks', chats: '&Chats' };
+
+/**
+ * A main window's menu bar, for its selection and the tab it shows. File,
+ * View, Tools, Advanced and Help are always there; Task on the Dashboard and
+ * Tasks tabs, Project on those and the Projects tab, and Edit and Chat on the
+ * Chats tab, which also adds the Chats window's File and View items. A phone's
+ * main window (no tab) has every menu but the Chats tab's.
+ */
+function mainMenuTemplate({ w, tab, fixed, selection }: Omit<MainView, 'w'> & { w: AppWindow | null }): Electron.MenuItemConstructorOptions[] {
+  const [hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject] = selection;
+  const ui = (type: string) => () => sendUi(w, type);
   const active = taskState === 'running' || taskState === 'checking' || taskState === 'classifying';
   // The renderer knows the task's run cap; a task with room under it can still Run Now while active.
   const runNow = canRunNow ?? !active;
   const view: Settings['view'] = engine?.settings.view ?? ViewSchema.parse({});
-  const addonPanes = addons ? addonPanesMenu(addons.list(), view, updateView) : [];
-  const tools = addons ? addonToolsMenu(addonDeps(), addons.list()) : [];
-  const addonToolbars = addons ? addonToolbarsMenu(addons.list(), view, updateView) : [];
-  const template: Electron.MenuItemConstructorOptions[] = [
+  const addonList = addons?.list() ?? [];
+  const addonPanes = addons ? addonPanesMenu(addonList, view, updateView) : [];
+  const tools = addons ? addonToolsMenu(addonDeps(), addonList) : [];
+  const addonToolbars = addons ? addonToolbarsMenu(addonList, view, updateView) : [];
+  const every = tab === undefined;
+  const taskMenus = every || tab === 'dashboard' || tab === 'tasks';
+  const projectMenu = taskMenus || tab === 'projects';
+  const sv = tab === 'chats' && w ? tabSessionsView(w) : undefined;
+  const chats = sv ? sessionsMenuParts(sv) : undefined;
+  const sep: Electron.MenuItemConstructorOptions = { type: 'separator' };
+  // On the Chats tab a terminal session needs these keys (Ctrl+N is the shell's), so the menu doesn't take them.
+  const key = (accelerator: string) => (tab === 'chats' ? {} : { accelerator });
+  const hideNoAction: Electron.MenuItemConstructorOptions = {
+    label: 'Hide Task Runs with &No Action',
+    type: 'checkbox',
+    checked: view.hideNoActionRuns,
+    click: (item) => updateView({ hideNoActionRuns: item.checked }),
+  };
+  const tabs = view.tabs;
+  const setTabs = (patch: Partial<Settings['view']['tabs']>) => updateView({ tabs: { ...tabs, ...patch } });
+  const tabsMenu: Electron.MenuItemConstructorOptions = {
+    id: 'view-tabs',
+    label: 'Ta&bs',
+    submenu: [
+      { label: '&Top', type: 'radio', checked: tabs.position === 'top', click: () => setTabs({ position: 'top' }) },
+      { label: '&Left', type: 'radio', checked: tabs.position === 'left', click: () => setTabs({ position: 'left' }) },
+      { label: '&Bottom', type: 'radio', checked: tabs.position === 'bottom', click: () => setTabs({ position: 'bottom' }) },
+      sep,
+      tabs.position === 'left'
+        ? { label: 'Show &Labels', type: 'checkbox', checked: tabs.labels, click: (item) => setTabs({ labels: item.checked }) }
+        : { label: 'Show &Icons', type: 'checkbox', checked: tabs.icons, click: (item) => setTabs({ icons: item.checked }) },
+    ],
+  };
+  // What the shown tab adds to View.
+  const tabItems: Electron.MenuItemConstructorOptions[] =
+    tab === 'dashboard'
+      ? [hideNoAction]
+      : tab === 'projects'
+        ? [groupProjectsByMenu(view, updateView)]
+        : tab === 'tasks'
+          ? [...paneVisibilityItems(view, updateView, addonPanes), sep, { label: 'Task &List Options', submenu: taskListMenu(view, updateView) }, hideNoAction]
+          : chats
+            ? [chats.activityPane, sep, ...chats.listItems, sep, ...chats.navItems, sep, ...chats.paneItems]
+            : [];
+  const viewMenu: Electron.MenuItemConstructorOptions[] = every
+    ? [
+        { id: 'view-dashboard', label: '&Dashboard', glyph: 'dashboard', click: ui('show-dashboard') },
+        { id: 'view-chats', label: '&Chats', glyph: 'chat', click: () => openSessionsWindow() },
+        { id: 'view-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
+        sep,
+        ...paneVisibilityItems(view, updateView, addonPanes),
+        groupProjectsByMenu(view, updateView),
+        sep,
+        { label: 'Task &List Options', submenu: taskListMenu(view, updateView) },
+        hideNoAction,
+      ]
+    : [
+        ...mainTabs(addonList).map((t) => ({
+          id: `view-${t.id}`,
+          label: VIEW_WINDOW_LABELS[t.id] ?? menuText(t.label),
+          glyph: t.icon,
+          platforms: NOT_MOBILE,
+          click: () => openViewWindow(t.id),
+        })),
+        { id: 'view-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
+        ...(fixed ? [] : [sep, tabsMenu]),
+        ...(tabItems.length ? [sep, ...tabItems] : []),
+      ];
+  const head: Electron.MenuItemConstructorOptions[] = [
     {
       id: 'file',
       label: '&File',
       submenu: [
-        { id: 'new-task', label: '&New Task…', accelerator: 'CmdOrCtrl+N', glyph: 'newTask', click: () => openEditorWindow() },
-        { id: 'new-task-template', label: 'New Task from &Template…', accelerator: 'CmdOrCtrl+Shift+N', click: () => openTemplatePickerWindow() },
+        { id: 'new-task', label: '&New Task…', ...key('CmdOrCtrl+N'), glyph: 'newTask', click: () => openEditorWindow() },
+        { id: 'new-task-template', label: 'New Task from &Template…', ...key('CmdOrCtrl+Shift+N'), click: () => openTemplatePickerWindow() },
         { id: 'new-task-agent', label: 'New Task with A&gent…', click: () => openBuilderSetupWindow() },
         { id: 'new-folder', label: 'New &Folder…', glyph: 'folder', click: () => openNewFolderWindow() },
         { id: 'new-project', label: 'New P&roject…', glyph: 'newProject', click: () => openProjectEditor() },
-        { type: 'separator' },
+        // The phone's main window keeps its own: its tabs have New Chat and New Terminal.
+        ...(every || !w ? [] : [sep, ...(chats ? chats.newItems : sessionNewMenus(w))]),
+        sep,
         { id: 'import-task', label: '&Import Task…', click: () => void importTask() },
-        { id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: () => sendUi('export-task') },
-        { type: 'separator' },
+        ...(taskMenus ? [{ id: 'task-export', label: 'Ex&port Task…', enabled: hasTask, click: ui('export-task') }] : []),
+        ...(chats ? [sep, ...chats.fileItems] : []),
+        sep,
         { id: 'templates', label: 'Temp&lates', click: () => openTemplatesWindow() },
-        { id: 'settings', label: 'S&ettings', accelerator: 'CmdOrCtrl+,', glyph: 'settings', click: () => openSettingsWindow() },
-        // macOS: Quit lives in the app menu that macTemplate prepends.
-        ...(process.platform === 'darwin'
-          ? []
-          : ([{ type: 'separator' }, { role: 'quit', label: 'E&xit' }] as Electron.MenuItemConstructorOptions[])),
+        { id: 'settings', label: 'S&ettings', ...key('CmdOrCtrl+,'), glyph: 'settings', click: () => openSettingsWindow() },
+        // A view window closes like the Chats window; macOS: Quit lives in the app menu that macTemplate prepends.
+        ...(fixed
+          ? ([sep, { label: 'Close &Window', accelerator: 'Alt+F4', registerAccelerator: false, click: () => w?.close() }] as Electron.MenuItemConstructorOptions[])
+          : process.platform === 'darwin'
+            ? []
+            : ([sep, { role: 'quit', label: 'E&xit' }] as Electron.MenuItemConstructorOptions[])),
       ],
     },
-    {
-      id: 'task',
-      label: '&Task',
-      submenu: [
-        { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', glyph: 'run', enabled: hasTask && runNow, click: () => sendUi('run-now') },
-        { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', glyph: 'stop', enabled: hasTask && active, click: () => sendUi('stop-task') },
-        { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: SHORTCUTS.pauseResume, glyph: taskPaused ? 'resume' : 'pause', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: () => sendUi('pause-resume') },
-        { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', glyph: 'power', enabled: hasTask && !taskCompleted, click: () => sendUi('enable-disable') },
-        { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', glyph: 'complete', enabled: hasTask && (taskCompleted || allowComplete), click: () => sendUi('complete-reopen') },
-        { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', glyph: 'edit', enabled: hasTask, click: () => sendUi('edit-task') },
-        { id: 'task-edit-agent', label: 'Edit with &Agent…', enabled: hasTask, click: () => sendUi('edit-with-agent') },
-        { id: 'task-versions', label: '&Version History', enabled: hasTask, click: () => sendUi('version-history') },
-        { id: 'task-delete', label: 'De&lete Task', glyph: 'delete', enabled: hasTask, click: () => sendUi('delete-task') },
-        { type: 'separator' },
-        { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', glyph: 'guidance', enabled: hasTask, click: () => sendUi('edit-note') },
-        { id: 'task-note-clear', label: 'Clear Guidance', enabled: hasTask && hasNote, click: () => sendUi('clear-note') },
-        { type: 'separator' },
-        { id: 'task-move-folder', label: 'Move to &Folder…', glyph: 'folder', enabled: hasTask, click: () => sendUi('move-to-folder') },
-        { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: () => sendUi('clear-runs') },
-        { type: 'separator' },
-        { id: 'task-work-folder', label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: hasTask, click: () => sendUi('open-work-folder') },
-      ],
-    },
-    {
-      // The selected project, or the selected task's.
-      id: 'project',
-      label: '&Project',
-      submenu: projectMenuItems(
-        (command) => sendUi(PROJECT_UI_ACTIONS[command]),
-        Object.fromEntries(
-          PROJECT_COMMANDS.map((c) => [
-            c,
-            {
-              enabled: hasProject,
-              ...(c === 'new-chat' ? { accelerator: SHORTCUTS.newChat } : c === 'new-terminal' ? { accelerator: SHORTCUTS.newTerminal } : {}),
-            },
-          ]),
-        ),
-      ),
-    },
+    ...(chats && process.platform !== 'darwin' ? [chats.edit] : []),
+    ...(taskMenus
+      ? [
+          {
+            id: 'task',
+            label: '&Task',
+            submenu: [
+              { id: 'task-run-now', label: '&Run Now', accelerator: 'F5', glyph: 'run', enabled: hasTask && runNow, click: ui('run-now') },
+              { id: 'task-stop', label: '&Stop Task', accelerator: 'Shift+F5', glyph: 'stop', enabled: hasTask && active, click: ui('stop-task') },
+              { id: 'task-pause-resume', label: taskPaused ? '&Resume' : '&Pause', accelerator: SHORTCUTS.pauseResume, glyph: taskPaused ? 'resume' : 'pause', enabled: hasTask && taskState !== 'disabled' && !taskCompleted, click: ui('pause-resume') },
+              { id: 'task-enable-disable', label: taskEnabled === false ? 'E&nable' : '&Disable', glyph: 'power', enabled: hasTask && !taskCompleted, click: ui('enable-disable') },
+              { id: 'task-complete', label: taskCompleted ? 'Re&open' : 'C&omplete', glyph: 'complete', enabled: hasTask && (taskCompleted || allowComplete), click: ui('complete-reopen') },
+              { id: 'task-edit', label: '&Edit Task…', accelerator: 'CmdOrCtrl+E', glyph: 'edit', enabled: hasTask, click: ui('edit-task') },
+              { id: 'task-edit-agent', label: 'Edit with &Agent…', enabled: hasTask, click: ui('edit-with-agent') },
+              { id: 'task-versions', label: '&Version History', enabled: hasTask, click: ui('version-history') },
+              { id: 'task-delete', label: 'De&lete Task', glyph: 'delete', enabled: hasTask, click: ui('delete-task') },
+              sep,
+              { id: 'task-note', label: hasNote ? 'Edit &Guidance for Next Run…' : 'Add &Guidance for Next Run…', glyph: 'guidance', enabled: hasTask, click: ui('edit-note') },
+              { id: 'task-note-clear', label: 'Clear Guidance', enabled: hasTask && hasNote, click: ui('clear-note') },
+              sep,
+              { id: 'task-move-folder', label: 'Move to &Folder…', glyph: 'folder', enabled: hasTask, click: ui('move-to-folder') },
+              { id: 'task-clear-runs', label: 'Clear Run &History…', enabled: hasTask && !active, click: ui('clear-runs') },
+              sep,
+              { id: 'task-work-folder', label: 'Open &Working Directory', platforms: DESKTOP_ONLY, enabled: hasTask, click: ui('open-work-folder') },
+            ],
+          } as Electron.MenuItemConstructorOptions,
+        ]
+      : []),
+    ...(projectMenu
+      ? [
+          {
+            // The selected project, or the selected task's.
+            id: 'project',
+            label: '&Project',
+            submenu: projectMenuItems(
+              (command) => sendUi(w, PROJECT_UI_ACTIONS[command]),
+              Object.fromEntries(
+                PROJECT_COMMANDS.map((c) => [
+                  c,
+                  {
+                    enabled: hasProject,
+                    ...(c === 'new-chat' ? { accelerator: SHORTCUTS.newChat } : c === 'new-terminal' ? { accelerator: SHORTCUTS.newTerminal } : {}),
+                  },
+                ]),
+              ),
+            ),
+          } as Electron.MenuItemConstructorOptions,
+        ]
+      : []),
+    ...(chats?.chat ? [chats.chat] : []),
     {
       id: 'view',
       label: '&View',
       submenu: [
-        { id: 'view-dashboard', label: '&Dashboard', glyph: 'dashboard', click: () => sendUi('show-dashboard') },
-        { id: 'view-chats', label: '&Chats', glyph: 'chat', click: () => openSessionsWindow() },
-        { id: 'view-history', label: '&History', glyph: 'history', platforms: NOT_MOBILE, click: () => openHistoryWindow() },
-        { type: 'separator' },
-        ...paneVisibilityItems(view, updateView, addonPanes),
-        groupProjectsByMenu(view, updateView),
-        { type: 'separator' },
-        { label: 'Task &List Options', submenu: taskListMenu(view, updateView) },
-        { label: 'Hide Task Runs with &No Action', type: 'checkbox', checked: view.hideNoActionRuns, click: (item) => updateView({ hideNoActionRuns: item.checked }) },
-        { type: 'separator' },
+        ...viewMenu,
+        sep,
         { label: '&Toolbar', platforms: NOT_MOBILE, type: 'checkbox', checked: view.toolbar, click: (item) => updateView({ toolbar: item.checked }) },
         // The phone shows the addons' main-toolbar buttons on its Tasks tab, so their toggles stay.
         ...addonToolbars,
-        { label: 'Status &Bar', platforms: NOT_MOBILE, type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
-        { type: 'separator' },
+        { label: every ? 'Status &Bar' : 'Status Ba&r', platforms: NOT_MOBILE, type: 'checkbox', checked: view.statusBar, click: (item) => updateView({ statusBar: item.checked }) },
+        sep,
         ...zoomMenuItems(),
       ],
     },
+  ];
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...head,
     {
       id: 'tools',
       label: 'T&ools',
@@ -3447,14 +3678,14 @@ function mainMenuTemplate(
           },
         },
         // A phone reloads Looper's pages by itself when they lose their connection.
-        { role: 'reload', label: '&Reload UI', platforms: NOT_MOBILE },
+        { role: 'reload', label: '&Reload UI', platforms: NOT_MOBILE, ...(tab === 'chats' ? { registerAccelerator: false } : {}) },
       ],
     },
     {
       id: 'help',
       label: '&Help',
       submenu: [
-        { id: 'instructions', label: '&Instructions', accelerator: 'F1', click: () => openInstructionsWindow() },
+        { id: 'instructions', label: '&Instructions', ...key('F1'), click: () => openInstructionsWindow() },
         { type: 'separator' },
         { id: 'about', label: '&About Looper', click: () => openAboutWindow() },
       ],

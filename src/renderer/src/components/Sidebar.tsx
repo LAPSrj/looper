@@ -11,10 +11,6 @@ import { TaskList } from './TaskList';
 import { useDragResize } from './hooks';
 
 interface Props {
-  projects: Project[];
-  projectSelected: string | null;
-  onProjectSelect: (id: string) => void;
-  environments: Environment[];
   tasks: Task[];
   folders: TaskFolder[];
   layout: Record<string, string[]>;
@@ -40,8 +36,6 @@ const FIT_PANE_MIN_PX = 160;
 const SASH_STEP_PX = 24;
 /** The single task list's key among the panes. */
 const SINGLE = 'single';
-/** The Projects pane's key. */
-const PROJECTS = 'projects';
 const DEFAULT_ADDON_PANE = { visible: true, collapsed: false, weight: 1 };
 
 /** The pair of panes a splitter drag resizes, measured when the drag starts. */
@@ -72,15 +66,46 @@ interface PaneEntry {
 
 const isTaskPane = (key: string): key is PaneId => PANES.some((p) => p.id === key);
 
-/**
- * The Projects pane, the task list (one list of every task, or the Tasks /
- * Goals / Watchers panes stacked), and the installed addons' panes below it.
- */
-export function Sidebar({
+/** The Projects tab's list of projects, under its header (a right-click there: Group By and New Project). */
+export function ProjectsSidebar({
   projects,
-  projectSelected,
-  onProjectSelect,
+  selected,
+  onSelect,
   environments,
+  view,
+}: {
+  projects: Project[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+  environments: Environment[];
+  view: View;
+}) {
+  return (
+    <aside className="sidebar">
+      <div
+        className="sidebar-header"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          window.looper.projects.showContextMenu('');
+        }}
+      >
+        <span className="pane-title">Projects</span>
+        <span className="pane-count">{projects.length}</span>
+      </div>
+      <ProjectList
+        projects={projects}
+        groupBy={view.projectsPane.groupBy}
+        environments={environments}
+        selected={selected}
+        compact={view.taskList === 'compact'}
+        onSelect={onSelect}
+      />
+    </aside>
+  );
+}
+
+/** The Tasks tab's task list (one list of every task, or the Tasks / Goals / Watchers panes stacked), and the installed addons' panes below it. */
+export function Sidebar({
   tasks,
   folders,
   layout,
@@ -109,7 +134,6 @@ export function Sidebar({
     const patch: Partial<View> = {};
     for (const [key, weight] of Object.entries(weights)) {
       if (key === SINGLE) patch.singleWeight = weight;
-      else if (key === PROJECTS) patch.projectsPane = { ...view.projectsPane, weight };
       else if (isTaskPane(key)) patch.panes = { ...(patch.panes ?? view.panes), [key]: { ...view.panes[key], weight } };
       else {
         const prev = patch.addonPanes ?? view.addonPanes;
@@ -187,35 +211,8 @@ export function Sidebar({
     }),
   );
 
-  const projectsPane = view.projectsPane;
-  const projectEntries: PaneEntry[] = projectsPane.visible
-    ? [
-        {
-          key: PROJECTS,
-          title: 'Projects',
-          count: projects.length,
-          collapsible: true,
-          open: !projectsPane.collapsed,
-          weight: projectsPane.weight,
-          fit: true,
-          onToggle: () => onView({ projectsPane: { ...projectsPane, collapsed: !projectsPane.collapsed } }),
-          onMenu: () => window.looper.projects.showContextMenu(''),
-          body: (
-            <ProjectList
-              projects={projects}
-              groupBy={projectsPane.groupBy}
-              environments={environments}
-              selected={projectSelected}
-              compact={view.taskList === 'compact'}
-              onSelect={onProjectSelect}
-            />
-          ),
-        },
-      ]
-    : [];
-
   const singleCount = tasks.filter((t) => passesFilter(t, view.single, ALL_FILTERS)).length;
-  if (view.sidebar === 'single' && view.single.visible && !addonEntries.length && !projectEntries.length) {
+  if (view.sidebar === 'single' && view.single.visible && !addonEntries.length) {
     return (
       <aside className="sidebar">
         <div
@@ -264,7 +261,7 @@ export function Sidebar({
           };
         });
 
-  const shown = [...projectEntries, ...taskEntries, ...addonEntries];
+  const shown = [...taskEntries, ...addonEntries];
   const weight = (e: PaneEntry) => dragWeights?.[e.key] ?? e.weight;
   // A pane that fits its content needs a pane that fills the rest; with none open they all share the height by weight.
   const filling = shown.some((e) => e.open && !e.fit);

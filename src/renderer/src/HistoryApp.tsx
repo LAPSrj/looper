@@ -2,15 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   filterHistory,
   groupHistory,
+  HISTORY_PAGE,
   NO_HISTORY_COMMANDS,
   type HistoryCommand,
   type HistoryCommands,
   type HistoryConversation,
+  type HistoryFolderFilter,
   type HistoryItem,
+  type HistoryList as HistoryListResult,
 } from '@shared/history';
 import type { MessageRow } from '@shared/messages';
 import { ViewSchema, type Project, type View } from '@shared/types';
-import { DESKTOP_ONLY } from '@shared/ui-platform';
+import { DESKTOP_ONLY, NOT_MOBILE } from '@shared/ui-platform';
 import { ActivityPanel } from './components/ActivityPanel';
 import { AddonSearchBox } from './components/AddonPane';
 import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
@@ -57,16 +60,26 @@ function ConversationView({ rows, ctx, empty }: { rows: MessageRow[]; ctx: { tas
 }
 
 /**
- * The History window: every project's conversations on the left, Looper's
- * recorded runs and the ones started in Claude Code or Codex outside it; the
- * selected one, read only, in the middle with its subagents' tabs; and the
- * activity pane on the right, hidden until View → Activity Pane shows it.
+ * The History window: the conversations on this computer on the left, newest
+ * first, Looper's recorded runs and every Claude Code and Codex one in the
+ * environments' folders, a page at a time; the selected one, read only, in
+ * the middle with its subagents' tabs; and the activity pane on the right,
+ * hidden until View → Activity Pane shows it. Edit → Find shows the find bar.
  */
 export function HistoryApp() {
   const [items, setItems] = useState<HistoryItem[] | null>(null);
+  const [more, setMore] = useState(false);
+  const [limit, setLimit] = useState(HISTORY_PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [view, setView] = useState<View['history']>(DEFAULT_VIEW);
-  const [projectId, setProjectId] = useState('');
+  const [viewKnown, setViewKnown] = useState(false);
+  const [folder, setFolder] = useState<HistoryFolderFilter>('');
+  /** F5: each one reads the folders again. */
+  const [refreshes, setRefreshes] = useState(1);
+  const [finding, setFinding] = useState(false);
+  /** Edit → Find counts up: the find box takes the focus and selects what it holds, once it shows. */
+  const [findFocus, setFindFocus] = useState(0);
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<ReadonlySet<string> | null>(null);
   const [searching, setSearching] = useState(false);
@@ -82,12 +95,9 @@ export function HistoryApp() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-
-  /** The list: the cached conversations at once, then what the folders hold now. */
-  const load = () => {
-    void window.looper.history.list(false).then((list) => setItems((prev) => prev ?? list));
-    void window.looper.history.list(true).then(setItems, fail);
-  };
+  const loads = useRef(0);
+  const freshDone = useRef(0);
+  const scanning = useRef(false);
 
   const loadCommands = () => {
     const id = selectedRef.current;
@@ -97,11 +107,23 @@ export function HistoryApp() {
     });
   };
 
+  const openFind = () => {
+    setFinding(true);
+    setFindFocus((n) => n + 1);
+  };
+  useEffect(() => {
+    if (!findFocus) return;
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, [findFocus]);
+
   useEffect(() => {
     document.title = 'History';
-    load();
     void window.looper.projects.list().then(setProjects);
-    void window.looper.info().then((i) => setView(i.settings.view.history));
+    void window.looper.info().then((i) => {
+      setView(i.settings.view.history);
+      setViewKnown(true);
+    });
     const unsub = subscribe((e) => {
       if (e.type === 'settings') setView(e.settings.view.history);
       else if (e.type === 'projects') setProjects(e.projects);
@@ -110,8 +132,9 @@ export function HistoryApp() {
     });
     const unsubUi = window.looper.onUi((e) => {
       if (e.type === 'history-activity') setActivity(e.checked);
-      else if (e.type === 'history-refresh') load();
-      else if (e.type === 'history-find') searchRef.current?.focus();
+      else if (e.type === 'history-refresh') setRefreshes((n) => n + 1);
+      else if (e.type === 'history-folder') setFolder(e.folder);
+      else if (e.type === 'history-find') openFind();
     });
     return () => {
       unsub();
@@ -119,6 +142,40 @@ export function HistoryApp() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The list: what the engine knows at once, then, on opening and on F5, what the folders hold now. The latest load wins.
+  useEffect(() => {
+    if (!viewKnown) return;
+    const n = ++loads.current;
+    const o = { limit, showRuns: view.showRuns, folder };
+    // A filter or Show More while the folders are read waits for them too, so it doesn't list the old files.
+    const fresh = refreshes !== freshDone.current || scanning.current;
+    freshDone.current = refreshes;
+    let freshIn = false;
+    const take = (l: HistoryListResult) => {
+      if (n !== loads.current) return;
+      setItems(l.items);
+      setMore(l.more);
+    };
+    const quick = window.looper.history.list({ ...o, fresh: false }).then((l) => {
+      if (!freshIn) take(l);
+    }, fail);
+    if (!fresh) {
+      void quick.finally(() => n === loads.current && setLoadingMore(false));
+      return;
+    }
+    scanning.current = true;
+    void window.looper.history
+      .list({ ...o, fresh: true })
+      .then((l) => {
+        freshIn = true;
+        take(l);
+      }, fail)
+      .finally(() => {
+        scanning.current = false;
+        if (n === loads.current) setLoadingMore(false);
+      });
+  }, [viewKnown, view.showRuns, folder, limit, refreshes]);
 
   useEffect(() => {
     window.looper.history.select(selected);
@@ -143,22 +200,30 @@ export function HistoryApp() {
     });
   }, [follow, selected]);
 
-  // Typing filters by title; Enter searches the messages, until the text changes.
+  // Typing filters by title; Search Messages reads the listed conversations' messages, until the text changes.
   const typed = (text: string) => {
     setQuery(text);
     setFound(null);
   };
   const searchMessages = () => {
     const q = query.trim();
-    if (!q) return setFound(null);
+    if (!q || !items) return setFound(null);
     setSearching(true);
     void window.looper.history
-      .search(q)
+      .search(
+        q,
+        items.map((i) => i.id),
+      )
       .then((ids) => setFound(new Set(ids)), fail)
       .finally(() => setSearching(false));
   };
+  const closeFind = () => {
+    setFinding(false);
+    setQuery('');
+    setFound(null);
+  };
 
-  const shown = useMemo(() => filterHistory(items ?? [], { projectId, showRuns: view.showRuns, title: query, found }), [items, projectId, view.showRuns, query, found]);
+  const shown = useMemo(() => filterHistory(items ?? [], { title: query, found }), [items, query, found]);
   const groups = useMemo(() => groupHistory(shown, view.groupBy, projects, Date.now()), [shown, view.groupBy, projects]);
   const item = items?.find((i) => i.id === selected);
 
@@ -169,7 +234,7 @@ export function HistoryApp() {
     {
       id: 'continue',
       items: [
-        { id: 'chat', label: 'Continue in Chat', icon: 'chat', labeled: true, enabled: commands.chat, run: run('chat') },
+        { id: 'chat', label: 'Continue in Chat', icon: 'chat', enabled: commands.chat, run: run('chat') },
         { id: 'compact', label: 'Continue Compacted', icon: 'compact', enabled: commands.compact, run: run('compact') },
         { id: 'terminal', label: 'Continue in Terminal', icon: 'terminal', enabled: commands.terminal, run: run('terminal') },
       ],
@@ -180,6 +245,11 @@ export function HistoryApp() {
         { id: 'copy-id', label: 'Copy Session ID', icon: 'copy', enabled: !!commands.sessionId, run: run('copy-id') },
         { id: 'open-folder', label: 'Open Working Directory', icon: 'folder', platforms: DESKTOP_ONLY, enabled: commands.folder, run: run('open-folder') },
       ],
+    },
+    {
+      id: 'panes',
+      platforms: NOT_MOBILE,
+      items: [{ id: 'activity-pane', label: 'Activity Pane', icon: 'activity', enabled: !!item, pressed: !!item && activity, run: () => window.looper.history.toggleActivity() }],
     },
   ];
 
@@ -209,36 +279,54 @@ export function HistoryApp() {
     ...subagents.map((a) => ({ id: `agent:${a.agentId}`, label: a.description || a.type, title: `${a.description || a.type} (${a.type})`, status: a.status })),
   ];
   const emptyText =
-    items === null ? 'Loading…' : searching ? 'Searching…' : found ? `No conversation’s messages contain “${query.trim()}”.` : query.trim() ? 'No conversation’s title contains that.' : 'No conversations.';
+    items === null ? 'Loading…' : found ? `No conversation’s messages contain “${query.trim()}”.` : query.trim() ? 'No conversation’s title contains that.' : 'No conversations.';
+  const findStatus = searching ? 'Searching…' : found ? (found.size === 1 ? '1 conversation' : `${found.size} conversations`) : '';
 
   return (
     <div className="sessions-app history-app">
-      <Toolbar groups={toolbar} className="sessions-toolbar history-toolbar">
-        <select className="history-project" aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">All Projects</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+      <Toolbar groups={toolbar} className="sessions-toolbar" />
+      {finding && (
         <div
-          className="history-search"
+          className="chat-find"
           onKeyDown={(e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            searchMessages();
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              searchMessages();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              closeFind();
+            }
           }}
         >
-          <AddonSearchBox value={query} onChange={typed} placeholder="Search" inputRef={(el) => (searchRef.current = el)} />
+          <AddonSearchBox value={query} onChange={typed} placeholder="Find" inputRef={(el) => (searchRef.current = el)} />
+          <span className="muted">{findStatus}</span>
+          <button className="btn small" disabled={!query.trim() || searching} onClick={searchMessages}>
+            Search Messages
+          </button>
+          <button className="btn small" onClick={closeFind}>
+            Close
+          </button>
         </div>
-      </Toolbar>
+      )}
       <div
         className="sessions-body"
         ref={bodyRef}
         style={{ gridTemplateColumns: `minmax(200px, ${widths.left}px) 5px minmax(480px, 1fr)${pane ? ` 5px minmax(280px, ${widths.right}px)` : ''}` }}
       >
-        <HistoryList groups={groups} projects={projects} selected={selected} onSelect={setSelected} emptyText={emptyText} />
+        <HistoryList
+          groups={groups}
+          projects={projects}
+          selected={selected}
+          onSelect={setSelected}
+          emptyText={emptyText}
+          showPlace={view.groupBy !== 'folder'}
+          more={more && !found}
+          loadingMore={loadingMore}
+          onMore={() => {
+            setLoadingMore(true);
+            setLimit((l) => l + HISTORY_PAGE);
+          }}
+        />
         <div className="sidebar-divider" onMouseDown={dragLeft} />
         <main className="sessions-center">
           {!item ? (

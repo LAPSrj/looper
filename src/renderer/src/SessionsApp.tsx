@@ -53,8 +53,11 @@ function replyParts(s: SessionSummary | undefined, now: number): string[] {
 
 const limitParts = (limits: UsageLimits, now: number): string[] => limitFacts(limits, now).map((f) => `${f.label} ${f.value}`);
 
-/** The window's bottom line: the session's harness and its context, then the usage limits of the account its harness runs on. */
-function SessionsStatusBar({ summary, chat, limits }: { summary?: SessionSummary; chat: ChatState | null; limits: UsageLimits }) {
+/**
+ * The window's bottom line: the session's harness and its context, then the usage limits of the account its harness runs on.
+ * `children` follow at the end (the main window's own, on its Chats tab).
+ */
+export function SessionsStatusBar({ summary, chat, limits, children }: { summary?: SessionSummary; chat: ChatState | null; limits: UsageLimits; children?: React.ReactNode }) {
   // Every time on it counts minutes.
   const now = useNow(MINUTE);
   const left = chat ? [chat.harnessName] : summary ? [summary.harnessName] : [];
@@ -74,6 +77,7 @@ function SessionsStatusBar({ summary, chat, limits }: { summary?: SessionSummary
       {limitParts(limits, now).map((p) => (
         <span key={p}>{p}</span>
       ))}
+      {children}
     </div>
   );
 }
@@ -724,7 +728,23 @@ function savedWidths(key: string): { left: number; right: number } {
 }
 
 function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) {
-  const { state, selected, summary, chat, activity, shown, subagents } = s;
+  const { state, summary, chat, shown } = s;
+  return (
+    <div className="sessions-app">
+      {!single && shown.toolbar && <SessionsToolbar s={s} />}
+      <SessionsBody s={s} single={single} />
+      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={sessionLimits(state, summary)} />}
+    </div>
+  );
+}
+
+/**
+ * The Chats window's panes, as in the main window's Chats tab: the session
+ * list, the session shown, and its activity pane. A single chat's window has
+ * the session alone, with its activity pane when the View menu shows it.
+ */
+export function SessionsBody({ s, single = false }: { s: SessionsWindow; single?: boolean }) {
+  const { state, selected, summary, activity, shown, subagents } = s;
   const widthsKey = single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY;
   const [widths, setWidths] = useState(() => savedWidths(widthsKey));
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -749,55 +769,51 @@ function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) 
   const list = single ? '' : `minmax(200px, ${widths.left}px) 5px `;
 
   return (
-    <div className="sessions-app">
-      {!single && shown.toolbar && <SessionsToolbar s={s} />}
-      <div
-        className="sessions-body"
-        ref={bodyRef}
-        style={{ gridTemplateColumns: pane ? `${list}minmax(${single ? 0 : 480}px, 1fr) 5px minmax(280px, ${widths.right}px)` : `${list}1fr` }}
-      >
-        {!single && (
-          <>
-            <SessionList
-              sessions={state.sessions}
-              selected={selected}
-              collapsed={shown.collapsed}
-              waitingFirst={shown.waitingFirst}
-              onToggle={s.toggleGroup}
-              onSelect={s.setSelected}
-            />
-            <div className="sidebar-divider" onMouseDown={dragLeft} />
-          </>
-        )}
-        <main className="sessions-center">
-          {summary && hasTabs(s) && <SubagentTabs s={s} />}
-          <SessionCenter s={s} />
-        </main>
-        {pane && summary && (
-          <>
-            <div className="sidebar-divider" onMouseDown={dragRight} />
-            <ActivityPanel
-              sessionId={summary.id}
-              taskId={summary.taskId}
-              rows={s.watchedRows}
-              rowsAgent={s.watchedAgent}
-              attachments={s.attachments}
-              background={activity?.background ?? []}
-              subagents={subagents}
-              gitProject={s.gitRepo ? summary.projectId : undefined}
-              following={s.follow}
-              onFollow={s.setFollow}
-              onOpenWorkflow={(runId) => s.showWorkflow(runId)}
-              workflowRun={s.workflow?.run ?? null}
-              onOpenWorkflowAgent={(runId, agentId) => s.showWorkflow(runId, agentId)}
-              working={summary.status === 'working'}
-              pos={s.nowPos}
-              onPos={s.setNowPos}
-            />
-          </>
-        )}
-      </div>
-      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={sessionLimits(state, summary)} />}
+    <div
+      className="sessions-body"
+      ref={bodyRef}
+      style={{ gridTemplateColumns: pane ? `${list}minmax(${single ? 0 : 480}px, 1fr) 5px minmax(280px, ${widths.right}px)` : `${list}1fr` }}
+    >
+      {!single && (
+        <>
+          <SessionList
+            sessions={state.sessions}
+            selected={selected}
+            collapsed={shown.collapsed}
+            waitingFirst={shown.waitingFirst}
+            onToggle={s.toggleGroup}
+            onSelect={s.setSelected}
+          />
+          <div className="sidebar-divider" onMouseDown={dragLeft} />
+        </>
+      )}
+      <main className="sessions-center">
+        {summary && hasTabs(s) && <SubagentTabs s={s} />}
+        <SessionCenter s={s} />
+      </main>
+      {pane && summary && (
+        <>
+          <div className="sidebar-divider" onMouseDown={dragRight} />
+          <ActivityPanel
+            sessionId={summary.id}
+            taskId={summary.taskId}
+            rows={s.watchedRows}
+            rowsAgent={s.watchedAgent}
+            attachments={s.attachments}
+            background={activity?.background ?? []}
+            subagents={subagents}
+            gitProject={s.gitRepo ? summary.projectId : undefined}
+            following={s.follow}
+            onFollow={s.setFollow}
+            onOpenWorkflow={(runId) => s.showWorkflow(runId)}
+            workflowRun={s.workflow?.run ?? null}
+            onOpenWorkflowAgent={(runId, agentId) => s.showWorkflow(runId, agentId)}
+            working={summary.status === 'working'}
+            pos={s.nowPos}
+            onPos={s.setNowPos}
+          />
+        </>
+      )}
     </div>
   );
 }

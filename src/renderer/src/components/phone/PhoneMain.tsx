@@ -35,7 +35,7 @@ import { SessionList } from '../SessionList';
 import { TaskDetail } from '../TaskDetail';
 import { showTaskMenu } from '../TaskList';
 import { TaskSubText } from '../Live';
-import { taskToolbarGroups } from '../TaskToolbar';
+import { newToolbarGroups, projectToolbarGroups, taskToolbarGroups } from '../TaskToolbar';
 import { PhoneDashboard } from './PhoneDashboard';
 import { EmptyRow, Group, LargeTitle, Row, Segmented } from './PhoneList';
 import { SplitEmpty, SplitView, useSplit } from './PhoneSplit';
@@ -118,15 +118,18 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   const toolbar =
     m.task || m.addonShown
       ? undefined
-      : taskToolbarGroups({
-          task: null,
-          project: m.project,
-          newTaskProject: m.project,
-          sessionProject: m.sessionProject,
-          runtime: undefined,
-          dashboard: !top && nav.tab === 'dashboard',
-          onAction: m.uiAction,
-        });
+      : [
+          {
+            id: 'views',
+            items: [
+              { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !top && nav.tab === 'dashboard', run: () => m.uiAction('show-dashboard') },
+              { id: 'chats', label: 'Chats', icon: 'chat', run: () => window.looper.sessions.openWindow() },
+            ],
+          },
+          ...newToolbarGroups({ newTaskProject: m.project, sessionProject: m.sessionProject, onAction: m.uiAction }),
+          ...taskToolbarGroups({ task: null, runtime: undefined, onAction: m.uiAction }),
+          ...(m.project ? projectToolbarGroups(m.project, m.uiAction) : []),
+        ];
   // iPad: the list column shows the tab's own list; its rows replace the detail column's screen.
   const list = split
     ? rootFor(

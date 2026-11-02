@@ -9,12 +9,16 @@ import type { Project, View } from './types';
  */
 export type HistorySource = 'chat' | 'terminal' | 'remote' | 'run' | 'claude-code' | 'codex';
 
-/** One conversation of a project, as the History window lists it. */
+/** One conversation on this computer, as the History window lists it. */
 export interface HistoryItem {
   /** The list's own id for it (the engine knows what it stands for). */
   id: string;
   source: HistorySource;
-  projectId: string;
+  /** The Looper project whose folder it ran in; unset for any other folder. */
+  projectId?: string;
+  /** The folder it ran in, as its environment sees it; '' when the transcript doesn't say. */
+  folder: string;
+  environmentId: string;
   /** Claude's title for the conversation, else its first message; a task run's summary. */
   title: string;
   /** When it was last active (ms since the epoch). */
@@ -45,7 +49,7 @@ export interface HistoryCommands {
   compact: boolean;
   terminal: boolean;
   sessionId: string | null;
-  /** Its project still has a folder to open. */
+  /** It knows the folder it ran in, to open. */
   folder: boolean;
 }
 
@@ -74,23 +78,56 @@ export function historySourceText(item: Pick<HistoryItem, 'source' | 'taskName'>
   }
 }
 
-export interface HistoryFilter {
-  /** '' for every project. */
-  projectId: string;
+/** How many more conversations Show More reads. */
+export const HISTORY_PAGE = 100;
+
+/** View → Folder: every folder (''), one project's (`project:<id>`), or the folders outside every project ('other'). */
+export type HistoryFolderFilter = '' | 'other' | `project:${string}`;
+
+/** What the engine lists: the newest `limit` conversations that pass the View menu's filters. */
+export interface HistoryListOptions {
+  /** Read the folders again (slow across WSL); else the files found last, or the cached ones. */
+  fresh: boolean;
+  limit: number;
   showRuns: boolean;
-  /** Typed into the search box: the titles that contain it. */
+  folder: HistoryFolderFilter;
+}
+
+export interface HistoryList {
+  items: HistoryItem[];
+  /** Older conversations are left to read (Show More). */
+  more: boolean;
+}
+
+/** Whether a conversation passes View → Folder. */
+export function inFolderFilter(item: Pick<HistoryItem, 'projectId'>, f: HistoryFolderFilter): boolean {
+  if (!f) return true;
+  if (f === 'other') return !item.projectId;
+  return item.projectId === f.slice('project:'.length);
+}
+
+export interface HistoryFind {
+  /** Typed into the find bar: the titles that contain it. */
   title: string;
-  /** Enter in the search box: the conversations whose messages contain it; null before a search. */
+  /** Search Messages: the conversations whose messages contain it; null before a search. */
   found: ReadonlySet<string> | null;
 }
 
 /** The conversations the list shows, newest first. */
-export function filterHistory(items: HistoryItem[], f: HistoryFilter): HistoryItem[] {
+export function filterHistory(items: HistoryItem[], f: HistoryFind): HistoryItem[] {
   const title = f.title.trim().toLowerCase();
   return items
-    .filter((i) => (!f.projectId || i.projectId === f.projectId) && (f.showRuns || i.source !== 'run'))
     .filter((i) => (f.found ? f.found.has(i.id) : !title || i.title.toLowerCase().includes(title)))
     .sort((a, b) => b.lastActive - a.lastActive);
+}
+
+/** A conversation's folder group: its project's, else its folder in its environment. */
+export function folderGroupOf(item: Pick<HistoryItem, 'projectId' | 'folder' | 'environmentId'>, projects: Pick<Project, 'id' | 'name'>[]): { key: string; title: string } {
+  if (item.projectId) {
+    const p = projects.find((x) => x.id === item.projectId);
+    if (p) return { key: `project:${p.id}`, title: p.name };
+  }
+  return { key: `folder:${item.environmentId}\n${item.folder}`, title: item.folder || 'Unknown folder' };
 }
 
 export interface HistoryGroup {
@@ -127,7 +164,8 @@ const defaultMonthTitle = (d: Date): string => d.toLocaleDateString(undefined, {
 
 /**
  * The list's groups, of conversations already in order (filterHistory): by
- * date, or by project in the Projects pane's order.
+ * date, or by folder, the projects first in the Projects tab's order, then
+ * the other folders newest first.
  */
 export function groupHistory(
   items: HistoryItem[],
@@ -137,11 +175,11 @@ export function groupHistory(
   monthTitle: (d: Date) => string = defaultMonthTitle,
 ): HistoryGroup[] {
   const groups = new Map<string, HistoryGroup>();
-  if (by === 'project') {
-    for (const p of projects) groups.set(p.id, { key: p.id, title: p.name, items: [] });
+  if (by === 'folder') {
+    for (const p of projects) groups.set(`project:${p.id}`, { key: `project:${p.id}`, title: p.name, items: [] });
   }
   for (const item of items) {
-    const g = by === 'project' ? { key: item.projectId, title: projects.find((p) => p.id === item.projectId)?.name ?? item.projectId } : dateGroupOf(item.lastActive, now, monthTitle);
+    const g = by === 'folder' ? folderGroupOf(item, projects) : dateGroupOf(item.lastActive, now, monthTitle);
     let group = groups.get(g.key);
     if (!group) {
       group = { ...g, items: [] };

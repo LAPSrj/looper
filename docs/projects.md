@@ -7,7 +7,7 @@ and permission mode). Its tasks use them unless a task picks its own, and
 its chats and terminal sessions start with the same harness, model, effort
 and permission mode.
 
-![The Projects pane and a project's view](img/projects.png)
+![The Projects tab and a project's view](img/projects.png)
 
 ## Creating a project
 
@@ -18,30 +18,30 @@ named after it, with the task's environment and agent settings. A task saved wit
 the folder of an existing project joins that project.
 
 To make a project with no tasks, for example a folder you only chat in, use
-**File → New Project…**, or right-click the Projects pane.
+**File → New Project…**, or right-click the list on the Projects tab.
 
-## The Projects pane
+## The Projects tab
 
-The Projects pane, above the task list, lists every project with its folder.
-Drag a project to change the order, which the tray icon's menu follows too.
-**View → Projects** shows or hides the pane.
+The main window's **Projects** tab lists every project with its folder on the
+left, under the header **Projects** with their count, and shows the selected
+project's view on the right ("No project selected." when none). Drag a project
+to change the order, which the tray icon's menu follows too.
 
-The pane can group its list. Right-click the pane's header, or open **View →
-Task List Options → Projects Pane**, and pick **Group By**: **None** (the
-default), **Folder** (the folder each project's working directory is in), or
-**Harness** (the harness its chats and terminal sessions start with). Each
-group has a header with its project count, and the groups are listed by name;
-inside a group the projects keep your order. While the list is grouped you
-can't drag projects to reorder them. The choice is saved with the other View
-settings.
+The list can group its projects. Right-click the list, or open **View → Group
+Projects By**, and pick **None** (the default), **Folder** (the folder each
+project's working directory is in), or **Harness** (the harness its chats and
+terminal sessions start with). Each group has a header with its project count,
+and the groups are listed by name; inside a group the projects keep your order.
+While the list is grouped you can't drag projects to reorder them. The choice
+is saved with the other View settings.
 
-Selecting a project shows its view in the main window, and the
-[toolbar](monitoring.md#the-toolbar) then acts on the project: **New Task in
-&lt;project&gt;**, **Edit Project**, **New Chat**, **New Terminal** and **Open
-Working Directory**. The **Status** tab shows the project's settings and
+Selecting a project shows its view, and the
+[toolbar](monitoring.md#the-toolbar) then has **Edit Project** and **Open
+Folder** after its New buttons, which start a task, chat or terminal in the
+project. The **Status** tab shows the project's settings and
 whether it keeps a Remote Control conversation open. The **Tasks** tab lists
 the tasks that run in the project, in the same kind of table as a task's
-Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to select it. The **Chats** tab lists the
+Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to show it on the Tasks tab. The **Chats** tab lists the
 project's chats, terminal sessions and Remote Control conversations, including
 those that went on from one of its tasks' runs, in a table like a task's Runs
 tab but without a Result column: double-click one for its run window, or right-click it to
@@ -52,14 +52,16 @@ Right-clicking a project opens a menu with New Chat, New Terminal, New Task…,
 Edit Project…, Open Working Directory and Delete Project. Double-clicking it
 opens Edit Project. The **Project** menu in the menu bar has the same actions
 (New Task in Project…, New Chat, New Terminal, Edit Project…, Open Folder,
-Delete Project…) for the selected project, or the selected task's project. It's
-greyed out while neither is selected.
+Delete Project…) for the selected project, or the selected task's project. It shows on the
+Dashboard, Projects and Tasks tabs, and it's greyed out while neither is
+selected.
 
 ## The Git tab
 
 When a project's folder is in a git repository, the project's view has a
-**Git** tab, and so does the [Chats window's activity
-pane](monitoring.md#the-activity-pane) for the project's sessions. It shows the
+**Git** tab, and so does the [activity
+pane](monitoring.md#the-activity-pane) of the Chats tab and window for the project's
+sessions. It shows the
 repository and doesn't change it.
 
 ![The Git tab's History: the commits, the selected commit's files, and a file's changes](img/git.png)
@@ -99,8 +101,8 @@ lock, so an agent's own git commands never wait on it.
 
 ![The Edit Project window](img/project-editor.png)
 
-- **Name** — how the project shows in the Projects pane, the tray menu, the
-  Chats window, and the Claude app for a Remote Control conversation. Left
+- **Name** — how the project shows on the Projects tab, in the tray menu, the
+  Chats tab and window, and the Claude app for a Remote Control conversation. Left
   empty, it's the folder's name.
 - **Working directory** — the project's folder, in the path style its
   environment expects. Browse… opens a picker scoped to the environment.
@@ -143,10 +145,11 @@ To move a task to another project, pick that project on its General tab.
 
 ## Starting a chat from the tray
 
-Right-click the tray icon and click a project: a new chat opens in it in the
-[Chats window](monitoring.md#the-chats-window), with the project's
-harness, model and permission mode, without bringing up the main window.
-Double-clicking the tray icon still shows the main window.
+Right-click the tray icon and click a project: a new chat opens in it with the project's
+harness, model and permission mode. It shows on the main window's Chats tab,
+which comes forward, or in the [Chats window](monitoring.md#the-chats-window)
+when that's open (see [the main window](monitoring.md#the-main-window)).
+Double-clicking the tray icon shows the main window.
 
 ## Deleting a project
 

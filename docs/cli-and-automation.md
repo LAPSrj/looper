@@ -245,7 +245,7 @@ settings.json         environments (each with its harnesses), default
                        environment, timing settings
 tasks.json             every task definition, and the deleted tasks in the
                        Recycle Bin
-projects.json          the projects, in the Projects pane's order
+projects.json          the projects, in the Projects tab's order
 state.json             runtime snapshot: current state, next run time, last
                        result — what `looper list` reads — and the Chats
                        window's open chats and terminal sessions, which

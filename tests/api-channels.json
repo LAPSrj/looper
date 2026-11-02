@@ -1695,13 +1695,14 @@
   }
  },
  "history.search": {
-  "arity": 1,
+  "arity": 2,
   "calls": [
    [
     "invoke",
     "history:search",
     [
-     "a0"
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -1778,6 +1779,17 @@
     [
      "a0"
     ]
+   ]
+  ],
+  "result": {}
+ },
+ "history.toggleActivity": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "history:toggleActivity",
+    []
    ]
   ],
   "result": {}
@@ -2618,7 +2630,7 @@
   }
  },
  "reportSelection": {
-  "arity": 9,
+  "arity": 10,
   "calls": [
    [
     "send",
@@ -2632,7 +2644,22 @@
      "a5",
      "a6",
      "a7",
-     "a8"
+     "a8",
+     "a9"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "showTaskInMain": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "ui:showTaskInMain",
+    [
+     "a0",
+     "a1"
     ]
    ]
   ],

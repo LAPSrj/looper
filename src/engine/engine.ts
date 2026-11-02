@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
@@ -24,15 +23,15 @@ import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind
 import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
-import { MessagesService, readRunSessionId } from './messages';
+import { MessagesService, readRunSessionId, transcriptHostPath } from './messages';
 import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions';
 import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType, kindMismatchText } from './chat';
-import { HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps } from './history';
-import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem } from '../shared/history';
+import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
+import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
 import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
 import { SessionHub } from './sessions';
@@ -261,10 +260,10 @@ export interface Engine {
   /** Continue Compacted: a new chat that starts from the run's messages, without its tool calls. Throws with the reason. */
   compactRun(id: string, runId: string): Promise<ChatState>;
   // the History window
-  /** Every project's conversations: Looper's runs, and Claude Code and Codex conversations from outside Looper. `fresh`: read the folders again, else the cached ones. */
-  historyList(fresh: boolean): Promise<HistoryItem[]>;
-  /** The listed conversations whose user or agent messages contain the text. */
-  historySearch(query: string): Promise<string[]>;
+  /** The newest conversations on this computer: Looper's runs, and every Claude Code and Codex conversation in the environments' folders. */
+  historyList(o: HistoryListOptions): Promise<HistoryList>;
+  /** Of the listed conversations `ids`, the ones whose user or agent messages contain the text. */
+  historySearch(query: string, ids: string[]): Promise<string[]>;
   /** A listed conversation's rows and subagents (a subagent's rows with `agentId`); null once it's no longer listed. */
   historyRead(id: string, agentId?: string): Promise<HistoryConversation | null>;
   historyItem(id: string): HistoryItem | undefined;
@@ -274,10 +273,11 @@ export interface Engine {
   historyChangedAt(id: string): Promise<number | undefined>;
   /**
    * Continue in Chat on a conversation from outside Looper: a chat in its
-   * project that resumes it, or the open chat holding it. Throws with the
-   * reason (a project harness of another kind among them).
+   * project, or its folder's stand-in, that resumes it, or the open chat
+   * holding it. Throws with the reason (a project harness of another kind
+   * among them).
    */
-  continueHistoryInChat(id: string): ChatState;
+  continueHistoryInChat(id: string): Promise<ChatState>;
   /** Continue in Terminal on a conversation from outside Looper: the Looper terminal session's id, or null in the system's terminal. Throws with the reason. */
   continueHistoryInTerminal(id: string): Promise<string | null>;
   /** Continue Compacted on a conversation from outside Looper: a new chat from its messages. Throws with the reason. */
@@ -482,11 +482,13 @@ export function createEngine(opts: EngineOptions): Engine {
     const cwd = normalizeFolder(createTarget(sessionTask(place, settings, 'folder'), { host, settings }).toTargetPath(folder));
     const own = projects.list().find((p) => p.environmentId === env.id && sameFolder(p.cwd, cwd));
     if (own) return projectTaskId(own.id);
-    // One stand-in per folder and environment, so its run history stays together; Windows paths compare without case.
-    const key = /^[A-Za-z]:[\\/]|^\\\\/.test(cwd) ? cwd.toLowerCase() : cwd;
-    const id = FOLDER_TASK_PREFIX + crypto.createHash('sha1').update(`${env.id}\n${key}`).digest('hex').slice(0, 12);
+    return folderStandIn(env.id, cwd);
+  };
+  /** The stand-in of a folder (as its environment sees it), recorded so its sessions find it. */
+  const folderStandIn = (environmentId: string, cwd: string): string => {
+    const id = folderStandInId(environmentId, cwd);
     ensureDir(runs.taskDir(id));
-    writeJsonAtomic(folderPlaceFile(id), { name: cwd, environmentId: env.id, cwd });
+    writeJsonAtomic(folderPlaceFile(id), { name: cwd, environmentId, cwd });
     return id;
   };
   /** Also a Remote Control helper's stand-in, from its run history. */
@@ -837,13 +839,28 @@ export function createEngine(opts: EngineOptions): Engine {
     configDirs: opts.historyDirs,
   });
 
-  /** A conversation from outside Looper's runs, and its project's stand-in, which a chat or terminal on it runs as. Throws with the reason. */
-  const outsideOf = (id: string) => {
+  /**
+   * A conversation from outside Looper's runs, and the stand-in a chat or
+   * terminal on it runs as: its project's, else its folder's (`inFolder`).
+   * Throws with the reason.
+   */
+  const outsideOf = async (id: string): Promise<{ t: HistoryTranscript; task: Task; inFolder: boolean }> => {
     const t = history.transcript(id);
     if (!t) throw new Error('This conversation is no longer in the History window’s list. Refresh the list and try again.');
-    const project = projects.get(t.projectId);
-    if (!project) throw new Error('Its project no longer exists.');
-    return { t, task: projectSessionTask(project, settings) };
+    if (t.projectId) {
+      const project = projects.get(t.projectId);
+      if (!project) throw new Error('Its project no longer exists.');
+      return { t, task: projectSessionTask(project, settings), inFolder: false };
+    }
+    if (!t.folder) throw new Error('The transcript doesn’t say which folder the conversation ran in.');
+    const env = settings.environments.find((e) => e.id === t.environmentId);
+    if (!env) throw new Error('The environment the conversation was found in no longer exists.');
+    const hostFolder = await transcriptHostPath(t.folder, host, env.kind === 'wsl' ? env.distro : undefined);
+    const isDir = hostFolder ? await fs.promises.stat(hostFolder).then((st) => st.isDirectory(), () => false) : false;
+    if (!isDir) throw new Error(`The folder ${t.folder} no longer exists.`);
+    const task = taskOrProject(folderStandIn(env.id, t.folder));
+    if (!task) throw new Error(`Looper can’t open ${t.folder}.`);
+    return { t, task, inFolder: true };
   };
 
   /**
@@ -1648,38 +1665,42 @@ export function createEngine(opts: EngineOptions): Engine {
       const kept = info?.harnessId && resolveEnvironment(task, settings).harnesses.some((h) => h.id === info.harnessId);
       return chats.start(task, { kind: 'compact', from: runId, history, ...(kept ? { harnessId: info.harnessId, settings: info.settings } : {}) });
     },
-    historyList: (fresh) => history.list(fresh),
-    historySearch: (query) => history.search(query),
+    historyList: (o) => history.list(o),
+    historySearch: (query, ids) => history.search(query, ids),
     historyRead: (id, agentId) => history.read(id, agentId),
     historyItem: (id) => history.item(id),
     historyCommands(id: string): HistoryCommands & { outside?: boolean } {
       const item = history.item(id);
-      const project = item ? projects.get(item.projectId) : undefined;
-      if (!item || !project) return NO_HISTORY_COMMANDS;
-      const base = { sessionId: item.sessionId ?? null, folder: !!project.cwd };
+      if (!item) return NO_HISTORY_COMMANDS;
+      const base = { sessionId: item.sessionId ?? null, folder: !!item.folder };
       if (item.runId) {
         const c = this.canContinueRun(item.taskId, item.runId);
         return { ...base, chat: c.chat, terminal: c.terminal, compact: c.compact };
       }
       const t = history.transcript(id);
-      if (!t) return NO_HISTORY_COMMANDS;
+      const project = t?.projectId ? projects.get(t.projectId) : undefined;
+      if (!t || (t.projectId && !project)) return NO_HISTORY_COMMANDS;
+      // Without its folder there's nowhere to go on.
+      if (!project && !t.folder) return { ...NO_HISTORY_COMMANDS, sessionId: base.sessionId };
       // A harness of another kind is refused when it's picked, saying why.
-      const task = projectSessionTask(project, settings);
-      const chat = chats.findOpen(task.id, '', t.sessionId);
-      const terminal = terminalRuns.findOpen(task.id, '', t.sessionId);
+      const taskId = project ? projectTaskId(project.id) : folderStandInId(t.environmentId, t.folder);
+      const chat = chats.findOpen(taskId, '', t.sessionId);
+      const terminal = terminalRuns.findOpen(taskId, '', t.sessionId);
       // A chat or terminal of Looper's holding it comes forward: there's nothing to ask about another one.
       return { ...base, chat: !terminal, terminal: !chat, compact: true, outside: !chat && !terminal };
     },
     historyChangedAt: (id) => history.changedAt(id),
-    continueHistoryInChat(id: string): ChatState {
-      const { t, task } = outsideOf(id);
+    async continueHistoryInChat(id: string): Promise<ChatState> {
+      const { t, task, inFolder } = await outsideOf(id);
       const open = chats.findOpen(task.id, '', t.sessionId);
       if (open) return open;
       if (terminalRuns.findOpen(task.id, '', t.sessionId)) throw new Error('The conversation is open in a terminal window.');
-      return chats.start(task, { kind: 'resume', sessionId: t.sessionId, harnessKind: t.harnessKind, transcript: t.path });
+      // A folder has no harness of its own: the environment's of the conversation's kind goes on with it.
+      const harnessId = inFolder ? resolveEnvironment(task, settings).harnesses.find((h) => h.kind === t.harnessKind)?.id : undefined;
+      return chats.start(task, { kind: 'resume', sessionId: t.sessionId, harnessKind: t.harnessKind, transcript: t.path, ...(harnessId ? { harnessId } : {}) });
     },
     async continueHistoryInTerminal(id: string): Promise<string | null> {
-      const { t, task } = outsideOf(id);
+      const { t, task } = await outsideOf(id);
       const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
       if (kind !== t.harnessKind) throw new Error(kindMismatchText(t.harnessKind, kind));
       if (settings.terminal === 'system') {
@@ -1698,7 +1719,7 @@ export function createEngine(opts: EngineOptions): Engine {
       return sessionId;
     },
     async compactHistory(id: string): Promise<ChatState> {
-      const { t, task } = outsideOf(id);
+      const { t, task } = await outsideOf(id);
       const rows = await history.compactable(id);
       if (!rows.some((r) => r.kind === 'agent')) throw new Error('The conversation has no reply to compact yet.');
       return chats.start(task, { kind: 'compact', from: t.sessionId, label: `Compacted from "${t.title}"`, history: rows });

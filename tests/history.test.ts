@@ -1,18 +1,21 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChatManager } from '../src/engine/chat';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { detectHost } from '../src/engine/host';
-import { claudeProjectFolder, HISTORY_CACHE_FILE, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type ConfigDirs } from '../src/engine/history';
+import { claudeProjectFolder, folderStandInId, HISTORY_CACHE_FILE, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type ConfigDirs } from '../src/engine/history';
 import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { loadSettings } from '../src/engine/store/settings';
 import type { ChatInfo } from '../src/shared/chat';
-import { dateGroupOf, filterHistory, groupHistory, historySourceText, type HistoryItem } from '../src/shared/history';
+import { dateGroupOf, filterHistory, groupHistory, historySourceText, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
 import { projectSessionTask, projectTaskId } from '../src/shared/projects';
 import { ProjectSchema, TaskSchema, type Project } from '../src/shared/types';
+
+/** The engine's list of every conversation: reading the folders, newest first. */
+const opts = (o: Partial<HistoryListOptions> = {}): HistoryListOptions => ({ fresh: true, limit: 100, showRuns: true, folder: '', ...o });
 
 const jsonl = (records: object[]) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
 
@@ -67,18 +70,33 @@ describe('the History window helpers', () => {
     expect(dateGroupOf(new Date(2026, 8, 30).getTime(), now, month).title).toBe('2026-9');
   });
 
-  it('filters by project, task runs, title or a message search, and groups by project in their order', () => {
-    const item = (id: string, projectId: string, source: HistoryItem['source'], title: string, lastActive: number): HistoryItem => ({ id, projectId, source, title, lastActive, harnessKind: 'claude-code', taskId: projectTaskId(projectId) });
-    const items = [item('a', 'p1', 'chat', 'Fix the build', 3), item('b', 'p2', 'run', 'Nightly check', 2), item('c', 'p1', 'codex', 'Write docs', 1)];
-    const f = { projectId: '', showRuns: true, title: '', found: null };
-    expect(filterHistory(items, f).map((i) => i.id)).toEqual(['a', 'b', 'c']);
-    expect(filterHistory(items, { ...f, showRuns: false }).map((i) => i.id)).toEqual(['a', 'c']);
-    expect(filterHistory(items, { ...f, projectId: 'p1', title: 'DOCS' }).map((i) => i.id)).toEqual(['c']);
-    expect(filterHistory(items, { ...f, title: 'zzz', found: new Set(['b']) }).map((i) => i.id)).toEqual(['b']);
-    const groups = groupHistory(items, 'project', [{ id: 'p2', name: 'Two' }, { id: 'p1', name: 'One' }], 0);
+  it('finds by title or a message search, and groups by folder: the projects in their order, then the other folders', () => {
+    const item = (id: string, projectId: string | undefined, folder: string, source: HistoryItem['source'], title: string, lastActive: number): HistoryItem => ({
+      id,
+      ...(projectId ? { projectId } : {}),
+      folder,
+      environmentId: 'local',
+      source,
+      title,
+      lastActive,
+      harnessKind: 'claude-code',
+      taskId: projectId ? projectTaskId(projectId) : '',
+    });
+    const items = [
+      item('a', 'p1', '/w/one', 'chat', 'Fix the build', 4),
+      item('d', undefined, '/w/loose', 'claude-code', 'Loose ends', 3),
+      item('b', 'p2', '/w/two', 'run', 'Nightly check', 2),
+      item('c', 'p1', '/w/one', 'codex', 'Write docs', 1),
+    ];
+    const f = { title: '', found: null };
+    expect(filterHistory(items, f).map((i) => i.id)).toEqual(['a', 'd', 'b', 'c']);
+    expect(filterHistory(items, { ...f, title: 'DOCS' }).map((i) => i.id)).toEqual(['c']);
+    expect(filterHistory(items, { title: 'zzz', found: new Set(['b']) }).map((i) => i.id)).toEqual(['b']);
+    const groups = groupHistory(items, 'folder', [{ id: 'p2', name: 'Two' }, { id: 'p1', name: 'One' }], 0);
     expect(groups.map((g) => [g.title, g.items.map((i) => i.id)])).toEqual([
       ['Two', ['b']],
       ['One', ['a', 'c']],
+      ['/w/loose', ['d']],
     ]);
     expect(historySourceText({ source: 'run', taskName: 'Nightly' })).toBe('Task run · Nightly');
     expect(historySourceText({ source: 'remote' })).toBe('Remote Control');
@@ -147,36 +165,93 @@ describe('the History scanner', () => {
       },
     });
     const folder = (cwd: string) => join(claude, 'projects', claudeProjectFolder(cwd));
-    return { dataDir, claude, codex, runs, ledger, service, folder, probes: () => probes };
+    return { dataDir, claude, codex, runs, ledger, service, folder, settings, probes: () => probes };
   }
 
-  it("lists a project's own folder only: its title, else its first message, and Codex threads started there", async () => {
+  it('lists every folder: a project\'s with its project, any other with its folder, and Codex threads but not their subagents', async () => {
     const { codex, service, folder } = setup();
     write(join(folder('/w/looper'), 'titled.jsonl'), claudeTranscript('/w/looper', [['fix the build', 'fixed']], [{ type: 'ai-title', aiTitle: 'Fixing the build', sessionId: 'titled' }]));
     write(join(folder('/w/looper'), 'plain.jsonl'), claudeTranscript('/w/looper', [['add a History window\nwith three panes', 'added']]));
     write(join(folder('/w/looper'), 'renamed.jsonl'), claudeTranscript('/w/looper', [['q', 'a']], [{ type: 'ai-title', aiTitle: 'AI' }, { type: 'custom-title', customTitle: 'My name' }]));
     write(join(folder('/w/looper'), 'empty.jsonl'), jsonl([{ type: 'permission-mode', permissionMode: 'auto' }]));
-    // A session started in a subfolder has a folder of its own, which isn't read.
+    // A subfolder is a folder of its own, outside the project.
     write(join(folder('/w/looper/docs'), 'sub.jsonl'), claudeTranscript('/w/looper/docs', [['docs only', 'ok']]));
-    // "/w/a/b" and the project "/w/a-b" share a folder name: only the exact folder counts.
+    // "/w/a/b" and the project "/w/a-b" share a folder name: the transcript's own folder decides.
     write(join(folder('/w/a-b'), 'collide.jsonl'), claudeTranscript('/w/a/b', [['elsewhere', 'ok']]));
     write(join(folder('/w/a-b'), 'mine.jsonl'), claudeTranscript('/w/a-b', [['in a-b', 'ok']]));
-    // A folder no project has isn't read either.
-    write(join(folder('/w/other'), 'other.jsonl'), claudeTranscript('/w/other', [['other', 'ok']]));
     write(join(codex, 'sessions', '2026', '10', '20', 'rollout-2026-10-20T10-00-00-c0dex-1.jsonl'), codexRollout('c0dex-1', '/w/looper', 'codex question'));
-    write(join(codex, 'sessions', '2026', '10', '20', 'rollout-2026-10-20T11-00-00-c0dex-2.jsonl'), codexRollout('c0dex-2', '/w/elsewhere', 'not here'));
+    write(join(codex, 'sessions', '2026', '10', '20', 'rollout-2026-10-20T11-00-00-c0dex-2.jsonl'), codexRollout('c0dex-2', '/w/elsewhere', 'not a project'));
     write(join(codex, 'sessions', '2026', '10', '20', 'rollout-2026-10-20T12-00-00-c0dex-3.jsonl'), codexRollout('c0dex-3', '/w/looper', 'a review', { subagent: { other: 'guardian' } }));
 
-    const items = await service.list(true);
-    const got = items.map((i) => [i.projectId, i.source, i.sessionId, i.title]).sort((a, b) => String(a[2]).localeCompare(String(b[2])));
+    const { items, more } = await service.list(opts());
+    expect(more).toBe(false);
+    const got = items.map((i) => [i.projectId ?? '', i.folder, i.source, i.sessionId, i.title]).sort((a, b) => String(a[3]).localeCompare(String(b[3])));
     expect(got).toEqual([
-      ['looper', 'codex', 'c0dex-1', 'codex question'],
-      ['ab', 'claude-code', 'mine', 'in a-b'],
-      ['looper', 'claude-code', 'plain', 'add a History window'],
-      ['looper', 'claude-code', 'renamed', 'My name'],
-      ['looper', 'claude-code', 'titled', 'Fixing the build'],
+      ['looper', '/w/looper', 'codex', 'c0dex-1', 'codex question'],
+      ['', '/w/elsewhere', 'codex', 'c0dex-2', 'not a project'],
+      ['', '/w/a/b', 'claude-code', 'collide', 'elsewhere'],
+      ['ab', '/w/a-b', 'claude-code', 'mine', 'in a-b'],
+      ['looper', '/w/looper', 'claude-code', 'plain', 'add a History window'],
+      ['looper', '/w/looper', 'claude-code', 'renamed', 'My name'],
+      ['', '/w/looper/docs', 'claude-code', 'sub', 'docs only'],
+      ['looper', '/w/looper', 'claude-code', 'titled', 'Fixing the build'],
     ]);
     expect(items.find((i) => i.sessionId === 'plain')?.lastActive).toBe(Date.parse('2026-10-01T10:00:03.000Z'));
+    // Outside every project, a conversation goes on in its folder's stand-in.
+    expect(items.find((i) => i.sessionId === 'sub')?.taskId).toBe(folderStandInId('local', '/w/looper/docs'));
+
+    // View → Folder: one project's (the exact folder, not its look-alike), or the folders outside every project.
+    const ab = await service.list(opts({ fresh: false, folder: 'project:ab' }));
+    expect(ab.items.map((i) => i.sessionId)).toEqual(['mine']);
+    const other = await service.list(opts({ fresh: false, folder: 'other' }));
+    expect(other.items.map((i) => i.sessionId).sort()).toEqual(['c0dex-2', 'collide', 'sub']);
+  });
+
+  it('reads only the newest page of transcripts by modified time, and the next ones with a larger limit', async () => {
+    const { dataDir, service, folder } = setup();
+    const now = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < 5; i++) {
+      const file = write(join(folder(`/w/f${i}`), `s${i}.jsonl`), claudeTranscript(`/w/f${i}`, [[`question ${i}`, 'ok']]));
+      // s4 is the newest.
+      utimesSync(file, now - 600 + i * 60, now - 600 + i * 60);
+    }
+    const first = await service.list(opts({ limit: 2 }));
+    expect(first.items.map((i) => i.sessionId)).toEqual(['s4', 's3']);
+    expect(first.more).toBe(true);
+    // The others are found but not read yet: the cache has their size and time, without a title.
+    const cache = JSON.parse(readFileSync(join(dataDir, HISTORY_CACHE_FILE), 'utf8')) as Record<string, { meta?: unknown }>;
+    expect(Object.values(cache).filter((c) => c.meta).length).toBe(2);
+    expect(Object.keys(cache).length).toBe(5);
+
+    const next = await service.list(opts({ fresh: false, limit: 4 }));
+    expect(next.items.map((i) => i.sessionId)).toEqual(['s4', 's3', 's2', 's1']);
+    expect(next.more).toBe(true);
+    const all = await service.list(opts({ fresh: false, limit: 6 }));
+    expect(all.items.map((i) => i.sessionId)).toEqual(['s4', 's3', 's2', 's1', 's0']);
+    expect(all.more).toBe(false);
+  });
+
+  it('counts a transcript once when two config folders share their projects folder through a link', async () => {
+    const { root: base, service, folder, claude } = { ...setup(), root };
+    const second = join(base, 'claude-work');
+    mkdirSync(second, { recursive: true });
+    symlinkSync(join(claude, 'projects'), join(second, 'projects'));
+    write(join(folder('/w/looper'), 'once.jsonl'), claudeTranscript('/w/looper', [['only once', 'ok']]));
+    (service as unknown as { d: { configDirs: () => Promise<ConfigDirs> } }).d.configDirs = async () => ({ claude: [claude, second], codex: [] });
+    expect((await service.list(opts())).items.map((i) => i.sessionId)).toEqual(['once']);
+  });
+
+  it("matches a project in any environment that shares the transcripts' folder, not only the first one read", async () => {
+    const { service, folder, settings } = setup();
+    // Read first, and using the same folder (two WSL environments on one distro).
+    settings.environments.unshift({ ...settings.environments[0], id: 'first' });
+    write(join(folder('/w/looper'), 'shared.jsonl'), claudeTranscript('/w/looper', [['shared folder', 'ok']]));
+    write(join(folder('/w/loose'), 'loose.jsonl'), claudeTranscript('/w/loose', [['no project', 'ok']]));
+    const { items } = await service.list(opts());
+    const by = (id: string) => items.find((i) => i.sessionId === id);
+    expect(by('shared')).toMatchObject({ projectId: 'looper', environmentId: 'local' });
+    expect(by('loose')?.environmentId).toBe('first');
+    settings.environments.shift();
   });
 
   it("leaves out Looper's own sessions: a live run folder's, and the ledger's, which says what a pruned run was", async () => {
@@ -200,7 +275,7 @@ describe('the History scanner', () => {
     writeFileSync(join(runs.runDir(projectTaskId('looper'), '20261011-100000-bbbb'), 'session.json'), JSON.stringify({ session_id: 'resumed' }));
     write(join(folder('/w/looper'), 'resumed.jsonl'), claudeTranscript('/w/looper', [['outside first', 'ok']]));
 
-    const items = await service.list(true);
+    const { items } = await service.list(opts());
     const got = items.map((i) => [i.source, i.sessionId ?? '', i.title, i.taskName ?? '', i.runId ?? '']).sort((a, b) => a[1].localeCompare(b[1]));
     expect(got).toEqual([
       ['run', 'live-run', 'All green', 'Nightly', '20261010-100000-aaaa'],
@@ -210,12 +285,12 @@ describe('the History scanner', () => {
   });
 
   it('keeps each transcript by path, size and modified time, shows the cached ones at once, and asks for the folders once', async () => {
-    const { dataDir, service, folder, probes } = setup();
+    const { dataDir, service, folder, settings, probes } = setup();
     const file = write(join(folder('/w/looper'), 'one.jsonl'), claudeTranscript('/w/looper', [['first title', 'ok']]));
     // A whole second, which setting it again gives back exactly.
     const stamp = Math.floor(Date.now() / 1000) - 60;
     utimesSync(file, stamp, stamp);
-    expect((await service.list(true)).map((i) => i.title)).toEqual(['first title']);
+    expect((await service.list(opts())).items.map((i) => i.title)).toEqual(['first title']);
     const cache = JSON.parse(readFileSync(join(dataDir, HISTORY_CACHE_FILE), 'utf8')) as Record<string, { size: number; mtimeMs: number; meta: { title: string } }>;
     const st = statSync(file);
     expect(cache[file]).toMatchObject({ size: st.size, mtimeMs: st.mtimeMs, meta: { title: 'first title' } });
@@ -225,19 +300,19 @@ describe('the History scanner', () => {
     expect(sameSize.length).toBe(st.size);
     writeFileSync(file, sameSize);
     utimesSync(file, stamp, stamp);
-    expect((await service.list(true)).map((i) => i.title)).toEqual(['first title']);
+    expect((await service.list(opts())).items.map((i) => i.title)).toEqual(['first title']);
 
     // A changed file is read again.
     writeFileSync(file, claudeTranscript('/w/looper', [['a longer, newer title', 'ok']]));
-    expect((await service.list(true)).map((i) => i.title)).toEqual(['a longer, newer title']);
+    expect((await service.list(opts())).items.map((i) => i.title)).toEqual(['a longer, newer title']);
 
     // The cached list comes without reading any folder, even in a new service (a new start of Looper).
     rmSync(file);
     const again = new HistoryService({ ...(service as unknown as { d: ConstructorParameters<typeof HistoryService>[0] }).d });
-    expect((await again.list(false)).map((i) => i.title)).toEqual(['a longer, newer title']);
-    expect((await again.list(true)).map((i) => i.title)).toEqual([]);
+    expect((await again.list(opts({ fresh: false }))).items.map((i) => i.title)).toEqual(['a longer, newer title']);
+    expect((await again.list(opts())).items.map((i) => i.title)).toEqual([]);
     // Once per environment in each service.
-    expect(probes()).toBe(2);
+    expect(probes()).toBe(2 * settings.environments.length);
   });
 });
 
@@ -362,7 +437,9 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     const file = write(join(claudeDir, 'projects', claudeProjectFolder(dir), 'outside-2.jsonl'), claudeTranscript(dir, [['plan the release', 'here is the plan']], [{ type: 'ai-title', aiTitle: 'Release plan' }]));
     utimesSync(file, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
 
-    const [item] = await engine.historyList(true);
+    const {
+      items: [item],
+    } = await engine.historyList(opts());
     expect(item).toMatchObject({ source: 'claude-code', projectId: project.id, title: 'Release plan', sessionId: 'outside-2' });
     expect(engine.historyCommands(item.id)).toMatchObject({ chat: true, terminal: true, compact: true, sessionId: 'outside-2', outside: true });
     expect((await engine.historyRead(item.id))!.rows.filter((r) => r.kind !== 'tool').map((r) => r.text)).toEqual(['plan the release', 'here is the plan']);
@@ -387,8 +464,8 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     await engine.closeChat(compacted.id);
 
     // Continue in Chat: the chat resumes the session itself; asking again brings the same chat.
-    const chat = engine.continueHistoryInChat(item.id);
-    expect(engine.continueHistoryInChat(item.id).id).toBe(chat.id);
+    const chat = await engine.continueHistoryInChat(item.id);
+    expect((await engine.continueHistoryInChat(item.id)).id).toBe(chat.id);
     expect(engine.historyCommands(item.id)).toMatchObject({ chat: true, terminal: false, outside: false });
     await until(() => lines(fake.args).some((a) => (a as string[]).includes('outside-2')), 'claude to resume');
     engine.sendChat(chat.id, 'next step', []);
@@ -400,7 +477,20 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
 
     // The chat is a run of the project now: the History list shows the conversation once, as the chat.
     writeFileSync(join(dirOf, 'session.json'), JSON.stringify({ session_id: 'outside-2', transcript_path: file }));
-    const after = await engine.historyList(true);
-    expect(after.filter((i) => i.sessionId === 'outside-2').map((i) => [i.source, i.runId])).toEqual([['chat', chat.id]]);
+    const after = await engine.historyList(opts());
+    expect(after.items.filter((i) => i.sessionId === 'outside-2').map((i) => [i.source, i.runId])).toEqual([['chat', chat.id]]);
+
+    // A conversation in a folder no project has goes on in that folder's stand-in.
+    const loose = mkdtempSync(join(tmpdir(), 'looper-history-loose-'));
+    const looseFile = write(join(claudeDir, 'projects', claudeProjectFolder(loose), 'outside-3.jsonl'), claudeTranscript(loose, [['loose question', 'loose answer']]));
+    utimesSync(looseFile, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+    const looseItem = (await engine.historyList(opts())).items.find((i) => i.sessionId === 'outside-3')!;
+    expect(looseItem).toMatchObject({ folder: loose, environmentId: 'local', source: 'claude-code' });
+    expect(looseItem.projectId).toBeUndefined();
+    expect(engine.historyCommands(looseItem.id)).toMatchObject({ chat: true, terminal: true, compact: true, folder: true, outside: true });
+    await engine.continueHistoryInChat(looseItem.id);
+    expect(engine.findSessionTask(folderStandInId('local', loose))?.cwd).toBe(loose);
+    expect(engine.historyCommands(looseItem.id)).toMatchObject({ chat: true, terminal: false, outside: false });
+    await until(() => lines(fake.args).some((a) => (a as string[]).includes('outside-3')), 'claude to resume the loose conversation');
   });
 });

@@ -87,7 +87,7 @@ export function parentFolder(cwd: string): string {
   return /^[A-Za-z]:$/.test(parent) ? folder.slice(0, i + 1) : parent;
 }
 
-/** What the Projects pane groups its list by. */
+/** What the Projects tab groups its list by. */
 export type ProjectGroupBy = View['projectsPane']['groupBy'];
 
 /** The name of the harness a project's sessions start with (unset = the environment's first). */
@@ -105,7 +105,7 @@ export interface ProjectGroup {
 }
 
 /**
- * The projects in the Projects pane's groups. Groups go by title (a project
+ * The projects in the Projects tab's groups. Groups go by title (a project
  * with no folder or harness last), each keeping the user's order of its
  * projects; Windows folders group without regard to case.
  */

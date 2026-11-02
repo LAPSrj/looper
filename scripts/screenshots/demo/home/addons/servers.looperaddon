@@ -10,6 +10,7 @@
     "command": ["node", "/home/leandro/repos/looper/scripts/screenshots/demo/addon/servers.mjs"]
   },
   "panes": [{ "id": "servers", "title": "Servers" }],
+  "tabs": [{ "id": "overview", "title": "Servers", "view": "overview", "icon": "terminal" }],
   "tools": [{ "id": "servers", "label": "Servers", "pane": "servers" }],
   "toolbar": [{ "id": "servers", "label": "Servers", "icon": "terminal", "tool": "servers" }]
 }

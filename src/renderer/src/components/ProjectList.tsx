@@ -9,7 +9,7 @@ import { listContextMenu, parentIndex } from './list-nav';
 type NavRow = { kind: 'group'; key: string } | { kind: 'project'; p: Project };
 
 /**
- * The Projects pane's body: the projects in the user's order, dragged to
+ * The Projects tab's list: the projects in the user's order, dragged to
  * reorder, or under a header for each group (see `groupProjects`), in which
  * the order can't be dragged.
  */

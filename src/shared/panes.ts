@@ -60,10 +60,9 @@ export function passesFilter(t: Task, filter: TaskFilter, offered: (keyof TaskFi
   );
 }
 
-/** Whether any sidebar pane shows (View's pane check boxes): with none, the main window leaves the sidebar out. */
+/** Whether any pane of the Tasks tab's sidebar shows (View's pane check boxes): with none, the tab leaves the sidebar out. */
 export function sidebarHasPanes(view: View, addons: { id: string; enabled: boolean; panes: { id: string }[] }[]): boolean {
   return (
-    view.projectsPane.visible ||
     (view.sidebar === 'single' ? view.single.visible : PANES.some((p) => view.panes[p.id].visible)) ||
     addons.some((a) => a.enabled && a.panes.some((p) => view.addonPanes[addonPaneKey(a.id, p.id)]?.visible ?? true))
   );

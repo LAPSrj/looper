@@ -53,9 +53,13 @@ function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1
  * views: every session, the one shown (null: the Overview), its chat or
  * activity, the followed subagent or open workflow, and the window's keys. `single`: a single
  * chat's window (Open in New Window), which shows `initial` only and takes no
- * keys that move through the list.
+ * keys that move through the list. `tab`: the main window's Chats tab, which
+ * takes the keys and counts as looking at the session only while `active`.
  */
-export function useSessionsWindow(initial?: string, single = false) {
+export function useSessionsWindow(initial?: string, single = false, tab?: { active: boolean }) {
+  const active = tab?.active ?? true;
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [state, setState] = useState<SessionsState>({ sessions: [], limits: {} });
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(initial ?? null);
@@ -88,7 +92,7 @@ export function useSessionsWindow(initial?: string, single = false) {
   stateRef.current = state;
 
   useEffect(() => {
-    if (!single) document.title = 'Chats';
+    if (!single && !tab) document.title = 'Chats';
     void window.looper.sessions.state().then((s) => {
       setState(s);
       setLoaded(true);
@@ -113,7 +117,7 @@ export function useSessionsWindow(initial?: string, single = false) {
         e.preventDefault();
         e.stopPropagation();
       };
-      if (e.altKey || e.metaKey) return;
+      if (e.altKey || e.metaKey || !activeRef.current) return;
       if (single) {
         // The window's own chat: F6 between its panes, and Close Conversation.
         if (e.key === 'F6' && !e.ctrlKey) {
@@ -178,31 +182,35 @@ export function useSessionsWindow(initial?: string, single = false) {
   }, [single, loaded, selected, summary, state.sessions]);
 
   useEffect(() => {
-    window.looper.sessions.show(selected);
     setChat(null);
     setActivity(null);
     setFollowed(null);
     setWorkflowOpen(null);
-    if (!selected) return;
-    window.looper.sessions.seen(selected);
+    if (selected && activeRef.current) window.looper.sessions.seen(selected);
+  }, [selected]);
+
+  // The shown session's events come only while it shows (a Chats tab behind another tab gets none), so it's read again each time it does.
+  useEffect(() => {
+    window.looper.sessions.show(active ? selected : null);
+    if (!selected || !active) return;
     void window.looper.chat.get(selected).then((c) => {
       if (c && c.id === selectedRef.current) setChat(c);
     });
     void window.looper.sessions.activity(selected).then((a) => {
       if (a && a.id === selectedRef.current) setActivity(a);
     });
-  }, [selected]);
+  }, [selected, active]);
 
   // Looking at a session ends its wait for a finished turn or a notification.
   const waitKey = summary?.waiting ? `${summary.id}:${summary.waiting.reason}:${summary.waiting.since}` : '';
   useEffect(() => {
-    if (!summary?.waiting || summary.waiting.reason === 'permission') return;
+    if (!summary?.waiting || summary.waiting.reason === 'permission' || !active) return;
     if (document.hasFocus()) window.looper.sessions.seen(summary.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitKey]);
+  }, [waitKey, active]);
   useEffect(() => {
     const onFocus = () => {
-      if (selectedRef.current) window.looper.sessions.seen(selectedRef.current);
+      if (selectedRef.current && activeRef.current) window.looper.sessions.seen(selectedRef.current);
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);

@@ -1,8 +1,8 @@
 # Addons
 
-An addon is another program that adds screens to Looper: a pane in the
-sidebar, a screen in the main window when you select one of the pane's items,
-and windows of its own. The program only describes what each screen holds
+An addon is another program that adds screens to Looper: a pane on the main
+window's Tasks tab, a screen in the main window when you select one of the
+pane's items, a tab of its own, and windows of its own. The program only describes what each screen holds
 (fields, values, buttons). Looper draws it with its own controls, so addon
 screens look and behave like the rest of Looper, and they follow along when
 Looper's interface changes.
@@ -11,8 +11,8 @@ Looper's interface changes.
 
 An addon comes with a `.looperaddon` file. Double-click it, drop it on the
 Looper window, or use **Advanced → Addons… → Install…**. Looper asks first,
-showing the addon's description, the panes, toolbar buttons and Tools menu
-items it adds, how many tools' calls it changes the look of on the Chats
+showing the addon's description, the tabs, panes, toolbar buttons and Tools
+menu items it adds, how many tools' calls it changes the look of on the Chats
 window's Now tab, and the command it runs, and installs it when you click
 **Install**. For an addon that's already installed, the button says
 **Replace** (another version) or **Reinstall** (the same version).
@@ -27,15 +27,29 @@ quits.
 
 ![An addon's Servers pane, with a search box, and a server's screen](img/addons-pane.png)
 
-Each pane an addon adds shows in the sidebar below the task list, in both the
-single-list and the multiple-pane layout. Like the task panes, it has a header
+Each pane an addon adds shows on the Tasks tab, in the sidebar below the task
+list, in both the single-list and the multiple-pane layout. Like the task panes, it has a header
 you click to collapse it and a splitter above it you drag to resize it.
 An addon can group a pane's items under headings, like task folders, that you
 click to collapse; collapsed groups stay collapsed the next time.
-Selecting an item shows its screen in the main window, and selecting a task
-goes back to the task's detail. Right-clicking an item opens its menu, and
+Selecting an item shows its screen on the right of the Tasks tab, and
+selecting a task goes back to the task's detail. Right-clicking an item opens its menu, and
 right-clicking the pane's header opens the pane's menu, which ends with
-**Hide Pane**. Its check box in the **View** menu shows a hidden pane again.
+**Hide Pane**. Its check box in the **View** menu, while the Tasks tab shows,
+shows a hidden pane again.
+
+## Addon tabs
+
+An addon can add tabs to the main window, after Looper's own. Each one is
+filled by one of the addon's screens, across the whole window, such as a
+**Servers** tab that shows every server at once. A tab has a name and an
+icon. Without an icon of its own it shows a window icon. While the tab shows,
+its screen's toolbar buttons join the main toolbar, after the addon's own
+buttons. The screen's menu bar isn't used in the main window.
+
+The **View** menu has an item named after each tab, which opens the tab's
+screen in a window of its own. The tab goes away while the addon is stopped in the Addons window, and a window left
+on it goes back to the Dashboard. Phones don't show addon tabs.
 
 When an addon stops on its own, its panes say so and show the end of what it
 printed as it stopped, with a **Restart** button.
@@ -44,8 +58,9 @@ printed as it stopped, with a **Restart** button.
 
 An addon can add buttons to the main toolbar, after Looper's own, such as a
 **Servers** button that opens the addon's Servers window. While one of an
-addon's screens shows in the main window, that screen's buttons follow them,
-such as **Edit Server…** for the selected server.
+addon's screens shows in the main window, on the Tasks tab or in one of its
+tabs, that screen's buttons follow them, such as **Edit Server…** for the
+selected server.
 
 The View menu has a check box for each installed addon after **Toolbar**,
 such as **Servers Toolbar** (the addon can give it another name), and
@@ -96,8 +111,8 @@ environment. The install dialog shows your settings when you have changed
 them.
 
 Looper remembers a stopped addon: it doesn't start the next time Looper
-starts, and its panes, toolbar buttons and Tools menu items stay hidden, and
-its windows close, until you start it again. The status bar counts the
+starts, and its tabs, panes, toolbar buttons and Tools menu items stay hidden,
+and its windows close, until you start it again. The status bar counts the
 running addons.
 
 ## Writing an addon
@@ -127,6 +142,7 @@ noted in the engine log.
     "env": { "SERVERS_FILE": "/home/me/servers.json" }
   },
   "panes": [{ "id": "servers", "title": "Servers" }],
+  "tabs": [{ "id": "overview", "title": "Servers", "view": "overview", "icon": "terminal" }],
   "tools": [{ "id": "servers", "label": "Servers", "pane": "servers" }],
   "toolbar": [{ "id": "servers", "label": "Servers", "icon": "terminal", "tool": "servers" }]
 }
@@ -141,7 +157,8 @@ noted in the engine log.
 | `run.command` | The program and its arguments. A WSL command runs through the environment's shell, `bash -lic` unless the user changed it, as tasks do, so the PATH includes what `~/.bashrc` adds (nvm, bun). A Windows command must be an `.exe`. |
 | `run.cwd`, `run.env` | Working directory and extra environment variables. |
 | `${addonDir}` | In `run.command`, `run.cwd` and `run.env` values: the folder the `.looperaddon` file is installed from, as the side the addon runs on sees it (`/home/…` or `/mnt/c/…` in WSL). Ship the file next to your program and write `"command": ["node", "${addonDir}/addon.mjs"]`, and the addon runs wherever the user keeps your program. |
-| `panes` | The sidebar panes, by id and title. |
+| `panes` | The panes on the Tasks tab, by id and title. |
+| `tabs` | Tabs in the main window, after Looper's own: `{ id, title, view, params?, icon? }`. Each one is filled by the addon's screen `view`, drawn with `params` like any screen. Its `toolbar` buttons join the main toolbar while the tab shows, and its `menuBar` is ignored there, as in the main window. `icon` is one of the toolbar icon names listed under [Menus and toolbars](#menus-and-toolbars), and without one the tab shows a window icon. A tab `id` can't repeat: a manifest that repeats one is invalid, with `tabs: duplicate id "<id>"`. View → the tab's title opens it in a window of its own. |
 | `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
 | `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool? }`. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
 | `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
@@ -272,7 +289,8 @@ button's `id`.
 ```
 
 `toolbar` adds its buttons to the window's toolbar while the screen shows: in
-the main window after Looper's own buttons, in a pane window after the pane's,
+the main window, on the Tasks tab or in an addon tab, after Looper's own
+buttons, in a pane window after the pane's,
 and in a window the screen fills, in a toolbar of its own. `menuBar` becomes
 the menu bar of a window the screen fills (one opened with `openWindow`, or a
 Tools item with a `view`).
@@ -339,7 +357,7 @@ The answer can have:
 | `refresh` | | Draws the addon's panes and screens again. |
 | `message` | `kind` (`info`, `warning`, `error`), `message`, `detail?` | Shows a dialog. |
 | `copy` | `text` | Copies the text to the clipboard. |
-| `select` | `pane`, `item` | Selects a pane item, such as one just created, in the window the event came from, or in the window that opened it. |
+| `select` | `pane`, `item` | Selects a pane item, such as one just created, in the window the event came from, or in the window that opened it. In the main window, it shows the Tasks tab. |
 
 ### How tool calls show
 

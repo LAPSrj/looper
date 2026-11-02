@@ -151,7 +151,8 @@ either change at once.
 ## In a desktop browser
 
 In a browser on another computer, the main window fills the page, with its
-menu bar. Every other window opens as a dialog over it: drag it by its title
+menu bar and its [tabs](monitoring.md#the-main-window), the same as at the
+host computer. Every other window opens as a dialog over it: drag it by its title
 bar, resize it by its edges, and use the buttons on its title bar to minimize
 it, maximize it (a window you can resize) or close it. Double-clicking the
 title bar also maximizes it. A maximized window fills the page and can't be
@@ -239,7 +240,7 @@ Android's, with one window on screen at a time.
 - The main window has tabs along the bottom: **Dashboard**, **Projects**,
   **Tasks** and **Chats**. Selecting a task or a project opens its screen
   over the list; each tab keeps its own screens, and tapping the tab you're on
-  goes back to its list.
+  goes back to its list. Addons' tabs don't show on a phone.
 - The menu bar is behind **More** (**⋯** on an iPhone, **⋮** on Android): File,
   Task, View, Advanced and Help, and **This Device**.
 - Other windows open as full screens that you leave with **Back** (**‹** on an

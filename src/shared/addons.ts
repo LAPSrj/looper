@@ -85,6 +85,18 @@ export const AddonToolSchema = z
   .refine((t) => !!t.pane !== !!t.view, 'give either "pane" or "view"');
 export type AddonTool = z.infer<typeof AddonToolSchema>;
 
+/** A tab of the main window's own: one of the addon's screens fills it, and View → its title opens it in a window of its own. */
+export const AddonTabSchema = z
+  .object({
+    id,
+    title: z.string().min(1),
+    view: id,
+    params: ParamsSchema.optional(),
+    icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
+  })
+  .strict();
+export type AddonTab = z.infer<typeof AddonTabSchema>;
+
 /** A main-toolbar button: it opens one of the addon's tools, or else sends it a `click` event. */
 export const AddonMainButtonSchema = z
   .object({
@@ -127,6 +139,8 @@ export const AddonManifestSchema = z
     description: z.string().optional(),
     run: AddonRunSchema,
     panes: z.array(AddonPaneDefSchema).default([]),
+    /** Tabs in the main window, after Looper's own (not on a phone, whose tab bar has room for Looper's only). */
+    tabs: z.array(AddonTabSchema).default([]),
     tools: z.array(AddonToolSchema).default([]),
     /** Buttons on the main toolbar, there at all times. */
     toolbar: z.array(AddonMainButtonSchema).default([]),
@@ -155,6 +169,11 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
   for (const p of parsed.data.panes) {
     if (ids.has(p.id)) return { ok: false, reason: 'invalid', error: `panes: duplicate id "${p.id}"` };
     ids.add(p.id);
+  }
+  const tabIds = new Set<string>();
+  for (const t of parsed.data.tabs) {
+    if (tabIds.has(t.id)) return { ok: false, reason: 'invalid', error: `tabs: duplicate id "${t.id}"` };
+    tabIds.add(t.id);
   }
   const toolIds = new Set<string>();
   for (const t of parsed.data.tools) {
@@ -235,10 +254,12 @@ function listText(items: string[]): string {
 }
 
 /** What installing the addon adds to Looper, one line per place, for the install confirmation. */
-export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'> & { toolCalls?: AddonToolCall[] }): string[] {
+export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'> & { tabs?: AddonTab[]; toolCalls?: AddonToolCall[] }): string[] {
   const lines: string[] = [];
+  const tabs = (m.tabs ?? []).map((t) => t.title);
+  if (tabs.length) lines.push(`${tabs.length === 1 ? 'A ' : ''}${listText(tabs)} tab${tabs.length === 1 ? '' : 's'} in the main window`);
   const panes = m.panes.map((p) => p.title);
-  if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} in the sidebar`);
+  if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} on the Tasks tab`);
   const buttons = m.toolbar.map((b) => b.label);
   if (buttons.length) lines.push(`${buttons.length === 1 ? 'A ' : ''}${listText(buttons)} button${buttons.length === 1 ? '' : 's'} on the toolbar`);
   const tools = m.tools.map((t) => `${t.label}…`);
@@ -612,6 +633,7 @@ export interface AddonInfo {
   /** describeRun of its manifest. */
   run: string;
   panes: { id: string; title: string }[];
+  tabs: AddonTab[];
   tools: AddonTool[];
   toolbar: AddonMainButton[];
   toolbarName?: string;
