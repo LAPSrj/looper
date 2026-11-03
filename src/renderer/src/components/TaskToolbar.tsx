@@ -9,22 +9,19 @@ export interface NewToolbarState {
   newTaskProject: Project | null;
   /** The project New Chat and New Terminal start in; null makes them ask. */
   sessionProject: Project | null;
+  /** Show New Terminal after New Chat (the Chats tab). */
+  terminal?: boolean;
   onAction: (type: UiEvent['type']) => void;
 }
 
-/** The main window's New buttons, the same on every tab: New Task and New Project, then New Chat and New Terminal. */
-export function newToolbarGroups({ newTaskProject, sessionProject, onAction }: NewToolbarState): ToolbarGroup[] {
+/** The main window's New buttons, in the order of the tabs: New Project, New Task and New Chat, and New Terminal on the Chats tab. */
+export function newToolbarGroups({ newTaskProject, sessionProject, terminal, onAction }: NewToolbarState): ToolbarGroup[] {
   return [
     {
       id: 'new',
       items: [
-        { id: 'new-task', label: newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', icon: 'newTask', run: () => onAction('new-task') },
         { id: 'new-project', label: 'New Project', icon: 'newProject', run: () => void window.looper.projects.openEditor() },
-      ],
-    },
-    {
-      id: 'new-sessions',
-      items: [
+        { id: 'new-task', label: newTaskProject ? `New Task in ${newTaskProject.name}` : 'New Task', icon: 'newTask', run: () => onAction('new-task') },
         {
           id: 'new-chat',
           label: sessionProject ? `New Chat in ${sessionProject.name}` : 'New Chat',
@@ -33,14 +30,21 @@ export function newToolbarGroups({ newTaskProject, sessionProject, onAction }: N
           run: sessionProject ? () => void window.looper.projects.newChat(sessionProject.id) : null,
           menu: { label: sessionProject ? 'New Chat in Another Project' : 'New Chat in Project', open: (x, y) => window.looper.sessions.showNewMenu('chat', x, y) },
         },
-        {
-          id: 'new-terminal',
-          label: sessionProject ? `New Terminal in ${sessionProject.name}` : 'New Terminal',
-          shortcut: sessionProject ? hint(SHORTCUTS.newTerminal) : undefined,
-          icon: 'terminal',
-          run: sessionProject ? () => void window.looper.projects.newTerminal(sessionProject.id) : null,
-          menu: { label: sessionProject ? 'New Terminal in Another Project' : 'New Terminal in Project', open: (x, y) => window.looper.sessions.showNewMenu('terminal', x, y) },
-        },
+        ...(terminal
+          ? [
+              {
+                id: 'new-terminal',
+                label: sessionProject ? `New Terminal in ${sessionProject.name}` : 'New Terminal',
+                shortcut: sessionProject ? hint(SHORTCUTS.newTerminal) : undefined,
+                icon: 'terminal',
+                run: sessionProject ? () => void window.looper.projects.newTerminal(sessionProject.id) : null,
+                menu: {
+                  label: sessionProject ? 'New Terminal in Another Project' : 'New Terminal in Project',
+                  open: (x: number, y: number) => window.looper.sessions.showNewMenu('terminal', x, y),
+                },
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -52,7 +56,7 @@ export interface TaskToolbarState {
   onAction: (type: UiEvent['type']) => void;
 }
 
-/** The Tasks tab's buttons, for the selected task: running it, its state, editing it, its guidance and its folder. */
+/** The Tasks tab's buttons, for the selected task: running it, its state and its guidance, then editing it and its folder. */
 export function taskToolbarGroups({ task, runtime, onAction }: TaskToolbarState): ToolbarGroup[] {
   const state = runtime?.state;
   const active = state === 'running' || state === 'checking' || state === 'classifying';
@@ -79,17 +83,15 @@ export function taskToolbarGroups({ task, runtime, onAction }: TaskToolbarState)
         },
         { id: 'enable-disable', label: task?.enabled === false ? 'Enable' : 'Disable', icon: 'power', enabled: hasTask && !completed, run: act('enable-disable') },
         { id: 'complete-reopen', label: completed ? 'Reopen' : 'Complete', icon: 'complete', enabled: hasTask && (completed || !!task?.completion.allowed), run: act('complete-reopen') },
-        { id: 'edit-task', label: 'Edit Task', shortcut: 'Ctrl+E', icon: 'edit', enabled: hasTask, run: act('edit-task') },
+        { id: 'edit-note', label: task?.note ? 'Edit Guidance for Next Run' : 'Add Guidance for Next Run', icon: 'guidance', enabled: hasTask, run: act('edit-note') },
       ],
     },
     {
-      id: 'guidance',
-      items: [{ id: 'edit-note', label: task?.note ? 'Edit Guidance for Next Run' : 'Add Guidance for Next Run', icon: 'guidance', enabled: hasTask, run: act('edit-note') }],
-    },
-    {
-      id: 'folder',
-      platforms: DESKTOP_ONLY,
-      items: [{ id: 'open-work-folder', label: 'Open Working Directory', icon: 'folder', enabled: hasTask, run: act('open-work-folder') }],
+      id: 'edit',
+      items: [
+        { id: 'edit-task', label: 'Edit Task', shortcut: 'Ctrl+E', icon: 'edit', enabled: hasTask, run: act('edit-task') },
+        { id: 'open-work-folder', label: 'Open Working Directory', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: hasTask, run: act('open-work-folder') },
+      ],
     },
   ];
 }
@@ -101,7 +103,7 @@ export function projectToolbarGroups(project: Project | null, onAction: (type: U
       id: 'project',
       items: [
         { id: 'edit-project', label: 'Edit Project', icon: 'edit', enabled: !!project, run: () => onAction('edit-project') },
-        { id: 'open-project-folder', label: 'Open Folder', icon: 'folder', platforms: DESKTOP_ONLY, enabled: !!project, run: () => onAction('open-project-folder') },
+        { id: 'open-project-folder', label: 'Open Folder', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: !!project, run: () => onAction('open-project-folder') },
       ],
     },
   ];

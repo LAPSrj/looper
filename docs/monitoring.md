@@ -37,8 +37,8 @@ go to the first and the last.
 
 ### Where the tabs go
 
-**View → Tabs** puts the tabs at the **Top** (below the toolbar, the
-default), on the **Left** (a column down the window's left side), or at the
+**View → Tabs** puts the tabs on the **Left** (a column down the window's
+left side, the default), at the **Top** (below the toolbar), or at the
 **Bottom** (above the status bar). At the top or at the bottom, **Show Icons**
 turns the icon before each tab's name on or off. On the left, **Show Labels**
 turns the name under each icon on or off; an icon alone shows its name when
@@ -208,17 +208,18 @@ guide in its own window, and Help → About Looper shows the version.
 
 ## The toolbar
 
-The first buttons are always there. After them come the shown tab's buttons,
-then the buttons that addons add (see [Addons](addons.md#the-toolbar)), then
-the buttons of the addon screen that shows, if one does. Buttons, left to
-right, with their tooltips:
+The New buttons come first, in the order of the tabs, and each one shows its
+tab's icon with a plus.
+After them come the shown tab's buttons, then the buttons that addons add
+(see [Addons](addons.md#the-toolbar)), then the buttons of the addon screen
+that shows, if one does. Buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
-| Page with a plus | New Task, or New Task in &lt;project&gt; while a project or a task is selected | — |
 | Folder with a plus | New Project (the same as File → New Project…) | — |
+| Checklist with a plus | New Task, or New Task in &lt;project&gt; while a project or a task is selected | — |
 | Bubble with a plus | New Chat in &lt;project&gt;; its arrow lists the projects | Ctrl+T |
-| Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects | Ctrl+Shift+T |
+| Terminal | On the Chats tab only: New Terminal in &lt;project&gt;; its arrow lists the projects | Ctrl+Shift+T |
 
 On the **Tasks** tab, the buttons act on the selected task:
 
@@ -229,9 +230,9 @@ On the **Tasks** tab, the buttons act on the selected task:
 | Pause/Resume | Pause / Resume | Ctrl+P |
 | Power | Enable / Disable | — |
 | Check | Complete / Reopen | — |
+| Note with a folded corner | Add Guidance for Next Run / Edit Guidance for Next Run | — |
 | Edit | Edit Task | Ctrl+E |
-| Guidance | Add Guidance for Next Run / Edit Guidance for Next Run | — |
-| Folder | Open Working Directory | — |
+| Open folder | Open Working Directory | — |
 
 On the **Projects** tab, the buttons are Edit Project and Open Folder, for the
 selected [project](projects.md). On the **Chats** tab they are the Chats
@@ -497,16 +498,16 @@ The toolbar's buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
-| Grid | Dashboard (stays pressed while the dashboard shows); Overview on the Chats tab | — |
-| Bullhorn | Send to Chats | — |
-| Clock with an arrow around it | History: opens the [History window](#the-history-window) | — |
 | Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects, Other Folder… and New Project… | Ctrl+T |
 | Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects, Other Folder… and New Project… | — |
+| Grid | Dashboard (stays pressed while the dashboard shows); Overview on the Chats tab | — |
+| Clock with an arrow around it | History: opens the [History window](#the-history-window) | — |
+| Bullhorn | Send to Chats | — |
 | Bubble with a square | Stop (greyed out while the agent isn't working) | Esc in a chat |
 | Bubble with fast-forward | Send Now: stops the turn, and the agent goes on with the chat's queued messages | Ctrl+Enter |
 | Bubble with text and a small bubble | Compact into New Chat (greyed out while the agent works, and until it has replied) | — |
 | Bubble with an X | Close Conversation | Ctrl+W, Ctrl+F4 |
-| Folder | Open Working Directory | — |
+| Open folder | Open Working Directory | — |
 | Window with a right column | Activity Pane (stays pressed while the pane shows) | — |
 
 The status bar shows the session's harness, then how much of the context the conversation uses, when
@@ -589,11 +590,11 @@ The toolbar's buttons, left to right:
 
 | Button | Tooltip |
 |---|---|
-| Two bubbles | Continue in Chat |
+| Bubble | Continue in Chat |
 | Bubble with text and a small bubble | Continue Compacted |
 | Terminal | Continue in Terminal |
 | Two sheets | Copy Session ID |
-| Folder | Open Working Directory |
+| Open folder | Open Working Directory |
 | Window with a right column | Activity Pane (stays pressed while the pane shows) |
 
 The File menu and a conversation's right-click menu have the same commands.

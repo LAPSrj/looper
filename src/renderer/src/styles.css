@@ -145,84 +145,63 @@ code,
   min-height: 0;
 }
 
-/* The main window's tabs (ViewTabs): an indicator bar on the selected one, unlike the underlined tab rows inside a view. */
+/*
+ * The main window's tabs below the toolbar or above the status bar: the shared
+ * Tabs strip (styled with the others further down), on the toolbar's color, its
+ * selected tab the view's. Over the view's top border, so that tab can cover it.
+ */
+.tabs.main-tabs {
+  --tabs-pad: 8px;
+  flex: none;
+  background: var(--bg-2);
+}
+.main-tabs.top {
+  position: relative;
+  z-index: 1;
+  margin-bottom: -1px;
+}
+
+/* The main window's tabs down its left side (ViewTabs' rail). */
 .view-tabs {
   display: flex;
   flex: none;
-  gap: 2px;
-  padding: 2px 8px;
-  background: var(--bg-2);
-}
-.view-tabs.bottom {
-  border-top: 1px solid var(--border);
-}
-.view-tabs.left {
   flex-direction: column;
+  gap: 2px;
   padding: 6px 4px;
   border-top: 1px solid var(--border);
   border-right: 1px solid var(--border);
+  background: var(--bg-2);
 }
 .view-tab {
-  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 3px;
+  width: 72px;
+  padding: 8px 4px;
   border: none;
   border-radius: var(--radius-control);
   background: none;
   color: var(--fg-muted);
   font: inherit;
+  font-size: var(--font-caption);
   cursor: default;
+}
+.view-tabs.icons-only .view-tab {
+  width: auto;
+  padding: 8px;
+}
+.view-tab svg {
+  width: 20px;
+  height: 20px;
 }
 .view-tab:hover {
   background: var(--bg-3);
   color: var(--fg);
 }
 .view-tab.active {
-  color: var(--fg);
-}
-.view-tab.active::after {
-  content: '';
-  position: absolute;
-  border-radius: 2px;
-  background: var(--accent);
-}
-.view-tabs.top .view-tab.active::after,
-.view-tabs.bottom .view-tab.active::after {
-  left: 10px;
-  right: 10px;
-  height: 3px;
-}
-.view-tabs.top .view-tab.active::after {
-  bottom: 0;
-}
-.view-tabs.bottom .view-tab.active::after {
-  top: 0;
-}
-.view-tabs.left .view-tab {
-  flex-direction: column;
-  gap: 3px;
-  width: 72px;
-  padding: 8px 4px;
-  font-size: var(--font-caption);
-}
-.view-tabs.left.icons-only .view-tab {
-  width: auto;
-  padding: 8px;
-}
-.view-tabs.left .view-tab svg {
-  width: 20px;
-  height: 20px;
-}
-.view-tabs.left .view-tab.active {
   background: var(--bg-3);
-}
-.view-tabs.left .view-tab.active::after {
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
+  color: var(--fg);
 }
 .view-tab-label {
   max-width: 100%;
@@ -235,8 +214,9 @@ code,
   outline-offset: -2px;
 }
 @media (forced-colors: active) {
-  .view-tab.active::after {
-    background: Highlight;
+  .view-tab.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }
 .instructions-app {
@@ -814,6 +794,82 @@ html:not(.phone-window) .session-group ~ .session-row {
 }
 .tab-item.active .tab-close {
   border-bottom-color: var(--accent);
+}
+/*
+ * Desktop windows draw the shared strip as classic tabs: each tab has a
+ * border and is a shade darker than the panel, and the selected one is 2px
+ * taller and the panel's color (--tabs-bg), open into the panel below. The
+ * strip's line (an inset shadow, under the tabs) shows only past the others.
+ * Phones keep the underlined tabs above.
+ */
+:where(html:not(.phone-window)) .tabs {
+  align-items: flex-end;
+  padding-top: 4px;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  margin-top: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: color-mix(in srgb, var(--tabs-bg) 94%, var(--fg));
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item:not(.active):hover {
+  background: color-mix(in srgb, var(--tabs-bg) 88%, var(--fg));
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item.active {
+  margin-top: 0;
+  border-bottom-color: transparent;
+  /* Tabs sets --tab-under to the color that covers most of the panel under the tab. */
+  background: var(--tab-under, var(--tabs-bg));
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab {
+  padding: 4px 12px;
+  border: none;
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item.active .tab {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item.has-close .tab {
+  padding-right: 4px;
+}
+:where(html:not(.phone-window)) .tab-close {
+  border-bottom: none;
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item:has(> .tab.divide-after) {
+  margin-right: 9px;
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab.divide-after {
+  margin-right: 0;
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab.divide-after::after {
+  right: -7px;
+}
+/* The main window's strip above the status bar: the same tabs upside down. */
+:where(html:not(.phone-window)) .tabs.main-tabs.bottom {
+  align-items: flex-start;
+  padding: 0 var(--tabs-pad) 4px;
+  box-shadow: inset 0 1px 0 var(--border);
+}
+:where(html:not(.phone-window)) .main-tabs.bottom .tab-item {
+  margin-top: 0;
+  margin-bottom: 2px;
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+}
+:where(html:not(.phone-window)) .main-tabs.bottom .tab-item.active {
+  margin-bottom: 0;
+  border-top-color: transparent;
+  border-bottom-color: var(--border);
+}
+@media (forced-colors: active) {
+  :where(html:not(.phone-window)) .tabs-scroll .tab-item.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 .tabs-scroll-button {
   display: none;
@@ -4046,6 +4102,7 @@ html.phone-window .workflow-text {
   flex: none;
   --tabs-pad: 0px;
   border-bottom: none;
+  box-shadow: none;
 }
 .git-branch {
   min-width: 0;

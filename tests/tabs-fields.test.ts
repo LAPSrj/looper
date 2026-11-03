@@ -2,11 +2,29 @@ import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { bindField } from '../src/renderer/src/components/field-model';
-import { ctrlTabTarget, panelDomId, tabAria, tabDomId, tabKeyTarget, tabName, tabStop, type TabItem } from '../src/renderer/src/components/tabs-model';
+import { ctrlTabTarget, isClear, mostCommon, panelDomId, tabAria, tabDomId, tabKeyTarget, tabName, tabStop, type TabItem } from '../src/renderer/src/components/tabs-model';
 import { resultParts, resultSummary } from '../src/renderer/src/components/workflow-summary';
 
 const tab = (id: string, extra: Partial<TabItem> = {}): TabItem => ({ id, label: id, ...extra });
 const ids = ['conversation', 'agent:a', 'agent:b', 'run:r'];
+
+describe('the selected tab color', () => {
+  it('takes the color most samples under the tab have, the first of a tie', () => {
+    const white = 'rgb(251, 251, 251)';
+    const base = 'rgb(243, 243, 243)';
+    expect(mostCommon([white, white, base, white, base])).toBe(white);
+    expect(mostCommon([base, white])).toBe(base);
+    expect(mostCommon([])).toBeNull();
+  });
+
+  it('passes over backgrounds that paint nothing, but not black', () => {
+    expect(isClear('rgba(0, 0, 0, 0)')).toBe(true);
+    expect(isClear('transparent')).toBe(true);
+    expect(isClear('color(srgb 1 1 1 / 0)')).toBe(true);
+    expect(isClear('rgb(0, 0, 0)')).toBe(false);
+    expect(isClear('rgba(20, 22, 26, 0.5)')).toBe(false);
+  });
+});
 
 describe('tabKeyTarget', () => {
   it('moves to the neighbor with Left and Right, wrapping at the ends', () => {

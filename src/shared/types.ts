@@ -486,7 +486,7 @@ export const ViewSchema = z.object({
   /** The main window's tabs: below the toolbar, down its left side, or above the status bar. */
   tabs: z
     .object({
-      position: z.enum(['top', 'left', 'bottom']).default('top'),
+      position: z.enum(['top', 'left', 'bottom']).default('left'),
       /** At the top or bottom: each tab shows its icon before its name. */
       icons: z.boolean().default(true),
       /** On the left: each tab shows its name below its icon. */

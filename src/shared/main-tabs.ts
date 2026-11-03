@@ -2,10 +2,10 @@ import type { AddonInfo, AddonTab } from './addons';
 
 /** Looper's own tabs of the main window, in their order. */
 export const LOOPER_TABS = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { id: 'projects', label: 'Projects', icon: 'folder' },
-  { id: 'tasks', label: 'Tasks', icon: 'tasks' },
-  { id: 'chats', label: 'Chats', icon: 'chat' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboardTab' },
+  { id: 'projects', label: 'Projects', icon: 'projectsTab' },
+  { id: 'tasks', label: 'Tasks', icon: 'tasksTab' },
+  { id: 'chats', label: 'Chats', icon: 'chatsTab' },
 ] as const;
 
 export type LooperTab = (typeof LOOPER_TABS)[number]['id'];

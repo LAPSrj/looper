@@ -71,11 +71,14 @@ export function StatusGlyph({ level, label, className }: { level: StatusLevel; l
   );
 }
 
-/** A speech bubble in the top-left of the icon, leaving the bottom-right corner for an action glyph. */
-const BUBBLE = 'M3 2h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 12.8V10H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 2Z';
+/** A speech bubble on the left of the icon, leaving the bottom-right corner for an action glyph. Its top is at 3, level with the checklist's and the folder's. */
+const BUBBLE = 'M3 3h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 13.8V11H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 3Z';
 
 /** The same bubble lower down, leaving the top-right corner for an action glyph. */
 const BUBBLE_LOW = 'M3 5h8a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 15v-2.5H3A1.5 1.5 0 0 1 1.5 11V6.5A1.5 1.5 0 0 1 3 5Z';
+
+/** The tasks icon's three checks, down its left side. */
+const TASK_CHECKS = 'm1.8 3.8 1.2 1.2L5 3M1.8 8.3l1.2 1.2L5 7.5M1.8 12.8l1.2 1.2L5 12';
 
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
 export const ICONS: Record<
@@ -100,7 +103,10 @@ export const ICONS: Record<
   | 'doubleSize'
   | 'normalSize'
   | 'history'
-  | 'tasks'
+  | 'dashboardTab'
+  | 'projectsTab'
+  | 'tasksTab'
+  | 'chatsTab'
   | 'window',
   ReactNode
 > = {
@@ -128,14 +134,15 @@ export const ICONS: Record<
       <path d="m5 8 2.2 2.2L11 6" />
     </>
   ),
-  guidance: <path d="M2.5 3.5h11v7.5H7l-3 2.5v-2.5H2.5Z" />,
-  // Two speech bubbles: a conversation, unlike guidance's single one.
-  chat: (
+  // A sticky note with its corner folded: a note for the next run.
+  guidance: (
     <>
-      <path d="M1.5 2.5h8.5v5.5H5L2.8 9.8V8H1.5Z" />
-      <path d="M12 5.5h2.5v6h-1.2v1.8L11 11.5H6.5V10" />
+      <path d="M2.5 2.5h11v7l-4 4h-7Z" />
+      <path d="M13.5 9.5h-4v4M5 5.5h6M5 8h3" />
     </>
   ),
+  // The chat actions' bubble, moved to the middle of the box.
+  chat: <path d={BUBBLE} transform="translate(1 -0.4)" />,
   // A speech bubble with a plus at its bottom-right corner, a gap cut around it (Fluent's compound icons).
   newChat: (
     <>
@@ -172,7 +179,7 @@ export const ICONS: Record<
         <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
       </mask>
       <path d={BUBBLE} mask="url(#ico-cut-compact)" />
-      <path d="M4.5 4.6h5M4.5 7.2h3" />
+      <path d="M4.5 5.6h5M4.5 8.2h3" />
       <path d="M10 9.6h4a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-2.2l-1.6 1.4V14H10a1 1 0 0 1-1-1v-2.4a1 1 0 0 1 1-1Z" />
     </>
   ),
@@ -220,15 +227,13 @@ export const ICONS: Record<
     </>
   ),
   folder: <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" />,
+  // The folder with its front tipped forward: opening one in Explorer, unlike the plain folder (a project).
+  openFolder: <path d="M13 7.5V6a1 1 0 0 0-1-1H7L5.7 3.5H2.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h9.6a1 1 0 0 0 .9-.6l2.2-4.7a.5.5 0 0 0-.45-.7H4.4a1 1 0 0 0-.9.6L1.6 12.9" />,
   add: <path d="M8 3v10M3 8h10" />,
-  // A page with a folded corner and two text lines, a plus at its bottom-right corner with a gap cut around it.
+  // The tasks icon with a plus in place of its last two rows' lines, the second row's cut short to clear it.
   newTask: (
     <>
-      <mask id="ico-cut-plus-task" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
-      </mask>
-      <path d="M2.5 1.5h6l3 3v9h-9ZM8.5 1.5v3h3M5 7h4M5 9.5h2.5" mask="url(#ico-cut-plus-task)" />
+      <path d={`${TASK_CHECKS}M7.5 4h6.5M7.5 8.5h1.3`} />
       <path d="M12 9.2v5.6M9.2 12h5.6" />
     </>
   ),
@@ -254,11 +259,31 @@ export const ICONS: Record<
       <path d="M8 5v3l2.2 1.4" />
     </>
   ),
-  // Three checked rows: the task list.
-  tasks: (
+  // The tabs' icons: two of a project's and a chat's shape for the plural names, and the dashboard's and the task list's drawn smaller to match their size.
+  dashboardTab: (
     <>
-      <path d="m1.8 3.8 1.2 1.2L5 3M1.8 8.3l1.2 1.2L5 7.5M1.8 12.8l1.2 1.2L5 12" />
-      <path d="M7.5 4h6.5M7.5 8.5h6.5M7.5 13h6.5" />
+      <rect x="3" y="3" width="3.5" height="3.5" rx="0.5" />
+      <rect x="9.5" y="3" width="3.5" height="3.5" rx="0.5" />
+      <rect x="3" y="9.5" width="3.5" height="3.5" rx="0.5" />
+      <rect x="9.5" y="9.5" width="3.5" height="3.5" rx="0.5" />
+    </>
+  ),
+  projectsTab: (
+    <>
+      <path d="M1.5 12.5V7a1 1 0 0 1 1-1h2.7L6.5 7.3h5a1 1 0 0 1 1 1v4.2a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
+      <path d="M4 6V4a1 1 0 0 1 1-1h2.7L9 4.3h4.5a1 1 0 0 1 1 1v5.2a1 1 0 0 1-1 1h-1" />
+    </>
+  ),
+  tasksTab: (
+    <>
+      <path d="m2.5 4.4 1.1 1.1 1.9-1.9M2.5 7.9 3.6 9l1.9-1.9M2.5 11.4l1.1 1.1 1.9-1.9" />
+      <path d="M7.5 4.5h5.5M7.5 8h5.5M7.5 11.5h5.5" />
+    </>
+  ),
+  chatsTab: (
+    <>
+      <path d="M1.5 6.5a1.3 1.3 0 0 1 1.3-1.3h6.4a1.3 1.3 0 0 1 1.3 1.3v3.7a1.3 1.3 0 0 1-1.3 1.3H5.5L3 13.8v-2.3h-.2a1.3 1.3 0 0 1-1.3-1.3Z" />
+      <path d="M5.5 5.2V3.8a1.3 1.3 0 0 1 1.3-1.3h6.4a1.3 1.3 0 0 1 1.3 1.3v3.7a1.3 1.3 0 0 1-1.3 1.3H13v2.2l-2.5-2.2" />
     </>
   ),
   // A window with a title bar: an addon's tab, when it names no icon of its own.

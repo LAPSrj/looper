@@ -114,10 +114,10 @@ describe('tabs, icon-only buttons and a toolbar name', () => {
   it("puts the started addons' tabs after Looper's own, with a window icon when they name none", () => {
     const addon = (id: string, enabled: boolean) => ({ id, name: id.toUpperCase(), enabled, tabs: [{ id: 'main', title: `${id} tab`, view: 'v' }] });
     expect(mainTabs([addon('a', true), addon('b', false)]).map((t) => [t.id, t.label, t.icon])).toEqual([
-      ['dashboard', 'Dashboard', 'dashboard'],
-      ['projects', 'Projects', 'folder'],
-      ['tasks', 'Tasks', 'tasks'],
-      ['chats', 'Chats', 'chat'],
+      ['dashboard', 'Dashboard', 'dashboardTab'],
+      ['projects', 'Projects', 'projectsTab'],
+      ['tasks', 'Tasks', 'tasksTab'],
+      ['chats', 'Chats', 'chatsTab'],
       [addonTabId('a', 'main'), 'a tab', 'window'],
     ]);
   });

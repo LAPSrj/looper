@@ -159,6 +159,7 @@ function DesktopMain({ fixed }: { fixed?: string }) {
     ...newToolbarGroups({
       newTaskProject: onChats ? null : (m.project ?? projects.find((p) => p.id === m.targetTask?.projectId) ?? null),
       sessionProject: onChats ? chatProject : m.sessionProject,
+      terminal: onChats,
       onAction: m.uiAction,
     }),
     ...(tab === 'tasks'

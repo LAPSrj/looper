@@ -373,6 +373,7 @@ export const ADDON_ICONS = [
   'refresh',
   'open',
   'folder',
+  'openFolder',
   'terminal',
   'run',
   'stop',

@@ -1,5 +1,7 @@
 /** What a tab strip's tabs say and do, apart from the DOM: the roles, ids, names and keys the ARIA tabs pattern asks for. */
 
+import type { ReactNode } from 'react';
+
 export type TabStatus = 'running' | 'done' | 'failed' | 'waiting';
 
 export const STATUS_WORD: Record<TabStatus, string> = { running: 'running', done: 'done', failed: 'failed', waiting: 'waiting' };
@@ -7,6 +9,8 @@ export const STATUS_WORD: Record<TabStatus, string> = { running: 'running', done
 export interface TabItem {
   id: string;
   label: string;
+  /** Drawn before the label (an Icon). */
+  icon?: ReactNode;
   /** Drawn as a StatusMark before the label, and named after the label ("Explorer, running"). */
   status?: TabStatus;
   /** The full name, when the label is cut short. */
@@ -16,6 +20,24 @@ export interface TabItem {
   /** A divider after this tab (the conversation, before its subagents). */
   dividerAfter?: boolean;
 }
+
+/** The color most samples have (the first of those tied); null with none. */
+export function mostCommon(colors: readonly string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const c of colors) counts.set(c, (counts.get(c) ?? 0) + 1);
+  let best: string | null = null;
+  let most = 0;
+  for (const [c, n] of counts) {
+    if (n > most) {
+      best = c;
+      most = n;
+    }
+  }
+  return best;
+}
+
+/** Whether a computed background-color paints nothing (transparent, or alpha 0). */
+export const isClear = (color: string): boolean => color === 'transparent' || /^rgba\(.*,\s*0\)$/.test(color) || /\/\s*0\)$/.test(color);
 
 /** A tab's accessible name: the label, then its status word. */
 export const tabName = (label: string, status?: TabStatus): string => (status ? `${label}, ${STATUS_WORD[status]}` : label);

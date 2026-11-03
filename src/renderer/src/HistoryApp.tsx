@@ -243,7 +243,7 @@ export function HistoryApp() {
       id: 'session',
       items: [
         { id: 'copy-id', label: 'Copy Session ID', icon: 'copy', enabled: !!commands.sessionId, run: run('copy-id') },
-        { id: 'open-folder', label: 'Open Working Directory', icon: 'folder', platforms: DESKTOP_ONLY, enabled: commands.folder, run: run('open-folder') },
+        { id: 'open-folder', label: 'Open Working Directory', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: commands.folder, run: run('open-folder') },
       ],
     },
     {

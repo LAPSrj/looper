@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { StatusMark } from './StatusMark';
-import { ctrlTabTarget, panelDomId, tabAria, tabDomId, tabKeyTarget, type TabItem } from './tabs-model';
+import { ctrlTabTarget, isClear, mostCommon, panelDomId, tabAria, tabDomId, tabKeyTarget, type TabItem } from './tabs-model';
 
 export type { TabItem, TabStatus } from './tabs-model';
 
@@ -17,7 +17,8 @@ const CLOSE = (
  * One strip of tabs for every window: the ARIA tabs pattern (one Tab stop,
  * Left and Right select the neighbor, Home and End, optionally Ctrl+Tab), the
  * active tab kept in view, no scrollbar, an edge fade where more tabs lie, and
- * scroll buttons at the ends on a desktop pointer while it overflows.
+ * scroll buttons at the ends on a desktop pointer while it overflows. On a
+ * desktop the selected tab takes the color under it, so it joins its panel.
  */
 export function Tabs({
   tabs,
@@ -27,6 +28,7 @@ export function Tabs({
   idBase,
   className,
   ctrlTab,
+  panelAbove,
 }: {
   tabs: readonly TabItem[];
   active: string;
@@ -38,9 +40,12 @@ export function Tabs({
   className?: string;
   /** Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs while the window has focus: one strip per window turns it on. */
   ctrlTab?: boolean;
+  /** The panel is above the strip (tabs at a window's bottom). */
+  panelAbove?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState({ start: false, end: false });
+  const [under, setUnder] = useState<string | null>(null);
   const ids = tabs.map((t) => t.id);
   const latest = useRef({ ids, active, onSelect });
   latest.current = { ids, active, onSelect };
@@ -70,6 +75,46 @@ export function Tabs({
     const el = listRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     if (typeof el?.scrollIntoView === 'function') el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   }, [active]);
+
+  // Points just past the strip, across the selected tab: each takes the first painted background up from the element there.
+  const sampleUnder = useCallback((): Element[] => {
+    const strip = listRef.current;
+    const tab = strip?.querySelector<HTMLElement>('.tab-item.active');
+    if (!strip || !tab || document.documentElement.classList.contains('phone-window') || typeof document.elementFromPoint !== 'function') return [];
+    const s = strip.getBoundingClientRect();
+    const t = tab.getBoundingClientRect();
+    const y = panelAbove ? s.top - 3 : s.bottom + 3;
+    const n = Math.max(3, Math.round(t.width / 6));
+    const found: Element[] = [];
+    const colors: string[] = [];
+    for (let i = 0; i < n; i++) {
+      let el = document.elementFromPoint(t.left + 2 + ((t.width - 4) * i) / (n - 1), y);
+      if (el) found.push(el);
+      while (el && isClear(getComputedStyle(el).backgroundColor)) el = el.parentElement;
+      if (el) colors.push(getComputedStyle(el).backgroundColor);
+    }
+    setUnder(mostCommon(colors));
+    return found;
+  }, [panelAbove]);
+
+  useLayoutEffect(() => {
+    const found = sampleUnder();
+    const again = () => void sampleUnder();
+    // What's below can change size (a dragged divider) or arrive a frame later (a view that loads).
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(again);
+    if (listRef.current) observer?.observe(listRef.current);
+    for (const el of new Set(found)) observer?.observe(el);
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(again) : 0;
+    const scheme = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+    window.addEventListener('resize', again);
+    scheme?.addEventListener('change', again);
+    return () => {
+      observer?.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener('resize', again);
+      scheme?.removeEventListener('change', again);
+    };
+  }, [active, tabs.length, sampleUnder]);
 
   useEffect(() => {
     if (!ctrlTab) return;
@@ -131,7 +176,12 @@ export function Tabs({
         </svg>
       </button>
       {tabs.map((t) => (
-        <span key={t.id} role="presentation" className={`tab-item${t.onClose ? ' has-close' : ''}${t.id === active ? ' active' : ''}`}>
+        <span
+          key={t.id}
+          role="presentation"
+          className={`tab-item${t.onClose ? ' has-close' : ''}${t.id === active ? ' active' : ''}`}
+          style={t.id === active && under ? ({ '--tab-under': under } as CSSProperties) : undefined}
+        >
           <button
             type="button"
             className={`tab${t.id === active ? ' active' : ''}${t.status ? ' marked' : ''}${t.dividerAfter ? ' divide-after' : ''}`}
@@ -139,6 +189,7 @@ export function Tabs({
             onClick={() => onSelect(t.id)}
             {...tabAria(ids, t, active, idBase)}
           >
+            {t.icon}
             {t.status && <StatusMark status={t.status} />}
             <span className="tab-label">{t.label}</span>
           </button>

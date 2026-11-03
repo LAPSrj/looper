@@ -38,6 +38,8 @@
 - **Units go inside the input field** as a right-aligned suffix (the
   `.input-suffix` pattern), not in the label. Use SI abbreviations: "s" for
   seconds, "min" for minutes.
+- **Icons follow `src/renderer/src/components/icons.md`.** Read it before
+  adding or changing an icon.
 - **Section headers only when they group 3+ related fields.** Don't add
   headers for one or two fields. Don't add tab descriptions (text between the
   tab bar and the first field).

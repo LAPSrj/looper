@@ -123,7 +123,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
             id: 'views',
             items: [
               { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !top && nav.tab === 'dashboard', run: () => m.uiAction('show-dashboard') },
-              { id: 'chats', label: 'Chats', icon: 'chat', run: () => window.looper.sessions.openWindow() },
+              { id: 'chats', label: 'Chats', icon: 'chatsTab', run: () => window.looper.sessions.openWindow() },
             ],
           },
           ...newToolbarGroups({ newTaskProject: m.project, sessionProject: m.sessionProject, onAction: m.uiAction }),

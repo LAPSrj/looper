@@ -21,6 +21,7 @@ import './desktop-device.css';
 import { filterLabel, groupPlaces, HOST_COMPUTER, messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type FileView, type HostBrowser, type LocalMessage } from './file-flows';
 import { Markdown } from '../components/Markdown';
+import { Tabs } from '../components/Tabs';
 import { PLACE_ICONS } from './places';
 import { shortcutText, type MenuNav } from './menu-model';
 import { useMenuState } from './menu-state';
@@ -871,13 +872,13 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
   return (
     <ShellDialog title={f.title} width={760} height={onDevice ? undefined : 540} className="ws-filedialog" onClose={f.cancel}>
       {f.sources.length > 1 && (
-        <div className="tabs ws-sources" role="tablist">
-          {f.sources.map((src) => (
-            <button key={src} role="tab" aria-selected={f.source === src} className={`tab${f.source === src ? ' active' : ''}`} onClick={() => f.setSource(src)}>
-              {src === 'computer' ? HOST_COMPUTER : 'This Device'}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          tabs={f.sources.map((src) => ({ id: src, label: src === 'computer' ? HOST_COMPUTER : 'This Device' }))}
+          active={f.source}
+          onSelect={(id) => f.setSource(id as (typeof f.sources)[number])}
+          label="Location"
+          className="ws-sources"
+        />
       )}
       {onDevice ? (
         // Save to This Device needs only the file name below.

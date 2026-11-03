@@ -566,9 +566,9 @@ function TranscriptView({ summary, rows, waitingText }: { summary: SessionSummar
 }
 
 /**
- * The Chats window's toolbar as data: the dashboard and Send to Chats, new
- * sessions (in the shown session's project, or a picked one), Stop, the
- * chat's Send Now and Close Conversation, the session's folder, and the
+ * The Chats window's toolbar as data: new sessions (in the shown session's
+ * project, or a picked one), the dashboard, History and Send to Chats, the
+ * conversation's Stop, Send Now, Compact and Close and its folder, and the
  * activity pane. The desktop draws it; a phone's More menu offers it
  * (pass it to usePageNav as `toolbar`).
  */
@@ -577,14 +577,6 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
   const project = summary?.projectId;
   const fail = (e: Error) => void window.looper.showError(e.message);
   return [
-    {
-      id: 'views',
-      items: [
-        { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !summary, run: () => s.setSelected(null) },
-        { id: 'send-to-chats', label: 'Send to Chats', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
-        { id: 'history', label: 'History', icon: 'history', platforms: NOT_MOBILE, run: () => window.looper.history.open() },
-      ],
-    },
     {
       id: 'new',
       items: [
@@ -604,6 +596,14 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
           run: project ? () => void window.looper.projects.newTerminal(project) : null,
           menu: { label: 'New Terminal in Project', open: (x, y) => window.looper.sessions.showNewMenu('terminal', x, y) },
         },
+      ],
+    },
+    {
+      id: 'views',
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !summary, run: () => s.setSelected(null) },
+        { id: 'history', label: 'History', icon: 'history', platforms: NOT_MOBILE, run: () => window.looper.history.open() },
+        { id: 'send-to-chats', label: 'Send to Chats', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
       ],
     },
     {
@@ -640,12 +640,15 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
           enabled: !!summary && summary.kind !== 'run',
           run: () => void window.looper.sessions.close(summary!.id),
         },
+        {
+          id: 'open-work-folder',
+          label: 'Open Working Directory',
+          icon: 'openFolder',
+          platforms: DESKTOP_ONLY,
+          enabled: !!summary,
+          run: () => void window.looper.openTaskWorkFolder(summary!.taskId),
+        },
       ],
-    },
-    {
-      id: 'folder',
-      platforms: DESKTOP_ONLY,
-      items: [{ id: 'open-work-folder', label: 'Open Working Directory', icon: 'folder', enabled: !!summary, run: () => void window.looper.openTaskWorkFolder(summary!.taskId) }],
     },
     {
       // A phone shows the activity in a sheet, from its own bar button.

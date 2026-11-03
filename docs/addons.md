@@ -266,9 +266,10 @@ confirm?, needsItem? }` and `{ separator: true }`. Each button shows its
 `label`, after its `icon` when it has one. With `iconOnly`, it shows only its
 icon, and the `label` is its tooltip. Keep it for commands people know by
 their icon, such as Refresh. The icons are Looper's own: `add`, `edit`, `delete`, `copy`,
-`refresh`, `open`, `folder`, `terminal`, `run`, `stop`, `pause`, `key`,
-`lock`, `search` and `settings`. A click sends a `click` event with the
-button's `id`.
+`refresh`, `open`, `folder`, `openFolder`, `terminal`, `run`, `stop`, `pause`,
+`key`, `lock`, `search` and `settings`. Use `openFolder` for a button that
+opens a folder in Explorer, and `folder` for one about the folder itself. A
+click sends a `click` event with the button's `id`.
 
 ### Screens
 

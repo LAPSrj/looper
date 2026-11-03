@@ -70,7 +70,7 @@ You can see and edit these under File → Settings…; see
 [environments](environments.md) for details. The main window opens on its
 [Dashboard](monitoring.md#the-dashboard) tab, which lists the tasks that need
 you and the runs in progress. A toolbar is above it, the window's tabs
-(Dashboard, Projects, Tasks and Chats) are below the toolbar, and a status bar
+(Dashboard, Projects, Tasks and Chats) are down its left side, and a status bar
 shows how many tasks are enabled, disabled, completed, paused, or running. See
 [the main window](monitoring.md#the-main-window) for what each tab shows.
 
