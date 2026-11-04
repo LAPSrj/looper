@@ -76,10 +76,10 @@ describe('chat messages', () => {
   });
 
   it("answers claude's permission hook in its decision format", () => {
-    expect(JSON.parse(permissionAnswer(true, { command: 'ls' }))).toEqual({
-      hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput: { command: 'ls' } } },
+    expect(JSON.parse(permissionAnswer(true))).toEqual({
+      hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } },
     });
-    expect(JSON.parse(permissionAnswer(false, {})).hookSpecificOutput.decision).toEqual({
+    expect(JSON.parse(permissionAnswer(false)).hookSpecificOutput.decision).toEqual({
       behavior: 'deny',
       message: 'The user denied this in Looper.',
     });
@@ -329,7 +329,7 @@ describe('permission hook (bash)', () => {
     }
     expect(req).toBeDefined();
     expect(JSON.parse(fs.readFileSync(path.join(queue, req!), 'utf8')).tool_name).toBe('Bash');
-    fs.writeFileSync(path.join(queue, req!.replace(/\.req$/, '.ans')), permissionAnswer(true, { command: 'ls' }));
+    fs.writeFileSync(path.join(queue, req!.replace(/\.req$/, '.ans')), permissionAnswer(true));
     const code = await new Promise((r) => child.on('close', r));
     expect(code).toBe(0);
     expect(JSON.parse(out).hookSpecificOutput.decision.behavior).toBe('allow');

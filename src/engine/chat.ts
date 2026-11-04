@@ -102,11 +102,13 @@ export function claudeUserMessage(
   return { type: 'user', message: { role: 'user', content } };
 }
 
-/** The decision a PermissionRequest hook prints for claude. */
-export function permissionAnswer(allow: boolean, input: unknown): string {
-  const decision = allow
-    ? { behavior: 'allow', updatedInput: input }
-    : { behavior: 'deny', message: 'The user denied this in Looper.' };
+/**
+ * The decision a PermissionRequest hook prints for claude. No updatedInput:
+ * with one, Claude Code checks the call again and refuses what still asks
+ * (settings files, .mcp.json), even when the input is unchanged.
+ */
+export function permissionAnswer(allow: boolean): string {
+  const decision = allow ? { behavior: 'allow' } : { behavior: 'deny', message: 'The user denied this in Looper.' };
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } });
 }
 
@@ -863,7 +865,7 @@ class ChatSession {
     // An idle agent has no turn to end: its process stays for the next message.
     if (!this.proc || this.closed || this.killing || this.status !== 'working') return;
     // A tool call waiting for an answer would hold the turn: it's refused.
-    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false, p.input));
+    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false));
     this.permissions = [];
     if (this.claude && this.status === 'working') {
       if (this.stopTimer) return;
@@ -931,7 +933,7 @@ class ChatSession {
   async restartAgent(): Promise<void> {
     if (this.closed || this.killing) return;
     const wasWorking = this.status === 'working';
-    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false, p.input));
+    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false));
     this.permissions = [];
     if (this.stopTimer) {
       clearTimeout(this.stopTimer);
@@ -1408,7 +1410,7 @@ class ChatSession {
       } catch (err) {
         // Unreadable: refuse it rather than leave the agent waiting for nobody.
         this.d.log.warn(`chat ${this.id}: unreadable permission request ${name}: ${errMsg(err)}`);
-        this.writeAnswer(id, permissionAnswer(false, {}));
+        this.writeAnswer(id, permissionAnswer(false));
       }
     }
   }
@@ -1417,7 +1419,7 @@ class ChatSession {
     const p = this.permissions.find((x) => x.id === requestId);
     if (!p) return;
     this.permissions = this.permissions.filter((x) => x !== p);
-    this.writeAnswer(requestId, permissionAnswer(allow, p.input));
+    this.writeAnswer(requestId, permissionAnswer(allow));
     this.scheduleEmit();
   }
 
