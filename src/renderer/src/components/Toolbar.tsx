@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
-import { isPhone, uiHere, usePageNav } from '../web/page-nav';
+import { isPhone, uiHere } from '../web/page-nav';
 import { ICONS } from './icons';
+import { NavBar } from './NavBar';
 import { SplitToolButton, ToolButton } from './ToolButton';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from './toolbar-model';
 
@@ -52,8 +53,7 @@ export function Toolbar({
   onContextMenu?: (e: React.MouseEvent) => void;
   children?: React.ReactNode;
 }) {
-  usePageNav({ toolbar: groups }, order);
-  if (isPhone) return null;
+  if (isPhone) return <NavBar toolbar={groups} order={order} />;
   return (
     <div className={`toolbar${className ? ` ${className}` : ''}`} onContextMenu={onContextMenu}>
       <ToolbarButtons groups={groups} />

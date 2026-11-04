@@ -84,7 +84,8 @@ export function paneMenuItems(view: View, id: PaneId, update: ViewUpdate, withSh
   ];
 }
 
-const GROUP_LABELS: Record<ProjectGroupBy, string> = { none: '&None', folder: '&Folder', harness: '&Harness' };
+// "Parent Folder": the folder the projects' folders are in, not the folders the user makes in the list.
+const GROUP_LABELS: Record<ProjectGroupBy, string> = { none: '&None', folder: '&Parent Folder', harness: '&Harness' };
 
 /** The Projects list's Group By choices as a submenu named `label`. */
 function groupByMenu(view: View, update: ViewUpdate, label: string): MenuItemConstructorOptions {

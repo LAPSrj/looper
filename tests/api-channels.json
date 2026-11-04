@@ -133,13 +133,16 @@
   }
  },
  "projects.reorder": {
-  "arity": 1,
+  "arity": 4,
   "calls": [
    [
     "invoke",
     "projects:reorder",
     [
-     "a0"
+     "a0",
+     "a1",
+     "a2",
+     "a3"
     ]
    ]
   ],
@@ -213,6 +216,91 @@
    [
     "send",
     "context-menu:project",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "projects.folders": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "projects:folders",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:folders': Error: boom projects:folders"
+  }
+ },
+ "projects.layout": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "projects:layout",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'projects:layout': Error: boom projects:layout"
+  }
+ },
+ "projects.addFolder": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "projects:addFolder",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom projects:addFolder"
+  }
+ },
+ "projects.renameFolder": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "projects:renameFolder",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom projects:renameFolder"
+  }
+ },
+ "projects.folderCommand": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "projects:folderCommand",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "projects.showFolderMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:project-folder",
     [
      "a0"
     ]
@@ -956,53 +1044,6 @@
    "err": "Error invoking remote method 'runs:messageImage': Error: boom runs:messageImage"
   }
  },
- "agent.buffer": {
-  "arity": 2,
-  "calls": [
-   [
-    "invoke",
-    "agent:buffer",
-    [
-     "a0",
-     "a1"
-    ]
-   ]
-  ],
-  "result": {
-   "err": "Error invoking remote method 'agent:buffer': Error: boom agent:buffer"
-  }
- },
- "agent.write": {
-  "arity": 3,
-  "calls": [
-   [
-    "send",
-    "agent:write",
-    [
-     "a0",
-     "a1",
-     "a2"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "agent.resize": {
-  "arity": 4,
-  "calls": [
-   [
-    "send",
-    "agent:resize",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "restState": {
   "arity": 0,
   "calls": [
@@ -1104,6 +1145,20 @@
    "err": "boom task:openChat"
   }
  },
+ "openItemWindow": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "window:openItem",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "chat.get": {
   "arity": 1,
   "calls": [
@@ -1134,6 +1189,21 @@
   ],
   "result": {}
  },
+ "chat.confirmSend": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "chat:confirmSend",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:confirmSend': Error: boom chat:confirmSend"
+  }
+ },
  "chat.answer": {
   "arity": 3,
   "calls": [
@@ -1148,6 +1218,39 @@
    ]
   ],
   "result": {}
+ },
+ "chat.runCommand": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "chat:runCommand",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom chat:runCommand"
+  }
+ },
+ "chat.stopCommand": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:stopCommand",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:stopCommand': Error: boom chat:stopCommand"
+  }
  },
  "chat.stop": {
   "arity": 1,
@@ -1531,6 +1634,21 @@
   ],
   "result": {
    "err": "Error invoking remote method 'sessions:stop': Error: boom sessions:stop"
+  }
+ },
+ "sessions.restart": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:restart",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:restart': Error: boom sessions:restart"
   }
  },
  "sessions.showContextMenu": {
@@ -2244,25 +2362,6 @@
   ],
   "result": {
    "err": "Error invoking remote method 'messages:open': Error: boom messages:open"
-  }
- },
- "openMessageImage": {
-  "arity": 5,
-  "calls": [
-   [
-    "invoke",
-    "messages:openImage",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3",
-     "a4"
-    ]
-   ]
-  ],
-  "result": {
-   "err": "Error invoking remote method 'messages:openImage': Error: boom messages:openImage"
   }
  },
  "openEditor": {

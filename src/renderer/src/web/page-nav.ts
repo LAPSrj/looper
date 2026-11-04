@@ -3,6 +3,7 @@ import { uiPlatformOf } from '../../../shared/ui-platform';
 import { findToolbarItem, toolbarKey, type ToolbarGroup } from '../components/toolbar-model';
 import { platform } from '../platform';
 import { findMoreAction, type MoreGroup } from './more-menu';
+import type { NavCommand, PageNavAction } from './nav-bar-model';
 
 /**
  * What a page tells the phone frame (iOS/Android) about the screen it shows;
@@ -70,24 +71,6 @@ export interface PageNavTabs {
   items: readonly (readonly [string, string])[];
   value: string;
   select: (id: string) => void;
-}
-
-export interface PageNavAction {
-  id: string;
-  label: string;
-  /** An ICONS key (components/icons.tsx); the label is its accessible name. */
-  icon?: string;
-  /** A usage ring instead of an icon (components/ContextRing.tsx): the context used, and the 5-hour limit used, as fractions. */
-  ring?: { context: number | null; used: number | null };
-  disabled?: boolean;
-  run: () => void;
-}
-
-export interface NavCommand {
-  /** Default "Cancel" / "Save". */
-  label?: string;
-  disabled?: boolean;
-  run: () => void;
 }
 
 /** What the top frame offers its iframes, as `window.top.__looperFrame`. */

@@ -248,7 +248,7 @@ describe('headless agent over pipes', () => {
     expect(raw).toContain('shell warning on stderr');
     expect(raw).toContain(resultLine);
 
-    // The terminal tab gets CRLF-terminated lines, never bare LF.
+    // The live output gets CRLF-terminated lines, never bare LF.
     const display = shown.join('');
     expect(display).toContain('shell warning on stderr\r\n');
     expect(display.replace(/\r\n/g, '')).not.toContain('\n');

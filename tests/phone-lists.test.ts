@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { AttentionRow } from '../src/shared/dashboard';
+import type { MenuItemSpec } from '../src/shared/remote-access';
 import type { SessionSummary } from '../src/shared/sessions';
 import type { Task } from '../src/shared/types';
+import type { ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
+import { composeMore } from '../src/renderer/src/web/more-menu';
 import {
-  TEXT_LARGER,
-  TEXT_SMALLER,
-  chatMore,
   clockTime,
+  conversationMore,
   dayGroups,
   dayTitle,
   resultTone,
   splitAttention,
   taskNameOf,
+  taskScreenMore,
   taskSummary,
   terminalOverlay,
   terminalTitle,
@@ -157,35 +159,68 @@ describe('terminals on a phone', () => {
     expect(terminalTitle({ title: 'Terminal', groupName: '' })).toBe('Terminal');
   });
 
-  it('covers an empty terminal: starting while a session is on its way, the empty view when none is', () => {
-    expect(terminalOverlay({ loaded: false, hasOutput: false, sessionActive: true })).toBeNull();
-    expect(terminalOverlay({ loaded: true, hasOutput: false, sessionActive: true })).toBe('starting');
-    expect(terminalOverlay({ loaded: true, hasOutput: false, sessionActive: false })).toBe('empty');
-    expect(terminalOverlay({ loaded: true, hasOutput: true, sessionActive: true })).toBeNull();
+  it('covers an empty terminal while its session is on its way', () => {
+    expect(terminalOverlay({ loaded: false, hasOutput: false })).toBeNull();
+    expect(terminalOverlay({ loaded: true, hasOutput: false })).toBe('starting');
+    expect(terminalOverlay({ loaded: true, hasOutput: true })).toBeNull();
   });
 });
 
 describe('a conversation’s More menu', () => {
-  const refs = (kind: Parameters<typeof chatMore>[0]) => chatMore(kind).map((g) => g.map((r) => ('item' in r ? r.item : 'toolbar' in r ? r.toolbar : '?')));
+  // What the hand-written list gave before the catalog: the menu item where the window's menu bar has it,
+  // the toolbar item where it doesn't (a terminal has no Chat menu).
+  const sessions = [{ item: 'chat-new-in-project' }, { item: 'chat-send-to-chats', toolbar: 'send-to-chats' }];
+  const close = [{ item: 'chat-close', toolbar: 'close-conversation' }];
+  const restart = { item: 'chat-restart', toolbar: 'restart-agent' };
 
   it('offers a chat its own commands, with Close Conversation last in a group of its own', () => {
-    expect(refs('chat')).toEqual([['chat-find', 'chat-save-markdown', 'chat-copy-session-id'], ['chat-new-in-project', 'chat-send-to-chats'], ['chat-close']]);
+    expect(conversationMore('chat')).toEqual([
+      [{ item: 'chat-find' }, { item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }, restart, { item: 'chat-compact', toolbar: 'compact' }],
+      sessions,
+      close,
+    ]);
   });
 
-  it('leaves out what is desktop-only or lives elsewhere on a phone', () => {
-    const all = refs('chat').flat();
-    // Open in New Window and Working Directory are for a computer; Stop and Send Now are in the message box;
-    // the settings are in the Usage panel; the View and Edit menus are the window's own.
-    for (const gone of ['chat-stop', 'chat-send-now', 'chat-harness', 'chat-model', 'chat-effort', 'chat-permission-mode', 'chat-attach']) expect(all).not.toContain(gone);
+  it('gives a terminal session its text size and Restart Agent instead of a transcript’s commands', () => {
+    expect(conversationMore('terminal')).toEqual([[{ toolbar: 'terminal-text-smaller' }, { toolbar: 'terminal-text-larger' }, restart], sessions, close]);
   });
 
-  it('gives a terminal session its text size instead of a transcript’s commands', () => {
-    expect(refs('terminal')[0]).toEqual([TEXT_SMALLER, TEXT_LARGER]);
-    expect(refs('terminal').flat()).not.toContain('chat-save-markdown');
-    expect(refs('terminal').at(-1)).toEqual(['chat-close']);
+  it('gives a task run’s agent its export and session id, no Find', () => {
+    expect(conversationMore('run')).toEqual([[{ item: 'chat-save-markdown' }], sessions, close]);
   });
 
-  it('gives a task run’s agent no Find', () => {
-    expect(refs('run').flat()).not.toContain('chat-find');
+  it('shows the toolbar’s Restart Agent where the window has no Chat menu, and the Chat menu’s where it has', () => {
+    const toolbar: ToolbarGroup[] = [{ id: 'session', items: [{ id: 'restart-agent', label: 'Restart Agent', run: () => {} }] }];
+    const chatMenu: MenuItemSpec = {
+      id: '0',
+      key: 'chat',
+      type: 'submenu',
+      label: 'Chat',
+      enabled: true,
+      submenu: [{ id: '0.0', key: 'chat-restart', type: 'normal', label: 'Restart Agent', enabled: true }],
+    };
+    const terminal = composeMore({ toolbar, menu: [], more: conversationMore('terminal') });
+    expect(terminal.items.map((i) => i.id)).toEqual(['__page:tb:restart-agent']);
+    const chat = composeMore({ toolbar, menu: [chatMenu], more: conversationMore('chat') });
+    expect(chat.items.map((i) => i.id)).toEqual(['0.0']);
+  });
+});
+
+describe('a task screen’s More menu', () => {
+  it('has the Task menu’s commands, its project’s New Chat and New Terminal, and Delete last', () => {
+    expect(taskScreenMore()).toEqual([
+      [{ item: 'task-run-now', toolbar: 'run-now' }, { item: 'task-stop', toolbar: 'stop-task' }, { item: 'task-pause-resume', toolbar: 'pause-resume' }, { item: 'task-enable-disable', toolbar: 'enable-disable' }, { item: 'task-complete', toolbar: 'complete-reopen' }],
+      [{ item: 'task-edit', toolbar: 'edit-task' }, { item: 'task-edit-agent' }, { item: 'task-note', toolbar: 'edit-note' }, { item: 'task-note-clear' }],
+      [{ item: 'task-move-folder' }, { item: 'task-versions' }, { item: 'task-export' }, { item: 'task-clear-runs' }],
+      [{ item: 'project-new-chat' }, { item: 'project-new-terminal' }],
+      [{ item: 'task-delete' }],
+    ]);
+  });
+
+  it('uses the menu bar’s items: a task’s screen has no toolbar', () => {
+    const menu: MenuItemSpec[] = [
+      { id: '1', key: 'task', type: 'submenu', label: 'Task', enabled: true, submenu: [{ id: '1.0', key: 'task-edit', type: 'normal', label: 'Edit Task…', enabled: true }] },
+    ];
+    expect(composeMore({ menu, more: taskScreenMore() }).items.map((i) => i.label)).toEqual(['Edit Task…']);
   });
 });

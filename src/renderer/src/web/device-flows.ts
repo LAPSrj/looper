@@ -51,7 +51,7 @@ export function useThisDevice(controller: ShellController): ThisDevice {
     };
   }, [controller]);
 
-  const fail = (err: unknown) => void ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'] });
+  const fail = (err: unknown) => void ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'], defaultId: 0, cancelId: 0 });
 
   return {
     name,

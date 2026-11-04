@@ -17,6 +17,9 @@ export type RunSummary = Omit<RunGroup, 'records' | 'resultText'>;
 
 /** The run list's View filters. */
 export interface RunFilter {
+  /** Runs the scheduler skipped (or deferred), and the ones whose steps Run Options skipped. */
+  hideSkipped: boolean;
+  /** Runs whose check or classifier found nothing to do. */
   hideNoAction: boolean;
 }
 
@@ -84,6 +87,6 @@ export const isSessionRun = (g: Pick<RunSummary, 'result'>): boolean => g.result
 /** Whether a task run shows in the run lists (a task's Runs tab, Recent runs). Sessions show in their project's Chat tab instead. */
 export function runShown(g: RunSummary, filter: RunFilter): boolean {
   if (isSessionRun(g)) return false;
-  // "No action" to the user covers both no-action check runs and scheduler skips.
-  return !(filter.hideNoAction && (g.result === 'skipped' || g.result === 'noop'));
+  if (g.result === 'skipped') return !filter.hideSkipped;
+  return !(filter.hideNoAction && g.result === 'noop');
 }

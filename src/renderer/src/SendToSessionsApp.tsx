@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { sessionGroupKey, type SessionSummary } from '@shared/sessions';
 import { subscribe } from './events';
-import { useDialogKeys } from './components/hooks';
-import { EditorFooter } from './components/ui';
+import { sendsOnEnter } from './components/composer-text';
+import { isPhone } from './web/page-nav';
+import { CheckboxField } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 /**
  * The chats and terminal sessions a message can go to: open ones, and no task
@@ -67,14 +69,14 @@ export function SendToSessionsApp({ group }: { group?: string }) {
     });
   const allOf = (items: SessionSummary[]) => items.length > 0 && items.every((s) => picked.has(s.id));
   /** A check box for a set of sessions: checked when all are picked, partly checked when some are. */
-  const groupBox = (items: SessionSummary[]) => (
-    <input
-      type="checkbox"
+  const groupBox = (label: string, items: SessionSummary[], className?: string) => (
+    <CheckboxField
+      key={label}
+      label={label}
+      className={className}
       checked={allOf(items)}
-      ref={(el) => {
-        if (el) el.indeterminate = !allOf(items) && items.some((s) => picked.has(s.id));
-      }}
-      onChange={(e) => setAll(items.map((s) => s.id), e.target.checked)}
+      indeterminate={!allOf(items) && items.some((s) => picked.has(s.id))}
+      onChange={(on) => setAll(items.map((s) => s.id), on)}
     />
   );
 
@@ -83,49 +85,60 @@ export function SendToSessionsApp({ group }: { group?: string }) {
     window.looper.sessions.send([...picked], text);
     window.close();
   };
-  useDialogKeys({ onSave: send, onCancel: () => window.close() });
 
   return (
     <div className="editor send-sessions">
       <div className="send-sessions-pick">
-        <label className="checkbox-field">
-          {groupBox(sessions)}
-          Every chat
-        </label>
+        {groupBox('Every chat', sessions)}
         {harnesses.length > 1 &&
-          harnesses.map((h) => {
-            const items = sessions.filter((s) => s.harnessName === h);
-            return (
-              <label key={h} className="checkbox-field">
-                {groupBox(items)}
-                Every {h} chat
-              </label>
-            );
-          })}
+          harnesses.map((h) =>
+            groupBox(
+              `Every ${h} chat`,
+              sessions.filter((s) => s.harnessName === h),
+            ),
+          )}
       </div>
       <div className="send-sessions-list">
         {groups.map((g) => (
           <div key={g.name}>
-            <label className="checkbox-field send-sessions-group">
-              {groupBox(g.items)}
-              {g.name}
-            </label>
+            {groupBox(g.name, g.items, 'send-sessions-group')}
             {g.items.map((s) => (
-              <label key={s.id} className="checkbox-field send-sessions-item">
-                <input type="checkbox" checked={picked.has(s.id)} onChange={(e) => setAll([s.id], e.target.checked)} />
-                <span className="send-sessions-title">{s.title}</span>
-                <span className="muted send-sessions-kind">
-                  {s.harnessName}
-                  {s.kind === 'terminal' ? ' · Terminal' : ''}
-                </span>
-              </label>
+              <CheckboxField
+                key={s.id}
+                className="send-sessions-item"
+                checked={picked.has(s.id)}
+                onChange={(on) => setAll([s.id], on)}
+                label={
+                  <>
+                    <span className="send-sessions-title">{s.title}</span>
+                    <span className="muted send-sessions-kind">
+                      {s.harnessName}
+                      {s.kind === 'terminal' ? ' · Terminal' : ''}
+                    </span>
+                  </>
+                }
+              />
             ))}
           </div>
         ))}
         {sessions.length === 0 && <div className="empty">No chats are open.</div>}
       </div>
-      <textarea className="send-sessions-text" value={text} placeholder="Message" rows={6} autoFocus onChange={(e) => setText(e.target.value)} />
-      <EditorFooter primaryLabel="Send" onPrimary={send} onCancel={() => window.close()} primaryDisabled={!text.trim() || picked.size === 0} />
+      <textarea
+        className="send-sessions-text"
+        value={text}
+        placeholder="Message"
+        rows={6}
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          // As in a chat's message box: Enter sends on the desktop (Shift+Enter breaks the line), a phone's Enter breaks it.
+          if (sendsOnEnter(e, isPhone)) {
+            e.preventDefault();
+            send();
+          }
+        }}
+      />
+      <WindowActions confirm={{ label: 'Send', run: send, disabled: !text.trim() || picked.size === 0 }} />
     </div>
   );
 }

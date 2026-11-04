@@ -13,7 +13,7 @@ import type { Environment, Project, Settings, Task } from '../shared/types';
 import { envPrefix, envSide, runProbe } from './discover-models';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { CodexAccumulator, readRunSessionId, TranscriptAccumulator, transcriptHostPath, type SubagentMeta } from './messages';
+import { CodexAccumulator, TranscriptAccumulator, transcriptHostPath, type SubagentMeta } from './messages';
 import { subagentsOf } from './sessions';
 import { writeJsonAtomic } from './store/fsutil';
 
@@ -90,19 +90,22 @@ export class SessionLedger {
 /**
  * Every session a run folder names: the agent's (and those a context restart
  * ended, `session<N>-…`) and the classifier's (`classify-…`), from the Claude
- * hook payloads and Codex's thread file.
+ * hook payloads and Codex's thread file. `own`: the agent's current session
+ * (the plain names), the one the run goes on with.
  */
-export function runSessionRefs(runDir: string): { sessionId: string; classifier: boolean }[] {
+export async function runSessionRefs(runDir: string): Promise<{ sessionId: string; classifier: boolean; own: boolean }[]> {
   let names: string[];
   try {
-    names = fs.readdirSync(runDir);
+    names = await fs.promises.readdir(runDir);
   } catch {
     return [];
   }
-  const out: { sessionId: string; classifier: boolean }[] = [];
-  const read = (name: string): Record<string, unknown> | null => {
+  // As readRunSessionId: session.json before stop.json.
+  names.sort((a, b) => Number(b.endsWith('session.json')) - Number(a.endsWith('session.json')));
+  const out: { sessionId: string; classifier: boolean; own: boolean }[] = [];
+  const read = async (name: string): Promise<Record<string, unknown> | null> => {
     try {
-      return JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8').replace(/^﻿/, '')) as Record<string, unknown>;
+      return JSON.parse((await fs.promises.readFile(path.join(runDir, name), 'utf8')).replace(/^﻿/, '')) as Record<string, unknown>;
     } catch {
       return null;
     }
@@ -112,20 +115,20 @@ export function runSessionRefs(runDir: string): { sessionId: string; classifier:
     let id: unknown;
     if (name.endsWith('codex-session.json')) {
       prefix = name.slice(0, -'codex-session.json'.length);
-      id = read(name)?.thread_id;
+      id = (await read(name))?.thread_id;
     } else {
       const m = /^(.*?)(?:session|stop)\.json$/.exec(name);
       if (!m) continue;
       prefix = m[1];
-      const raw = read(name);
+      const raw = await read(name);
       id = raw?.session_id;
       const t = raw?.transcript_path;
       if ((typeof id !== 'string' || !id) && typeof t === 'string' && t.trim().endsWith('.jsonl')) {
         id = t.trim().split(/[\\/]/).pop()!.slice(0, -'.jsonl'.length);
       }
     }
-    if (typeof id !== 'string' || !id.trim() || out.some((o) => o.sessionId === id)) continue;
-    out.push({ sessionId: id.trim(), classifier: prefix.startsWith('classify-') });
+    if (typeof id !== 'string' || !id.trim() || out.some((o) => o.sessionId === id.trim())) continue;
+    out.push({ sessionId: id.trim(), classifier: prefix.startsWith('classify-'), own: prefix === '' });
   }
   return out;
 }
@@ -495,25 +498,47 @@ export class HistoryService {
     }
   }
 
-  /** Looper's recorded runs, and the session ids their folders name. */
-  private runEntries(projects: Project[]): { runs: Entry[]; known: Set<string> } {
+  /** What each ended task run's folder names, by folder: it doesn't change once the run is over. */
+  private readonly runRefs = new Map<string, { sessionId: string; classifier: boolean; own: boolean }[]>();
+
+  /** A run folder's sessions, read without holding up the main process; a task run that ended is read once. */
+  private async refsOf(dir: string, ended: boolean): Promise<{ sessionId: string; classifier: boolean; own: boolean }[]> {
+    const kept = this.runRefs.get(dir);
+    if (kept) return kept;
+    const refs = await runSessionRefs(dir);
+    if (ended) this.runRefs.set(dir, refs);
+    return refs;
+  }
+
+  /**
+   * Looper's recorded runs, and the session ids their folders name. There
+   * can be thousands of run folders, so they're read asynchronously, a task at
+   * a time, letting the windows go on between tasks.
+   */
+  private async runEntries(projects: Project[]): Promise<{ runs: Entry[]; known: Set<string> }> {
     const runs: Entry[] = [];
     const known = new Set<string>();
     const remote = this.d.remoteRuns();
     for (const taskId of this.d.runTaskIds()) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const task = this.d.findTask(taskId);
       if (!task) continue;
       const project = this.projectOf(taskId, task, projects);
-      for (const s of this.d.summaries(taskId)) {
-        const dir = this.d.runDir(taskId, s.runId);
-        for (const r of runSessionRefs(dir)) known.add(r.sessionId);
+      const summaries = this.d.summaries(taskId);
+      // Chats and terminal sessions name their session on their first message, whenever that comes.
+      const refs = await mapLimit(summaries, STAT_AT_ONCE, (s) =>
+        // In progress: started, held, or between the classifier's go-ahead ('act') and the agent's first record.
+        this.refsOf(this.d.runDir(taskId, s.runId), !['started', 'held', 'act', 'chat', 'terminal'].includes(s.result)),
+      );
+      summaries.forEach((s, i) => {
+        for (const r of refs[i]) known.add(r.sessionId);
         const chat = s.result === 'chat' ? this.d.readChatInfo(taskId, s.runId) : null;
         const term = s.result === 'terminal' ? this.d.readTerminalInfo(taskId, s.runId) : null;
         if (chat?.resumedSession) known.add(chat.resumedSession);
         const kind = chat?.harnessKind ?? term?.harnessKind ?? this.taskKind(task);
-        const sessionId = kind ? readRunSessionId(dir, kind) : null;
+        const sessionId = kind ? (refs[i].find((r) => r.own)?.sessionId ?? null) : null;
         // No conversation to show: a run that stopped at its check, or a folder retention took.
-        if (!kind || !sessionId) continue;
+        if (!kind || !sessionId) return;
         const source: HistorySource = s.result === 'chat' ? 'chat' : s.result === 'terminal' ? (remote.has(s.runId) ? 'remote' : 'terminal') : 'run';
         const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task.name || 'Untitled chat').trim();
         runs.push({
@@ -532,7 +557,7 @@ export class HistoryService {
             ...(source === 'run' ? { taskName: task.name } : {}),
           },
         });
-      }
+      });
     }
     return { runs, known };
   }
@@ -604,7 +629,7 @@ export class HistoryService {
   private rescan(): Promise<HistoryIndex> {
     if (this.scanning) return this.scanning;
     this.scanning = (async () => {
-      const { runs, known } = this.runEntries(this.d.projects());
+      const { runs, known } = await this.runEntries(this.d.projects());
       const files = await this.scanFiles();
       const old = this.loadCache();
       const next = new Map<string, CacheEntry>();
@@ -687,13 +712,15 @@ export class HistoryService {
    * The newest `limit` conversations that pass the View menu's filters.
    * `fresh` reads the folders again (slow over \\wsl.localhost); else it
    * lists the files found last, or the cached ones, which show at once.
+   * `progress` gets the list so far each time more of it is read, so a
+   * window can show the conversations as they come.
    */
-  async list(o: HistoryListOptions): Promise<HistoryList> {
+  async list(o: HistoryListOptions, progress?: (partial: HistoryList) => void): Promise<HistoryList> {
     const projects = this.d.projects();
     let index: HistoryIndex;
     if (o.fresh) index = await this.rescan();
     else if (this.index) index = this.index;
-    else index = this.index = { ...this.runEntries(projects), files: this.cachedFiles() };
+    else index = this.index = { ...(await this.runEntries(projects)), files: this.cachedFiles() };
 
     const project = o.folder.startsWith('project:') ? projects.find((p) => `project:${p.id}` === o.folder) : undefined;
     if (o.folder.startsWith('project:') && !project) return { items: [], more: false };
@@ -708,16 +735,23 @@ export class HistoryService {
 
     const found: Entry[] = [];
     let at = 0;
+    // An item the window showed keeps working until it's listed again.
+    const show = (e: Entry) => this.entries.set(e.item.id, e);
     while (at < candidates.length && found.length < o.limit) {
       const batch = candidates.slice(at, at + Math.min(READ_AT_ONCE, o.limit - found.length));
       at += batch.length;
       const got = await Promise.all(batch.map((c) => (c.run ? Promise.resolve(c.run) : this.resolve(c.file!, index.known, projects))));
+      const before = found.length;
       for (const e of got) if (e && passes(e)) found.push(e);
+      // Only a batch that read a transcript took long enough to be worth showing on its way.
+      if (progress && found.length > before && batch.some((c) => c.file)) {
+        found.slice(before).forEach(show);
+        progress({ items: found.map((e) => e.item), more: true });
+      }
     }
     this.saveCache();
     const shown = found.slice(0, o.limit);
-    // An item the window showed keeps working until it's listed again.
-    for (const e of shown) this.entries.set(e.item.id, e);
+    shown.forEach(show);
     return { items: shown.map((e) => e.item), more: found.length > o.limit || at < candidates.length };
   }
 

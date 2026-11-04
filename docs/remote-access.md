@@ -216,16 +216,17 @@ A picker that chooses a folder only offers **Host Computer**. **Save As** works
 the same way: save in a folder on the host computer, or under **This Device**,
 where only the file name is needed and the file is downloaded to the device.
 
-Open Working Directory and Show in Folder, used from the device, list the
-folder's files in a window, with **Download** for the selected file and **Open
-on Host Computer**, which opens it with its default app on the host computer.
+Open Working Directory, Show in Folder and the other commands that open a
+folder in the host computer's file browser are only in the desktop app, so they
+don't show on a device.
 
 An image (PNG, JPEG, GIF, WebP, BMP or SVG) or a text file (`.txt`, or `.md`,
 shown as formatted Markdown) opens in a viewer first, such as a file attached
 to a chat message when you click it. The viewer has **Download to This Device**
-and **Download to Host Computer**, which puts a copy in your Downloads folder
-on the host computer (a name already there gets a number, so nothing is
-replaced). Any other file asks **Open on Host Computer** or **Download**.
+and **Cancel**, and at the left of the buttons **Download to Host Computer**,
+which puts a copy in your Downloads folder on the host computer (a name already
+there gets a number, so nothing is replaced). Any other file asks **Download**
+or, at the left, **Open on Host Computer**, with **Cancel** to leave it.
 
 ## On a phone or tablet
 
@@ -246,18 +247,21 @@ Android's, with one window on screen at a time.
 - Other windows open as full screens that you leave with **Back** (**‹** on an
   iPhone, **←** on Android), or as sheets. On an iPhone you close a sheet with
   **✕** or drag it down; on Android, **✕** or a tap outside it closes it.
+- A window's buttons that don't close it, such as **Restore** in a version's
+  window or **Clear Filter** in the Filter window, are in **More**.
 - **Back** also answers the back gesture or button of the phone, and on an
   iPhone a swipe from the left edge.
-- In a session's screen, a workflow's tab above the conversation opens the
-  workflow as a screen of its own: its phases as lists, with a row per agent
+- In a session's screen, the **Subagents** and **Workflows** rows above the
+  conversation show how they're doing and open the Activity sheet on that list.
+  A workflow there opens as a screen of its own: its phases as lists, with a row per agent
   showing what it's doing or how it ended and how long it took. Tapping an
   agent opens its conversation as the next screen. The Activity sheet's Now
   follows that agent. See [Subagents and
   workflows](monitoring.md#subagents-and-workflows).
 - A long press (half a second) opens the context menu.
 - A terminal has a key row above the keyboard: **Esc**, **Tab**, a **Ctrl** that
-  holds for the next key, the arrows, and `|`, `~`, `/` and `-`, with **A−**
-  and **A+** for the text size.
+  holds for the next key, the arrows, and `|`, `~`, `/` and `-`. **Smaller
+  Text** and **Larger Text** in **More** change the text size.
 
 To open Looper without the browser's bars, add it to the Home Screen: in Safari
 on an iPhone, Share → **Add to Home Screen**; in Chrome on Android, **Install

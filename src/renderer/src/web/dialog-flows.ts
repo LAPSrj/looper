@@ -1,16 +1,9 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, HostPlace, MessageBoxSpec } from '../../../shared/remote-access';
+import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, HostPlace } from '../../../shared/remote-access';
 
 // ---------- message boxes ----------
 
 export const messageResult = (response: number, checkboxChecked: boolean): DialogResult => ({ kind: 'message', response, checkboxChecked });
-
-/** Esc or the window's ×: the cancel button (Electron's default is the last one). */
-export const messageCancelId = (spec: MessageBoxSpec): number => spec.cancelId ?? Math.max(0, spec.buttons.length - 1);
-
-/** The button that has the focus first. */
-export const messageDefaultId = (spec: MessageBoxSpec): number =>
-  spec.defaultId !== undefined && spec.defaultId >= 0 && spec.defaultId < spec.buttons.length ? spec.defaultId : 0;
 
 // ---------- file dialogs ----------
 

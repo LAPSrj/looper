@@ -131,8 +131,11 @@ export function detectWslMountPrefix(distro?: string): Promise<string | undefine
  * (/home/x -> \\wsl.localhost\<distro>\home\x, /mnt/c/y -> C:\y) or to
  * 'posix' (C:\y -> /mnt/c/y). Without a distro name: the default distro from
  * a Windows host, looper's own distro from WSL. Undefined when wslpath fails.
+ * `existing`: the path names a file that may not exist yet. wslpath resolves
+ * links only in a path that exists, and Windows can't follow a WSL link over
+ * \\wsl.localhost, so such a conversion is kept only once its result exists.
  */
-export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: string): Promise<string | undefined> {
+export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: string, existing = false): Promise<string | undefined> {
   // Starting wsl.exe can block the main process for hundreds of ms, and transcript polling converts the same paths several times a second.
   const key = `${to}\0${distro ?? ''}\0${p}`;
   const known = converted.get(key);
@@ -153,12 +156,19 @@ export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: stri
     }
   });
   converted.set(key, result);
-  void result.then((out) => {
-    if (!out) converted.delete(key);
+  void result.then(async (out) => {
+    const forget = () => {
+      if (converted.get(key) === result) converted.delete(key);
+    };
+    if (!out) return forget();
+    // A file not there yet is asked about again a little later, not on every poll (each one starts wsl.exe).
+    if (existing && !(await fs.promises.stat(out).then(() => true, () => false))) setTimeout(forget, MISSING_RETRY_MS).unref?.();
   });
   return result;
 }
 const converted = new Map<string, Promise<string | undefined>>();
+/** How long the conversion of a file that doesn't exist yet is kept before it's asked again. */
+const MISSING_RETRY_MS = 5_000;
 
 /**
  * Installed WSL distros via `wsl.exe --list --quiet` (works on a Windows host

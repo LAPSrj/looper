@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolUseIds } from '../src/engine/chat';
+import { OUTPUT_PREVIEW, commandAttachment, sizeText } from '../src/shared/bash-mode';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { gitTabLabel } from '../src/shared/git';
 import { TaskSchema } from '../src/shared/types';
@@ -35,6 +36,7 @@ import readline from 'node:readline';
 const dir = ${JSON.stringify(dir)};
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const text = (m) => m.message.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
+fs.appendFileSync(path.join(dir, 'argv'), process.argv.slice(2).join(' ') + '\\n');
 const pending = [];
 let busy = false;
 let interrupted = false;
@@ -186,6 +188,111 @@ describe('a chat queue on Claude', { timeout: 30_000 }, () => {
   });
 });
 
+describe('commands the user runs from the message box ("!")', { timeout: 30_000 }, () => {
+  let engine: Engine | null = null;
+  afterEach(async () => {
+    await engine?.stop();
+    engine = null;
+  });
+
+  it('runs a command in the chat’s working directory, with its stdout, stderr and exit code, without a turn of the agent', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const out = await s.engine.runChatCommand(s.chatId, 'pwd; echo oops >&2; exit 3', 'run-1');
+    expect(out).toMatchObject({ id: 'run-1', input: 'pwd; echo oops >&2; exit 3', stdout: `${s.dir}\n`, stderr: 'oops\n', exitCode: 3 });
+    expect(out.stopped).toBeUndefined();
+    expect(out.saved).toBeUndefined();
+    // Nothing went to the agent, and the conversation is as it was.
+    expect(lines(join(s.dir, 'received'))).toEqual([]);
+    expect(s.engine.getChat(s.chatId)).toMatchObject({ status: 'ready', rows: [], runningCommands: 0 });
+  });
+
+  it('Stop ends a command that runs, keeping what it printed', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const began = join(s.dir, 'began');
+    const running = s.engine.runChatCommand(s.chatId, `echo started; touch '${began}'; sleep 30; echo never`, 'run-1');
+    await until(() => s.engine.getChat(s.chatId)?.runningCommands === 1 && existsSync(began), 'the command to start');
+    await s.engine.stopChat(s.chatId);
+    const out = await running;
+    expect(out).toMatchObject({ stdout: 'started\n', exitCode: null, stopped: true });
+    expect(s.engine.getChat(s.chatId)?.runningCommands).toBe(0);
+  });
+
+  it('Stop under one command ends that one alone, and its output comes as it runs, in batches', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const live: { id: string; stdout: string }[] = [];
+    s.engine.on((e) => {
+      if (e.type === 'chat:command' && e.chatId === s.chatId) live.push({ id: e.id, stdout: e.stdout });
+    });
+    const began = join(s.dir, 'began');
+    const one = s.engine.runChatCommand(s.chatId, `echo first; touch '${began}'; sleep 30`, 'run-1');
+    const two = s.engine.runChatCommand(s.chatId, 'sleep 2; echo second', 'run-2');
+    await until(() => existsSync(began) && live.some((l) => l.id === 'run-1' && l.stdout === 'first\n'), 'the first command’s output, live');
+    await s.engine.stopChatCommand(s.chatId, 'run-1');
+    await expect(one).resolves.toMatchObject({ stopped: true, stdout: 'first\n' });
+    const second = await two;
+    expect(second).toMatchObject({ exitCode: 0, stdout: 'second\n' });
+    expect(second.stopped).toBeUndefined();
+    // A command's name is the window's, and two can't share one.
+    await expect(s.engine.runChatCommand(s.chatId, 'true', '../x')).rejects.toThrow('no usable id');
+  });
+
+  it('saves output too long to send to a file in the chat’s folder, and the agent gets its preview and the file’s path', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const out = await s.engine.runChatCommand(s.chatId, 'seq 1 20000; echo short >&2', 'run-1');
+    const full = Array.from({ length: 20000 }, (_, i) => `${i + 1}\n`).join('');
+    expect(out.saved?.stdout?.bytes).toBe(Buffer.byteLength(full));
+    expect(out.saved?.stderr).toBeUndefined();
+    expect(out.stderr).toBe('short\n');
+    // The preview is the output's start; the file holds all of it, in the chat's own folder (a local chat's path is the host's).
+    expect(out.stdout).toBe(full.slice(0, OUTPUT_PREVIEW));
+    const file = out.saved!.stdout!.path;
+    expect(file.startsWith(s.engine.runDir('t1', s.chatId))).toBe(true);
+    expect(file.endsWith('run-1-stdout.txt')).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe(full);
+    s.engine.sendChat(s.chatId, 'look', [commandAttachment(out)]);
+    await until(() => existsSync(join(s.dir, 'received')), 'the message');
+    const received = readFileSync(join(s.dir, 'received'), 'utf8');
+    expect(received.startsWith(
+      `<bash-input>seq 1 20000; echo short >&2</bash-input>\n<bash-stdout><persisted-output>\nOutput too large (${sizeText(Buffer.byteLength(full))}). Full output saved to: ${file}\n\nPreview (first 2KB):\n1\n2\n3\n`,
+    )).toBe(true);
+    expect(received).toContain('\n</persisted-output></bash-stdout><bash-stderr>short</bash-stderr>\n\nlook\n');
+  });
+
+  it('sends the commands with the next message, ahead of its text, in Claude Code’s format, and shows them as its attachments', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const one = await s.engine.runChatCommand(s.chatId, 'echo one', 'run-1');
+    const two = await s.engine.runChatCommand(s.chatId, 'echo bad >&2; exit 2', 'run-2');
+    const attachments = [commandAttachment(one), commandAttachment(two)];
+    s.engine.sendChat(s.chatId, 'what failed?', attachments);
+    await until(() => existsSync(join(s.dir, 'received')), 'the message');
+    expect(readFileSync(join(s.dir, 'received'), 'utf8')).toBe(
+      '<bash-input>echo one</bash-input>\n<bash-stdout>one</bash-stdout><bash-stderr></bash-stderr>\n\n' +
+        '<bash-input>echo bad >&2; exit 2</bash-input>\n<bash-stdout></bash-stdout><bash-stderr>bad\nExit code 2</bash-stderr>\n\n' +
+        'what failed?\n',
+    );
+    const prompt = s.engine.getChat(s.chatId)!.rows.find((r) => r.kind === 'prompt')!;
+    expect(prompt.text).toBe('what failed?');
+    expect(prompt.attachments?.map((a) => [a.name, a.command?.exitCode])).toEqual([
+      ['! echo one', 0],
+      ['! echo bad >&2; exit 2', 2],
+    ]);
+  });
+
+  it('sends a message of commands alone', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const out = await s.engine.runChatCommand(s.chatId, 'echo alone', 'run-1');
+    s.engine.sendChat(s.chatId, '', [commandAttachment(out)]);
+    await until(() => existsSync(join(s.dir, 'received')), 'the message');
+    expect(readFileSync(join(s.dir, 'received'), 'utf8')).toBe('<bash-input>echo alone</bash-input>\n<bash-stdout>alone</bash-stdout><bash-stderr></bash-stderr>\n');
+  });
+});
+
 describe("a chat's harness", { timeout: 30_000 }, () => {
   let engine: Engine | null = null;
   afterEach(async () => {
@@ -240,6 +347,56 @@ describe("a chat's harness", { timeout: 30_000 }, () => {
     expect(e.canContinueRun('t1', chatId)).toEqual({ chat: true, terminal: false, guidance: false, compact: true });
     expect(() => e.startTerminalSession('t1', chatId)).toThrow('only Continue in Chat');
     expect(e.startChat('t1', chatId)).toMatchObject({ id: chatId, harnessId: 'other', harnessLocked: true });
+  });
+});
+
+describe('Restart Agent', { timeout: 30_000 }, () => {
+  let engine: Engine | null = null;
+  afterEach(async () => {
+    await engine?.stop();
+    engine = null;
+  });
+
+  it("ends the turn in progress, starts a new process on the conversation, and the chat goes on", async () => {
+    const s = await setUp();
+    engine = s.engine;
+    expect(s.engine.canRestartSession(s.chatId)).toBe(true);
+    s.engine.sendChat(s.chatId, 'first', []);
+    touch(s.dir, 'call-1');
+    // Mid-turn: Claude Code has named its session and runs a tool.
+    await until(() => !!s.engine.getChat(s.chatId)?.rows.some((r) => r.kind === 'tool'), 'the tool call');
+    await s.engine.restartSession(s.chatId);
+    const after = s.engine.getChat(s.chatId)!;
+    expect(after.status).toBe('ready');
+    expect(after.rows.filter((r) => r.kind === 'agent').map((r) => r.text)).toEqual(['Stopped.', 'Restarted Claude Code.']);
+    // The new process counts its turns from 1 again.
+    s.engine.sendChat(s.chatId, 'second', []);
+    touch(s.dir, 'release-1');
+    await until(() => lines(join(s.dir, 'turns')).length === 1, 'the next turn');
+    expect(lines(join(s.dir, 'turns'))).toEqual(['turn 1: second | read mid-turn: ']);
+    await until(() => s.engine.getChat(s.chatId)?.status === 'ready', 'the turn to end');
+    // The new process goes on with the same Claude Code session (its MCP servers and settings load again).
+    const argv = lines(join(s.dir, 'argv'));
+    expect(argv).toHaveLength(2);
+    expect(argv[0]).not.toContain('--resume');
+    expect(argv[1]).toContain('--resume s1');
+  });
+
+  it('restarts an idle chat on its conversation, and the next message goes to the new process', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    s.engine.sendChat(s.chatId, 'first', []);
+    touch(s.dir, 'call-1');
+    touch(s.dir, 'release-1');
+    await until(() => lines(join(s.dir, 'turns')).length === 1, 'the first turn');
+    await until(() => s.engine.getChat(s.chatId)?.status === 'ready', 'the turn to end');
+    await s.engine.restartSession(s.chatId);
+    // Nothing was cut short: only the restart shows.
+    expect(s.engine.getChat(s.chatId)!.rows.filter((r) => r.kind === 'agent').map((r) => r.text)).toEqual(['done 1', 'Restarted Claude Code.']);
+    s.engine.sendChat(s.chatId, 'second', []);
+    await until(() => lines(join(s.dir, 'turns')).length === 2, 'the next turn');
+    expect(lines(join(s.dir, 'turns'))[1]).toBe('turn 1: second | read mid-turn: ');
+    expect(lines(join(s.dir, 'argv'))[1]).toContain('--resume s1');
   });
 });
 

@@ -1,7 +1,10 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
+import { CHAT_COMMANDS, CHAT_MORE_GROUPS } from '../../shared/commands/chat';
+import { PROJECT_COMMANDS } from '../../shared/commands/project';
+import { TASK_COMMANDS, TASK_MORE_GROUPS } from '../../shared/commands/task';
 import type { AttentionRow } from '../../shared/dashboard';
 import { waitedText, waitingOf, type SessionKind, type SessionSummary } from '../../shared/sessions';
-import type { MoreGroup } from './web/more-menu';
+import { catalogMore, type MoreGroup } from './web/more-menu';
 
 // ---------- lists by day ----------
 
@@ -147,44 +150,26 @@ export function taskSummary(input: { counts: TaskCounts; loaded: boolean; addons
   return parts.join(' · ');
 }
 
-// ---------- a chat's More menu ----------
+// ---------- the More menus built from the command catalogs ----------
 
 /**
- * A conversation screen's More menu on a phone: the Chats window's commands that
- * apply to what it shows, flattened, with Close Conversation last. Not here, and why:
- * Stop and Send Now are in the message box; Harness, Model, Effort and Permission Mode
- * are in the Usage panel; Open in New Window and Open Working Directory are for a
- * computer; Edit, View and pane commands are the desktop window's. A terminal session
- * has no message box and no transcript to export: its text size and its project's
- * New Chat instead. A task run's agent can only be exported or left.
+ * A conversation screen's More menu on a phone: the chat catalog's commands
+ * for the kind of session shown (shared/commands/chat.ts says where each one
+ * goes, or why it isn't on a phone).
  */
-export function chatMore(kind: SessionKind): MoreGroup[] {
-  const conversation: MoreGroup =
-    kind === 'terminal'
-      ? [{ toolbar: TEXT_SMALLER }, { toolbar: TEXT_LARGER }]
-      : kind === 'chat'
-        ? [{ item: 'chat-find' }, { item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }]
-        : [{ item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }];
-  return [conversation, [{ item: 'chat-new-in-project' }, { item: 'chat-send-to-chats' }], [{ item: 'chat-close' }]];
-}
+export const conversationMore = (kind: SessionKind): MoreGroup[] => catalogMore([CHAT_COMMANDS], CHAT_MORE_GROUPS, kind);
+
+/** A task screen's More menu on a phone: the Task menu's commands, and its project's New Chat and New Terminal. */
+export const taskScreenMore = (): MoreGroup[] => catalogMore([TASK_COMMANDS, PROJECT_COMMANDS], TASK_MORE_GROUPS);
 
 // ---------- terminals ----------
-
-/** The Smaller Text and Larger Text items a terminal puts in its screen's More menu (toolbar item ids). */
-export const TEXT_SMALLER = 'terminal-text-smaller';
-export const TEXT_LARGER = 'terminal-text-larger';
 
 /** A terminal session's title on a phone: its name, with its project when the name is the plain "Terminal". */
 export function terminalTitle(s: { title: string; groupName: string }): string {
   return s.title === 'Terminal' && s.groupName ? `Terminal – ${s.groupName}` : s.title;
 }
 
-/**
- * What covers a terminal on a phone: nothing once it has output, "Starting" while
- * a session is on its way and hasn't printed yet, and the empty view when no
- * session exists (`idle`: the task could run now).
- */
-export function terminalOverlay(input: { loaded: boolean; hasOutput: boolean; sessionActive: boolean }): 'starting' | 'empty' | null {
-  if (!input.loaded || input.hasOutput) return null;
-  return input.sessionActive ? 'starting' : 'empty';
+/** What covers a terminal on a phone: nothing once it has output, "Starting" while its session hasn't printed yet. */
+export function terminalOverlay(input: { loaded: boolean; hasOutput: boolean }): 'starting' | null {
+  return !input.loaded || input.hasOutput ? null : 'starting';
 }

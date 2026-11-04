@@ -46,7 +46,7 @@ export function attentionRows(tasks: Task[], runtimes: Record<string, TaskRuntim
       if (run.question !== null) {
         rows.push({ task, level: 'warning', problem: `The agent asks: ${run.question}`, at: run.startedAt, runId: run.runId, lastRunId: null, question: true });
       } else if (run.held) {
-        rows.push({ task, level: 'warning', problem: 'The agent is waiting for you in the Terminal tab.', at: run.startedAt, runId: run.runId, lastRunId: null });
+        rows.push({ task, level: 'warning', problem: 'The agent is waiting for your guidance in the run window.', at: run.startedAt, runId: run.runId, lastRunId: null });
       }
     }
     const detail = rt.lastDetail ? capFirst(rt.lastDetail) : '';

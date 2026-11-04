@@ -13,13 +13,15 @@ import type {
   AddonScreen,
   AddonToolbarItem,
 } from '@shared/addons';
-import { isPhone, usePageNav } from '../web/page-nav';
+import { isPhone } from '../web/page-nav';
+import { NavBar } from './NavBar';
 import type { MoreGroup, MoreRef } from '../web/more-menu';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { ToolbarButtons } from './Toolbar';
 import { groupsAtSeparators, type ToolbarGroup } from './toolbar-model';
-import { EditorFooter, Field, InfoBar, NumberInput, TabBar } from './ui';
+import { CheckboxField, Field, InfoBar, InputRow, InputSuffix, NumberInput, TabBar } from './ui';
+import { WindowActions } from './WindowActions';
 
 type Value = string | number | boolean;
 type Values = Record<string, Value>;
@@ -170,7 +172,6 @@ export function AddonScreenView({
   const fields = screen ? fieldsOf(screen.body) : [];
   const missing = fields.some((f) => f.required && (values[f.id] === undefined || String(values[f.id]).trim() === ''));
   const footer = mode === 'window' ? screen?.body.find((n) => n.type === 'footer') : undefined;
-  const primary = footer?.type === 'footer' ? footer.primary : undefined;
 
   type TabsNode = Extract<AddonNode, { type: 'tabs' }>;
   const activeTab = (n: TabsNode) => (n.items.some((t) => t.id === tabSel[n.id]) ? tabSel[n.id] : n.items[0].id);
@@ -179,8 +180,6 @@ export function AddonScreenView({
   const windowTabs = mode === 'window' ? (screen?.body.find((n) => n.type === 'tabs') as TabsNode | undefined) : undefined;
 
   useDialogKeys({
-    onSave: mode === 'window' && primary && !missing && !busy ? () => void send('click', primary.id, primary.confirm) : undefined,
-    onCancel: mode === 'window' ? () => window.close() : undefined,
     tabs: windowTabs?.items.map((t) => t.id),
     tab: windowTabs ? activeTab(windowTabs) : undefined,
     onTab: windowTabs ? selectTab(windowTabs) : undefined,
@@ -213,10 +212,7 @@ export function AddonScreenView({
     switch (f.input) {
       case 'checkbox':
         return (
-          <label key={f.id} className="checkbox-field">
-            <input type="checkbox" checked={v === true} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, e.target.checked)} />
-            {f.label}
-          </label>
+          <CheckboxField key={f.id} label={f.label} checked={v === true} autoFocus={f.autofocus} onChange={(on) => setValue(f.id, on)} />
         );
       case 'textarea':
         return (
@@ -234,7 +230,7 @@ export function AddonScreenView({
         // A path box with Browse…, as the Windows guidelines give every box that takes a file.
         return (
           <Field key={f.id} label={f.label}>
-            <div className="addon-file">
+            <InputRow>
               {text('text')}
               <button
                 className="btn"
@@ -246,7 +242,7 @@ export function AddonScreenView({
               >
                 Browse…
               </button>
-            </div>
+            </InputRow>
           </Field>
         );
       case 'select':
@@ -264,24 +260,13 @@ export function AddonScreenView({
       case 'number':
         return (
           <Field key={f.id} label={f.label}>
-            {f.suffix ? (
-              <NumberInput suffix={f.suffix} value={Number(v) || 0} onChange={(n) => setValue(f.id, n)} />
-            ) : (
-              <input type="number" value={Number(v) || 0} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, Number(e.target.value))} />
-            )}
+            <NumberInput suffix={f.suffix} value={Number(v) || 0} autoFocus={f.autofocus} onChange={(n) => setValue(f.id, n)} />
           </Field>
         );
       default:
         return (
           <Field key={f.id} label={f.label}>
-            {f.suffix ? (
-              <div className="input-suffix">
-                {text(f.input)}
-                <span className="suffix">{f.suffix}</span>
-              </div>
-            ) : (
-              text(f.input)
-            )}
+            {f.suffix ? <InputSuffix suffix={f.suffix}>{text(f.input)}</InputSuffix> : text(f.input)}
           </Field>
         );
     }
@@ -302,22 +287,20 @@ export function AddonScreenView({
                 Copy
               </button>
               {/* Showing the characters is a state, and the Windows guidelines keep command buttons for actions. */}
-              <label className="checkbox-field addon-reveal">
-                <input
-                  type="checkbox"
-                  checked={shown !== undefined}
-                  disabled={busy}
-                  onChange={(e) =>
-                    e.target.checked
-                      ? void send('reveal', secret)
-                      : setRevealed((m) => {
-                          const { [secret]: _, ...rest } = m;
-                          return rest;
-                        })
-                  }
-                />
-                Show {p.label.toLowerCase()}
-              </label>
+              <CheckboxField
+                className="addon-reveal"
+                label={`Show ${p.label.toLowerCase()}`}
+                checked={shown !== undefined}
+                disabled={busy}
+                onChange={(on) =>
+                  on
+                    ? void send('reveal', secret)
+                    : setRevealed((m) => {
+                        const { [secret]: _, ...rest } = m;
+                        return rest;
+                      })
+                }
+              />
             </span>
           )}
           {!secret && p.copy && p.value && (
@@ -411,12 +394,13 @@ export function AddonScreenView({
 
   const groups = addonToolbarGroups(screen?.toolbar ?? [], { busy, onClick: (id, confirm) => void send('click', id, confirm) }, 'screen');
   // A phone draws no toolbar: the screen's buttons and its designed More menu go to the frame, after the window's own.
-  usePageNav(mode === 'inline' || toolbarHidden ? null : { toolbar: groups, more: addonMore(screen?.mobileMore) }, 1);
+  const bar = mode === 'inline' || toolbarHidden ? null : <NavBar toolbar={groups} more={addonMore(screen?.mobileMore)} order={1} />;
 
   if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || screen?.body.map(node)}</div>;
   if (mode === 'main') {
     return (
       <div className="detail addon-screen">
+        {bar}
         {/* The buttons join the window's toolbar, after its own. */}
         {groups.length > 0 && toolbarSlot && createPortal(<ToolbarButtons groups={groups} leadingSep={toolbarSep} />, toolbarSlot)}
         <div className="detail-bar">
@@ -428,6 +412,7 @@ export function AddonScreenView({
   }
   return (
     <div className="editor addon-screen">
+      {bar}
       {groups.length > 0 && !isPhone && (
         <div className="toolbar addon-toolbar">
           <ToolbarButtons groups={groups} />
@@ -444,16 +429,14 @@ export function AddonScreenView({
       <div className="editor-body">
         <div className="form">{failed || screen?.body.map(node)}</div>
       </div>
-      {footer?.type === 'footer' && (
-        <EditorFooter
-          primaryLabel={footer.primary.label}
-          onPrimary={() => void send('click', footer.primary.id, footer.primary.confirm)}
-          onCancel={() => window.close()}
-          onApply={footer.apply ? () => void send('click', footer.apply!.id, footer.apply!.confirm) : undefined}
-          applyLabel={footer.apply?.label}
-          saving={busy}
-          primaryDisabled={missing || footer.primary.disabled}
+      {footer?.type === 'footer' ? (
+        <WindowActions
+          confirm={{ label: footer.primary.label, disabled: missing || footer.primary.disabled, run: () => void send('click', footer.primary.id, footer.primary.confirm) }}
+          apply={footer.apply && { label: footer.apply.label, disabled: footer.apply.disabled, run: () => void send('click', footer.apply!.id, footer.apply!.confirm) }}
+          busy={busy}
         />
+      ) : (
+        <WindowActions close />
       )}
     </div>
   );
@@ -480,6 +463,7 @@ export function addonToolbarGroups(items: AddonToolbarItem[], { selected, busy, 
       icon: t.icon,
       labeled: !t.iconOnly,
       platforms: t.platforms,
+      ...(t.destructive ? { destructive: true as const } : {}),
       enabled: !(busy || t.disabled || (selected !== undefined && !commandOn(t, selected ?? undefined))),
       run: () => onClick(t.id, t.confirm),
     }),
@@ -499,6 +483,7 @@ export function addonMainGroups(addons: AddonInfo[], hidden: string[]): ToolbarG
         icon: b.icon,
         labeled: true,
         platforms: b.platforms,
+        ...(b.destructive ? { destructive: true as const } : {}),
         enabled: a.status === 'running',
         run: () => {
           if (b.tool) void window.looper.addons.openTool(a.id, b.tool);

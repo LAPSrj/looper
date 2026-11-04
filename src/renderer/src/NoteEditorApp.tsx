@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
-import { Field, NumberField, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow } from './components/ui';
+import { GuidanceForm, guidanceNote } from './components/form-blocks';
 
 /**
  * Standalone next-run guidance window (Task → Add/Edit Guidance for Next Run).
@@ -36,21 +36,17 @@ export function NoteEditorApp({ taskId }: { taskId: string }) {
     });
   }, [taskId]);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This task no longer exists.</div>;
-  if (!task) return <div className="empty">Loading…</div>;
+  if (missing || !task) return <EmptyWindow gone={missing && 'This task no longer exists.'} />;
 
   const doSave = async (): Promise<boolean> => {
-    const trimmed = text.trim();
-    if (trimmed && (!Number.isInteger(runsLeft) || runsLeft < 1)) {
-      void window.looper.showError('Applies to next: must be a whole number of runs, at least 1.');
+    const next = guidanceNote(text, runsLeft);
+    if ('problem' in next) {
+      void window.looper.showError(next.problem);
       return false;
     }
     setSaving(true);
     try {
-      await window.looper.tasks.save({ ...task, note: trimmed ? { text: trimmed, runsLeft } : undefined });
+      await window.looper.tasks.save({ ...task, note: next.note });
       return true;
     } catch (e) {
       void window.looper.showError((e as Error).message);
@@ -60,25 +56,6 @@ export function NoteEditorApp({ taskId }: { taskId: string }) {
     }
   };
   const save = async () => { if (await doSave()) window.close(); };
-  saveRef.current = save;
 
-  return (
-    <div className="editor">
-      <div className="editor-body">
-        <div className="form">
-          <Field label="Guidance">
-            <textarea autoFocus rows={7} value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
-          <NumberField
-            label="Applies to next"
-            suffix="runs"
-            min={1}
-            value={runsLeft}
-            onChange={setRunsLeft}
-          />
-        </div>
-      </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
-    </div>
-  );
+  return <GuidanceForm text={text} onText={setText} runsLeft={runsLeft} onRunsLeft={setRunsLeft} saving={saving} onSave={() => void save()} />;
 }

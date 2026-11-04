@@ -47,10 +47,78 @@ describe('agent fields', () => {
     }
   });
 
+  it('draws the task editor\'s folder, environment, agent and classifier fields with AgentFields', () => {
+    const text = src('renderer', 'src', 'components', 'TaskEditor.tsx');
+    expect(text.match(/<AgentFields/g)?.length).toBe(4);
+    expect(text).not.toMatch(/label="(Working directory|Environment|Harness|Model|Model id|Effort|Session type|Permission mode)"/);
+  });
+
   it('uses no other name for a field in any window', () => {
     const files = walk(path.join(__dirname, '..', 'src', 'renderer', 'src')).filter((f) => /\.tsx$/.test(f));
     const text = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     expect(text).not.toMatch(/label="Working folder"|label="Shell environment variables"|label="Timezone"/);
+  });
+});
+
+describe('form elements', () => {
+  const renderer = path.join(__dirname, '..', 'src', 'renderer', 'src');
+  const files = walk(renderer)
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => [path.relative(renderer, f).replace(/\\/g, '/'), fs.readFileSync(f, 'utf8')] as const);
+  /** The shared form components draw these; no window writes them by hand. */
+  const SHARED = new Set(['components/ui.tsx']);
+
+  it('draws checkboxes, groups under a checkbox, input rows and toggle buttons only through the shared components', () => {
+    for (const [file, text] of files) {
+      if (SHARED.has(file)) continue;
+      expect(text, file).not.toMatch(/className=["{`][^"}`]*\b(checkbox-field|stagger-fields|step-fields|browse-row|input-row|day-toggle)\b/);
+      // A label for a control is a Field (a value shown under a caption keeps a span).
+      expect(text, file).not.toMatch(/<label className="field(-label)?"/);
+    }
+  });
+
+  it('keeps no styles for the hand-written versions', () => {
+    for (const sheet of ['styles.css', 'phone.css', 'web/desktop-device.css']) {
+      const css = fs.readFileSync(path.join(renderer, sheet), 'utf8');
+      expect(css, sheet).not.toMatch(/\.(stagger-fields|browse-row|addon-file|radio-list)\b/);
+    }
+  });
+
+  it('shows an editor window\'s Loading… and "no longer exists" through EmptyWindow', () => {
+    for (const [file, text] of files) {
+      expect(text, file).not.toMatch(/className="empty">This [^<]*no longer/);
+      // A window with window actions is a form window (panes keep their own Loading… text).
+      if (/<WindowActions\b/.test(text) && !SHARED.has(file)) expect(text, file).not.toMatch(/className="empty">Loading…/);
+    }
+  });
+
+  it('draws every window\'s footer buttons through WindowActions', () => {
+    for (const [file, text] of files) expect(text, file).not.toMatch(/\b(EditorFooter|CloseFooter|DialogFooter)\b/);
+  });
+
+  it('writes the footer row by hand only in WindowActions, the browser frame\'s message box and the pairing page', () => {
+    // The message box keeps Electron's own button list; the pairing page shows before any window.
+    const HAND = new Set(['components/WindowActions.tsx', 'web/DesktopFrame.tsx', 'web/PairPage.tsx']);
+    for (const [file, text] of files) {
+      if (!HAND.has(file)) expect(text, file).not.toContain('className="editor-footer"');
+    }
+  });
+
+  it('leaves Esc and Enter to WindowActions: no other useDialogKeys call passes onSave or onCancel', () => {
+    const OWN = new Set(['components/WindowActions.tsx']);
+    for (const [file, text] of files) {
+      if (OWN.has(file)) continue;
+      for (const [call] of text.matchAll(/useDialogKeys\s*(?:<[^>]*>)?\(\{[\s\S]*?\}\)/g)) {
+        expect(call, file).not.toMatch(/\b(onSave|onCancel)\b/);
+      }
+    }
+  });
+
+  it('has one short random id helper', () => {
+    for (const [file, text] of files) {
+      if (file === 'rid.ts') continue;
+      expect(text, file).not.toContain('Math.random().toString(36)');
+    }
   });
 });
 
@@ -65,14 +133,14 @@ describe('shortcuts', () => {
   it('keeps New Chat on Ctrl+T and New Terminal on Ctrl+Shift+T in the main window and the Chats window', () => {
     expect(SHORTCUTS.newChat).toBe('CmdOrCtrl+T');
     expect(SHORTCUTS.newTerminal).toBe('CmdOrCtrl+Shift+T');
-    const main = src('main', 'index.ts');
-    // Both windows' menus take the keys from the one table.
+    // The menus of both windows (index.ts, and the Chats commands' catalog) take the keys from the one table.
+    const main = src('main', 'index.ts') + src('shared', 'commands', 'chat.ts');
     expect(main.match(/accelerator: SHORTCUTS\.newChat/g)?.length).toBeGreaterThanOrEqual(2);
     expect(main.match(/accelerator: SHORTCUTS\.newTerminal/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it('writes no well-known key, and none of the shared keys, as a literal in a menu', () => {
-    const main = src('main', 'index.ts');
+    const main = ['index.ts', 'file-menu.ts'].map((f) => src('main', f)).join('') + ['chat.ts', 'task.ts', 'project.ts'].map((f) => src('shared', 'commands', f)).join('');
     // The literal accelerators of the menu templates and the shared ones the table gives.
     const literals = [...main.matchAll(/accelerator: '([^']+)'/g)].map((m) => m[1]);
     for (const k of WELL_KNOWN_KEYS) expect(literals, k).not.toContain(k);

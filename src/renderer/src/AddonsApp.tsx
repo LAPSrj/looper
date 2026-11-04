@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonSide } from '@shared/addons';
 import type { Environment } from '@shared/types';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { useDialogKeys } from './components/hooks';
 import { useFitWindow } from './fit-window';
-import { SelectList } from './components/SelectList';
-import { EditorFooter, Field } from './components/ui';
+import { ListActions, SelectList } from './components/SelectList';
+import { EmptyWindow, Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 const STATUS: Record<AddonInfo['status'], string> = { starting: 'Starting', running: 'Running', stopped: 'Stopped' };
 
@@ -26,8 +26,6 @@ export function AddonsApp() {
       setSelected((s) => (s && e.addons.some((a) => a.id === s) ? s : (e.addons[0]?.id ?? null)));
     });
   }, []);
-
-  useDialogKeys({ onCancel: () => window.close() });
 
   const addon = addons.find((a) => a.id === selected);
   // Stop shows while it runs; Start otherwise, which also brings back one that stopped on its own.
@@ -55,12 +53,12 @@ export function AddonsApp() {
                 { label: 'Edit…', run: () => void window.looper.addons.edit(a.id) },
                 { label: on ? 'Stop' : 'Start', run: () => void window.looper.addons.setEnabled(a.id, !on) },
                 { label: 'Restart', enabled: a.enabled, run: () => void window.looper.addons.restart(a.id) },
-                { label: 'Remove', run: () => void window.looper.addons.remove(a.id) },
+                { label: 'Remove', destructive: true, run: () => void window.looper.addons.remove(a.id) },
               ];
             }}
             onDelete={(a) => void window.looper.addons.remove(a.id)}
           />
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" onClick={() => void window.looper.addons.install()}>
               Install…
             </button>
@@ -76,7 +74,7 @@ export function AddonsApp() {
             <button className="btn danger" disabled={!addon} onClick={() => addon && void window.looper.addons.remove(addon.id)}>
               Remove
             </button>
-          </div>
+          </ListActions>
           {addon && (
             <dl className="props addon-details">
               {addon.description && (
@@ -105,11 +103,7 @@ export function AddonsApp() {
           )}
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }
@@ -166,11 +160,7 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
     document.title = 'Edit Addon';
   }, []);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (addon === null) return <div className="empty">This addon is no longer installed.</div>;
-  if (!addon || !draft) return <div className="empty">Loading…</div>;
+  if (!addon || !draft) return <EmptyWindow gone={addon === null && 'This addon is no longer installed.'} />;
 
   const patch = (p: Partial<RunDraft>) => setDraft((d) => (d ? { ...d, ...p } : d));
   const run = fromDraft(draft, addon.ownRun.on);
@@ -197,8 +187,6 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
   const save = async () => {
     if (await doSave()) window.close();
   };
-  saveRef.current = save;
-
   return (
     <div className="editor">
       <div className="editor-body">
@@ -223,14 +211,14 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
           <Field label="Environment variables">
             <input className="mono" value={draft.env} placeholder="NAME=value" onChange={(e) => patch({ env: e.target.value })} />
           </Field>
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" disabled={isDefault} onClick={() => setDraft(defaults)}>
               Restore Defaults
             </button>
-          </div>
+          </ListActions>
         </div>
       </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void doSave()} saving={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void doSave() }} busy={saving} />
     </div>
   );
 }

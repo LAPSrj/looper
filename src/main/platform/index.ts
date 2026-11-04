@@ -135,13 +135,16 @@ function dialogTarget(win: AppWindow | null | undefined): RemoteWindow | 'gone' 
   return w ?? 'gone';
 }
 
-/** Electron's default cancelId: the first "Cancel" or "No" button, else 0. */
-function defaultCancelId(buttons: string[]): number {
-  const i = buttons.findIndex((b) => /^(cancel|no)$/i.test(b.replace(/&/g, '').trim()));
-  return i >= 0 ? i : 0;
-}
+/**
+ * Electron's MessageBoxOptions with the buttons' roles said, not guessed:
+ * `cancelId` is what Esc and the window's × answer (the button that
+ * abandons), `defaultId` the one Enter runs (the safest), and `destructiveId`
+ * the one a phone draws red (a destructive action the user didn't choose:
+ * Don't Save, Replace).
+ */
+export type MessageBoxOptions = Electron.MessageBoxOptions & { cancelId: number; defaultId: number; destructiveId?: number };
 
-export function messageBoxSpec(o: Electron.MessageBoxOptions): MessageBoxSpec {
+export function messageBoxSpec(o: MessageBoxOptions): MessageBoxSpec {
   const buttons = o.buttons?.length ? [...o.buttons] : ['OK'];
   return {
     ...(o.type ? { type: o.type as MessageBoxSpec['type'] } : {}),
@@ -149,8 +152,9 @@ export function messageBoxSpec(o: Electron.MessageBoxOptions): MessageBoxSpec {
     message: o.message,
     ...(o.detail ? { detail: o.detail } : {}),
     buttons,
-    ...(o.defaultId !== undefined ? { defaultId: o.defaultId } : {}),
-    cancelId: o.cancelId ?? defaultCancelId(buttons),
+    defaultId: o.defaultId,
+    cancelId: o.cancelId,
+    ...(o.destructiveId !== undefined ? { destructiveId: o.destructiveId } : {}),
     ...(o.checkboxLabel ? { checkboxLabel: o.checkboxLabel, checkboxChecked: !!o.checkboxChecked } : {}),
   };
 }
@@ -169,11 +173,14 @@ function fileDialogSpec(o: Electron.OpenDialogOptions | Electron.SaveDialogOptio
 }
 
 /** dialog.showMessageBox(win?, opts), or the same box on the remote client. */
-export async function showMessageBox(win: AppWindow | null | undefined, opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+export async function showMessageBox(win: AppWindow | null | undefined, opts: MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
   const t = dialogTarget(win);
-  if (t === undefined) return win ? dialog.showMessageBox(win as BrowserWindow, opts) : dialog.showMessageBox(opts);
+  if (t === undefined) {
+    const { destructiveId: _red, ...electron } = opts;
+    return win ? dialog.showMessageBox(win as BrowserWindow, electron) : dialog.showMessageBox(electron);
+  }
   const spec = messageBoxSpec(opts);
-  if (t === 'gone') return { response: spec.cancelId ?? 0, checkboxChecked: !!spec.checkboxChecked };
+  if (t === 'gone') return { response: spec.cancelId, checkboxChecked: !!spec.checkboxChecked };
   const r = await t.client.dialog(t, 'message', spec);
   return { response: r.response, checkboxChecked: r.checkboxChecked };
 }

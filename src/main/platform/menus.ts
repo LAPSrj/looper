@@ -14,10 +14,13 @@ declare global {
       platforms?: UiPlatform[];
       /** An ICONS key (renderer components/icons.tsx) the phone's menus draw. Not `icon`, which Electron reads as an image. */
       glyph?: string;
+      /** It destroys or cuts something off (Delete, Stop, Close): a phone draws it red, last. */
+      destructive?: true;
     }
     interface MenuItem {
       platforms?: UiPlatform[];
       glyph?: string;
+      destructive?: true;
     }
   }
 }
@@ -36,6 +39,7 @@ export interface MenuItemLike {
   submenu?: MenuLike | null;
   platforms?: UiPlatform[];
   glyph?: string;
+  destructive?: true;
   /** Electron's wrapper, click(event, window, webContents): it flips `checked` for checkbox and radio items, then calls the template's click(item, window, event). */
   click?: Function;
 }
@@ -120,6 +124,7 @@ export function serializeMenu(menu: MenuLike, platform?: UiPlatform): { items: M
       const key = ownKey(item.id);
       if (key) spec.key = key;
       if (item.glyph) spec.icon = item.glyph;
+      if (item.destructive) spec.destructive = true;
       if (!platform && item.platforms) spec.platforms = [...item.platforms];
       if (item.submenu) spec.submenu = walk(item.submenu, id);
       out.push(spec);

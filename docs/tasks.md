@@ -200,14 +200,14 @@ classifier step on or off. When on, it runs after a check that returned
   classifier. Left unset (`harnessId` omitted), it's the task's own agent
   harness if that's Claude Code or Codex, otherwise the environment's first
   Claude Code or Codex harness.
+- **Model** — shown for Claude Code and Codex harnesses: a preset from the
+  harness's model list, or Custom… to type a model id. Defaults to `haiku`.
 - **Session type** — Headless (default): `claude -p` / `codex exec` over
   pipes, answering under a strict `{act, reason}` schema (claude
   `--json-schema` / codex `--output-schema`). Interactive terminal: a real pty
-  shown in the task's Terminal tab (you can watch it and type into it); the
+  (its conversation shows in the run window); the
   session gives its verdict by running `looper-classify act "<reason>"` or
   `looper-classify noop "<reason>"`, then writes a short closing message.
-- **Model** — a preset from the harness's model list, or Custom… to type a
-  model id. Defaults to `haiku`.
 - **Timeout** — seconds before the classifier session is killed and treated
   as an error. Default 180s.
 - **Classifier prompt** — your yes/no question about the check output.
@@ -238,8 +238,8 @@ classifier step on or off. When on, it runs after a check that returned
   environment's first harness with its default model, effort and permission
   mode.
 - **Harness** — which harness in the task's environment runs the agent.
-- **Session type** — Interactive terminal (default): a real pty shown in the
-  task's Terminal tab, which you can type into. Headless: no terminal; the
+- **Session type** — Interactive terminal (default): a real pty, which you
+  follow in the run window and steer with guidance. Headless: no terminal; the
   harness runs non-interactively (`claude -p` / `codex exec`) and its exit
   is the only signal.
 - **Model** — shown for Claude Code and Codex harnesses: a preset from the
@@ -305,7 +305,7 @@ classifier step on or off. When on, it runs after a check that returned
   detection is Claude Code only; other harnesses end a run only via
   `looper-done`, process exit, or Max runtime.
 - **When idle too long** — End the run, or Hold and wait for me (the run
-  pauses for you to continue it by hand in the terminal).
+  pauses for you to continue it with guidance).
 - **Simultaneous runs** — cycles of this task that may be in flight at once.
   At the default of 1, a slot due while a run is active is
   skipped. Above 1, a due slot starts another run alongside the ones already
@@ -385,7 +385,7 @@ A template is a task definition you can create new tasks from; it's stored
 separately from your tasks and can be left incomplete (no working directory,
 check command, or agent prompt required).
 
-- **File → New Task from Template…** (Ctrl+Shift+N) opens a picker listing
+- **File → New Task → From Template…** (Ctrl+Shift+N) opens a picker listing
   your templates by name. Select one and click Create (or double-click it)
   to open a new task editor prefilled from the template; nothing is saved
   until you save that new task.
@@ -467,7 +467,8 @@ before the first recorded change, marked "Before history".
   status fields keep their current values, files the version never recorded
   are left alone (Looper doesn't delete files), and the restore is saved as
   a new version, so you can restore the one before it. A run already going keeps the
-  definition it started with.
+  definition it started with. The View and Compare windows have **Restore**
+  too, at the left of their buttons, apart from Close.
 - **Edit with Agent** replaces Restore while [Edit Task with
   Agent](task-builder.md#saving-undo-and-redo) is open on the task: the
   conversation continues from the version, and nothing is saved until you

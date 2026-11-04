@@ -36,6 +36,39 @@ export function mostCommon(colors: readonly string[]): string | null {
   return best;
 }
 
+/** A computed CSS color's red, green and blue (0 to 1); null for a form it doesn't read. */
+export function colorChannels(color: string): [number, number, number] | null {
+  const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(color.trim());
+  if (rgb) return [Number(rgb[1]) / 255, Number(rgb[2]) / 255, Number(rgb[3]) / 255];
+  // color-mix() computes to color(srgb r g b), with channels from 0 to 1.
+  const srgb = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(color.trim());
+  if (srgb) return [Number(srgb[1]), Number(srgb[2]), Number(srgb[3])];
+  return null;
+}
+
+/** WCAG's relative luminance of sRGB channels. */
+function luminance([r, g, b]: [number, number, number]): number {
+  const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+const contrast = (a: number, b: number): number => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+/**
+ * The text color a tab on background `bg` needs instead of its own `fg`:
+ * white or black, whichever reads better, once `fg` falls under WCAG's 4.5:1
+ * against it (a tab over a terminal's black takes white text); null while
+ * `fg` reads well, or when either color can't be read.
+ */
+export function readableText(bg: string, fg: string): string | null {
+  const b = colorChannels(bg);
+  const f = colorChannels(fg);
+  if (!b || !f) return null;
+  const lb = luminance(b);
+  if (contrast(lb, luminance(f)) >= 4.5) return null;
+  return contrast(lb, 1) >= contrast(lb, 0) ? '#fff' : '#000';
+}
+
 /** Whether a computed background-color paints nothing (transparent, or alpha 0). */
 export const isClear = (color: string): boolean => color === 'transparent' || /^rgba\(.*,\s*0\)$/.test(color) || /\/\s*0\)$/.test(color);
 

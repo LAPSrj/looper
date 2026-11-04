@@ -12,7 +12,8 @@ import {
   type GitStatusResult,
 } from '@shared/git';
 import { fmtDateTime } from '../format';
-import { isPhone, usePageNav } from '../web/page-nav';
+import { isPhone } from '../web/page-nav';
+import { NavBar } from './NavBar';
 import { useDragResize, useListNav } from './hooks';
 import { Group, Row } from './phone/PhoneList';
 import { DiffView } from './ToolContent';
@@ -198,15 +199,9 @@ function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle
 }
 
 /**
- * A phone's push: while a deeper screen shows (`title` set), Back returns to
- * the one before it. The frame's bar draws the Back and the title; in a sheet,
- * where the bar is out of reach, `PhoneBack` draws one in the view.
+ * The in-view Back a phone's sheet shows over a pushed screen (hidden elsewhere: the frame's bar has it,
+ * from the NavBar beside it, which gives the deeper screen's title and Back).
  */
-function usePhoneDetail(title: string | null, onBack: () => void): void {
-  usePageNav(isPhone && title !== null ? { title, back: onBack } : null, 10);
-}
-
-/** The in-view Back a phone's sheet shows over a pushed screen (hidden elsewhere: the frame's bar has it). */
 function PhoneBack({ label, onBack }: { label: string; onBack: () => void }) {
   return (
     <button className="pg-inline-back" onClick={onBack}>
@@ -247,7 +242,6 @@ function ChangesView({ projectId, status, narrow, onDetail }: { projectId: strin
   const current = changes.find((c) => c.path === sel) ?? changes[0];
   const diffShown = !isPhone || open;
   useEffect(() => onDetail(isPhone && open), [open, onDetail]);
-  usePhoneDetail(isPhone && open && current ? baseName(current.path) : null, () => setOpen(false));
   // A change's diff is read again whenever the status says something changed.
   const statusKey = JSON.stringify(changes);
   const key = current ? `${current.path}\n${current.kind}\n${statusKey}` : '';
@@ -284,6 +278,7 @@ function ChangesView({ projectId, status, narrow, onDetail }: { projectId: strin
     );
     return open ? (
       <div className="git-phone-detail">
+        {current && <NavBar title={baseName(current.path)} back={() => setOpen(false)} order={10} />}
         <PhoneBack label="Changes" onBack={() => setOpen(false)} />
         {diffPane}
       </div>
@@ -456,10 +451,6 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
   const file = detail ? (detail.files.find((f) => f.path === filePath) ?? detail.files[0]) : undefined;
   const diffKey = detail && file ? `${detail.hash}\n${file.path}` : '';
   useEffect(() => onDetail(isPhone && phoneOpen !== null), [phoneOpen, onDetail]);
-  usePhoneDetail(
-    !isPhone || phoneOpen === null ? null : phoneOpen === 'file' ? (file ? baseName(file.path) : '') : (current?.subject ?? ''),
-    () => setPhoneOpen(phoneOpen === 'file' ? 'commit' : null),
-  );
   useEffect(() => {
     if (!detail || !file || (isPhone && phoneOpen !== 'file')) return;
     let live = true;
@@ -487,6 +478,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
     if (phoneOpen === 'file') {
       return (
         <div className="git-phone-detail">
+          <NavBar title={file ? baseName(file.path) : ''} back={() => setPhoneOpen('commit')} order={10} />
           <PhoneBack label="Commit" onBack={() => setPhoneOpen('commit')} />
           {detail ? (
             <DiffPane
@@ -504,6 +496,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
     if (phoneOpen === 'commit') {
       return (
         <div className="git-phone-list">
+          <NavBar title={current?.subject ?? ''} back={() => setPhoneOpen(null)} order={10} />
           <PhoneBack label="History" onBack={() => setPhoneOpen(null)} />
           {detail ? (
             <>

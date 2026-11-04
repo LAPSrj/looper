@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { RunFilter } from '@shared/runs';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { watcherOf } from '@shared/types';
 import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort, withKind } from '@shared/environments';
@@ -6,15 +7,13 @@ import { cronToForm, nextWindowOpen } from '@shared/cron';
 import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
 import { tickFor, useNow } from '../useNow';
 import { RunLog } from './RunLog';
-import { Terminal } from './Terminal';
 import { TabBar } from './ui';
 
-export type DetailTab = 'status' | 'runs' | 'terminal';
+export type DetailTab = 'status' | 'runs';
 
 const TABS: [DetailTab, string][] = [
   ['status', 'Status'],
   ['runs', 'Runs'],
-  ['terminal', 'Terminal'],
 ];
 
 interface Props {
@@ -25,12 +24,10 @@ interface Props {
   records: RunRecord[];
   tab: DetailTab;
   onTab: (t: DetailTab) => void;
-  hideNoActionRuns: boolean;
+  /** View → Task Runs: the runs the Runs tab leaves out (unset before the settings come: none). */
+  runFilter?: RunFilter;
   /** Run to select in the run log (notification click). */
   focusRun?: { runId: string } | null;
-  /** The run the Terminal tab is pinned to when several are in flight (null = the newest). */
-  terminalRun: string | null;
-  onTerminalRun: (runId: string | null) => void;
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -92,7 +89,7 @@ function describeCron(cron: string): string {
 function statusDetail(runtime: TaskRuntime | undefined): string {
   if (!runtime) return '';
   if (runtime.asking) return 'The agent is waiting for your answer in the run window';
-  if (runtime.held) return 'The agent is waiting for you in the Terminal tab';
+  if (runtime.held) return 'The agent is waiting for your guidance in the run window';
   if (runtime.runs.length > 1) return `${runtime.runs.length} runs active`;
   switch (runtime.state) {
     case 'running':
@@ -139,10 +136,8 @@ export function TaskDetail({
   records,
   tab,
   onTab,
-  hideNoActionRuns,
+  runFilter,
   focusRun,
-  terminalRun,
-  onTerminalRun,
 }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
@@ -259,16 +254,7 @@ export function TaskDetail({
           </div>
         )}
         {tab === 'runs' && (
-          <RunLog records={records} runtime={runtime} hideNoAction={hideNoActionRuns} focusRun={focusRun} />
-        )}
-        {tab === 'terminal' && (
-          <Terminal
-            taskId={task.id}
-            runtime={runtime}
-            headless={task.agent.mode === 'headless'}
-            selectedRun={terminalRun}
-            onSelectRun={onTerminalRun}
-          />
+          <RunLog records={records} runtime={runtime} filter={runFilter} focusRun={focusRun} />
         )}
       </section>
     </div>

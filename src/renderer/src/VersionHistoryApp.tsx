@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '@shared/types';
 import { changeLabels, sourceLabel, type VersionSummary } from '@shared/versions';
-import { useDialogKeys } from './components/hooks';
-import { SelectList } from './components/SelectList';
+import { ListActions, SelectList } from './components/SelectList';
+import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
 
 /** Version History window (Task → Version History…): a task's saved versions, newest first. */
@@ -40,8 +40,6 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
     window.addEventListener('focus', check);
     return () => window.removeEventListener('focus', check);
   }, [taskId]);
-
-  useDialogKeys({ onCancel: () => window.close() });
 
   const version = versions.find((v) => v.n === selected);
   const current = versions[0]?.n;
@@ -108,7 +106,7 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
             onContextMenu={(v) => window.looper.showVersionContextMenu({ builder: builderOpen, current: v.n === current })}
             autoFocus
           />
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" disabled={!version} onClick={view}>
               View…
             </button>
@@ -124,14 +122,10 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
                 Restore
               </button>
             )}
-          </div>
+          </ListActions>
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }

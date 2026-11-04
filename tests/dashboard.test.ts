@@ -58,7 +58,7 @@ describe('dashboard rows', () => {
     expect(rows.map((r) => [r.task.id, r.level, r.problem, r.runId, r.lastRunId])).toEqual([
       ['failed', 'error', 'Timed out: Agent timed out', null, 'f1'],
       ['paused', 'error', 'Auto-paused after 5 consecutive errors. Last error: Agent exited with code 1', null, 'p5'],
-      ['waits', 'warning', 'The agent is waiting for you in the Terminal tab.', 'r1', null],
+      ['waits', 'warning', 'The agent is waiting for your guidance in the run window.', 'r1', null],
     ]);
   });
 

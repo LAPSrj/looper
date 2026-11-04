@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment } from '@shared/types';
 import { definitionFields, fileName, lineDiff, type VersionDetail } from '@shared/versions';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 import { settingGroup, settingLabel, settingValue } from './taskSettings';
 
 /** One line on one side of the side-by-side view; null = no line there (the other side has one). */
@@ -393,8 +394,6 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
     });
   }, [taskId, n, compare]);
 
-  useDialogKeys({ onCancel: () => window.close() });
-
   const restore = async () => {
     if (!(await window.looper.confirm(`Restore version ${n}? Its definition and recorded files replace the current ones, and the restore is saved as a new version.`))) return;
     try {
@@ -405,8 +404,7 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
     }
   };
 
-  if (error) return <div className="empty">{error}</div>;
-  if (!detail) return <div className="empty">Loading…</div>;
+  if (error || !detail) return <EmptyWindow gone={error} />;
   return (
     <div className="editor">
       <div className="editor-body compare-app">
@@ -416,14 +414,7 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
           <VersionView detail={detail} environments={environments} />
         )}
       </div>
-      <div className="editor-footer">
-        <button className="btn" disabled={detail.isCurrent} onClick={() => void restore()}>
-          Restore
-        </button>
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close extras={[{ id: 'restore', label: 'Restore', disabled: detail.isCurrent, run: () => void restore() }]} />
     </div>
   );
 }

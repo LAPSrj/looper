@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { chatCanCompact, contextText, type ChatState } from '@shared/chat';
-import type { MessageRow } from '@shared/messages';
 import type { SessionSummary, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
-import { dashboardOrder, waitedText } from '@shared/sessions';
+import { canStop, dashboardOrder, liveCards, showsConversation, waitedText } from '@shared/sessions';
+import type { EngineEvent } from '@shared/types';
 import { ActivityPanel, type ActivityTab } from './components/ActivityPanel';
 import { fmtClock } from './format';
 import { WaitedFor } from './components/Live';
@@ -11,13 +11,14 @@ import { MINUTE, useNow } from './useNow';
 import { ICONS } from './components/icons';
 import { ToolButton } from './components/ToolButton';
 import { Toolbar } from './components/Toolbar';
-import type { ToolbarGroup } from './components/toolbar-model';
-import { DESKTOP_ONLY, NOT_MOBILE } from '@shared/ui-platform';
-import { SHORTCUTS, hint } from '@shared/shortcuts';
-import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
-import { ChatView } from './components/ChatView';
+import { commandToolbar, type ToolbarGroup } from './components/toolbar-model';
+import { NOT_MOBILE } from '@shared/ui-platform';
+import { CHAT_COMMANDS } from '@shared/commands/chat';
+import { ChatView, PermissionButtons } from './components/ChatView';
 import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
+import { MessageBox, type MessageBoxStop } from './components/MessageBox';
+import { RunGuidance, TranscriptView } from './components/Transcript';
 import { useAutoGrow } from './components/phone/auto-grow';
 import { Group, LargeTitle, Row, Segmented } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
@@ -31,10 +32,12 @@ import { TerminalView } from './components/TerminalView';
 import { Tabs, type TabItem } from './components/Tabs';
 import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components/WorkflowView';
 import { platform } from './platform';
-import { chatMore, terminalTitle } from './phone-lists';
+import { conversationMore, terminalTitle } from './phone-lists';
 import { subscribe } from './events';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
-import { isPhone, usePageNav, type PageNavAction } from './web/page-nav';
+import { isPhone } from './web/page-nav';
+import type { PageNavAction } from './web/nav-bar-model';
+import { NavBar } from './components/NavBar';
 
 /** Where the panes' widths are saved: the Chats window's, and a single chat's window's apart. */
 const WIDTHS_KEY = 'sessions.widths';
@@ -182,24 +185,74 @@ const backgroundText = (n: number) => (n === 1 ? '1 running in the background' :
 const cardClass = (s: SessionSummary, size: CardSize | undefined, extra = '') =>
   `overview-card${extra}${size?.big ? ' big' : ''}${s.waiting && s.waiting.reason !== 'turn' ? ' waiting' : ''}`;
 
+const fail = (e: Error) => void window.looper.showError(e.message);
+
+/** A session's Stop beside its message box, by the toolbar's rule. */
+const stopOf = (s: SessionSummary): MessageBoxStop => ({ enabled: canStop(s), run: () => void window.looper.sessions.stop(s.id).catch(fail) });
+
 /**
  * One session on the dashboard as a summary: its state, the agent's messages since the
- * user's last one, and Allow/Deny or a reply box at the bottom. A terminal session's
- * and a task run's card on the desktop, and every card on a phone.
+ * user's last one, and Allow/Deny or a reply box at the bottom: on the desktop a chat's
+ * message box, Send above Stop. A terminal session's card on the desktop, and every
+ * card on a phone.
  */
 export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag }) {
   const [reply, setReply] = useState('');
   const replyBox = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(replyBox, reply, 120, isPhone);
+  const run = s.kind === 'run';
   const send = () => {
-    if (!reply.trim()) return;
-    window.looper.sessions.send([s.id], reply);
-    setReply('');
+    const text = reply.trim();
+    if (!text) return;
+    // A task run's agent takes the reply as guidance, the answer to its question while it asks one.
+    if (run) void sendRunGuidance(s, text).then(() => setReply(''), fail);
+    else {
+      window.looper.sessions.send([s.id], reply);
+      setReply('');
+    }
   };
+  const placeholder = run ? (s.question !== undefined ? 'Answer' : 'Guidance') : 'Reply';
+  const keep = (e: React.MouseEvent) => e.stopPropagation();
+  let bottom: React.ReactNode = null;
+  if (s.permissionId) {
+    bottom = (
+      <div className="overview-actions" onClick={keep}>
+        <PermissionButtons chatId={s.id} permissionId={s.permissionId} />
+      </div>
+    );
+  } else if (s.status !== 'ended' && isPhone) {
+    // On a phone Enter is a line break; Send, or Ctrl+Enter from a hardware keyboard, sends.
+    bottom = (
+      <div className="overview-actions" onClick={keep}>
+        <textarea
+          ref={replyBox}
+          rows={1}
+          value={reply}
+          placeholder={placeholder}
+          onChange={(e) => setReply(e.target.value)}
+          onKeyDown={(e) => {
+            if (sendsOnEnter(e, true)) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+        <button className="btn small" disabled={!reply.trim()} onClick={send}>
+          Send
+        </button>
+      </div>
+    );
+  } else if (s.status !== 'ended') {
+    bottom = (
+      <div className="overview-composer" onClick={keep}>
+        <MessageBox text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />
+      </div>
+    );
+  }
   return (
     <div
       data-id={s.id}
-      className={cardClass(s, size) + (drag?.mark ?? '')}
+      className={cardClass(s, size, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '')}
       onClick={() => onOpen(s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -209,54 +262,7 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
       <CardTitle s={s} size={size} drag={drag} />
       <CardMessages s={s} />
       {s.background > 0 && <div className="muted">{backgroundText(s.background)}</div>}
-      <div className="overview-actions" onClick={(e) => e.stopPropagation()}>
-        {s.kind === 'run' ? null : s.permissionId ? (
-          <>
-            <button className="btn primary small" onClick={() => window.looper.chat.answer(s.id, s.permissionId!, true)}>
-              Allow
-            </button>
-            <button className="btn small" onClick={() => window.looper.chat.answer(s.id, s.permissionId!, false)}>
-              Deny
-            </button>
-          </>
-        ) : (
-          s.status !== 'ended' && (
-            <>
-              {isPhone ? (
-                // On a phone Enter is a line break; Send, or Ctrl+Enter from a hardware keyboard, sends.
-                <textarea
-                  ref={replyBox}
-                  rows={1}
-                  value={reply}
-                  placeholder="Reply"
-                  onChange={(e) => setReply(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (sendsOnEnter(e, true)) {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
-                />
-              ) : (
-                <input
-                  value={reply}
-                  placeholder="Reply"
-                  onChange={(e) => setReply(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
-                />
-              )}
-              <button className="btn small" disabled={!reply.trim()} onClick={send}>
-                Send
-              </button>
-            </>
-          )
-        )}
-      </div>
+      {bottom}
     </div>
   );
 }
@@ -335,34 +341,46 @@ function useCardsInView(root: HTMLElement | null): [ReadonlySet<string>, TrackCa
   return [inView, track];
 }
 
-/** A chat's state while its card is in view: read once, then kept current by its own chat events only. */
-function useCardChat(id: string, live: boolean): ChatState | null {
-  const [chat, setChat] = useState<ChatState | null>(null);
+/**
+ * A card's conversation while it's in view: read once (`read`), then kept current by
+ * its own events only (`of` picks them). `read` and `of` are module constants.
+ */
+function useCardFeed<T>(id: string, live: boolean, read: (id: string) => Promise<T | null>, of: (e: EngineEvent, id: string) => T | undefined): T | null {
+  const [value, setValue] = useState<T | null>(null);
   useEffect(() => {
-    setChat(null);
+    setValue(null);
     if (!live) return;
     let current = true;
     const unsub = subscribe((e) => {
-      if (e.type === 'chat' && e.state.id === id) setChat(e.state);
+      const v = of(e, id);
+      if (v) setValue(() => v);
     });
     // An event that came first is newer than what was read.
-    void window.looper.chat.get(id).then((c) => {
-      if (current && c) setChat((prev) => prev ?? c);
+    void read(id).then((v) => {
+      if (current && v) setValue((prev) => prev ?? v);
     });
     return () => {
       current = false;
       unsub();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, live]);
-  return live ? chat : null;
+  return live ? value : null;
 }
 
+const readChat = (id: string) => window.looper.chat.get(id);
+const chatEvent = (e: EngineEvent, id: string) => (e.type === 'chat' && e.state.id === id ? e.state : undefined);
+/** A task run's conversation comes with its activity, as for the run the Chats tab shows. */
+const readActivity = (id: string) => window.looper.sessions.activity(id);
+const activityEvent = (e: EngineEvent, id: string) => (e.type === 'session:activity' && e.activity.id === id ? e.activity : undefined);
+
 /**
- * A chat on the desktop dashboard: its title bar (a click opens the chat, a right-click
- * its menu), then the chat itself, as in the window's middle without the activity pane.
- * Out of view, the card shows the agent's latest messages instead.
+ * A chat or task run on the desktop dashboard: its title bar (a click opens it, a
+ * right-click its menu), then the conversation itself, as in the window's middle
+ * without the activity pane: a chat with its message box, a task run with its
+ * guidance box. Out of view, the card shows the agent's latest messages instead.
  */
-function ChatCard({
+function LiveCard({
   s,
   live,
   size,
@@ -377,9 +395,30 @@ function ChatCard({
   track: TrackCard;
   onOpen: (id: string) => void;
 }) {
-  const chat = useCardChat(s.id, live);
-  // The card's title changes with every status and minute; the chat only with its own events.
-  const view = useMemo(() => chat && <ChatView state={chat} embedded />, [chat]);
+  const chat = useCardFeed(s.id, live && s.kind === 'chat', readChat, chatEvent);
+  const activity = useCardFeed(s.id, live && s.kind === 'run', readActivity, activityEvent);
+  // The card's title changes with every status and minute; the conversation only with its own events.
+  const chatView = useMemo(() => chat && <ChatView state={chat} embedded />, [chat]);
+  const question = s.question ?? null;
+  const recheck = `${s.status}\n${s.latest ?? ''}`;
+  const stoppable = canStop(s);
+  const runView = useMemo(
+    () =>
+      activity && (
+        <TranscriptView
+          taskId={s.taskId}
+          runId={s.id}
+          rows={activity.rows ?? []}
+          pendingGuidance={activity.pendingGuidance}
+          waitingText="Waiting for the agent's first message…"
+          footer={<RunGuidance taskId={s.taskId} runId={s.id} question={question} recheck={recheck} stop={stopOf(s)} />}
+        />
+      ),
+    // stopOf(s) reads only the id and `stoppable`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activity, s.taskId, s.id, question, recheck, stoppable],
+  );
+  const view = chatView ?? runView;
   // Working in a card is looking at it: a finished turn or a notification stops waiting,
   // when the focus comes into the card and when one comes while it's there.
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -430,8 +469,8 @@ const CARD_DRAG_TYPE = 'application/x-looper-card';
  * The Chats window's dashboard: a card per session in the order the cards
  * were dragged to (the list's for the others), so cards don't move while you
  * work in them, unless Waiting Chats First puts the waiting ones first. Each
- * chat is a working chat; terminal sessions and task runs are summaries. Any
- * card can be twice its size.
+ * chat is a working chat and each task run its conversation with its guidance
+ * box; terminal sessions are summaries. Any card can be twice its size.
  */
 function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const { sessions } = s.state;
@@ -439,9 +478,9 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const [inView, track] = useCardsInView(root);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
-  const live = sessions.filter((x) => x.kind === 'chat' && inView.has(x.id)).map((x) => x.id);
+  const live = liveCards(sessions, inView);
   const liveKey = live.join('\n');
-  // A layout effect, so the window takes the chats' events before the cards read them.
+  // A layout effect, so the window takes the chats' and runs' events before the cards read them.
   useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
   if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
@@ -494,8 +533,8 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
     >
       {dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst).map((x) => {
         const size = { big: big.includes(x.id), onToggle: () => s.toggleBig(x.id) };
-        return x.kind === 'chat' ? (
-          <ChatCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={s.setSelected} />
+        return showsConversation(x) ? (
+          <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={s.setSelected} />
         ) : (
           <DashboardCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={s.setSelected} />
         );
@@ -537,33 +576,8 @@ function SubagentTabs({ s }: { s: SessionsWindow }) {
 /** The conversation's tab strip, once there's more than the conversation to show. */
 const hasTabs = (s: SessionsWindow): boolean => subagentTabs(s.subagents, s.follow).length + s.workflows.length > 0;
 
-/** A conversation read from its transcript in the middle (a subagent's, or a task run's agent), read again while it runs. */
-function TranscriptView({ summary, rows, waitingText }: { summary: SessionSummary; rows: MessageRow[]; waitingText: string }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [rows.length]);
-  const ctx = { taskId: summary.taskId, runId: summary.id };
-  return (
-    <div className="chat-app">
-      <div
-        className="chat-scroll"
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-      >
-        {groupRows(rows).map((item) =>
-          item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
-        )}
-        {rows.length === 0 && <div className="muted">{waitingText}</div>}
-      </div>
-    </div>
-  );
-}
+/** Send guidance to a task run's agent, which it gets mid-run; rejects with the reason it can't take it. */
+const sendRunGuidance = (s: SessionSummary, text: string): Promise<void> => window.looper.sendGuidance(s.taskId, s.id, text);
 
 /**
  * The Chats window's toolbar as data: new sessions (in the shown session's
@@ -575,95 +589,55 @@ function TranscriptView({ summary, rows, waitingText }: { summary: SessionSummar
 export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
   const { summary, chat, stoppable, shown } = s;
   const project = summary?.projectId;
-  const fail = (e: Error) => void window.looper.showError(e.message);
   return [
     {
       id: 'new',
-      items: [
-        {
-          id: 'new-chat',
-          label: project ? `New Chat in ${summary!.groupName}` : 'New Chat',
-          shortcut: project ? hint(SHORTCUTS.newChat) : undefined,
-          icon: 'newChat',
+      items: commandToolbar(CHAT_COMMANDS, 'new', {
+        newChat: {
+          label: project ? `New Chat in ${summary!.groupName}` : undefined,
+          shortcut: !!project,
           run: project ? () => void window.looper.projects.newChat(project) : null,
           menu: { label: 'New Chat in Project', open: (x, y) => window.looper.sessions.showNewMenu('chat', x, y) },
         },
-        {
-          id: 'new-terminal',
-          label: project ? `New Terminal in ${summary!.groupName}` : 'New Terminal',
-          shortcut: project ? hint(SHORTCUTS.newTerminal) : undefined,
-          icon: 'terminal',
+        newTerminal: {
+          label: project ? `New Terminal in ${summary!.groupName}` : undefined,
+          shortcut: !!project,
           run: project ? () => void window.looper.projects.newTerminal(project) : null,
           menu: { label: 'New Terminal in Project', open: (x, y) => window.looper.sessions.showNewMenu('terminal', x, y) },
         },
-      ],
+      }),
     },
     {
       id: 'views',
-      items: [
-        { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !summary, run: () => s.setSelected(null) },
-        { id: 'history', label: 'History', icon: 'history', platforms: NOT_MOBILE, run: () => window.looper.history.open() },
-        { id: 'send-to-chats', label: 'Send to Chats', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
-      ],
+      items: commandToolbar(CHAT_COMMANDS, 'views', {
+        dashboard: { pressed: !s.selected, run: () => s.setSelected(null) },
+        history: { run: () => window.looper.history.open() },
+        sendToChats: { run: () => window.looper.sessions.openSend() },
+      }),
     },
     {
       id: 'session',
-      items: [
-        {
-          id: 'stop',
-          label: 'Stop',
-          shortcut: summary?.kind === 'chat' ? 'Esc' : undefined,
-          icon: 'stopChat',
-          enabled: stoppable,
-          run: () => void window.looper.sessions.stop(summary!.id).catch(fail),
+      items: commandToolbar(CHAT_COMMANDS, 'session', {
+        // Esc is a chat's: a terminal's goes to its agent.
+        stop: { shortcut: summary?.kind === 'chat', enabled: stoppable, run: () => void window.looper.sessions.stop(summary!.id).catch(fail) },
+        sendNow: { enabled: (chat?.queued.length ?? 0) > 0, run: () => void window.looper.chat.sendNow(chat!.id).catch(fail) },
+        restart: {
+          // A chat, or a terminal session on Claude Code or Codex (a custom harness has no conversation to go on with).
+          enabled: !!summary && (summary.kind === 'chat' || (summary.kind === 'terminal' && summary.harnessKind !== 'custom')),
+          run: () => void window.looper.sessions.restart(summary!.id).catch(fail),
         },
-        {
-          id: 'send-now',
-          label: 'Send Now',
-          shortcut: 'Ctrl+Enter',
-          icon: 'sendNow',
-          enabled: (chat?.queued.length ?? 0) > 0,
-          run: () => void window.looper.chat.sendNow(chat!.id).catch(fail),
-        },
-        {
-          id: 'compact',
-          label: 'Compact into New Chat',
-          icon: 'compact',
-          enabled: !!chat && chatCanCompact(chat),
-          run: () => void window.looper.chat.compact(chat!.id).catch(fail),
-        },
-        {
-          id: 'close-conversation',
-          label: 'Close Conversation',
-          shortcut: 'Ctrl+W',
-          icon: 'closeChat',
-          enabled: !!summary && summary.kind !== 'run',
-          run: () => void window.looper.sessions.close(summary!.id),
-        },
-        {
-          id: 'open-work-folder',
-          label: 'Open Working Directory',
-          icon: 'openFolder',
-          platforms: DESKTOP_ONLY,
-          enabled: !!summary,
-          run: () => void window.looper.openTaskWorkFolder(summary!.taskId),
-        },
-      ],
+        compact: { enabled: !!chat && chatCanCompact(chat), run: () => void window.looper.chat.compact(chat!.id).catch(fail) },
+        close: { enabled: !!summary && summary.kind !== 'run', run: () => void window.looper.sessions.close(summary!.id) },
+        openWorkFolder: { enabled: !!summary, run: () => void window.looper.openTaskWorkFolder(summary!.taskId) },
+      }),
     },
     {
       // A phone shows the activity in a sheet, from its own bar button.
       id: 'panes',
       platforms: NOT_MOBILE,
-      items: [
-        {
-          id: 'activity-pane',
-          label: 'Activity Pane',
-          icon: 'activity',
-          enabled: !!summary,
-          pressed: !!summary && shown.activityPane,
-          run: () => s.setShown({ activityPane: !shown.activityPane }),
-        },
-      ],
+      items: commandToolbar(CHAT_COMMANDS, 'panes', {
+        activityPane: { enabled: !!summary, pressed: !!summary && shown.activityPane, run: () => s.setShown({ activityPane: !shown.activityPane }) },
+      }),
     },
   ];
 }
@@ -693,12 +667,13 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
  */
 function SessionCenter({ s }: { s: SessionsWindow }) {
   const { summary, follow, followed, chat, workflow } = s;
-  if (!summary) return s.single ? <div className="empty">Loading…</div> : <ChatsDashboard s={s} />;
+  // A conversation on its way (a new or compacted chat) isn't listed for a moment: the dashboard would flash up meanwhile.
+  if (!summary) return s.single || s.selected ? <div className="empty">Loading…</div> : <ChatsDashboard s={s} />;
   if (workflow) {
     const { run, agent } = workflow;
     const openAgent = (id: string | null) => s.showWorkflow(run.runId, id);
     const props = { run, taskId: summary.taskId, sessionId: summary.id, onAgent: openAgent };
-    const agentView = agent && <TranscriptView key={agent.agentId} summary={summary} rows={s.subRows} waitingText="Waiting for the agent's first message…" />;
+    const agentView = agent && <TranscriptView key={agent.agentId} taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the agent's first message…" />;
     if (isPhone) return agentView || <PhoneWorkflow {...props} />;
     return (
       <div className="workflow-view">
@@ -713,9 +688,23 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
       </div>
     );
   }
-  if (follow && followed) return <TranscriptView summary={summary} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
+  if (follow && followed) return <TranscriptView taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
   if (summary.kind === 'terminal') return <TerminalView key={summary.id} id={summary.id} />;
-  if (summary.kind === 'run') return <TranscriptView key={summary.id} summary={summary} rows={s.activity?.rows ?? []} waitingText="Waiting for the agent's first message…" />;
+  if (summary.kind === 'run') {
+    return (
+      <TranscriptView
+        key={summary.id}
+        taskId={summary.taskId}
+        runId={summary.id}
+        rows={s.activity?.rows ?? []}
+        pendingGuidance={s.activity?.pendingGuidance}
+        waitingText="Waiting for the agent's first message…"
+        footer={
+          <RunGuidance taskId={summary.taskId} runId={summary.id} question={summary.question ?? null} recheck={`${summary.status}\n${summary.latest ?? ''}`} stop={stopOf(summary)} />
+        }
+      />
+    );
+  }
   return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
 }
 
@@ -855,14 +844,6 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     // With the list beside it (iPad), the window stays and shows the list (useSessionsWindow drops the selection).
     else if (opened && listed.current && !split) window.close();
   }, [summary, opened, split]);
-  // A conversation that never turns up (it closed before this window loaded) gives up and shows the list.
-  useEffect(() => {
-    if (!starting) return;
-    const t = setTimeout(() => s.setSelected(null), 15_000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [starting]);
-  const fail = (e: Error) => void window.looper.showError(e.message);
   // A row of the conversation (Subagents, Workflows) opens Activity on its list: the inspector when it fits, else the sheet.
   const openActivity = (tab: ActivityTab = 'now') =>
     split?.inspector ? setInspector((i) => ({ open: true, tab, n: i.n + 1 })) : setSheet({ kind: 'activity', tab });
@@ -908,8 +889,9 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           ? terminalTitle(summary)
           : summary.title
         : undefined;
-  usePageNav(
-    split
+  const bar = (
+    <NavBar
+      {...(split
       ? {
           // iPad: the bar over the list has its title and buttons; the rest is the conversation's.
           title: title ?? '',
@@ -924,7 +906,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
             inspector: inspectorShown ? { width: split.inspector, title: 'Activity' } : undefined,
           },
           toolbar: sessionsToolbarGroups(s),
-          more: summary ? chatMore(summary.kind) : undefined,
+          more: summary ? conversationMore(summary.kind) : undefined,
           modal: !!sheet,
         }
       : {
@@ -934,11 +916,12 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           // The list's large title; a conversation on its way has none to scroll past.
           largeTitle: platform === 'ios' && !summary && !single && !starting,
           toolbar: sessionsToolbarGroups(s),
-          // A designed More menu for a conversation: only what applies to it (phone-lists.ts chatMore).
-          more: summary ? chatMore(summary.kind) : undefined,
+          // A conversation's More menu: the chat catalog's commands for its kind (phone-lists.ts conversationMore).
+          more: summary ? conversationMore(summary.kind) : undefined,
           // The Activity and Usage sheets are drawn in the page: the frame's bar stays out of reach under them.
           modal: !!sheet,
-        },
+        })}
+    />
   );
 
   const sessionsList = (
@@ -1009,6 +992,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   if (split) {
     return (
       <div className="phone-sessions phone-page split">
+        {bar}
         <SplitView
           split={split}
           lead={sessionsList}
@@ -1022,7 +1006,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
               </div>
             ) : starting ? (
               <div className="pg-split-pane phone-starting">
-                <TerminalOverlay kind="starting" />
+                <TerminalOverlay />
               </div>
             ) : (
               <SplitEmpty>No Chat Selected</SplitEmpty>
@@ -1035,20 +1019,34 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     );
   }
 
-  if (!summary && single) return <div className="empty">Loading…</div>;
+  if (!summary && single) {
+    return (
+      <div className="empty">
+        {bar}
+        Loading…
+      </div>
+    );
+  }
   if (starting) {
     return (
       <div className="phone-sessions phone-page phone-starting">
-        <TerminalOverlay kind="starting" />
+        {bar}
+        <TerminalOverlay />
       </div>
     );
   }
   if (!summary) {
-    return <div className="phone-sessions phone-page">{sessionsList}</div>;
+    return (
+      <div className="phone-sessions phone-page">
+        {bar}
+        {sessionsList}
+      </div>
+    );
   }
 
   return (
     <div className={`phone-sessions phone-page phone-conversation kind-${summary.kind}`}>
+      {bar}
       {!workflow && !s.follow && <ConversationAgents s={s} onOpen={openActivity} />}
       <main className="sessions-center">
         <SessionCenter s={s} />

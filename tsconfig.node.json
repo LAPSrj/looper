@@ -40,6 +40,8 @@
     "src/renderer/src/components/terminal-keys.ts",
     "src/renderer/src/components/blank-draft.ts",
     "src/renderer/src/components/composer-text.ts",
+    "src/renderer/src/components/chat-groups.ts",
+    "src/renderer/src/run-rows.ts",
     "src/renderer/src/components/usage.ts",
     "src/renderer/src/components/subagents.ts",
     "src/renderer/src/components/tabs-model.ts",
@@ -52,6 +54,7 @@
     "src/renderer/src/components/editor-lines.ts",
     "src/renderer/src/components/highlight.ts",
     "src/renderer/src/web/nav-stack.ts",
+    "src/renderer/src/web/nav-bar-model.ts",
     "src/renderer/src/web/gestures.ts",
     "tests/**/*"
   ]

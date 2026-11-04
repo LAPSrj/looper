@@ -208,8 +208,8 @@ the desktop app running.
 What it does the same as the app:
 
 - Runs every task on its schedule, including interactive-mode agents (they
-  still get a real pty; you just don't get a terminal tab to watch or type
-  into — use `--quiet` to suppress the raw agent output that's echoed to
+  still get a real pty; you just don't get a run window to follow them in
+  — use `--quiet` to suppress the raw agent output that's echoed to
   stdout by default, or read `output.log` in the run directory).
 - Applies inbox files, prunes old run logs and the engine log on the same
   schedule as the app.
@@ -226,7 +226,7 @@ new one starts about 7 seconds later. A lock that wasn't refreshed for 20
 seconds, or whose process is gone, belongs to a Looper that crashed, so the
 next one starts without asking.
 
-What it doesn't do: there's no terminal tab, no system notifications, no
+What it doesn't do: there's no run window, no system notifications, no
 tray icon, and no settings/task editor UI — manage tasks with the CLI, the
 inbox, or by editing `tasks.json` while it's stopped. Stop it with Ctrl-C;
 it shuts the engine down cleanly before exiting.

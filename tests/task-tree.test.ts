@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Task, TaskFolder } from '../src/shared/types';
-import { siblingOrder, taskEntries, type TaskTree } from '../src/renderer/src/task-tree';
+import { siblingOrder } from '../src/shared/folders';
+import { taskEntries, type TaskTree } from '../src/renderer/src/task-tree';
 
 const task = (id: string, folderId?: string): Task => ({ id, name: id, folderId }) as unknown as Task;
 const folder = (id: string, parentId?: string): TaskFolder => ({ id, name: id, parentId }) as unknown as TaskFolder;

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
-import { Field, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow, Field, ToggleButtons } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 function findHarness(settings: Settings, envId: string, harnessId: string): Harness | undefined {
   return settings.environments.find((e) => e.id === envId)?.harnesses.find((h) => h.id === harnessId);
@@ -63,17 +63,11 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
     });
   }, [envId, harnessId, index, isNew, copyOf]);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This model no longer exists.</div>;
-  if (!settings) return <div className="empty">Loading…</div>;
+  if (missing || !settings) return <EmptyWindow gone={missing && 'This model no longer exists.'} />;
 
   const kind = findHarness(settings, envId, harnessId)?.kind ?? 'claude-code';
   const kindLevels = kind === 'custom' ? [] : EFFORT_LEVELS[kind];
-  const toggleEffort = (value: string) => {
-    const next = efforts.includes(value) ? efforts.filter((v) => v !== value) : [...efforts, value];
-    if (next.length === 0) return;
+  const setLevels = (next: string[]) => {
     setEfforts(next);
     if (!next.includes(defaultEffort)) setDefaultEffort('');
   };
@@ -125,7 +119,6 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
     }
   };
   const save = async () => { if (await doSave()) window.close(); };
-  saveRef.current = save;
 
   return (
     <div className="editor">
@@ -140,18 +133,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
           {kindLevels.length > 0 && (
             <>
               <Field label="Effort levels">
-                <div className="day-row" role="group" aria-label="Effort levels">
-                  {kindLevels.map(([value, label]) => (
-                    <button
-                      key={value}
-                      aria-pressed={efforts.includes(value)}
-                      className={`btn small day-toggle ${efforts.includes(value) ? 'selected' : ''}`}
-                      onClick={() => toggleEffort(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <ToggleButtons options={kindLevels} value={efforts} onChange={setLevels} label="Effort levels" />
               </Field>
               <Field label="Default effort">
                 <select value={defaultEffort} onChange={(e) => setDefaultEffort(e.target.value)}>
@@ -169,7 +151,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
           )}
         </div>
       </div>
-      <EditorFooter primaryLabel={isNew ? 'Create' : 'Save'} onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
+      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => void save() }} busy={saving} />
     </div>
   );
 }

@@ -36,15 +36,18 @@ describe('groupRuns', () => {
     expect(run.result).toBe('noop');
   });
 
-  it('shows task runs only, and hides no-action ones on request', () => {
+  it('shows task runs only, and hides skipped and no-action ones on request, each apart', () => {
     const runs = groupRuns([
       rec('t1', 'a', '2026-10-20T10:00:00Z', 'result', 'success'),
       rec('t1', 'b', '2026-10-21T10:00:00Z', 'chat', 'chat'),
       rec('t1', 'c', '2026-10-22T10:00:00Z', 'terminal', 'terminal'),
       rec('t1', 'd', '2026-10-23T10:00:00Z', 'check', 'noop'),
+      rec('t1', 'e', '2026-10-24T10:00:00Z', 'system', 'skipped'),
     ]);
-    expect(runs.filter((g) => runShown(g, { hideNoAction: false })).map((g) => g.runId)).toEqual(['d', 'a']);
-    expect(runs.filter((g) => runShown(g, { hideNoAction: true })).map((g) => g.runId)).toEqual(['a']);
+    expect(runs.filter((g) => runShown(g, { hideSkipped: true, hideNoAction: false })).map((g) => g.runId)).toEqual(['d', 'a']);
+    expect(runs.filter((g) => runShown(g, { hideSkipped: false, hideNoAction: true })).map((g) => g.runId)).toEqual(['e', 'a']);
+    expect(runs.filter((g) => runShown(g, { hideSkipped: false, hideNoAction: false })).map((g) => g.runId)).toEqual(['e', 'd', 'a']);
+    expect(runs.filter((g) => runShown(g, { hideSkipped: true, hideNoAction: true })).map((g) => g.runId)).toEqual(['a']);
   });
 
   it('keeps a retried run as started while its agent restarts', () => {
@@ -81,7 +84,7 @@ describe('engine recent runs', () => {
     // A task that no longer exists keeps its run log on disk; it isn't listed.
     store.append(rec('gone', 'd', '2026-10-23T10:00:00Z', 'result', 'success'));
 
-    const hide = { hideNoAction: true };
+    const hide = { hideSkipped: false, hideNoAction: true };
     expect(engine.recentRuns(10, hide).map((r) => [r.taskName, r.runId, r.result])).toEqual([
       ['Second', 'c', 'started'],
       ['First', 'a', 'success'],
@@ -106,6 +109,6 @@ describe('engine recent runs', () => {
     store.append(rec('t1', 'a', '2026-10-20T10:00:00Z', 'result', 'success'));
     store.append(rec('t1', 'b', '2026-10-21T10:00:00Z', 'chat', 'chat', 'a chat'));
     store.append(rec('t1', 'c', '2026-10-22T10:00:00Z', 'terminal', 'terminal', 'a terminal'));
-    expect(engine.recentRuns(10, { hideNoAction: false }).map((r) => r.runId)).toEqual(['a']);
+    expect(engine.recentRuns(10, { hideSkipped: false, hideNoAction: false }).map((r) => r.runId)).toEqual(['a']);
   });
 });

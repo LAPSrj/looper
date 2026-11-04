@@ -36,7 +36,7 @@ export function TerminalView({ id }: { id: string }) {
     setOutput('unknown');
     void window.looper.terminalSession.output(id).then((out) => {
       if (out?.data) term.write(out.data);
-      if (out?.stopped) term.write(STOPPED);
+      if (out?.stopped) term.write(out.note ? `\r\n${DIM}── ${out.note} ──${RESET}\r\n` : STOPPED);
       else if (!out || out.ended) term.write(ENDED);
       // An ended or stopped session has nothing more to wait for.
       setOutput(out?.data || !out || out.ended || out.stopped ? 'some' : 'none');
@@ -120,12 +120,12 @@ export function TerminalView({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   // A phone shows "Starting…" over the terminal until its session prints something.
-  const overlay = isPhone ? terminalOverlay({ loaded: output !== 'unknown', hasOutput: output === 'some', sessionActive: true }) : null;
+  const overlay = isPhone && terminalOverlay({ loaded: output !== 'unknown', hasOutput: output === 'some' }) !== null;
   return (
     <div className="terminal-session">
       <div className="terminal-stage" style={TERMINAL_STAGE}>
         <div className="terminal" ref={ref} />
-        {overlay && <TerminalOverlay kind={overlay} />}
+        {overlay && <TerminalOverlay />}
       </div>
       {phone.row}
     </div>

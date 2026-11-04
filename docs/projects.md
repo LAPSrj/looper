@@ -27,13 +27,40 @@ left, under the header **Projects** with their count, and shows the selected
 project's view on the right ("No project selected." when none). Drag a project
 to change the order, which the tray icon's menu follows too.
 
-The list can group its projects. Right-click the list, or open **View → Group
-Projects By**, and pick **None** (the default), **Folder** (the folder each
-project's working directory is in), or **Harness** (the harness its chats and
-terminal sessions start with). Each group has a header with its project count,
-and the groups are listed by name; inside a group the projects keep your order.
-While the list is grouped you can't drag projects to reorder them. The choice
-is saved with the other View settings.
+### Folders
+
+You can keep projects together in folders of the list, which work as the
+Tasks tab's [folders](monitoring.md#folders) do. **New Folder…**, when you
+right-click the empty part of the list or its header, asks for the folder's
+name and its parent folder. Folders nest, each has a header you click to close
+or open it, and in each folder (and at the top level) folders and projects
+share one order. An empty folder shows too, so you can drop projects in it.
+
+Dragging works as in the task list: drop a project on another to put it
+there, in that project's folder; on the middle of a folder's header to move it
+into the folder; on the top edge of a header to put it before the folder; on
+the bottom edge of a folder's last row to put it after the folder; or below
+the list to move it to the end of the top level. Drag a folder's header to
+move the whole folder, into another one too. You can also right-click a
+project and pick its folder under **Move to Folder**, which has **Top Level**
+and **New Folder…** (the new folder gets the project). Right-click a folder's
+header for **New Project…**, **New Folder…**, **New Subfolder…**, **Rename
+Folder…** (F2) and **Delete Folder…** (Delete), which asks first and moves what
+the folder holds to its parent. Folders are only in the Projects tab's list:
+the Chats list, the tray menu and the rest keep the projects in your order.
+
+### Grouping
+
+The list can group its projects instead. Right-click the list, or open
+**View → Group Projects By**, and pick **None** (the default), **Parent
+Folder** (the folder each project's working directory is in), or **Harness**
+(the harness its chats and terminal sessions start with). Each group has a
+header with its project count, and the groups are listed by name; inside a
+group the projects keep your order. While the list is grouped it doesn't show
+your folders, and you can't drag projects. The choice is saved with the other
+View settings.
+
+### A project's view
 
 Selecting a project shows its view, and the
 [toolbar](monitoring.md#the-toolbar) then has **Edit Project** and **Open
@@ -41,7 +68,7 @@ Folder** after its New buttons, which start a task, chat or terminal in the
 project. The **Status** tab shows the project's settings and
 whether it keeps a Remote Control conversation open. The **Tasks** tab lists
 the tasks that run in the project, in the same kind of table as a task's
-Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to show it on the Tasks tab. The **Chats** tab lists the
+Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to open it in a window of its own (see [A task or project in its own window](monitoring.md#a-task-or-project-in-its-own-window)). The **Chats** tab lists the
 project's chats, terminal sessions and Remote Control conversations, including
 those that went on from one of its tasks' runs, in a table like a task's Runs
 tab but without a Result column: double-click one for its run window, or right-click it to
@@ -49,8 +76,10 @@ go on with it in a chat or a terminal. When the project's folder is in a git
 repository, a **Git** tab shows it (see [below](#the-git-tab)).
 
 Right-clicking a project opens a menu with New Chat, New Terminal, New Task…,
-Edit Project…, Open Working Directory and Delete Project. Double-clicking it
-opens Edit Project. The **Project** menu in the menu bar has the same actions
+Edit Project…, Open Working Directory, Delete Project and Move to Folder.
+Double-clicking it (or pressing Enter) opens it in a window of its own, with
+its view alone (see [A task or project in its own
+window](monitoring.md#a-task-or-project-in-its-own-window)). The **Project** menu in the menu bar has the same actions
 (New Task in Project…, New Chat, New Terminal, Edit Project…, Open Folder,
 Delete Project…) for the selected project, or the selected task's project. It shows on the
 Dashboard, Projects and Tasks tabs, and it's greyed out while neither is

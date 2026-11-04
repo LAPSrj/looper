@@ -7,6 +7,8 @@ import { listContextMenu } from './list-nav';
 export interface ListMenuItem {
   label: string;
   enabled?: boolean;
+  /** It destroys or cuts something off (Remove): a phone draws it red, last. */
+  destructive?: true;
   run: () => void;
 }
 
@@ -58,7 +60,7 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
       shown.current = menu(item, i);
       window.looper.showListContextMenu(
         token,
-        shown.current.map((m, n) => ({ id: String(n), label: m.label, enabled: m.enabled })),
+        shown.current.map((m, n) => ({ id: String(n), label: m.label, enabled: m.enabled, ...(m.destructive ? { destructive: true as const } : {}) })),
       );
     } else onContextMenu?.(item, i);
   };
@@ -159,37 +161,43 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
 }
 
 interface ListActionsProps {
-  onAdd: () => void;
-  onEdit: () => void;
+  /** Each standard button shows only when its handler is given. */
+  onAdd?: () => void;
+  onEdit?: () => void;
   editDisabled?: boolean;
-  /** Omit to hide the Duplicate button. */
   onDuplicate?: () => void;
   duplicateDisabled?: boolean;
-  onRemove: () => void;
+  onRemove?: () => void;
   removeDisabled?: boolean;
   removeTitle?: string;
-  /** Extra buttons appended after Remove. */
+  /** The list's own buttons, after the standard ones (Update…, Restore, Pair Device…). */
   children?: ReactNode;
 }
 
-/** The Add/Edit/Duplicate/Remove button row under a SelectList. */
+/** The button row under a SelectList: Add…, Edit…, Duplicate, Remove, then the list's own. */
 export function ListActions({ onAdd, onEdit, editDisabled, onDuplicate, duplicateDisabled, onRemove, removeDisabled, removeTitle, children }: ListActionsProps) {
   return (
     <div className="env-actions">
-      <button className="btn" onClick={onAdd}>
-        Add…
-      </button>
-      <button className="btn" disabled={editDisabled} onClick={onEdit}>
-        Edit…
-      </button>
+      {onAdd && (
+        <button className="btn" onClick={onAdd}>
+          Add…
+        </button>
+      )}
+      {onEdit && (
+        <button className="btn" disabled={editDisabled} onClick={onEdit}>
+          Edit…
+        </button>
+      )}
       {onDuplicate && (
         <button className="btn" disabled={duplicateDisabled} onClick={onDuplicate}>
           Duplicate
         </button>
       )}
-      <button className="btn danger" disabled={removeDisabled} title={removeTitle} onClick={onRemove}>
-        Remove
-      </button>
+      {onRemove && (
+        <button className="btn danger" disabled={removeDisabled} title={removeTitle} onClick={onRemove}>
+          Remove
+        </button>
+      )}
       {children}
     </div>
   );

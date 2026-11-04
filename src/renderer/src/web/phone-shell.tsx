@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MenuItemSpec } from '../../../shared/remote-access';
-import { UsageGlyph } from '../components/ContextRing';
-import { ICONS } from '../components/icons';
 import type { ShellController } from './controller';
-import { messageCancelId } from './dialog-flows';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
 import { composeMore, THIS_DEVICE_ITEM, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
-import type { PageNav, PageNavAction } from './page-nav';
+import { plainLabel } from './nav-bar-model';
+import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
 
@@ -541,7 +539,7 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   for (const d of s.dialogs) {
     layers.push(() =>
       d.kind === 'message'
-        ? controller.answer(d.dialogId, { kind: 'message', response: messageCancelId(d.spec), checkboxChecked: !!d.spec.checkboxChecked })
+        ? controller.answer(d.dialogId, { kind: 'message', response: d.spec.cancelId, checkboxChecked: !!d.spec.checkboxChecked })
         : controller.answer(d.dialogId, d.kind === 'open' ? { kind: 'open', canceled: true, filePaths: [] } : { kind: 'save', canceled: true }),
     );
   }
@@ -747,29 +745,6 @@ export function Scrim({ className, onTap }: { className: string; onTap?: () => v
   );
 }
 
-/** An ICONS entry as a 22 px glyph for a bar button. */
-export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
-  const icon = (ICONS as Record<string, ReactNode>)[name];
-  if (!icon) return null;
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {icon}
-    </svg>
-  );
-}
-
-/** A bar button's glyph: its usage ring, or its icon. */
-export function ActionGlyph({ action, size = 22 }: { action: Pick<PageNavAction, 'icon' | 'ring'>; size?: number }) {
-  if (action.ring) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden="true">
-        <UsageGlyph context={action.ring.context} used={action.ring.used} />
-      </svg>
-    );
-  }
-  return action.icon ? <NavIcon name={action.icon} size={size} /> : null;
-}
-
 /** The More menu open over a screen, and what its page's own items do. */
 export interface OpenMore extends MoreMenu {
   w: string;
@@ -807,8 +782,6 @@ export function menuGroups(items: MenuItemSpec[]): MenuItemSpec[][] {
   return out.filter((g) => g.length);
 }
 
-/** Electron's &-mnemonics don't belong on a phone. */
-export const plainLabel = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
 
 /** Android: long menus open as a bottom sheet rather than a list at the finger (iOS keeps the menu, which scrolls). */
 export const isLongMenu = (items: MenuItemSpec[], height: number): boolean => {

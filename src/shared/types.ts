@@ -240,7 +240,7 @@ export const ClassifierSchema = z
     harnessId: z.string().min(1).optional(),
     model: z.string().min(1).default('haiku'),
     prompt: z.string().min(1),
-    /** Headless answers via structured output; interactive runs in the terminal tab and answers via `looper-classify`. */
+    /** Headless answers via structured output; interactive runs in a terminal and answers via `looper-classify`. */
     mode: z.enum(['interactive', 'headless']).default('headless'),
     timeoutSec: z.number().positive().default(180),
   })
@@ -528,7 +528,15 @@ export const ViewSchema = z.object({
   singleWeight: z.number().positive().default(2),
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: z.boolean().default(true),
-  hideNoActionRuns: z.boolean().default(false),
+  /** View → Task Runs: what the Runs tabs and the dashboards' Recent runs leave out. */
+  runFilter: z
+    .object({
+      /** Runs the scheduler skipped or deferred, or whose steps Run Options skipped. */
+      hideSkipped: z.boolean().default(false),
+      /** Runs whose check or classifier found nothing to do. */
+      hideNoAction: z.boolean().default(false),
+    })
+    .prefault({}),
   /** The Chats window's View menu, and the project groups closed in its list (by project id or group name). */
   sessions: z
     .object({
@@ -595,12 +603,18 @@ export const ProjectSchema = z
     env: EnvVarsSchema.default({}),
     /** Remote Control keeps a conversation open here while it runs. */
     remote: z.boolean().default(false),
+    /** The Projects tab's folder it's in (ProjectFolder); unset: the top level. */
+    folderId: z.string().min(1).optional(),
     createdAt: z.string().optional(),
     updatedAt: z.string().optional(),
   })
   .strict();
 export type Project = z.infer<typeof ProjectSchema>;
 export type ProjectInput = z.input<typeof ProjectSchema>;
+
+/** A folder of the Projects tab's list, which the user makes to keep projects together: the same as a task folder, nesting included. */
+export const ProjectFolderSchema = TaskFolderSchema;
+export type ProjectFolder = TaskFolder;
 
 /**
  * A helper: a conversation Looper keeps open so the user can ask it, from the
@@ -679,8 +693,6 @@ export const SettingsSchema = z.object({
     maxDelaySec: z.number().positive().default(600),
     minIntervalSec: z.number().nonnegative().default(30),
   }).prefault({}),
-  /** Bytes of live terminal output kept per task for late-attaching UIs. */
-  outputBufferBytes: z.number().int().positive().default(262144),
   /** Days a run's records and output are kept before being deleted. */
   runRetentionDays: z.number().int().positive().default(30),
   /** Days engine.log entries are kept before being pruned. */
@@ -736,6 +748,26 @@ export const SettingsSchema = z.object({
   }).prefault({}),
   /** Advanced → Prevent Sleep → While a Session Is Working: keep the computer awake while a chat, terminal or task agent works. */
   preventSleepWhileWorking: z.boolean().default(false),
+  /** Settings → Chats. */
+  chats: z
+    .object({
+      /** Thinking blocks show open, outside the tool-call groups. */
+      expandThinking: z.boolean().default(false),
+      /** Close Conversation doesn't ask once the prompt cache of the agent's last reply has expired. */
+      closeExpiredWithoutAsking: z.boolean().default(false),
+      /** An idle chat's or terminal session's agent stops once its prompt cache expires; the next message (or key) starts it again on the conversation. */
+      stopWhenCacheExpires: z.boolean().default(false),
+      /** Ask before a chat's message goes to an agent whose prompt cache has expired, which re-reads the whole context at full price. */
+      confirmExpiredSend: z
+        .object({
+          enabled: z.boolean().default(false),
+          /** Only while the conversation's context is over `aboveTokens`. */
+          onlyAbove: z.boolean().default(true),
+          aboveTokens: z.number().int().positive().default(200_000),
+        })
+        .prefault({}),
+    })
+    .prefault({}),
   /** Main-window view options (View menu). */
   view: ViewSchema.prefault({}),
   /** Addons stopped in Advanced → Addons…, by id: they don't start with Looper and show nothing. */
@@ -968,11 +1000,14 @@ export type EngineEvent =
   | { type: 'runtime'; runtime: TaskRuntime }
   | { type: 'record'; record: RunRecord }
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
-  | { type: 'agent:end'; taskId: string; runId: string }
+  /** A chat's running "!" command: its output so far (the newest part once it's long), sent as it comes in batches. */
+  | { type: 'chat:command'; chatId: string; id: string; stdout: string; stderr: string }
   /** problem: the run ended with an error or warning; a click opens its run window on the report. */
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }
   | { type: 'projects'; projects: Project[] }
+  /** The Projects tab's folders or their order changed. */
+  | { type: 'project-folders'; folders: ProjectFolder[]; layout: Record<string, string[]> }
   | { type: 'recycleBin'; entries: RecycleBinEntry[] }
   | { type: 'folders'; folders: TaskFolder[]; layout: Record<string, string[]> }
   | { type: 'templates'; templates: Template[] }

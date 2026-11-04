@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
-import { EditorFooter, Field, NumberField } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow, Field, NumberField } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { useDiscardUnsaved, useLiveSettings } from './components/hooks';
 import { useFitWindow } from './fit-window';
 import { AgentFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
 
@@ -26,51 +27,12 @@ async function saveRemote(live: Settings, remote: Settings['remote']): Promise<b
   }
 }
 
-/**
- * Create-on-add: a new entry already exists in the settings so its window
- * could open; closing the window without Create removes it again.
- */
-function useDiscardUnsaved(id: string, isNew?: boolean) {
-  const savedRef = useRef(false);
-  useEffect(() => {
-    if (!isNew) return;
-    const onUnload = () => {
-      if (!savedRef.current) window.looper.remote.discard(id);
-    };
-    window.addEventListener('beforeunload', onUnload);
-    return () => window.removeEventListener('beforeunload', onUnload);
-  }, [id, isNew]);
-  return savedRef;
-}
-
-/** The settings, kept current; `missing` once the entry is gone from them. */
-function useLiveSettings(found: (s: Settings) => boolean) {
-  const [live, setLive] = useState<Settings | null>(null);
-  const [host, setHost] = useState<string | undefined>(undefined);
-  const [missing, setMissing] = useState(false);
-  const foundRef = useRef(found);
-  foundRef.current = found;
-  useEffect(() => {
-    void window.looper.info().then((info) => {
-      setLive(info.settings);
-      setHost(info.host);
-      if (!foundRef.current(info.settings)) setMissing(true);
-    });
-    return window.looper.onEvent((e) => {
-      if (e.type !== 'settings') return;
-      setLive(e.settings);
-      if (!foundRef.current(e.settings)) setMissing(true);
-    });
-  }, []);
-  return { live, host, missing };
-}
-
 /** Advanced → Remote Control → Helpers → Add/Edit. */
 export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boolean }) {
   const { live, host, missing } = useLiveSettings((s) => s.remote.helpers.some((h) => h.id === id));
   const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);
   const [saving, setSaving] = useState(false);
-  const savedRef = useDiscardUnsaved(id, isNew);
+  const savedRef = useDiscardUnsaved(isNew, () => window.looper.remote.discard(id));
   useFitWindow();
 
   useEffect(() => {
@@ -85,11 +47,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     document.title = isNew ? 'New Helper' : 'Edit Helper';
   }, [isNew]);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This helper no longer exists.</div>;
-  if (!live || !draft) return <div className="empty">Loading…</div>;
+  if (missing || !live || !draft) return <EmptyWindow gone={missing && 'This helper no longer exists.'} />;
 
   const doSave = async (): Promise<boolean> => {
     const problem = draftProblem(draft, live.environments);
@@ -105,7 +63,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     if (ok) savedRef.current = true;
     return ok;
   };
-  saveRef.current = async () => {
+  const save = async () => {
     if (await doSave()) window.close();
   };
 
@@ -132,13 +90,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
           </Field>
         </div>
       </div>
-      <EditorFooter
-        primaryLabel={isNew ? 'Create' : 'Save'}
-        onPrimary={() => void saveRef.current()}
-        onCancel={() => window.close()}
-        onApply={isNew ? undefined : () => void doSave()}
-        saving={saving}
-      />
+      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => void save() }} apply={isNew ? undefined : { run: () => void doSave() }} busy={saving} />
     </div>
   );
 }

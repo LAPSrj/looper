@@ -1027,26 +1027,15 @@ describe('simultaneous runs', () => {
     expect(records().find((r) => r.phase === 'agent' && r.result === 'exited')).toMatchObject({ network: true });
   });
 
-  it('the terminal buffer is per run and outlives the last run', async () => {
+  it('streams each run’s output as its own agent:data events', async () => {
     await startRuns(2);
     h.liveAgents[0].out('one');
     h.liveAgents[1].out('two');
-    expect(h.sched.getBuffer('t1')!.data).toBe('two'); // the newest run
-    expect(h.sched.getBuffer('t1', h.liveAgents[0].runId)!.data).toBe('one');
-
-    h.liveAgents[1].end(agentEnd('done'));
-    await flush();
-    expect(h.sched.getBuffer('t1')!.data).toBe('one'); // the run still in flight
-    h.liveAgents[0].end(agentEnd('done'));
-    await flush();
-    expect(h.sched.getBuffer('t1')).toMatchObject({ runId: h.liveAgents[1].runId, data: 'two' });
-
-    // A new run clears out the buffers of the finished ones.
-    h.checks.push(check('act'));
-    h.clock.now += 120_000;
-    await h.tickN(1);
-    expect(h.sched.getBuffer('t1')).toEqual({ runId: h.liveAgents[2].runId, data: '' });
-    expect(h.sched.getBuffer('t1', h.liveAgents[0].runId)).toBeNull();
+    const data = h.events.filter((e) => e.type === 'agent:data');
+    expect(data).toEqual([
+      { type: 'agent:data', taskId: 't1', runId: h.liveAgents[0].runId, data: 'one' },
+      { type: 'agent:data', taskId: 't1', runId: h.liveAgents[1].runId, data: 'two' },
+    ]);
   });
 });
 
@@ -1080,8 +1069,6 @@ describe('context restarts', () => {
     ) as Extract<EngineEvent, { type: 'record' }>;
     expect(agentRec.record.durationMs).toBe(50);
     expect(h.sched.get('t1')!.lastDetail).toBe('fixed c');
-    // Each session ended with its own agent:end, so the terminal tab marks the seam.
-    expect(h.events.filter((e) => e.type === 'agent:end')).toHaveLength(2);
   });
 
   it('a rolling conversation moves on to the new session', async () => {

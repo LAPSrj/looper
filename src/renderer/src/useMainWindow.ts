@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppInfo, UiEvent } from '@shared/api';
 import type { RemoteState } from '@shared/remote';
 import { isStandInTaskId, projectTaskId } from '@shared/projects';
-import type { PreventSleepState, Project, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { PreventSleepState, Project, ProjectFolder, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { subscribe } from './events';
@@ -35,6 +35,8 @@ export function useMainWindow(menuTab?: string) {
   // False until the tasks and the runtimes have both answered: the counts before that are placeholders.
   const [loaded, setLoaded] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
+  const [projectLayout, setProjectLayout] = useState<Record<string, string[]>>({});
   // The project whose view shows; picking a task or an addon item clears it.
   const [projectSel, setProjectSel] = useState<string | null>(null);
   const [folders, setFolders] = useState<TaskFolder[]>([]);
@@ -50,8 +52,6 @@ export function useMainWindow(menuTab?: string) {
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
   const [rest, setRest] = useState<RestState | null>(null);
   const [preventSleep, setPreventSleep] = useState<PreventSleepState | null>(null);
-  // The run picked in the Terminal tab when several are in flight; Stop Task targets it.
-  const [terminalRun, setTerminalRun] = useState<string | null>(null);
   const [remote, setRemote] = useState<RemoteState | null>(null);
   // null until the dashboard first loads them.
   const [recent, setRecent] = useState<RecentRun[] | null>(null);
@@ -92,8 +92,8 @@ export function useMainWindow(menuTab?: string) {
       : list === 'recent'
         ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
         : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
-  // A row picked on the Dashboard tab counts only while it shows.
-  const onDashboard = menuTab === undefined || menuTab === 'dashboard';
+  // A row picked on a dashboard (the Dashboard tab's, or the Tasks tab's with no task selected) counts only while it shows.
+  const onDashboard = menuTab === undefined || menuTab === 'dashboard' || (menuTab === 'tasks' && !addonSel);
   const livePick =
     !selected && onDashboard && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
   // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
@@ -107,8 +107,9 @@ export function useMainWindow(menuTab?: string) {
   // The project the Project menu acts on: the selected project, else the target task's.
   const taskProject = tasks.find((t) => t.id === target)?.projectId;
   const menuProject = projectSel ?? (taskProject && projects.some((p) => p.id === taskProject) ? taskProject : null);
-  const uiRef = useRef({ selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun });
-  uiRef.current = { selected: target, project: projectTarget, menuProject, tasks, runtimes, terminalRun: selected ? terminalRun : (taskPick?.runId ?? null) };
+  const pickedRun = selected ? null : (taskPick?.runId ?? null);
+  const uiRef = useRef({ selected: target, project: projectTarget, menuProject, tasks, runtimes, pickedRun });
+  uiRef.current = { selected: target, project: projectTarget, menuProject, tasks, runtimes, pickedRun };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: DetailTab }) => {
     setSelected(e.taskId);
@@ -132,7 +133,7 @@ export function useMainWindow(menuTab?: string) {
     const { menuProject: menuProj, tasks: ts, runtimes: rts } = ui;
     const sel = forced ?? ui.selected;
     const proj = forced ? null : ui.project;
-    const pickedRun = forced ? null : ui.terminalRun;
+    const pickedRun = forced ? null : ui.pickedRun;
     switch (type) {
       case 'edit-project':
         if (menuProj) void window.looper.projects.openEditor(menuProj);
@@ -300,6 +301,8 @@ export function useMainWindow(menuTab?: string) {
       }),
     ]).finally(() => setLoaded(true));
     void window.looper.projects.list().then(setProjects);
+    void window.looper.projects.folders().then(setProjectFolders);
+    void window.looper.projects.layout().then(setProjectLayout);
     void window.looper.folders.list().then(setFolders);
     void window.looper.folders.layout().then(setLayout);
     void window.looper.restState().then(setRest);
@@ -316,6 +319,10 @@ export function useMainWindow(menuTab?: string) {
           break;
         case 'projects':
           setProjects(e.projects);
+          break;
+        case 'project-folders':
+          setProjectFolders(e.folders);
+          setProjectLayout(e.layout);
           break;
         case 'folders':
           setFolders(e.folders);
@@ -372,7 +379,7 @@ export function useMainWindow(menuTab?: string) {
   }, [projects, projectSel]);
 
   // Ctrl+Tab and Ctrl+PageUp/PageDown step through a task's tabs where the task shows.
-  useDialogKeys<DetailTab>({ tabs: ['status', 'runs', 'terminal'], tab, onTab: menuTab === undefined || menuTab === 'tasks' ? setTab : undefined });
+  useDialogKeys<DetailTab>({ tabs: ['status', 'runs'], tab, onTab: menuTab === undefined || menuTab === 'tasks' ? setTab : undefined });
 
   useEffect(() => {
     if (!selected || records[selected]) return;
@@ -386,17 +393,19 @@ export function useMainWindow(menuTab?: string) {
   }, [tasks, selected]);
 
   const infoLoaded = info !== null;
-  const hideNoActionRuns = info?.settings.view.hideNoActionRuns ?? false;
+  const runFilter = info?.settings.view.runFilter;
+  const filterKey = JSON.stringify(runFilter ?? null);
   // Each run another list shows can hide one from Recent runs: read that many more.
   const recentLimit = RECENT_RUNS + listedRuns.size;
   useEffect(() => {
     if (selected || !infoLoaded) return;
     // A run writes its records in quick bursts: read once the burst is over.
     const t = setTimeout(() => {
-      void window.looper.runs.recent(recentLimit, { hideNoAction: hideNoActionRuns }).then(setRecent);
+      void window.looper.runs.recent(recentLimit, runFilter ?? { hideSkipped: false, hideNoAction: false }).then(setRecent);
     }, 200);
     return () => clearTimeout(t);
-  }, [selected, infoLoaded, hideNoActionRuns, runsChanged, recentLimit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, infoLoaded, filterKey, runsChanged, recentLimit]);
 
   const selectedState = target ? runtimes[target]?.state : undefined;
   const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
@@ -418,9 +427,6 @@ export function useMainWindow(menuTab?: string) {
       menuTab,
     );
   }, [target, tasks, selectedState, selectedActiveRuns, menuProject, menuTab]);
-
-  // A terminal pick belongs to one task.
-  useEffect(() => setTerminalRun(null), [selected]);
 
   const select = useCallback((id: string | null) => {
     setSelected(id);
@@ -486,6 +492,8 @@ export function useMainWindow(menuTab?: string) {
     view,
     tasks,
     projects,
+    projectFolders,
+    projectLayout,
     folders,
     layout,
     runtimes,
@@ -513,7 +521,6 @@ export function useMainWindow(menuTab?: string) {
     sessionProject,
     tab,
     focusRun,
-    terminalRun,
     dashboardShown,
     // The dashboard.
     attention,
@@ -527,7 +534,6 @@ export function useMainWindow(menuTab?: string) {
     setTab,
     setPick,
     setMenuTarget,
-    setTerminalRun,
     openFromDashboard,
     uiAction,
     changeView,

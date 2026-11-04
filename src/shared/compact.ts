@@ -1,3 +1,4 @@
+import { fileAttachments, withCommands } from './bash-mode';
 import type { MessageRow } from './messages';
 
 /** The tools that start a subagent: their result is the subagent's final report. */
@@ -54,8 +55,10 @@ export function compactedText(rows: MessageRow[], path: (hostPath: string) => st
     }
     if (r.kind === 'tool') return `[Subagent report: ${r.text}]\n${r.result ?? ''}`;
     if (r.kind === 'agent') return `[Agent]\n${r.text}`;
-    const files = r.attachments?.length ? `\n\nAttached files:\n${r.attachments.map((a) => `- ${path(a.path)}`).join('\n')}` : '';
-    return `[${r.kind === 'guidance' ? 'User, while the agent worked' : 'User'}]\n${r.text}${files}`;
+    const attached = fileAttachments(r.attachments ?? []);
+    const files = attached.length ? `\n\nAttached files:\n${attached.map((a) => `- ${path(a.path)}`).join('\n')}` : '';
+    // The commands the user ran go ahead of the text, as they went to the agent.
+    return `[${r.kind === 'guidance' ? 'User, while the agent worked' : 'User'}]\n${withCommands(r.text, r.attachments ?? [])}${files}`;
   });
   const intro = 'The conversation so far, continued in a new session. Only the messages are kept: tool calls and their results were left out.';
   // A message quoting the closing tag would end the block early for withoutCompacted.

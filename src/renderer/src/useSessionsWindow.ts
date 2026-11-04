@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import { dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
+import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
 import { ViewSchema, type View } from '@shared/types';
 import { openWorkflow } from '@shared/workflows';
 import { useGitRepo } from './components/hooks';
@@ -180,6 +180,13 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     for (const s of state.sessions) listed.current.add(s.id);
     if (!single && loaded && selected && !summary && listed.current.has(selected)) setSelected(null);
   }, [single, loaded, selected, summary, state.sessions]);
+  // One that never turns up (it failed to start, or closed before it was listed) gives up and shows the dashboard.
+  const waitingFor = !single && loaded && selected && !summary ? selected : null;
+  useEffect(() => {
+    if (!waitingFor) return;
+    const t = setTimeout(() => setSelected((s) => (s === waitingFor ? null : s)), 15_000);
+    return () => clearTimeout(t);
+  }, [waitingFor]);
 
   useEffect(() => {
     setChat(null);
@@ -261,8 +268,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setShown({ cardOrder: placeCard(ids, id, target, after) });
   };
   const subagents = activity?.subagents ?? [];
-  // Stop ends the agent's turn: while it works, or while it waits for a permission. A task run's agent isn't stopped here.
-  const stoppable = summary?.kind !== 'run' && (summary?.status === 'working' || summary?.waiting?.reason === 'permission');
+  const stoppable = canStop(summary, chat?.runningCommands);
 
   return {
     single,

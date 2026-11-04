@@ -2,7 +2,7 @@ import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { bindField } from '../src/renderer/src/components/field-model';
-import { ctrlTabTarget, isClear, mostCommon, panelDomId, tabAria, tabDomId, tabKeyTarget, tabName, tabStop, type TabItem } from '../src/renderer/src/components/tabs-model';
+import { ctrlTabTarget, isClear, mostCommon, panelDomId, readableText, tabAria, tabDomId, tabKeyTarget, tabName, tabStop, type TabItem } from '../src/renderer/src/components/tabs-model';
 import { resultParts, resultSummary } from '../src/renderer/src/components/workflow-summary';
 
 const tab = (id: string, extra: Partial<TabItem> = {}): TabItem => ({ id, label: id, ...extra });
@@ -15,6 +15,18 @@ describe('the selected tab color', () => {
     expect(mostCommon([white, white, base, white, base])).toBe(white);
     expect(mostCommon([base, white])).toBe(base);
     expect(mostCommon([])).toBeNull();
+  });
+
+  it('turns the text white over a dark color and black over a light one, only when the text would not read', () => {
+    const dark = 'rgb(30, 30, 30)';
+    // A terminal's black under the tab: the light theme's dark text turns white.
+    expect(readableText('rgb(12, 12, 12)', dark)).toBe('#fff');
+    // The dark theme's light text over a light panel turns black.
+    expect(readableText('rgb(250, 250, 250)', 'rgb(230, 230, 230)')).toBe('#000');
+    // Text that reads well stays as it is.
+    expect(readableText('rgb(251, 251, 251)', dark)).toBeNull();
+    expect(readableText('color(srgb 0.05 0.05 0.05)', dark)).toBe('#fff');
+    expect(readableText('red', dark)).toBeNull();
   });
 
   it('passes over backgrounds that paint nothing, but not black', () => {

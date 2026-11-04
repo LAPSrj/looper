@@ -84,10 +84,10 @@ default place instead.
 
 ## Creating your first task
 
-Open File → New Task… (Ctrl+N) for a blank task, or File → New Task from
-Template… (Ctrl+Shift+N) to pick a starting point from your saved templates
+Open File → New Task → Blank Task… (Ctrl+N) for a blank task, or File → New
+Task → From Template… (Ctrl+Shift+N) to pick a starting point from your saved templates
 (see [task templates](tasks.md#task-templates)). Either way, a task editor
-window opens. File → New Task with Agent… lets an agent build the task from
+window opens. File → New Task → With Agent… lets an agent build the task from
 a description instead (see [building a task with an
 agent](task-builder.md)).
 
@@ -116,8 +116,8 @@ and field.
 ![The main window with a task selected](img/main-window.png)
 
 Open the Tasks tab, select the task in the sidebar and click Run Now (or press F5, or use
-Task → Run Now). Switch to the task's Terminal tab to watch the agent work
-in a real pty — you can type into it if the agent is waiting on you. The
+Task → Run Now). Open the run's window to watch the agent work as a
+conversation — you can send it guidance if it is waiting on you. The
 Status tab shows the task's current state and last result; the Runs tab
 lists every past run with its check/classifier/agent outcome. See
 [how a run works](how-a-run-works.md) and [monitoring](monitoring.md) for
@@ -131,7 +131,7 @@ what to expect during and after a run.
   pipeline and how a run ends.
 - [Environments](environments.md) — local shell, WSL, and Windows bridges,
   and the harnesses (agent CLIs) inside them.
-- [Monitoring](monitoring.md) — the terminal tab, the Runs tab and run
+- [Monitoring](monitoring.md) — the Runs tab and run
   window, notifications, and settings.
 - [CLI and automation](cli-and-automation.md) — driving Looper from a
   shell or from another agent.

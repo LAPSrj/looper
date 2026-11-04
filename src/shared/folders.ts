@@ -1,5 +1,61 @@
 import type { TaskFolder } from './types';
 
+/** Something a list files in its folders: a task or a project. */
+export interface Filed {
+  id: string;
+  folderId?: string;
+}
+
+/** Sibling order per container ('' = the top level): `folder:<id>` entries mixed with item ids. */
+export type FolderLayout = Record<string, string[]>;
+
+/**
+ * Sibling order per container ('' = top level): `folder:<id>` entries mixed
+ * with item ids, in the layout's order, self-healed: members the layout
+ * doesn't know append, and ones that don't exist or sit elsewhere drop. An
+ * item filed in a deleted or unknown folder lists at the top level.
+ */
+export function siblingOrder(items: Filed[], folders: TaskFolder[], layout: FolderLayout, parents: Map<string, string> = folderParents(folders)): Map<string, string[]> {
+  const containerOf = (t: Filed) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
+  const out = new Map<string, string[]>();
+  for (const container of ['', ...folders.map((f) => f.id)]) {
+    const valid = new Set<string>();
+    for (const f of folders) if (parents.get(f.id) === container) valid.add(`folder:${f.id}`);
+    for (const t of items) if (containerOf(t) === container) valid.add(t.id);
+    const list: string[] = [];
+    for (const entry of layout[container] ?? []) {
+      if (!valid.has(entry)) continue;
+      valid.delete(entry);
+      list.push(entry);
+    }
+    list.push(...valid);
+    out.set(container, list);
+  }
+  return out;
+}
+
+/** A stored layout: string lists by container, anything else dropped. */
+export function sanitizeLayout(raw: unknown): FolderLayout {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: FolderLayout = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) out[key] = value.filter((e): e is string => typeof e === 'string');
+  }
+  return out;
+}
+
+/**
+ * A folder's new parent, unless it's unknown or inside the folder's own
+ * subtree (which would close a cycle): then null, and the folder stays where it is.
+ */
+export function validParent(folders: TaskFolder[], id: string, parentId: string | null): string | undefined | null {
+  if (!parentId) return undefined;
+  if (!folders.some((f) => f.id === parentId)) return null;
+  const parents = folderParents(folders);
+  for (let p: string | undefined = parentId; p; p = parents.get(p) || undefined) if (p === id) return null;
+  return parentId;
+}
+
 /**
  * Effective container of each folder ('' = top level). A parent that doesn't
  * exist or would close a cycle lands the folder at the top level, so a broken

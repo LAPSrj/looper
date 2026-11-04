@@ -94,6 +94,7 @@ export const ICONS: Record<
   | 'sendNow'
   | 'compact'
   | 'stopChat'
+  | 'restartAgent'
   | 'closeChat'
   | 'activity'
   | 'attach'
@@ -192,6 +193,17 @@ export const ICONS: Record<
       </mask>
       <path d={BUBBLE} mask="url(#ico-cut-stop)" />
       <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="0.8" />
+    </>
+  ),
+  // A speech bubble with a circular arrow at its corner: the agent starts again on the same conversation.
+  restartAgent: (
+    <>
+      <mask id="ico-cut-restart" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" stroke="none" />
+        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
+      </mask>
+      <path d={BUBBLE} mask="url(#ico-cut-restart)" />
+      <path d="M14.4 12a2.4 2.4 0 1 1-.7-1.7M14 8.9v1.6h-1.6" />
     </>
   ),
   // A speech bubble lower down with an X at the top-right corner, as on a window's close button.

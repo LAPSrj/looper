@@ -106,14 +106,14 @@ describe('sidebar panes', () => {
     const groupBy = (items: MenuItemConstructorOptions[]) => items.find((i) => i.label === '&Group By')!.submenu as MenuItemConstructorOptions[];
     const header = projectsPaneMenuItems(view, (p) => (patch = p));
     expect(header.map((i) => i.label ?? '-')).toEqual(['&Group By']);
-    expect(groupBy(header).map((i) => [i.label, i.checked])).toEqual([['&None', true], ['&Folder', false], ['&Harness', false]]);
+    expect(groupBy(header).map((i) => [i.label, i.checked])).toEqual([['&None', true], ['&Parent Folder', false], ['&Harness', false]]);
     groupBy(header)[2].click!({} as never, undefined as never, undefined as never);
     expect(patch.projectsPane).toEqual({ ...view.projectsPane, groupBy: 'harness' });
 
     // View's own item: the choices one level down, and Task List Options no longer holds them.
     const viewItem = groupProjectsByMenu(view, (p) => (patch = p));
     expect(viewItem.label).toBe('&Group Projects By');
-    expect((viewItem.submenu as MenuItemConstructorOptions[]).map((i) => i.label)).toEqual(['&None', '&Folder', '&Harness']);
+    expect((viewItem.submenu as MenuItemConstructorOptions[]).map((i) => i.label)).toEqual(['&None', '&Parent Folder', '&Harness']);
     (viewItem.submenu as MenuItemConstructorOptions[])[1].click!({} as never, undefined as never, undefined as never);
     expect(patch.projectsPane).toEqual({ ...view.projectsPane, groupBy: 'folder' });
     for (const sidebar of ['single', 'multiple'] as const) {

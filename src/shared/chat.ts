@@ -1,16 +1,23 @@
+import type { CommandOutput } from './bash-mode';
 import type { MessageRow } from './messages';
 import { stripMarkdown } from './messages-md';
 import type { SlashCommand, UsageLimits } from './sessions';
 import type { HarnessModel } from './types';
 
-/** A file the user attached to a chat message, or dropped or pasted into a Looper terminal. */
+/**
+ * A file the user attached to a chat message, or dropped or pasted into a
+ * Looper terminal; or a command the user ran from the message box ("!"),
+ * which has no file.
+ */
 export interface Attachment {
-  /** The file's own name, as the user knows it. */
+  /** The file's own name, as the user knows it; a command's is "! <command>". */
   name: string;
-  /** Host path of Looper's copy, under the task's attachments folder: clicking it opens this. */
+  /** Host path of Looper's copy, under the task's attachments folder: clicking it opens this. '' for a command. */
   path: string;
   /** An image the agent gets to see itself (PNG, JPEG, GIF or WebP). */
   image: boolean;
+  /** A command and its output, which go to the agent with the message. */
+  command?: CommandOutput;
 }
 
 /** A file's own name: its base name without the stamp Looper puts in front of an attachment copy's. */
@@ -99,6 +106,8 @@ export interface ChatState {
   commands: SlashCommand[];
   /** What a picked command is written with: "/" for Claude Code, "$" for a Codex skill. */
   commandPrefix: '/' | '$';
+  /** How many commands the user ran from the message box ("!") are still running: Stop stops them. */
+  runningCommands: number;
   /** When the agent last finished a turn (ms since the epoch). */
   turnEndedAt?: number;
   startedAt: number;

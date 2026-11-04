@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RemoteMessage, RemoteState } from '@shared/remote';
-import { useDialogKeys, useDragResize, useListNav } from './components/hooks';
+import { useDragResize, useListNav } from './components/hooks';
 import { Markdown } from './components/Markdown';
-import { ResizableColumns, type TableCol } from './components/ui';
+import { EmptyWindow, ResizableColumns, type TableCol } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 import { REMOTE_STATUS_LABELS, fmtDate, fmtTime } from './format';
 
 const COLS: readonly TableCol[] = [
@@ -55,8 +56,6 @@ export function RemoteConversationsApp() {
     };
   }, [selected, status]);
 
-  useDialogKeys({ onCancel: () => window.close() });
-
   const list = state?.conversations ?? [];
   const idx = list.findIndex((c) => c.id === selected);
   const nav = useListNav({
@@ -72,55 +71,58 @@ export function RemoteConversationsApp() {
     onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
   });
 
-  if (!state) return <div className="empty">Loading…</div>;
+  if (!state) return <EmptyWindow />;
 
   return (
-    <div className="runlog" ref={containerRef}>
-      <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={nav}>
-        <table className="runlog-table">
-          <ResizableColumns cols={COLS} storageKey="remote-conversations" />
-          <tbody>
-            {list.map((c) => (
-              <tr
-                key={c.id}
-                id={`conv-${c.id}`}
-                className={`run-row${selected === c.id ? ' selected' : ''}`}
-                onClick={() => setSelected(c.id)}
-                onDoubleClick={() => void window.looper.remote.open(c.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setSelected(c.id);
-                  window.looper.remote.showContextMenu(c.id);
-                }}
-              >
-                <td>{fmtDate(c.startedAt)}</td>
-                <td>{fmtTime(c.startedAt)}</td>
-                <td>{REMOTE_STATUS_LABELS[c.status]}</td>
-                <td title={c.cwd}>{c.name}</td>
-                <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
-              </tr>
-            ))}
-            {list.length === 0 && (
-              <tr>
-                <td colSpan={5} className="muted">
-                  {state.running ? 'No conversations yet.' : 'Remote Control is off.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+    <div className="editor">
+      <div className="runlog" ref={containerRef}>
+        <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={nav}>
+          <table className="runlog-table">
+            <ResizableColumns cols={COLS} storageKey="remote-conversations" />
+            <tbody>
+              {list.map((c) => (
+                <tr
+                  key={c.id}
+                  id={`conv-${c.id}`}
+                  className={`run-row${selected === c.id ? ' selected' : ''}`}
+                  onClick={() => setSelected(c.id)}
+                  onDoubleClick={() => void window.looper.remote.open(c.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setSelected(c.id);
+                    window.looper.remote.showContextMenu(c.id);
+                  }}
+                >
+                  <td>{fmtDate(c.startedAt)}</td>
+                  <td>{fmtTime(c.startedAt)}</td>
+                  <td>{REMOTE_STATUS_LABELS[c.status]}</td>
+                  <td title={c.cwd}>{c.name}</td>
+                  <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
+                </tr>
+              ))}
+              {list.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    {state.running ? 'No conversations yet.' : 'Remote Control is off.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="runlog-divider" onMouseDown={onDragStart} />
+        <div className="runlog-result" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
+          {message ? (
+            <>
+              {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
+              <Markdown text={message.text} />
+            </>
+          ) : (
+            <div className="runlog-result-empty muted">{conv ? 'No message yet' : 'Select a conversation'}</div>
+          )}
+        </div>
       </div>
-      <div className="runlog-divider" onMouseDown={onDragStart} />
-      <div className="runlog-result" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
-        {message ? (
-          <>
-            {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
-            <Markdown text={message.text} />
-          </>
-        ) : (
-          <div className="runlog-result-empty muted">{conv ? 'No message yet' : 'Select a conversation'}</div>
-        )}
-      </div>
+      <WindowActions close />
     </div>
   );
 }

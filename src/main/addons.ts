@@ -38,6 +38,7 @@ import {
   WindowSlots,
   writeClipboard,
   type AppWindow,
+  type MessageBoxOptions,
 } from './platform';
 
 export interface AddonUiDeps {
@@ -69,13 +70,13 @@ export function sendAddonEvent(ev: AddonUiEvent, only?: AppWindow | null): void 
   }
 }
 
-async function messageBox(parent: AppWindow | null, opts: Electron.MessageBoxOptions): Promise<number> {
+async function messageBox(parent: AppWindow | null, opts: MessageBoxOptions): Promise<number> {
   const r = await showMessageBox(parent && !parent.isDestroyed() ? parent : undefined, opts);
   return r.response;
 }
 
 const errorBox = (parent: AppWindow | null, message: string, detail?: string) =>
-  messageBox(parent, { type: 'error', title: 'Looper', message, detail, buttons: ['OK'] });
+  messageBox(parent, { type: 'error', title: 'Looper', message, detail, buttons: ['OK'], defaultId: 0, cancelId: 0 });
 
 async function ask(parent: AppWindow | null, message: string): Promise<boolean> {
   return (await messageBox(parent, { type: 'question', title: 'Looper', message, buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 })) === 0;
@@ -154,7 +155,7 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
       sendAddonEvent({ type: 'refresh', addonId });
       return;
     case 'message':
-      await messageBox(sender, { type: a.kind, title: 'Looper', message: a.message, detail: a.detail, buttons: ['OK'] });
+      await messageBox(sender, { type: a.kind, title: 'Looper', message: a.message, detail: a.detail, buttons: ['OK'], defaultId: 0, cancelId: 0 });
       return;
     case 'copy':
       writeClipboard(a.text);
@@ -253,6 +254,8 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
     buttons: [verb, 'Cancel'],
     defaultId: 0,
     cancelId: 1,
+    // Installing over another version, which the user didn't ask for by opening the file.
+    ...(verb === 'Replace' ? { destructiveId: 0 } : {}),
     noLink: true,
   });
   if (response !== 0) return;
@@ -460,6 +463,7 @@ function menuItems(
           label: m.label,
           platforms: m.platforms,
           ...(m.checked !== undefined ? { type: m.radio ? 'radio' : 'checkbox', checked: m.checked } : {}),
+          ...(m.destructive ? { destructive: true as const } : {}),
           enabled: (m.enabled ?? true) && commandOn(m, item),
           click: () => void runEvent(deps, sender, addonId, { source, kind: 'menu', id: m.id, item: item?.id }, m.confirm),
         },

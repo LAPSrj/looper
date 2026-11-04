@@ -19,12 +19,13 @@ import {
   type PhoneScreen,
   type PhoneTab,
 } from '../../phone-nav';
-import { TEXT_LARGER, TEXT_SMALLER } from '../../phone-lists';
+import { taskScreenMore } from '../../phone-lists';
 import { taskEntries } from '../../task-tree';
 import type { MainWindow } from '../../useMainWindow';
 import { DEFAULT_SHOWN } from '../../useSessionsWindow';
 import type { MoreGroup } from '../../web/more-menu';
-import { usePageNav, type PageNavAction } from '../../web/page-nav';
+import type { PageNavAction } from '../../web/nav-bar-model';
+import { NavBar } from '../NavBar';
 import { AddonPaneList } from '../AddonPane';
 import { AddonScreenView, AddonToolbarButtons } from '../AddonScreen';
 import { Icon } from '../Icon';
@@ -143,8 +144,9 @@ export function PhoneMain({ m }: { m: MainWindow }) {
     : null;
   // With nothing opened, the Chats tab's detail is its Overview (a chat opens in a Chats window of its own).
   const detail: ShownScreen | null = !split || top ? shown : nav.tab === 'sessions' ? { title: 'Overview', actions: [], body: <PhoneSessionsTab m={m} show="overview" /> } : null;
-  usePageNav(
-    list
+  const bar = (
+    <NavBar
+      {...(list
       ? {
           title: detail?.title ?? '',
           back,
@@ -156,12 +158,14 @@ export function PhoneMain({ m }: { m: MainWindow }) {
           split: { width: split!.lead, title: list.title, actions: list.actions, largeTitle: true },
           tabs: { items: PHONE_TABS, value: nav.tab, select: (id) => setNav((n) => selectTab(n, id as PhoneTab)) },
         }
-      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: true, largeTitle: platform === 'ios' && !top },
+      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: true, largeTitle: platform === 'ios' && !top })}
+    />
   );
 
   if (split && list) {
     return (
       <div className={`phone-main phone-page split tab-${nav.tab}${top ? ' pushed' : ''}`}>
+        {bar}
         <SplitView split={split} lead={list.body} detail={detail?.body ?? <SplitEmpty>{EMPTY_DETAIL[nav.tab]}</SplitEmpty>} />
       </div>
     );
@@ -169,6 +173,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
 
   return (
     <div className={`phone-main phone-page tab-${nav.tab}${top ? ' pushed' : ''}`}>
+      {bar}
       <div className="phone-screen">{shown.body}</div>
       <nav className="phone-tabbar" aria-label="Looper">
         {PHONE_TABS.map(([id, label]) => (
@@ -222,7 +227,7 @@ function screenFor(
           : { id: 'run', label: 'Run Now', icon: 'run', run: () => m.uiAction('run-now') },
         { id: 'edit', label: 'Edit Task', icon: 'edit', run: () => m.uiAction('edit-task') },
       ],
-      more: TASK_MORE,
+      more: TASK_SCREEN_MORE,
       body: (
         <div className="phone-detail" onContextMenu={(e) => taskMenuAt(e, m)}>
           <TaskDetail
@@ -234,10 +239,8 @@ function screenFor(
             records={m.records[task.id] ?? []}
             tab={m.tab}
             onTab={m.setTab}
-            hideNoActionRuns={m.view?.hideNoActionRuns ?? false}
+            runFilter={m.view?.runFilter}
             focusRun={m.focusRun}
-            terminalRun={m.terminalRun}
-            onTerminalRun={m.setTerminalRun}
           />
         </div>
       ),
@@ -360,23 +363,15 @@ function rootFor(
  * A task screen's More menu: the Task menu's commands that apply to the task
  * shown (the menu bar follows the selection, which is this task), what can't
  * be done now left out, Delete last in red; and its project's New Chat and New
- * Terminal. Nothing about the menu bar's other menus.
+ * Terminal (phone-lists.ts taskScreenMore, from the command catalogs).
  */
-const TASK_MORE: MoreGroup[] = [
-  [{ item: 'task-run-now' }, { item: 'task-stop' }, { item: 'task-pause-resume' }, { item: 'task-enable-disable' }, { item: 'task-complete' }],
-  [{ item: 'task-edit' }, { item: 'task-edit-agent' }, { item: 'task-note' }, { item: 'task-note-clear' }],
-  [{ item: 'task-move-folder' }, { item: 'task-versions' }, { item: 'task-export' }, { item: 'task-clear-runs' }],
-  // The Terminal tab's text size (it reports these while it shows; nothing otherwise).
-  [{ toolbar: TEXT_SMALLER }, { toolbar: TEXT_LARGER }],
-  [{ item: 'project-new-chat' }, { item: 'project-new-terminal' }],
-  [{ item: 'task-delete' }],
-];
+const TASK_SCREEN_MORE = taskScreenMore();
 
 /** A long press on the task's screen: the task's menu, as a right-click on its row. */
 function taskMenuAt(e: React.MouseEvent, m: MainWindow) {
   if (!m.task) return;
-  // The run log, the terminal and links have menus of their own.
-  if ((e.target as HTMLElement).closest('.run-row, .pg-row, .terminal, .terminal-wrap, .terminal-empty, a, input, textarea, select')) return;
+  // The run log and links have menus of their own.
+  if ((e.target as HTMLElement).closest('.run-row, .pg-row, a, input, textarea, select')) return;
   e.preventDefault();
   window.looper.showTaskContextMenu({
     enabled: m.task.enabled,
@@ -392,7 +387,10 @@ function taskMenuAt(e: React.MouseEvent, m: MainWindow) {
 
 function PhoneProjects({ m, current = null }: { m: MainWindow; current?: string | null }) {
   const projectsMenu = () => window.looper.projects.showContextMenu('');
-  const groups = groupProjects(m.projects, m.view?.projectsPane.groupBy ?? 'none', m.info?.settings.environments ?? []);
+  // The user's folders show as groups too, those with projects in them.
+  const groups = groupProjects(m.projects, m.view?.projectsPane.groupBy ?? 'none', m.info?.settings.environments ?? [], m.projectFolders).filter(
+    (g) => g.projects.length > 0,
+  );
   const rows = (list: Project[]) =>
     list.map((p) => (
       <Row

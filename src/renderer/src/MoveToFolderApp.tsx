@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { Task, TaskFolder } from '@shared/types';
-import { folderTree } from '@shared/folders';
-import { useDialogKeys } from './components/hooks';
 import { SelectList } from './components/SelectList';
-import { EditorFooter } from './components/ui';
+import { EmptyWindow, Field, InputRow } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { folderChoices } from './components/form-blocks';
 
 /** Root pseudo-folder: moving here clears the task's folderId. */
 const TOP_LEVEL = '';
@@ -66,21 +66,18 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
     }
   };
 
-  useDialogKeys({ onSave: () => void move(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This task no longer exists.</div>;
+  if (missing) return <EmptyWindow gone="This task no longer exists." />;
 
   const items: { id: string; name: string }[] = [
     { id: TOP_LEVEL, name: 'Top level' },
-    ...folderTree(folders).map(({ folder, depth }) => ({ id: folder.id, name: ' '.repeat(depth * 3) + folder.name })),
+    ...folderChoices(folders),
   ];
 
   return (
     <div className="editor">
       <div className="editor-body">
         <div className="picker-body">
-          <div className="field">
-            <label className="field-label">Folder</label>
+          <Field label="Folder">
             <SelectList
               items={items}
               label="Folders"
@@ -92,10 +89,9 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
               onOpen={() => void move()}
               autoFocus
             />
-          </div>
-          <div className="field" style={{ flex: 'none', marginTop: 12 }}>
-            <label className="field-label">New folder</label>
-            <div className="browse-row">
+          </Field>
+          <Field label="New folder">
+            <InputRow>
               <input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -110,17 +106,11 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
               <button className="btn" disabled={!newName.trim()} onClick={() => void createFolder()}>
                 Create
               </button>
-            </div>
-          </div>
+            </InputRow>
+          </Field>
         </div>
       </div>
-      <EditorFooter
-        primaryLabel="Move"
-        onPrimary={() => void move()}
-        onCancel={() => window.close()}
-        saving={saving}
-        primaryDisabled={!task}
-      />
+      <WindowActions confirm={{ label: 'Move', run: () => void move(), disabled: !task }} busy={saving} />
     </div>
   );
 }

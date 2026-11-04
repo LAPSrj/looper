@@ -104,6 +104,8 @@ export const AddonMainButtonSchema = z
     label: z.string().min(1),
     icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
     tool: id.optional(),
+    /** It destroys or cuts something off: a phone draws it red, last in its menu. */
+    destructive: z.boolean().optional(),
     platforms,
   })
   .strict();
@@ -398,6 +400,8 @@ const MenuItemSchema = z.union([
       checked: z.boolean().optional(),
       /** With `checked`: a bullet instead, for one choice among the items next to it. */
       radio: z.boolean().optional(),
+      /** It destroys or cuts something off: a phone draws it red, last in its menu. */
+      destructive: z.boolean().optional(),
       platforms,
     })
     .strict(),
@@ -475,6 +479,8 @@ const ToolbarItemSchema = z.union([
       disabled: z.boolean().optional(),
       confirm: z.string().min(1).optional(),
       needsItem: z.boolean().optional(),
+      /** It destroys or cuts something off: a phone draws it red, last in its menu. */
+      destructive: z.boolean().optional(),
       platforms,
     })
     .strict()

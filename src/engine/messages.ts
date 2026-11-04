@@ -10,6 +10,7 @@ import {
   type PatchHunk,
   type SentFiles,
 } from '../shared/messages';
+import { commandAttachment, parseCommands, parseOutputOnly, withOutput } from '../shared/bash-mode';
 import { parseTaskNotification } from '../shared/sessions';
 import { compactRow, compactRows, withoutCompacted } from '../shared/compact';
 import { readContextTokens, readSubagentStats, type SubagentStats } from './context';
@@ -605,13 +606,26 @@ export class TranscriptAccumulator {
   }
 
   /** The user's prompt row, or a task row when a workflow script computed the text for one of its agents. */
-  private pushPrompt(raw: string, ts?: string): void {
+  protected pushPrompt(raw: string, ts?: string): void {
     // A compacted chat's first message starts with the earlier conversation, which the chat keeps as rows of its own (compacted.json).
-    const text = withoutCompacted(raw);
-    if (!text.trim()) return;
-    const task = workflowTaskText(text);
+    const full = withoutCompacted(raw);
+    if (!full.trim()) return;
+    // Claude Code's own bash mode records a command's output as a message after its input: it fills in that command.
+    const output = parseOutputOnly(full);
+    const last = this.rows[this.rows.length - 1];
+    const waiting = last?.kind === 'prompt' ? last.attachments?.[last.attachments.length - 1] : undefined;
+    if (output && waiting?.command && waiting.command.exitCode === null && !waiting.command.stopped && !waiting.command.stdout && !waiting.command.stderr) {
+      last!.attachments = [...last!.attachments!.slice(0, -1), commandAttachment(withOutput(waiting.command, output))];
+      return;
+    }
+    // The commands the user ran from the message box (or Claude Code's bash mode) show as the message's attachments.
+    const { commands, text } = parseCommands(full, `cmd${this.nextId}`);
+    const task = commands.length ? null : workflowTaskText(text);
     if (task !== null) this.push({ kind: 'task', ts, text: task });
-    else this.push({ kind: 'prompt', ts, text });
+    else {
+      const row = this.push({ kind: 'prompt', ts, text, preview: text || !commands.length ? undefined : previewOf(commands.map((c) => `! ${c.input}`).join(', ')) });
+      if (commands.length) row.attachments = commands.map(commandAttachment);
+    }
   }
 
   /** The image a tool call's result carried, by the call's tool_use id. */
@@ -725,8 +739,7 @@ export class CodexAccumulator extends TranscriptAccumulator {
           // Injected context is one <tag>…</tag> block, after a heading line for the AGENTS.md
           // instructions ("# AGENTS.md instructions", seen live in codex-cli 0.163.0).
           if (/^(?:#[^\n]*\n+)?<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
-          const prompt = withoutCompacted(text);
-          if (prompt.trim()) this.push({ kind: 'prompt', ts, text: prompt });
+          this.pushPrompt(text, ts);
         } else if (block.type === 'output_text' && p.role === 'assistant') {
           this.push({ kind: 'agent', ts, text });
         }
@@ -1332,8 +1345,8 @@ export class MessagesService {
 /** A transcript path in the run target's form, as the engine host can open it. */
 export async function transcriptHostPath(p: string, host: HostKind, distro?: string): Promise<string | undefined> {
   const isWindowsPath = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
-  if (host === 'windows') return isWindowsPath ? p : convertWslPath(p, 'windows', distro);
-  if (isWindowsPath) return convertWslPath(p, 'posix');
+  if (host === 'windows') return isWindowsPath ? p : convertWslPath(p, 'windows', distro, true);
+  if (isWindowsPath) return convertWslPath(p, 'posix', undefined, true);
   return p;
 }
 

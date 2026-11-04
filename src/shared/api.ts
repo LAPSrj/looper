@@ -13,6 +13,7 @@ import type {
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
+import type { CommandOutput } from './bash-mode';
 import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
@@ -23,7 +24,7 @@ import type { DiscoveredModel } from './model-update';
 import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
 import type { PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
-import type { EngineEvent, PreventSleepState, Project, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
+import type { EngineEvent, PreventSleepState, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
   version: string;
@@ -64,7 +65,8 @@ export interface LooperApi {
     save(input: unknown): Promise<Project>;
     /** Asks first; shows why when tasks still belong to it. */
     remove(id: string): Promise<void>;
-    reorder(ids: string[]): Promise<void>;
+    /** The new order, and as drag and drop sends them, the projects' new folders (null: the top level), the layout, and folders' new parents. */
+    reorder(ids: string[], folderById?: Record<string, string | null>, layout?: Record<string, string[]>, parentById?: Record<string, string | null>): Promise<void>;
     /** The Edit Project window (no id = New Project). */
     openEditor(id?: string): Promise<void>;
     /** The New Task editor with the project picked. */
@@ -72,8 +74,18 @@ export interface LooperApi {
     /** A new chat or terminal session in the project, on its harness and settings; shows why when it can't start. */
     newChat(id: string): Promise<void>;
     newTerminal(id: string): Promise<void>;
-    /** A project row's right-click menu; '' = the pane's (New Project…). */
+    /** A project row's right-click menu; '' = the pane's (New Project…, New Folder…). */
     showContextMenu(id: string): void;
+    /** The Projects tab's folders, which work as task folders do. */
+    folders(): Promise<ProjectFolder[]>;
+    /** Sibling order per container ('' = top level): `folder:<id>` entries mixed with project ids. */
+    layout(): Promise<Record<string, string[]>>;
+    addFolder(name: string, parentId?: string): Promise<ProjectFolder>;
+    renameFolder(id: string, name: string): Promise<ProjectFolder>;
+    /** The list's F2 and Delete on a folder: the Rename Folder window, or Delete Folder's question. */
+    folderCommand(id: string, command: 'rename' | 'delete'): void;
+    /** A folder header's right-click menu: New Folder…, New Subfolder…, Rename Folder…, Delete Folder. */
+    showFolderMenu(folderId: string): void;
   };
   versions: {
     /** A task's versions, oldest first. */
@@ -167,12 +179,6 @@ export interface LooperApi {
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   };
-  /** Terminal of one run; without a run id, of the task's newest run in flight. */
-  agent: {
-    buffer(id: string, runId?: string): Promise<{ runId: string; data: string } | null>;
-    write(id: string, data: string, runId?: string): void;
-    resize(id: string, cols: number, rows: number, runId?: string): void;
-  };
   /** Current Rest Mode state; live updates arrive as `rest` engine events. */
   restState(): Promise<RestState>;
   /** Current Prevent Sleep state; live updates arrive as `prevent-sleep` engine events. */
@@ -190,11 +196,15 @@ export interface LooperApi {
   openTaskTerminal(taskId: string, runId?: string): Promise<void>;
   /** Open Project in Chat, or Continue in Chat with a run id: the task's harness in a Looper chat window. */
   openTaskChat(taskId: string, runId?: string): Promise<void>;
+  /** A double-click on a list's row: the task, project or chat (or task run) in a window of its own, or that window brought forward. */
+  openItemWindow(kind: 'task' | 'project' | 'chat', id: string): void;
   /** A chat in the Sessions window. */
   chat: {
     get(id: string): Promise<ChatState | null>;
     /** To the agent, or into the chat's queue while it works. */
     send(id: string, text: string, attachments: Attachment[]): void;
+    /** Before a message goes to an idle agent: false when Settings → Chats asks first (its prompt cache expired) and the user cancels. */
+    confirmSend(id: string): Promise<boolean>;
     /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
     sendNow(id: string): Promise<void>;
     /** Compact into New Chat: a new chat that starts from this one's messages takes its place. Rejects with the reason. */
@@ -205,8 +215,16 @@ export interface LooperApi {
     setDraft(id: string, text: string, attachments: Attachment[]): void;
     /** Allow or deny the agent's permission request. */
     answer(id: string, requestId: string, allow: boolean): void;
-    /** End the agent's turn (Esc). */
+    /** End the agent's turn (Esc), and the commands the user ran from the message box. */
     stop(id: string): Promise<void>;
+    /**
+     * A message box's "!" command, named `commandId` by the window: run in the
+     * chat's working directory on its target; its output once it ends or is
+     * stopped (`chat:command` events bring it as it comes). Rejects with the reason it can't run.
+     */
+    runCommand(id: string, command: string, commandId: string): Promise<CommandOutput>;
+    /** Stop under a running "!" command: that one alone ends. */
+    stopCommand(id: string, commandId: string): Promise<void>;
     /** The message box's Harness, Model, Effort or Permission Mode menu ('all': one menu with the four as submenus), at (x, y) in the window. */
     showSettingMenu(id: string, which: ChatSettingMenu | 'all', x: number, y: number): void;
     /** Attach Files: the open dialog, then the picked files copied in like dropped ones. */
@@ -241,7 +259,7 @@ export interface LooperApi {
     activity(id: string): Promise<SessionActivity | null>;
     /** The window shows this session now (null: the Overview): its conversation and activity come as events. */
     show(id: string | null): void;
-    /** The chats the window's dashboard shows as cards now (none once it leaves the dashboard): their conversations come as events too. */
+    /** The chats and task runs whose cards on the window's dashboard show their conversation now (none once it leaves the dashboard): their conversations and activity come as events too. */
     showCards(ids: string[]): void;
     /** The user looked at the session: a finished turn or a notification stops waiting. */
     seen(id: string): void;
@@ -249,6 +267,8 @@ export interface LooperApi {
     close(id: string): Promise<void>;
     /** Stop: end the agent's turn (Claude's interrupt in a chat, Esc in a terminal session). */
     stop(id: string): Promise<void>;
+    /** Restart Agent: the harness starts again on the same conversation, ending a turn in progress. Rejects with the reason. */
+    restart(id: string): Promise<void>;
     /** A session's right-click menu; `card`: on its dashboard card, which adds Double Size or Normal Size. */
     showContextMenu(id: string, card?: boolean): void;
     /** A list group's right-click menu (`group`: sessionGroupKey): New Chat in its project, Send to Chats… with its chats checked, and Close All Conversations in it. */
@@ -323,7 +343,8 @@ export interface LooperApi {
      * `stopped`: quitting Looper stopped its harness, and the next key typed
      * into it starts the harness again on the conversation.
      */
-    output(id: string): Promise<{ data: string; ended: boolean; stopped?: boolean } | null>;
+    /** `note`: why its harness was stopped, when it wasn't quitting Looper. */
+    output(id: string): Promise<{ data: string; ended: boolean; stopped?: boolean; note?: string } | null>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
   };
@@ -369,8 +390,6 @@ export interface LooperApi {
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open a run's window (its step records and conversation), or a subagent's conversation when agentId is set. */
   openMessages(taskId: string, runId: string, agentId?: string, label?: string): Promise<void>;
-  /** Open a message row's image in a zoomable window. */
-  openMessageImage(taskId: string, runId: string, rowId: string, agentId?: string, label?: string): Promise<void>;
   /** Open the task editor in its own window (no id = new task). */
   openEditor(taskId?: string): Promise<void>;
   /** Open the next-run guidance window for a task. */
@@ -442,7 +461,7 @@ export interface LooperApi {
     tab?: string,
   ): void;
   /** Show the task on the main window's Tasks tab, at one of its tabs (from a Dashboard or Projects window). */
-  showTaskInMain(taskId: string, view: 'status' | 'runs' | 'terminal'): void;
+  showTaskInMain(taskId: string, view: 'status' | 'runs'): void;
   showTaskContextMenu(info: {
     enabled: boolean;
     /** The task is finished for good: the menu offers Reopen instead of Complete. */
@@ -459,7 +478,7 @@ export interface LooperApi {
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
   /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
-  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean }[]): void;
+  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true }[]): void;
   /** Context menu of a Recycle Bin item (Restore, Delete). */
   showRecycleBinContextMenu(): void;
   /** Context menu of a Version History item (View, Compare with Current, then Restore or, with Edit Task with Agent open on the task, Edit with Agent). */
@@ -565,9 +584,9 @@ export type UiEvent =
   /** A list window's row menu (showListContextMenu): the item picked. */
   | { type: 'list-menu'; token: string; id: string }
   /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */
-  | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'terminal' | 'runs' }
-  /** Conversation window View menu: a Show toggle changed. */
-  | { type: 'messages-show'; key: MessagesShowKey; checked: boolean }
+  | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'runs' }
+  /** Run window View menu: the Show Run Log toggle changed. */
+  | { type: 'messages-show-run'; checked: boolean }
   /** Conversation window View menu: the Raw Messages toggle changed. */
   | { type: 'messages-raw'; checked: boolean }
   /** Run window View menu: the Raw Agent Output toggle changed. */
@@ -605,7 +624,6 @@ export type UiEvent =
   /** History window: show the find bar and put the focus in it (Edit → Find…). */
   | { type: 'history-find' }
   /** History window View menu: the folders the list shows (View → Folder). */
-  | { type: 'history-folder'; folder: HistoryFolderFilter };
-
-/** run: the run's own step records (check, classifier, agent, result, guidance). */
-export type MessagesShowKey = 'run' | 'messages' | 'thinking' | 'tools' | 'subagents';
+  | { type: 'history-folder'; folder: HistoryFolderFilter }
+  /** History window: the list a `history.list` call (by its `request`) has read so far. */
+  | { type: 'history-progress'; request: number; list: HistoryList };

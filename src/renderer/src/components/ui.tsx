@@ -3,32 +3,73 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 // On a phone, marks the window's page and keeps the keyboard and safe-area insets its styles use.
 import './phone/keyboard';
 import { platform } from '../platform';
-import { isPhone, usePageNav } from '../web/page-nav';
+import { isPhone } from '../web/page-nav';
+import { NavBar } from './NavBar';
 import { bindField } from './field-model';
 import { ICON_STROKE_BOLD, StatusGlyph } from './icons';
 import { Group, Row } from './phone/PhoneList';
 import { Tabs } from './Tabs';
+import { WindowActions } from './WindowActions';
 
 const onIos = isPhone && platform === 'ios';
 
-/** A labelled group of radio buttons, one per option, stacked vertically; on an iPhone, rows with a check on the chosen one. */
+/** A check box with its text after it. */
+export function CheckboxField({
+  label,
+  checked,
+  onChange,
+  disabled,
+  autoFocus,
+  indeterminate,
+  className,
+}: {
+  label: ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  /** Partly checked: some of the things it stands for are on. */
+  indeterminate?: boolean;
+  className?: string;
+}) {
+  return (
+    <label className={`checkbox-field${className ? ` ${className}` : ''}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        ref={indeterminate === undefined ? undefined : (el) => void (el && (el.indeterminate = indeterminate))}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+/**
+ * A labelled group of radio buttons, one per option, stacked vertically; on an iPhone, rows with a check on the chosen one.
+ * `hideLabel`: the label only names the group (the check box above it says what it's for).
+ */
 export function RadioField<T extends string>({
   label,
+  hideLabel,
   name,
   value,
   options,
   onChange,
 }: {
   label: string;
+  hideLabel?: boolean;
   name: string;
   value: T;
   options: [T, string][];
   onChange: (value: T) => void;
 }) {
-  if (onIos) return <CheckRows label={label} value={value} options={options} onChange={onChange} />;
+  if (onIos) return <CheckRows label={label} hideLabel={hideLabel} value={value} options={options} onChange={onChange} />;
   return (
     <div className="radio-field" role="radiogroup" aria-label={label}>
-      <span className="field-label">{label}</span>
+      {!hideLabel && <span className="field-label">{label}</span>}
       {options.map(([v, text]) => (
         <label key={v} className="checkbox-field radio-option">
           <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} />
@@ -40,7 +81,19 @@ export function RadioField<T extends string>({
 }
 
 /** iOS's choice of one: a row per option, a check on the chosen one (a radio group for assistive technology). */
-function CheckRows<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (value: T) => void }) {
+function CheckRows<T extends string>({
+  label,
+  hideLabel,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  hideLabel?: boolean;
+  value: T;
+  options: [T, string][];
+  onChange: (value: T) => void;
+}) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const chosen = Math.max(0, options.findIndex(([v]) => v === value));
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -53,7 +106,7 @@ function CheckRows<T extends string>({ label, value, options, onChange }: { labe
   };
   return (
     <div className="radio-field radio-rows">
-      <span className="field-label">{label}</span>
+      {!hideLabel && <span className="field-label">{label}</span>}
       <div className="radio-rows-list" role="radiogroup" aria-label={label} onKeyDown={onKeyDown}>
         {options.map(([v, text], i) => (
           <button key={v} type="button" role="radio" aria-checked={value === v} tabIndex={i === chosen ? 0 : -1} className="radio-row" ref={(el) => void (refs.current[i] = el)} onClick={() => onChange(v)}>
@@ -114,10 +167,21 @@ export function Field({ label, help, children }: { label: string; help?: ReactNo
   );
 }
 
+/** A text box with its unit inside it at the right edge. */
+export function InputSuffix({ suffix, className, children }: { suffix?: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={`input-suffix${className ? ` ${className}` : ''}`}>
+      {children}
+      {suffix && <span className="suffix">{suffix}</span>}
+    </div>
+  );
+}
+
 interface NumberInputProps {
   /** The unit, inside the box at its right edge; omit for a plain number (a port). */
   suffix?: string;
-  value: number;
+  /** null: no number yet (an empty box). */
+  value: number | null;
   onChange: (n: number) => void;
   /** Set by a Field around it. */
   id?: string;
@@ -128,11 +192,14 @@ interface NumberInputProps {
   min?: number;
   max?: number;
   disabled?: boolean;
+  autoFocus?: boolean;
+  /** A class on the box's wrapper, for a box outside a form (the image window's zoom). */
+  className?: string;
 }
 
-export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled, id, label }: NumberInputProps) {
+export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled, autoFocus, id, label, className }: NumberInputProps) {
   return (
-    <div className="input-suffix">
+    <InputSuffix suffix={suffix} className={className}>
       <input
         id={id}
         aria-label={label}
@@ -140,7 +207,8 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
         min={min}
         max={max}
         disabled={disabled}
-        value={value}
+        autoFocus={autoFocus}
+        value={value ?? ''}
         onChange={(e) => {
           // A cleared field is a keystroke on the way to a new number, not a 0.
           if (e.target.value === '') return;
@@ -149,18 +217,76 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
         }}
         onBlur={onBlur}
       />
-      {suffix && <span className="suffix">{suffix}</span>}
-    </div>
+    </InputSuffix>
   );
 }
 
-/** The fields that depend on a checkbox right above them: indented under it, and dimmed and disabled (not hidden) while it's off. */
-export function StepFields({ on, when = true, children }: { on: boolean; /** False: the fields have no checkbox above them (no project), and show as they are. */ when?: boolean; children: ReactNode }) {
+/**
+ * The fields that depend on a checkbox right above them: indented under it, and dimmed and disabled (not hidden) while it's off.
+ * Stacked like the rest of the form, or with `row` side by side (Settings' stagger delays) or a lone sub-option that sits tight under its checkbox.
+ */
+export function StepFields({
+  on,
+  when = true,
+  row,
+  children,
+}: {
+  on: boolean;
+  /** False: the fields have no checkbox above them (no project), and show as they are. */
+  when?: boolean;
+  row?: boolean;
+  children: ReactNode;
+}) {
   if (!when) return <>{children}</>;
   return (
-    <fieldset className={`step-fields step-stack${on ? '' : ' disabled'}`} disabled={!on}>
+    <fieldset className={`step-fields ${row ? 'step-row' : 'step-stack'}${on ? '' : ' disabled'}`} disabled={!on}>
       {children}
     </fieldset>
+  );
+}
+
+/** Controls side by side on one line: a text box and its buttons (Browse…), or a pair of number boxes. */
+export function InputRow({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={`input-row${className ? ` ${className}` : ''}`}>{children}</div>;
+}
+
+/**
+ * A row of buttons that each turn one choice on or off (days of the week, effort levels); one always stays on.
+ * `wrap`: many short buttons (days of the month) that wrap onto more lines.
+ */
+export function ToggleButtons<T extends string | number>({
+  options,
+  value,
+  onChange,
+  label,
+  wrap,
+}: {
+  options: readonly (readonly [T, string])[];
+  value: readonly T[];
+  onChange: (next: T[]) => void;
+  /** Names the group when no Field's label does. */
+  label?: string;
+  wrap?: boolean;
+}) {
+  return (
+    <div className={wrap ? 'dom-row' : 'day-row'} role="group" aria-label={label}>
+      {options.map(([v, text]) => {
+        const on = value.includes(v);
+        return (
+          <button
+            key={v}
+            aria-pressed={on}
+            className={`btn small day-toggle${on ? ' selected' : ''}`}
+            onClick={() => {
+              const next = on ? value.filter((x) => x !== v) : [...value, v];
+              if (next.length > 0) onChange(next);
+            }}
+          >
+            {text}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -208,9 +334,15 @@ export function TabBar<T extends string>({
   const [open, setOpen] = useState(false);
   const rows = onIos && !!sections;
   const close = () => setOpen(false);
-  usePageNav(rows && open ? { title: tabs.find(([id]) => id === active)?.[1], back: close } : null, 3);
   if (rows) {
-    if (open) return <>{children}</>;
+    if (open) {
+      return (
+        <>
+          <NavBar title={tabs.find(([id]) => id === active)?.[1]} back={close} order={3} />
+          {children}
+        </>
+      );
+    }
     return (
       <div className="pg-scroll tab-sections">
         <Group>
@@ -348,38 +480,17 @@ export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol
   );
 }
 
-interface EditorFooterProps {
-  primaryLabel?: string;
-  onPrimary: () => void;
-  onCancel: () => void;
-  /** Omit to hide the Apply button. */
-  onApply?: () => void;
-  applyLabel?: string;
-  saving?: boolean;
-  primaryDisabled?: boolean;
-}
-
 /**
- * Standard dialog footer: Save | Cancel | Apply. A phone draws Cancel and the
- * primary button in its navigation bar instead (PageNav `cancel`/`confirm`),
- * and leaves Apply out.
+ * An editor window's whole body while it has nothing to show: Loading…, or why
+ * not (`gone`: "This task no longer exists."), with Close (Esc) to leave it.
  */
-export function EditorFooter({ primaryLabel = 'Save', onPrimary, onCancel, onApply, applyLabel = 'Apply', saving, primaryDisabled }: EditorFooterProps) {
-  usePageNav({ cancel: { disabled: saving, run: onCancel }, confirm: { label: primaryLabel, disabled: saving || primaryDisabled, run: onPrimary } }, 2);
-  if (isPhone) return null;
+export function EmptyWindow({ gone }: { gone?: string | false | null }) {
   return (
-    <div className="editor-footer">
-      <button className="btn primary" onClick={onPrimary} disabled={saving || primaryDisabled}>
-        {primaryLabel}
-      </button>
-      <button className="btn" onClick={onCancel} disabled={saving}>
-        Cancel
-      </button>
-      {onApply && (
-        <button className="btn" onClick={onApply} disabled={saving}>
-          {applyLabel}
-        </button>
-      )}
+    <div className="editor">
+      <div className="editor-body">
+        <div className="empty">{gone || 'Loading…'}</div>
+      </div>
+      <WindowActions close />
     </div>
   );
 }

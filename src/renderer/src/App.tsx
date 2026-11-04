@@ -17,7 +17,7 @@ import type { ToolbarGroup } from './components/toolbar-model';
 import { sessionLimits } from './components/usage';
 import { ViewTabs } from './components/ViewTabs';
 import { SessionsBody, SessionsStatusBar, sessionsToolbarGroups } from './SessionsApp';
-import { preventSleepStatus, useMainWindow } from './useMainWindow';
+import { preventSleepStatus, useMainWindow, type MainWindow } from './useMainWindow';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
@@ -25,10 +25,12 @@ import { isPhone } from './web/page-nav';
 /**
  * The main window: its tabs (Dashboard, Projects, Tasks, Chats and the
  * addons'), drawn for the desktop or a phone. `fixed`: a view window (View →
- * Dashboard and the rest), which shows that tab alone.
+ * Dashboard and the rest), which shows that tab alone. `item`: with `fixed`
+ * the Tasks or Projects tab, a task's or project's own window (a double-click
+ * on its row), which shows that one alone, without the list.
  */
-export function App({ fixed }: { fixed?: string }) {
-  return isPhone ? <PhoneApp /> : <DesktopMain fixed={fixed} />;
+export function App({ fixed, item }: { fixed?: string; item?: string }) {
+  return isPhone ? <PhoneApp /> : <DesktopMain fixed={fixed} item={item} />;
 }
 
 function PhoneApp() {
@@ -43,6 +45,28 @@ const TAB_KEY = 'main.tab';
 function savedSidebarWidth(): number {
   const width = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
   return width >= 180 ? width : 300;
+}
+
+/**
+ * A task's or project's own window: it keeps that one selected, so its view,
+ * toolbar and menus act on it, takes its name as the window's title, and
+ * closes once it's deleted.
+ */
+function useItemWindow(m: MainWindow, fixed: string | undefined, item: string | undefined): void {
+  const isTask = fixed === 'tasks';
+  const name = !item ? undefined : isTask ? m.tasks.find((t) => t.id === item)?.name : m.projects.find((p) => p.id === item)?.name;
+  const seen = useRef(false);
+  useEffect(() => {
+    if (!item) return;
+    if (!name) {
+      if (seen.current) window.close();
+      return;
+    }
+    seen.current = true;
+    document.title = name;
+    if (isTask && m.selected !== item) m.select(item);
+    else if (!isTask && m.projectSel !== item) m.selectProject(item);
+  }, [item, name, isTask, m.selected, m.projectSel]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** What each tab had selected when it was left, so coming back shows it again. */
@@ -66,9 +90,10 @@ function chatsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
  * another shows. A selection made elsewhere (a notification, a project's task,
  * a new chat) shows its tab.
  */
-function DesktopMain({ fixed }: { fixed?: string }) {
+function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const [picked, setPicked] = useState(() => fixed ?? localStorage.getItem(TAB_KEY) ?? 'dashboard');
   const m = useMainWindow(picked);
+  useItemWindow(m, fixed, item);
   const s = useSessionsWindow(undefined, false, { active: picked === 'chats' });
   const { view, tasks, projects, runtimes, addons, rest, counts, remoteOpen } = m;
   const tabs = mainTabs(addons);
@@ -150,8 +175,8 @@ function DesktopMain({ fixed }: { fixed?: string }) {
   const tab = tabDef?.id ?? picked;
   const onChats = tab === 'chats';
   const environments = m.info?.settings.environments ?? [];
-  // A view window has no Tasks tab: its tasks open in the main window.
-  const openTask = (id: string, at: DetailTab) => (fixed ? window.looper.showTaskInMain(id, at) : m.openFromDashboard(id, at));
+  // A view window other than the Tasks one has no Tasks tab: its tasks open in the main window.
+  const openTask = (id: string, at: DetailTab) => (fixed && fixed !== 'tasks' ? window.looper.showTaskInMain(id, at) : m.openFromDashboard(id, at));
   const hiddenToolbars = view?.hiddenAddonToolbars ?? [];
 
   const chatProject = onChats && s.summary?.projectId ? (projects.find((p) => p.id === s.summary!.projectId) ?? null) : null;
@@ -195,10 +220,13 @@ function DesktopMain({ fixed }: { fixed?: string }) {
       />,
     );
   } else if (tab === 'projects') {
+    // A project's own window has the project alone.
+    const sidebar = !item;
     body = (
-      <div className="app" ref={appRef} style={sidebarColumns(true)}>
-        {view ? <ProjectsSidebar projects={projects} selected={m.projectSel} onSelect={m.selectProject} environments={environments} view={view} /> : <aside className="sidebar" />}
-        {divider}
+      <div className="app" ref={appRef} style={sidebarColumns(sidebar)}>
+        {sidebar &&
+          (view ? <ProjectsSidebar projects={projects} folders={m.projectFolders} layout={m.projectLayout} selected={m.projectSel} onSelect={m.selectProject} environments={environments} view={view} /> : <aside className="sidebar" />)}
+        {sidebar && divider}
         <main className="main">
           {m.project ? (
             <ProjectDetail
@@ -208,17 +236,17 @@ function DesktopMain({ fixed }: { fixed?: string }) {
               runtimes={runtimes}
               environments={environments}
               remote={m.remote}
-              onSelectTask={(id) => openTask(id, 'status')}
+              onSelectTask={(id) => window.looper.openItemWindow('task', id)}
             />
           ) : (
-            <div className="empty">No project selected.</div>
+            <div className="empty">{item ? 'Loading…' : 'No project selected.'}</div>
           )}
         </main>
       </div>
     );
   } else if (tab === 'tasks') {
-    // With every pane hidden (View menu) there is no sidebar: the task takes the whole width.
-    const sidebar = !view || sidebarHasPanes(view, addons);
+    // With every pane hidden (View menu) there is no sidebar: the task takes the whole width. A task's own window has the task alone.
+    const sidebar = !item && (!view || sidebarHasPanes(view, addons));
     const { task, addonShown } = m;
     body = (
       <div className="app" ref={appRef} style={sidebarColumns(sidebar)}>
@@ -255,10 +283,8 @@ function DesktopMain({ fixed }: { fixed?: string }) {
               records={m.records[task.id] ?? []}
               tab={m.tab}
               onTab={m.setTab}
-              hideNoActionRuns={view?.hideNoActionRuns ?? false}
+              runFilter={view?.runFilter}
               focusRun={m.focusRun}
-              terminalRun={m.terminalRun}
-              onTerminalRun={m.setTerminalRun}
             />
           ) : addonShown ? (
             <AddonScreenView
@@ -270,8 +296,20 @@ function DesktopMain({ fixed }: { fixed?: string }) {
               mode="main"
               toolbarSlot={hiddenToolbars.includes(addonShown.addon.id) ? null : toolbarSlot}
             />
+          ) : item ? (
+            <div className="empty">Loading…</div>
           ) : (
-            <div className="empty">No task selected.</div>
+            // No task selected: the tasks' dashboard, as the Chats tab shows its own.
+            <Dashboard
+              attention={m.attention}
+              running={m.running}
+              remote={null}
+              recent={m.recentShown}
+              runtimes={runtimes}
+              pick={m.livePick}
+              onPick={m.setPick}
+              onOpen={openTask}
+            />
           )}
         </main>
       </div>

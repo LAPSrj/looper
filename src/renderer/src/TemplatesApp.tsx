@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
-import { useDialogKeys } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
-
-const rid = () => Math.random().toString(36).slice(2, 8);
+import { WindowActions } from './components/WindowActions';
+import { rid } from './rid';
 
 /** Standalone template manager window (File → Templates…). All actions apply immediately. */
 export function TemplatesApp() {
@@ -23,8 +22,6 @@ export function TemplatesApp() {
       }
     });
   }, []);
-
-  useDialogKeys({ onCancel: () => window.close() });
 
   const tpl = templates.find((t) => t.id === selected);
 
@@ -87,7 +84,7 @@ export function TemplatesApp() {
               { label: 'Export…', run: () => void window.looper.templates.export(t.id) },
               { label: 'Move Up', enabled: i > 0, run: () => move(t, -1) },
               { label: 'Move Down', enabled: i < templates.length - 1, run: () => move(t, 1) },
-              { label: 'Remove', run: () => void remove(t) },
+              { label: 'Remove', destructive: true, run: () => void remove(t) },
             ]}
             onDelete={(t) => void remove(t)}
           />
@@ -100,21 +97,17 @@ export function TemplatesApp() {
             onRemove={() => void remove()}
             removeDisabled={!tpl}
           />
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" onClick={() => void window.looper.templates.import()}>
               Import…
             </button>
             <button className="btn" disabled={!tpl} onClick={() => tpl && void window.looper.templates.export(tpl.id)}>
               Export…
             </button>
-          </div>
+          </ListActions>
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Environment, Project } from '@shared/types';
 import { folderName } from '@shared/projects';
 import { windowTitle } from '@shared/window-title';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { AgentFields } from './components/RemoteFields';
-import { EditorFooter, Field } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { CheckboxField, EmptyWindow, Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 import { useFitWindow } from './fit-window';
 
 type Draft = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'mode' | 'remote'>;
@@ -50,11 +50,7 @@ export function ProjectEditorApp({ id }: { id?: string }) {
     });
   }, [id]);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This project no longer exists.</div>;
-  if (!environments || !draft) return <div className="empty">Loading…</div>;
+  if (missing || !environments || !draft) return <EmptyWindow gone={missing && 'This project no longer exists.'} />;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const env = environments.find((e) => e.id === draft.environmentId);
@@ -94,7 +90,7 @@ export function ProjectEditorApp({ id }: { id?: string }) {
       setSaving(false);
     }
   };
-  saveRef.current = async () => {
+  const save = async () => {
     if (await doSave()) window.close();
   };
 
@@ -119,19 +115,10 @@ export function ProjectEditorApp({ id }: { id?: string }) {
               <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
             </Field>
           </div>
-          <label className="checkbox-field">
-            <input type="checkbox" checked={draft.remote} onChange={(e) => set({ remote: e.target.checked })} />
-            Keep a Remote Control conversation open
-          </label>
+          <CheckboxField label="Keep a Remote Control conversation open" checked={draft.remote} onChange={(on) => set({ remote: on })} />
         </div>
       </div>
-      <EditorFooter
-        primaryLabel={id ? 'Save' : 'Create'}
-        onPrimary={() => void saveRef.current()}
-        onCancel={() => window.close()}
-        onApply={id ? () => void doSave() : undefined}
-        saving={saving}
-      />
+      <WindowActions confirm={{ label: id ? 'Save' : 'Create', run: () => void save() }} apply={id ? { run: () => void doSave() } : undefined} busy={saving} />
     </div>
   );
 }

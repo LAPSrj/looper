@@ -30,6 +30,8 @@ export interface SessionSummary {
   waiting?: { reason: WaitReason; text: string; since: number };
   /** A chat's oldest permission request, which the Overview can answer. */
   permissionId?: string;
+  /** A task run's agent asked this with looper-ask and waits for the answer. */
+  question?: string;
   /** One line: the agent's latest text message since the user's last one (never a tool call). */
   latest?: string;
   /** The agent's messages since the user's last one, as plain text, the newest last (the dashboard's cards). */
@@ -105,6 +107,8 @@ export interface SessionActivity {
   id: string;
   /** A terminal session's or task run's conversation, from its transcript (a chat's comes with the chat). */
   rows?: MessageRow[];
+  /** A task run's guidance its agent hasn't picked up yet. */
+  pendingGuidance?: string;
   background: BackgroundTask[];
   subagents: SubagentInfo[];
   /** The workflow runs the session started (Claude Code's Workflow tool), newest first. */
@@ -157,6 +161,39 @@ export function placeCard(ids: string[], id: string, target: string, after: bool
   rest.splice(after ? at + 1 : at, 0, id);
   return rest;
 }
+
+/**
+ * Whether a session's dashboard card shows the conversation itself while it's in view:
+ * a chat's (with its message box) and a task run's (read from its transcript). A
+ * terminal session's card shows a summary, since its conversation is the terminal.
+ */
+export const showsConversation = (s: SessionSummary): boolean => s.kind !== 'terminal';
+
+/** The cards of the dashboard's that show their conversation now: those in view (`inView`, by session id). */
+export const liveCards = (sessions: SessionSummary[], inView: ReadonlySet<string>): string[] =>
+  sessions.filter((s) => showsConversation(s) && inView.has(s.id)).map((s) => s.id);
+
+/**
+ * The sessions the engine reads closely for the Chats windows: the one each shows,
+ * and the task runs among the live cards of its dashboard (`cards`), whose
+ * conversations come with their activity. A chat's card has its chat's own events.
+ */
+export function watchedSessions(views: Iterable<{ shown: string | null; cards: string[] }>, isRun: (id: string) => boolean): string[] {
+  const ids = new Set<string>();
+  for (const v of views) {
+    if (v.shown !== null) ids.add(v.shown);
+    for (const id of v.cards) if (isRun(id)) ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * Whether Stop applies to a session: it ends the agent's turn while the agent works or
+ * waits for a permission, and a chat's "!" commands (`runningCommands`). A task run is
+ * listed only while it runs, and its Stop stops the whole run, after asking.
+ */
+export const canStop = (s: SessionSummary | undefined, runningCommands = 0): boolean =>
+  !!s && (s.kind === 'run' || s.status === 'working' || s.waiting?.reason === 'permission' || runningCommands > 0);
 
 /** "3 min", "1 h 5 min": how long something has waited. */
 export function waitedText(ms: number): string {

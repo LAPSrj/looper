@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Terminal as XTerm } from '@xterm/xterm';
-import { TEXT_LARGER, TEXT_SMALLER } from '../../phone-lists';
-import { isPhone, usePageNav } from '../../web/page-nav';
+import { CHAT_COMMANDS } from '@shared/commands/chat';
+import { isPhone } from '../../web/page-nav';
+import { commandToolbar } from '../toolbar-model';
+import { NavBar } from '../NavBar';
 import { KEY_ROW, StickyCtrl, stepFontSize, type TermKey } from '../terminal-keys';
 
 const ARROW_NAMES: Partial<Record<TermKey, string>> = { up: 'Up', down: 'Down', left: 'Left', right: 'Right' };
@@ -76,23 +78,6 @@ export function usePhoneTerminal(send: (data: string) => void): PhoneTerminal {
     t.refit();
   };
 
-  // The text size isn't a key: it's in the window's More menu (a toolbar item the menu offers, and a designed menu can name).
-  usePageNav(
-    isPhone
-      ? {
-          toolbar: [
-            {
-              id: 'terminal-text',
-              items: [
-                { id: TEXT_SMALLER, label: 'Smaller Text', run: () => changeFont(-1), enabled: fontSize > stepFontSize(fontSize, -1) },
-                { id: TEXT_LARGER, label: 'Larger Text', run: () => changeFont(1), enabled: fontSize < stepFontSize(fontSize, 1) },
-              ],
-            },
-          ],
-        }
-      : null,
-    5,
-  );
 
   // Pressing a key mustn't take the focus from the terminal: the keyboard would go down.
   const keep = (e: React.PointerEvent | React.MouseEvent) => e.preventDefault();
@@ -108,15 +93,30 @@ export function usePhoneTerminal(send: (data: string) => void): PhoneTerminal {
   );
 
   const row = isPhone ? (
-    <div className="term-keys" role="toolbar" aria-label="Terminal keys" onPointerDown={keep} onMouseDown={keep}>
-      <div className="term-keys-scroll">
-        {KEY_ROW.slice(0, 2).map(keyButton)}
-        <button className={`term-key${ctrlOn ? ' on' : ''}`} aria-pressed={ctrlOn} onClick={() => setCtrlOn(ctrl.toggle())}>
-          Ctrl
-        </button>
-        {KEY_ROW.slice(2).map(keyButton)}
+    <>
+      {/* The text size isn't a key: it's in the window's More menu (a toolbar item the menu offers, and a designed menu can name). */}
+      <NavBar
+        toolbar={[
+          {
+            id: 'terminal-text',
+            items: commandToolbar(CHAT_COMMANDS, 'terminal-text', {
+              textSmaller: { run: () => changeFont(-1), enabled: fontSize > stepFontSize(fontSize, -1) },
+              textLarger: { run: () => changeFont(1), enabled: fontSize < stepFontSize(fontSize, 1) },
+            }),
+          },
+        ]}
+        order={5}
+      />
+      <div className="term-keys" role="toolbar" aria-label="Terminal keys" onPointerDown={keep} onMouseDown={keep}>
+        <div className="term-keys-scroll">
+          {KEY_ROW.slice(0, 2).map(keyButton)}
+          <button className={`term-key${ctrlOn ? ' on' : ''}`} aria-pressed={ctrlOn} onClick={() => setCtrlOn(ctrl.toggle())}>
+            Ctrl
+          </button>
+          {KEY_ROW.slice(2).map(keyButton)}
+        </div>
       </div>
-    </div>
+    </>
   ) : null;
 
   return { attach, typed, row };

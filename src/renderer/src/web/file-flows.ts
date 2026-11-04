@@ -249,7 +249,7 @@ export function useFileDialog(controller: ShellController, dialog: Extract<OpenD
   const start = split.dir ?? storage.get(LAST_FOLDER_KEY);
   const extensions = useMemo(() => allowedExtensions(spec.filters), [spec.filters]);
   const [message, ask] = useLocalMessage();
-  const fail = (err: unknown) => void ask({ type: 'error', title: spec.title ?? 'Looper', message: errorText(err), buttons: ['OK'] });
+  const fail = (err: unknown) => void ask({ type: 'error', title: spec.title ?? 'Looper', message: errorText(err), buttons: ['OK'], defaultId: 0, cancelId: 0 });
   const browser = useHostBrowser(controller, {
     w: dialog.w,
     start,
@@ -298,6 +298,7 @@ export function useFileDialog(controller: ShellController, dialog: Extract<OpenD
         buttons: ['Yes', 'No'],
         defaultId: 1,
         cancelId: 1,
+        destructiveId: 0,
       });
       if (r !== 0) return;
     }
@@ -411,7 +412,7 @@ function dataUrl(blob: Blob): Promise<string> {
 export function usePathRequest(controller: ShellController, req: PathRequest): PathFlow {
   const [w] = useState(() => controller.anyWindow() ?? '');
   const [message, ask] = useLocalMessage();
-  const fail = (err: unknown) => void ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'] });
+  const fail = (err: unknown) => void ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'], defaultId: 0, cancelId: 0 });
   const browser = useHostBrowser(controller, { w, start: req.path, files: true, extensions: null, multi: false, skip: !req.isDir, onError: fail });
   const close = () => controller.closePath(req.id);
   const file = req.isDir ? browser.entries.find((e) => !e.dir && browser.selected.includes(e.path)) : undefined;
@@ -459,7 +460,7 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
         if (r === 0) await controller.openOnHost(req.path);
         else if (r === 1) await controller.downloadHostFile(req.path);
       } catch (err) {
-        await ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'] });
+        await ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'], defaultId: 0, cancelId: 0 });
       }
       controller.closePath(req.id);
     });
@@ -478,7 +479,7 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
           toHost: () =>
             void controller
               .saveOnHost(req.path)
-              .then((saved) => ask({ type: 'info', title: 'Looper', message: `Downloaded ${baseName(saved)} to the host computer.`, detail: saved, buttons: ['OK'] }))
+              .then((saved) => ask({ type: 'info', title: 'Looper', message: `Downloaded ${baseName(saved)} to the host computer.`, detail: saved, buttons: ['OK'], defaultId: 0, cancelId: 0 }))
               .catch(fail),
         }
       : null,

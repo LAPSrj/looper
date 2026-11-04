@@ -258,6 +258,8 @@ export interface MenuItemSpec {
   key?: string;
   /** An ICONS key (components/icons.tsx) the phone's menus draw before the label. */
   icon?: string;
+  /** It destroys or cuts something off (Delete, Stop, Close): a phone draws it red, last. */
+  destructive?: true;
   /** Where it shows (unset: everywhere); the server leaves out what the client's platform doesn't show. */
   platforms?: UiPlatform[];
 }
@@ -269,8 +271,12 @@ export interface MessageBoxSpec {
   message: string;
   detail?: string;
   buttons: string[];
-  defaultId?: number;
-  cancelId?: number;
+  /** The button Enter runs and the focus starts on. */
+  defaultId: number;
+  /** The button Esc and the window's × answer. */
+  cancelId: number;
+  /** The button a phone draws red: a destructive action the user didn't choose (Don't Save, Replace). */
+  destructiveId?: number;
   checkboxLabel?: string;
   checkboxChecked?: boolean;
 }

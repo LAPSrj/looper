@@ -4,6 +4,7 @@ import { importTaskDraft } from '@shared/validate';
 import { windowTitle } from '@shared/window-title';
 
 import { TaskEditor } from './components/TaskEditor';
+import { EmptyWindow } from './components/ui';
 
 interface EditorAppProps {
   taskId?: string;
@@ -93,7 +94,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
     }
   }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode]);
 
-  if (task === undefined || !environments || !projects || !initialReady) return <div className="empty">Loading…</div>;
+  if (task === undefined || !environments || !projects || !initialReady) return <EmptyWindow />;
   return (
     <div className="editor-window">
       <TaskEditor

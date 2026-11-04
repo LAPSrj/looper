@@ -1,37 +1,6 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import { folderParents, folderSubtree } from '../../shared/folders';
+import { folderParents, folderSubtree, siblingOrder } from '../../shared/folders';
 import type { Task, TaskFolder } from '../../shared/types';
-
-/**
- * Sibling order per container ('' = top level): `folder:<id>` entries mixed with
- * task ids, in the layout's order, self-healed: the folders and tasks can outrun
- * the layout event, so members the layout doesn't know append, and ones that
- * don't exist or sit elsewhere drop.
- */
-export function siblingOrder(
-  tasks: Task[],
-  folders: TaskFolder[],
-  layout: Record<string, string[]>,
-  parents: Map<string, string> = folderParents(folders),
-): Map<string, string[]> {
-  // A task pointing at a deleted or unknown folder lists at the top level.
-  const containerOf = (t: Task) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
-  const out = new Map<string, string[]>();
-  for (const container of ['', ...folders.map((f) => f.id)]) {
-    const valid = new Set<string>();
-    for (const f of folders) if (parents.get(f.id) === container) valid.add(`folder:${f.id}`);
-    for (const t of tasks) if (containerOf(t) === container) valid.add(t.id);
-    const list: string[] = [];
-    for (const entry of layout[container] ?? []) {
-      if (!valid.has(entry)) continue;
-      valid.delete(entry);
-      list.push(entry);
-    }
-    list.push(...valid);
-    out.set(container, list);
-  }
-  return out;
-}
 
 /** One row of a phone's Tasks screen: a folder (it opens its own screen) or a task. */
 export type TaskEntry =

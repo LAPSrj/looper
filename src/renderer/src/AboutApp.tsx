@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import icon from '../../../assets/icon.png';
-import { useDialogKeys } from './components/hooks';
+import { WindowActions } from './components/WindowActions';
 
 /** Standalone About window (Help → About Looper). */
 export function AboutApp() {
@@ -9,16 +9,15 @@ export function AboutApp() {
     document.title = 'About';
     void window.looper.info().then((i) => setVersion(i.version));
   }, []);
-  useDialogKeys({ onCancel: () => window.close() });
   return (
-    <div className="about">
-      <img src={icon} alt="" width={72} height={72} />
-      <h1>Looper</h1>
-      <div className="muted">Created by Leandro Amorim</div>
-      <div className="muted">{version ? `Version ${version}` : ''}</div>
-      <button className="btn" autoFocus onClick={() => window.close()}>
-        OK
-      </button>
+    <div className="editor">
+      <div className="about">
+        <img src={icon} alt="" width={72} height={72} />
+        <h1>Looper</h1>
+        <div className="muted">Created by Leandro Amorim</div>
+        <div className="muted">{version ? `Version ${version}` : ''}</div>
+      </div>
+      <WindowActions close />
     </div>
   );
 }

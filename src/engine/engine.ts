@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import type { MessageImage, MessagesResult } from '../shared/messages';
 import { runShown, type RunFilter } from '../shared/runs';
-import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
   FOLDER_TASK_PREFIX,
   folderEnvironment,
@@ -32,6 +32,7 @@ import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType, kindMismatchText } from './chat';
 import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
 import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
+import type { CommandOutput } from '../shared/bash-mode';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
 import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
 import { SessionHub } from './sessions';
@@ -104,7 +105,16 @@ export interface Engine {
   saveProject(input: unknown): Project;
   /** Delete a project. Throws while tasks belong to it. */
   removeProject(id: string): void;
-  reorderProjects(ids: string[]): void;
+  /** The projects' order, and as drag and drop sends them, their new folders, the layout and folders' new parents (as reorderTasks). */
+  reorderProjects(ids: string[], folderById?: Record<string, string | null>, layout?: Record<string, string[]>, parentById?: Record<string, string | null>): void;
+  /** The Projects tab's folders, and each container's order of folders and projects. */
+  listProjectFolders(): ProjectFolder[];
+  listProjectLayout(): Record<string, string[]>;
+  /** A new project folder, in `parentId` (unset: the top level). Throws with the reason. */
+  addProjectFolder(name: string, parentId?: string): ProjectFolder;
+  renameProjectFolder(id: string, name: string): ProjectFolder;
+  /** Delete a project folder; its folders and projects move up to its parent. */
+  removeProjectFolder(id: string): void;
   // tasks
   listTasks(): Task[];
   getTask(id: string): Task | undefined;
@@ -204,12 +214,9 @@ export interface Engine {
   reopenTask(id: string): void;
   /**
    * Stop a cycle wherever it is (check, classifier or agent). Without a run id
-   * the task's newest run in flight is stopped; so do write/resize/buffer.
+   * the task's newest run in flight is stopped.
    */
   stopTask(id: string, reason?: string, runId?: string): Promise<boolean>;
-  writeAgent(id: string, data: string, runId?: string): void;
-  resizeAgent(id: string, cols: number, rows: number, runId?: string): void;
-  agentBuffer(id: string, runId?: string): { runId: string; data: string } | null;
   /**
    * Open the task's harness in a window of the system's terminal (same
    * env/cwd/model/args, no prompt). A run id resumes that run's conversation
@@ -228,7 +235,7 @@ export interface Engine {
   resizeTerminalSession(sessionId: string, cols: number, rows: number): void;
   /** The session's output so far and whether it ended; null once it's closed. */
   /** `stopped`: quitting Looper stopped its harness, and the next key typed into it starts it again on the conversation. */
-  terminalSessionOutput(sessionId: string): { data: string; ended: boolean; stopped?: boolean } | null;
+  terminalSessionOutput(sessionId: string): { data: string; ended: boolean; stopped?: boolean; note?: string } | null;
   /** Sessions in Looper terminal windows whose harness is still running (Remote Control's not counted). */
   runningTerminalSessions(): number;
   // remote control (settings.remote.enabled turns it on and off: every helper and project gets its conversation, or every one of its sessions ends)
@@ -255,13 +262,13 @@ export interface Engine {
   startChat(id: string, runId?: string): ChatState;
   /** Fork from Here: a new chat with the conversation up to the row at `index` of the chat's history and rows. Throws with the reason. */
   forkChat(chatId: string, index: number): ChatState;
-  /** Compact into New Chat: a new chat that starts from the chat's messages, without its tool calls; the chat closes. Throws with the reason. */
-  compactChat(chatId: string): Promise<ChatState>;
+  /** Compact into New Chat: a new chat that starts from the chat's messages, without its tool calls; the chat closes after `started` sees the new one. Throws with the reason. */
+  compactChat(chatId: string, started?: (next: ChatState) => void): Promise<ChatState>;
   /** Continue Compacted: a new chat that starts from the run's messages, without its tool calls. Throws with the reason. */
   compactRun(id: string, runId: string): Promise<ChatState>;
   // the History window
   /** The newest conversations on this computer: Looper's runs, and every Claude Code and Codex conversation in the environments' folders. */
-  historyList(o: HistoryListOptions): Promise<HistoryList>;
+  historyList(o: HistoryListOptions, progress?: (partial: HistoryList) => void): Promise<HistoryList>;
   /** Of the listed conversations `ids`, the ones whose user or agent messages contain the text. */
   historySearch(query: string, ids: string[]): Promise<string[]>;
   /** A listed conversation's rows and subagents (a subagent's rows with `agentId`); null once it's no longer listed. */
@@ -284,8 +291,16 @@ export interface Engine {
   compactHistory(id: string): Promise<ChatState>;
   getChat(chatId: string): ChatState | undefined;
   sendChat(chatId: string, text: string, attachments: Attachment[]): void;
-  /** End the agent's turn; the conversation goes on with the next message. */
+  /** End the agent's turn, and the commands the user ran from the message box; the conversation goes on with the next message. */
   stopChat(chatId: string): Promise<void>;
+  /**
+   * A message box's "!" command, run in the chat's working directory on its
+   * target: its output once it ends or is stopped (`chat:command` events show
+   * it as it comes). `commandId`: the window's name for it.
+   */
+  runChatCommand(chatId: string, command: string, commandId: string): Promise<CommandOutput>;
+  /** Stop under a running "!" command: that one alone ends. */
+  stopChatCommand(chatId: string, commandId: string): Promise<void>;
   /** Chat menu: the chat's own model, effort or permission mode. */
   configureChat(chatId: string, patch: Partial<ChatSettings>): Promise<void>;
   /** Harness menu: a chat nothing has been said in moves to another harness of the task's environment. Throws with the reason. */
@@ -322,6 +337,14 @@ export interface Engine {
    * pressed in it.
    */
   stopSession(id: string): Promise<void>;
+  /**
+   * Restart Agent: the session's harness (Claude Code's or Codex's process)
+   * starts again on the same conversation, ending a turn in progress. Throws
+   * with the reason it can't.
+   */
+  restartSession(id: string): Promise<void>;
+  /** Whether Restart Agent applies: a chat, or a terminal session on Claude Code or Codex. */
+  canRestartSession(id: string): boolean;
   /** End a chat or terminal session for good (stopping Looper keeps them for its next start). */
   closeSession(id: string): Promise<void>;
   /** End every chat and terminal session in the Sessions window for good. */
@@ -1014,12 +1037,54 @@ export function createEngine(opts: EngineOptions): Engine {
       throw new Error("The task's harness has changed, so this conversation can't go on in a terminal.");
     }
     const dir = runs.runDir(taskId, runId);
-    const own = fs.existsSync(path.join(dir, 'stop.json')) ? readRunSessionId(dir, kind) : null;
+    // The session's own conversation once it has one on disk: a finished turn (stop.json), or a prompt it took (prompt.json, a turn a restart cut short).
+    const started = fs.existsSync(path.join(dir, 'stop.json')) || fs.existsSync(path.join(dir, 'prompt.json'));
+    const own = started ? readRunSessionId(dir, kind) : null;
     launchTerminal(taskId, task, runId, kind, own ?? terminalResume.get(runId));
     // The turn quitting cut short is over, whatever the files from before say.
     sessionHub.stopped(runId);
     sessionHub.changed();
   };
+
+  /** Whether Restart Agent applies to a session: a chat, or a Looper terminal session on Claude Code or Codex. */
+  const canRestart = (id: string): boolean => {
+    if (chats.taskOf(id)) return true;
+    const taskId = remote.owns(id) ? undefined : terminals.taskOf(id);
+    const task = taskId ? taskOrProject(taskId) : undefined;
+    try {
+      return !!task && !!recordedKind(task) && !!terminalRuns.openInfo(id);
+    } catch {
+      return false; // the task's environment or harness is gone
+    }
+  };
+
+  /** What a terminal stopped for its expired cache says until a key starts it again. */
+  const CACHE_STOPPED = 'stopped when the prompt cache expired · press any key to go on';
+
+  /**
+   * Settings → Chats → Stop the agent once its cache expires: each idle chat
+   * and terminal session whose last reply's prompt cache has expired gets its
+   * harness stopped. Nothing is lost: the next message (or key) starts it
+   * again on the conversation. One running background work is left alone.
+   */
+  const stopExpiredAgents = (): void => {
+    if (!settings.chats.stopWhenCacheExpires) return;
+    const now = Date.now();
+    for (const s of sessionHub.state().sessions) {
+      if (s.kind === 'run' || s.status !== 'ready' || s.waiting?.reason === 'permission' || s.background > 0) continue;
+      if (s.cacheUntil === undefined || s.cacheUntil > now) continue;
+      if (s.kind === 'chat') {
+        if (chats.agentRunning(s.id)) void chats.stopIdleAgent(s.id).then((stopped) => stopped && sessionHub.changed());
+      } else if (!s.stopped && !remote.owns(s.id) && terminals.taskOf(s.id) && canRestart(s.id)) {
+        // Keys typed since the agent's last reply are a prompt on its way, which stopping would lose.
+        if ((terminals.inputAt(s.id) ?? 0) > (s.lastReplyAt ?? 0)) continue;
+        const taskId = s.taskId;
+        terminals.suspend(s.id, () => wakeTerminal(taskId, s.id), CACHE_STOPPED);
+        sessionHub.changed();
+      }
+    }
+  };
+  let cacheTimer: NodeJS.Timeout | null = null;
 
   /** Open again a terminal session that was open when Looper quit: listed with its output, its harness not running. */
   const restoreTerminal = (c: Extract<OpenConversation, { kind: 'terminal' }>): void => {
@@ -1168,9 +1233,9 @@ export function createEngine(opts: EngineOptions): Engine {
     // A task run's sessions (its agent's, its classifier's) go in the ledger as its steps record them.
     if (e.type === 'record') {
       const { taskId, runId } = e.record;
-      for (const r of runSessionRefs(runs.runDir(taskId, runId))) {
-        ledger.add({ sessionId: r.sessionId, kind: r.classifier ? 'classifier' : 'run', taskId, taskName: tasks.get(taskId)?.name, runId });
-      }
+      void runSessionRefs(runs.runDir(taskId, runId)).then((refs) => {
+        for (const r of refs) ledger.add({ sessionId: r.sessionId, kind: r.classifier ? 'classifier' : 'run', taskId, taskName: tasks.get(taskId)?.name, runId });
+      });
       return;
     }
     if (e.type !== 'runtime') return;
@@ -1238,6 +1303,8 @@ export function createEngine(opts: EngineOptions): Engine {
   // Run-log retention: delete records and run folders past their age limit,
   // sparing whatever runs are currently in progress.
   const RETENTION_SWEEP_MS = 60 * 60 * 1000;
+  /** How often idle sessions are checked for an expired prompt cache (Settings → Chats). */
+  const CACHE_CHECK_MS = 15_000;
   let retentionTimer: NodeJS.Timeout | null = null;
   const sweepRunLogs = () => {
     sweepCompletedTasks();
@@ -1338,6 +1405,7 @@ export function createEngine(opts: EngineOptions): Engine {
         git.checkAll();
       });
       projects.on('reorder', emitProjects);
+      projects.on('folders', () => emit({ type: 'project-folders', folders: projects.listFolders(), layout: projects.listLayout() }));
       tasks.on('change', (task: Task, kind: 'create' | 'update' | 'remove', previous?: Task) => {
         if (kind !== 'remove') recordVersion(task, previous);
       });
@@ -1355,12 +1423,15 @@ export function createEngine(opts: EngineOptions): Engine {
       sweepRunLogs();
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
       sessionHub.start();
+      cacheTimer = setInterval(stopExpiredAgents, CACHE_CHECK_MS);
       git.checkAll();
     },
     async stop() {
       if (!started) return;
       started = false;
       sessionHub.stop();
+      if (cacheTimer) clearInterval(cacheTimer);
+      cacheTimer = null;
       if (retentionTimer) clearInterval(retentionTimer);
       retentionTimer = null;
       inbox.stop();
@@ -1443,7 +1514,12 @@ export function createEngine(opts: EngineOptions): Engine {
       }
       projects.remove(id);
     },
-    reorderProjects: (ids) => projects.reorder(ids),
+    reorderProjects: (ids, folderById, layout, parentById) => projects.reorder(ids, folderById, layout, parentById),
+    listProjectFolders: () => projects.listFolders(),
+    listProjectLayout: () => projects.listLayout(),
+    addProjectFolder: (name, parentId) => projects.addFolder(name, parentId),
+    renameProjectFolder: (id, name) => projects.renameFolder(id, name),
+    removeProjectFolder: (id) => void projects.removeFolder(id),
     listTasks: () => tasks.list(),
     getTask: (id) => tasks.get(id),
     findSessionTask: lookup,
@@ -1590,9 +1666,6 @@ export function createEngine(opts: EngineOptions): Engine {
     completeTask: (id, reason) => scheduler.completeTask(id, reason ?? 'completed by the user'),
     reopenTask: (id) => scheduler.reopenTask(id),
     stopTask: (id, reason, runId) => scheduler.stopTask(id, reason, runId),
-    writeAgent: (id, data, runId) => scheduler.writeAgent(id, data, runId),
-    resizeAgent: (id, c, r, runId) => scheduler.resizeAgent(id, c, r, runId),
-    agentBuffer: (id, runId) => scheduler.getBuffer(id, runId),
     openTaskTerminal(id: string, runId?: string): Promise<void> {
       const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
@@ -1649,11 +1722,14 @@ export function createEngine(opts: EngineOptions): Engine {
       if (!task) throw new Error('This chat is closed.');
       return chats.fork(task, chatId, index);
     },
-    async compactChat(chatId: string): Promise<ChatState> {
+    async compactChat(chatId: string, started?: (next: ChatState) => void): Promise<ChatState> {
       const taskId = chats.taskOf(chatId);
       const task = taskId ? taskOrProject(taskId) : undefined;
       if (!task) throw new Error('This chat is closed.');
-      return chats.compact(task, chatId);
+      return chats.compact(task, chatId, (next) => {
+        sessionHub.changed();
+        started?.(next);
+      });
     },
     async compactRun(id: string, runId: string): Promise<ChatState> {
       const task = taskOrProject(id);
@@ -1665,7 +1741,7 @@ export function createEngine(opts: EngineOptions): Engine {
       const kept = info?.harnessId && resolveEnvironment(task, settings).harnesses.some((h) => h.id === info.harnessId);
       return chats.start(task, { kind: 'compact', from: runId, history, ...(kept ? { harnessId: info.harnessId, settings: info.settings } : {}) });
     },
-    historyList: (o) => history.list(o),
+    historyList: (o, progress) => history.list(o, progress),
     historySearch: (query, ids) => history.search(query, ids),
     historyRead: (id, agentId) => history.read(id, agentId),
     historyItem: (id) => history.item(id),
@@ -1727,6 +1803,8 @@ export function createEngine(opts: EngineOptions): Engine {
     getChat: (chatId) => chats.get(chatId),
     sendChat: (chatId, text, attachments) => chats.send(chatId, text, attachments),
     stopChat: (chatId) => chats.stop(chatId),
+    runChatCommand: (chatId, command, commandId) => chats.runCommand(chatId, command, commandId),
+    stopChatCommand: (chatId, commandId) => chats.stopCommand(chatId, commandId),
     configureChat: (chatId, patch) => chats.configure(chatId, patch),
     async setChatHarness(chatId: string, harnessId: string): Promise<void> {
       const taskId = chats.taskOf(chatId);
@@ -1779,6 +1857,18 @@ export function createEngine(opts: EngineOptions): Engine {
         sessionHub.stopped(id);
       }
     },
+    async restartSession(id: string): Promise<void> {
+      if (!canRestart(id)) throw new Error('This conversation’s agent can’t be restarted.');
+      if (chats.taskOf(id)) {
+        await chats.restartAgent(id);
+      } else {
+        const taskId = terminals.taskOf(id)!;
+        terminals.restart(id, () => wakeTerminal(taskId, id));
+      }
+      sessionHub.changed();
+      saveConversations();
+    },
+    canRestartSession: (id) => canRestart(id),
     async closeSession(id: string): Promise<void> {
       if (chats.taskOf(id)) await chats.close(id);
       else if (terminals.taskOf(id) && !remote.owns(id)) closeTerminal(id);

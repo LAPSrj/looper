@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RecycleBinEntry } from '@shared/types';
-import { useDialogKeys } from './components/hooks';
-import { SelectList } from './components/SelectList';
+import { ListActions, SelectList } from './components/SelectList';
+import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
 
 /** Recycle Bin window (File → Recycle Bin…): deleted tasks to restore or delete for good. */
@@ -20,8 +20,6 @@ export function RecycleBinApp() {
       if (e.type === 'recycleBin') apply(e.entries);
     });
   }, []);
-
-  useDialogKeys({ onCancel: () => window.close() });
 
   const entry = entries.find((e) => e.task.id === selected);
 
@@ -82,7 +80,7 @@ export function RecycleBinApp() {
             onDelete={() => void remove()}
             autoFocus
           />
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" disabled={!entry} onClick={() => void restore()}>
               Restore
             </button>
@@ -92,14 +90,10 @@ export function RecycleBinApp() {
             <button className="btn danger" disabled={!entries.length} onClick={() => void empty()}>
               Empty Recycle Bin
             </button>
-          </div>
+          </ListActions>
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }

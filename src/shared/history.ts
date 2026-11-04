@@ -91,6 +91,8 @@ export interface HistoryListOptions {
   limit: number;
   showRuns: boolean;
   folder: HistoryFolderFilter;
+  /** The window's own number for the call: the list so far comes as history-progress events with it, while it's read. */
+  request?: number;
 }
 
 export interface HistoryList {
@@ -150,12 +152,18 @@ const startOfWeek = (ts: number): number => {
   return new Date(today).setDate(new Date(today).getDate() - weekday);
 };
 
-/** Today, Yesterday, This Week, then one group per month, for a time. */
+const startOfMonth = (ts: number): number => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+};
+
+/** Today, Yesterday, This Week, This Month, then one group per earlier month, for a time. */
 export function dateGroupOf(ts: number, now: number, monthTitle: (d: Date) => string): { key: string; title: string } {
   const today = startOfDay(now);
   if (ts >= today) return { key: 'today', title: 'Today' };
   if (ts >= today - DAY) return { key: 'yesterday', title: 'Yesterday' };
   if (ts >= startOfWeek(now)) return { key: 'week', title: 'This Week' };
+  if (ts >= startOfMonth(now)) return { key: 'month', title: 'This Month' };
   const d = new Date(ts);
   return { key: `${d.getFullYear()}-${d.getMonth() + 1}`, title: monthTitle(d) };
 }

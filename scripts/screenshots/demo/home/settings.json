@@ -41,7 +41,6 @@
     "maxDelaySec": 600,
     "minIntervalSec": 30
   },
-  "outputBufferBytes": 262144,
   "runRetentionDays": 3650,
   "engineLogRetentionDays": 10,
   "completedTaskRetention": {

@@ -89,6 +89,8 @@ interface Track {
   seenAt: number;
   hooks: Record<'prompt' | 'stop' | 'notification', HookFile | null>;
   rows: MessageRow[];
+  /** A task run's guidance its agent hasn't picked up yet. */
+  pendingGuidance?: string;
   subagentMetas: SubagentMeta[];
   /** What each subagent's transcript says, read while the window shows the session; a finished one's isn't read again. */
   subagentStats: Map<string, SubagentStats>;
@@ -343,6 +345,7 @@ export class SessionHub {
     return {
       id,
       ...(entry.kind !== 'chat' ? { rows: t.rows } : {}),
+      ...(t.pendingGuidance ? { pendingGuidance: t.pendingGuidance } : {}),
       background: backgroundOf(t.rows),
       subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats),
       workflows: t.workflows,
@@ -433,6 +436,7 @@ export class SessionHub {
     try {
       const r = await this.d.readRows(e.taskId, e.id);
       if (r.status === 'ok') t.rows = r.rows.filter((row) => row.kind !== 'raw');
+      t.pendingGuidance = e.kind === 'run' ? r.pendingGuidance : undefined;
       if (kind === 'claude-code') t.subagentMetas = await this.d.subagents(e.taskId, e.id);
       if (kind === 'claude-code' && (force || this.watched.has(id))) {
         for (const a of subagentsOf(t.subagentMetas, t.rows)) {
@@ -468,7 +472,7 @@ export class SessionHub {
     for (const id of this.watched) {
       const activity = this.activity(id);
       if (!activity) continue;
-      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.background, activity.subagents, activity.workflows]);
+      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.pendingGuidance, activity.background, activity.subagents, activity.workflows]);
       if (aKey === this.lastActivity.get(id)) continue;
       this.lastActivity.set(id, aKey);
       this.d.emit({ type: 'session:activity', activity });
@@ -618,6 +622,7 @@ export class SessionHub {
       ...(harness.limitsKey ? { limitsKey: harness.limitsKey } : {}),
       status: waits ? 'ready' : 'working',
       ...(waiting ? { waiting } : {}),
+      ...(e.question !== null ? { question: e.question } : {}),
       ...(latest ? { latest } : {}),
       ...(recent.length ? { recent } : {}),
       ...(t.context ? { context: t.context } : {}),

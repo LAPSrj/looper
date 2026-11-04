@@ -46,11 +46,9 @@ Codex session at the configured model (`haiku` by default) with the check's
 same two ways as the agent. Headless (the default) is a `claude -p` or
 `codex exec` call
 that must answer `{"act": boolean, "reason": string}` under a strict schema.
-Interactive runs in a real pty shown in the task's terminal tab — you can
-watch it and type into it — and gives its verdict by running
+Interactive runs in a real pty and gives its verdict by running
 `looper-classify act "<reason>"` or `looper-classify noop "<reason>"`,
-followed by a short closing message. In both modes the classifier's output
-streams to the terminal tab, its conversation shows in the run window
+followed by a short closing message. In both modes its conversation shows in the run window
 (replies typed as **Classifier**), and its files live under
 `classify-*` in the run folder, fully separate from the agent's.
 
@@ -72,8 +70,8 @@ Once check and classifier both said go, the task's harness (Claude Code,
 Codex, or a custom CLI) starts a **fresh session** — no memory of earlier
 runs, unless the Agent tab's Conversation is set to continue across runs
 (see [the task editor](tasks.md#agent)) — in the task's working directory, interactive by default in a real pty
-shown in the task's terminal tab (`mode: "headless"` runs without one, driven
-by plain pipes).
+that you follow in the run window (its conversation as a chat) and steer with
+guidance (`mode: "headless"` runs without a pty, driven by plain pipes).
 
 The prompt is your template with `{{summary}}` / `{{context}}` (plus
 `{{task}}`, `{{taskId}}`, `{{runId}}`, `{{trigger}}`) filled in, and any
@@ -188,7 +186,7 @@ as its text), and the run's result is the last session's.
   works on until it finishes.
 - With **Continue one conversation across runs**, the next run resumes the newest
   session's conversation.
-- The Terminal tab, `output.txt`, and `output.log` keep every session, with a
+- `output.txt` and `output.log` keep every session, with a
   line marking each restart, and the conversation window shows every
   session's conversation in order.
 - Interactive Codex reports its conversation only when its first turn ends,
@@ -199,14 +197,14 @@ as its text), and the run's result is the last session's.
 
 When a Claude Code or Codex interactive run times out idle with `onIdleTimeout: hold`,
 the run isn't ended — it's held. The task list shows **Needs attention** and
-the status pane reads "The agent is waiting for you in the Terminal tab".
-Nothing about the run is lost; it's still the same session, just paused for
-input.
+the status pane reads "The agent is waiting for your guidance in the run
+window". Nothing about the run is lost; it's still the same session, just
+paused for input.
 
-To resume it, open the task's **Terminal** tab and type your answer directly
-into the running session — the moment you send input, the hold clears and the
-idle clock resets. There's no separate "resume" button for this; it's driven
-by the same terminal you'd use to watch the run. You can still **Stop Task**
+To resume it, send guidance from the run window's box, or from the box under
+the run on the Chats tab. Looper types the guidance into the idle session, the
+hold clears and the idle clock resets. There's no separate "resume" button
+for this. You can still **Stop Task**
 a held run if you'd rather abandon it.
 
 ## Questions from the agent
@@ -227,10 +225,10 @@ When the agent asks:
 - You get a notification with the question, unless the run window is the
   focused window. Clicking it opens the run window.
 - The task shows **Needs attention**, the dashboard lists it with the
-  question, and for an interactive run the Terminal tab shows the question
-  with an **Answer…** link to the run window.
-- The run window shows the question at the top of its lower panel, and its
-  send box takes the answer. The other ways to send guidance (Send Guidance… on the
+  question.
+- The run window shows the question above the guidance box at the bottom of
+  the window (an info bar, "The agent has a question"), and the box, whose
+  placeholder reads "Your answer", takes the answer. The other ways to send guidance (Send Guidance… on the
   run's context menu, the inbox `guide` command, `looper guide`) answer it
   too.
 
@@ -261,8 +259,7 @@ it to finish.
   as skipped, the same as a scheduled slot — it isn't retried automatically.
   The CLI/inbox `run` command behaves the same way. Run Now on a paused task
   also lifts the pause and clears its error count, the same as Resume. When
-  more than one run of a task is in flight, the **Terminal** tab shows a run selector above the
-  console so you can pick which one to watch and type into; the task's status
+  more than one run of a task is in flight, the task's status
   and last-result always reflect whichever run finished most recently.
 - **Concurrency limits defer, they don't skip.** An [environment or
   harness](environments.md) can cap how many tasks (counting each run of a
@@ -346,8 +343,9 @@ agent uses up the charge.
 
 While a Claude Code or Codex agent is running, you can send it guidance
 without stopping it: the send box under the run window's conversation
-(Ctrl+Enter sends), **Send Guidance…** on a run's context menu in the Runs
-tab, the inbox `guide`
+(Enter sends, Shift+Enter breaks the line; on a phone Enter breaks the line), **Send Guidance…** on a run's context menu in the Runs
+tab, the box under the run's conversation on the Chats tab or in the Chats
+window and on its dashboard card (with [View → Show Task Runs](monitoring.md#the-chat-list)), the inbox `guide`
 command, or `looper guide <taskId> <text>`. Text sent before the agent picked
 up the previous one is appended to it. While the agent waits on an answer to
 [its question](#questions-from-the-agent), what you send is the answer instead.

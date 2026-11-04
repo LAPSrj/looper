@@ -1,20 +1,103 @@
 import { useState } from 'react';
-import type { Environment, Project } from '@shared/types';
+import type { Environment, Project, ProjectFolder } from '@shared/types';
 import { groupProjects, type ProjectGroupBy } from '@shared/projects';
+import { FolderTree } from './FolderTree';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
 import { listContextMenu, parentIndex } from './list-nav';
 
-/** A row the keyboard visits: a group's header or a project. */
-type NavRow = { kind: 'group'; key: string } | { kind: 'project'; p: Project };
+/** A project's row: its name, then its folder unless the list is compact. */
+function ProjectRow({ p, compact }: { p: Project; compact: boolean }) {
+  return (
+    <>
+      <div className="task-item-row">
+        <span className="task-name">{p.name}</span>
+      </div>
+      {!compact && (
+        <div className="task-item-sub mono" title={p.cwd}>
+          {p.cwd}
+        </div>
+      )}
+    </>
+  );
+}
 
 /**
- * The Projects tab's list: the projects in the user's order, dragged to
- * reorder, or under a header for each group (see `groupProjects`), in which
- * the order can't be dragged.
+ * The Projects tab's list. Ungrouped, it's the task list's tree (FolderTree):
+ * the user's folders, nested, mixed with the projects in one order, with the
+ * same drag and drop. Grouped by parent folder or harness (see
+ * `groupProjects`), it has a header per group instead, and nothing drags.
  */
 export function ProjectList({
-  projects: ordered,
+  projects,
+  folders,
+  layout,
+  groupBy,
+  environments,
+  selected,
+  compact,
+  onSelect,
+}: {
+  projects: Project[];
+  folders: ProjectFolder[];
+  layout: Record<string, string[]>;
+  groupBy: ProjectGroupBy;
+  environments: Environment[];
+  selected: string | null;
+  compact: boolean;
+  onSelect: (id: string | null) => void;
+}) {
+  const paneMenu = () => window.looper.projects.showContextMenu('');
+  if (!projects.length && !folders.length) {
+    return (
+      <div
+        className="addon-pane-note muted"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          paneMenu();
+        }}
+      >
+        No projects yet.
+      </div>
+    );
+  }
+  if (groupBy !== 'none') return <GroupedProjects projects={projects} groupBy={groupBy} environments={environments} selected={selected} compact={compact} onSelect={onSelect} />;
+  return (
+    <FolderTree
+      items={projects}
+      folders={folders}
+      layout={layout}
+      label="Projects"
+      idPrefix="project-"
+      selected={selected}
+      onSelect={onSelect}
+      compact={compact}
+      passes={() => true}
+      showFolders
+      // An empty folder shows, to drop projects in.
+      folderShown={() => true}
+      autoOpenFolders
+      renderItem={(p) => <ProjectRow p={p} compact={compact} />}
+      onActivate={(p) => window.looper.openItemWindow('project', p.id)}
+      // Delete Project… asks first.
+      onDelete={(p) => void window.looper.projects.remove(p.id)}
+      onItemMenu={(p) => window.looper.projects.showContextMenu(p.id)}
+      onFolderCommand={(id, command) => window.looper.projects.folderCommand(id, command)}
+      onFolderMenu={(id) => window.looper.projects.showFolderMenu(id)}
+      onEmptyMenu={paneMenu}
+      onReorder={(ids, folderById, nextLayout, parentById) =>
+        void window.looper.projects.reorder(ids, folderById, nextLayout, parentById).catch((e) => void window.looper.showError((e as Error).message))
+      }
+    />
+  );
+}
+
+/** A row the keyboard visits in the grouped list: a group's header or a project. */
+type NavRow = { kind: 'group'; key: string } | { kind: 'project'; p: Project };
+
+/** The projects under a header per group (parent folder or harness), in the user's order within each. */
+function GroupedProjects({
+  projects,
   groupBy,
   environments,
   selected,
@@ -26,12 +109,9 @@ export function ProjectList({
   environments: Environment[];
   selected: string | null;
   compact: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
 }) {
-  // The dragged project, and the row it would go before (null = the end).
-  const [drag, setDrag] = useState<{ id: string; before: string | null } | null>(null);
-  const grouped = groupBy !== 'none';
-  const groups = groupProjects(ordered, groupBy, environments);
+  const groups = groupProjects(projects, groupBy, environments);
   // The keys of the groups the user closed (per session, like the task folders).
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const toggleGroup = (key: string) =>
@@ -40,15 +120,9 @@ export function ProjectList({
       if (!next.delete(key)) next.add(key);
       return next;
     });
-  // The rows as they show, top to bottom: a closed group's rows don't.
-  const projects = groups.flatMap((g) => (grouped && closed.has(g.key) ? [] : g.projects));
   const rowId = (id: string) => `project-${id}`;
   const groupRowId = (key: string) => `project-group-${groups.findIndex((g) => g.key === key)}`;
-  // The rows the keyboard visits: the group headers too, and the project selected or the header it last stopped on is the active one.
-  const rows: NavRow[] = groups.flatMap((g): NavRow[] => [
-    ...(grouped ? [{ kind: 'group' as const, key: g.key }] : []),
-    ...(grouped && closed.has(g.key) ? [] : g.projects.map((p) => ({ kind: 'project' as const, p }))),
-  ]);
+  const rows: NavRow[] = groups.flatMap((g): NavRow[] => [{ kind: 'group', key: g.key }, ...(closed.has(g.key) ? [] : g.projects.map((p) => ({ kind: 'project' as const, p })))]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.key === activeGroup);
   const index = groupAt >= 0 ? groupAt : selected === null ? -1 : rows.findIndex((r) => r.kind === 'project' && r.p.id === selected);
@@ -57,7 +131,6 @@ export function ProjectList({
     setActiveGroup(null);
     onSelect(id);
   };
-  /** A project's menu, the pane's (New Project…) for a header. */
   const showRowMenu = (r: NavRow) => window.looper.projects.showContextMenu(r.kind === 'project' ? r.p.id : '');
   const nav = useListNav({
     count: rows.length,
@@ -70,143 +143,82 @@ export function ProjectList({
     onActivate: (i) => {
       const r = rows[i];
       if (r.kind === 'group') toggleGroup(r.key);
-      else void window.looper.projects.openEditor(r.p.id);
+      else window.looper.openItemWindow('project', r.p.id);
     },
-    // Delete Project… asks first.
     onDelete: (i) => {
       const r = rows[i];
       if (r.kind === 'project') void window.looper.projects.remove(r.p.id);
     },
     onMenu: (i) => showRowMenu(rows[i]),
-    tree: grouped
-      ? {
-          expanded: (i) => {
-            const r = rows[i];
-            return r.kind === 'group' ? !closed.has(r.key) : undefined;
-          },
-          set: (i, open) => {
-            const r = rows[i];
-            if (r.kind === 'group' && closed.has(r.key) === open) toggleGroup(r.key);
-          },
-          parent: (i) => parentIndex(rows.map((r) => (r.kind === 'group' ? 0 : 1)), i),
-        }
-      : undefined,
+    tree: {
+      expanded: (i) => {
+        const r = rows[i];
+        return r.kind === 'group' ? !closed.has(r.key) : undefined;
+      },
+      set: (i, open) => {
+        const r = rows[i];
+        if (r.kind === 'group' && closed.has(r.key) === open) toggleGroup(r.key);
+      },
+      parent: (i) => parentIndex(rows.map((r) => (r.kind === 'group' ? 0 : 1)), i),
+    },
     scrollToId: index >= 0 ? idAt(rows[index]) : null,
   });
-
-  if (!ordered.length) {
-    return (
-      <div
-        className="addon-pane-note muted"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          window.looper.projects.showContextMenu('');
-        }}
-      >
-        No projects yet.
-      </div>
-    );
-  }
-
-  const drop = () => {
-    if (!drag) return;
-    const rest = ordered.map((p) => p.id).filter((id) => id !== drag.id);
-    const at = drag.before === null ? rest.length : rest.indexOf(drag.before);
-    rest.splice(at < 0 ? rest.length : at, 0, drag.id);
-    setDrag(null);
-    void window.looper.projects.reorder(rest);
-  };
-
-  const row = (p: Project) => (
-    <li
-      key={p.id}
-      id={rowId(p.id)}
-      role={grouped ? 'treeitem' : 'option'}
-      aria-level={grouped ? 2 : undefined}
-      aria-selected={p.id === selected}
-      className={`task-item${p.id === selected ? ' selected' : ''}${
-        drag && drag.id !== p.id && drag.before === p.id ? ' drop-before' : ''
-      }${drag && drag.id !== p.id && drag.before === null && p === projects[projects.length - 1] ? ' drop-after' : ''}`}
-      draggable={!grouped}
-      style={grouped ? { marginLeft: GROUP_INDENT } : undefined}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        setDrag({ id: p.id, before: null });
-      }}
-      onDragOver={(e) => {
-        if (!drag) return;
-        e.preventDefault();
-        const rect = e.currentTarget.getBoundingClientRect();
-        const after = e.clientY > rect.top + rect.height / 2;
-        const i = projects.indexOf(p);
-        const before = after ? (projects[i + 1]?.id ?? null) : p.id;
-        if (before !== drag.before) setDrag({ ...drag, before });
-      }}
-      onDragEnd={() => setDrag(null)}
-      onClick={() => pick(p.id)}
-      onDoubleClick={() => void window.looper.projects.openEditor(p.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        pick(p.id);
-        window.looper.projects.showContextMenu(p.id);
-      }}
-    >
-      <div className="task-item-row">
-        <span className="task-name">{p.name}</span>
-      </div>
-      {!compact && (
-        <div className="task-item-sub mono" title={p.cwd}>
-          {p.cwd}
-        </div>
-      )}
-    </li>
-  );
-
   return (
     <ul
       className={`task-list${compact ? ' compact' : ''}`}
-      role={grouped ? 'tree' : 'listbox'}
+      role="tree"
       aria-label="Projects"
       tabIndex={0}
       onKeyDown={nav}
       aria-activedescendant={index >= 0 ? idAt(rows[index]) : undefined}
-      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active row's menu.
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onSelect(null);
+      }}
       onContextMenu={(e) => listContextMenu(e, index, (i) => showRowMenu(rows[i]), () => window.looper.projects.showContextMenu(''))}
-      onDragOver={(e) => {
-        if (!drag) return;
-        e.preventDefault();
-        // Below the last row: the end of the list.
-        if (e.target === e.currentTarget && drag.before !== null) setDrag({ ...drag, before: null });
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        drop();
-      }}
     >
       {groups.map((g) => [
-        grouped && (
-          <GroupHeader
-            key={`group-${g.key}`}
-            id={groupRowId(g.key)}
-            as="li"
-            name={g.title}
-            open={!closed.has(g.key)}
-            count={g.projects.length}
-            title={g.title}
-            className={activeGroup === g.key ? 'active' : undefined}
-            onToggle={() => {
-              setActiveGroup(g.key);
-              toggleGroup(g.key);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              window.looper.projects.showContextMenu('');
-            }}
-          />
-        ),
-        ...(grouped && closed.has(g.key) ? [] : g.projects.map(row)),
+        <GroupHeader
+          key={`group-${g.key}`}
+          id={groupRowId(g.key)}
+          as="li"
+          name={g.title}
+          open={!closed.has(g.key)}
+          count={g.projects.length}
+          title={g.title}
+          className={activeGroup === g.key ? 'active' : undefined}
+          onToggle={() => {
+            setActiveGroup(g.key);
+            toggleGroup(g.key);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.looper.projects.showContextMenu('');
+          }}
+        />,
+        ...(closed.has(g.key)
+          ? []
+          : g.projects.map((p) => (
+              <li
+                key={p.id}
+                id={rowId(p.id)}
+                role="treeitem"
+                aria-level={2}
+                aria-selected={p.id === selected}
+                className={`task-item${p.id === selected ? ' selected' : ''}`}
+                style={{ marginLeft: GROUP_INDENT }}
+                onClick={() => pick(p.id)}
+                onDoubleClick={() => window.looper.openItemWindow('project', p.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  pick(p.id);
+                  window.looper.projects.showContextMenu(p.id);
+                }}
+              >
+                <ProjectRow p={p} compact={compact} />
+              </li>
+            ))),
       ])}
     </ul>
   );

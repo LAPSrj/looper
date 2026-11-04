@@ -1,6 +1,7 @@
 /* Android: Material 3. The color scheme (android-palette.css) is the tonal palette of Looper's blue (#0067c0),
    light and dark; 48 dp touch targets and the Material type scale. */
 @import './android-palette.css';
+@import './md-bar.css';
 
 .ph-root.android,
 .ph-pair.android,
@@ -19,50 +20,6 @@
 }
 
 /* ---------- buttons ---------- */
-.md-icon-btn {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: none;
-  color: var(--md-on-surface-variant);
-  cursor: pointer;
-}
-.md-icon-btn:active:not(:disabled),
-.md-text-btn:active:not(:disabled) {
-  background: color-mix(in srgb, currentColor 12%, transparent);
-}
-.md-icon-btn:disabled {
-  opacity: 0.38;
-}
-.md-text-btn {
-  flex: none;
-  min-width: 48px;
-  height: 40px;
-  margin: 4px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 20px;
-  background: none;
-  color: var(--md-primary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.1px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.md-text-btn:disabled {
-  color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
-}
-.md-text-btn.error {
-  color: var(--md-error);
-}
 .md-filled-btn {
   height: 40px;
   padding: 0 16px;
@@ -99,30 +56,9 @@
   padding-top: 0;
   background: transparent;
 }
-.md-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  height: 64px;
-  padding: 0 4px;
-}
 .md-bar.sheet .md-bar-row {
   height: 56px;
   padding: 0 12px;
-}
-.md-bar-title {
-  flex: 1;
-  min-width: 0;
-  margin: 0 0 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 22px;
-  font-weight: 400;
-  line-height: 28px;
-}
-.md-bar-title.no-lead {
-  margin-left: 12px;
 }
 .md-handle {
   width: 32px;

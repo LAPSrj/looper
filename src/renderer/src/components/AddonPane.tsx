@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem } from '@shared/addons';
-import { isPhone, usePageNav } from '../web/page-nav';
+import { isPhone } from '../web/page-nav';
+import { NavBar } from './NavBar';
 import { addonMore, addonToolbarGroups, AddonScreenView } from './AddonScreen';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useDragResize, useListNav } from './hooks';
@@ -462,7 +463,6 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
     { selected: item ?? null, onClick: (id, confirm) => void window.looper.addons.event(addonId, { source: { pane }, kind: 'click', id, item: item?.id }, confirm) },
     'pane',
   );
-  usePageNav(content?.mobileMore ? { more: addonMore(content.mobileMore) } : null);
 
   // Ctrl+E goes to the Search box, its standard shortcut in Windows.
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -479,6 +479,7 @@ export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; 
 
   return (
     <div className="app-shell">
+      {content?.mobileMore && <NavBar more={addonMore(content.mobileMore)} />}
       {/* The window's toolbar: the pane's buttons, then the selected item's screen's, and the Search box at its right. A phone's More menu has the buttons. */}
       {(paneButtons.length > 0 || item || content?.search) && (
         <Toolbar groups={paneGroups} className="addon-toolbar">

@@ -19,8 +19,6 @@ import {
   imageType,
   initialSource,
   joinPath,
-  messageCancelId,
-  messageDefaultId,
   messageResult,
   navMove,
   navTarget,
@@ -194,12 +192,8 @@ describe('accelerators', () => {
 // ---------- dialogs ----------
 
 describe('dialog results', () => {
-  it('message boxes: the response and checkbox, Esc giving cancelId (else the last button)', () => {
+  it('message boxes: the response and checkbox', () => {
     expect(messageResult(1, true)).toEqual({ kind: 'message', response: 1, checkboxChecked: true });
-    expect(messageCancelId({ message: 'm', buttons: ['Yes', 'No'], cancelId: 0 })).toBe(0);
-    expect(messageCancelId({ message: 'm', buttons: ['Save', "Don't Save", 'Cancel'] })).toBe(2);
-    expect(messageDefaultId({ message: 'm', buttons: ['A', 'B'], defaultId: 1 })).toBe(1);
-    expect(messageDefaultId({ message: 'm', buttons: ['A', 'B'], defaultId: 5 })).toBe(0);
   });
 
   it('file dialogs: picked paths, a save path, This Device, and cancels', () => {
@@ -219,7 +213,7 @@ describe('dialog results', () => {
     });
     const win = client.openWindow({ hash: '', title: 'Looper', width: 100, height: 100, resizable: true, modal: false, parent: null });
     const last = () => (sent.filter((m) => m.t === 'dialog').at(-1) as Extract<ServerMessage, { t: 'dialog' }>).dialogId;
-    const m = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Yes', 'No'], cancelId: 1 });
+    const m = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Yes', 'No'], defaultId: 1, cancelId: 1 });
     client.answer(last(), messageResult(0, false));
     expect(await m).toEqual({ kind: 'message', response: 0, checkboxChecked: false });
     const o = client.dialog(win, 'open', { properties: ['openDirectory'] });

@@ -12,13 +12,12 @@ import {
   type RemoteAccessState,
 } from '@shared/remote-access';
 import type { RemoteAccessSettings } from '@shared/types';
-import { EditorFooter, Field, NumberInput } from './components/ui';
-import { useDialogKeys } from './components/hooks';
-import { SelectList } from './components/SelectList';
+import { CheckboxField, EmptyWindow, Field, NumberInput } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { ListActions, SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { useFitWindow } from './fit-window';
-import { isPhone } from './web/page-nav';
 
 const showError = (e: unknown) => void window.looper.showError((e as Error).message);
 
@@ -31,30 +30,27 @@ function deviceSub(d: PairedDevice): string {
   return `${d.lastSeenAt ? `Last used ${fmtDateTime(d.lastSeenAt)}` : 'Not used yet'} · ${via}`;
 }
 
-/** The Sources checkboxes, each with its status when `status` is given. */
-function SourcesField({
+/** A checkbox per source, each with a line after it: its status (Settings) or what it's for (Set Up). */
+function SourceRows({
   sources,
   onChange,
-  status,
+  note,
   autoFocus,
 }: {
   sources: RemoteAccessProviderId[];
   onChange: (id: RemoteAccessProviderId, on: boolean) => void;
-  status?: (id: RemoteAccessProviderId) => string;
+  note: (id: RemoteAccessProviderId) => string;
   autoFocus?: boolean;
 }) {
   return (
-    <Field label="Sources">
+    <>
       {REMOTE_ACCESS_SOURCES.map((id, i) => (
         <div key={id} className="ra-source">
-          <label className="checkbox-field">
-            <input type="checkbox" autoFocus={autoFocus && i === 0} checked={sources.includes(id)} onChange={(e) => onChange(id, e.target.checked)} />
-            {SOURCE_NAMES[id]}
-          </label>
-          {status && <span className="ra-source-status">{status(id)}</span>}
+          <CheckboxField label={SOURCE_NAMES[id]} autoFocus={autoFocus && i === 0} checked={sources.includes(id)} onChange={(on) => onChange(id, on)} />
+          <span className="ra-source-status">{note(id)}</span>
         </div>
       ))}
-    </Field>
+    </>
   );
 }
 
@@ -91,10 +87,7 @@ export function RemoteAccessSettingsApp() {
     });
   }, []);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (!draft) return <div className="empty">Loading…</div>;
+  if (!draft) return <EmptyWindow />;
 
   const set = (patch: Partial<RemoteAccessSettings>) => setDraft({ ...draft, ...patch });
 
@@ -112,7 +105,7 @@ export function RemoteAccessSettingsApp() {
       setSaving(false);
     }
   };
-  saveRef.current = async () => {
+  const save = async () => {
     if (await doSave()) window.close();
   };
 
@@ -126,7 +119,9 @@ export function RemoteAccessSettingsApp() {
           <Field label="Name">
             <input autoFocus value={draft.name} maxLength={64} placeholder={state?.defaultName} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <SourcesField sources={draft.sources} onChange={setSource} status={(id) => sourceLine(state, id)} />
+          <Field label="Sources">
+            <SourceRows sources={draft.sources} onChange={setSource} note={(id) => sourceLine(state, id)} />
+          </Field>
           <div className="row">
             {draft.sources.includes('tailscale') && (
               <Field label="Machine name">
@@ -139,7 +134,7 @@ export function RemoteAccessSettingsApp() {
           </div>
         </div>
       </div>
-      <EditorFooter onPrimary={() => void saveRef.current()} onCancel={() => window.close()} onApply={() => void doSave()} saving={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void doSave() }} busy={saving} />
     </div>
   );
 }
@@ -157,9 +152,7 @@ export function RemoteAccessDevicesApp() {
     });
   }, []);
 
-  useDialogKeys({ onCancel: () => window.close() });
-
-  if (!state) return <div className="empty">Loading…</div>;
+  if (!state) return <EmptyWindow />;
 
   const device = state.devices.find((d) => d.id === selected);
 
@@ -193,12 +186,12 @@ export function RemoteAccessDevicesApp() {
             autoFocus
             menu={(d) => [
               { label: 'Rename…', run: () => void window.looper.remoteAccess.openRename(d.id) },
-              { label: 'Remove', run: () => void remove(d) },
+              { label: 'Remove', destructive: true, run: () => void remove(d) },
             ]}
             onRename={(d) => void window.looper.remoteAccess.openRename(d.id)}
             onDelete={(d) => void remove(d)}
           />
-          <div className="env-actions">
+          <ListActions>
             <button className="btn" disabled={state.phase !== 'running'} onClick={() => void window.looper.remoteAccess.openPair()}>
               Pair Device…
             </button>
@@ -208,14 +201,10 @@ export function RemoteAccessDevicesApp() {
             <button className="btn danger" disabled={!device} onClick={() => void remove()}>
               Remove
             </button>
-          </div>
+          </ListActions>
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }
@@ -271,8 +260,6 @@ export function RemoteAccessPairApp() {
       current = false;
     };
   }, [link]);
-
-  useDialogKeys({ onCancel: () => window.close() });
 
   const paired = code && state?.pairedWith?.code === code.code ? state.pairedWith.device : null;
   const off = state && state.phase !== 'running';
@@ -342,14 +329,7 @@ export function RemoteAccessPairApp() {
           {body}
         </div>
       </div>
-      {/* A phone closes the sheet from the xmark in its bar. */}
-      {!isPhone && (
-        <div className="editor-footer">
-          <button className="btn primary" autoFocus onClick={() => window.close()}>
-            Close
-          </button>
-        </div>
-      )}
+      <WindowActions close />
     </div>
   );
 }
@@ -394,9 +374,7 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
     }
   };
 
-  useDialogKeys({ onSave: () => void save(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This device is no longer paired.</div>;
+  if (missing) return <EmptyWindow gone="This device is no longer paired." />;
 
   return (
     <div className="editor">
@@ -407,7 +385,7 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
           </Field>
         </div>
       </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} primaryDisabled={!name.trim()} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save(), disabled: !name.trim() }} busy={saving} />
     </div>
   );
 }
@@ -490,9 +468,7 @@ export function RemoteAccessSetupApp() {
     else setStep(steps[at + 1]);
   };
 
-  useDialogKeys({ onSave: next, onCancel: () => window.close() });
-
-  if (!sources) return <div className="empty">Loading…</div>;
+  if (!sources) return <EmptyWindow />;
 
   const toggle = (id: RemoteAccessProviderId, on: boolean) => setSources(REMOTE_ACCESS_SOURCES.filter((s) => (s === id ? on : sources.includes(s))));
 
@@ -501,15 +477,7 @@ export function RemoteAccessSetupApp() {
     body = (
       <>
         <h2 className="ra-setup-title">How will devices reach this computer?</h2>
-        {REMOTE_ACCESS_SOURCES.map((id, i) => (
-          <div key={id} className="ra-source">
-            <label className="checkbox-field">
-              <input type="checkbox" autoFocus={i === 0} checked={sources.includes(id)} onChange={(e) => toggle(id, e.target.checked)} />
-              {SOURCE_NAMES[id]}
-            </label>
-            <span className="ra-source-status">{SOURCE_USES[id]}</span>
-          </div>
-        ))}
+        <SourceRows sources={sources} onChange={toggle} note={(id) => SOURCE_USES[id]} autoFocus />
       </>
     );
   } else if (step === 'machine') {
@@ -564,10 +532,7 @@ export function RemoteAccessSetupApp() {
             </li>
           ))}
         </ul>
-        <label className="checkbox-field">
-          <input type="checkbox" checked={pair} onChange={(e) => setPair(e.target.checked)} />
-          Pair a device after Finish
-        </label>
+        <CheckboxField label="Pair a device after Finish" checked={pair} onChange={setPair} />
       </>
     );
   }
@@ -577,17 +542,10 @@ export function RemoteAccessSetupApp() {
       <div className="editor-body">
         <div className="form ra-setup">{body}</div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" disabled={at === 0 || busy} onClick={() => setStep(steps[at - 1])}>
-          Back
-        </button>
-        <button className="btn primary" disabled={!canNext || busy} onClick={next}>
-          {step === 'finish' ? 'Finish' : 'Next'}
-        </button>
-        <button className="btn" disabled={busy} onClick={() => window.close()}>
-          Cancel
-        </button>
-      </div>
+      <WindowActions
+        wizard={{ back: { run: () => setStep(steps[at - 1]), disabled: at === 0 }, next: { run: next, disabled: !canNext }, last: step === 'finish' }}
+        busy={busy}
+      />
     </div>
   );
 }

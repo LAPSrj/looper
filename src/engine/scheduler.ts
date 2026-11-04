@@ -110,8 +110,6 @@ export class Scheduler extends EventEmitter {
   private readonly agents = new Map<string, SessionHandle>();
   /** Per active cycle (by run id): aborting kills whatever step is running (check, classifier). */
   private readonly cycleStops = new Map<string, { controller: AbortController; reason: string }>();
-  /** Terminal output per run id; a finished run's buffer stays until the task starts a new one. */
-  private readonly buffers = new Map<string, { taskId: string; runId: string; data: string }>();
   /** Tasks whose deferral (concurrency limit) has been logged, to log once per wait. */
   private readonly deferLogged = new Set<string>();
   /** Per task: the usage-limit reset a run reported, pending until its last sibling finishes. */
@@ -234,19 +232,6 @@ export class Scheduler extends EventEmitter {
 
   get(taskId: string): TaskRuntime | undefined {
     return this.runtimes.get(taskId);
-  }
-
-  /**
-   * The terminal buffer of a run: the named one, else the newest run in
-   * flight, else the task's most recent buffer — a finished run's output stays
-   * visible in the terminal tab while the task is idle.
-   */
-  getBuffer(taskId: string, runId?: string): { runId: string; data: string } | null {
-    let buf = this.buffers.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '');
-    if (!buf && !runId) {
-      for (const b of this.buffers.values()) if (b.taskId === taskId) buf = b;
-    }
-    return buf ? { runId: buf.runId, data: buf.data } : null;
   }
 
   // ---------- commands ----------
@@ -540,14 +525,6 @@ export class Scheduler extends EventEmitter {
     }, RESUME_GRACE_MS);
   }
 
-  writeAgent(taskId: string, data: string, runId?: string): void {
-    this.agents.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '')?.write(data);
-  }
-
-  resizeAgent(taskId: string, cols: number, rows: number, runId?: string): void {
-    this.agents.get(runId ?? newestRun(this.runtimes.get(taskId))?.runId ?? '')?.resize(cols, rows);
-  }
-
   // ---------- internals ----------
 
   /**
@@ -686,7 +663,6 @@ export class Scheduler extends EventEmitter {
       this.machineRetries.delete(task.id);
       if (gone && !ACTIVE.has(gone.state)) {
         this.runtimes.delete(task.id);
-        this.dropBuffers(task.id);
         this.persist();
       }
       return;
@@ -1522,7 +1498,6 @@ export class Scheduler extends EventEmitter {
       // The task was deleted mid-cycle; drop its runtime once nothing is left.
       if (rt.runs.length === 0) {
         this.runtimes.delete(taskId);
-        this.dropBuffers(taskId);
         this.limitWaits.delete(taskId);
         this.sleepOwed.delete(taskId);
       }
@@ -1664,43 +1639,21 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'notify', taskId: task.id, runId, kind, title: task.name, body, ...(problem ? { problem } : {}) });
   }
 
-  /** Feed a session's output into the run's terminal buffer and the live event stream. */
-  private bufferSink(taskId: string, runId: string): (data: string) => void {
-    const max = this.d.settings.outputBufferBytes;
-    // Keep the buffer across the steps of one run, so the terminal tab shows
-    // the classifier's output followed by the agent's. A new run of the task
-    // is what clears out the buffers of its finished runs — never the finish
-    // itself, so an idle task still shows what its last run printed.
-    if (!this.buffers.has(runId)) {
-      const live = new Set(this.runtimes.get(taskId)?.runs.map((r) => r.runId) ?? []);
-      for (const [id, buf] of this.buffers) if (buf.taskId === taskId && !live.has(id)) this.buffers.delete(id);
-      this.buffers.set(runId, { taskId, runId, data: '' });
-    }
-    return (data) => {
-      const buf = this.buffers.get(runId);
-      if (buf) {
-        buf.data += data;
-        if (buf.data.length > max) buf.data = buf.data.slice(buf.data.length - max);
-      }
-      this.emitEvent({ type: 'agent:data', taskId, runId, data });
-    };
-  }
-
-  private dropBuffers(taskId: string): void {
-    for (const [id, buf] of this.buffers) if (buf.taskId === taskId) this.buffers.delete(id);
+  /** Feed a session's output into the live event stream (`looper serve` prints it). */
+  private outputSink(taskId: string, runId: string): (data: string) => void {
+    return (data) => this.emitEvent({ type: 'agent:data', taskId, runId, data });
   }
 
   /**
-   * The classify step as a session, mirroring runAgent: output streams to the
-   * terminal tab and the handle is registered so Stop / typing reach it.
+   * The classify step as a session, mirroring runAgent: output streams out and
+   * the handle is registered so Stop reaches it.
    */
   private async runClassifier(task: Task, ctx: RunContext): Promise<ClassifyResult> {
     try {
       const cls = await this.steps.runClassify(ctx, {
-        onData: this.bufferSink(task.id, ctx.runId),
+        onData: this.outputSink(task.id, ctx.runId),
         onHandle: (handle) => this.agents.set(ctx.runId, handle),
       });
-      this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
       return cls;
     } finally {
       this.agents.delete(ctx.runId);
@@ -1720,7 +1673,7 @@ export class Scheduler extends EventEmitter {
     let wasHeld = false;
     for (;;) {
       const handle = await this.steps.startAgent(ctx, {
-        onData: this.bufferSink(task.id, ctx.runId),
+        onData: this.outputSink(task.id, ctx.runId),
         onHold: () => {
           this.setHeld(rt, ctx.runId, true);
           this.record(task.id, ctx.runId, 'agent', 'held', {
@@ -1752,7 +1705,6 @@ export class Scheduler extends EventEmitter {
       const end = await handle.finished;
       // A question still waiting has nobody left to read the answer.
       this.setQuestion(rt, ctx.runId, null);
-      this.emitEvent({ type: 'agent:end', taskId: task.id, runId: ctx.runId });
       elapsedMs += end.durationMs;
       wasHeld ||= end.wasHeld;
       const whole = { durationMs: elapsedMs, wasHeld };

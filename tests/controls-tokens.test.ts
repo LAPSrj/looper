@@ -44,18 +44,12 @@ describe('focus ring', () => {
 });
 
 describe('native controls', () => {
-  it('draws checkboxes and radios by element, 20px, with the accent when checked', () => {
-    const box = rule("html:not(.phone-window) input:is([type='checkbox'], [type='radio'])");
-    expect(box).toContain('appearance: none');
-    expect(box).toMatch(/width: 20px/);
-    expect(box).toMatch(/height: 20px/);
-    expect(box).toContain('var(--radius-control)');
-    expect(rule("html:not(.phone-window) input:is([type='checkbox'], [type='radio']):checked")).toContain('background: var(--accent)');
+  it('keeps the system checkboxes, radios, drop-down arrows, number spinners and date fields on desktop', () => {
+    expect(css).not.toMatch(/html:not\(\.phone-window\) (input|select)/);
+    expect(rule('.checkbox-field input[type="checkbox"],\n.checkbox-field input[type="radio"]')).toContain('width: auto');
   });
 
-  it('draws drop-down arrows, hides number spinners, and styles disclosure triangles by element', () => {
-    expect(rule('html:not(.phone-window) select')).toContain('appearance: none');
-    expect(css).toContain("html:not(.phone-window) input[type='number']::-webkit-inner-spin-button");
+  it('styles disclosure triangles by element', () => {
     expect(rule('summary')).toContain('list-style: none');
     expect(css).toContain('summary::-webkit-details-marker');
   });
@@ -73,15 +67,16 @@ describe('native controls', () => {
     expect(css).toContain(`d='${path}'`);
   });
 
-  it('dims a disabled control, its label and a disabled button the same way', () => {
+  it('keeps the system disabled look for form fields: only a text box fades, and a group under its checkbox', () => {
     const token = /--disabled-opacity:\s*([\d.]+)/.exec(css)?.[1];
     expect(token).toBeTruthy();
     expect(rule('.btn:disabled')).toContain('opacity: var(--disabled-opacity)');
-    expect(rule(':is(input, select, textarea):disabled')).toContain('opacity: var(--disabled-opacity)');
-    expect(rule('.field:has(:is(input, select, textarea, button):disabled) > .field-label')).toContain('opacity: var(--disabled-opacity)');
-    // A disabled <option> (Status) must not dim the label of an enabled select.
-    expect(css).not.toContain('.field:has(:disabled)');
-    expect(css).not.toMatch(/\.field input:disabled/);
+    expect(rule('.field input:disabled')).toContain('opacity: 0.55');
+    // StepFields draws every group under a checkbox, stacked or in a row (Settings' stagger delays): one rule fades them.
+    expect(rule('.step-fields.disabled')).toContain('opacity: 0.4');
+    expect(rule('fieldset.step-fields.step-row')).toContain('display: flex');
+    expect(css).not.toContain(':is(input, select, textarea):disabled');
+    expect(css).not.toContain('> .field-label {\n  opacity');
   });
 
   it('phone switches are not text fields (the toggles are left out of the text-box rules)', () => {
@@ -175,11 +170,14 @@ describe('group headers and chevrons', () => {
     }
   });
 
-  it('the task list is a tree: folders and tasks are tree items with a level', () => {
-    const list = read('components/TaskList.tsx');
-    expect(list).toContain("role={options.showFolders ? 'tree' : 'listbox'}");
-    expect(list).toContain("role={options.showFolders ? 'treeitem' : 'option'}");
-    expect(list).toContain('aria-level={options.showFolders ? depth + 1 : undefined}');
+  it('the task and project lists are a tree: folders and items are tree items with a level', () => {
+    // Both lists draw the shared FolderTree.
+    expect(read('components/TaskList.tsx')).toContain('<FolderTree');
+    expect(read('components/ProjectList.tsx')).toContain('<FolderTree');
+    const list = read('components/FolderTree.tsx');
+    expect(list).toContain("role={showFolders ? 'tree' : 'listbox'}");
+    expect(list).toContain("role={showFolders ? 'treeitem' : 'option'}");
+    expect(list).toContain('aria-level={showFolders ? depth + 1 : undefined}');
     expect(list).toContain('level={depth + 1}');
     // GroupHeader itself says treeitem, expanded and level.
     const header = read('components/GroupHeader.tsx');

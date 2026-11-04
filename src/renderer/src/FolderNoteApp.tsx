@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Task, TaskFolder } from '@shared/types';
 import { folderSubtree } from '@shared/folders';
-import { Field, NumberField, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow } from './components/ui';
+import { GuidanceForm, guidanceNote } from './components/form-blocks';
 
 /**
  * Next-run guidance for every task in a folder — nested folders included
@@ -46,23 +46,19 @@ export function FolderNoteApp({ folderId }: { folderId: string }) {
   const subtree = folderSubtree(allFolders, folderId);
   const tasks = allTasks.filter((t) => t.folderId && subtree.has(t.folderId));
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close() });
-
-  if (missing) return <div className="empty">This folder no longer exists.</div>;
-  if (!folder) return <div className="empty">Loading…</div>;
-  if (tasks.length === 0) return <div className="empty">This folder has no tasks.</div>;
+  if (missing || !folder) return <EmptyWindow gone={missing && 'This folder no longer exists.'} />;
+  if (tasks.length === 0) return <EmptyWindow gone="This folder has no tasks." />;
 
   const save = async () => {
-    const trimmed = text.trim();
-    if (trimmed && (!Number.isInteger(runsLeft) || runsLeft < 1)) {
-      void window.looper.showError('Applies to next: must be a whole number of runs, at least 1.');
+    const next = guidanceNote(text, runsLeft);
+    if ('problem' in next) {
+      void window.looper.showError(next.problem);
       return;
     }
     setSaving(true);
     try {
       for (const task of tasks) {
-        await window.looper.tasks.save({ ...task, note: trimmed ? { text: trimmed, runsLeft } : undefined });
+        await window.looper.tasks.save({ ...task, note: next.note });
       }
       window.close();
     } catch (e) {
@@ -70,25 +66,16 @@ export function FolderNoteApp({ folderId }: { folderId: string }) {
       setSaving(false);
     }
   };
-  saveRef.current = save;
 
   return (
-    <div className="editor">
-      <div className="editor-body">
-        <div className="form">
-          <Field label={`Guidance for ${tasks.length === 1 ? 'the 1 task' : `all ${tasks.length} tasks`} in "${folder.name}"`}>
-            <textarea autoFocus rows={7} value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
-          <NumberField
-            label="Applies to next"
-            suffix="runs"
-            min={1}
-            value={runsLeft}
-            onChange={setRunsLeft}
-          />
-        </div>
-      </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} saving={saving} />
-    </div>
+    <GuidanceForm
+      label={`Guidance for ${tasks.length === 1 ? 'the 1 task' : `all ${tasks.length} tasks`} in "${folder.name}"`}
+      text={text}
+      onText={setText}
+      runsLeft={runsLeft}
+      onRunsLeft={setRunsLeft}
+      saving={saving}
+      onSave={() => void save()}
+    />
   );
 }

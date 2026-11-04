@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
-import { folderTree } from '@shared/folders';
-import { Field, NumberField, RadioField, TabBar, EditorFooter } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, InputRow, NumberField, NumberInput, RadioField, StepFields, TabBar } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { FolderOptions } from './components/form-blocks';
+import { rid } from './rid';
 import { useDialogKeys } from './components/hooks';
 import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 
-type SettingsTab = 'general' | 'rest' | 'environments' | 'advanced';
+type SettingsTab = 'general' | 'chats' | 'rest' | 'environments' | 'advanced';
 
 const TABS: [SettingsTab, string][] = [
   ['general', 'General'],
+  ['chats', 'Chats'],
   ['rest', 'Rest Mode'],
   ['environments', 'Environments'],
   ['advanced', 'Advanced'],
 ];
-
-const rid = () => Math.random().toString(36).slice(2, 8);
 
 /** Standalone settings window (File → Settings…). */
 export function SettingsApp() {
@@ -50,6 +51,7 @@ export function SettingsApp() {
   const [promptRunOptions, setPromptRunOptions] = useState<boolean | null>(null);
   const [builderView, setBuilderView] = useState<'chat' | 'terminal' | null>(null);
   const [terminal, setTerminal] = useState<Settings['terminal'] | null>(null);
+  const [chats, setChats] = useState<Settings['chats'] | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -89,6 +91,7 @@ export function SettingsApp() {
       setPromptRunOptions((v) => v ?? info.settings.promptRunOptions);
       setBuilderView((v) => v ?? info.settings.builder.view);
       setTerminal((v) => v ?? info.settings.terminal);
+      setChats((v) => v ?? info.settings.chats);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -117,10 +120,9 @@ export function SettingsApp() {
 
   const visibleTabs = host === 'windows' ? TABS : TABS.filter(([id]) => id !== 'rest');
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void saveRef.current(), onCancel: () => window.close(), tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
+  useDialogKeys({ tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null) return <div className="empty">Loading…</div>;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null || chats === null) return <EmptyWindow />;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -237,6 +239,7 @@ export function SettingsApp() {
         recycleBinDays: binDays,
         promptRunOptions,
         terminal,
+        chats,
         builder: { view: builderView },
         rest: {
           minSleepMin: restMinSleep,
@@ -258,7 +261,6 @@ export function SettingsApp() {
   };
   const save = async () => { if (await doSave()) window.close(); };
   const apply = async () => { await doSave(); };
-  saveRef.current = save;
 
   return (
     <div className="editor">
@@ -278,22 +280,15 @@ export function SettingsApp() {
             <Field label="Move completed tasks to folder">
               <select value={completedFolderId} onChange={(e) => setCompletedFolderId(e.target.value)}>
                 <option value="">Leave them where they are</option>
-                {folderTree(folders).map(({ folder, depth }) => (
-                  <option key={folder.id} value={folder.id}>
-                    {' '.repeat(depth * 3) + folder.name}
-                  </option>
-                ))}
+                <FolderOptions folders={folders} />
               </select>
             </Field>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={staggerEnabled} onChange={(e) => setStaggerEnabled(e.target.checked)} />
-              Stagger overdue tasks on startup
-            </label>
-            <div className={`stagger-fields${staggerEnabled ? '' : ' disabled'}`}>
-              <NumberField label="Minimum delay" suffix="s" min={0} disabled={!staggerEnabled} value={staggerMin} onChange={setStaggerMin} />
-              <NumberField label="Maximum delay" suffix="s" min={1} disabled={!staggerEnabled} value={staggerMax} onChange={setStaggerMax} />
-              <NumberField label="Minimum interval" suffix="s" min={0} disabled={!staggerEnabled} value={staggerInterval} onChange={setStaggerInterval} />
-            </div>
+            <CheckboxField label="Stagger overdue tasks on startup" checked={staggerEnabled} onChange={setStaggerEnabled} />
+            <StepFields row on={staggerEnabled}>
+              <NumberField label="Minimum delay" suffix="s" min={0} value={staggerMin} onChange={setStaggerMin} />
+              <NumberField label="Maximum delay" suffix="s" min={1} value={staggerMax} onChange={setStaggerMax} />
+              <NumberField label="Minimum interval" suffix="s" min={0} value={staggerInterval} onChange={setStaggerInterval} />
+            </StepFields>
             <RadioField
               label="Open terminal sessions in"
               name="terminal"
@@ -304,37 +299,57 @@ export function SettingsApp() {
               ]}
               onChange={setTerminal}
             />
-            <label className="checkbox-field">
-              <input type="checkbox" checked={promptRunOptions} onChange={(e) => setPromptRunOptions(e.target.checked)} />
-              Show run options before manually running a task
-            </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={notificationsEnabled} onChange={(e) => setNotificationsEnabled(e.target.checked)} />
-              Show notifications
-            </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={closeToTray} onChange={(e) => setCloseToTray(e.target.checked)} />
-              Close to system tray
-            </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={confirmQuitRuns} onChange={(e) => setConfirmQuitRuns(e.target.checked)} />
-              Ask before quitting while tasks are running
-            </label>
-            <div className={`stagger-fields${confirmQuitRuns ? '' : ' disabled'}`}>
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  disabled={!confirmQuitRuns}
-                  checked={confirmQuitWatchers}
-                  onChange={(e) => setConfirmQuitWatchers(e.target.checked)}
+            <CheckboxField label="Show run options before manually running a task" checked={promptRunOptions} onChange={setPromptRunOptions} />
+            <CheckboxField label="Show notifications" checked={notificationsEnabled} onChange={setNotificationsEnabled} />
+            <CheckboxField label="Close to system tray" checked={closeToTray} onChange={setCloseToTray} />
+            <CheckboxField label="Ask before quitting while tasks are running" checked={confirmQuitRuns} onChange={setConfirmQuitRuns} />
+            <StepFields row on={confirmQuitRuns}>
+              <CheckboxField label="Also while tasks are watching for events" checked={confirmQuitWatchers} onChange={setConfirmQuitWatchers} />
+            </StepFields>
+            <CheckboxField label="Start with the computer" checked={startWithSystem} onChange={setStartWithSystem} />
+          </div>
+        )}
+
+        {tab === 'chats' && (
+          <div className="form">
+            <CheckboxField label="Show thinking expanded" checked={chats.expandThinking} onChange={(on) => setChats({ ...chats, expandThinking: on })} />
+            <CheckboxField
+              label="Close conversations without asking once their cache has expired"
+              checked={chats.closeExpiredWithoutAsking}
+              onChange={(on) => setChats({ ...chats, closeExpiredWithoutAsking: on })}
+            />
+            <CheckboxField
+              label="Stop the harness once a conversation’s cache expires"
+              checked={chats.stopWhenCacheExpires}
+              onChange={(on) => setChats({ ...chats, stopWhenCacheExpires: on })}
+            />
+            <CheckboxField
+              label="Ask before sending a message once the cache has expired"
+              checked={chats.confirmExpiredSend.enabled}
+              onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, enabled: on } })}
+            />
+            <StepFields on={chats.confirmExpiredSend.enabled}>
+              <div className="inline-field">
+                <CheckboxField
+                  label="Only when the context is larger than"
+                  checked={chats.confirmExpiredSend.onlyAbove}
+                  onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, onlyAbove: on } })}
                 />
-                Also while tasks are watching for events
-              </label>
-            </div>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={startWithSystem} onChange={(e) => setStartWithSystem(e.target.checked)} />
-              Start with the computer
-            </label>
+                {/* Thousands of tokens on screen; the setting stays in tokens, 1k at least. */}
+                <NumberInput
+                  label="Context size"
+                  suffix="k tokens"
+                  min={1}
+                  disabled={!chats.confirmExpiredSend.onlyAbove}
+                  value={chats.confirmExpiredSend.aboveTokens / 1000}
+                  onChange={(n) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: Math.round(n * 1000) } })}
+                  onBlur={() =>
+                    chats.confirmExpiredSend.aboveTokens < 1000 &&
+                    setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: 1000 } })
+                  }
+                />
+              </div>
+            </StepFields>
           </div>
         )}
 
@@ -342,10 +357,7 @@ export function SettingsApp() {
           <div className="form">
             <NumberField label="Minimum sleep" suffix="min" min={1} value={restMinSleep} onChange={setRestMinSleep} />
             <NumberField label="Wait before sleeping" suffix="s" min={1} value={restGrace} onChange={setRestGrace} />
-            <label className="checkbox-field">
-              <input type="checkbox" checked={restDisarmOnWake} onChange={(e) => setRestDisarmOnWake(e.target.checked)} />
-              Turn off when the computer is woken manually
-            </label>
+            <CheckboxField label="Turn off when the computer is woken manually" checked={restDisarmOnWake} onChange={setRestDisarmOnWake} />
           </div>
         )}
 
@@ -377,7 +389,7 @@ export function SettingsApp() {
               menu={(e) => [
                 { label: 'Edit…', run: () => void window.looper.openEnvironmentEditor(e.id) },
                 { label: 'Duplicate', run: () => void duplicateEnv(e) },
-                { label: 'Remove', enabled: envs.length > 1, run: () => void removeEnv(e) },
+                { label: 'Remove', destructive: true, enabled: envs.length > 1, run: () => void removeEnv(e) },
               ]}
               onDelete={(e) => void removeEnv(e)}
             />
@@ -397,35 +409,25 @@ export function SettingsApp() {
         {tab === 'advanced' && (
           <div className="form">
             <Field label="Tasks file">
-              <div className="browse-row">
+              <InputRow>
                 <input type="text" readOnly value={tasksFile ?? defaultFile('tasks')} />
                 <button className="btn" onClick={() => void browseStoreFile('tasks')}>Browse…</button>
                 {tasksFile && <button className="btn" onClick={() => void resetStoreFile('tasks')}>Reset</button>}
-              </div>
+              </InputRow>
             </Field>
             <Field label="Templates file">
-              <div className="browse-row">
+              <InputRow>
                 <input type="text" readOnly value={templatesFile ?? defaultFile('templates')} />
                 <button className="btn" onClick={() => void browseStoreFile('templates')}>Browse…</button>
                 {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
-              </div>
+              </InputRow>
             </Field>
             <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
             <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
-            <label className="checkbox-field">
-              <input type="checkbox" checked={deleteCompleted} onChange={(e) => setDeleteCompleted(e.target.checked)} />
-              Move completed tasks to the Recycle Bin
-            </label>
-            <div className={`stagger-fields${deleteCompleted ? '' : ' disabled'}`}>
-              <NumberField
-                label="After"
-                suffix="days"
-                min={1}
-                disabled={!deleteCompleted}
-                value={completedDays}
-                onChange={setCompletedDays}
-              />
-            </div>
+            <CheckboxField label="Move completed tasks to the Recycle Bin" checked={deleteCompleted} onChange={setDeleteCompleted} />
+            <StepFields row on={deleteCompleted}>
+              <NumberField label="After" suffix="days" min={1} value={completedDays} onChange={setCompletedDays} />
+            </StepFields>
             <NumberField label="Delete tasks in the Recycle Bin after" suffix="days" min={1} value={binDays} onChange={setBinDays} />
             <RadioField
               label="Show conversations with the agent in"
@@ -442,7 +444,7 @@ export function SettingsApp() {
 
       </div>
       </TabBar>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
     </div>
   );
 }

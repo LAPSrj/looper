@@ -34,8 +34,12 @@ interface Session {
   wake?: () => void;
   /** Its harness started again after a restore: the session keeps its place in the list and its output. */
   restored?: boolean;
-  /** The size the window asked for while nothing ran: the harness gets it once it starts. */
+  /** The size the window last asked for: a harness started again (after a restore, a restart or a stop) gets it. */
   size?: { cols: number; rows: number };
+  /** When the user last typed into it (ms since the epoch). */
+  inputAt?: number;
+  /** Why its harness was stopped while Looper ran (the cache expired); unset after quitting. */
+  note?: string;
 }
 
 /**
@@ -97,22 +101,73 @@ export class TerminalSessions {
     this.sessions.set(id, { taskId, proc: null, output, launcher: '', startedAt, wake, restored: true });
   }
 
-  /** Quitting Looper stopped its harness: a key typed into it starts it again. */
+  /**
+   * Stop the harness and keep the session listed with its output, as quitting
+   * leaves it: the first input typed into it calls `wake`. `note` says why, in
+   * the window now and each time it shows the session again.
+   */
+  suspend(id: string, wake: () => void, note: string): void {
+    const s = this.sessions.get(id);
+    if (!s?.proc) return;
+    // A session object of its own, so the old harness's exit doesn't end it.
+    this.sessions.set(id, { taskId: s.taskId, proc: null, output: s.output, launcher: '', startedAt: s.startedAt, wake, restored: true, note, size: s.size });
+    killProc(s.proc);
+    removeFile(s.launcher);
+    this.d.emit({ type: 'terminal:data', id, data: noteLine(note) });
+    this.d.log.info(`[${s.taskId}] stopped terminal session ${id}: ${note}`);
+  }
+
+  /**
+   * Restart Agent: the harness ends, and `start` starts it again under the same
+   * id, after the output the session had. A session quitting stopped just starts.
+   */
+  restart(id: string, start: () => void): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    if (s.proc) {
+      this.sessions.set(id, { taskId: s.taskId, proc: null, output: s.output, launcher: '', startedAt: s.startedAt, restored: true, size: s.size });
+      killProc(s.proc);
+      removeFile(s.launcher);
+    } else {
+      s.wake = undefined;
+      s.note = undefined;
+    }
+    const line = noteLine('restarted');
+    const now = this.sessions.get(id)!;
+    now.output = (now.output + line).slice(-OUTPUT_BYTES);
+    this.d.emit({ type: 'terminal:data', id, data: line });
+    try {
+      start();
+    } catch (err) {
+      // It stays stopped: a key tries again.
+      now.wake = start;
+      throw err;
+    }
+  }
+
+  /** Quitting Looper (or Stop the Agent When Its Cache Expires) stopped its harness: a key typed into it starts it again. */
   isStopped(id: string): boolean {
     const s = this.sessions.get(id);
     return !!s && !s.proc && !!s.wake;
+  }
+
+  /** When the user last typed into the session; undefined before they have. */
+  inputAt(id: string): number | undefined {
+    return this.sessions.get(id)?.inputAt;
   }
 
   write(id: string, data: string): void {
     const s = this.sessions.get(id);
     if (!s) return;
     if (s.proc) {
+      s.inputAt = Date.now();
       s.proc.write(data);
       return;
     }
     const wake = s.wake;
     if (!wake) return;
     s.wake = undefined;
+    s.note = undefined;
     try {
       wake();
     } catch (err) {
@@ -126,7 +181,7 @@ export class TerminalSessions {
 
   resize(id: string, cols: number, rows: number): void {
     const s = this.sessions.get(id);
-    if (s && !s.proc) s.size = { cols, rows };
+    if (s) s.size = { cols, rows };
     try {
       s?.proc?.resize(cols, rows);
     } catch {
@@ -134,11 +189,14 @@ export class TerminalSessions {
     }
   }
 
-  /** The output so far, and whether the session has ended or quitting stopped it. Null for an unknown or closed session. */
-  output(id: string): { data: string; ended: boolean; stopped?: boolean } | null {
+  /**
+   * The output so far, and whether the session has ended or its harness was
+   * stopped (`note`: why, when it wasn't quitting). Null for an unknown or closed session.
+   */
+  output(id: string): { data: string; ended: boolean; stopped?: boolean; note?: string } | null {
     const s = this.sessions.get(id);
     if (!s) return null;
-    return { data: s.output, ended: !s.proc && !s.wake, ...(this.isStopped(id) ? { stopped: true } : {}) };
+    return { data: s.output, ended: !s.proc && !s.wake, ...(this.isStopped(id) ? { stopped: true, ...(s.note ? { note: s.note } : {}) } : {}) };
   }
 
   /** The open sessions, oldest first. */
@@ -165,21 +223,28 @@ export class TerminalSessions {
     this.sessions.delete(id);
     const proc = s.proc;
     s.proc = null;
-    if (proc) {
-      // On Windows the pty's own kill leaves wsl.exe or the harness behind: take the whole tree.
-      if (process.platform === 'win32' && proc.pid) void killHostTree(proc.pid);
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
-    }
+    if (proc) killProc(proc);
     removeFile(s.launcher);
   }
 
   closeAll(): void {
     for (const id of [...this.sessions.keys()]) this.close(id);
   }
+}
+
+function killProc(proc: SessionProc): void {
+  // On Windows the pty's own kill leaves wsl.exe or the harness behind: take the whole tree.
+  if (process.platform === 'win32' && proc.pid) void killHostTree(proc.pid);
+  try {
+    proc.kill();
+  } catch {
+    /* already gone */
+  }
+}
+
+/** A line of Looper's own in a terminal's output, dimmed. */
+function noteLine(text: string): string {
+  return `\r\n\x1b[90m── ${text} ──\x1b[0m\r\n`;
 }
 
 function removeFile(file: string): void {

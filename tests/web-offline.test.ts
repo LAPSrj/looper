@@ -137,7 +137,7 @@ describe('the offline store', () => {
       store.welcome('d1');
       store.put('runs:list', ['t1', 500], [], 'w-main');
       store.put('runs:list', ['t2', 500], [], 'w-main');
-      store.put('runs:recent', [10, { hideNoAction: false }], [], 'w-main');
+      store.put('runs:recent', [10, { hideSkipped: false, hideNoAction: false }], [], 'w-main');
       store.put('runs:messages', ['t1', 'r1'], { rows: [] }, 'w-run');
       store.put('versions:list', ['t1'], [], 'w-versions');
       store.put('versions:detail', ['t1', 3, false], {}, 'w-versions');

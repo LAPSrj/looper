@@ -3,8 +3,8 @@ import type { Environment, Harness, Settings, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
 import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
 import { Chevron } from './components/icons';
-import { EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 interface Group {
   envId: string;
@@ -143,10 +143,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
     }
   };
 
-  useDialogKeys({ onSave: () => void doUpdate(), onCancel: () => window.close() });
-
-  if (!settings) return <div className="empty">Loading…</div>;
-  if (groups.length === 0) return <div className="empty">No Claude Code or Codex harnesses.</div>;
+  if (!settings || groups.length === 0) return <EmptyWindow gone={settings && 'No Claude Code or Codex harnesses.'} />;
 
   const loading = groups.some((g) => g.status === 'loading');
 
@@ -226,12 +223,13 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
           })}
         </div>
       </div>
-      <EditorFooter
-        primaryLabel="Update"
-        onPrimary={() => void doUpdate()}
-        onCancel={() => window.close()}
-        saving={saving}
-        primaryDisabled={loading || !groups.some((g) => g.status === 'ready' && hasModelChange(g.rows, g.actions))}
+      <WindowActions
+        confirm={{
+          label: 'Update',
+          run: () => void doUpdate(),
+          disabled: loading || !groups.some((g) => g.status === 'ready' && hasModelChange(g.rows, g.actions)),
+        }}
+        busy={saving}
       />
     </div>
   );

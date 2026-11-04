@@ -60,14 +60,19 @@ describe('the History window helpers', () => {
     expect(claudeProjectFolder('C:\\Users\\leand\\repos\\looper')).toBe('C--Users-leand-repos-looper');
   });
 
-  it('groups by Today, Yesterday, This Week, then month', () => {
+  it('groups by Today, Yesterday, This Week, This Month, then month', () => {
     const now = new Date(2026, 10, 5, 15, 0).getTime(); // a Thursday
     const month = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}`;
     expect(dateGroupOf(new Date(2026, 10, 5, 1).getTime(), now, month).title).toBe('Today');
     expect(dateGroupOf(new Date(2026, 10, 4, 23).getTime(), now, month).title).toBe('Yesterday');
     expect(dateGroupOf(new Date(2026, 10, 2, 9).getTime(), now, month).title).toBe('This Week');
-    expect(dateGroupOf(new Date(2026, 10, 1, 9).getTime(), now, month).title).toBe('2026-11');
+    expect(dateGroupOf(new Date(2026, 10, 1, 9).getTime(), now, month).title).toBe('This Month');
+    expect(dateGroupOf(new Date(2026, 9, 31, 23).getTime(), now, month).title).toBe('2026-10');
     expect(dateGroupOf(new Date(2026, 8, 30).getTime(), now, month).title).toBe('2026-9');
+    // A week that began last month: its days there are This Week, and the month's earlier days are under their month.
+    const wednesday = new Date(2026, 11, 2, 12).getTime();
+    expect(dateGroupOf(new Date(2026, 10, 30, 9).getTime(), wednesday, month).title).toBe('This Week');
+    expect(dateGroupOf(new Date(2026, 10, 29, 9).getTime(), wednesday, month).title).toBe('2026-11');
   });
 
   it('finds by title or a message search, and groups by folder: the projects in their order, then the other folders', () => {
@@ -102,7 +107,7 @@ describe('the History window helpers', () => {
     expect(historySourceText({ source: 'remote' })).toBe('Remote Control');
   });
 
-  it("finds every session a run folder names, the classifier's apart", () => {
+  it("finds every session a run folder names, the classifier's and the ended ones apart from the agent's own", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'looper-run-refs-'));
     writeFileSync(join(dir, 'session.json'), JSON.stringify({ session_id: 's-agent' }));
     writeFileSync(join(dir, 'stop.json'), JSON.stringify({ session_id: 's-agent' }));
@@ -110,11 +115,11 @@ describe('the History window helpers', () => {
     writeFileSync(join(dir, 'classify-session.json'), JSON.stringify({ session_id: 's-classifier' }));
     writeFileSync(join(dir, 'codex-session.json'), JSON.stringify({ thread_id: 't-codex' }));
     writeFileSync(join(dir, 'chat.json'), JSON.stringify({ title: 'not a session' }));
-    expect(runSessionRefs(dir).sort((a, b) => a.sessionId.localeCompare(b.sessionId))).toEqual([
-      { sessionId: 's-agent', classifier: false },
-      { sessionId: 's-classifier', classifier: true },
-      { sessionId: 's-ended', classifier: false },
-      { sessionId: 't-codex', classifier: false },
+    expect((await runSessionRefs(dir)).sort((a, b) => a.sessionId.localeCompare(b.sessionId))).toEqual([
+      { sessionId: 's-agent', classifier: false, own: true },
+      { sessionId: 's-classifier', classifier: true, own: false },
+      { sessionId: 's-ended', classifier: false, own: false },
+      { sessionId: 't-codex', classifier: false, own: true },
     ]);
   });
 });
@@ -205,6 +210,24 @@ describe('the History scanner', () => {
     expect(ab.items.map((i) => i.sessionId)).toEqual(['mine']);
     const other = await service.list(opts({ fresh: false, folder: 'other' }));
     expect(other.items.map((i) => i.sessionId).sort()).toEqual(['c0dex-2', 'collide', 'sub']);
+  });
+
+  it('reports the list as it reads the transcripts, a batch at a time, newest first', async () => {
+    const { service, folder } = setup();
+    const now = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < 20; i++) {
+      const file = write(join(folder(`/w/p${i}`), `p${i}.jsonl`), claudeTranscript(`/w/p${i}`, [[`question ${i}`, 'ok']]));
+      utimesSync(file, now - 3000 + i * 60, now - 3000 + i * 60);
+    }
+    const seen: number[] = [];
+    const final = await service.list(opts({ limit: 20 }), (partial) => {
+      seen.push(partial.items.length);
+      expect(partial.more).toBe(true);
+    });
+    // Eight at a time: the window shows the first ones while the rest are read.
+    expect(seen).toEqual([8, 16, 20]);
+    expect(final.items.map((i) => i.sessionId).slice(0, 3)).toEqual(['p19', 'p18', 'p17']);
+    expect(final.items).toHaveLength(20);
   });
 
   it('reads only the newest page of transcripts by modified time, and the next ones with a larger limit', async () => {

@@ -944,7 +944,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     opts.maxRuntimeMs,
   );
 
-  /** Headless stream to the terminal tab: pipes carry bare LF, xterm needs CRLF; blank runs collapse. */
+  /** Headless stream to the live output: pipes carry bare LF, a terminal needs CRLF; blank runs collapse. */
   const showHeadless = (d: string): void => {
     let display = d.replace(/(\r?\n)+/g, '\r\n');
     if (prevEndedNewline) display = display.replace(/^\r\n/, '');
@@ -980,7 +980,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }
   });
   // Only the piped (headless) process has a separate stderr: shell and harness
-  // diagnostics. They go to the raw log and the terminal tab, never to output.txt.
+  // diagnostics. They go to the raw log and the live output, never to output.txt.
   // Whole lines only, so bash's job-control warnings can be dropped even when a
   // chunk boundary falls inside one.
   let stderrBuf = '';
@@ -1138,9 +1138,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   }
 
   /**
-   * Keyboard input from the user (terminal tab) or from looper itself: the
-   * session is busy again. A focus report is the terminal tab gaining or
-   * losing focus, not anyone acting on the session.
+   * Keyboard input from looper itself (guidance typed in): the session is
+   * busy again. A focus report is a terminal gaining or losing focus, not
+   * anyone acting on the session.
    */
   function input(data: string): void {
     if (ended) return;

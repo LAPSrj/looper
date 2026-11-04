@@ -368,20 +368,20 @@ describe('remote windows', () => {
 describe('dialogs', () => {
   it("resolves with the client's answer, checked; a malformed one counts as a cancel", async () => {
     const { client, win, sent } = lone();
-    const p = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], cancelId: 1 });
+    const p = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 });
     const d = sent.find((m) => m.t === 'dialog') as Extract<ServerMessage, { t: 'dialog' }>;
     client.answer(d.dialogId, { kind: 'message', response: 0, checkboxChecked: true });
     expect(await p).toEqual({ kind: 'message', response: 0, checkboxChecked: true });
-    const q = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], cancelId: 1 });
+    const q = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 });
     const d2 = sent.filter((m) => m.t === 'dialog').at(-1) as Extract<ServerMessage, { t: 'dialog' }>;
     client.answer(d2.dialogId, { kind: 'message', response: 7, checkboxChecked: false });
     expect((await q).response).toBe(1);
   });
 
-  it('closing the client cancels open dialogs: a message box its cancelId or last button, a file dialog canceled', async () => {
+  it('closing the client cancels open dialogs: a message box its cancelId, a file dialog canceled', async () => {
     const { client, win } = lone();
-    const a = client.dialog(win, 'message', { message: 'Save?', buttons: ['Save', "Don't Save", 'Cancel'] });
-    const b = client.dialog(win, 'message', { message: 'Sure?', buttons: ['Yes', 'No'], cancelId: 0 });
+    const a = client.dialog(win, 'message', { message: 'Save?', buttons: ['Save', "Don't Save", 'Cancel'], defaultId: 0, cancelId: 2, destructiveId: 1 });
+    const b = client.dialog(win, 'message', { message: 'Sure?', buttons: ['Yes', 'No'], defaultId: 1, cancelId: 0 });
     const c = client.dialog(win, 'open', { properties: ['openFile'] });
     const s = client.dialog(win, 'save', {});
     client.dispose();
@@ -483,7 +483,7 @@ describe('dispatcher', () => {
     const id = (first.sent[0] as Extract<ServerMessage, { t: 'welcome' }>).clientId;
     const settings = client.openWindow({ hash: 'settings', title: 'Settings', width: 720, height: 640, resizable: true, modal: true, parent: client.main });
     settings.setMenu({ items: [{ label: 'View', type: 'normal', enabled: true, visible: true }] });
-    const pending = client.dialog(settings, 'message', { message: 'Sure?', buttons: ['OK'] });
+    const pending = client.dialog(settings, 'message', { message: 'Sure?', buttons: ['OK'], defaultId: 0, cancelId: 0 });
     first.drop();
     vi.advanceTimersByTime(900);
     // Back in time: the same windows, menus and the open dialog.
@@ -580,7 +580,7 @@ describe('dispatcher', () => {
     clients.attach(b);
     const [ca, cb] = clients.list();
     const main = ca.main!;
-    const pending = ca.dialog(main, 'message', { message: 'Sure?', buttons: ['OK'] });
+    const pending = ca.dialog(main, 'message', { message: 'Sure?', buttons: ['OK'], defaultId: 0, cancelId: 0 });
     clients.disconnectAll();
     expect(ca.connected).toBe(false);
     expect(ca.disposed).toBe(false);
@@ -609,7 +609,7 @@ describe('dispatcher', () => {
     const aw = ca.main!;
     const clicks: string[] = [];
     aw.setMenu({ items: [{ label: 'Delete', type: 'normal', enabled: true, visible: true, click: () => clicks.push('x') }] });
-    const pending = ca.dialog(aw, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], cancelId: 1 });
+    const pending = ca.dialog(aw, 'message', { message: 'Delete?', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1 });
     const d = a.of('dialog')[0];
     b.deliver({ t: 'invoke', id: 5, w: aw.w, channel: 'tasks:remove', args: ['t1'] });
     b.deliver({ t: 'send', w: aw.w, channel: 'context-menu:tasks-empty', args: [] });

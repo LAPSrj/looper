@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '@shared/types';
-import { useDialogKeys } from './components/hooks';
 import { SelectList } from './components/SelectList';
-import { EditorFooter } from './components/ui';
+import { Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 export function TemplatePickerApp() {
   const [templates, setTemplates] = useState<Task[]>([]);
@@ -31,14 +31,11 @@ export function TemplatePickerApp() {
     window.close();
   };
 
-  useDialogKeys({ onSave: create, onCancel: () => window.close(), enterAnywhere: true });
-
   return (
     <div className="editor">
       <div className="editor-body">
         <div className="picker-body">
-          <div className="field">
-            <label className="field-label">Template</label>
+          <Field label="Template">
             {templates.length === 0 ? (
               <div className="empty">No templates. Create one in File → Templates.</div>
             ) : (
@@ -54,10 +51,10 @@ export function TemplatePickerApp() {
                 autoFocus
               />
             )}
-          </div>
+          </Field>
         </div>
       </div>
-      <EditorFooter primaryLabel="Create" onPrimary={create} primaryDisabled={!selected} onCancel={() => window.close()} />
+      <WindowActions confirm={{ label: 'Create', run: create, disabled: !selected }} enterAnywhere />
     </div>
   );
 }

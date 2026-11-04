@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { StatusMark } from './StatusMark';
-import { ctrlTabTarget, isClear, mostCommon, panelDomId, tabAria, tabDomId, tabKeyTarget, type TabItem } from './tabs-model';
+import { ctrlTabTarget, isClear, mostCommon, panelDomId, readableText, tabAria, tabDomId, tabKeyTarget, type TabItem } from './tabs-model';
 
 export type { TabItem, TabStatus } from './tabs-model';
 
@@ -46,6 +46,8 @@ export function Tabs({
   const listRef = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState({ start: false, end: false });
   const [under, setUnder] = useState<string | null>(null);
+  // The selected tab's text color when the strip's own doesn't read on the color under it.
+  const [underText, setUnderText] = useState<string | null>(null);
   const ids = tabs.map((t) => t.id);
   const latest = useRef({ ids, active, onSelect });
   latest.current = { ids, active, onSelect };
@@ -93,7 +95,10 @@ export function Tabs({
       while (el && isClear(getComputedStyle(el).backgroundColor)) el = el.parentElement;
       if (el) colors.push(getComputedStyle(el).backgroundColor);
     }
-    setUnder(mostCommon(colors));
+    const color = mostCommon(colors);
+    setUnder(color);
+    // The strip's text color, which the tab inherits unless this sets its own.
+    setUnderText(color ? readableText(color, getComputedStyle(strip).color) : null);
     return found;
   }, [panelAbove]);
 
@@ -180,7 +185,9 @@ export function Tabs({
           key={t.id}
           role="presentation"
           className={`tab-item${t.onClose ? ' has-close' : ''}${t.id === active ? ' active' : ''}`}
-          style={t.id === active && under ? ({ '--tab-under': under } as CSSProperties) : undefined}
+          style={
+            t.id === active && under ? ({ '--tab-under': under, ...(underText ? { '--tab-under-text': underText } : {}) } as CSSProperties) : undefined
+          }
         >
           <button
             type="button"

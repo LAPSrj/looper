@@ -16,9 +16,10 @@ import { ViewSchema, type Project, type View } from '@shared/types';
 import { DESKTOP_ONLY, NOT_MOBILE } from '@shared/ui-platform';
 import { ActivityPanel } from './components/ActivityPanel';
 import { AddonSearchBox } from './components/AddonPane';
-import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
+import { ChatRow, ToolGroup } from './components/ChatRows';
+import { groupRows } from './components/chat-groups';
 import { HistoryList } from './components/HistoryList';
-import { useDragResize } from './components/hooks';
+import { useChatsSettings, useDragResize } from './components/hooks';
 import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
 import type { ToolbarGroup } from './components/toolbar-model';
@@ -42,6 +43,7 @@ const fail = (e: Error) => void window.looper.showError(e.message);
 /** The conversation in the middle, read only: its rows as a chat shows them. */
 function ConversationView({ rows, ctx, empty }: { rows: MessageRow[]; ctx: { taskId: string; runId: string }; empty: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { expandThinking } = useChatsSettings();
   // A conversation opens at its end, where it left off.
   useEffect(() => {
     const el = scrollRef.current;
@@ -50,7 +52,7 @@ function ConversationView({ rows, ctx, empty }: { rows: MessageRow[]; ctx: { tas
   return (
     <div className="chat-app">
       <div className="chat-scroll" ref={scrollRef}>
-        {groupRows(rows).map((item) =>
+        {groupRows(rows, expandThinking).map((item) =>
           item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
         )}
         {rows.length === 0 && <div className="muted">{empty}</div>}
@@ -98,6 +100,12 @@ export function HistoryApp() {
   const loads = useRef(0);
   const freshDone = useRef(0);
   const scanning = useRef(false);
+  /** The current load's calls, by request number: what each one's list so far does. */
+  const progress = useRef(new Map<number, (l: HistoryListResult) => void>());
+  /** The filters the last load listed with, and the list it shows. */
+  const lastFilters = useRef('');
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   const loadCommands = () => {
     const id = selectedRef.current;
@@ -135,6 +143,7 @@ export function HistoryApp() {
       else if (e.type === 'history-refresh') setRefreshes((n) => n + 1);
       else if (e.type === 'history-folder') setFolder(e.folder);
       else if (e.type === 'history-find') openFind();
+      else if (e.type === 'history-progress') progress.current.get(e.request)?.(e.list);
     });
     return () => {
       unsub();
@@ -144,6 +153,7 @@ export function HistoryApp() {
   }, []);
 
   // The list: what the engine knows at once, then, on opening and on F5, what the folders hold now. The latest load wins.
+  // Each call's list shows as the engine reads it (history-progress), so the first conversations show while the rest are read.
   useEffect(() => {
     if (!viewKnown) return;
     const n = ++loads.current;
@@ -152,13 +162,30 @@ export function HistoryApp() {
     const fresh = refreshes !== freshDone.current || scanning.current;
     freshDone.current = refreshes;
     let freshIn = false;
-    const take = (l: HistoryListResult) => {
+    // How many conversations show now: a list on its way never shows fewer than that. With the same
+    // filters (Show More, Refresh) the list already shown counts; a filter changed lists other conversations.
+    const filters = JSON.stringify([view.showRuns, folder]);
+    let shown = filters === lastFilters.current ? (itemsRef.current?.length ?? -1) : -1;
+    lastFilters.current = filters;
+    const take = (l: HistoryListResult, partial: boolean) => {
       if (n !== loads.current) return;
+      shown = l.items.length;
       setItems(l.items);
-      setMore(l.more);
+      setMore(partial || l.more);
+      // A list on its way ends in a greyed Loading… where Show More goes, until the rest is read.
+      if (partial) setLoadingMore(true);
     };
-    const quick = window.looper.history.list({ ...o, fresh: false }).then((l) => {
-      if (!freshIn) take(l);
+    const quickReq = n * 2;
+    const freshReq = n * 2 + 1;
+    progress.current.clear();
+    progress.current.set(quickReq, (l) => {
+      if (!freshIn && l.items.length > shown) take(l, true);
+    });
+    progress.current.set(freshReq, (l) => {
+      if (!freshIn && l.items.length > shown) take(l, true);
+    });
+    const quick = window.looper.history.list({ ...o, fresh: false, request: quickReq }).then((l) => {
+      if (!freshIn && l.items.length >= shown) take(l, false);
     }, fail);
     if (!fresh) {
       void quick.finally(() => n === loads.current && setLoadingMore(false));
@@ -166,10 +193,10 @@ export function HistoryApp() {
     }
     scanning.current = true;
     void window.looper.history
-      .list({ ...o, fresh: true })
+      .list({ ...o, fresh: true, request: freshReq })
       .then((l) => {
         freshIn = true;
-        take(l);
+        take(l, false);
       }, fail)
       .finally(() => {
         scanning.current = false;

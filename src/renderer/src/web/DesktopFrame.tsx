@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -18,10 +17,12 @@ import { fmtDateTime } from '../format';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
 import './desktop-device.css';
-import { filterLabel, groupPlaces, HOST_COMPUTER, messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
+import { filterLabel, groupPlaces, HOST_COMPUTER, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type FileView, type HostBrowser, type LocalMessage } from './file-flows';
 import { Markdown } from '../components/Markdown';
 import { Tabs } from '../components/Tabs';
+import { CheckboxField, Field } from '../components/ui';
+import { WindowActions } from '../components/WindowActions';
 import { PLACE_ICONS } from './places';
 import { shortcutText, type MenuNav } from './menu-model';
 import { useMenuState } from './menu-state';
@@ -687,19 +688,16 @@ function MessageIcon({ type }: { type: MessageBoxSpec['type'] }) {
 /** A message box: the computer's (showMessageBox) or the shell's own. */
 function MessageBox({ spec, onAnswer }: { spec: MessageBoxSpec; onAnswer: (response: number, checkboxChecked: boolean) => void }) {
   const [checked, setChecked] = useState(!!spec.checkboxChecked);
-  const def = messageDefaultId(spec);
+  const def = spec.defaultId;
   return (
-    <ShellDialog title={spec.title || 'Looper'} width={460} className="ws-msgbox" onClose={() => onAnswer(messageCancelId(spec), checked)}>
+    <ShellDialog title={spec.title || 'Looper'} width={460} className="ws-msgbox" onClose={() => onAnswer(spec.cancelId, checked)}>
       <div className="ws-msgbox-body">
         <MessageIcon type={spec.type} />
         <div className="ws-msgbox-text">
           <div className="ws-msgbox-message">{spec.message}</div>
           {spec.detail && <div className="ws-msgbox-detail">{spec.detail}</div>}
           {spec.checkboxLabel && (
-            <label className="checkbox-field">
-              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-              {spec.checkboxLabel}
-            </label>
+            <CheckboxField label={spec.checkboxLabel} checked={checked} onChange={setChecked} />
           )}
         </div>
       </div>
@@ -907,8 +905,7 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
       {(f.kind === 'save' || f.extensions) && (
         <div className="ws-filename">
           {f.kind === 'save' && (
-            <label className="field">
-              <span className="field-label">File name</span>
+            <Field label="File name">
               <input
                 value={f.name}
                 autoFocus
@@ -920,21 +917,17 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
                   }
                 }}
               />
-            </label>
+            </Field>
           )}
           <div className="muted ws-filter">{filterLabel(dialog.spec.filters)}</div>
         </div>
       )}
-      <div className="editor-footer">
-        {!(onDevice && f.kind === 'open') && (
-          <button className="btn primary" disabled={!f.canConfirm} onClick={f.confirm}>
-            {f.confirmLabel}
-          </button>
-        )}
-        <button className="btn" onClick={f.cancel}>
-          Cancel
-        </button>
-      </div>
+      {/* Open from This Device commits with Choose File…: the row has only Cancel, which abandons the open. */}
+      {onDevice && f.kind === 'open' ? (
+        <WindowActions cancel={f.cancel} />
+      ) : (
+        <WindowActions confirm={{ label: f.confirmLabel, run: f.confirm, disabled: !f.canConfirm }} cancel={f.cancel} />
+      )}
       <LocalMessageBox msg={f.message} />
     </ShellDialog>
   );
@@ -950,8 +943,7 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
   const [notify, setNotify] = useState<boolean | null>(null);
   const usable = d.push === 'on' || d.push === 'off';
   const nameValue = name ?? d.name;
-  const save = (e: FormEvent) => {
-    e.preventDefault();
+  const save = () => {
     if (!nameValue.trim() || d.busy) return;
     // Notifications first, still inside the click: turning them on asks for permission.
     const pushing = notify !== null && notify !== (d.push === 'on') ? d.setNotifications(notify) : Promise.resolve(true);
@@ -963,34 +955,30 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
   };
   return (
     <ShellDialog title="This Device" width={400} className="ws-thisdevice" onClose={onClose}>
-      <form className="ws-thisdevice-form" onSubmit={save}>
+      {/* Enter in the name runs Save through WindowActions, which stops the form's own submit; a submit that gets through saves the same way. */}
+      <form
+        className="ws-thisdevice-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
         <div className="ws-thisdevice-body">
-          <label className="field">
-            <span className="field-label">Name</span>
+          <Field label="Name">
             <input autoFocus value={nameValue} maxLength={64} onChange={(e) => setName(e.target.value)} />
-          </label>
+          </Field>
           <div className="field">
             <span className="field-label">{HOST_COMPUTER}</span>
             <span className="ws-thisdevice-value">{d.computer || '\u00a0'}</span>
           </div>
-          <label className="checkbox-field">
-            <input type="checkbox" checked={notify ?? d.push === 'on'} disabled={!usable || d.busy} onChange={(e) => setNotify(e.target.checked)} />
-            Notifications
-          </label>
+          <CheckboxField label="Notifications" checked={notify ?? d.push === 'on'} disabled={!usable || d.busy} onChange={setNotify} />
           <div className="ws-thisdevice-commands">
             <button type="button" className="btn" onClick={d.unpair}>
               Unpair This Device
             </button>
           </div>
         </div>
-        <div className="editor-footer">
-          <button type="submit" className="btn primary" disabled={!nameValue.trim() || d.busy}>
-            Save
-          </button>
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-        </div>
+        <WindowActions confirm={{ label: 'Save', run: save, disabled: !nameValue.trim() || d.busy }} cancel={onClose} />
       </form>
       <LocalMessageBox msg={d.message} />
     </ShellDialog>
@@ -1008,23 +996,23 @@ function FileViewBody({ view, name }: { view: FileView; name: string }) {
 /** A folder or file on the host computer the user asked to see (Open Working Directory, an attachment clicked…). */
 function PathDialog({ controller, req }: { controller: ShellController; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  // The focus starts in the viewer (Enter downloads, Esc closes), not in the window behind it.
+  const viewer = useRef<HTMLDivElement>(null);
+  const viewing = !!p.view;
+  useEffect(() => {
+    if (viewing) viewer.current?.focus();
+  }, [viewing]);
   if (p.view) {
     return (
       <ShellDialog title={p.name} width={900} height={680} className="ws-viewer" onClose={p.close}>
-        <div className={`ws-viewer-body${p.view.kind === 'image' ? ' image' : ''}`} tabIndex={0}>
+        <div ref={viewer} className={`ws-viewer-body${p.view.kind === 'image' ? ' image' : ''}`} tabIndex={0}>
           <FileViewBody view={p.view} name={p.name} />
         </div>
-        <div className="editor-footer">
-          <button className="btn primary" autoFocus onClick={p.view.toDevice}>
-            Download to This Device
-          </button>
-          <button className="btn" onClick={p.view.toHost}>
-            Download to {HOST_COMPUTER}
-          </button>
-          <button className="btn" onClick={p.close}>
-            Close
-          </button>
-        </div>
+        <WindowActions
+          confirm={{ label: 'Download to This Device', run: p.view.toDevice }}
+          cancel={p.close}
+          extras={[{ id: 'download-to-host', label: `Download to ${HOST_COMPUTER}`, run: p.view.toHost }]}
+        />
         <LocalMessageBox msg={p.message} />
       </ShellDialog>
     );
@@ -1033,17 +1021,11 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
   return (
     <ShellDialog title={p.name} width={760} height={540} className="ws-filedialog" onClose={p.close}>
       <HostBrowserView browser={p.browser} multi={false} onActivate={p.activate} newFolder={false} autoFocus />
-      <div className="editor-footer">
-        <button className="btn primary" disabled={!p.canDownload} onClick={p.download}>
-          Download
-        </button>
-        <button className="btn" onClick={p.openOnComputer}>
-          Open on {HOST_COMPUTER}
-        </button>
-        <button className="btn" onClick={p.close}>
-          Close
-        </button>
-      </div>
+      <WindowActions
+        confirm={{ label: 'Download', run: p.download, disabled: !p.canDownload }}
+        cancel={p.close}
+        extras={[{ id: 'open-on-host', label: `Open on ${HOST_COMPUTER}`, run: p.openOnComputer }]}
+      />
       <LocalMessageBox msg={p.message} />
     </ShellDialog>
   );

@@ -160,7 +160,7 @@ noted in the engine log.
 | `panes` | The panes on the Tasks tab, by id and title. |
 | `tabs` | Tabs in the main window, after Looper's own: `{ id, title, view, params?, icon? }`. Each one is filled by the addon's screen `view`, drawn with `params` like any screen. Its `toolbar` buttons join the main toolbar while the tab shows, and its `menuBar` is ignored there, as in the main window. `icon` is one of the toolbar icon names listed under [Menus and toolbars](#menus-and-toolbars), and without one the tab shows a window icon. A tab `id` can't repeat: a manifest that repeats one is invalid, with `tabs: duplicate id "<id>"`. View → the tab's title opens it in a window of its own. |
 | `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
-| `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool? }`. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
+| `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool?, destructive? }` (`destructive` as for a menu item, under [Menus and toolbars](#menus-and-toolbars)). With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
 | `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
 | `toolCalls` | How calls to some tools show on the Now tab of the Chats window's activity pane (below). |
 
@@ -246,12 +246,15 @@ describe an instant search, with no request to the addon:
 ### Menus and toolbars
 
 A menu item is `{ id, label, enabled?, confirm?, needsItem?, checked?,
-radio? }` or `{ separator: true }`. `&` in a label marks its access key, and
-`&&` is a literal `&`. With `confirm`, Looper asks that question first.
-`checked` draws a check mark next to the item while it's true, and with
-`radio: true` a bullet instead, for one choice among the items around it.
-Picking one sends the usual `menu` event, and the addon answers with a
-`refresh` so the marks follow. A menu bar is a list of `{ label, items }`.
+radio?, destructive? }` or `{ separator: true }`. `&` in a label marks its
+access key, and `&&` is a literal `&`. With `confirm`, Looper asks that
+question first. `checked` draws a check mark next to the item while it's true,
+and with `radio: true` a bullet instead, for one choice among the items around
+it. Picking one sends the usual `menu` event, and the addon answers with a
+`refresh` so the marks follow. Set `destructive: true` on an item that
+deletes or stops something, such as Delete Server: a phone shows it in red,
+last in its menu. Looper doesn't guess it from the label. A menu bar is a
+list of `{ label, items }`.
 
 In a pane window, a menu-bar item or toolbar button with `needsItem` acts on
 the selected item, and the event's `item` is that item. It's unavailable while
@@ -262,7 +265,9 @@ menu also leaves it off in the menu bar. An item without a `menu` leaves every
 `needsItem` command available.
 
 A toolbar is a list of buttons `{ id, label, icon?, iconOnly?, disabled?,
-confirm?, needsItem? }` and `{ separator: true }`. Each button shows its
+confirm?, needsItem?, destructive? }` and `{ separator: true }`. `destructive`
+is as for a menu item: in a phone's More menu, the button's row is red and
+last. Each button shows its
 `label`, after its `icon` when it has one. With `iconOnly`, it shows only its
 icon, and the `label` is its tooltip. Keep it for commands people know by
 their icon, such as Refresh. The icons are Looper's own: `add`, `edit`, `delete`, `copy`,
@@ -309,7 +314,7 @@ Tools item with a `view`).
 | `row` | `items`: fields | Fields side by side. |
 | `section` | `title`, `body` | A titled group of nodes. |
 | `tabs` | `id`, `items`: `{ id, title, body }` | Looper's tabs, showing one tab's `body` at a time. In a window, top-level tabs go across the top of the window, and Ctrl+Tab moves between them. The selected tab stays selected when the screen is drawn again, and the fields on every tab keep their values. |
-| `footer` | `primary`, `apply?` | In a window, its bottom bar: the primary button, Cancel (which closes the window), and the apply button. Enter clicks the primary button and Esc cancels. The primary button stays off while a `required` field is empty. |
+| `footer` | `primary`, `apply?` | In a window, its bottom bar: the primary button, Cancel (which closes the window), and the apply button. Enter clicks the primary button and Esc cancels. The primary button stays off while a `required` field is empty. A window without a footer has a Close button there, which Esc also clicks. |
 
 A button is `{ id, label, primary?, danger?, disabled?, confirm? }`. With
 `confirm`, Looper asks that question first, and No sends nothing.

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
-import { useDialogKeys } from './components/hooks';
-import { EditorFooter, Field } from './components/ui';
+import { CheckboxField, EmptyWindow, Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 /**
  * Standalone "Run Now" options window: lets the user skip any step of the
@@ -61,10 +61,8 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
     }
     window.looper.applyRunOptions({ check, classifier, agent });
   };
-  useDialogKeys({ onSave: run, onCancel: () => window.close() });
 
-  if (missing) return <div className="empty">This task no longer exists.</div>;
-  if (!task) return <div className="empty">Loading…</div>;
+  if (missing || !task) return <EmptyWindow gone={missing && 'This task no longer exists.'} />;
 
   return (
     <div className="editor">
@@ -78,31 +76,12 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
               onChange={(e) => setGuidance(e.target.value)}
             />
           </Field>
-          {task.check?.enabled && (
-            <label className="checkbox-field">
-              <input autoFocus type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />
-              Check
-            </label>
-          )}
-          {task.classifier?.enabled && (
-            <label className="checkbox-field">
-              <input autoFocus={!task.check?.enabled} type="checkbox" checked={classifier} onChange={(e) => setClassifier(e.target.checked)} />
-              Classifier
-            </label>
-          )}
-          <label className="checkbox-field">
-            <input autoFocus={!task.check?.enabled && !task.classifier?.enabled} type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} />
-            Agent
-          </label>
+          {task.check?.enabled && <CheckboxField label="Check" autoFocus checked={check} onChange={setCheck} />}
+          {task.classifier?.enabled && <CheckboxField label="Classifier" autoFocus={!task.check?.enabled} checked={classifier} onChange={setClassifier} />}
+          <CheckboxField label="Agent" autoFocus={!task.check?.enabled && !task.classifier?.enabled} checked={agent} onChange={setAgent} />
         </div>
       </div>
-      <EditorFooter
-        primaryLabel="Run"
-        onPrimary={() => void run()}
-        onCancel={() => window.close()}
-        primaryDisabled={nothingSelected}
-        saving={saving}
-      />
+      <WindowActions confirm={{ label: 'Run', run: () => void run(), disabled: nothingSelected }} busy={saving} />
     </div>
   );
 }

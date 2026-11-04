@@ -2,7 +2,8 @@ import type { Project, Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
 import { DESKTOP_ONLY } from '@shared/ui-platform';
 import { SHORTCUTS, hint } from '@shared/shortcuts';
-import type { ToolbarGroup } from './toolbar-model';
+import { TASK_COMMANDS } from '@shared/commands/task';
+import { commandToolbar, type ToolbarGroup } from './toolbar-model';
 
 export interface NewToolbarState {
   /** The project New Task puts the task in; null asks for one in the editor. */
@@ -70,28 +71,21 @@ export function taskToolbarGroups({ task, runtime, onAction }: TaskToolbarState)
   return [
     {
       id: 'task',
-      items: [
-        { id: 'run-now', label: 'Run Now', shortcut: 'F5', icon: 'run', enabled: hasTask && canRunNow, run: act('run-now') },
-        { id: 'stop-task', label: 'Stop Task', shortcut: 'Shift+F5', icon: 'stop', enabled: active, run: act('stop-task') },
-        {
-          id: 'pause-resume',
-          label: paused ? 'Resume' : 'Pause',
-          shortcut: hint(SHORTCUTS.pauseResume),
-          icon: paused ? 'resume' : 'pause',
-          enabled: hasTask && state !== 'disabled' && !completed,
-          run: act('pause-resume'),
-        },
-        { id: 'enable-disable', label: task?.enabled === false ? 'Enable' : 'Disable', icon: 'power', enabled: hasTask && !completed, run: act('enable-disable') },
-        { id: 'complete-reopen', label: completed ? 'Reopen' : 'Complete', icon: 'complete', enabled: hasTask && (completed || !!task?.completion.allowed), run: act('complete-reopen') },
-        { id: 'edit-note', label: task?.note ? 'Edit Guidance for Next Run' : 'Add Guidance for Next Run', icon: 'guidance', enabled: hasTask, run: act('edit-note') },
-      ],
+      items: commandToolbar(TASK_COMMANDS, 'task', {
+        runNow: { enabled: hasTask && canRunNow, run: act('run-now') },
+        stop: { enabled: active, run: act('stop-task') },
+        pauseResume: { alt: paused, enabled: hasTask && state !== 'disabled' && !completed, run: act('pause-resume') },
+        enableDisable: { alt: task?.enabled === false, enabled: hasTask && !completed, run: act('enable-disable') },
+        complete: { alt: completed, enabled: hasTask && (completed || !!task?.completion.allowed), run: act('complete-reopen') },
+        note: { alt: !!task?.note, enabled: hasTask, run: act('edit-note') },
+      }),
     },
     {
       id: 'edit',
-      items: [
-        { id: 'edit-task', label: 'Edit Task', shortcut: 'Ctrl+E', icon: 'edit', enabled: hasTask, run: act('edit-task') },
-        { id: 'open-work-folder', label: 'Open Working Directory', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: hasTask, run: act('open-work-folder') },
-      ],
+      items: commandToolbar(TASK_COMMANDS, 'edit', {
+        edit: { enabled: hasTask, run: act('edit-task') },
+        workFolder: { enabled: hasTask, run: act('open-work-folder') },
+      }),
     },
   ];
 }

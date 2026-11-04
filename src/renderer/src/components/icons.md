@@ -31,7 +31,7 @@ acts on it use that shape:
 |---|---|---|---|
 | Project | `folder` | `projectsTab`: two folders | `newProject` |
 | Task | `TASK_CHECKS` | `tasksTab`: the checklist, smaller | `newTask` |
-| Chat | `BUBBLE` | `chatsTab`: two bubbles | `newChat`, `stopChat`, `sendNow`, `compact`, `closeChat` |
+| Chat | `BUBBLE` | `chatsTab`: two bubbles | `newChat`, `stopChat`, `sendNow`, `restartAgent`, `compact`, `closeChat` |
 | Dashboard | `dashboard` | `dashboardTab`: the grid, smaller | the Chats toolbar's Dashboard (Overview) |
 
 - Tab labels are plural, so a tab whose shape is one thing shows two of it,
@@ -54,8 +54,9 @@ action mark in a corner.
 
 - New is the object's shape with a plus at the bottom-right (`M12 9.2v5.6M9.2
   12h5.6`). Don't use that corner plus for anything else.
-- The other marks are the stop square, fast-forward and the small bubble at
-  the bottom-right, and the X at the top-right for Close.
+- The other marks are the stop square, fast-forward, the circular arrow
+  (Restart Agent) and the small bubble at the bottom-right, and the X at the
+  top-right for Close.
 - Leave a gap of about 1.5 between the mark and the base. Either cut the base
   with a mask (a black circle of radius 4.3 at 12,12 for the plus, as
   `newProject` does), or draw the base's parts clear of the mark (as `newTask`

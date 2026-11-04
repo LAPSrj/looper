@@ -114,3 +114,59 @@ describe('terminal sessions', () => {
     expect(fs.existsSync(launcher)).toBe(false);
   });
 });
+
+describe('stopping and restarting a terminal session’s harness', () => {
+  function twoSpawns() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-terminals-'));
+    const events: EngineEvent[] = [];
+    const fakes = [fakeProc(), fakeProc()];
+    let n = 0;
+    const sessions = new TerminalSessions({ emit: (e) => events.push(e), log: new Logger(), spawn: () => fakes[n++].proc });
+    const prepare = () => {
+      const launcher = path.join(dir, `terminal-${n}.sh`);
+      fs.writeFileSync(launcher, '');
+      return { spec: { command: 'bash', args: [] }, cwd: dir, launcher };
+    };
+    const id = sessions.start('task-1', prepare);
+    return { sessions, events, fakes, prepare, id };
+  }
+
+  it('stops the harness when the cache expires, keeps the output and the note, and a key starts it again', () => {
+    const { sessions, events, fakes, prepare, id } = twoSpawns();
+    fakes[0].print('before');
+    sessions.resize(id, 140, 40);
+    sessions.write(id, 'half a prom');
+    expect(sessions.inputAt(id)).toBeGreaterThan(0);
+    let woke = 0;
+    sessions.suspend(id, () => {
+      woke++;
+      sessions.start('task-1', prepare, id);
+    }, 'stopped when the prompt cache expired · press any key to go on');
+    expect(fakes[0].state.killed).toBe(true);
+    // The old harness's exit doesn't end the session.
+    fakes[0].exit();
+    expect(events.some((e) => e.type === 'terminal:end')).toBe(false);
+    expect(sessions.isStopped(id)).toBe(true);
+    expect(sessions.output(id)).toEqual({ data: 'before', ended: false, stopped: true, note: 'stopped when the prompt cache expired · press any key to go on' });
+    sessions.write(id, 'x');
+    expect(woke).toBe(1);
+    expect(fakes[1].written).toEqual([]);
+    // The harness starts again at the window's size, not the pty's default.
+    expect(fakes[1].state.size).toEqual([140, 40]);
+    expect(sessions.output(id)).toEqual({ data: 'before', ended: false });
+  });
+
+  it('restarts a running harness under the same id, after the output it had', () => {
+    const { sessions, events, fakes, prepare, id } = twoSpawns();
+    fakes[0].print('one');
+    sessions.restart(id, () => sessions.start('task-1', prepare, id));
+    expect(fakes[0].state.killed).toBe(true);
+    fakes[0].exit();
+    expect(events.some((e) => e.type === 'terminal:end')).toBe(false);
+    fakes[1].print('two');
+    expect(sessions.output(id)?.data).toMatch(/^one.*restarted.*two$/s);
+    expect(sessions.running()).toBe(1);
+    sessions.write(id, 'k');
+    expect(fakes[1].written).toEqual(['k']);
+  });
+});

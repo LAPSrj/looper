@@ -1,7 +1,9 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
 import type { MessageRow, SentFile, SentFileInfo, SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
+import { toolGroupLabel } from './chat-groups';
 import { MessageBody, PromptBody } from './Markdown';
 import { ToolInputView, ToolResultView } from './ToolContent';
 
@@ -33,10 +35,119 @@ function Thumbnail({ a }: { a: Attachment }) {
   return <ThumbButton name={a.name} src={src} onOpen={() => openAttachment(a)} />;
 }
 
-/** A message's files: images as thumbnails, other files by name; each opens in its default app. */
-export function AttachmentList({ items, onRemove }: { items: Attachment[]; onRemove?: (a: Attachment) => void }) {
+/** What a command's line says after it: still running, stopped, or its exit code when it failed. */
+function commandStatus(c: CommandOutput): string {
+  if (c.running) return 'Running…';
+  if (c.stopped) return 'Stopped';
+  return c.exitCode ? `Exit code ${c.exitCode}` : '';
+}
+
+const CHEVRON = (
+  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m2 3.5 3 3 3-3" />
+  </svg>
+);
+
+/** Where a chat's files open: a saved command output opens by its path in the chat's own form. */
+export type FileCtx = { taskId: string; runId: string };
+
+/** A stream saved whole to a file: "Full output (363.5KB) saved to a file", and Open. */
+function SavedLine({ what, saved, files }: { what: string; saved: SavedOutput; files?: FileCtx }) {
+  const open = () =>
+    files && void window.looper.sessions.openFile(files.taskId, files.runId, saved.path, false).catch((e) => void window.looper.showError((e as Error).message));
+  return (
+    <div className="chat-command-saved" title={saved.path}>
+      Full {what} ({sizeText(saved.bytes)}) saved to a file.{' '}
+      {files && (
+        <button className="link" onClick={open}>
+          Open
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A command the user ran from the message box ("!"), as a terminal: its
+ * command line first, a green "!" for the shell's prompt, fixed at the top
+ * while the output (stdout, then stderr) scrolls under it, following the
+ * newest output as it comes unless scrolled up. A click on the command line
+ * shows or hides the output: open while it runs or waits in the message box
+ * (`onRemove`), closed in the conversation. Under the box, as under an image:
+ * Stop while it runs (`onStop`), Remove once it has ended. Output too long to
+ * send shows its preview and a line for the file it was saved to.
+ */
+function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemove?: () => void; onStop?: () => void; files?: FileCtx }) {
+  const [open, setOpen] = useState(!!onRemove || !!c.running);
+  const status = commandStatus(c);
+  const output = [c.stdout.replace(/\n+$/, ''), c.stderr.replace(/\n+$/, '')].filter(Boolean).join('\n');
+  const savedLines = [c.saved?.stdout && ['output', c.saved.stdout] as const, c.saved?.stderr && ['error output', c.saved.stderr] as const].filter(
+    (x): x is readonly ['output' | 'error output', SavedOutput] => !!x,
+  );
+  const shows = open && !(c.running && !output);
+  const outRef = useRef<HTMLPreElement>(null);
+  const atBottom = useRef(true);
+  useLayoutEffect(() => {
+    const el = outRef.current;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }, [output, shows]);
+  return (
+    <div className="chat-command">
+      <div className={`chat-command-box${shows ? ' open' : ''}`}>
+        <button className="chat-command-line" aria-expanded={open} title={open ? 'Hide the output' : 'Show the output'} onClick={() => setOpen((o) => !o)}>
+          <span className="chat-command-prompt">!</span>
+          <span className="chat-command-input">{c.input}</span>
+          {status && <span className={`chat-command-status${c.exitCode || c.stopped ? ' failed' : ''}`}>{status}</span>}
+          <span className="chat-command-chevron">{CHEVRON}</span>
+        </button>
+        {shows && (
+          <pre
+            className="chat-command-output"
+            ref={outRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+            }}
+          >
+            {output || '(no output)'}
+          </pre>
+        )}
+        {open && savedLines.map(([what, saved]) => <SavedLine key={what} what={what} saved={saved} files={files} />)}
+      </div>
+      {c.running
+        ? onStop && (
+            <button className="link chat-file-remove" onClick={onStop}>
+              Stop
+            </button>
+          )
+        : onRemove && (
+            <button className="link chat-file-remove" onClick={onRemove}>
+              Remove
+            </button>
+          )}
+    </div>
+  );
+}
+
+/**
+ * A message's files: images as thumbnails, other files by name (each opens in
+ * its default app); then the commands the user ran. `onStop`: the message box's
+ * Stop under a running command; `files`: where a saved output opens.
+ */
+export function AttachmentList({
+  items,
+  onRemove,
+  onStop,
+  files: fileCtx,
+}: {
+  items: Attachment[];
+  onRemove?: (a: Attachment) => void;
+  onStop?: (a: Attachment) => void;
+  files?: FileCtx;
+}) {
   const images = items.filter((a) => a.image);
-  const files = items.filter((a) => !a.image);
+  const files = items.filter((a) => !a.image && !a.command);
+  const commands = items.filter((a) => a.command);
   return (
     <div className="chat-attachments">
       {images.length > 0 && (
@@ -64,6 +175,9 @@ export function AttachmentList({ items, onRemove }: { items: Attachment[]; onRem
             </button>
           )}
         </div>
+      ))}
+      {commands.map((a) => (
+        <CommandItem key={a.command!.id} c={a.command!} onRemove={onRemove && (() => onRemove(a))} onStop={onStop && (() => onStop(a))} files={fileCtx} />
       ))}
     </div>
   );
@@ -168,6 +282,19 @@ function sameRow(a: MessageRow, b: MessageRow): boolean {
   return true;
 }
 
+/**
+ * The agent's thinking: a block on a faded ground, its text always showing.
+ * With Settings → Chats → Show thinking expanded off it sits inside a tool
+ * group ("Thinking and 3 tool uses"), whose toggle is the one that hides it.
+ */
+function ThinkingBubble({ text, onContextMenu }: { text: string; onContextMenu?: (e: React.MouseEvent) => void }) {
+  return (
+    <div className="chat-msg chat-thinking" onContextMenu={onContextMenu}>
+      <MessageBody text={text} />
+    </div>
+  );
+}
+
 const sameCtx = (a: RowCtx, b: RowCtx): boolean =>
   a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu);
 
@@ -182,10 +309,12 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
     : undefined;
   switch (row.kind) {
     case 'prompt':
+    case 'guidance':
+      // Guidance is the user's own message too: its text, without the header Looper sends the agent with it.
       return (
         <div className="chat-msg chat-user" onContextMenu={onContextMenu}>
           {row.text && <PromptBody text={row.text} />}
-          {row.attachments && <AttachmentList items={row.attachments} />}
+          {row.attachments && <AttachmentList items={row.attachments} files={ctx} />}
         </div>
       );
     case 'agent':
@@ -195,12 +324,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
         </div>
       );
     case 'thinking':
-      return (
-        <details className="chat-aside" onContextMenu={onContextMenu}>
-          <summary>Thinking</summary>
-          <MessageBody text={row.text} />
-        </details>
-      );
+      return <ThinkingBubble text={row.text} onContextMenu={onContextMenu} />;
     case 'task':
       // The task a workflow script computed for its agent: not the user's message, so a muted block.
       return (
@@ -242,30 +366,13 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
 
 export const ChatRow = memo(ChatRowView, (prev, next) => sameRow(prev.row, next.row) && sameCtx(prev.ctx, next.ctx));
 
-export type ChatItem = { kind: 'row'; row: MessageRow } | { kind: 'tools'; rows: MessageRow[] };
-
-/** Messages stay as they are (a delivered SendUserFile call is the agent's message); each run of tool calls (and the thinking between them) becomes one group. */
-export function groupRows(rows: MessageRow[]): ChatItem[] {
-  const items: ChatItem[] = [];
-  for (const row of rows) {
-    const last = items[items.length - 1];
-    if ((row.kind === 'tool' && !row.sent) || row.kind === 'thinking') {
-      if (last?.kind === 'tools') last.rows.push(row);
-      else items.push({ kind: 'tools', rows: [row] });
-    } else items.push({ kind: 'row', row });
-  }
-  return items;
-}
-
-/** "5 tool uses, 1 failed": closed, the group is one line; open, it lists each call, and each call opens to its details. */
+/** "Thinking and 5 tool uses, 1 failed": closed, the group is one line; open, it lists each call (each opens to its details) and the thinking's text. */
 function ToolGroupView({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
-  const tools = rows.filter((r) => r.kind === 'tool');
-  if (tools.length === 0) return <>{rows.map((r) => <ChatRow key={r.id} row={r} ctx={ctx} />)}</>;
-  const failed = tools.filter((r) => r.resultError).length;
+  const { text, failed } = toolGroupLabel(rows);
   return (
     <details className="chat-aside chat-tools">
       <summary>
-        {tools.length === 1 ? '1 tool use' : `${tools.length} tool uses`}
+        {text}
         {failed ? <span className="error-text">, {failed} failed</span> : null}
       </summary>
       <div className="chat-tools-list">

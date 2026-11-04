@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { Field, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { useEffect, useState } from 'react';
+import { Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 /**
  * Guidance window for one run. Continue mode (run context menu → Continue
@@ -22,9 +22,6 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
     });
   }, [taskId, runId, name]);
 
-  const startRef = useRef<() => Promise<void>>(async () => {});
-  useDialogKeys({ onSave: () => void startRef.current(), onCancel: () => window.close() });
-
   const start = async () => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -39,7 +36,6 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
       setStarting(false);
     }
   };
-  startRef.current = start;
 
   return (
     <div className="editor">
@@ -50,13 +46,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
           </Field>
         </div>
       </div>
-      <EditorFooter
-        primaryLabel={mode === 'send' ? 'Send' : 'Continue'}
-        onPrimary={() => void start()}
-        onCancel={() => window.close()}
-        saving={starting}
-        primaryDisabled={!text.trim()}
-      />
+      <WindowActions confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: () => void start(), disabled: !text.trim() }} busy={starting} />
     </div>
   );
 }

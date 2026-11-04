@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { agentArgs } from '../shared/projects';
+import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
+import { CommandStream } from './command-output';
 import {
   chatTitle,
   forkPoint,
@@ -35,7 +37,7 @@ import { contextOfLine, readCodexContextWindow, readContextTokens } from './cont
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, findCodexRollout, transcriptHostPath } from './messages';
-import { childEnv, writeLauncher, type RunContext } from './steps/common';
+import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
 import { recordCodexHome } from './steps/session';
 import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
@@ -85,7 +87,7 @@ export function claudeUserMessage(
 ): Record<string, unknown> {
   const blocks: Record<string, unknown>[] = [];
   const files: string[] = [];
-  for (const a of attachments) {
+  for (const a of fileAttachments(attachments)) {
     const mediaType = a.image ? imageMediaType(a.path) : undefined;
     const data = mediaType ? read(a.path) : null;
     if (mediaType && data && data.length <= MAX_INLINE_IMAGE) {
@@ -94,7 +96,8 @@ export function claudeUserMessage(
       files.push(toTargetPath(a.path));
     }
   }
-  const body = withFileList(text, files);
+  // The commands the user ran go first, as Claude Code's own bash mode puts them in the conversation.
+  const body = withFileList(withCommands(text, attachments), files);
   const content = [...(compacted ? [{ type: 'text', text: compacted }] : []), ...(body ? [{ type: 'text', text: body }] : []), ...blocks];
   return { type: 'user', message: { role: 'user', content } };
 }
@@ -365,6 +368,11 @@ export function historyRows(rows: MessageRow[]): MessageRow[] {
   return rows.map((r, i) => ({ ...r, id: `h${i}` }));
 }
 
+/** Where in a chat's folder the output of the user's "!" commands too long to send is saved. */
+const COMMANDS_DIR = 'commands';
+/** A running "!" command's output goes to the window at most this often. */
+const COMMAND_OUTPUT_MS = 100;
+
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
@@ -533,6 +541,9 @@ class ChatSession {
   /** Remote Control: the name the Claude app lists the chat under, while it's on. */
   private remoteName?: string;
   private commands: SlashCommand[] = [];
+  /** The commands the user ran from the message box that are still running, by id. */
+  private readonly shellCommands = new Map<string, { child: ChildProcess; marker: string; stopped: boolean }>();
+  private commandSeq = 0;
   private turnEndedAt?: number;
   private readonly startedAt: number;
   /** Stop asked claude to end its turn: the process ends if the turn doesn't. */
@@ -732,7 +743,7 @@ class ChatSession {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     if (this.stopTimer) clearTimeout(this.stopTimer);
     this.forkProc?.kill();
-    await this.kill();
+    await Promise.all([this.kill(), this.stopCommands()]);
     // A chat nobody wrote in leaves nothing behind; a run keeps its folder, minus the permission requests.
     const gone = this.recorded || keep ? path.join(this.dir, 'permissions') : this.dir;
     try {
@@ -750,12 +761,105 @@ class ChatSession {
     await this.target.killLeftovers(this.ctx.runId).catch(() => undefined);
   }
 
+  // ---------- commands the user runs from the message box ("!") ----------
+
+  /**
+   * Run `input` in the chat's working directory on its target (a WSL or
+   * remote chat runs it there), through a launcher as the agent's own
+   * processes start: its stdout and stderr once it ends. It runs whatever the
+   * agent is doing, and Stop ends it. Its processes carry a run marker of
+   * their own, so stopping it leaves the agent's alone.
+   */
+  runCommand(input: string, id: string): Promise<CommandOutput> {
+    const command = input.trim();
+    if (this.closed) return Promise.reject(new Error('This chat is closed.'));
+    if (!command) return Promise.reject(new Error('There is no command to run.'));
+    // The window names it (its live output and its Stop find it by the name), within what a file name can hold.
+    if (!/^[\w-]{1,64}$/.test(id) || this.shellCommands.has(id)) return Promise.reject(new Error('The command has no usable id.'));
+    const n = ++this.commandSeq;
+    const marker = `${this.ctx.runId}-cmd${n}`;
+    const spec = writeLauncher({ ...this.ctx, runId: marker }, `command-${n}`, command).spec;
+    // Output too long to send goes whole to a file in the chat's folder, which the agent reads by its own path.
+    const stream = (name: 'stdout' | 'stderr', clean?: (s: string) => string) =>
+      new CommandStream(path.join(this.dir, COMMANDS_DIR, `${id}-${name}.txt`), this.targetFile(COMMANDS_DIR, `${id}-${name}.txt`), clean);
+    const stdout = stream('stdout');
+    // The launcher's interactive bash warns that it has no job control: that's the shell's, not the command's.
+    const stderr = stream('stderr', stripShellNoise);
+    return new Promise((resolve) => {
+      const child = spawn(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const running = { child, marker, stopped: false };
+      this.shellCommands.set(id, running);
+      this.scheduleEmit();
+      // The window shows the output as it comes, a batch at most every COMMAND_OUTPUT_MS.
+      let timer: NodeJS.Timeout | null = null;
+      const show = () => {
+        timer = null;
+        if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, stdout: stdout.live(), stderr: stderr.live() });
+      };
+      const took = () => {
+        if (!timer) timer = setTimeout(show, COMMAND_OUTPUT_MS);
+      };
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
+      child.stdout?.on('data', (d: string) => {
+        stdout.push(d);
+        took();
+      });
+      child.stderr?.on('data', (d: string) => {
+        stderr.push(d);
+        took();
+      });
+      let done = false;
+      const end = async (exitCode: number | null, error?: string) => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        const [out, err] = await Promise.all([stdout.finish(), stderr.finish()]);
+        this.shellCommands.delete(id);
+        this.scheduleEmit();
+        const errText = error ? (err.text ? `${err.text}\n${error}` : error) : err.text;
+        const saved = out.saved || err.saved ? { ...(out.saved ? { stdout: out.saved } : {}), ...(err.saved ? { stderr: err.saved } : {}) } : undefined;
+        resolve({
+          id,
+          input: command,
+          stdout: out.text,
+          stderr: errText,
+          exitCode: running.stopped ? null : exitCode,
+          ...(running.stopped ? { stopped: true } : {}),
+          ...(saved ? { saved } : {}),
+        });
+      };
+      child.on('error', (e) => void end(null, `Couldn't run the command: ${e.message}`));
+      child.on('close', (code) => void end(code));
+      this.d.log.info(`[${this.taskId}] chat ${this.id}: running the user's command ${id}`);
+    });
+  }
+
+  /** Stop: the commands still running end (`id`: that one alone), with what they printed so far. */
+  async stopCommands(id?: string): Promise<void> {
+    await Promise.all(
+      [...this.shellCommands.entries()]
+        .filter(([key]) => id === undefined || key === id)
+        .map(async ([, c]) => {
+          c.stopped = true;
+          // The launcher's shell first, and for good: an interactive bash ignores SIGTERM, and would go on to the command's next line.
+          if (c.child.pid) await killHostTree(c.child.pid, 'SIGKILL').catch(() => undefined);
+          await this.target.killLeftovers(c.marker).catch(() => undefined);
+        }),
+    );
+  }
+
   /**
    * Stop: end the agent's turn. The conversation goes on with the next
    * message. Claude ends the turn when asked and keeps its process; one that
    * doesn't within a few seconds, and Codex's turn, end with their process.
    */
   async stop(): Promise<void> {
+    // The commands the user ran from the message box stop too, whatever the agent is doing.
+    await Promise.all([this.stopCommands(), this.stopTurn()]);
+  }
+
+  private async stopTurn(): Promise<void> {
     // An idle agent has no turn to end: its process stays for the next message.
     if (!this.proc || this.closed || this.killing || this.status !== 'working') return;
     // A tool call waiting for an answer would hold the turn: it's refused.
@@ -805,7 +909,7 @@ class ChatSession {
     if (this.status === 'working') {
       // Claude goes on with the written messages as soon as its turn stops.
       this.writeQueued();
-      await this.stop();
+      await this.stopTurn();
     } else this.drainQueue();
   }
 
@@ -816,6 +920,60 @@ class ChatSession {
     this.queued = this.queued.filter((q) => q !== m);
     this.scheduleEmit();
     return m;
+  }
+
+  /**
+   * Restart Agent: the harness starts again on the same conversation. A turn
+   * in progress ends first, as Stop ends it, and a chat whose session ended
+   * goes on. Claude gets a new process at once; Codex starts one per turn
+   * anyway, so its next message does.
+   */
+  async restartAgent(): Promise<void> {
+    if (this.closed || this.killing) return;
+    const wasWorking = this.status === 'working';
+    for (const p of this.permissions) this.writeAnswer(p.id, permissionAnswer(false, p.input));
+    this.permissions = [];
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    this.killing = true;
+    this.status = 'starting';
+    this.scheduleEmit();
+    await this.kill();
+    this.killing = false;
+    if (this.closed) return;
+    this.unsendQueued();
+    if (wasWorking) this.acc.addNote('Stopped.');
+    this.error = undefined;
+    this.status = 'ready';
+    if (wasWorking) this.turnEnded();
+    if (this.claude) this.startClaude();
+    this.acc.addNote(`Restarted ${harnessKindLabel(this.harness.kind)}.`);
+    this.save();
+    this.scheduleEmit();
+    this.drainQueue();
+  }
+
+  /**
+   * The prompt cache expired: an idle Claude chat's process ends, and the next
+   * message starts a new one on the conversation. Returns whether it ended one.
+   */
+  async stopIdleAgent(): Promise<boolean> {
+    if (!this.claude || !this.proc || this.closed || this.killing || this.busy() || this.queued.length > 0) return false;
+    this.killing = true;
+    await this.kill();
+    this.killing = false;
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: stopped the agent, its prompt cache expired`);
+    this.scheduleEmit();
+    // A message sent while the process was ending waited in the queue: it starts a new one now.
+    this.drainQueue();
+    return true;
+  }
+
+  /** Whether the harness's process runs now (Claude's lives between turns; Codex's only during one). */
+  agentRunning(): boolean {
+    return !!this.proc;
   }
 
   /** Claude: a new process with the chat's settings that resumes the conversation. */
@@ -926,10 +1084,11 @@ class ChatSession {
     this.codexTurns += 1;
     const q = (s: string) => this.target.quote(s);
     const s = this.settings;
-    const images = p.attachments.filter((x) => x.image && imageMediaType(x.path));
-    const files = p.attachments.filter((x) => !images.includes(x)).map((x) => this.target.toTargetPath(x.path));
+    const attached = fileAttachments(p.attachments);
+    const images = attached.filter((x) => x.image && imageMediaType(x.path));
+    const files = attached.filter((x) => !images.includes(x)).map((x) => this.target.toTargetPath(x.path));
     const promptFile = `turn-${this.codexTurns}.txt`;
-    const prompt = withFileList(p.text, files) || 'See the attached image.';
+    const prompt = withFileList(withCommands(p.text, p.attachments), files) || 'See the attached image.';
     writeText(path.join(this.dir, promptFile), compacted ? `${compacted}\n\n${prompt}` : prompt);
     const parts = [this.harness.command, 'exec', ...codexPermissionArgs(s.permissionMode, false)];
     if (s.model) parts.push('--model', q(s.model));
@@ -1472,6 +1631,7 @@ class ChatSession {
       queued: this.queued,
       commands: this.commands,
       commandPrefix: this.claude ? '/' : '$',
+      runningCommands: this.shellCommands.size,
       ...(this.turnEndedAt !== undefined ? { turnEndedAt: this.turnEndedAt } : {}),
       startedAt: this.startedAt,
     };
@@ -1547,11 +1707,16 @@ export class ChatManager {
     return this.start(task, source.forkAt(index));
   }
 
-  /** Compact into New Chat: a new chat that starts from the chat's messages, and the chat closes (its run keeps the whole conversation). */
-  async compact(task: Task, chatId: string): Promise<ChatState> {
+  /**
+   * Compact into New Chat: a new chat that starts from the chat's messages,
+   * and the chat closes (its run keeps the whole conversation). `started`
+   * runs before the old chat closes, so a window can show the new one first.
+   */
+  async compact(task: Task, chatId: string, started?: (next: ChatState) => void): Promise<ChatState> {
     const source = this.sessions.get(chatId);
     if (!source) throw new Error('This chat is closed.');
     const next = this.start(task, source.compactOpening());
+    started?.(next);
     await this.close(chatId);
     return next;
   }
@@ -1622,6 +1787,31 @@ export class ChatManager {
 
   async stop(id: string): Promise<void> {
     await this.sessions.get(id)?.stop();
+  }
+
+  /** A command the user ran from the message box ("!"), named `commandId` by its window: its output once it ends, or once Stop ends it. */
+  runCommand(id: string, input: string, commandId: string): Promise<CommandOutput> {
+    const s = this.sessions.get(id);
+    if (!s) return Promise.reject(new Error('This chat is closed.'));
+    return s.runCommand(input, commandId);
+  }
+
+  /** Stop under a running command: that command alone ends. */
+  async stopCommand(id: string, commandId: string): Promise<void> {
+    await this.sessions.get(id)?.stopCommands(commandId);
+  }
+
+  async restartAgent(id: string): Promise<void> {
+    await this.sessions.get(id)?.restartAgent();
+  }
+
+  /** The prompt cache expired: the idle chat's process ends until its next message. Returns whether it ended one. */
+  async stopIdleAgent(id: string): Promise<boolean> {
+    return (await this.sessions.get(id)?.stopIdleAgent()) ?? false;
+  }
+
+  agentRunning(id: string): boolean {
+    return this.sessions.get(id)?.agentRunning() ?? false;
   }
 
   async configure(id: string, patch: Partial<ChatSettings>): Promise<void> {

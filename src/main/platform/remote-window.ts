@@ -543,11 +543,11 @@ export class RemoteClient {
   }
 }
 
-/** What a dismissed dialog answers: a message box its cancelId (or last button), a file dialog canceled. */
+/** What a dismissed dialog answers: a message box its cancelId, a file dialog canceled. */
 export function cancelResult(msg: Extract<ServerMessage, { t: 'dialog' }>): DialogResult {
   if (msg.kind === 'message') {
     const spec = msg.spec;
-    return { kind: 'message', response: spec.cancelId ?? Math.max(0, spec.buttons.length - 1), checkboxChecked: !!spec.checkboxChecked };
+    return { kind: 'message', response: spec.cancelId, checkboxChecked: !!spec.checkboxChecked };
   }
   return msg.kind === 'open' ? { kind: 'open', canceled: true, filePaths: [] } : { kind: 'save', canceled: true };
 }

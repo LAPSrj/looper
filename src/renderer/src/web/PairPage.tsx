@@ -6,6 +6,7 @@ import { guessDeviceName } from './device-name';
 import { codeFromQr } from './pair-link';
 import { canScan } from './pair-scan';
 import { QrScanner } from './QrScanner';
+import { Field } from '../components/ui';
 import './phone.css';
 import './ios.css';
 import './android.css';
@@ -166,14 +167,8 @@ export function PairPage() {
         <div className="pair-page-body">
           <PairLogo />
           <h1>Pair this device</h1>
-          <label className="field">
-            <span className="field-label">Pairing code</span>
-            {codeInput('mono')}
-          </label>
-          <label className="field">
-            <span className="field-label">Device name</span>
-            {nameInput()}
-          </label>
+          <Field label="Pairing code">{codeInput('mono')}</Field>
+          <Field label="Device name">{nameInput()}</Field>
           {scan && (
             <button type="button" className="btn" onClick={() => setScanning(true)}>
               Scan QR Code

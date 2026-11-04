@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { groupRuns, runShown } from '@shared/runs';
+import { groupRuns, runShown, type RunFilter } from '@shared/runs';
 import type { RunRecord, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
 import { dayGroups, resultTone, timeAndDuration } from '../phone-lists';
@@ -27,12 +27,15 @@ interface Props {
   runtime?: TaskRuntime;
   /** A project's Chat tab: lists every run in `records` (sessions) without a Result column. */
   sessions?: boolean;
-  hideNoAction?: boolean;
+  /** View → Task Runs: the runs it leaves out (none when unset). */
+  filter?: RunFilter;
   /** Run to select (notification click); a fresh object per click re-triggers. */
   focusRun?: { runId: string } | null;
 }
 
-export function RunLog({ records, runtime, sessions = false, hideNoAction = false, focusRun }: Props) {
+const SHOW_ALL: RunFilter = { hideSkipped: false, hideNoAction: false };
+
+export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,8 +45,9 @@ export function RunLog({ records, runtime, sessions = false, hideNoAction = fals
   const containerRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(
-    () => groupRuns(records).filter((g) => sessions || runShown(g, { hideNoAction })),
-    [records, hideNoAction, sessions],
+    () => groupRuns(records).filter((g) => sessions || runShown(g, filter)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [records, filter.hideSkipped, filter.hideNoAction, sessions],
   );
   const cols = sessions ? SESSION_COLS : RUN_COLS;
   // A run's records are all its own task's (a project's Chat tab mixes its tasks' sessions with its own).

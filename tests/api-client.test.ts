@@ -184,11 +184,11 @@ describe('Session', () => {
     connect();
     const api = session.apiFor('w1');
     const a = api.readEngineLog();
-    const b = api.agent.buffer('t', 'r');
+    const b = api.canGuideRun('t', 'r');
     const sent = last().sent.filter((m) => m.t === 'invoke');
     expect(sent.map((m) => [m.w, m.channel, m.args])).toEqual([
       ['w1', 'engineLog:read', []],
-      ['w1', 'agent:buffer', ['t', 'r']],
+      ['w1', 'run:canGuide', ['t', 'r']],
     ]);
     last().receive({ t: 'result', id: sent[1].id, ok: false, error: 'nope' });
     last().receive({ t: 'result', id: sent[0].id, ok: true, value: { $bytes: 'AQI=' } });
@@ -352,7 +352,7 @@ describe('reduceShell', () => {
     s = reduceShell(s, { t: 'window-menu', w: 'w1', menu: [] });
     s = reduceShell(s, { t: 'window-title', w: 'w2', title: 'Settings' });
     s = reduceShell(s, { t: 'menu', menuId: 'm', w: 'w1', items: [], x: 1, y: 2 });
-    s = reduceShell(s, { t: 'dialog', dialogId: 'd', w: 'w2', kind: 'message', spec: { message: 'm', buttons: ['OK'] } });
+    s = reduceShell(s, { t: 'dialog', dialogId: 'd', w: 'w2', kind: 'message', spec: { message: 'm', buttons: ['OK'], defaultId: 0, cancelId: 0 } });
     expect(s.windows.map((x) => [x.w, x.title, x.menu])).toEqual([['w1', 'w1', []], ['w2', 'Settings', null]]);
     expect(s.menus).toHaveLength(1);
     expect(s.dialogs).toHaveLength(1);

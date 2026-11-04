@@ -164,9 +164,11 @@ creating a file. For a task you want to run fully unattended:
 - Set the agent's permission mode to Accept edits (`acceptEdits`), or pass
   `--allowedTools …` in the agent's extra args, so it never needs to ask.
 - Or leave prompts possible but set **When idle too long** to "Hold and wait
-  for me", and answer
-  the prompt yourself in the task's Terminal tab when it comes up — see
-  [how a run works](how-a-run-works.md) for what a held run looks like.
+  for me", and send guidance to the held run — see
+  [how a run works](how-a-run-works.md) for what a held run looks like. A
+  startup prompt can't be answered that way: answer it once by running the
+  harness yourself in the task's folder (a terminal session in the task's
+  project, or Continue in Terminal on one of its runs).
 
 ## Runs show as "interrupted" after a restart
 

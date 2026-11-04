@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Harness, Settings } from '@shared/types';
+import { useEffect, useState } from 'react';
+import type { Harness } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { Field, NumberField, StepFields, TabBar, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { CheckboxField, EmptyWindow, Field, TabBar } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { ConcurrencyLimit } from './components/form-blocks';
+import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
 import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 
@@ -24,65 +26,39 @@ const TABS: [HarnessTab, string][] = [
 
 /** Standalone harness editor window (Environment → Harnesses → Add/Edit). */
 export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; harnessId: string; isNew?: boolean }) {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { live: settings, missing } = useLiveSettings((s) => !!s.environments.find((e) => e.id === envId)?.harnesses.some((h) => h.id === harnessId));
   const [draft, setDraft] = useState<Harness | null>(null);
   const [argsText, setArgsText] = useState('');
   const [envText, setEnvText] = useState('');
   const [tab, setTab] = useState<HarnessTab>('general');
   const [selectedModel, setSelectedModel] = useState<number | null>(null);
-  const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   useFitWindow();
 
-  // Create-on-add: a new harness already exists in settings so this window
-  // could open; closing without saving removes it again.
-  const savedRef = useRef(false);
-  useEffect(() => {
-    if (!isNew) return;
-    const onUnload = () => {
-      if (!savedRef.current) window.looper.discardHarness(envId, harnessId);
-    };
-    window.addEventListener('beforeunload', onUnload);
-    return () => window.removeEventListener('beforeunload', onUnload);
-  }, [isNew, envId, harnessId]);
+  const savedRef = useDiscardUnsaved(isNew, () => window.looper.discardHarness(envId, harnessId));
 
   useEffect(() => {
     document.title = isNew ? 'New Harness' : 'Edit Harness';
-    void window.looper.info().then((info) => {
-      setSettings(info.settings);
-      const harness = info.settings.environments
-        .find((e) => e.id === envId)
-        ?.harnesses.find((h) => h.id === harnessId);
-      if (!harness) {
-        setMissing(true);
-        return;
-      }
-      const copy = JSON.parse(JSON.stringify(harness)) as Harness;
-      setDraft(copy);
-      setArgsText(joinTokens(copy.args ?? []));
-      setEnvText(envToLine(copy.env ?? {}));
-    });
-    // The Models tab edits the live harness through its own editor window.
-    return window.looper.onEvent((e) => {
-      if (e.type !== 'settings') return;
-      setSettings(e.settings);
-      if (!e.settings.environments.find((x) => x.id === envId)?.harnesses.some((h) => h.id === harnessId)) {
-        setMissing(true);
-      }
-    });
-  }, [envId, harnessId, isNew]);
+  }, [isNew]);
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
+  // The draft starts from the settings as they first arrive; the Models tab edits the live harness through its own editor window.
+  useEffect(() => {
+    if (!settings || draft) return;
+    const harness = settings.environments.find((e) => e.id === envId)?.harnesses.find((h) => h.id === harnessId);
+    if (!harness) return;
+    const copy = JSON.parse(JSON.stringify(harness)) as Harness;
+    setDraft(copy);
+    setArgsText(joinTokens(copy.args ?? []));
+    setEnvText(envToLine(copy.env ?? {}));
+  }, [settings, draft, envId, harnessId]);
+
   useDialogKeys({
-    onSave: () => void saveRef.current(),
-    onCancel: () => window.close(),
     tabs: TABS.map(([id]) => id),
     tab,
     onTab: setTab,
   });
 
-  if (missing) return <div className="empty">This harness no longer exists.</div>;
-  if (!settings || !draft) return <div className="empty">Loading…</div>;
+  if (missing || !settings || !draft) return <EmptyWindow gone={missing && 'This harness no longer exists.'} />;
 
   // Models live on the harness in settings (edited through their own window);
   // everything else is a draft applied on save.
@@ -153,7 +129,6 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   };
   const save = async () => { if (await doSave()) window.close(); };
   const apply = async () => { await doSave(); };
-  saveRef.current = save;
 
   return (
     <div className="editor">
@@ -198,23 +173,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           <Field label="Environment variables">
             <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
           </Field>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={draft.maxConcurrentTasks !== undefined}
-              onChange={(e) => patch({ maxConcurrentTasks: e.target.checked ? 1 : undefined })}
-            />
-            Limit concurrent tasks
-          </label>
-          <StepFields on={draft.maxConcurrentTasks !== undefined}>
-            <NumberField
-              label="Maximum concurrent tasks"
-              suffix="tasks"
-              min={1}
-              value={draft.maxConcurrentTasks ?? 1}
-              onChange={(n) => patch({ maxConcurrentTasks: n })}
-            />
-          </StepFields>
+          <ConcurrencyLimit value={draft.maxConcurrentTasks} onChange={(max) => patch({ maxConcurrentTasks: max })} />
           {draft.kind !== 'custom' && (
             <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
               <select
@@ -228,22 +187,16 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           )}
           {draft.kind === 'claude-code' && (
             <>
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={draft.options?.remoteControl === true}
-                  onChange={(e) => patchOptions({ remoteControl: e.target.checked || undefined })}
-                />
-                Start new conversations with Remote Control
-              </label>
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={draft.options?.closeWhenCacheExpires !== false}
-                  onChange={(e) => patchOptions({ closeWhenCacheExpires: e.target.checked ? undefined : false })}
-                />
-                Close idle Remote Control conversations once their prompt cache expires
-              </label>
+              <CheckboxField
+                label="Start new conversations with Remote Control"
+                checked={draft.options?.remoteControl === true}
+                onChange={(on) => patchOptions({ remoteControl: on || undefined })}
+              />
+              <CheckboxField
+                label="Close idle Remote Control conversations once their prompt cache expires"
+                checked={draft.options?.closeWhenCacheExpires !== false}
+                onChange={(on) => patchOptions({ closeWhenCacheExpires: on ? undefined : false })}
+              />
             </>
           )}
         </div>
@@ -263,7 +216,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               menu={(_, i) => [
                 { label: 'Edit…', run: () => void window.looper.openModelEditor(envId, harnessId, i) },
                 { label: 'Duplicate', run: () => void window.looper.openModelEditor(envId, harnessId, undefined, i) },
-                { label: 'Remove', run: () => void removeModel(i) },
+                { label: 'Remove', destructive: true, run: () => void removeModel(i) },
               ]}
               onDelete={(_, i) => void removeModel(i)}
             />
@@ -286,7 +239,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           </div>
         )}
       </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
     </div>
   );
 }

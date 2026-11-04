@@ -273,6 +273,7 @@ describe('the session hub', () => {
     queued: [],
     commands: [],
     commandPrefix: '/',
+    runningCommands: 0,
     startedAt: 1000,
     ...over,
   });
@@ -284,6 +285,8 @@ describe('the session hub', () => {
     dir?: string;
     now?: () => number;
     rows?: MessageRow[];
+    /** A task run's guidance its agent hasn't picked up yet, as its transcript is read. */
+    guidance?: () => string | undefined;
     cache?: { at?: number; ttlMs?: number };
     workflows?: (opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean }) => WorkflowRun[];
   }) {
@@ -296,7 +299,7 @@ describe('the session hub', () => {
       projects: () => [project('p1', 'Website')],
       harnessOf: () => ({ kind: 'claude-code', name: 'Claude Code', limitsKey: 'e/claude' }),
       runDir: () => opts.dir ?? '/nowhere',
-      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0 }),
+      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0, pendingGuidance: opts.guidance?.() }),
       subagents: async () => [],
       subagentStats: async () => null,
       workflows: async (_taskId, _runId, o) => opts.workflows?.(o) ?? [],
@@ -443,6 +446,34 @@ describe('the session hub', () => {
     expect(h.activity('r9')?.rows).toHaveLength(3);
     run.question = 'Which branch?';
     expect(h.state().sessions[0]).toMatchObject({ status: 'ready', waiting: { reason: 'notification', text: 'Waiting for your answer', since: 5000 } });
+  });
+
+  it("sends a watched task run's conversation as its activity, kept current while it runs (a dashboard card's)", async () => {
+    const run: RunEntry = { id: 'r9', taskId: 't1', startedAt: 1000, held: false, question: null };
+    const rows: MessageRow[] = [{ id: '0', kind: 'prompt', text: 'Do the task', preview: '' }];
+    let guidance: string | undefined;
+    const { h, events } = hub({ runs: [run], rows, guidance: () => guidance });
+    const sent = () => events.flatMap((e) => (e.type === 'session:activity' && e.activity.id === 'r9' ? [e.activity.rows?.map((r) => r.id)] : []));
+    const poll = () => (h as unknown as { poll: () => Promise<void> }).poll();
+    h.watch(['r9']);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent()).toEqual([['0']]);
+    rows.push({ id: '1', kind: 'agent', text: 'Checking the logs', preview: '' });
+    await poll();
+    await poll();
+    expect(sent()).toEqual([['0'], ['0', '1']]);
+    // Guidance sent from the card shows at the end while the agent hasn't picked it up, though no row came.
+    guidance = 'Also list the closed duplicates';
+    await poll();
+    await poll();
+    expect(events.filter((e) => e.type === 'session:activity').at(-1)).toMatchObject({ activity: { pendingGuidance: 'Also list the closed duplicates' } });
+    expect(sent()).toHaveLength(3);
+    // Out of view, it isn't sent any more.
+    h.watch([]);
+    rows.push({ id: '2', kind: 'agent', text: 'Done', preview: '' });
+    await poll();
+    await poll();
+    expect(sent()).toHaveLength(3);
   });
 
   it('records the usage limits Claude reports for each harness apart, and tells each session its harness', () => {

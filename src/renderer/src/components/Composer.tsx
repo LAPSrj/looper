@@ -4,11 +4,13 @@ import { harnessKindLabel } from '@shared/environments';
 import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList } from './ChatRows';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from './chat-settings';
+import { bashModeEntry, commandAttachment } from '@shared/bash-mode';
 import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
 import { ICONS } from './icons';
 import { useAutoGrow } from './phone/auto-grow';
 import { ToolButton } from './ToolButton';
 import { isPhone } from '../web/page-nav';
+import { subscribe } from '../events';
 import { withShortcut } from '../shortcut';
 
 const reportError = (e: Error) => void window.looper.showError(e.message);
@@ -130,8 +132,37 @@ function PlusMenu({
   );
 }
 
+/** Bash mode's prompt, drawn beside the command line in the box, in a shell prompt's green. */
+const BASH_PROMPT = (
+  <span className="bash-prompt" aria-hidden="true">
+    !
+  </span>
+);
+
 /** Each chat's unsent message and files, kept while the window shows another session. */
 const drafts = new Map<string, { text: string; pending: Attachment[] }>();
+
+/** What the engine keeps of the files waiting: a command still running isn't one yet. */
+const saved = (pending: Attachment[]): Attachment[] => pending.filter((a) => !a.command?.running);
+
+/** The message box showing each chat, by its id: a command that ends while another chat shows goes into that chat's draft instead. */
+const shown = new Map<string, (fn: (p: Attachment[]) => Attachment[]) => void>();
+let commandSeq = 0;
+
+/** A "!" command ended (`next`: its result; null: it couldn't run): it takes its running place among the chat's files waiting. */
+function finishCommand(chatId: string, key: string, next: Attachment | null): void {
+  const swap = (p: Attachment[]) => p.flatMap((a) => (a.command?.id === key ? (next ? [next] : []) : [a]));
+  const set = shown.get(chatId);
+  if (set) {
+    set(swap);
+    return;
+  }
+  const d = drafts.get(chatId);
+  if (!d) return;
+  const pending = swap(d.pending);
+  drafts.set(chatId, { ...d, pending });
+  window.looper.chat.setDraft(chatId, d.text, saved(pending));
+}
 
 /** What the chat view can ask of its message box. */
 export interface ComposerHandle {
@@ -153,7 +184,16 @@ export interface ComposerHandle {
  */
 export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded: boolean; onSent: () => void }>(function Composer({ state, embedded, onSent }, ref) {
   const id = state.id;
-  const [text, setTextState] = useState(() => drafts.get(id)?.text ?? state.draft?.text ?? '');
+  // A draft in bash mode is kept as "!" and the command, as it was typed.
+  const initial = drafts.get(id)?.text ?? state.draft?.text ?? '';
+  /**
+   * Bash mode, as in Claude Code: "!" typed (or pasted) at the start of an
+   * empty box turns it into a command line, the "!" a green prompt beside the
+   * box's text, which is the command alone. Backspace in an empty box leaves it.
+   */
+  const [bash, setBashState] = useState(() => initial.startsWith('!'));
+  const bashRef = useRef(bash);
+  const [text, setTextState] = useState(() => (initial.startsWith('!') ? initial.slice(1) : initial));
   const [pending, setPendingState] = useState<Attachment[]>(() => drafts.get(id)?.pending ?? state.draft?.attachments ?? []);
   const [pick, setPick] = useState(0);
   /** Where the cursor is in the message box: the "/" list follows the word it's in. */
@@ -172,24 +212,40 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
 
   const setText = (t: string) => {
     setTextState(t);
-    const draft = { text: t, pending: drafts.get(id)?.pending ?? pending };
+    const draft = { text: (bashRef.current ? '!' : '') + t, pending: drafts.get(id)?.pending ?? pending };
     drafts.set(id, draft);
     // The engine keeps it too, for the next start of Looper.
-    window.looper.chat.setDraft(id, draft.text, draft.pending);
+    window.looper.chat.setDraft(id, draft.text, saved(draft.pending));
+  };
+  /** The box's text and whether it's in bash mode, together. */
+  const setBox = (t: string, b: boolean) => {
+    bashRef.current = b;
+    setBashState(b);
+    setText(t);
   };
   const setPending = (fn: (p: Attachment[]) => Attachment[]) =>
     setPendingState((p) => {
       const next = fn(p);
-      const draft = { text: drafts.get(id)?.text ?? text, pending: next };
+      const draft = { text: drafts.get(id)?.text ?? (bashRef.current ? '!' : '') + text, pending: next };
       drafts.set(id, draft);
-      window.looper.chat.setDraft(id, draft.text, next);
+      window.looper.chat.setDraft(id, draft.text, saved(next));
       return next;
     });
+  const setPendingRef = useRef(setPending);
+  setPendingRef.current = setPending;
+  useEffect(() => {
+    const set = (fn: (p: Attachment[]) => Attachment[]) => setPendingRef.current(fn);
+    shown.set(id, set);
+    return () => {
+      if (shown.get(id) === set) shown.delete(id);
+    };
+  }, [id]);
 
   /** Text put in the box by code: the box takes the focus with its cursor here once it shows the text. */
   const caretTo = useRef<number | null>(null);
   const putText = (t: string, at: number) => {
-    setText(t);
+    // What code puts in the box is a message (a quote, a command picked from the "/" list), not a command line.
+    setBox(t, false);
     setCaret(at);
     caretTo.current = at;
   };
@@ -223,7 +279,7 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
         if (e.chatId === id) quoteRef.current(e.text);
       } else if (e.type === 'chat-edit' && e.chatId === id) {
         recall.current = null;
-        setText(e.text);
+        setBox(e.text, false);
         setPending(() => e.attachments);
         composerRef.current?.focus();
       }
@@ -251,20 +307,62 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
     attach,
     quote: (selection) => quoteRef.current(selection),
     take: (t, attachments) => {
-      setText(text.trim() ? `${t}\n\n${text}` : t);
+      // A command line being typed gives way to the message taken back.
+      setBox(text.trim() && !bash ? `${t}\n\n${text}` : t, false);
       setPending((p) => [...attachments, ...p]);
       composerRef.current?.focus();
     },
   }));
 
-  const canSend = !ended && (!!text.trim() || pending.length > 0);
-  const send = () => {
+  // A running command's output as it comes: into its place among the files waiting (the engine keeps none of it until it ends).
+  useEffect(
+    () =>
+      subscribe((e) => {
+        if (e.type !== 'chat:command' || e.chatId !== id) return;
+        const live = (p: Attachment[]) =>
+          p.map((a) => (a.command?.id === e.id && a.command.running ? commandAttachment({ ...a.command, stdout: e.stdout, stderr: e.stderr }) : a));
+        setPendingState(live);
+        const d = drafts.get(id);
+        if (d) drafts.set(id, { ...d, pending: live(d.pending) });
+      }),
+    [id],
+  );
+
+  // A message goes with the files and the commands that have ended; a command still running stays for a later one.
+  const ready = pending.filter((a) => !a.command?.running);
+  const canRun = !ended && bash && !!text.trim();
+  const canSend = !ended && !bash && (!!text.trim() || ready.length > 0);
+  const stoppable = working || state.runningCommands > 0;
+  /** Run the command line: it waits among the files as it runs, and the box is empty, out of bash mode, for the message. */
+  const run = () => {
+    const command = text.trim();
+    if (!command || ended) return;
+    // Apart from the commands of a draft from before a restart, which keep their ids.
+    const key = `run-${Date.now().toString(36)}-${++commandSeq}`;
+    setPending((p) => [...p, commandAttachment({ id: key, input: command, stdout: '', stderr: '', exitCode: null, running: true })]);
+    setBox('', false);
+    recall.current = null;
+    window.looper.chat.runCommand(id, command, key).then(
+      (out) => finishCommand(id, key, commandAttachment(out)),
+      (e: Error) => {
+        finishCommand(id, key, null);
+        reportError(e);
+      },
+    );
+  };
+  const send = async () => {
+    if (bash) {
+      run();
+      return;
+    }
     if (!canSend) return;
-    window.looper.chat.send(id, text.trim(), pending);
+    // An idle agent whose cache expired may ask first (Settings → Chats); a message queued behind a turn doesn't.
+    if (state.status !== 'working' && !(await window.looper.chat.confirmSend(id).catch(() => true))) return;
+    window.looper.chat.send(id, text.trim(), ready);
     // A phone without its computer (web/start.ts marks it) shows its own alert; the message stays to send later.
     if ('stale' in document.documentElement.dataset) return;
     setText('');
-    setPending(() => []);
+    setPending((p) => p.filter((a) => a.command?.running));
     recall.current = null;
     onSent();
   };
@@ -272,7 +370,7 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
 
   // "/" at the start of the box or of a word lists the harness's commands and skills (Codex's "$" too).
   const typed = commandAt(text, caret, [...new Set(['/', state.commandPrefix])]);
-  const typedList = !!typed && typed.start !== closedAt && focused && !ended;
+  const typedList = !!typed && typed.start !== closedAt && focused && !ended && !bash;
   const options = typedList ? matchCommands(state.commands, typed.query) : picker ? matchCommands(state.commands, '', Infinity) : [];
   const picked = Math.min(pick, options.length - 1);
   useLayoutEffect(() => {
@@ -327,7 +425,14 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
     }
     if (sendsOnEnter(e, isPhone)) {
       e.preventDefault();
-      send();
+      void send();
+    } else if (bash && e.key === 'Backspace' && plain && !ta.value) {
+      // Backspace in an empty command line takes the "!" away: the box is a message box again.
+      e.preventDefault();
+      setBox('', false);
+    } else if (bash) {
+      // A command line has no sent messages to go back through.
+      return;
     } else if (e.key === 'ArrowUp' && plain && !ta.value.slice(0, ta.selectionStart).includes('\n')) {
       if (ta.value && !recall.current) return;
       const index = (recall.current?.index ?? sent.length) - 1;
@@ -350,7 +455,12 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
 
   const pendingList = pending.length > 0 && (
     <div className="chat-pending">
-      <AttachmentList items={pending} onRemove={(a) => setPending((p) => p.filter((x) => x !== a))} />
+      <AttachmentList
+        items={pending}
+        onRemove={(a) => setPending((p) => p.filter((x) => x !== a))}
+        onStop={(a) => a.command && void window.looper.chat.stopCommand(id, a.command.id).catch(reportError)}
+        files={{ taskId: state.taskId, runId: id }}
+      />
     </div>
   );
   // The "/" list drops from the message box's top edge, like a combo box's list.
@@ -383,7 +493,9 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
     <textarea
       ref={composerRef}
       value={text}
-      placeholder={`Message ${harnessKindLabel(state.harnessKind)}`}
+      placeholder={bash ? 'Command' : `Message ${harnessKindLabel(state.harnessKind)}`}
+      aria-label={bash ? 'Command' : undefined}
+      spellCheck={!bash}
       rows={isPhone ? 1 : 3}
       disabled={ended}
       aria-autocomplete="list"
@@ -391,8 +503,16 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
       aria-activedescendant={options.length > 0 ? `slash-${id}-${picked}` : undefined}
       onChange={(e) => {
         recall.current = null;
+        const v = e.target.value;
+        // "!" typed or pasted into an empty box: bash mode, the "!" its prompt and the rest the command.
+        const command = bash ? null : bashModeEntry(text, v);
+        if (command !== null) {
+          setBox(command, true);
+          setCaret(command.length);
+          return;
+        }
         const at = e.target.selectionStart;
-        setText(e.target.value);
+        setText(v);
         setCaret(at);
         setPick(0);
         if (commandAt(e.target.value, at, ['/', state.commandPrefix])?.start !== closedAt) setClosedAt(null);
@@ -414,8 +534,8 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
   );
 
   if (isPhone) {
-    // Stop while the agent works and there's nothing to queue; otherwise Send, or Queue while it works.
-    const mode = working && !canSend ? 'stop' : working ? 'queue' : 'send';
+    // Run in bash mode; Stop while the agent (or a command) works and there's nothing to queue; otherwise Send, or Queue while it works.
+    const mode = bash ? 'run' : stoppable && !canSend ? 'stop' : working ? 'queue' : 'send';
     return (
       <div className="chat-composer phone-composer">
         {pendingList}
@@ -428,13 +548,14 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
             onSkills={openPicker}
             onSendNow={() => void window.looper.chat.sendNow(id).catch(reportError)}
           />
-          <div className="composer-input phone-composer-box">
+          <div className={`composer-input phone-composer-box${bash ? ' bash-mode' : ''}`}>
             {slashList}
+            {bash && BASH_PROMPT}
             {textarea}
             <button
               className={`phone-composer-action ${mode}`}
-              aria-label={mode === 'stop' ? 'Stop' : mode === 'queue' ? 'Queue' : 'Send'}
-              disabled={mode !== 'stop' && !canSend}
+              aria-label={mode === 'stop' ? 'Stop' : mode === 'queue' ? 'Queue' : mode === 'run' ? 'Run' : 'Send'}
+              disabled={mode === 'run' ? !canRun : mode !== 'stop' && !canSend}
               // The box keeps the focus, so the keyboard stays up.
               onMouseDown={(e) => e.preventDefault()}
               onClick={mode === 'stop' ? stop : send}
@@ -452,16 +573,17 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
       <div className="composer-main">
         <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
         {pendingList}
-        <div className="composer-input">
+        <div className={`composer-input${bash ? ' bash-mode' : ''}`}>
           {slashList}
+          {bash && BASH_PROMPT}
           {textarea}
         </div>
       </div>
       <div className="composer-actions">
-        <button className="btn primary" disabled={!canSend} onClick={send}>
-          {working ? 'Queue' : 'Send'}
+        <button className="btn primary" disabled={bash ? !canRun : !canSend} onClick={() => void send()}>
+          {bash ? 'Run' : working ? 'Queue' : 'Send'}
         </button>
-        <button className="btn" title={withShortcut('Stop', 'Esc')} disabled={!working} onClick={stop}>
+        <button className="btn" title={withShortcut('Stop', 'Esc')} disabled={!stoppable} onClick={stop}>
           Stop
         </button>
       </div>

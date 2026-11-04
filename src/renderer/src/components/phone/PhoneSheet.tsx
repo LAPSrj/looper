@@ -1,18 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { platform } from '../../platform';
+import { BarHostContext, NavBar, type BarHost } from '../NavBar';
 import { DETENT_HEIGHT, draggedHeight, settleSheet, type Detent } from './sheet-detents';
-
-const XMARK = (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-    <path d="m4 4 10 10M14 4 4 14" />
-  </svg>
-);
 
 /**
  * A sheet from the bottom of a phone page (the Activity and Usage panels): a
  * grabber that drags it between its medium and large heights, or down to close,
- * a scrim that closes it, and on iOS an xmark at the leading edge. It's drawn in
- * the page, so the frame's bar stays above it.
+ * a scrim that closes it, and its bar (NavBar: on iOS an xmark at the leading
+ * edge). It's drawn in the page, so the frame's bar stays above it.
  */
 export function PhoneSheet({
   title,
@@ -35,6 +30,7 @@ export function PhoneSheet({
     setClosing(true);
     setTimeout(onClose, 180);
   };
+  const host: BarHost = { presentation: platform === 'android' ? 'bottom-sheet' : 'page-sheet', close };
   // Esc, from a hardware keyboard.
   const closeRef = useRef(close);
   closeRef.current = close;
@@ -102,15 +98,9 @@ export function PhoneSheet({
           }}
         >
           <div className="pg-sheet-grabber" aria-hidden="true" />
-          <div className="pg-sheet-head">
-            {platform === 'ios' && (
-              <button className="pg-sheet-close" aria-label="Close" onClick={close}>
-                {XMARK}
-              </button>
-            )}
-            <span className="pg-sheet-title">{title}</span>
-            {platform === 'ios' && <span className="pg-sheet-close pg-sheet-spacer" aria-hidden="true" />}
-          </div>
+          <BarHostContext.Provider value={host}>
+            <NavBar title={title} />
+          </BarHostContext.Provider>
         </div>
         <div className="pg-sheet-body">{children}</div>
       </div>

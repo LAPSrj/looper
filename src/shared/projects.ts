@@ -1,4 +1,5 @@
-import { TaskSchema, type Environment, type Project, type Settings, type Task, type View } from './types';
+import { folderTree } from './folders';
+import { TaskSchema, type Environment, type Project, type ProjectFolder, type Settings, type Task, type View } from './types';
 
 /** What a session needs to know about where it runs: a project's or a Remote Control helper's values. */
 export type SessionPlace = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'> &
@@ -99,18 +100,34 @@ export function projectHarnessName(project: Project, environments: Environment[]
 
 export interface ProjectGroup {
   key: string;
-  /** Empty for the one group of an ungrouped list. */
+  /** Empty for the projects at the top level (an ungrouped list, or the ones in no folder). */
   title: string;
   projects: Project[];
+  /** A folder the user made (ProjectFolder). */
+  folderId?: string;
 }
 
 /**
- * The projects in the Projects tab's groups. Groups go by title (a project
- * with no folder or harness last), each keeping the user's order of its
+ * The projects in groups, as a phone's Projects tab lists them. Ungrouped,
+ * the projects in no folder come first, then each of the user's folders in
+ * the desktop tree's order, named by its path ("Clients / Acme"). Grouped, the
+ * groups go by title (a project with no parent folder or harness last), and
+ * the user's folders don't show. Each group keeps the user's order of its
  * projects; Windows folders group without regard to case.
  */
-export function groupProjects(projects: Project[], groupBy: ProjectGroupBy, environments: Environment[]): ProjectGroup[] {
-  if (groupBy === 'none') return [{ key: '', title: '', projects }];
+export function groupProjects(projects: Project[], groupBy: ProjectGroupBy, environments: Environment[], folders: ProjectFolder[] = []): ProjectGroup[] {
+  if (groupBy === 'none') {
+    if (folders.length === 0) return [{ key: '', title: '', projects }];
+    const ids = new Set(folders.map((f) => f.id));
+    const path: string[] = [];
+    const groups: ProjectGroup[] = [{ key: '', title: '', projects: projects.filter((p) => !p.folderId || !ids.has(p.folderId)) }];
+    for (const { folder, depth } of folderTree(folders)) {
+      path.length = depth;
+      path.push(folder.name);
+      groups.push({ key: `folder:${folder.id}`, title: path.join(' / '), folderId: folder.id, projects: projects.filter((p) => p.folderId === folder.id) });
+    }
+    return groups;
+  }
   const groups = new Map<string, ProjectGroup>();
   for (const p of projects) {
     const title = groupBy === 'folder' ? parentFolder(p.cwd) : projectHarnessName(p, environments);

@@ -23,8 +23,8 @@ started. No idle burn, no context rot, at most one agent per task, ever.
   task into one rolling conversation); the agent signals
   `looper-done`, files its report, and the loop resumes.
 - **Monitoring built in** — a per-task Runs tab with results and reports, a
-  run window with each run's steps and full conversation, live status, and a
-  real terminal tab you can watch *and type into* mid-run.
+  run window with each run's steps and full conversation, live status, and
+  guidance you can send to the agent mid-run.
 - **Chats and terminals on demand** — open a project's agent in a chat or a
   terminal, all on one Chats tab (or in a Chats window) that lists them by
   project, puts the ones waiting for you first, and shows what each agent is
@@ -34,7 +34,7 @@ started. No idle burn, no context rot, at most one agent per task, ever.
 - **Git tab** — a project's uncommitted changes and commit history, with
   each file's diff, read in the project's own environment.
 - **System notifications** — each task picks what it toasts, from errors-only
-  to every run; clicking one lands on the live terminal, the run in the Runs
+  to every run; clicking one opens a live run's window, a finished run in the Runs
   tab, or, for an error or warning, the run's window with its report selected.
 - **Any harness, any environment** — Claude Code, Codex, or a custom agent
   CLI; Looper on Windows driving agents inside WSL, or Linux/WSL directly.
@@ -77,13 +77,13 @@ npm run package        # or build the installer for your platform (release/)
 On first launch Looper creates a Local Shell environment pointed at the
 `claude` CLI (plus a WSL bridge on Windows). Then:
 
-1. **File → New Task…** (Ctrl+N).
+1. **File → New Task → Blank Task…** (Ctrl+N).
 2. On the **General** tab, name the task and pick its project, or its
    working directory for a new project; on
    the **Agent** tab, write the prompt. Optionally add a check command on the
    **Check** tab. Save.
 3. On the **Tasks** tab, select the task and press **F5** (Run Now). Watch
-   the agent work in the **Terminal** tab.
+   the agent work in the run's window.
 
 The [Getting started guide](docs/getting-started.md) walks through this with
 more detail, including the packaged Windows installer and notification setup.
@@ -116,7 +116,7 @@ The full user guide lives in [docs/](docs/README.md):
   cycle and every way a run ends.
 - [Environments](docs/environments.md) — local shell, WSL and Windows bridges,
   harnesses and their models, concurrency caps.
-- [Monitoring](docs/monitoring.md) — the main window's tabs, terminal tab, chats and terminal
+- [Monitoring](docs/monitoring.md) — the main window's tabs, chats and terminal
   sessions, Runs tab and run window, notifications, Rest Mode, Prevent
   Sleep, Remote Control, tray, settings.
 - [Remote Access](docs/remote-access.md) — Looper in a browser on a phone,

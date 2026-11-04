@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { FOLDER_TASK_PREFIX, folderEnvironment, projectTaskId } from '../src/shared/projects';
-import { dashboardOrder, placeCard, type SessionSummary } from '../src/shared/sessions';
+import { canStop, dashboardOrder, liveCards, placeCard, showsConversation, watchedSessions, type SessionSummary } from '../src/shared/sessions';
 import { EnvironmentSchema } from '../src/shared/types';
 
 const harness = { id: 'claude', name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
@@ -89,5 +89,38 @@ describe("the dashboard's card order", () => {
     expect(placeCard(['a', 'b', 'c', 'd'], 'd', 'b', false)).toEqual(['a', 'd', 'b', 'c']);
     expect(placeCard(['a', 'b', 'c', 'd'], 'a', 'c', true)).toEqual(['b', 'c', 'a', 'd']);
     expect(placeCard(['a', 'b'], 'a', 'gone', true)).toEqual(['a', 'b']);
+  });
+});
+
+describe("the dashboard's live cards", () => {
+  const s = (id: string, kind: SessionSummary['kind'], over: Partial<SessionSummary> = {}) => ({ id, kind, status: 'ready', ...over }) as SessionSummary;
+
+  it("shows a chat's and a task run's conversation while in view, and a terminal session's summary", () => {
+    const list = [s('c1', 'chat'), s('r1', 'run'), s('t1', 'terminal'), s('c2', 'chat'), s('r2', 'run')];
+    expect(list.map(showsConversation)).toEqual([true, true, false, true, true]);
+    expect(liveCards(list, new Set(['c1', 'r1', 't1', 'r2']))).toEqual(['c1', 'r1', 'r2']);
+    expect(liveCards(list, new Set())).toEqual([]);
+  });
+
+  it("reads closely each window's shown session and the task runs among its live cards, once each", () => {
+    const runs = new Set(['r1', 'r2', 'r3']);
+    const views = [
+      { shown: null, cards: ['c1', 'r1', 'r2'] },
+      { shown: 'c9', cards: [] },
+      { shown: 'r1', cards: ['r3', 'gone'] },
+    ];
+    expect(watchedSessions(views, (id) => runs.has(id)).sort()).toEqual(['c9', 'r1', 'r2', 'r3']);
+    expect(watchedSessions([], (id) => runs.has(id))).toEqual([]);
+  });
+
+  it("enables Stop as the toolbar does: a working agent, a permission waiting, a chat's commands, and always a task run (listed only while it runs)", () => {
+    expect(canStop(undefined)).toBe(false);
+    expect(canStop(s('c1', 'chat'))).toBe(false);
+    expect(canStop(s('c1', 'chat', { status: 'working' }))).toBe(true);
+    expect(canStop(s('c1', 'chat'), 1)).toBe(true);
+    expect(canStop(s('t1', 'terminal', { waiting: { reason: 'permission', text: 'Asks', since: 1 } }))).toBe(true);
+    expect(canStop(s('t1', 'terminal', { waiting: { reason: 'turn', text: 'Done', since: 1 } }))).toBe(false);
+    expect(canStop(s('r1', 'run', { status: 'working' }))).toBe(true);
+    expect(canStop(s('r1', 'run', { status: 'ready' }))).toBe(true);
   });
 });

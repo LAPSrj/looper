@@ -17,7 +17,7 @@ polling inside the agent, no context buildup, at most one agent per task.
 - **[Projects](projects.md)**: the folders your tasks run in and your
   chats and terminals open in, the Projects tab, project settings and
   overrides, and starting a chat from the tray.
-- **[Building a task with an agent](task-builder.md)**: New Task with Agent
+- **[Building a task with an agent](task-builder.md)**: File → New Task → With Agent
   and Edit with Agent, the draft panel, saving with Undo and Redo, and how
   the agent tests a task's check and access.
 - **[How a run works](how-a-run-works.md)**: the check → classify → agent
@@ -28,7 +28,7 @@ polling inside the agent, no context buildup, at most one agent per task.
   WSL, Windows), the WSL shell and mount-prefix settings, harnesses and
   their models, and concurrency caps.
 - **[Monitoring](monitoring.md)**: the main window and its tabs, the task list,
-  the dashboard, toolbar and context-menu actions, the Recycle Bin, the live terminal tab, terminal sessions and
+  the dashboard, toolbar and context-menu actions, the Recycle Bin, terminal sessions and
   chats, the Runs tab and run window, the engine log, notifications, Rest Mode, Prevent Sleep, the tray, and the
   Settings window.
 - **[Remote Access](remote-access.md)**: Looper in a browser on your phone,

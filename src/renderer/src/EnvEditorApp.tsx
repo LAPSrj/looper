@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Environment, Harness, Settings } from '@shared/types';
+import { useEffect, useState } from 'react';
+import type { Environment, Harness } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
-import { Field, NumberField, StepFields, TabBar, EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow, Field, TabBar } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { ConcurrencyLimit } from './components/form-blocks';
+import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
 import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
+import { rid } from './rid';
 
 type EnvTab = 'general' | 'harnesses' | 'advanced';
-
-const rid = () => Math.random().toString(36).slice(2, 8);
 
 function newHarness(): Harness {
   return { id: `h-${rid()}`, name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
@@ -21,53 +22,34 @@ type EnvDraft = Pick<Environment, 'name' | 'kind' | 'distro' | 'shell' | 'mountP
 
 /** Standalone environment editor window (Settings → Environments → Add/Edit). */
 export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean }) {
-  const [live, setLive] = useState<Settings | null>(null);
+  const { live, host, missing } = useLiveSettings((s) => s.environments.some((e) => e.id === envId));
   const [draft, setDraft] = useState<EnvDraft | null>(null);
   const [tab, setTab] = useState<EnvTab>('general');
-  const [host, setHost] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | null>(null);
   const [distros, setDistros] = useState<string[]>([]);
   const [detectedPrefix, setDetectedPrefix] = useState<string | undefined>(undefined);
-  const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   /** "Custom" chosen in the Shell dropdown; the free-text field shows regardless of its value. */
   const [customShell, setCustomShell] = useState(false);
   useFitWindow();
 
-  // Create-on-add: a new environment already exists in settings so this window
-  // could open; closing without saving removes it again.
-  const savedRef = useRef(false);
-  useEffect(() => {
-    if (!isNew) return;
-    const onUnload = () => {
-      if (!savedRef.current) window.looper.discardEnvironment(envId);
-    };
-    window.addEventListener('beforeunload', onUnload);
-    return () => window.removeEventListener('beforeunload', onUnload);
-  }, [isNew, envId]);
+  const savedRef = useDiscardUnsaved(isNew, () => window.looper.discardEnvironment(envId));
 
   useEffect(() => {
     document.title = isNew ? 'New Environment' : 'Edit Environment';
     void window.looper.listWslDistros().then(setDistros);
-    void window.looper.info().then((info) => {
-      setLive(info.settings);
-      setHost(info.host);
-      const env = info.settings.environments.find((e) => e.id === envId);
-      if (!env) {
-        setMissing(true);
-        return;
-      }
-      const { name, kind, distro, shell, mountPrefix, maxConcurrentTasks } = env;
-      setDraft({ name, kind, distro, shell, mountPrefix, maxConcurrentTasks });
-      setCustomShell(!!shell && !SHELL_PRESETS.some(([cmd]) => cmd === shell));
-      setSelected(env.harnesses[0]?.id ?? null);
-    });
-    return window.looper.onEvent((e) => {
-      if (e.type !== 'settings') return;
-      setLive(e.settings);
-      if (!e.settings.environments.some((x) => x.id === envId)) setMissing(true);
-    });
-  }, [envId, isNew]);
+  }, [isNew]);
+
+  // The draft starts from the settings as they first arrive; harnesses stay live.
+  useEffect(() => {
+    if (!live || draft) return;
+    const env = live.environments.find((e) => e.id === envId);
+    if (!env) return;
+    const { name, kind, distro, shell, mountPrefix, maxConcurrentTasks } = env;
+    setDraft({ name, kind, distro, shell, mountPrefix, maxConcurrentTasks });
+    setCustomShell(!!shell && !SHELL_PRESETS.some(([cmd]) => cmd === shell));
+    setSelected(env.harnesses[0]?.id ?? null);
+  }, [live, draft, envId]);
 
   // The placeholder of the mount-prefix field shows the distro's real automount root.
   const draftKind = draft?.kind;
@@ -94,17 +76,13 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     ...(hasAdvanced ? ([['advanced', 'Advanced']] as [EnvTab, string][]) : []),
   ];
 
-  const saveRef = useRef<() => Promise<void>>(async () => {});
   useDialogKeys({
-    onSave: () => void saveRef.current(),
-    onCancel: () => window.close(),
     tabs: tabs.map(([id]) => id),
     tab,
     onTab: setTab,
   });
 
-  if (missing) return <div className="empty">This environment no longer exists.</div>;
-  if (!live || !draft || !env) return <div className="empty">Loading…</div>;
+  if (missing || !live || !draft || !env) return <EmptyWindow gone={missing && 'This environment no longer exists.'} />;
 
   const kinds = availableEnvironmentKinds(host);
   if (!kinds.includes(draft.kind)) kinds.push(draft.kind); // keep an unreachable kind editable
@@ -173,7 +151,6 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
   };
   const save = async () => { if (await doSave()) window.close(); };
   const apply = async () => { await doSave(); };
-  saveRef.current = save;
 
   return (
     <div className="editor">
@@ -212,23 +189,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
                 )}
               </Field>
             )}
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={draft.maxConcurrentTasks !== undefined}
-                onChange={(e) => patch({ maxConcurrentTasks: e.target.checked ? 1 : undefined })}
-              />
-              Limit concurrent tasks
-            </label>
-            <StepFields on={draft.maxConcurrentTasks !== undefined}>
-              <NumberField
-                label="Maximum concurrent tasks"
-                suffix="tasks"
-                min={1}
-                value={draft.maxConcurrentTasks ?? 1}
-                onChange={(n) => patch({ maxConcurrentTasks: n })}
-              />
-            </StepFields>
+            <ConcurrencyLimit value={draft.maxConcurrentTasks} onChange={(max) => patch({ maxConcurrentTasks: max })} />
           </div>
         )}
 
@@ -247,7 +208,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
               menu={(h) => [
                 { label: 'Edit…', run: () => void window.looper.openHarnessEditor(envId, h.id) },
                 { label: 'Duplicate', run: () => void duplicateHarness(h) },
-                { label: 'Remove', enabled: harnesses.length > 1, run: () => void removeHarness(h) },
+                { label: 'Remove', destructive: true, enabled: harnesses.length > 1, run: () => void removeHarness(h) },
               ]}
               onDelete={(h) => void removeHarness(h)}
             />
@@ -312,7 +273,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
           </div>
         )}
       </div>
-      <EditorFooter onPrimary={() => void save()} onCancel={() => window.close()} onApply={() => void apply()} saving={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
     </div>
   );
 }

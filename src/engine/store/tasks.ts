@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { validateTask } from '../../shared/validate';
-import { folderParents } from '../../shared/folders';
+import { sanitizeLayout, siblingOrder, validParent, type FolderLayout } from '../../shared/folders';
 import { DEFINITION_VERSION, migrateDefinition, type Definition } from '../../shared/migrate';
 import { agentDiffers, deriveTask, normalizeFolder, projectAgentIn, sameFolder } from '../../shared/projects';
 import { TaskFolderSchema } from '../../shared/types';
@@ -10,21 +10,6 @@ import { readJson, writeJsonAtomic } from './fsutil';
 import { ProjectStore } from './projects';
 
 type Placed = { ok: true; task: Task; create?: Project } | { ok: false; errors: string[] };
-
-/**
- * Sibling display order per container ('' = top level, otherwise a folder
- * id): `folder:<id>` entries mixed with task ids.
- */
-export type FolderLayout = Record<string, string[]>;
-
-function sanitizeLayout(raw: unknown): FolderLayout {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const out: FolderLayout = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (Array.isArray(value)) out[key] = value.filter((e): e is string => typeof e === 'string');
-  }
-  return out;
-}
 
 interface TasksFile {
   version: number;
@@ -198,23 +183,7 @@ export class TaskStore extends EventEmitter {
    * whether anything changed.
    */
   private syncLayout(): boolean {
-    const parents = folderParents(this.folders);
-    // A task pointing at a deleted/unknown folder lists at the top level.
-    const containerOf = (t: Task) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
-    const next: FolderLayout = {};
-    for (const container of ['', ...this.folders.map((f) => f.id)]) {
-      const valid = new Set<string>();
-      for (const f of this.folders) if (parents.get(f.id) === container) valid.add(`folder:${f.id}`);
-      for (const t of this.tasks.values()) if (containerOf(t) === container) valid.add(t.id);
-      const list: string[] = [];
-      for (const entry of this.layout[container] ?? []) {
-        if (!valid.has(entry)) continue;
-        valid.delete(entry);
-        list.push(entry);
-      }
-      list.push(...valid);
-      next[container] = list;
-    }
+    const next: FolderLayout = Object.fromEntries(siblingOrder([...this.tasks.values()], this.folders, this.layout));
     const changed = JSON.stringify(next) !== JSON.stringify(this.layout);
     this.layout = next;
     return changed;
@@ -368,23 +337,8 @@ export class TaskStore extends EventEmitter {
     }
     for (const [id, parentId] of Object.entries(parentById ?? {})) {
       const folder = this.folders.find((f) => f.id === id);
-      if (!folder) continue;
-      if (parentId) {
-        if (!this.folders.some((f) => f.id === parentId)) continue;
-        // Reject a parent inside the folder's own subtree (would close a cycle).
-        const parents = folderParents(this.folders);
-        let p: string | undefined = parentId;
-        let cyclic = false;
-        while (p) {
-          if (p === id) {
-            cyclic = true;
-            break;
-          }
-          p = parents.get(p) || undefined;
-        }
-        if (cyclic) continue;
-      }
-      folder.parentId = parentId ?? undefined;
+      const parent = validParent(this.folders, id, parentId);
+      if (folder && parent !== null) folder.parentId = parent;
     }
     if (layout) this.layout = sanitizeLayout(layout);
     this.syncLayout();

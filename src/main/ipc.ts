@@ -7,16 +7,17 @@ import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
 import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
-import { folderSubtree } from '../shared/folders';
+import { folderSubtree, folderTree } from '../shared/folders';
 import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
 import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
-import type { AppInfo } from '../shared/api';
+import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
+import { commandAttachment, commandFrom } from '../shared/bash-mode';
 import { attachmentName, type Attachment, type AttachmentInput, type ChatSettingMenu } from '../shared/chat';
-import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryListOptions } from '../shared/history';
+import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions } from '../shared/history';
 import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task, type View } from '../shared/types';
@@ -36,10 +37,12 @@ import {
   ofCaller,
   writeClipboard,
   type AppWindow,
+  type MessageBoxOptions,
 } from './platform';
 import { fitWindowHeight } from './platform/fit-window';
 import { withAccessKeys } from './platform/menus';
 import { projectMenuItems, type ProjectCommand } from './project-menu';
+import { taskContextMenuItems, type TaskMenuInfo } from './task-menu';
 import type { RemoteAccess } from './remote-access';
 import { paneMenuItems, projectsPaneMenuItems, singleMenuItems } from './view-menu';
 
@@ -110,6 +113,10 @@ export interface IpcHost {
   showCards: (window: AppWindow | null, chatIds: string[]) => void;
   /** Close Conversation: ends the chat or terminal session, asking first (over `from`) when it's working. */
   closeSession: (sessionId: string, from: AppWindow | null) => Promise<void>;
+  /** Settings → Chats → Ask before sending a message once the cache has expired: true to send. */
+  confirmChatSend: (chatId: string, from: AppWindow | null) => Promise<boolean>;
+  /** Restart Agent: the session's harness starts again on its conversation, asking first (over `from`) when it's working. Rejects with the reason. */
+  restartSession: (sessionId: string, from: AppWindow | null) => Promise<void>;
   /** Close All Conversations in a list group (sessionGroupKey), asking first over `from`. */
   closeSessionGroup: (group: string, from: AppWindow | null) => Promise<void>;
   /** Send to Chats; `group` (sessionGroupKey): with that list group's chats checked. */
@@ -127,6 +134,13 @@ export interface IpcHost {
   openSessions: (select?: string) => void;
   /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
   openChatWindow: (sessionId: string) => void;
+  /**
+   * A Projects tab folder's name window: Rename Folder with `folderId`, else New
+   * Folder in `parentId` (unset: the top level), which `moveProject` goes into once it's made.
+   */
+  openProjectFolderName: (o?: { folderId?: string; parentId?: string; moveProject?: string }) => void;
+  /** A task, project or chat in a window of its own (a double-click on its row), or that window brought forward. */
+  openItemWindow: (kind: 'task' | 'project' | 'chat', id: string) => void;
   /** A chat's Harness, Model, Effort or Permission Mode menu, as the Chat menu has them ('all': the four as submenus). */
   chatSettingMenu: (chatId: string, which: ChatSettingMenu | 'all') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window (a chat or terminal it lists in the Chats window), an ended one in its run window. */
@@ -149,7 +163,7 @@ export interface IpcHost {
   takeImportDraft: (key: string) => unknown;
   openLooperFile: (file: string) => Promise<void>;
   /** A Dashboard or Projects window's task, shown on the caller's main window's Tasks tab. */
-  showTaskInMain: (taskId: string, view: 'status' | 'runs' | 'terminal') => void;
+  showTaskInMain: (taskId: string, view: 'status' | 'runs') => void;
   /** The selection a main window (`from`) reported, and the tab it shows: its menu bar follows them. */
   updateTaskMenu: (
     from: AppWindow | null,
@@ -249,12 +263,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const doc = wrapLooperFile(kind, app.getVersion(), item);
       fs.writeFileSync(result.filePath, JSON.stringify(doc, null, 2) + '\n', 'utf8');
     } catch (err) {
-      const opts: Electron.MessageBoxOptions = {
+      const opts: MessageBoxOptions = {
         type: 'error',
         title: 'Looper',
         message: kind === 'task' ? 'Could not export task.' : 'Could not export template.',
         detail: (err as Error).message,
         buttons: ['OK'],
+        defaultId: 0,
+        cancelId: 0,
       };
       await showMessageBox(sender, opts);
     }
@@ -328,9 +344,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
     host.openMessages(taskId, runId, agentId, label),
   );
-  ipc.handle('messages:openImage', (_e, taskId: string, runId: string, rowId: string, agentId?: string, label?: string) =>
-    host.openMessageImage(taskId, runId, rowId, agentId, label),
-  );
 
   ipc.handle('engineLog:read', () => engine.readEngineLog());
 
@@ -361,7 +374,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         label: 'Attach Files…',
         click: () =>
           void attachFiles().catch((err: unknown) => {
-            void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+            void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 });
           }),
       },
     ]), { window: sender });
@@ -369,13 +382,27 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
   ipc.handle('chat:get', (_e, id: string) => engine.getChat(id) ?? null);
+  ipc.handle('chat:confirmSend', (e, id: string) => host.confirmChatSend(String(id), windowOf(e)));
+  /**
+   * A message's attachments from a window: only Looper's own copies of files
+   * (the renderer never makes the agent read any other file), and the
+   * finished commands the user ran from the message box, field by field.
+   */
+  const takeAttachments = (attachments: unknown): Attachment[] =>
+    (Array.isArray(attachments) ? (attachments as Attachment[]) : []).flatMap((a): Attachment[] => {
+      if (a?.command) {
+        const c = commandFrom(a.command);
+        return c ? [commandAttachment(c)] : [];
+      }
+      return engine.isAttachment(String(a?.path)) ? [{ name: String(a.name), path: String(a.path), image: !!a.image }] : [];
+    });
   ipc.on('chat:send', (_e, id: string, text: string, attachments: Attachment[]) => {
-    // Only Looper's own copies: the renderer never makes the agent read any other file.
-    const files = (Array.isArray(attachments) ? attachments : [])
-      .filter((a) => engine.isAttachment(String(a?.path)))
-      .map((a) => ({ name: String(a.name), path: String(a.path), image: !!a.image }));
-    engine.sendChat(id, String(text ?? ''), files);
+    engine.sendChat(id, String(text ?? ''), takeAttachments(attachments));
   });
+  ipc.handle('chat:runCommand', (_e, id: string, command: string, commandId: string) =>
+    engine.runChatCommand(String(id), String(command ?? ''), String(commandId ?? '')),
+  );
+  ipc.handle('chat:stopCommand', (_e, id: string, commandId: string) => engine.stopChatCommand(String(id), String(commandId ?? '')));
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
   ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
   // A chat message's right-click menu; Quote and Edit as New Message hand text back to the window's message box.
@@ -430,6 +457,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
                   message: `Could not open ${file}.`,
                   detail: err instanceof Error ? err.message : String(err),
                   buttons: ['OK'],
+                  defaultId: 0,
+                  cancelId: 0,
                 });
               }),
           },
@@ -454,6 +483,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
                 title: 'Looper',
                 message: err instanceof Error ? err.message : String(err),
                 buttons: ['OK'],
+                defaultId: 0,
+                cancelId: 0,
               });
             }
           },
@@ -477,11 +508,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:compact', (_e, id: string) => host.compactChat(String(id)));
   ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
   ipc.on('chat:draft', (_e, id: string, text: string, attachments: Attachment[]) => {
-    // As with chat:send, only Looper's own copies.
-    const files = (Array.isArray(attachments) ? attachments : [])
-      .filter((a) => engine.isAttachment(String(a?.path)))
-      .map((a) => ({ name: String(a.name), path: String(a.path), image: !!a.image }));
-    engine.setChatDraft(String(id), String(text ?? ''), files);
+    engine.setChatDraft(String(id), String(text ?? ''), takeAttachments(attachments));
   });
 
   // ---------- the Chats window ----------
@@ -491,16 +518,26 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('sessions:show', (e, id: string | null) => host.showSession(windowOf(e), typeof id === 'string' ? id : null));
   ipc.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
   ipc.handle('sessions:close', (e, id: string) => host.closeSession(String(id), windowOf(e)));
-  ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
+  ipc.handle('sessions:stop', (e, id: string) => stopSession(String(id), windowOf(e)));
+  ipc.handle('sessions:restart', (e, id: string) => host.restartSession(String(id), windowOf(e)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
 
   // ---------- the History window ----------
 
-  ipc.handle('history:list', (_e, o: unknown) => {
+  ipc.handle('history:list', (e, o: unknown) => {
     const opts = (o ?? {}) as Partial<HistoryListOptions>;
     const folder = typeof opts.folder === 'string' && (opts.folder === '' || opts.folder === 'other' || opts.folder.startsWith('project:')) ? opts.folder : '';
     const limit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) ? Math.max(1, Math.floor(opts.limit)) : HISTORY_PAGE;
-    return engine.historyList({ fresh: opts.fresh === true, limit, showRuns: opts.showRuns !== false, folder });
+    // The list so far goes to the window as it's read, tagged with the window's own number for the request.
+    const request = typeof opts.request === 'number' ? opts.request : undefined;
+    const sender = windowOf(e);
+    const progress =
+      request === undefined || !sender
+        ? undefined
+        : (list: HistoryList) => {
+            if (!sender.isDestroyed()) sender.webContents.send('ui:event', { type: 'history-progress', request, list } satisfies UiEvent);
+          };
+    return engine.historyList({ fresh: opts.fresh === true, limit, showRuns: opts.showRuns !== false, folder }, progress);
   });
   ipc.handle('history:search', (_e, query: unknown, ids: unknown) =>
     engine.historySearch(String(query ?? ''), Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []),
@@ -516,6 +553,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
   ipc.on('history:open', () => host.openHistory());
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
+  ipc.on('window:openItem', (_e, kind: unknown, id: unknown) => {
+    if ((kind === 'task' || kind === 'project' || kind === 'chat') && typeof id === 'string' && id) host.openItemWindow(kind, id);
+  });
   /** New Chat's or New Terminal's drop-down, under the button that asked: the projects, another folder, and New Project. */
   ipc.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
     const sender = windowOf(e);
@@ -545,7 +585,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
   ipc.on('sessions:cards', (e, ids: unknown) => host.showCards(windowOf(e), Array.isArray(ids) ? ids.map(String) : []));
-  // A session's right-click menu in the list, or on its dashboard card (`card`). A task run's agent can't be stopped or closed from here.
+  // A session's right-click menu in the list, or on its dashboard card (`card`). A task run can't be closed from here.
   ipc.on('context-menu:session', (e, id: string, card?: unknown) => {
     const sender = windowOf(e);
     const listed = engine.sessionsState().sessions;
@@ -560,11 +600,21 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const bigCards = view.sessions.bigCards.filter((x) => x !== s.id && listed.some((l) => l.id === x));
       engine.updateSettings({ view: { ...view, sessions: { ...view.sessions, bigCards: big ? bigCards : [...bigCards, s.id] } } });
     };
+    const restartable = engine.canRestartSession(id);
     const items: Electron.MenuItemConstructorOptions[] = [
       ...(run
-        ? []
+        ? [
+            { label: 'Send Guidance…', enabled: engine.canGuideRun(s.taskId, s.id), click: () => host.openSendGuidance(s.taskId, s.id) },
+            { label: 'Stop', destructive: true as const, click: () => void stopSession(id, sender).catch((err) => fail(sender, err)) },
+            { type: 'separator' } as const,
+          ]
         : [
-            { label: 'Stop', enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
+            { label: 'Stop', destructive: true as const, enabled: s.status === 'working' || s.waiting?.reason === 'permission', click: () => void engine.stopSession(id) },
+            {
+              label: 'Restart Agent',
+              enabled: restartable,
+              click: () => void host.restartSession(id, sender).catch((err) => fail(sender, err)),
+            },
             { type: 'separator' } as const,
           ]),
       ...(card === true ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { type: 'separator' } as const] : []),
@@ -732,8 +782,25 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   /** A failure shown over the window that asked. */
   const fail = (sender: AppWindow | null, err: unknown) => {
-    const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'] };
+    const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 };
     void showMessageBox(sender, opts);
+  };
+  /** A session's Stop; on a task run it stops the whole run, as the Tasks tab's Stop does, once the user agrees. */
+  const stopSession = async (id: string, sender: AppWindow | null): Promise<void> => {
+    const s = engine.sessionsState().sessions.find((x) => x.id === id);
+    if (s?.kind !== 'run') return engine.stopSession(id);
+    const msg = {
+      type: 'question' as const,
+      title: 'Looper',
+      message: `Stop the run of "${s.title}"?`,
+      detail: 'This stops the whole task run, the same as Stop on the Tasks tab, not only its conversation.',
+      buttons: ['Stop Run', 'Cancel'],
+      noLink: true,
+      defaultId: 1,
+      cancelId: 1,
+    };
+    const { response } = await showMessageBox(sender, msg);
+    if (response === 0) await engine.stopTask(s.taskId, undefined, s.id);
   };
   const projectChat = (id: string, sender: AppWindow | null) => host.openChat(projectTaskId(id)).catch((err) => fail(sender, err));
   const projectTerminal = (id: string, sender: AppWindow | null) => host.openTerminal(projectTaskId(id)).catch((err) => fail(sender, err));
@@ -749,10 +816,60 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       fail(sender, err);
     }
   };
+  const removeProjectFolder = async (id: string, sender: AppWindow | null) => {
+    const folder = engine.listProjectFolders().find((f) => f.id === id);
+    if (!folder) return;
+    const inside = engine.listProjects().some((p) => p.folderId === id) || engine.listProjectFolders().some((f) => f.parentId === id);
+    const where = folder.parentId ? 'the folder it’s in' : 'the top level';
+    const msg = {
+      type: 'question' as const,
+      title: 'Looper',
+      message: `Delete the folder "${folder.name}"?`,
+      detail: inside ? `What it holds moves to ${where}; the projects stay as they are.` : 'It’s empty.',
+      buttons: ['Delete', 'Cancel'],
+      noLink: true,
+      defaultId: 1,
+      cancelId: 1,
+    };
+    const { response } = await showMessageBox(sender, msg);
+    if (response === 0) engine.removeProjectFolder(id);
+  };
   ipc.handle('projects:list', () => engine.listProjects());
   ipc.handle('projects:save', (_e, input: unknown) => engine.saveProject(input));
   ipc.handle('projects:remove', (e, id: string) => removeProject(String(id), windowOf(e)));
-  ipc.handle('projects:reorder', (_e, ids: string[]) => engine.reorderProjects(Array.isArray(ids) ? ids.map(String) : []));
+  ipc.handle(
+    'projects:reorder',
+    (_e, ids: string[], folders?: Record<string, string | null>, layout?: Record<string, string[]>, parents?: Record<string, string | null>) =>
+      engine.reorderProjects(Array.isArray(ids) ? ids.map(String) : [], folders, layout, parents),
+  );
+  ipc.handle('projects:folders', () => engine.listProjectFolders());
+  ipc.handle('projects:layout', () => engine.listProjectLayout());
+  ipc.handle('projects:addFolder', (_e, name: unknown, parentId?: unknown) => engine.addProjectFolder(String(name ?? ''), typeof parentId === 'string' && parentId ? parentId : undefined));
+  ipc.handle('projects:renameFolder', (_e, id: unknown, name: unknown) => engine.renameProjectFolder(String(id), String(name ?? '')));
+  // The list's F2 and Delete on a folder: the same flows as its menu's.
+  ipc.on('projects:folderCommand', (e, id: unknown, command: unknown) => {
+    const sender = windowOf(e);
+    if (!sender || typeof id !== 'string') return;
+    if (command === 'rename') host.openProjectFolderName({ folderId: id });
+    else if (command === 'delete') void removeProjectFolder(id, sender);
+  });
+  // A project folder's header: New Folder…, New Subfolder…, Rename Folder…, Delete Folder (what it holds moves up).
+  ipc.on('context-menu:project-folder', (e, folderId: unknown) => {
+    const sender = windowOf(e);
+    const folder = engine.listProjectFolders().find((f) => f.id === folderId);
+    if (!sender || !folder) return;
+    popupMenu(
+      Menu.buildFromTemplate([
+        { label: 'New P&roject…', click: () => host.openProjectEditor() },
+        { label: 'New &Folder…', click: () => host.openProjectFolderName({ parentId: folder.parentId }) },
+        { label: 'New &Subfolder…', click: () => host.openProjectFolderName({ parentId: folder.id }) },
+        { type: 'separator' },
+        { label: '&Rename Folder…', click: () => host.openProjectFolderName({ folderId: folder.id }) },
+        { label: '&Delete Folder…', destructive: true, click: () => void removeProjectFolder(folder.id, sender) },
+      ]),
+      { window: sender },
+    );
+  });
   ipc.handle('projects:openEditor', (_e, id?: string) => host.openProjectEditor(id ? String(id) : undefined));
   ipc.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
   ipc.handle('projects:newChat', (e, id: string) => projectChat(String(id), windowOf(e)));
@@ -768,9 +885,29 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         ...projectsPaneMenuItems(engine.settings.view, update),
         { type: 'separator' },
         { label: 'New P&roject…', click: () => host.openProjectEditor() },
+        { label: 'New &Folder…', click: () => host.openProjectFolderName() },
       ]), { window: sender });
       return;
     }
+    // Move to Folder: the top level, each folder (at the end of it), or a new one.
+    const current = engine.getProject(pid)?.folderId;
+    const moveTo = (folderId: string | null) => () => engine.reorderProjects(engine.listProjects().map((p) => p.id), { [pid]: folderId });
+    const tree = folderTree(engine.listProjectFolders());
+    const moveMenu: Electron.MenuItemConstructorOptions = {
+      label: 'Move to F&older',
+      submenu: [
+        { label: '&Top Level', type: 'radio', checked: !current, click: moveTo(null) },
+        ...(tree.length ? [{ type: 'separator' } as const] : []),
+        ...tree.map(({ folder: f, depth }): Electron.MenuItemConstructorOptions => ({
+          label: ' '.repeat(depth * 3) + f.name.replace(/&/g, '&&'),
+          type: 'radio',
+          checked: current === f.id,
+          click: moveTo(f.id),
+        })),
+        { type: 'separator' },
+        { label: '&New Folder…', click: () => host.openProjectFolderName({ moveProject: pid }) },
+      ],
+    };
     const run: Record<ProjectCommand, () => void> = {
       'new-task': () => host.openNewTaskIn(pid),
       'new-chat': () => void projectChat(pid, sender),
@@ -779,7 +916,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       'open-folder': () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)),
       delete: () => void removeProject(pid, sender),
     };
-    popupMenu(Menu.buildFromTemplate(projectMenuItems((command) => run[command]())), { window: sender });
+    popupMenu(Menu.buildFromTemplate([...projectMenuItems((command) => run[command]()), { type: 'separator' }, moveMenu]), { window: sender });
   });
 
   // ---------- the Git tabs ----------
@@ -834,12 +971,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: 'Copy &Subject', click: () => writeClipboard(String(info.subject ?? '')) },
     ]), { window: sender });
   });
-
-  ipc.handle('agent:buffer', (_e, id: string, runId?: string) => engine.agentBuffer(id, runId));
-  ipc.on('agent:write', (_e, id: string, data: string, runId?: string) => engine.writeAgent(id, data, runId));
-  ipc.on('agent:resize', (_e, id: string, cols: number, rows: number, runId?: string) =>
-    engine.resizeAgent(id, cols, rows, runId),
-  );
 
   ipc.handle('openPath', (_e, p: string) => openPath(p));
   ipc.handle('editor:open', (_e, taskId?: string) => host.openEditor(taskId));
@@ -987,7 +1118,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       try {
         engine.restartRemoteConversation(id);
       } catch (err) {
-        void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'] });
+        void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 });
       }
     };
     popupMenu(Menu.buildFromTemplate([
@@ -1000,7 +1131,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         enabled: state.running && conv.source !== 'helper' && conv.source !== 'chat' && !(users && open) && conv.status !== 'waiting',
         click: restart,
       },
-      { label: 'Stop', enabled: open && !users, click: () => engine.stopRemoteConversation(id) },
+      { label: 'Stop', destructive: true, enabled: open && !users, click: () => engine.stopRemoteConversation(id) },
     ]), { window: sender });
   });
 
@@ -1086,7 +1217,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
   ipc.on('ui:showTaskInMain', (_e, taskId: unknown, view: unknown) => {
     if (typeof taskId !== 'string' || !engine.getTask(taskId)) return;
-    host.showTaskInMain(taskId, view === 'runs' || view === 'terminal' ? view : 'status');
+    host.showTaskInMain(taskId, view === 'runs' ? view : 'status');
   });
 
   // A dialog's page measures its content and asks for a window that fits it.
@@ -1094,12 +1225,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.handle('dialog:error', async (e, message: string, detail?: string) => {
     const sender = windowOf(e);
-    const opts: Electron.MessageBoxOptions = { type: 'error', title: 'Looper', message, ...(detail ? { detail } : {}), buttons: ['OK'] };
+    const opts: MessageBoxOptions = { type: 'error', title: 'Looper', message, ...(detail ? { detail } : {}), buttons: ['OK'], defaultId: 0, cancelId: 0 };
     await showMessageBox(sender, opts);
   });
   ipc.handle('dialog:confirm', async (e, message: string) => {
     const sender = windowOf(e);
-    const opts: Electron.MessageBoxOptions = { type: 'question', title: 'Looper', message, buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 };
+    const opts: MessageBoxOptions = { type: 'question', title: 'Looper', message, buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 };
     const result = await showMessageBox(sender, opts);
     return result.response === 0;
   });
@@ -1150,37 +1281,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('wsl:distros', () => listWslDistros());
   ipc.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
 
-  ipc.on('context-menu:task', (e, info: { enabled: boolean; completed: boolean; allowComplete: boolean; state?: string; held: boolean; hasNote: boolean; activeRuns?: number; maxRuns?: number }) => {
+  ipc.on('context-menu:task', (e, info: TaskMenuInfo) => {
     const sender = windowOf(e);
     if (!sender) return;
-    const active = info.state === 'running' || info.state === 'checking' || info.state === 'classifying';
-    // A task allowed several simultaneous runs can start another until its cap.
-    const canRun = !active || (info.activeRuns ?? 1) < (info.maxRuns ?? 1);
-    const menu = Menu.buildFromTemplate([
-      { label: 'Run Now', glyph: 'run', enabled: canRun, click: () => sender.webContents.send('ui:event', { type: 'run-now' }) },
-      { label: 'Stop Task', glyph: 'stop', enabled: active, click: () => sender.webContents.send('ui:event', { type: 'stop-task' }) },
-      { label: info.state === 'paused' ? 'Resume' : 'Pause', glyph: info.state === 'paused' ? 'resume' : 'pause', enabled: info.state !== 'disabled' && !info.completed, click: () => sender.webContents.send('ui:event', { type: 'pause-resume' }) },
-      { label: info.enabled ? 'Disable' : 'Enable', enabled: !info.completed, click: () => sender.webContents.send('ui:event', { type: 'enable-disable' }) },
-      {
-        label: info.completed ? 'Reopen' : 'Complete',
-        enabled: info.completed || info.allowComplete,
-        click: () => sender.webContents.send('ui:event', { type: 'complete-reopen' }),
-      },
-      { label: 'Edit Task…', glyph: 'edit', click: () => sender.webContents.send('ui:event', { type: 'edit-task' }) },
-      { label: 'Edit with Agent…', click: () => sender.webContents.send('ui:event', { type: 'edit-with-agent' }) },
-      { label: 'Version History', click: () => sender.webContents.send('ui:event', { type: 'version-history' }) },
-      { label: 'Delete Task', glyph: 'delete', click: () => sender.webContents.send('ui:event', { type: 'delete-task' }) },
-      { type: 'separator' },
-      { label: info.hasNote ? 'Edit Guidance for Next Run…' : 'Add Guidance for Next Run…', click: () => sender.webContents.send('ui:event', { type: 'edit-note' }) },
-      { label: 'Clear Guidance', enabled: info.hasNote, click: () => sender.webContents.send('ui:event', { type: 'clear-note' }) },
-      { type: 'separator' },
-      { label: 'Move to Folder…', glyph: 'folder', click: () => sender.webContents.send('ui:event', { type: 'move-to-folder' }) },
-      { label: 'Clear Run History…', enabled: !active, click: () => sender.webContents.send('ui:event', { type: 'clear-runs' }) },
-      { type: 'separator' },
-      { label: 'Open Project in Terminal', click: () => sender.webContents.send('ui:event', { type: 'open-terminal' }) },
-      { label: 'Open Project in Chat', click: () => sender.webContents.send('ui:event', { type: 'open-chat' }) },
-      { label: 'Open Working Directory', platforms: DESKTOP_ONLY, click: () => sender.webContents.send('ui:event', { type: 'open-work-folder' }) },
-    ]);
+    const menu = Menu.buildFromTemplate(taskContextMenuItems(info, (type) => sender.webContents.send('ui:event', { type })));
     popupMenu(menu, { window: sender });
   });
 
@@ -1193,7 +1297,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       return engine.listTasks().filter((t) => t.folderId && ids.has(t.folderId));
     };
     const name = engine.listFolders().find((f) => f.id === folderId)?.name ?? '?';
-    const opts: Electron.MessageBoxOptions = {
+    const opts: MessageBoxOptions = {
       type: 'question',
       title: 'Looper',
       message: `Delete folder "${name}"?`,
@@ -1282,6 +1386,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       },
       {
         label: 'Delete Folder…',
+        destructive: true,
         click: () => deleteFolder(sender, info.folderId),
       },
     ]);
@@ -1297,7 +1402,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
 
   // A list window's row menu: the window names the items; a pick comes back as a 'list-menu' event carrying the same token.
-  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean }[]) => {
+  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true }[]) => {
     const sender = windowOf(e);
     if (!sender || !Array.isArray(items)) return;
     popupMenu(
@@ -1305,6 +1410,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         items.map((it) => ({
           label: String(it.label),
           enabled: it.enabled !== false,
+          ...(it.destructive === true ? { destructive: true as const } : {}),
           click: () => sender.webContents.send('ui:event', { type: 'list-menu', token: String(token), id: String(it.id) }),
         })),
       ),
@@ -1317,7 +1423,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!sender) return;
     popupMenu(Menu.buildFromTemplate([
       { label: 'Restore', click: () => sender.webContents.send('ui:event', { type: 'bin-restore' }) },
-      { label: 'Delete', click: () => sender.webContents.send('ui:event', { type: 'bin-delete' }) },
+      { label: 'Delete', destructive: true, click: () => sender.webContents.send('ui:event', { type: 'bin-delete' }) },
     ]), { window: sender });
   });
 
@@ -1373,6 +1479,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
                 message: `Could not open ${file}.`,
                 detail: err instanceof Error ? err.message : String(err),
                 buttons: ['OK'],
+                defaultId: 0,
+                cancelId: 0,
               });
             }),
         });
@@ -1415,6 +1523,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         title: 'Looper',
         message: err instanceof Error ? err.message : String(err),
         buttons: ['OK'],
+        defaultId: 0,
+        cancelId: 0,
       });
     const menu = Menu.buildFromTemplate([
       { label: 'Open', click: () => host.openMessages(info.taskId, info.runId) },
@@ -1464,8 +1574,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (event.type === 'chat' || event.type === 'session:activity') {
       return sendTo(host.sessionWindow(event.type === 'chat' ? event.state.id : event.activity.id), event);
     }
+    // Likewise a running "!" command's output: the windows showing its chat.
+    if (event.type === 'chat:command') return sendTo(host.sessionWindow(event.chatId), event);
     // Likewise a terminal session's output: only the windows showing it.
     if (event.type === 'terminal:data' || event.type === 'terminal:end') return sendTo(host.terminalWindow(event.id), event);
+    // A task run's raw output is for `looper serve` to print: no window shows it.
+    if (event.type === 'agent:data') return;
     sendTo(allWindows(), event);
   };
   engine.on((event) => broadcast(event));

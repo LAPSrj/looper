@@ -4,9 +4,11 @@ import { describeCron } from '@shared/cron';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels } from '@shared/environments';
 import type { Environment, Harness, Task } from '@shared/types';
 import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
-import { ChatRow, ToolGroup, groupRows } from './components/ChatRows';
+import { ChatRow, ToolGroup } from './components/ChatRows';
+import { groupRows } from './components/chat-groups';
+import { useChatsSettings } from './components/hooks';
 import { Icon } from './components/Icon';
-import { TabBar } from './components/ui';
+import { EmptyWindow, TabBar } from './components/ui';
 import { openXterm } from './components/xterm';
 import { subscribe } from './events';
 import { fmtDateTime } from './format';
@@ -274,6 +276,7 @@ function Chat({ state }: { state: BuilderState }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const ctx = { taskId: state.taskId ?? '', runId: '' };
+  const { expandThinking } = useChatsSettings();
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -289,7 +292,7 @@ function Chat({ state }: { state: BuilderState }) {
   };
 
   const placeholder = state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run';
-  const items = groupRows(state.rows);
+  const items = groupRows(state.rows, expandThinking);
   const showCard = state.status === 'ready' && state.unsaved && draftValid(state);
   const last = items.at(-1);
   const cardUnder = showCard && last?.kind === 'row' && last.row.kind === 'agent';
@@ -418,8 +421,7 @@ export function BuilderApp({ id }: { id: string }) {
     });
   }, [taskId]);
 
-  if (state === undefined) return <div className="empty">Loading…</div>;
-  if (state === null) return <div className="empty">This conversation with the agent was closed.</div>;
+  if (!state) return <EmptyWindow gone={state === null && 'This conversation with the agent was closed.'} />;
   return (
     <div className="builder-app">
       <BuilderToolbar state={state} />

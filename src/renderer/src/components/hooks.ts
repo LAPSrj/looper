@@ -1,7 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
+import { SettingsSchema, type Settings } from '@shared/types';
 import { subscribe } from '../events';
 import { enterPressesDefault, listNavKey, type ListNavModel } from './list-nav';
+
+/** Settings → Chats, shared by every row of a conversation in the window: read once, then kept current. */
+let chatsSettings: Settings['chats'] = SettingsSchema.shape.chats.parse(undefined);
+let chatsListening = false;
+const chatsListeners = new Set<() => void>();
+function setChatsSettings(next: Settings['chats']): void {
+  if (JSON.stringify(next) === JSON.stringify(chatsSettings)) return;
+  chatsSettings = next;
+  for (const l of chatsListeners) l();
+}
+function watchChatsSettings(onChange: () => void): () => void {
+  if (!chatsListening) {
+    chatsListening = true;
+    void window.looper.info().then((i) => setChatsSettings(i.settings.chats));
+    subscribe((e) => {
+      if (e.type === 'settings') setChatsSettings(e.settings.chats);
+    });
+  }
+  chatsListeners.add(onChange);
+  return () => chatsListeners.delete(onChange);
+}
+export function useChatsSettings(): Settings['chats'] {
+  return useSyncExternalStore(watchChatsSettings, () => chatsSettings);
+}
 
 /** Whether the project's folder is in a git repository; it's checked again whenever the project changes. */
 export function useGitRepo(projectId: string | undefined): boolean {
@@ -16,6 +41,48 @@ export function useGitRepo(projectId: string | undefined): boolean {
     if (projectId) void window.looper.git.check(projectId);
   }, [projectId]);
   return !!projectId && repos.includes(projectId);
+}
+
+/**
+ * Create-on-add: a new entry already exists in the settings so its editor
+ * window could open; closing the window without Create removes it again
+ * (`discard`). Set the returned ref once the entry is saved.
+ */
+export function useDiscardUnsaved(isNew: boolean | undefined, discard: () => void): RefObject<boolean> {
+  const savedRef = useRef(false);
+  const discardRef = useRef(discard);
+  discardRef.current = discard;
+  useEffect(() => {
+    if (!isNew) return;
+    const onUnload = () => {
+      if (!savedRef.current) discardRef.current();
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [isNew]);
+  return savedRef;
+}
+
+/** The settings and host kind, kept current; `missing` once the entry the window edits (`found`) is gone from them. */
+export function useLiveSettings(found: (s: Settings) => boolean): { live: Settings | null; host: string | undefined; missing: boolean } {
+  const [live, setLive] = useState<Settings | null>(null);
+  const [host, setHost] = useState<string | undefined>(undefined);
+  const [missing, setMissing] = useState(false);
+  const foundRef = useRef(found);
+  foundRef.current = found;
+  useEffect(() => {
+    void window.looper.info().then((info) => {
+      setLive(info.settings);
+      setHost(info.host);
+      if (!foundRef.current(info.settings)) setMissing(true);
+    });
+    return window.looper.onEvent((e) => {
+      if (e.type !== 'settings') return;
+      setLive(e.settings);
+      if (!foundRef.current(e.settings)) setMissing(true);
+    });
+  }, []);
+  return { live, host, missing };
 }
 
 interface DialogKeysOpts<T extends string> {

@@ -1,7 +1,7 @@
 # Building a task with an agent
 
 Instead of filling in the task editor yourself, you can describe the task in
-a conversation and let an agent build it: **File → New Task with Agent…**
+a conversation and let an agent build it: **File → New Task → With Agent…**
 for a new task, or **Edit with Agent…** (Task menu and the task's context
 menu) to change an existing one. The agent writes the task's scripts, keeps
 the task's definition up to date, and tests that the task can reach what it
@@ -28,8 +28,11 @@ moment, and the definition as it was last saved.
 
 Type what the task should do and press Enter (Shift+Enter starts a new
 line). The agent's replies show in full. The tool calls between two replies
-(commands it ran, files it wrote) show as one line, such as "4 tool uses";
-expand it to list the calls, and expand a call to see its input and result.
+(commands it ran, files it wrote) show as one line, such as "4 tool uses", or "Thinking and 4 tool uses" when
+the agent's thinking sits among them (with **Settings → Chats → Show thinking
+expanded** on, thinking shows as a block between the messages instead); expand
+it to list the calls and the thinking's text, and expand a call to see its
+input and result.
 
 The agent runs in the task's working directory, so it can read the project
 and test the task from where it will run. It runs without the project's or

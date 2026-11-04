@@ -55,6 +55,8 @@ function Row({
       aria-level={2}
       className={`session-row${selected ? ' selected' : ''}${s.waiting?.reason === 'turn' ? ' unread' : ''}`}
       onClick={() => onSelect(s.id)}
+      // A chat or a task run opens in a window of its own; terminal sessions stay in the Chats window.
+      onDoubleClick={isPhone || s.kind === 'terminal' ? undefined : () => window.looper.openItemWindow('chat', s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
         // On a phone a selection opens the chat: a long press only shows its menu (which names the session itself).
@@ -196,6 +198,7 @@ export function SessionList({
     onActivate: (i) => {
       const r = rows[i];
       if (r.kind === 'group') onToggle(r.key);
+      else if (!isPhone && r.s.kind !== 'terminal') window.looper.openItemWindow('chat', r.s.id);
     },
     onDelete: (i) => {
       const r = rows[i];

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MessageImage } from '@shared/messages';
 import { Icon } from './components/Icon';
+import { NumberInput } from './components/ui';
 
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 800;
@@ -127,20 +128,16 @@ export function ImageApp({
         <button title="Zoom Out" aria-label="Zoom Out" disabled={!url || (zoom ?? 100) <= MIN_ZOOM} onClick={() => step(-1)}>
           <Icon>{ICONS.zoomOut}</Icon>
         </button>
-        <div className="input-suffix image-zoom">
-          <input
-            type="number"
-            min={MIN_ZOOM}
-            max={MAX_ZOOM}
-            value={zoom ?? ''}
-            disabled={!url}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v) && v > 0) setZoom(clamp(v));
-            }}
-          />
-          <span className="suffix">%</span>
-        </div>
+        <NumberInput
+          className="image-zoom"
+          label="Zoom"
+          suffix="%"
+          min={MIN_ZOOM}
+          max={MAX_ZOOM}
+          value={zoom}
+          disabled={!url}
+          onChange={(v) => Number.isFinite(v) && v > 0 && setZoom(clamp(v))}
+        />
         <button title="Zoom In" aria-label="Zoom In" disabled={!url || (zoom ?? 100) >= MAX_ZOOM} onClick={() => step(1)}>
           <Icon>{ICONS.zoomIn}</Icon>
         </button>

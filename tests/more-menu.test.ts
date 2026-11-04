@@ -4,7 +4,7 @@ import { AddonPaneContentSchema, AddonScreenSchema, readAddonManifest } from '..
 import type { MenuItemSpec } from '../src/shared/remote-access';
 import { menuForPlatform, showsOn, uiPlatformOf } from '../src/shared/ui-platform';
 import { findToolbarItem, groupsAtSeparators, toolbarFor, type ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
-import { composeMore, isDestructive, phoneMenu, THIS_DEVICE_ITEM } from '../src/renderer/src/web/more-menu';
+import { composeMore, phoneMenu, THIS_DEVICE_ITEM } from '../src/renderer/src/web/more-menu';
 
 const labels = (items: MenuItemSpec[]): string[] => items.map((i) => (i.type === 'separator' ? '—' : (i.label ?? '')));
 const item = (id: string, label: string, extra: Partial<MenuItemSpec> = {}): MenuItemSpec => ({ id, type: 'normal', label, enabled: true, ...extra });
@@ -109,11 +109,18 @@ describe('toolbar model', () => {
 });
 
 describe('phoneMenu', () => {
-  it('hides unavailable items and puts destructive ones last, in red', () => {
-    const out = phoneMenu([item('1', 'Run Now'), item('2', 'Delete Task'), item('3', 'Stop Task', { enabled: false }), sep('s'), item('4', 'Edit Task…')]);
-    expect(labels(out)).toEqual(['Run Now', '—', 'Edit Task…', '—', 'Delete Task']);
-    expect(isDestructive('De&lete Task')).toBe(true);
-    expect(isDestructive('Edit Task…')).toBe(false);
+  it('hides unavailable items and puts the ones marked destructive last', () => {
+    const out = phoneMenu([
+      item('1', 'Run Now'),
+      item('2', 'Delete Task', { destructive: true }),
+      item('3', 'Stop Task', { enabled: false, destructive: true }),
+      sep('s'),
+      item('4', 'Edit Task…'),
+      // The mark decides, not the label: Stop Rest Mode ends nothing.
+      item('5', 'Stop Rest Mode'),
+    ]);
+    expect(labels(out)).toEqual(['Run Now', '—', 'Edit Task…', 'Stop Rest Mode', '—', 'Delete Task']);
+    expect(out[out.length - 1].destructive).toBe(true);
   });
 
   it('drops submenus left empty', () => {
@@ -141,7 +148,7 @@ describe('composeMore', () => {
       submenu: [
         item('1.0', 'Run Now', { key: 'task-run-now' }),
         item('1.1', 'Stop Task', { key: 'task-stop', enabled: false }),
-        item('1.2', 'Delete Task', { key: 'task-delete' }),
+        item('1.2', 'Delete Task', { key: 'task-delete', destructive: true }),
         item('1.3', 'Open Working Directory', { key: 'task-work-folder', platforms: ['desktop'] }),
       ],
     },
@@ -277,6 +284,19 @@ describe('addon platform marks and mobileMore', () => {
     expect(messages).toEqual(['mobileMore names no toolbar button "nope"', 'mobileMore names no menu "Edit"', 'mobileMore names no menu item "missing"']);
     expect(AddonScreenSchema.safeParse({ ...screen, mobileMore: [] }).success).toBe(false);
     expect(AddonScreenSchema.safeParse({ ...screen, mobileMore: [[{ toolbar: 'new', menu: 'File' }]] }).success).toBe(false);
+  });
+
+  it('accepts destructive on menu items, screen toolbar buttons and main-toolbar buttons, and carries it to the menu', () => {
+    const r = AddonScreenSchema.safeParse({
+      toolbar: [{ id: 'del', label: 'Delete Server', icon: 'delete', destructive: true }],
+      menuBar: [{ label: '&Edit', items: [{ id: 'del', label: '&Delete Server', destructive: true }] }],
+      body: [],
+    });
+    expect(r.success).toBe(true);
+    expect(readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'Stop All', destructive: true }] }).ok).toBe(true);
+    expect(AddonScreenSchema.safeParse({ toolbar: [{ id: 'a', label: 'A', destructive: 'yes' }], body: [] }).success).toBe(false);
+    const { items } = serializeMenu({ items: [{ label: 'Delete Server', destructive: true }, { label: 'Stop Rest Mode' }] });
+    expect(items.map((i) => i.destructive)).toEqual([true, undefined]);
   });
 
   it('leaves a screen with none of these as it was', () => {

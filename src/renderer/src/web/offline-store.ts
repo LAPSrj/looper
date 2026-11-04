@@ -23,7 +23,6 @@ export const READ_CHANNELS: ReadonlySet<string> = new Set([
   'runs:output',
   'runs:messages',
   'runs:messageImage',
-  'agent:buffer',
   'rest:state',
   'prevent-sleep:state',
   'chat:get',
@@ -129,9 +128,9 @@ const emptyMeta = (version: string): OfflineMeta => ({ version, deviceId: null, 
 // Channels whose first argument is a chat or session id.
 const SESSION_KEYED = new Set(['chat:get', 'sessions:activity', 'sessions:backgroundOutput', 'terminalSession:output']);
 // Channels whose first argument is a task id.
-const TASK_KEYED = new Set(['runs:list', 'versions:list', 'versions:detail', 'runs:output', 'runs:messages', 'runs:messageImage', 'agent:buffer', 'run:canGuide']);
+const TASK_KEYED = new Set(['runs:list', 'versions:list', 'versions:detail', 'runs:output', 'runs:messages', 'runs:messageImage', 'run:canGuide']);
 // Channels whose second argument is a run id (a session's id for its subagents' transcripts).
-const RUN_KEYED = new Set(['runs:output', 'runs:messages', 'runs:messageImage', 'agent:buffer', 'run:canGuide']);
+const RUN_KEYED = new Set(['runs:output', 'runs:messages', 'runs:messageImage', 'run:canGuide']);
 // Kept while the task they belong to exists, whatever connection last read them.
 const SWEPT_BY_OWNER = new Set([...SESSION_KEYED, ...TASK_KEYED].filter((c) => c !== 'versions:detail'));
 

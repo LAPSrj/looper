@@ -3,7 +3,7 @@ import { Chevron } from './icons';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneItem } from '@shared/addons';
 import type { UiEvent } from '@shared/api';
-import type { Environment, Project, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { Environment, Project, ProjectFolder, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { ALL_FILTERS, PANES, passesFilter, type PaneId } from '@shared/panes';
 import { AddonPaneList, type AddonPaneState, type AddonSelection } from './AddonPane';
 import { ProjectList } from './ProjectList';
@@ -69,14 +69,18 @@ const isTaskPane = (key: string): key is PaneId => PANES.some((p) => p.id === ke
 /** The Projects tab's list of projects, under its header (a right-click there: Group By and New Project). */
 export function ProjectsSidebar({
   projects,
+  folders,
+  layout,
   selected,
   onSelect,
   environments,
   view,
 }: {
   projects: Project[];
+  folders: ProjectFolder[];
+  layout: Record<string, string[]>;
   selected: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   environments: Environment[];
   view: View;
 }) {
@@ -94,6 +98,8 @@ export function ProjectsSidebar({
       </div>
       <ProjectList
         projects={projects}
+        folders={folders}
+        layout={layout}
         groupBy={view.projectsPane.groupBy}
         environments={environments}
         selected={selected}

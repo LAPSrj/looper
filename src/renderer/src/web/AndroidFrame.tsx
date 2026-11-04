@@ -5,21 +5,18 @@ import { useConnection } from './connection';
 import type { ShellController } from './controller';
 import { OfflineBanner } from './OfflineBanner';
 import { useThisDevice } from './device-flows';
-import { messageCancelId, messageDefaultId, messageResult } from './dialog-flows';
+import { messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
 import { CHECK, FileRows, FileViewBody } from './phone-files';
 import { phoneMenu } from './more-menu';
 import {
-  ActionGlyph,
   deviceNoun,
   isLongMenu,
   menuGroups,
   moreFor,
-  NavIcon,
   PhoneWindows,
   pickMore,
-  plainLabel,
   Scrim,
   usePhoneShell,
   useSubmenus,
@@ -29,25 +26,11 @@ import {
   type Screen,
 } from './phone-shell';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
+import { barModel, dismissFor, plainLabel } from './nav-bar-model';
+import { ARROW_BACK, CLOSE, MdBarRow, NavIcon } from './NavBarRow';
+import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import './android.css';
 
-const ARROW_BACK = (
-  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z" fill="currentColor" />
-  </svg>
-);
-const CLOSE = (
-  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor" />
-  </svg>
-);
-const MORE_VERT = (
-  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-    <circle cx="12" cy="5.5" r="2" fill="currentColor" />
-    <circle cx="12" cy="12" r="2" fill="currentColor" />
-    <circle cx="12" cy="18.5" r="2" fill="currentColor" />
-  </svg>
-);
 const ARROW_RIGHT = (
   <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor" />
@@ -128,58 +111,21 @@ const DEVICE_LABEL = 'This device';
 
 function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controller: ShellController; sc: Screen; onMore: (sc: Screen, button: HTMLElement) => void }) {
   const nav = sc.nav;
-  const title = plainLabel(nav?.title ?? sc.win.title);
-  const hasMore = moreFor(sc, DEVICE_LABEL).items.length > 0;
-  const dialogLike = sc.pres === 'full-dialog' || sc.pres === 'dialog';
-  const cancel = nav?.cancel;
-  const confirm = nav?.confirm;
-  const lead = nav?.back ? (
-    <button className="md-icon-btn" aria-label="Back" onClick={() => shell.goBack()}>
-      {ARROW_BACK}
-    </button>
-  ) : cancel ? (
-    // A full-screen dialog's close, as Material draws an editor's Cancel.
-    <button className="md-icon-btn" aria-label={plainLabel(cancel.label ?? 'Cancel')} disabled={cancel.disabled} onClick={() => cancel.run()}>
-      {CLOSE}
-    </button>
-  ) : sc.pres === 'push' ? (
-      <button className="md-icon-btn" aria-label="Back" onClick={() => shell.goBack()}>
-        {ARROW_BACK}
-      </button>
-    ) : dialogLike ? (
-      <button className="md-icon-btn" aria-label="Close" onClick={() => controller.close(sc.win.w)}>
-        {CLOSE}
-      </button>
-    ) : null;
+  const goBack = () => shell.goBack();
+  const model = barModel({
+    title: nav?.title ?? sc.win.title,
+    back: nav?.back ? goBack : undefined,
+    cancel: nav?.cancel,
+    confirm: nav?.confirm,
+    actions: nav?.actions,
+    dismiss: dismissFor(sc.pres, { back: goBack, close: () => controller.close(sc.win.w) }),
+  });
+  const more = moreFor(sc, DEVICE_LABEL).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
   const connection = useConnection(controller);
   return (
     <header className={`md-bar${sc.pres === 'bottom-sheet' ? ' sheet' : ''}`}>
       {sc.pres === 'bottom-sheet' && <div className="md-handle" aria-hidden="true" />}
-      <div className="md-bar-row">
-        {lead}
-        <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{title}</h1>
-        {nav?.actions?.map((a) =>
-          (a.icon || a.ring) && !dialogLike ? (
-            <button key={a.id} className="md-icon-btn" aria-label={a.label} title={a.label} disabled={a.disabled} onClick={() => a.run()}>
-              <ActionGlyph action={a} size={24} />
-            </button>
-          ) : (
-            <button key={a.id} className="md-text-btn" disabled={a.disabled} onClick={() => a.run()}>
-              {a.label}
-            </button>
-          ),
-        )}
-        {confirm && (
-          <button className="md-text-btn" disabled={confirm.disabled} onClick={() => confirm.run()}>
-            {plainLabel(confirm.label ?? 'Save')}
-          </button>
-        )}
-        {hasMore && (
-          <button className="md-icon-btn" aria-label="More options" aria-haspopup="menu" onClick={(e) => onMore(sc, e.currentTarget)}>
-            {MORE_VERT}
-          </button>
-        )}
-      </div>
+      <MdBarRow model={model} onMore={more} dialogLike={sc.pres === 'full-dialog' || sc.pres === 'dialog'} />
       <OfflineBanner connection={connection} />
     </header>
   );
@@ -278,8 +224,8 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
  */
 export function Dialog({ spec, onAnswer, input }: { spec: MessageBoxSpec; onAnswer: (response: number, checked: boolean) => void; input?: { value: string; onChange: (v: string) => void } }) {
   const [checked, setChecked] = useState(!!spec.checkboxChecked);
-  const cancel = messageCancelId(spec);
-  const def = messageDefaultId(spec);
+  const cancel = spec.cancelId;
+  const def = spec.defaultId;
   const idx = spec.buttons.map((_, i) => i);
   const confirm = def !== cancel ? def : idx.find((i) => i !== cancel);
   const order = [cancel, ...idx.filter((i) => i !== cancel && i !== confirm), ...(confirm !== undefined ? [confirm] : [])].filter((i) => i < spec.buttons.length);
@@ -377,19 +323,29 @@ function BottomSheet({ label, onClose, children }: { label: string; onClose: () 
 }
 
 /** A full-screen dialog of the frame's own (a dialog on tablets): close, title, the confirming action. */
-function FullDialog({ shell, title, onClose, action, children }: { shell: PhoneShell; title: string; onClose: () => void; action?: ReactNode; children: ReactNode }) {
+function FullDialog({
+  shell,
+  title,
+  onClose,
+  bar,
+  children,
+}: {
+  shell: PhoneShell;
+  title: string;
+  onClose: () => void;
+  /** The bar's Confirm and actions; its close icon closes the dialog. */
+  bar?: Pick<NavBarProps, 'cancel' | 'confirm' | 'actions'>;
+  children: ReactNode;
+}) {
+  const host = useMemo(() => ({ presentation: shell.tablet ? ('dialog' as const) : ('full-dialog' as const), close: onClose }), [shell.tablet, onClose]);
   return (
     <div className={`md-own-dialog${shell.tablet ? ' tablet' : ''}`}>
       <div className="md-scrim" />
       <div className="md-own-card" role="dialog" aria-modal="true" aria-label={title}>
         <header className="md-bar">
-          <div className="md-bar-row">
-            <button className="md-icon-btn" aria-label="Close" onClick={onClose}>
-              {CLOSE}
-            </button>
-            <h1 className="md-bar-title">{title}</h1>
-            {action}
-          </div>
+          <BarHostContext.Provider value={host}>
+            <NavBar title={title} {...bar} />
+          </BarHostContext.Provider>
         </header>
         {children}
       </div>
@@ -427,13 +383,7 @@ function FileScreen({ controller, shell, dialog }: { controller: ShellController
       shell={shell}
       title={f.title}
       onClose={f.cancel}
-      action={
-        !(onDevice && f.kind === 'open') && (
-          <button className="md-text-btn" disabled={!f.canConfirm} onClick={f.confirm}>
-            {plainLabel(f.confirmLabel)}
-          </button>
-        )
-      }
+      bar={{ confirm: onDevice && f.kind === 'open' ? undefined : { label: f.confirmLabel, disabled: !f.canConfirm, run: f.confirm } }}
     >
       {f.sources.length > 1 && (
         <div className="md-tabs" role="tablist">
@@ -519,11 +469,7 @@ function PathScreen({ controller, shell, req }: { controller: ShellController; s
       shell={shell}
       title={p.name}
       onClose={p.close}
-      action={
-        <button className="md-text-btn" disabled={!p.canDownload} onClick={p.download}>
-          Download
-        </button>
-      }
+      bar={{ confirm: { label: 'Download', disabled: !p.canDownload, run: p.download } }}
     >
       <Crumbs browser={browser} />
       <FileRows os="android" browser={browser} onFile={(entry) => browser.select(entry)} />

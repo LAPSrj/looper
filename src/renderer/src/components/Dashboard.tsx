@@ -54,14 +54,13 @@ interface Props {
 /** What opening a dashboard row does (double-click or Enter; a tap on a phone). */
 export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => void) {
   return {
-    // A waiting run opens on its terminal, or in its run window to answer its question; a failed one in its run window.
+    // A waiting or failed run opens in its run window, where its question is answered and guidance sent.
     attention: (r: AttentionRow) => {
-      if (r.question && r.runId) void window.looper.openMessages(r.task.id, r.runId);
-      else if (r.runId) onOpen(r.task.id, 'terminal');
-      else if (r.lastRunId) void window.looper.openMessages(r.task.id, r.lastRunId);
+      const runId = r.runId ?? r.lastRunId;
+      if (runId) void window.looper.openMessages(r.task.id, runId);
       else onOpen(r.task.id, 'runs');
     },
-    running: (r: RunningRow) => onOpen(r.task.id, 'terminal'),
+    running: (r: RunningRow) => void window.looper.openMessages(r.task.id, r.runId),
     // An open conversation opens in a Looper terminal window.
     remote: (c: RemoteConversation) => void window.looper.remote.open(c.id),
     recent: (r: RecentRun) => void window.looper.openMessages(r.taskId, r.runId),

@@ -36,6 +36,8 @@ const NOT_CONNECTED_ALERT: MessageBoxSpec = {
   message: 'Not connected to the host computer.',
   detail: 'Looper keeps trying to reconnect.',
   buttons: ['OK'],
+  defaultId: 0,
+  cancelId: 0,
 };
 /** Sends a page makes on its own, which fail quietly while disconnected; every other send is the user's action and gets the alert. */
 const QUIET_SENDS = new Set([
@@ -43,7 +45,6 @@ const QUIET_SENDS = new Set([
   'sessions:seen',
   'sessions:cards',
   'builder:resize',
-  'agent:resize',
   'terminalSession:resize',
   'addons:slowDraw',
   'addons:menuBar',

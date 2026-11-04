@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
-import { useDialogKeys } from './components/hooks';
 import { ListActions, SelectList } from './components/SelectList';
 import { claudeHarnesses } from './components/RemoteFields';
-
-const rid = () => Math.random().toString(36).slice(2, 8);
+import { EmptyWindow } from './components/ui';
+import { WindowActions } from './components/WindowActions';
+import { rid } from './rid';
 
 /**
  * Advanced → Remote Control → Helpers. The list is managed live through the
@@ -29,9 +29,7 @@ export function RemoteHelpersApp() {
     });
   }, []);
 
-  useDialogKeys({ onCancel: () => window.close() });
-
-  if (!live) return <div className="empty">Loading…</div>;
+  if (!live) return <EmptyWindow />;
 
   const r = live.remote;
   const helpers = r.helpers;
@@ -94,7 +92,7 @@ export function RemoteHelpersApp() {
             menu={(h) => [
               { label: 'Edit…', run: () => void window.looper.remote.openHelperEditor(h.id) },
               { label: 'Duplicate', run: () => void duplicateHelper(h) },
-              { label: 'Remove', run: () => void removeHelper(h) },
+              { label: 'Remove', destructive: true, run: () => void removeHelper(h) },
             ]}
             onDelete={(h) => void removeHelper(h)}
           />
@@ -109,11 +107,7 @@ export function RemoteHelpersApp() {
           />
         </div>
       </div>
-      <div className="editor-footer">
-        <button className="btn" onClick={() => window.close()}>
-          Close
-        </button>
-      </div>
+      <WindowActions close />
     </div>
   );
 }

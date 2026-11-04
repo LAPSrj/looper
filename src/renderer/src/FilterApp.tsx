@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useDialogKeys } from './components/hooks';
-import { EditorFooter, Field } from './components/ui';
+import { Field } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 /**
  * The conversation window's filter, as a modal child window. OK and Clear
@@ -15,7 +15,6 @@ export function FilterApp({ current }: { current: string }) {
   }, []);
 
   const apply = (value: string) => window.looper.applyMessagesFilter(value);
-  useDialogKeys({ onSave: () => apply(text), onCancel: () => window.close() });
 
   return (
     <div className="editor">
@@ -26,13 +25,7 @@ export function FilterApp({ current }: { current: string }) {
           </Field>
         </div>
       </div>
-      <EditorFooter
-        primaryLabel="OK"
-        onPrimary={() => apply(text)}
-        onCancel={() => window.close()}
-        onApply={() => apply('')}
-        applyLabel="Clear Filter"
-      />
+      <WindowActions confirm={{ label: 'OK', run: () => apply(text) }} extras={[{ id: 'clear-filter', label: 'Clear Filter', run: () => apply('') }]} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
+import type { Catalog, Command } from '../../../shared/commands/types';
 import type { MenuItemSpec } from '../../../shared/remote-access';
-import { menuForPlatform } from '../../../shared/ui-platform';
+import { menuForPlatform, showsOn } from '../../../shared/ui-platform';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from '../components/toolbar-model';
 
 /**
@@ -19,8 +20,8 @@ export type MoreRef =
   | { toolbar: string }
   /** A menu-bar menu, by its key (the template's id) or label: its items show in its place, its separators as group breaks. */
   | { menu: string }
-  /** A menu-bar item anywhere in the menu bar, by its key. */
-  | { item: string };
+  /** A menu-bar item anywhere in the menu bar, by its key; when the menu bar has none, the toolbar item `toolbar` (a terminal has no Chat menu). */
+  | { item: string; toolbar?: string };
 
 /** A group of entries, set off from the next by a gap. */
 export type MoreGroup = MoreRef[];
@@ -39,13 +40,6 @@ export interface MoreAction {
 export const THIS_DEVICE_ITEM = '__looper-this-device';
 /** Items the page carries out itself start with this; the rest go to the computer's menu. */
 const PAGE = '__page:';
-
-/**
- * Items that destroy or cut something off, as their labels start: red, and
- * last in a menu (HIG: Context menus); a red button in an alert.
- */
-export const DESTRUCTIVE = /^(delete|remove|discard|don.t save|unpair|end|stop|clear|overwrite|replace|move to recycle bin)\b/i;
-export const isDestructive = (label: string | undefined): boolean => DESTRUCTIVE.test(plain(label));
 
 const plain = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
 const sameLabel = (a: string | undefined, b: string): boolean => plain(a).trim().toLowerCase() === plain(b).trim().toLowerCase();
@@ -68,8 +62,8 @@ const joinGroups = (groups: MenuItemSpec[][]): MenuItemSpec[] => tidy(groups.fla
 
 /**
  * A menu as a phone shows it (HIG: Context menus): what can't be done now is
- * hidden, not dimmed; destructive items go last, in a group of their own;
- * submenus left with nothing go too.
+ * hidden, not dimmed; the items marked destructive go last, in a group of
+ * their own; submenus left with nothing go too.
  */
 export function phoneMenu(items: MenuItemSpec[]): MenuItemSpec[] {
   const keep: MenuItemSpec[] = [];
@@ -85,7 +79,7 @@ export function phoneMenu(items: MenuItemSpec[]): MenuItemSpec[] {
       if (sub.length) keep.push({ ...it, submenu: sub });
       continue;
     }
-    (isDestructive(it.label) ? red : keep).push(it);
+    (it.destructive ? red : keep).push(it);
   }
   const body = tidy(keep);
   return red.length ? [...body, ...(body.length ? [separator()] : []), ...red] : body;
@@ -129,6 +123,7 @@ export function composeMore(input: MoreInput): MoreMenu {
     if (!isEnabled(it)) return [];
     const primary = it.run ? page(`tb:${it.id}`, it.label, it.icon, it.run) : null;
     if (primary && it.pressed !== undefined) Object.assign(primary, { type: 'checkbox', checked: it.pressed });
+    if (primary && it.destructive) primary.destructive = true;
     const m = it.menu;
     const entries = m?.items?.filter(isEnabled) ?? [];
     if (m && entries.length) {
@@ -161,13 +156,11 @@ export function composeMore(input: MoreInput): MoreMenu {
       input.more.map((group) =>
         group.flatMap((ref): MenuItemSpec[] => {
           if ('action' in ref) return ref.action.disabled ? [] : [page(`act:${ref.action.id}`, ref.action.label, ref.action.icon, ref.action.run)];
-          if ('toolbar' in ref) {
-            const it = toolbar.flatMap((g) => g.items).find((x) => x.id === ref.toolbar);
-            return it ? toolbarRows(it) : [];
-          }
           if ('menu' in ref) return findMenu(ref.menu)?.submenu ?? [];
-          const it = findItem(menu, ref.item);
-          return it ? [it] : [];
+          const it = 'item' in ref ? findItem(menu, ref.item) : undefined;
+          if (it) return [it];
+          const tb = ref.toolbar !== undefined ? toolbar.flatMap((g) => g.items).find((x) => x.id === ref.toolbar) : undefined;
+          return tb ? toolbarRows(tb) : [];
         }),
       ),
     );
@@ -181,6 +174,25 @@ export function composeMore(input: MoreInput): MoreMenu {
     items.push({ id: THIS_DEVICE_ITEM, type: 'normal', label: input.device, enabled: true });
   }
   return { items, run };
+}
+
+/**
+ * A screen's More menu from its command catalogs (shared/commands): every
+ * command that shows on a phone, in `groups`' order and catalog order within a
+ * group, for the session `kind` shown. A command refers to its menu-bar item,
+ * and to its toolbar item where the menu bar doesn't have it.
+ */
+export function catalogMore(catalogs: readonly Catalog[], groups: readonly string[], kind?: string): MoreGroup[] {
+  const commands = catalogs.flatMap((c) => Object.values(c));
+  const shows = (c: Command, group: string): boolean =>
+    showsOn(c.platforms, 'mobile') && 'group' in c.mobile && c.mobile.group === group && (kind === undefined || !c.mobile.kinds || c.mobile.kinds.includes(kind));
+  return groups.map((g) => commands.filter((c) => shows(c, g)).flatMap(commandRef)).filter((g) => g.length);
+}
+
+/** A command's entry in a More menu. */
+export function commandRef(c: Command): MoreRef[] {
+  if (c.menu) return [c.toolbar ? { item: c.menu.id, toolbar: c.toolbar.id } : { item: c.menu.id }];
+  return c.toolbar ? [{ toolbar: c.toolbar.id }] : [];
 }
 
 /** A designed menu's own command, by id. */

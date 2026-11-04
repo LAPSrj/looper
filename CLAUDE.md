@@ -48,6 +48,11 @@
 
 This is a Windows-first Electron app. Follow native Windows UX patterns:
 
+- **Win32 guidelines over WinUI.** The Windows UX guide for Win32
+  (learn.microsoft.com/windows/win32/uxguide) wins, so Looper keeps the
+  classic, efficient Win32 look and behavior. Use WinUI's guidance only where
+  Win32 says nothing on the subject, and say so where you apply it.
+
 - **Native dialogs for errors and confirmations** — use `dialog.showMessageBox`
   (type: error/question), not inline error lists or browser `alert()`/`confirm()`.
 - **Standard button order:** Save | Cancel | Apply (left to right).

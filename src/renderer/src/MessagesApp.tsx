@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { TaskRuntime } from '@shared/types';
 import { MessagesView } from './components/Messages';
-import { InfoBar } from './components/ui';
+import { RunGuidance } from './components/Transcript';
 import { subscribe } from './events';
 import { taskNameOf } from './phone-lists';
-import { isPhone } from './web/page-nav';
 
 /**
- * A conversation in its own window: a run's messages, or a subagent's
- * (agentId set). While the run's agent is going, a box under it sends the
- * agent guidance, or the answer to the question it is waiting on; a
- * subagent's window has none, since guidance goes to the main session.
+ * A conversation in its own window: a run's records and its conversation, or
+ * a subagent's conversation (agentId set). While the run's agent is going, a
+ * box at the bottom sends the agent guidance, or the answer to the question
+ * it is waiting on; a subagent's window has none, since guidance goes to the
+ * main session.
  */
 export function MessagesApp({
   taskId,
@@ -27,9 +27,6 @@ export function MessagesApp({
   focusReport?: boolean;
 }) {
   const [runtime, setRuntime] = useState<TaskRuntime | null>(null);
-  const [canGuide, setCanGuide] = useState(false);
-  const [guidance, setGuidance] = useState('');
-  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(0);
 
   useEffect(() => {
@@ -49,31 +46,6 @@ export function MessagesApp({
   const run = runtime?.runs.find((r) => r.runId === runId);
   const running = run?.state === 'running' || run?.state === 'classifying';
   const agentRunning = run?.state === 'running';
-  // While the agent waits on an answer, what the box sends is the answer.
-  const question = agentId ? null : (run?.question ?? null);
-
-  useEffect(() => {
-    if (agentId || !agentRunning) {
-      setCanGuide(false);
-      return;
-    }
-    void window.looper.canGuideRun(taskId, runId).then(setCanGuide);
-  }, [taskId, runId, agentId, agentRunning, question]);
-
-  const send = async () => {
-    const text = guidance.trim();
-    if (!text || sending) return;
-    setSending(true);
-    try {
-      await window.looper.sendGuidance(taskId, runId, text);
-      setGuidance('');
-      setSent((n) => n + 1);
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    } finally {
-      setSending(false);
-    }
-  };
 
   return (
     <div className="messages-app">
@@ -85,27 +57,9 @@ export function MessagesApp({
         refreshKey={sent}
         focusReport={focusReport}
         phoneTitle={phoneTitle}
-        notice={canGuide && question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
       />
-      {canGuide && (
-        <div className="guidance-compose">
-          <textarea
-            rows={3}
-            placeholder={question !== null ? 'Your answer' : 'Guidance for the agent'}
-            value={guidance}
-            onChange={(e) => setGuidance(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter is a line break; Ctrl+Enter sends (Cmd+Enter too on a phone or tablet).
-              if (e.key === 'Enter' && (e.ctrlKey || (isPhone && e.metaKey))) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <button className="btn primary" disabled={sending || !guidance.trim()} onClick={() => void send()}>
-            Send
-          </button>
-        </div>
+      {!agentId && agentRunning && (
+        <RunGuidance taskId={taskId} runId={runId} question={run?.question ?? null} recheck={run?.state} onSent={() => setSent((n) => n + 1)} />
       )}
     </div>
   );

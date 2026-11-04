@@ -3,9 +3,11 @@ import { AddonSearchBox } from './AddonPane';
 import { forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
-import { AttachmentList, ChatRow, ToolGroup, groupRows, type ChatItem, type RowCtx } from './ChatRows';
+import { AttachmentList, ChatRow, ToolGroup, type RowCtx } from './ChatRows';
+import { groupRows, type ChatItem } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
+import { useChatsSettings } from './hooks';
 import { PromptBody } from './Markdown';
 import { ToolInputView } from './ToolContent';
 
@@ -62,14 +64,21 @@ export function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissi
       <div className="chat-tool-body">
         <ToolInputView row={row} />
       </div>
-      <div className="chat-permission-actions">
-        <button className="btn primary" onClick={() => window.looper.chat.answer(state.id, p.id, true)}>
-          Allow
-        </button>
-        <button className="btn" onClick={() => window.looper.chat.answer(state.id, p.id, false)}>
-          Deny
-        </button>
-      </div>
+      <PermissionButtons chatId={state.id} permissionId={p.id} />
+    </div>
+  );
+}
+
+/** Allow and Deny on a chat's permission request: in the chat, and on its dashboard card. */
+export function PermissionButtons({ chatId, permissionId }: { chatId: string; permissionId: string }) {
+  return (
+    <div className="chat-permission-actions">
+      <button className="btn primary" onClick={() => window.looper.chat.answer(chatId, permissionId, true)}>
+        Allow
+      </button>
+      <button className="btn" onClick={() => window.looper.chat.answer(chatId, permissionId, false)}>
+        Deny
+      </button>
     </div>
   );
 }
@@ -228,8 +237,8 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
 
   // Esc closes the find bar, else stops the agent's turn (the Chat menu shows it as Stop's key);
   // F3 and Shift+F3 step through the matches; Ctrl+Shift+Q quotes the text selected in the messages.
-  const keys = useRef({ find, status: state.status });
-  keys.current = { find, status: state.status };
+  const keys = useRef({ find, status: state.status, commands: state.runningCommands });
+  keys.current = { find, status: state.status, commands: state.runningCommands };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
@@ -242,7 +251,8 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
       } else if (e.key === 'Escape') {
         const mine = !embedded || !!scrollRef.current?.closest('.chat-app')?.contains(document.activeElement);
         if (keys.current.find) closeFind();
-        else if (keys.current.status === 'working' && mine) void window.looper.chat.stop(id);
+        // Stop ends the agent's turn and the commands the user ran from the message box.
+        else if ((keys.current.status === 'working' || keys.current.commands > 0) && mine) void window.looper.chat.stop(id);
         else return;
         e.preventDefault();
       } else if (e.key === 'F3' && keys.current.find) {
@@ -259,8 +269,9 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const latest = useRef(state);
   latest.current = state;
   const ctx = useMemo<RowCtx>(() => ({ taskId: state.taskId, runId: state.id, onContextMenu: (_e, row) => showRowMenu(latest.current, row) }), [state.taskId, state.id]);
-  const history = useMemo(() => groupRows(state.history), [state.history]);
-  const items = useMemo(() => groupRows(state.rows), [state.rows]);
+  const { expandThinking } = useChatsSettings();
+  const history = useMemo(() => groupRows(state.history, expandThinking), [state.history, expandThinking]);
+  const items = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
 
   const editQueued = (messageId: string) =>
     void window.looper.chat.unqueue(id, messageId).then((m) => {

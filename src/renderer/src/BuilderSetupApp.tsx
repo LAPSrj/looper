@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Environment } from '@shared/types';
 import { AgentFields } from './components/RemoteFields';
-import { EditorFooter } from './components/ui';
-import { useDialogKeys } from './components/hooks';
+import { EmptyWindow } from './components/ui';
+import { WindowActions } from './components/WindowActions';
 
 /** New Task with Agent: what the task builder runs with. Start turns this window into the conversation. */
 export function BuilderSetupApp() {
@@ -68,9 +68,7 @@ export function BuilderSetupApp() {
     }
   };
 
-  useDialogKeys({ onSave: start, onCancel: () => window.close() });
-
-  if (!environments) return <div className="empty">Loading…</div>;
+  if (!environments) return <EmptyWindow />;
   return (
     <div className="editor">
       <div className="editor-body">
@@ -90,7 +88,7 @@ export function BuilderSetupApp() {
           />
         </div>
       </div>
-      <EditorFooter primaryLabel="Start" onPrimary={() => void start()} onCancel={() => window.close()} saving={starting} />
+      <WindowActions confirm={{ label: 'Start', run: () => void start() }} busy={starting} />
     </div>
   );
 }

@@ -38,8 +38,7 @@ const ModelEditorApp = lazy(() => import('./ModelEditorApp').then((m) => ({ defa
 const ModelUpdateApp = lazy(() => import('./ModelUpdateApp').then((m) => ({ default: m.ModelUpdateApp })));
 const FilterApp = lazy(() => import('./FilterApp').then((m) => ({ default: m.FilterApp })));
 const HistoryApp = lazy(() => import('./HistoryApp').then((m) => ({ default: m.HistoryApp })));
-const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));
-const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
+const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
 const ImageApp = lazy(() => import('./ImageApp').then((m) => ({ default: m.ImageApp })));
 const MarkdownExportApp = lazy(() => import('./MarkdownExportApp').then((m) => ({ default: m.MarkdownExportApp })));
@@ -90,6 +89,8 @@ const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
+const projectFolderNewMatch = /^project-folder-new(?:\/([^/]+))?$/.exec(hash);
+const projectFolderRenameMatch = /^project-folder-rename\/([^/]+)$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
 const sessionsMatch = /^sessions(?:\/([^/]+)(\/window)?)?$/.exec(hash);
 const sendToSessionsMatch = /^send-to-sessions(?:\/([^/]+))?$/.exec(hash);
@@ -98,6 +99,7 @@ const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash
 const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
 const viewMatch = /^view\/(.+)$/.exec(hash);
+const itemMatch = /^item\/(task|project)\/(.+)$/.exec(hash);
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
 const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
 
@@ -198,6 +200,11 @@ function pickRoot() {
   if (moveToFolderMatch) return <MoveToFolderApp taskId={decodeURIComponent(moveToFolderMatch[1])} />;
   if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;
   if (folderRenameMatch) return <FolderNameApp folderId={decodeURIComponent(folderRenameMatch[1])} />;
+  if (projectFolderRenameMatch) return <FolderNameApp scope="projects" folderId={decodeURIComponent(projectFolderRenameMatch[1])} />;
+  if (projectFolderNewMatch) {
+    const q = new URLSearchParams(projectFolderNewMatch[1] ? decodeURIComponent(projectFolderNewMatch[1]) : '');
+    return <FolderNameApp scope="projects" parentId={q.get('parent') ?? undefined} moveProject={q.get('move') ?? undefined} />;
+  }
   if (modelUpdateMatch) {
     return (
       <ModelUpdateApp
@@ -264,6 +271,7 @@ function pickRoot() {
   if (hash === 'instructions') return <InstructionsApp />;
   if (hash === 'about') return <AboutApp />;
   if (viewMatch) return <App fixed={decodeURIComponent(viewMatch[1])} />;
+  if (itemMatch) return <App fixed={itemMatch[1] === 'task' ? 'tasks' : 'projects'} item={decodeURIComponent(itemMatch[2])} />;
   return <App />;
 }
 

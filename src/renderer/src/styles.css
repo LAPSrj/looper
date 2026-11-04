@@ -256,7 +256,8 @@ code,
 }
 
 .about {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -270,10 +271,6 @@ code,
   font-size: 22px;
 }
 
-.about .btn {
-  margin-top: 20px;
-  min-width: 88px;
-}
 
 .toolbar {
   display: flex;
@@ -830,6 +827,13 @@ html:not(.phone-window) .session-group ~ .session-row {
   padding: 4px 12px;
   border: none;
 }
+/* Tabs sets --tab-under-text, white or black, when the text doesn't read on the color under the selected tab (a terminal's black). */
+:where(html:not(.phone-window)) .tabs-scroll .tab-item.active .tab {
+  color: var(--tab-under-text, var(--fg));
+}
+:where(html:not(.phone-window)) .tabs-scroll .tab-item.active .tab-close {
+  color: var(--tab-under-text, var(--fg-muted));
+}
 :where(html:not(.phone-window)) .tabs-scroll .tab-item.active .tab {
   padding-top: 5px;
   padding-bottom: 5px;
@@ -1362,22 +1366,6 @@ html:not(.phone-window) .session-group ~ .session-row {
   padding: 6px 0 0 6px;
   background: var(--term-bg);
 }
-.terminal-wrap {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  background: var(--term-bg);
-}
-.terminal-runs {
-  align-self: flex-start;
-  margin: 6px 10px 0;
-  padding: 4px 8px;
-  background: var(--term-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  color: var(--term-fg);
-}
 .terminal {
   flex: 1;
   min-height: 0;
@@ -1436,11 +1424,6 @@ html:not(.phone-window) .session-group ~ .session-row {
   display: block;
   margin: 12px 0 0;
 }
-/* The terminal stays dark in both themes; its bars sit on the window's own background. */
-.terminal-infobars {
-  flex: none;
-  background: var(--bg);
-}
 @media (prefers-color-scheme: dark) {
   .infobar {
     border-color: rgba(0, 0, 0, 0.1);
@@ -1496,6 +1479,12 @@ html:not(.phone-window) .session-group ~ .session-row {
   border-top: 1px solid var(--border);
   background: var(--bg-2);
 }
+/* Commands that don't close the window, at the row's left end, apart from the commit buttons (Win32: Dialog boxes). */
+.footer-extras {
+  display: flex;
+  gap: 8px;
+  margin-right: auto;
+}
 .tab-intro {
   margin: 16px 0 2px;
   padding-bottom: 10px;
@@ -1539,23 +1528,14 @@ html:not(.phone-window) .session-group ~ .session-row {
 .checkbox-field {
   display: flex;
   width: fit-content;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
+  gap: 6px;
   margin: 14px 0;
   font-size: var(--font-body);
-  font-weight: 400;
+  font-weight: 500;
   color: var(--fg);
   cursor: default;
 }
-.stagger-fields {
-  display: flex;
-  gap: 12px;
-  padding-left: 22px;
-}
-.stagger-fields .field {
-  margin: 0;
-}
-
 /* A form whose one text box takes all the room the window gives it: no empty space under it. */
 .form.fill {
   display: flex;
@@ -1574,18 +1554,7 @@ html:not(.phone-window) .session-group ~ .session-row {
   resize: none;
 }
 
-/* A sub-option checkbox sits right under the one it depends on. */
-.stagger-fields > .checkbox-field {
-  margin: 0;
-}
-.stagger-fields.disabled {
-  opacity: var(--disabled-opacity);
-}
-
-.step-fields {
-  padding-left: 22px;
-}
-
+/* The fields under a checkbox (StepFields), indented under it. */
 fieldset.step-fields {
   border: 0;
   margin: 0;
@@ -1597,109 +1566,42 @@ fieldset.step-fields {
 fieldset.step-fields > .row {
   margin: 0;
 }
-/* Several fields or rows under one checkbox (StepFields): the first sits right under it, the others keep the form's spacing. */
+/* Stacked: the first sits right under the checkbox, the others keep the form's spacing. */
 fieldset.step-fields.step-stack > :first-child {
   margin-top: 0;
 }
 fieldset.step-fields.step-stack > * + * {
   margin-top: 14px;
 }
+/* A sub-option checkbox at the end leaves the gap below to the next checkbox, as in any list of checkboxes. */
+fieldset.step-fields.step-stack > .checkbox-field:last-child {
+  margin-bottom: 0;
+}
+/* Side by side (Settings' stagger delays), or a sub-option checkbox right under the one it depends on. */
+fieldset.step-fields.step-row {
+  display: flex;
+  gap: 12px;
+}
+/* Low specificity on purpose: a phone's own field and switch margins win. */
+.step-row > * {
+  margin: 0;
+}
 .step-fields.disabled {
-  opacity: var(--disabled-opacity);
+  opacity: 0.4;
 }
 /* ---------- native controls ---------- */
-/* Desktop windows and the web desktop frame draw checkboxes, radio buttons, drop-down arrows, number spinners, date
-   fields and disclosure triangles in Looper's look, wherever they sit (not only inside a .field). A phone's page
-   draws its own (phone.css). Windows 11 sizes: a 20px box, 4px corners, the accent fill when checked. */
-html:not(.phone-window) input:is([type='checkbox'], [type='radio']) {
-  -webkit-appearance: none;
-  appearance: none;
-  flex: none;
-  position: relative;
-  width: 20px;
-  height: 20px;
-  margin: 0;
+/* Desktop windows and the web desktop frame keep the system's own checkboxes, radio buttons, drop-down arrows, number
+   spinners and date fields (Windows' look); only the disclosure triangles are drawn here. */
+/* A checkbox or radio beside its label keeps its natural size. */
+.checkbox-field input[type="checkbox"],
+.checkbox-field input[type="radio"] {
+  /* Inside a .field too (Remote Access's Sources): not a text box's size. */
+  width: auto;
+  height: auto;
   padding: 0;
-  border: 1px solid var(--fg-muted);
-  border-radius: var(--radius-control);
-  background: var(--bg-2);
-  cursor: default;
-}
-html:not(.phone-window) input[type='radio'] {
-  border-radius: 50%;
-}
-html:not(.phone-window) input:is([type='checkbox'], [type='radio']):checked {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-html:not(.phone-window) input:is([type='checkbox'], [type='radio']):checked::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--accent-fg);
-}
-html:not(.phone-window) input[type='checkbox']:checked::after {
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8.5 3 3 6-7' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8.5 3 3 6-7' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat;
-}
-html:not(.phone-window) input[type='radio']:checked::after {
-  inset: 4px;
-  border-radius: 50%;
-}
-@media (hover: hover) and (pointer: fine) {
-  html:not(.phone-window) input:is([type='checkbox'], [type='radio']):not(:disabled):hover {
-    border-color: var(--fg);
-  }
-  html:not(.phone-window) input:is([type='checkbox'], [type='radio']):not(:disabled):checked:hover {
-    border-color: var(--accent-hover);
-    background: var(--accent-hover);
-  }
-}
-/* Drop-downs: a muted chevron in place of the system arrow (the pop-up list stays the system's). */
-html:not(.phone-window) select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding-right: 28px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%235f5f5f' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-}
-@media (prefers-color-scheme: dark) {
-  html:not(.phone-window) select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b919c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  }
-}
-/* On the terminal's always-dark ground, the light chevron in both themes. */
-html:not(.phone-window) select.terminal-runs {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b919c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-}
-/* Number boxes: no spin buttons (the arrow keys step the value, and the unit sits where they were). */
-html:not(.phone-window) input[type='number'] {
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-html:not(.phone-window) input[type='number']::-webkit-inner-spin-button,
-html:not(.phone-window) input[type='number']::-webkit-outer-spin-button {
-  -webkit-appearance: none;
   margin: 0;
-}
-/* Date and time fields: the focused part in the accent, a quiet calendar button. */
-html:not(.phone-window) input:is([type='date'], [type='time'], [type='datetime-local'])::-webkit-datetime-edit-field:focus {
-  background: var(--accent);
-  color: var(--accent-fg);
-  outline: none;
-}
-html:not(.phone-window) input:is([type='date'], [type='datetime-local'])::-webkit-calendar-picker-indicator {
-  padding: 2px;
-  border-radius: var(--radius-control);
-  opacity: 0.7;
-  cursor: default;
-}
-@media (hover: hover) and (pointer: fine) {
-  html:not(.phone-window) input:is([type='date'], [type='datetime-local'])::-webkit-calendar-picker-indicator:hover {
-    background: var(--bg-3);
-    opacity: 1;
-  }
+  position: relative;
+  top: 1px;
 }
 /* Disclosure triangles: the thin chevron every other disclosure uses, turning a quarter when open. */
 summary {
@@ -1731,11 +1633,6 @@ details[open] > summary::before {
   outline-offset: 2px;
 }
 
-/* Radio options sit tight under their parent checkbox (which has 14px bottom margin). */
-.radio-list {
-  margin-top: -10px;
-}
-
 /* A radio group: laid out like a field, but its inputs keep their own size (no .field input rules). */
 .radio-field {
   display: flex;
@@ -1745,9 +1642,7 @@ details[open] > summary::before {
 }
 .checkbox-field.radio-option {
   margin: 2px 0;
-}
-.radio-list .checkbox-field {
-  margin: 4px 0;
+  font-weight: 400;
 }
 .help {
   margin: 0;
@@ -1772,6 +1667,7 @@ details[open] > summary::before {
 }
 /* The text box: every text control. :where() keeps the specificity of `.field input`, so component rules after this still win. */
 .field input:where(:not([type='checkbox'], [type='radio'])),
+:where(.inline-field) .input-suffix input,
 .field select,
 .field textarea,
 .guidance-compose textarea,
@@ -1793,6 +1689,7 @@ details[open] > summary::before {
   height: var(--control-height);
 }
 .field input:where(:not([type='checkbox'], [type='radio'])):focus,
+:where(.inline-field) .input-suffix input:focus,
 .field select:focus,
 .field textarea:focus,
 .guidance-compose textarea:focus,
@@ -1807,37 +1704,21 @@ details[open] > summary::before {
 .field textarea {
   resize: vertical;
 }
-/* A drop-down is as wide as its longest choice (at least 200px), not the window; name, path and command boxes stay full width. */
-:where(html:not(.phone-window)) .field select {
-  width: auto;
-  min-width: min(200px, 100%);
-  max-width: 100%;
-  align-self: flex-start;
+/* A disabled text box fades; drop-downs and checkboxes keep the system's disabled look. */
+.inline-field .input-suffix input:disabled,
+.field input:disabled {
+  opacity: 0.55;
 }
-/* One disabled look for every control, and for its label. */
-:is(input, select, textarea):disabled {
+.chat-composer :is(input, textarea):disabled {
   opacity: var(--disabled-opacity);
 }
-/* Only a disabled control counts: a disabled <option> (Status) leaves its select, and so its label, enabled. */
-.field:has(:is(input, select, textarea, button):disabled) > .field-label {
-  opacity: var(--disabled-opacity);
-}
-.checkbox-field:has(input:disabled) {
-  opacity: var(--disabled-opacity);
-}
-.checkbox-field input:disabled {
-  opacity: 1;
-}
-/* A group dimmed as a whole doesn't dim what's inside it again. */
-:is(.stagger-fields, .step-fields).disabled :is(input, select, textarea, .btn, .field-label) {
-  opacity: 1;
-}
-.browse-row {
+/* Controls side by side (InputRow): a text box and its Browse…, a pair of number boxes. */
+.input-row {
   display: flex;
   gap: 6px;
   align-items: center;
 }
-.browse-row input {
+.input-row input {
   flex: 1;
   min-width: 0;
 }
@@ -1860,12 +1741,6 @@ details[open] > summary::before {
   flex: 1;
   min-width: 0;
 }
-/* A number box fits its number, not the window (a phone's page sizes its own). */
-:where(html:not(.phone-window)) .input-suffix {
-  flex: 0 0 auto;
-  width: 140px;
-  max-width: 100%;
-}
 .input-suffix input {
   width: 100%;
   padding-right: 48px;
@@ -1881,6 +1756,21 @@ details[open] > summary::before {
   color: var(--fg-muted);
   font-size: var(--font-caption);
   pointer-events: none;
+}
+/* A checkbox whose text runs into a number box on the same line: "larger than [200 k tokens]". */
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inline-field > .checkbox-field {
+  margin: 0;
+}
+.inline-field > .input-suffix {
+  flex: 0 0 140px;
+}
+:where(.inline-field) .input-suffix input {
+  height: var(--control-height);
 }
 .day-row {
   display: flex;
@@ -1952,6 +1842,11 @@ details[open] > summary::before {
   flex: 1;
   min-height: 0;
   margin: 0;
+}
+/* A field under the list (Move to Folder's New folder) takes only its own height. */
+.picker-body > .field + .field {
+  flex: none;
+  margin-top: 12px;
 }
 .picker-body .env-list.boxed {
   flex: 1;
@@ -2076,6 +1971,32 @@ details[open] > summary::before {
   height: auto;
   overflow: visible;
   padding: 6px 0 0 14px;
+  font-size: var(--font-caption);
+}
+/*
+ * The agent's thinking: a bubble like its messages, outlined with dashes (Chromium draws a dotted rounded border's sides solid), in the
+ * muted text, on a light see-through white the conversation shows through
+ * (fainter in the dark theme, so it doesn't glare).
+ */
+.chat-thinking {
+  align-self: flex-start;
+  max-width: 88%;
+  padding: 6px 12px;
+  border-radius: var(--radius-overlay);
+  border: 1px dashed var(--fg-muted);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--fg-muted);
+  font-size: var(--font-caption);
+}
+@media (prefers-color-scheme: dark) {
+  .chat-thinking {
+    background: rgba(255, 255, 255, 0.04);
+  }
+}
+.chat-thinking .markdown {
+  height: auto;
+  overflow: visible;
+  padding: 0;
   font-size: var(--font-caption);
 }
 .chat-tools-list {
@@ -2576,22 +2497,24 @@ button:focus-visible,
   }
 }
 
-.messages .runlog-table tr.msg-thinking td {
-  color: var(--fg-muted);
-}
-
-.messages .runlog-table tr.msg-error td {
-  color: var(--red);
-}
-
-.messages .runlog-table tr.msg-thinking.selected td,
-.messages .runlog-table tr.msg-error.selected td {
-  color: var(--accent-fg);
-}
-
 .messages-detail {
   overflow: auto;
   background: var(--bg-2);
+}
+
+/* The conversation row's chat fills the panel, scrolling inside itself; a subagent's window is the chat alone. */
+.messages-detail.messages-detail-chat {
+  overflow: hidden;
+  background: var(--bg);
+}
+.messages-detail-chat > .chat-app,
+.messages-chat > .chat-app {
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.messages-chat {
+  background: var(--bg);
 }
 
 .messages-detail > .output {
@@ -2645,49 +2568,6 @@ button:focus-visible,
   padding: 0;
   height: auto;
   overflow: visible;
-}
-
-.msg-tool-detail {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.msg-tool-detail .tabs {
-  --tabs-pad: 14px;
-  flex: none;
-}
-
-.msg-tool-actions {
-  padding: 10px 14px 0;
-  flex: none;
-}
-
-.msg-tool-pending {
-  padding: 10px 14px 8px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-
-.msg-tool-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.msg-image-wrap {
-  height: 100%;
-  box-sizing: border-box;
-  padding: 12px 14px;
-}
-
-.msg-image-wrap img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  object-position: left top;
-  display: block;
 }
 
 /* ---------- Tool content renders ---------- */
@@ -3057,16 +2937,6 @@ button:focus-visible,
   white-space: pre-wrap;
 }
 
-.addon-file {
-  display: flex;
-  gap: 6px;
-}
-
-.addon-file input {
-  flex: 1;
-  min-width: 0;
-}
-
 /* The Windows instant Search box: a prompt inside, the search symbol (or the clear "x") at the right. */
 .addon-search {
   position: relative;
@@ -3384,9 +3254,13 @@ button:focus-visible,
 .overview-actions:empty {
   display: none;
 }
-.overview-actions input {
-  flex: 1;
-  min-width: 0;
+/* A terminal session's card on the desktop: a chat card's message box, edge to edge at the bottom. */
+.overview-reply {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.overview-composer {
+  margin: 0 -12px;
 }
 /* The desktop dashboard: two rows to the view (a doubled card fills its height); a doubled card spans two columns and two rows. */
 .sessions-dashboard {
@@ -3428,7 +3302,7 @@ button:focus-visible,
   width: 24px;
   height: 24px;
 }
-/* A chat's card: the title bar opens the chat; below it, the chat edge to edge. */
+/* A chat's or task run's card: the title bar opens it; below it, the conversation edge to edge. */
 .overview-chat {
   padding-bottom: 0;
   overflow: hidden;
@@ -3459,7 +3333,8 @@ button:focus-visible,
   padding-left: 12px;
   padding-right: 12px;
 }
-.overview-chat .chat-composer {
+.overview-chat .chat-composer,
+.overview-composer .chat-composer {
   padding: 8px 12px 10px;
 }
 
@@ -3763,6 +3638,159 @@ button:focus-visible,
   display: flex;
   gap: 10px;
   font-size: var(--font-caption);
+}
+
+/* Bash mode ("!" at the start of the empty box): the message box turns into a terminal, dark in either theme, the "!" its green prompt. */
+.composer-input.bash-mode textarea,
+.composer-input.bash-mode textarea:focus {
+  padding-left: 25px;
+  background: var(--term-bg);
+  border-color: var(--term-bg);
+  color: var(--term-fg);
+  caret-color: var(--term-fg);
+  font-family: var(--font-mono);
+  line-height: 20px;
+  color-scheme: dark;
+}
+.bash-prompt {
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: 11px;
+  color: var(--term-prompt);
+  font-family: var(--font-mono);
+  font-size: var(--font-body);
+  font-weight: 600;
+  line-height: 20px;
+  pointer-events: none;
+}
+
+/*
+ * The desktop composer: the command bar and the files waiting over the box
+ * alone, and the box as tall as the Send and Stop buttons beside it, top and
+ * bottom aligned.
+ */
+.chat-composer:not(.phone-composer) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'bar .' 'pending .' 'input actions';
+  gap: 0 8px;
+  align-items: stretch;
+}
+.chat-composer:not(.phone-composer) > .composer-main {
+  display: contents;
+}
+.chat-composer:not(.phone-composer) .chat-commandbar {
+  grid-area: bar;
+}
+.chat-composer:not(.phone-composer) .chat-pending {
+  grid-area: pending;
+}
+/* The box takes its height from the buttons alone (size containment): whatever its text's line height, it's exactly as tall as they are. */
+.chat-composer:not(.phone-composer) .composer-input {
+  grid-area: input;
+  contain: size;
+}
+.chat-composer:not(.phone-composer) > .composer-actions {
+  grid-area: actions;
+}
+
+/*
+ * A command the user ran ("!"), among a message's files: a terminal box, its
+ * command line first and fixed while the output scrolls under it; Remove
+ * under the box, as under an image.
+ */
+.chat-command {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.chat-command-box {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+  border-radius: var(--radius-control);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: var(--font-caption);
+  color-scheme: dark;
+}
+.chat-command-line {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.chat-command-box.open .chat-command-line {
+  padding-bottom: 2px;
+}
+.chat-command-prompt {
+  flex: none;
+  color: var(--term-prompt);
+  font-weight: 600;
+}
+.chat-command-input {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-command-status {
+  flex: none;
+  color: var(--term-fg);
+  opacity: 0.7;
+}
+.chat-command-status.failed {
+  color: #f07178;
+  opacity: 1;
+}
+.chat-command-chevron {
+  flex: none;
+  display: flex;
+  align-self: center;
+  opacity: 0.7;
+  transform: rotate(-90deg);
+}
+.chat-command-box.open .chat-command-chevron {
+  transform: none;
+}
+.chat-command-output {
+  margin: 0;
+  padding: 2px 10px 8px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* In the message box, the output keeps the message area in view. */
+.chat-pending .chat-command-output {
+  max-height: 160px;
+}
+/* Output too long to send: the line about the file it was saved to, under the preview, with its Open link light on the dark. */
+.chat-command-saved {
+  flex: none;
+  padding: 0 10px 8px;
+  color: var(--term-muted);
+}
+.chat-command-saved .link {
+  color: var(--term-fg);
+  text-decoration: underline;
+  font: inherit;
 }
 
 /* The "/" list: a combo box's drop-down list on the message box's top edge, as wide as the box. */
