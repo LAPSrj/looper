@@ -1,14 +1,16 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AddonSearchBox } from './AddonPane';
-import { forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
+import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
-import { AttachmentList, ChatRow, ToolGroup, type RowCtx } from './ChatRows';
+import { fmtClock } from '../format';
+import { MINUTE, useNow } from '../useNow';
+import { useSessionsState } from './phone/useSessionsState';
+import { ChatRow, ToolGroup, UserMessage, type RowCtx } from './ChatRows';
 import { groupRows, type ChatItem } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
 import { useChatsSettings } from './hooks';
-import { PromptBody } from './Markdown';
 import { ToolInputView } from './ToolContent';
 
 const Items = memo(function Items({ items, ctx, prefix }: { items: ChatItem[]; ctx: RowCtx; prefix: string }) {
@@ -90,6 +92,44 @@ function ChatStatus({ state }: { state: ChatState }) {
   if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {harnessKindLabel(state.harnessKind)}…</div>;
   if (state.status === 'ended') return <div className="chat-status chat-working error-text">{state.error ?? 'The session ended.'}</div>;
   return null;
+}
+
+/** Under the usage limit's message: whether Looper continues the chat at the reset, and the button that changes it. */
+function LimitNotice({ state }: { state: ChatState }) {
+  const sessions = useSessionsState();
+  const rule = useChatsSettings().skipExpiredContinue;
+  const now = useNow(MINUTE);
+  const limit = state.limit;
+  if (!limit) return null;
+  const at = continueAt(limit);
+  const passed = at !== undefined && at <= now;
+  const notice = (text: string, button?: { label: string; run: () => void }) => (
+    <div className="chat-limit-notice">
+      {text}
+      {button && (
+        <button className="link" onClick={button.run}>
+          {button.label}
+        </button>
+      )}
+    </div>
+  );
+  if (!state.autoContinue) {
+    if (passed) return null;
+    return notice('Looper won’t continue this chat when the limit resets.', {
+      label: 'Continue When Limit Resets',
+      run: () => window.looper.chat.setAutoContinue(state.id, true),
+    });
+  }
+  const dontContinue = { label: 'Don’t Continue', run: () => window.looper.chat.setAutoContinue(state.id, false) };
+  const cacheUntil = sessions?.sessions.find((s) => s.id === state.id)?.cacheUntil;
+  if (!state.continueAnyway && continueSkipped(rule, at ?? now, cacheUntil, state.context?.tokens)) {
+    const size = rule.aboveTokens > 0 ? ` and the context is larger than ${Math.round(rule.aboveTokens / 1000)}k tokens` : '';
+    const anyway = { label: 'Continue Anyway', run: () => window.looper.chat.continueAnyway(state.id) };
+    if (passed) return notice(`The limit has reset, but Looper didn’t continue this chat because the cache has expired${size}.`, anyway);
+    return notice(`Looper won’t continue this chat when the limit resets, because the cache will have expired${size}.`, anyway);
+  }
+  if (passed) return null;
+  return notice(at === undefined ? 'Looper will try to continue this chat every hour.' : `Looper will continue this chat at ${fmtClock(at, now)}.`, dontContinue);
 }
 
 /** The visible matches of `query` in `root`, in document order (case-insensitive, within one text node). */
@@ -298,6 +338,8 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
         if (dragDepth.current === 0) setDragging(false);
       }}
       onDrop={(e) => {
+        // Only files are the chat's: a dashboard card dropped here goes on to the dashboard.
+        if (!e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
         e.stopPropagation();
         dragDepth.current = 0;
@@ -364,16 +406,14 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           <Items items={history} ctx={ctx} prefix="h" />
           {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
           <Items items={items} ctx={ctx} prefix="r" />
+          {state.limit && state.status === 'ready' && <LimitNotice state={state} />}
           {state.permissions.map((p) => (
             <PermissionCard key={p.id} state={state} p={p} />
           ))}
           {/* Queued messages close the conversation, outlined until the agent reads them; Edit and Cancel until they've gone to it. */}
           {state.queued.map((m) => (
             <div key={m.id} className="chat-queued">
-              <div className="chat-msg chat-user">
-                {m.text && <PromptBody text={m.text} />}
-                {m.attachments.length > 0 && <AttachmentList items={m.attachments} />}
-              </div>
+              <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
               {!m.sent && (
                 <div className="chat-queued-actions">
                   <button className="link" onClick={() => editQueued(m.id)}>

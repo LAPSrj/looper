@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
+import { modelWindows } from './model-windows';
 import type { MessageImage, MessagesResult } from '../shared/messages';
 import { runShown, type RunFilter } from '../shared/runs';
 import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
@@ -27,6 +28,7 @@ import { MessagesService, readRunSessionId, transcriptHostPath } from './message
 import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions';
+import { CODEX_CACHE_MS } from './context';
 import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType, kindMismatchText } from './chat';
@@ -307,6 +309,12 @@ export interface Engine {
   setChatHarness(chatId: string, harnessId: string): Promise<void>;
   /** Answer the agent's permission request. */
   answerChat(chatId: string, requestId: string, allow: boolean): void;
+  /** Continue When Limit Resets, on or off, for a chat. */
+  setChatAutoContinue(chatId: string, on: boolean): void;
+  /** Continue Anyway: the chat's continue goes even though Settings → Chats' cache rule would stop it. */
+  setChatContinueAnyway(chatId: string): void;
+  /** Rename…: the user's name for a chat or terminal session; '' goes back to its automatic name. Throws when it's closed. */
+  renameSession(id: string, name: string): Promise<void>;
   /** End a chat (its window closed). */
   closeChat(chatId: string): Promise<void>;
   /** Chats in a turn or waiting on a permission answer. */
@@ -317,6 +325,10 @@ export interface Engine {
   sendNowChat(chatId: string): Promise<void>;
   /** Take a queued message out of the chat's queue (Cancel, or Edit). */
   unqueueChat(chatId: string, messageId: string): QueuedMessage | undefined;
+  /** A message for one of the chat's running subagents, handed over by the chat's subagent hook. */
+  messageSubagent(chatId: string, agentId: string, text: string): void;
+  /** Take back what waits for the subagent; undefined when it has already read it. */
+  unmessageSubagent(chatId: string, agentId: string): string | undefined;
   /** The chat's unsent message in its message box, kept for Looper's next start. */
   setChatDraft(chatId: string, text: string, attachments: Attachment[]): void;
   // sessions window
@@ -433,6 +445,7 @@ export function createEngine(opts: EngineOptions): Engine {
   const state = new StateStore(path.join(dataDir, 'state.json'));
   // Every session Looper starts, kept past run retention: the History window doesn't list them as conversations from outside Looper.
   const ledger = new SessionLedger(path.join(dataDir, LEDGER_FILE));
+  modelWindows.open(path.join(dataDir, 'model-windows.json'));
   const listeners = new Set<(e: EngineEvent) => void>();
 
   const emit = (e: EngineEvent) => {
@@ -717,11 +730,17 @@ export function createEngine(opts: EngineOptions): Engine {
     readHistory,
     readCompactable: (taskId, runId) => messages.compactable(taskId, runId),
     readTranscript: transcriptHistory,
+    readName: async (taskId, runId) => {
+      const info = runs.readTerminalInfo(taskId, runId) ?? runs.readChatInfo(taskId, runId);
+      if (info?.titleBy) return info.title;
+      return messages.sessionName(taskId, runId).catch(() => undefined);
+    },
     onSession: (c) => ledger.add({ ...c, kind: 'chat', taskName: lookup(c.taskId)?.name }),
     writeInfo: (taskId, runId, info) => runs.writeChatInfo(taskId, runId, info),
     appendRecord,
     taskVersion,
     onLimits: (key, limits) => hub?.setLimits(key, limits),
+    cacheUntil: (chatId) => hub?.state().sessions.find((s) => s.id === chatId)?.cacheUntil,
     remoteName: (task, harness) => (remote.isRunning() && startsWithRemoteControl(harness) ? task.name : undefined),
     onRemote: (c) => remote.attach({ ...c, source: 'chat' }),
     onClose: (chatId) => {
@@ -808,13 +827,24 @@ export function createEngine(opts: EngineOptions): Engine {
     subagentStats: (taskId, runId, agentId) => messages.subagentStats(taskId, runId, agentId),
     workflows: (taskId, runId, opts) => messages.workflows(taskId, runId, opts),
     contextTokens: (taskId, runId) => messages.contextTokens(taskId, runId),
+    contextModel: (taskId, runId) => messages.contextModel(taskId, runId),
     cacheUse: async (taskId, runId) => {
       const tail = await messages.transcriptTail(taskId, runId);
-      const use = tail ? lastCacheUse(tail) : {};
+      if (!tail) {
+        const at = await messages.codexLastResponse(taskId, runId);
+        return at !== null ? { at, ttlMs: CODEX_CACHE_MS } : {};
+      }
+      const use = lastCacheUse(tail);
       // A session that only read the cache kept alive an entry another one wrote: the long lifetime, as Remote Control assumes.
       return use.at !== undefined && use.ttlMs === undefined ? { ...use, ttlMs: CACHE_LONG_MS } : use;
     },
-    terminalTitle: (taskId, runId) => runs.readTerminalInfo(taskId, runId)?.title,
+    terminalTitle: (taskId, runId) => terminalRuns.title(runId) ?? runs.readTerminalInfo(taskId, runId) ?? undefined,
+    sessionName: async (taskId, runId) => {
+      const name = await messages.sessionName(taskId, runId).catch(() => undefined);
+      // terminal.json keeps it, so History lists the run under it too.
+      if (name) terminalRuns.nameFromHarness(runId, name);
+      return name;
+    },
     emit: (e) => {
       emit(e);
       if (e.type !== 'sessions') return;
@@ -857,6 +887,7 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     compactableRun: (taskId, runId) => messages.compactable(taskId, runId),
     runSubagents: (taskId, runId) => messages.subagents(taskId, runId),
+    runSubagentStats: (taskId, runId, agentId) => messages.subagentStats(taskId, runId, agentId),
     subagentsAt: (hostPath) => messages.subagentsAt(hostPath),
     ledger,
     configDirs: opts.historyDirs,
@@ -1813,6 +1844,14 @@ export function createEngine(opts: EngineOptions): Engine {
       await chats.setHarness(task, chatId, harnessId);
     },
     answerChat: (chatId, requestId, allow) => chats.answer(chatId, requestId, allow),
+    setChatAutoContinue: (chatId, on) => chats.setAutoContinue(chatId, on),
+    setChatContinueAnyway: (chatId) => chats.setContinueAnyway(chatId),
+    async renameSession(id: string, name: string): Promise<void> {
+      if (chats.taskOf(id)) chats.rename(id, name);
+      else if (terminals.taskOf(id) && !remote.owns(id)) await terminalRuns.rename(id, name);
+      else throw new Error('This conversation is closed.');
+      sessionHub.changed();
+    },
     closeChat: (chatId) => chats.close(chatId),
     busyChats: () => chats.busy(),
     attachToChat(chatId: string, files: AttachmentInput[]): Attachment[] {
@@ -1822,6 +1861,8 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     sendNowChat: (chatId) => chats.sendNow(chatId),
     unqueueChat: (chatId, messageId) => chats.unqueue(chatId, messageId),
+    messageSubagent: (chatId, agentId, text) => chats.messageSubagent(chatId, agentId, text),
+    unmessageSubagent: (chatId, agentId) => chats.unmessageSubagent(chatId, agentId),
     setChatDraft(chatId: string, text: string, attachments: Attachment[]): void {
       chats.setDraft(chatId, { text, attachments });
       saveConversations();

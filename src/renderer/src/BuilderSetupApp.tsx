@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Environment } from '@shared/types';
 import { AgentFields } from './components/RemoteFields';
-import { EmptyWindow } from './components/ui';
+import { EmptyWindow, FormGroup } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /** New Task with Agent: what the task builder runs with. Start turns this window into the conversation. */
@@ -73,19 +73,21 @@ export function BuilderSetupApp() {
     <div className="editor">
       <div className="editor-body">
         <div className="form setup-form">
-          <AgentFields
-            draft={{ environmentId: envId, harnessId, model: model || undefined, effort: effort || undefined, cwd }}
-            environments={environments}
-            host={host}
-            harnesses="agents"
-            onChange={(p) => {
-              if ('environmentId' in p) setEnvId(p.environmentId ?? '');
-              if ('harnessId' in p) setHarnessId(p.harnessId ?? '');
-              if ('model' in p) setModel(p.model ?? '');
-              if ('effort' in p) setEffort(p.effort ?? '');
-              if ('cwd' in p) setCwd(p.cwd ?? '');
-            }}
-          />
+          <FormGroup>
+            <AgentFields
+              draft={{ environmentId: envId, harnessId, model: model || undefined, effort: effort || undefined, cwd }}
+              environments={environments}
+              host={host}
+              harnesses="agents"
+              onChange={(p) => {
+                if ('environmentId' in p) setEnvId(p.environmentId ?? '');
+                if ('harnessId' in p) setHarnessId(p.harnessId ?? '');
+                if ('model' in p) setModel(p.model ?? '');
+                if ('effort' in p) setEffort(p.effort ?? '');
+                if ('cwd' in p) setCwd(p.cwd ?? '');
+              }}
+            />
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Start', run: () => void start() }} busy={starting} />

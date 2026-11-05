@@ -29,8 +29,7 @@ html.phone-window[data-platform='ios'] {
   --pg-cell: #ffffff; /* secondarySystemGroupedBackground */
   --pg-fill: rgba(118, 118, 128, 0.12);
   --pg-label: #000000;
-  /* secondaryLabel at 0.78 instead of Apple's 0.6: 5.3:1 on the grouped gray and 5.6:1 on white (0.6 gives 3.3:1 and 3.4:1). */
-  --pg-label-2: rgba(60, 60, 67, 0.78);
+  --pg-label-2: rgba(60, 60, 67, 0.6); /* secondaryLabel */
   --pg-label-3: rgba(60, 60, 67, 0.3);
   --pg-sep: rgba(60, 60, 67, 0.29);
   --pg-tint: #0088ff;
@@ -49,7 +48,7 @@ html.phone-window[data-platform='ios'] {
   --pg-switch-off: rgba(120, 120, 128, 0.16);
   --pg-seg-on: #ffffff;
   --pg-red: #ff383c;
-  --pg-orange: #ff9500;
+  --pg-orange: #ff8d28;
   --pg-green: #34c759;
   --pg-key: #ffffff;
   --pg-keys-bg: #d1d3d9;
@@ -58,7 +57,7 @@ html.phone-window[data-platform='ios'] {
   --bg-3: #e5e5ea;
   --border: #c6c6c8;
   --fg: #000000;
-  --fg-muted: rgba(60, 60, 67, 0.78);
+  --fg-muted: rgba(60, 60, 67, 0.6);
   --accent: #0088ff;
   --accent-fg: #ffffff;
   --green: #248a3d;
@@ -70,13 +69,18 @@ html.phone-window[data-platform='ios'] {
   --green-bg: color-mix(in srgb, var(--pg-green) 16%, var(--pg-cell));
   --yellow-bg: color-mix(in srgb, #ffcc00 20%, var(--pg-cell));
   --red-bg: color-mix(in srgb, var(--pg-red) 12%, var(--pg-cell));
-  --purple: #af52de;
+  --purple: #cb30e0;
   --backdrop: rgba(0, 0, 0, 0.4);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
   font-size: 17px;
   letter-spacing: -0.41px;
   /* One design pixel: text sizes below are multiples of it, so they follow the root's size (Dynamic Type, see the @supports rule). */
   --u: calc(1rem / 17);
+  /* A row: how tall at least, and how far its text keeps from the row's edges on every line count. */
+  --pg-row-min: 52px;
+  --pg-row-y: 13px;
+  --pg-body-lh: calc(22 * var(--u));
+  --pg-section-gap: 24px;
 }
 /* Dynamic Type: WebKit's text style takes the size from Settings > Display > Text Size. A browser that doesn't know it keeps 17px. */
 @supports (font: -apple-system-body) {
@@ -152,7 +156,7 @@ html.phone-window {
     --pg-switch-off: rgba(120, 120, 128, 0.36);
     --pg-seg-on: #636366;
     --pg-red: #ff4245;
-    --pg-orange: #ff9f0a;
+    --pg-orange: #ff9230;
     --pg-green: #30d158;
     --pg-key: #6b6b6b;
     --pg-keys-bg: #2c2c2e;
@@ -171,7 +175,7 @@ html.phone-window {
     --green-bg: color-mix(in srgb, var(--pg-green) 20%, var(--pg-cell));
     --yellow-bg: color-mix(in srgb, #ffd60a 20%, var(--pg-cell));
     --red-bg: color-mix(in srgb, var(--pg-red) 20%, var(--pg-cell));
-    --purple: #bf5af2;
+    --purple: #db34f2;
     --backdrop: rgba(0, 0, 0, 0.55);
   }
   /* Everything else follows the --md-* tokens' dark values; only what Material has no token for is set here. */
@@ -184,21 +188,21 @@ html.phone-window {
   }
 }
 
-/* Increase Contrast (iOS: Settings > Accessibility > Display & Text Size): secondary text, separators, the
-   tint and the status colors at 4.5:1 or better on every surface (Apple's high-contrast system colors). */
+/* Increase Contrast (iOS: Settings > Accessibility > Display & Text Size): stronger secondary text and
+   separators, and Apple's published increased-contrast system colors. */
 @media (prefers-contrast: more) {
   html.phone-window[data-platform='ios'] {
     --pg-label-2: rgba(60, 60, 67, 0.86);
     --pg-label-3: rgba(60, 60, 67, 0.55);
     --pg-sep: rgba(60, 60, 67, 0.6);
-    --pg-tint: #0040dd;
-    --pg-tab-label: #0040dd;
-    --pg-red: #d70015;
-    --pg-orange: #a05a00;
+    --pg-tint: #1e6ef4;
+    --pg-tab-label: #1e6ef4;
+    --pg-red: #e9152d;
+    --pg-orange: #c55300;
     --border: #8e8e93;
     --fg-muted: rgba(60, 60, 67, 0.86);
-    --accent: #0040dd;
-    --red: #d70015;
+    --accent: #1e6ef4;
+    --red: #e9152d;
   }
 }
 @media (prefers-contrast: more) and (prefers-color-scheme: dark) {
@@ -206,14 +210,14 @@ html.phone-window {
     --pg-label-2: rgba(235, 235, 245, 0.78);
     --pg-label-3: rgba(235, 235, 245, 0.5);
     --pg-sep: rgba(142, 142, 147, 0.8);
-    --pg-tint: #409cff;
-    --pg-tab-label: #409cff;
-    --pg-red: #ff6961;
-    --pg-orange: #ffb340;
+    --pg-tint: #5cb8ff;
+    --pg-tab-label: #5cb8ff;
+    --pg-red: #ff6165;
+    --pg-orange: #ffa056;
     --border: #8e8e93;
     --fg-muted: rgba(235, 235, 245, 0.78);
-    --accent: #409cff;
-    --red: #ff6961;
+    --accent: #5cb8ff;
+    --red: #ff6165;
   }
 }
 
@@ -328,18 +332,77 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
 html.phone-window .pg-empty {
   color: var(--pg-label-2);
 }
+/* A row that is a command, tinted as a button is; a destructive one is red. */
+html.phone-window .pg-row.tone-action .pg-row-title {
+  color: var(--pg-tint);
+}
+html.phone-window .pg-row.tone-destructive .pg-row-title {
+  color: var(--pg-red);
+}
+html.phone-window .pg-row.disabled {
+  opacity: 0.4;
+}
+/* A row a swipe slides aside (SwipeRow): the action lies behind it, at the row's end. */
+html.phone-window .pg-swipe {
+  position: relative;
+}
+html.phone-window .pg-swipe-content {
+  position: relative;
+  transition: transform 0.25s ease-out;
+}
+html.phone-window .pg-swipe-content.swipes {
+  background: var(--pg-cell);
+  touch-action: pan-y;
+}
+html.phone-window .pg-swipe-content.dragging {
+  transition: none;
+}
+html.phone-window .pg-swipe-action {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  min-height: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: 0;
+  background: var(--pg-red);
+  color: #ffffff;
+  font-size: calc(15 * var(--u));
+  font-weight: 600;
+}
 html.phone-window .pg-chevron {
   flex: none;
   color: var(--pg-label-3);
 }
 
 /* iOS: inset grouped sections, 16 pt from the edges, rounded, 52 pt rows, hairlines inset on both sides. */
-html.phone-window[data-platform='ios'] .pg-group-title {
+html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .radio-rows > .field-label, .form section h3, .addon-screen section h3, .picker-body > .field > .field-label) {
+  display: block;
+  margin: 0;
   padding: 0 32px 8px;
+  border-bottom: none;
+  color: var(--pg-label-2);
   font-size: calc(13 * var(--u));
   line-height: calc(18 * var(--u));
   font-weight: 600;
   letter-spacing: -0.08px;
+  text-transform: none;
+}
+/* Inside a form's own margin, a section's title and footer keep the same distance from its text. */
+html.phone-window[data-platform='ios'] :is(.form, .addon-screen, .picker-body) :is(.pg-group-title, .form-group-title, .radio-rows > .field-label, section h3),
+html.phone-window[data-platform='ios'] .picker-body > .field > .field-label {
+  padding-inline: 16px;
+}
+html.phone-window :is(.form, .picker-body) .pg-list {
+  margin-inline: 0;
+}
+html.phone-window[data-platform='ios'] :is(.form, .picker-body) .pg-group-footer {
+  margin-inline: 16px;
+}
+html.phone-window[data-platform='ios'] .pg-group,
+html.phone-window[data-platform='ios'] .form-group {
+  margin-bottom: var(--pg-section-gap);
 }
 html.phone-window[data-platform='ios'] .pg-list {
   margin: 0 16px;
@@ -352,11 +415,18 @@ html.phone-window[data-platform='ios'] .pg-group-footer {
 }
 html.phone-window[data-platform='ios'] .pg-row {
   position: relative;
-  min-height: 52px;
-  padding: 13px 16px;
+  min-height: var(--pg-row-min);
+  padding: var(--pg-row-y) 16px;
+}
+html.phone-window[data-platform='ios'] .pg-row-title {
+  line-height: var(--pg-body-lh);
+}
+html.phone-window[data-platform='ios'] .pg-row-check {
+  flex: none;
+  color: var(--pg-tint);
 }
 /* A hairline between rows, from the text's start to as far from the right edge. */
-html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .pg-addon-pane .task-item + .task-item, .pg-sessions .session-row + .session-row, .env-item + .env-item)::before {
+html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .pg-addon-pane .task-item + .task-item, .pg-sessions .session-row + .session-row, .pg-swipe + .pg-swipe > .pg-swipe-content > .pg-row)::before {
   content: '';
   position: absolute;
   top: 0;
@@ -368,6 +438,7 @@ html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .pg-addon-pane .ta
 }
 html.phone-window[data-platform='ios'] .pg-row-sub {
   font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
   letter-spacing: -0.24px;
 }
 html.phone-window[data-platform='ios'] .pg-row-value {
@@ -489,6 +560,7 @@ html.phone-window[data-platform='ios'] .pg-segmented button.active,
 html.phone-window[data-platform='ios'] .tabs-segmented .tab.active,
 html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab.active {
   background: var(--pg-seg-on);
+  color: var(--pg-label);
   font-weight: 600;
   box-shadow:
     0 3px 8px rgba(0, 0, 0, 0.12),
@@ -1667,6 +1739,8 @@ html.phone-window .field input:where(:not([type='checkbox'], [type='radio'])),
 html.phone-window .field select,
 html.phone-window .field textarea,
 html.phone-window .guidance-compose textarea,
+html.phone-window .send-sessions-text,
+html.phone-window .inline-field .input-suffix input,
 html.phone-window .json-editor,
 html.phone-window .chat-find input,
 html.phone-window .addon-search input,
@@ -1676,6 +1750,7 @@ html.phone-window .mu-item select {
   color: var(--pg-label);
 }
 html.phone-window .field input:where(:not([type='checkbox'], [type='radio'])),
+html.phone-window .inline-field .input-suffix input,
 html.phone-window .field select {
   height: auto;
   min-height: 44px;
@@ -1702,7 +1777,9 @@ html.phone-window .hours-row .input-suffix {
 html.phone-window[data-platform='ios'] .field input:where(:not([type='checkbox'], [type='radio'])),
 html.phone-window[data-platform='ios'] .field select,
 html.phone-window[data-platform='ios'] .field textarea,
-html.phone-window[data-platform='ios'] .guidance-compose textarea {
+html.phone-window[data-platform='ios'] .guidance-compose textarea,
+html.phone-window[data-platform='ios'] .send-sessions-text,
+html.phone-window[data-platform='ios'] .inline-field .input-suffix input {
   border: none;
   border-radius: 26px;
   padding: 14px 16px;
@@ -1711,7 +1788,9 @@ html.phone-window[data-platform='ios'] .guidance-compose textarea {
 html.phone-window[data-platform='android'] .field input:where(:not([type='checkbox'], [type='radio'])),
 html.phone-window[data-platform='android'] .field select,
 html.phone-window[data-platform='android'] .field textarea,
-html.phone-window[data-platform='android'] .guidance-compose textarea {
+html.phone-window[data-platform='android'] .guidance-compose textarea,
+html.phone-window[data-platform='android'] .send-sessions-text,
+html.phone-window[data-platform='android'] .inline-field .input-suffix input {
   min-height: 56px;
   padding: 15px 16px;
   border: 1px solid var(--pg-label-3);
@@ -1724,8 +1803,12 @@ html.phone-window[data-platform='android'] .field textarea:focus {
   border: 2px solid var(--pg-tint);
   padding: 14px 15px;
 }
-html.phone-window .input-row {
+html.phone-window .input-row,
+html.phone-window .inline-field {
   flex-wrap: wrap;
+}
+html.phone-window .inline-field > .input-suffix {
+  flex: 1 0 100%;
 }
 /* The week's seven day buttons share the row. */
 html.phone-window .day-row .day-toggle.day-toggle {
@@ -1838,6 +1921,18 @@ html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox'
   height: 24px;
   background: var(--pg-on-tint);
   transform: translateX(20px);
+}
+html.phone-window .checkbox-field input[type='checkbox']:indeterminate::after {
+  transform: translateX(10px);
+}
+html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']:indeterminate {
+  background: color-mix(in srgb, var(--pg-green) 50%, var(--pg-switch-off));
+}
+html.phone-window[data-platform='android'] .checkbox-field input[type='checkbox']:indeterminate {
+  border-color: var(--pg-tint);
+}
+html.phone-window .checkbox-note {
+  margin: 0;
 }
 html.phone-window .checkbox-field input[type='radio'] {
   width: 22px;
@@ -1998,6 +2093,9 @@ html.phone-window .help code {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+html.phone-window .send-sessions-text {
+  margin: 0 16px 12px;
+}
 html.phone-window .guidance-compose {
   padding: 8px 10px calc(8px + var(--looper-safe-bottom, 0px));
 }
@@ -2011,8 +2109,7 @@ html.phone-window .statusbar {
   padding-bottom: calc(4px + var(--looper-safe-bottom, 0px));
 }
 
-/* ---------- lists in dialogs (environments, templates, recycle bin…) ---------- */
-html.phone-window .env-list.boxed,
+/* ---------- the list in Update Models ---------- */
 html.phone-window .mu-list {
   border: none;
   border-radius: 26px;
@@ -2020,7 +2117,6 @@ html.phone-window .mu-list {
   background: var(--pg-cell);
   padding: 0;
 }
-html.phone-window .env-item,
 html.phone-window .mu-item,
 html.phone-window .mu-group {
   min-height: 44px;
@@ -2029,27 +2125,11 @@ html.phone-window .mu-group {
   border-radius: 0;
   font-size: calc(17 * var(--u));
 }
-html.phone-window[data-platform='ios'] .env-item {
-  position: relative;
-  min-height: 52px;
-  padding-top: 13px;
-  padding-bottom: 13px;
-}
-html.phone-window .env-item.selected {
-  background: var(--info-bg);
-}
-html.phone-window[data-platform='android'] .env-list.boxed,
 html.phone-window[data-platform='android'] .mu-list {
   border-radius: 16px;
   background: var(--pg-container);
   overflow: hidden;
 }
-html.phone-window[data-platform='android'] .env-item.selected {
-  border-radius: 16px;
-  background: var(--md-secondary-container);
-  color: var(--md-on-secondary-container);
-}
-html.phone-window .env-item-sub,
 html.phone-window .mu-item-sub,
 html.phone-window .mu-group-note {
   font-size: calc(14 * var(--u));
@@ -2069,10 +2149,6 @@ html.phone-window .mu-item select {
 }
 html.phone-window .picker-body {
   padding: 8px 16px;
-}
-html.phone-window .send-sessions-list .checkbox-field {
-  flex-direction: row;
-  justify-content: flex-start;
 }
 
 /* ---------- the rest ---------- */
@@ -2194,7 +2270,7 @@ html.phone-window:is([data-platform='ios'], [data-platform='android']) .input-su
   padding-right: 56px;
 }
 /* Pop-up buttons drawn by the page, with the platform's disclosure mark at the end. */
-html.phone-window:is([data-platform='ios'], [data-platform='android']) :is(.field select, .mu-item select) {
+html.phone-window[data-platform='android'] :is(.field select, .mu-item select) {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 36px;
@@ -2202,112 +2278,406 @@ html.phone-window:is([data-platform='ios'], [data-platform='android']) :is(.fiel
   background-repeat: no-repeat;
   background-position: right 14px center;
 }
-/* iOS pop-up buttons carry the up-and-down chevrons (chevron.up.chevron.down). */
-html.phone-window[data-platform='ios'] :is(.field select, .mu-item select) {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+/* A window of lists scrolls as a whole on a phone. */
+html.phone-window .form.env-tab {
+  display: block;
+  overflow-y: auto;
+}
+/* A short tabbed window as one page (TabBar's panels): its parts share one scroll. */
+html.phone-window .editor-body.tab-page {
+  display: block;
+  overflow-y: auto;
+  padding-top: 16px;
+}
+html.phone-window[data-platform='ios'] .form {
+  padding: 16px 16px 16px;
+}
+html.phone-window[data-platform='ios'] .tab-page .form {
+  overflow: visible;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
-/* ---------- iOS forms: consecutive fields and switches are inset groups (a card, hairlines between rows) ---------- */
-html.phone-window[data-platform='ios'] .form :is(.field, .checkbox-field) {
+/* Text loose in a form lines up with the rows' text, as a section's footer does. */
+html.phone-window[data-platform='ios'] :is(.form, .addon-screen) > :is(p, .muted),
+html.phone-window[data-platform='ios'] .agent-perms > .muted,
+html.phone-window[data-platform='ios'] .ra-setup-title {
+  margin: 0 0 8px;
+  padding-inline: 16px;
+  color: var(--pg-label-2);
+  font-size: calc(13 * var(--u));
+  font-weight: 400;
+  line-height: calc(18 * var(--u));
+}
+/* A file's text is a card of its own. */
+html.phone-window[data-platform='ios'] .form .json-editor {
+  border: none;
+  border-radius: 26px;
+  padding: 16px;
+  background: var(--pg-cell);
+}
+
+/* ---------- iOS forms: a FormGroup is an inset group (one card, a row per field, hairlines between rows) ---------- */
+html.phone-window[data-platform='ios'] .form-group {
+  display: block;
+  margin-top: 0;
+}
+html.phone-window[data-platform='ios'] .form-group-rows {
+  display: block;
+  overflow: hidden;
+  border-radius: 26px;
+  background: var(--pg-cell);
+}
+/* The desktop's wrappers add nothing here: their fields are the card's rows. */
+html.phone-window[data-platform='ios'] .form-group :is(.row, fieldset.step-fields, .inline-field, .checkbox-with-note) {
+  display: block;
+  margin: 0;
+  padding: 0;
+}
+html.phone-window[data-platform='ios'] .form-group :is(.field, .checkbox-field) {
   position: relative;
+}
+/* A hairline above every row, however it's nested; the card's clipping removes the first row's. */
+html.phone-window[data-platform='ios'] :is(.form-group :is(.field, .checkbox-field), .radio-row)::before {
+  content: '';
+  position: absolute;
+  top: -0.5px;
+  left: 16px;
+  right: 16px;
+  height: 0.5px;
+  background: var(--pg-sep);
+}
+html.phone-window[data-platform='ios'] .form-group :is(.field, .checkbox-field) {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 4px;
   width: auto;
-  min-height: 44px;
+  min-height: var(--pg-row-min);
   margin: 0;
-  padding: 10px 16px;
-  border-radius: 26px;
-  background-color: var(--pg-cell);
+  padding: var(--pg-row-y) 16px;
+  line-height: var(--pg-body-lh);
 }
-html.phone-window[data-platform='ios'] .form :is(.field, .checkbox-field) + :is(.field, .checkbox-field) {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+/* A field of one-line controls: the label at the leading edge, the first control at the trailing edge. */
+html.phone-window[data-platform='ios'] .form-group .field-one-line {
+  gap: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
-html.phone-window[data-platform='ios'] .form :is(.field, .checkbox-field):has(+ :is(.field, .checkbox-field)) {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
+html.phone-window[data-platform='ios'] .form-group .field-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: var(--pg-row-min);
 }
-html.phone-window[data-platform='ios'] .form :is(.field, .checkbox-field):not(:has(+ :is(.field, .checkbox-field))) {
-  margin-bottom: 20px;
+html.phone-window[data-platform='ios'] .form-group .field-line > .field-label {
+  padding-block: var(--pg-row-y);
 }
-html.phone-window[data-platform='ios'] .form :is(.field, .checkbox-field) + :is(.field, .checkbox-field)::before {
+html.phone-window[data-platform='ios'] .form-group .field-one-line > .help {
+  padding-bottom: var(--pg-row-y);
+}
+/* The label takes the room it needs, and wraps only when the value leaves it too little. */
+html.phone-window[data-platform='ios'] .form-group .field .field-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: calc(17 * var(--u));
+  line-height: var(--pg-body-lh);
+  color: var(--pg-label);
+}
+html.phone-window[data-platform='ios'] .form-group .field-line > :not(.field-label) {
+  flex: 1 1 72px;
+  min-width: 0;
+}
+html.phone-window[data-platform='ios'] .form-group .field-one-line input {
+  text-align: right;
+}
+/* A field's further controls have lines of their own (Shell's Custom command). */
+html.phone-window[data-platform='ios'] .form-group .field-line ~ :not(.help) {
+  border-top: 0.5px solid var(--pg-sep);
+}
+html.phone-window[data-platform='ios'] .form-group .field :is(input:not([type='checkbox'], [type='radio']), textarea) {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--pg-label);
+  letter-spacing: inherit;
+  line-height: var(--pg-body-lh);
+  caret-color: var(--pg-tint);
+}
+/* A row's value, as iOS draws every value beside a label; what's being typed reads as primary content. */
+html.phone-window[data-platform='ios'] .form-group .field-one-line input:not([type='checkbox'], [type='radio'], :focus) {
+  color: var(--pg-label-2);
+}
+/* The whole height of the row takes the tap. */
+html.phone-window[data-platform='ios'] .form-group .field-one-line input:not([type='checkbox'], [type='radio']) {
+  min-height: var(--pg-row-min);
+}
+/* Code keeps its font where it's read as code, in a box of several lines; a row's value is ordinary text. */
+html.phone-window[data-platform='ios'] .form-group .field-one-line input.mono {
+  font-family: inherit;
+}
+/* The Clear button at a text box's end while it's being edited. */
+html.phone-window[data-platform='ios'] .text-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+html.phone-window[data-platform='ios'] .text-control input {
+  flex: 1;
+  min-width: 0;
+}
+html.phone-window[data-platform='ios'] .input-clear {
+  display: none;
+  flex: none;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--pg-label-3);
+  line-height: 0;
+}
+html.phone-window[data-platform='ios'] .text-control:focus-within .input-clear:not([hidden]) {
+  display: block;
+}
+/* A larger target than the mark, as far as the row allows. */
+html.phone-window[data-platform='ios'] .input-clear::after {
+  content: '';
+  position: absolute;
+  inset: -13px -8px;
+}
+html.phone-window[data-platform='ios'] .input-clear {
+  position: relative;
+}
+/* SelectInput: the value as text with iOS's chevron.up.chevron.down; the select over it takes the tap and opens the system's menu. */
+html.phone-window[data-platform='ios'] .select-control {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+html.phone-window[data-platform='ios'] .select-value {
+  min-width: 0;
+  padding: var(--pg-row-y) 20px var(--pg-row-y) 0;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right center;
+  color: var(--pg-label-2);
+  font-size: calc(17 * var(--u));
+  line-height: var(--pg-body-lh);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+html.phone-window[data-platform='ios'] .select-control select {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: transparent;
+  font-size: calc(17 * var(--u));
+  opacity: 1;
+}
+html.phone-window[data-platform='ios'] .select-control select:active {
+  background: var(--pg-fill);
+}
+html.phone-window[data-platform='ios'] .select-control.disabled {
+  opacity: 0.4;
+}
+/* In a row, the select covers the line, so a tap on the label opens the menu too; the value and the label share the width by how much each needs. */
+html.phone-window[data-platform='ios'] .form-group .field-line > .select-control {
+  position: static;
+}
+/* The shorter of label and value keeps its whole width; only when both are long do they split the line and wrap. */
+html.phone-window[data-platform='ios'] .form-group .field-line:has(> .select-control) {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content);
+  justify-content: space-between;
+}
+/* A pair of number boxes (Every 2 h 0 min) keeps to the row's end. */
+html.phone-window[data-platform='ios'] .form-group .field-line > .input-row {
+  flex: 0 1 auto;
+  gap: 12px;
+  margin-left: auto;
+}
+/* A date or time is as wide as its value, so it sits at the row's end however WebKit lays out its inside. */
+html.phone-window[data-platform='ios'] .form-group .field-line > input:is([type='time'], [type='date'], [type='datetime-local']) {
+  flex: none;
+  width: auto;
+  margin-left: auto;
+}
+html.phone-window[data-platform='ios'] .form-group .field-line > .input-row .input-suffix {
+  flex: 0 1 auto;
+}
+html.phone-window[data-platform='ios'] .form-group :is(input, textarea)::placeholder {
+  font-style: normal;
+  color: var(--pg-label-3);
+}
+/* A date or time keeps to the row's end too: WebKit lays out its value on its own. */
+html.phone-window[data-platform='ios'] .form-group .field-one-line input::-webkit-date-and-time-value {
+  margin: 0;
+  text-align: right;
+}
+html.phone-window[data-platform='ios'] .form-group :is(.field, .inline-field) :is(input:not([type='checkbox'], [type='radio']), textarea) {
+  padding-right: 0;
+}
+/* The unit follows the value at the row's end, whatever its length. */
+html.phone-window[data-platform='ios'] .form-group .field-line > .input-suffix {
+  flex-basis: auto;
+}
+html.phone-window[data-platform='ios'] .form-group .input-suffix {
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
+}
+html.phone-window[data-platform='ios'] .form-group .input-suffix input {
+  flex: 1 1 5ch;
+  width: 5ch;
+  min-width: 2ch;
+  height: auto;
+  text-align: right;
+}
+/* The number and its unit read as one value: the same size and color. */
+html.phone-window[data-platform='ios'] .form-group .input-suffix .suffix {
+  position: static;
+  flex: none;
+  transform: none;
+  color: var(--pg-label-2);
+  font-size: calc(17 * var(--u));
+  line-height: var(--pg-body-lh);
+  pointer-events: none;
+}
+html.phone-window[data-platform='ios'] .form-group .input-row {
+  flex-wrap: nowrap;
+}
+html.phone-window[data-platform='ios'] .form-group .input-row .input-suffix {
+  flex: 1 1 0;
+}
+html.phone-window[data-platform='ios'] .form-group .field textarea {
+  min-height: 88px;
+  padding-top: 4px;
+}
+/* A row's own buttons (Browse…) are text, tinted, as a list row's are. */
+html.phone-window[data-platform='ios'] .form-group :is(.input-row, .time-chip-row) .btn {
+  flex: none;
+  min-height: 44px;
+  padding: 0 0 0 8px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--pg-tint);
+  font-size: calc(17 * var(--u));
+  font-weight: 400;
+}
+html.phone-window[data-platform='ios'] .form-group :is(.input-row, .time-chip-row) .btn:disabled {
+  color: var(--pg-label-3);
+  opacity: 1;
+}
+html.phone-window[data-platform='ios'] .form-group .field > .help {
+  flex: 0 0 100%;
+  margin: 0;
+  font-size: calc(13 * var(--u));
+  color: var(--pg-label-2);
+}
+html.phone-window[data-platform='ios'] .form-group .checkbox-field {
+  gap: 16px;
+  flex-direction: row-reverse;
+  align-items: center;
+}
+html.phone-window[data-platform='ios'] .form-group .checkbox-note {
+  padding: 0 16px var(--pg-row-y);
+}
+/* A form whose one text box fills the window: so does its card. */
+html.phone-window[data-platform='ios'] .form.fill :is(.form-group, .form-group-rows) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+}
+/* A list above the group (Move to Folder's New folder). */
+html.phone-window .picker-body {
+  display: block;
+  overflow-y: auto;
+}
+html.phone-window .picker-body > .field {
+  display: block;
+  margin: 0;
+}
+html.phone-window[data-platform='ios'] .picker-body {
+  padding: 16px;
+}
+/* Update Models: an inset card whose rows have their drop-down at the trailing edge, as a form's do. */
+html.phone-window[data-platform='ios'] .mu-list {
+  align-self: start;
+  min-height: 0;
+  max-height: calc(100% - 32px);
+  margin: 16px;
+}
+html.phone-window[data-platform='ios'] .mu-item-sub {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+html.phone-window[data-platform='ios'] .mu-group,
+html.phone-window[data-platform='ios'] .mu-item {
+  position: relative;
+  min-height: var(--pg-row-min);
+}
+html.phone-window[data-platform='ios'] .mu-item {
+  flex-wrap: nowrap;
+}
+html.phone-window[data-platform='ios'] .mu-item::before {
   content: '';
   position: absolute;
   top: 0;
   left: 16px;
-  right: 0;
+  right: 16px;
   height: 0.5px;
   background: var(--pg-sep);
 }
-/* A field with one simple control: the label at the leading edge, the control at the trailing edge. */
-html.phone-window[data-platform='ios'] .form .field:has(> :is(input:not([type='checkbox'], [type='radio']), select, .input-suffix)) {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 16px;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-html.phone-window[data-platform='ios'] .form .field > .field-label {
+html.phone-window[data-platform='ios'] .mu-item .select-control {
+  position: static;
   flex: none;
   max-width: 50%;
-  font-size: calc(17 * var(--u));
-  color: var(--pg-label);
 }
-html.phone-window[data-platform='ios'] .form .field > :is(input:not([type='checkbox'], [type='radio']), select, .input-suffix) {
-  flex: 1;
-  min-width: 0;
-  text-align: right;
+/* Send to Chats: its groups and message box on the page's gray, as far from the edges as a form's. */
+html.phone-window[data-platform='ios'] .send-sessions-pick {
+  display: block;
+  padding: 8px 16px 0;
+  border-bottom: none;
 }
-html.phone-window[data-platform='ios'] .form .field :is(input:not([type='checkbox'], [type='radio']), select, textarea) {
-  min-height: 44px;
-  padding-left: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border: none;
-  border-radius: 0;
-  background-color: transparent;
+html.phone-window[data-platform='ios'] .send-sessions-list {
+  padding: 0 16px;
 }
-html.phone-window[data-platform='ios'] .form .field :is(input:not([type='checkbox'], [type='radio']), textarea) {
-  padding-right: 0;
-}
-html.phone-window[data-platform='ios'] .form .field .input-suffix input {
-  padding-right: 56px;
-}
-html.phone-window[data-platform='ios'] .form .field textarea {
-  min-height: 88px;
-  padding-top: 4px;
-}
-html.phone-window[data-platform='ios'] .form .field select {
-  text-align-last: right;
-  padding-right: 24px;
-  background-position: right 0 center;
-}
-html.phone-window[data-platform='ios'] .form .field > .help {
-  flex: 0 0 100%;
+/* A section of an addon's screen: its title reads as its groups' header. */
+html.phone-window[data-platform='ios'] :is(.form, .addon-screen) section:not(.pg-group) {
   margin: 0;
-  padding: 0 0 10px;
-  font-size: calc(13 * var(--u));
-  color: var(--pg-label-2);
 }
-html.phone-window[data-platform='ios'] .form .checkbox-field {
-  padding-top: 0;
-  padding-bottom: 0;
-  flex-direction: row-reverse;
-  align-items: center;
-}
-/* RadioField on an iPhone: a header, then a card of rows with a check on the chosen one. */
+/* RadioField on an iPhone: a header, then a card of rows with a check on the chosen one; inside a FormGroup, the rows are the card's. */
 html.phone-window[data-platform='ios'] .radio-rows {
   display: block;
-  margin: 0 0 20px;
+  margin: 0 0 var(--pg-section-gap);
 }
-html.phone-window[data-platform='ios'] .radio-rows > .field-label {
-  display: block;
-  padding: 0 16px 6px;
-  font-size: calc(13 * var(--u));
-  color: var(--pg-label-2);
+html.phone-window[data-platform='ios'] .form-group .radio-rows {
+  margin: 0;
+}
+html.phone-window[data-platform='ios'] .form-group .radio-rows-list {
+  overflow: visible;
+  border-radius: 0;
+  background: none;
 }
 html.phone-window[data-platform='ios'] .radio-rows-list {
   display: flex;
@@ -2322,22 +2692,14 @@ html.phone-window[data-platform='ios'] .radio-row {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 44px;
-  padding: 0 16px;
+  min-height: var(--pg-row-min);
+  padding: var(--pg-row-y) 16px;
   border: none;
   background: none;
   color: var(--pg-label);
   font-size: calc(17 * var(--u));
+  line-height: var(--pg-body-lh);
   text-align: left;
-}
-html.phone-window[data-platform='ios'] .radio-row + .radio-row::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 16px;
-  right: 0;
-  height: 0.5px;
-  background: var(--pg-sep);
 }
 html.phone-window[data-platform='ios'] .radio-row:active {
   background: var(--pg-press);
@@ -2417,6 +2779,9 @@ html.phone-window[data-platform='ios'] .pg-split .pg-sessions .session-row.selec
 /* Readable width: lists and conversations keep about 700 pt, centered; the gray runs to the edges. */
 html.phone-window.tablet[data-platform='ios'] :is(.pg-scroll, .messages-phone-scroll, .runlog-phone-scroll, .git-phone-list) {
   padding-inline: max(0px, calc((100% - 700px) / 2));
+}
+html.phone-window.tablet[data-platform='ios'] .form {
+  max-width: 700px;
 }
 /* A task's Status card: as wide as a list's cards (700 less their 16 pt insets). */
 html.phone-window.tablet[data-platform='ios'] .phone-detail .status-pane {

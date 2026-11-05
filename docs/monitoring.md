@@ -51,19 +51,24 @@ you point at it. The Tabs menu is only in the main window.
 
 **View → Dashboard**, **Projects**, **Tasks** and each addon tab open that
 view in a window of its own, titled Dashboard, Projects, Tasks or the addon
-tab's title. The window has that view alone, with its part of the toolbar,
-its menus and a status bar, and no tabs. Opening it again brings it forward.
-In a Dashboard or Projects window, opening a task shows it on the main
-window's Tasks tab. **View → Chats** opens the Chats window.
+tab's title. The window has that view alone, with a status bar and no tabs,
+and its toolbar and menus have only what the view is about: a Tasks window
+has New Task and the task's commands, and the File, Task and View menus; a
+Projects window has New Project, New Chat and the project's commands, and the
+File, Project and View menus; a Dashboard window has File, Task and View, and
+no toolbar. Settings, Templates, Tools, Advanced and Help stay in the main
+window. Opening the window again brings it forward. In a Dashboard or Projects
+window, opening a task shows it on the main window's Tasks tab. **View → Chats**
+opens the Chats window.
 
 ### A task or project in its own window
 
 Double-clicking a task in the task list, or a project in the Projects tab's
 list or a project's Tasks tab (or pressing Enter on it), opens it in a window
 of its own, titled with its name. The window has the task's or the project's
-view alone, without the list, with its part of the toolbar, the menus the
-Tasks or Projects tab has, and a status bar. Opening it again brings it
-forward, and the window closes when the task or project is deleted. Edit Task
+view alone, without the list, with a status bar, and its toolbar and menus have
+only that task's or project's commands, without New items or addon buttons.
+Opening it again brings it forward, and the window closes when the task or project is deleted. Edit Task
 is on the toolbar (Ctrl+E) and in the Task menu. Double-clicking a chat or a
 task run in the Chats list opens it the way [Open in New
 Window](#a-chat-in-its-own-window) does.
@@ -139,8 +144,10 @@ The View menu, from the top:
   First**, **Previous Waiting Chat** and **Next Waiting Chat** (F8 and F9),
   **Previous Chat** and **Next Chat** (Shift+F8 and Shift+F9), and **Next
   Pane** and **Previous Pane** (F6 and Shift+F6).
-- **Toolbar**, each addon's "<addon> Toolbar" check box, **Status Bar**, and
-  the zoom commands.
+- **Toolbar**, each addon's "<addon> Toolbar" check box, and **Status Bar**.
+
+Ctrl+= and Ctrl+- zoom a window in and out, Ctrl+0 goes back to 100%, and
+Ctrl+wheel zooms too. Each kind of window remembers its zoom.
 
 ## The dashboard
 
@@ -169,7 +176,12 @@ problem and when its run started. A task is listed when:
 - its last run ended in an error, a time-out or an idle time-out (error
   icon), or a warning (warning icon), until a later run ends well.
 
-Disabled and completed tasks aren't listed.
+Disabled and completed tasks aren't listed. **Clear** takes everything off the
+list, and each finished run moves to Recent runs. Clearing only changes the
+list: a run that waits for you keeps waiting, under Running now, and an
+auto-paused task stays paused. A new problem shows on the list again. On a
+phone, Clear is the last row of the list, and the runs under Waiting for You
+stay.
 
 **Recent runs** lists the 10 latest finished runs across every task and
 project, newest first: the task or project, its result, its
@@ -312,11 +324,18 @@ them where they are. **File → Close Conversation** (Ctrl+W or Ctrl+F4, the
 toolbar, or right-click a session) ends one session for good, and **File →
 Close All Conversations** ends them all. Right-clicking a project's group in
 the list has **Close All Conversations** too, which ends only that group's
-chats and terminal sessions. Close All Conversations always asks first, and
-Close Conversation asks unless the chat has no messages yet, or, with
-**Settings → Chats → Close conversations without asking once their cache has
-expired**, the prompt cache of the agent's last reply has expired (the status
-bar says "Cache expired"). It always asks while the agent works.
+chats and terminal sessions. Close All Conversations always asks first. Close
+Conversation closes at once, unless the agent is working or waits for a
+permission answer, when closing would stop it and Looper asks. With
+**Settings → Chats → Ask before closing a conversation** it asks every time,
+except for a chat with no messages yet, or, with **Close conversations without
+asking once their cache has expired** under it, once the prompt cache of the
+agent's last reply has expired (the status bar says "Cache expired").
+
+Right-clicking a project's group in the list also has **Open Recent Chat**,
+a list of the project's 15 most recent conversations, from its tasks' runs and
+from Claude Code or Codex in its folder, as in the [History window](#the-history-window).
+Picking one goes on with it in a chat, or shows it when it's already open.
 
 Quitting Looper doesn't close them: it stops every session's agent (asking
 first while a chat's agent works or a terminal session runs), and the next
@@ -353,6 +372,37 @@ id for the conversation: Claude Code's session id, or Codex's thread id, the
 one `claude --resume` or `codex resume` takes. It's greyed out until the
 harness has started the conversation.
 
+**Chat → Rename…** (or right-click a session, or select it in the list and
+press F2) names a chat or terminal session. The name shows in the list, the
+dashboard, the chat's own window and History. A running Claude Code chat gets
+the name too, so its transcript has it. Clear the name and save to go back to
+the automatic one. A chat starts with its first message as its name. After its
+first turn, Looper asks Claude Code to name a Claude Code chat, and the chat
+takes that name (its transcript keeps it too); if Claude Code can't, the first
+message's stays. A chat that goes on with a conversation that already has a
+name (Continue in Chat on a run or in History) keeps that name. A Codex chat
+keeps its first message's name. A terminal session takes the name Claude Code
+or Codex gives its conversation once there is one. A name you give always wins.
+
+When a session's turn fails because the account is out of its usage limit,
+the dot in its icon turns red. Once the limit has reset, the dot turns green
+and larger until you look at the session. With **Chat → Continue When Limit
+Resets** (also in a chat's right-click menu) on, Looper sends the agent
+"Continue." a minute after the reset time, under the note "The usage limit
+has reset: continuing." When the harness doesn't say when the limit resets,
+Looper tries every hour. A message you send first, turning the option off, or
+closing the chat cancels it. **Settings → Chats → Continue chats once the usage
+limit resets** turns the option on for new chats.
+
+A line under the limit's message says what will happen, with a button to change
+it: "Looper will continue this chat at 17:01" with **Don't Continue**, or
+"Looper won't continue this chat when the limit resets" with **Continue When
+Limit Resets**. With **Settings → Chats → Don't continue once the cache has
+expired and the context is larger than** on, Looper doesn't send "Continue." to
+a chat whose cache has expired by then and whose context is over that size, and
+at 0k it only continues a chat whose cache still lasts. The line says so, and
+**Continue Anyway** sends it at the reset time, or at once if that has passed.
+
 **Stop** ends the agent's turn at once, and the conversation goes on with your
 next message. It's on the toolbar, in a session's right-click menu, under a
 chat's Send button, and in the Chat menu (Esc in a chat). In a chat, Looper asks Claude Code to stop, which
@@ -373,7 +423,7 @@ had, at the window's size, on its conversation once it has taken a message
 terminal session can't restart.
 
 With **Settings → Chats → Stop the harness once a conversation's cache
-expires**, Looper ends the Claude Code process of each chat and terminal
+expires**, Looper ends the harness's process of each chat and terminal
 session that's idle once the prompt cache of its last reply expires, so it
 doesn't keep running for nothing. A session that waits for a permission
 answer, or runs background work, keeps its process, and so does a terminal
@@ -381,7 +431,11 @@ session you've typed into since the agent's last reply. Nothing is lost: a chat
 starts its agent again with your next message, and a terminal session shows
 "stopped when the prompt cache expired · press any key to go on", where the
 key you press starts the harness again on the conversation, as after quitting.
-Codex reports no prompt cache, so its sessions aren't stopped.
+
+Claude Code's transcript says how long its cache lasts. Codex doesn't say, so
+for a Codex session Looper counts 30 minutes from its last reply, the least
+OpenAI's cache lasts for GPT-5.6 and later. The cache can last longer, so a
+Codex session that shows "Cache expired" may still have it.
 
 ### A chat in its own window
 
@@ -489,6 +543,19 @@ Esc while it works or asks for a permission.
 The button at the right of a card's title bar, **Double Size**, makes the card
 twice as wide and twice as tall, and **Normal Size** puts it back. The card's
 right-click menu has the same command. Looper remembers each card's size.
+
+The cards fill as many columns at least 340 pixels wide as fit, and two rows
+fill the view (each row at least 320 pixels tall). Pointing at the gap
+between two cards shows a bar there: drag a gap between two columns to make
+the column on its left wider or narrower, and a gap under a row to make that
+row taller or shorter (down to 200 pixels). The columns before the one you
+size keep their widths, and the rest of the width goes to as many columns as
+fit: a column that would be narrower than 340 pixels goes, and when nothing
+fits after your columns, the last one reaches the edge. A narrower window
+drops the columns it has no room for and brings them back when it's wider
+again. Double-click a gap to give its column or row the automatic size
+again. Looper remembers the widths and heights.
+
 Clicking a chat's or task run's title bar (or anywhere on a terminal session's
 card) opens the session, and right-clicking it has the session's menu. The toolbar's Dashboard button
 (named Overview on the Chats tab), **View → Dashboard** in the Chats window,
@@ -498,9 +565,31 @@ or a click below the list shows the dashboard.
 
 Once the agent starts a subagent, tabs appear above the conversation:
 **Conversation** for the session's own, then one per subagent, named by what
-it does. A subagent's dot pulses while it runs and turns red if it failed.
-Clicking its tab shows its conversation as it happens, and Now follows its
+it does. A subagent's tab has the same icon as a session in the list: the
+ring around it fills as the subagent's context fills (once Looper knows how
+large its model's context window is, which Claude Code says at the end of a
+chat's turn or a headless task run; Looper remembers each model's window, so
+terminal sessions, task runs and the History window use it too), and the
+dot in the middle pulses while it runs, turns green when it's done and red if
+it failed. Clicking its tab shows its conversation as it happens, and Now follows its
 tool calls.
+
+In a chat on Claude Code that hasn't ended, the tab of a subagent that is
+still running has a message box under its conversation, which reads "Message"
+and the subagent's name. What you send there goes to the subagent itself, and
+the chat's agent doesn't see it. It waits at the end of the subagent's
+conversation, under "Waiting for the subagent", until a tool call of the
+subagent's ends: Looper hands the subagent your message with that call's
+result, and it shows in the subagent's conversation as guidance from then on.
+Cancel takes the message back while it waits. A subagent that finishes before
+it reads the message (its last call hands its report back, and the message
+can't come with that one) never gets it: the message stays at the end of its
+conversation, under "The subagent finished before reading this.", until you
+leave its tab. A finished subagent's tab has no message box.
+
+A subagent's last call, which hands its final report back to the main agent,
+shows in its tab as a message from the agent, under the line "Handed back to
+the main agent", so the end of its session is easy to see.
 
 A workflow the agent runs (Claude Code's Workflow tool, a script that starts
 many subagents in phases) gets one tab after them, named by the workflow, with
@@ -529,31 +618,47 @@ shows or hides it.
 - **Now** shows the agent's latest tool call the way it looks on its screen. A
   command shows in a terminal, the command line and then its output, under its
   description as the title. A file it read shows in an editor with its line
-  numbers and its code in color, and a change it made shows the same way, with
-  the added lines marked in green and the removed ones in red. An image it
+  numbers and its code in VS Code's colors, Light+ or Dark+ with the theme, and a
+  change it made shows the way GitHub shows one, light or dark with the theme:
+  both files' line numbers, the
+  added lines in green and the removed ones in red, the changed words darker,
+  and a blue `@@` line above each part. Code read from the middle of a file is colored
+  right even when it starts inside a comment or a string. A Markdown file it
+  read or wrote shows formatted, as a page of a document; **Markdown Source**
+  (angle brackets) shows its text instead, and a change to one shows as a
+  change. A message the agent sends another agent (SendMessage), a
+  subagent's final report, and the task the agent gives a subagent show as an
+  email: From, To and Subject rows, then the message formatted. An image it
   read shows as the image. A skill it loaded shows the skill's instructions as
   formatted text. Other tools show their parameters in a table, names on the
   left and values on the right, and then their result. An addon can change how
   its own tools show here (see [Addons](addons.md#how-tool-calls-show)). It
   follows each new call. The tab's **Previous Tool Call** and **Next Tool
   Call** buttons go back through the earlier ones, and **Follow the Latest
-  Tool Call** goes back to following.
-- **Background** lists the commands, subagents and workflows the agent runs in
-  the background, with how long each has been running, and the last few that
-  ended, with how they ended. Its title counts the ones running. Clicking a
-  command shows the end of its output, and clicking a workflow shows its tab
-  above the conversation. Right-clicking a command has Open File (its output
-  file), Copy Path and Copy Content (the command).
-- **Subagents** lists the subagents the agent started (a workflow's agents are
-  in the workflow's tab): what each one does,
-  whether it's running, its agent type, the model and effort it runs on, how
-  many tokens its context holds, and whether it runs in the background. The
-  model, effort and context come from its latest reply, so they read "Not
-  known yet" until it has one. Clicking a subagent shows its tab. Right-click
-  it for **Open Subagent Conversation** in its own window.
-- **Files** lists the files the agent changed and read, and the files you
-  attached. Images show as thumbnails. Clicking a file shows the agent's last
-  tool call on it in Now, and right-clicking it has Open File and Copy Path.
+  Tool Call** goes back to following. **Tool Call List** (a bulleted list)
+  shows every tool call instead, one per row with the tool and its file or
+  command, and "Running" or "Failed"; the shown one is selected, Up and Down
+  move, and a click or Enter shows that call. While Now follows the latest,
+  the list keeps the newest in view.
+- **Background** lists the commands and workflows the agent runs in the
+  background (its subagents are in Subagents), with how long each has been
+  running, and the last few that ended, with how they ended. Its title counts
+  the ones running. Clicking a command shows the end of its output, and
+  clicking a workflow shows its tab above the conversation. Right-clicking a
+  command has Open File (its output file), Copy Path and Copy Content (the
+  command).
+- **Subagents** lists the subagents the agent started, the newest first (a
+  workflow's agents are in the workflow's tab): what each one does, whether
+  it's running, its agent type, the model and effort it runs on, and how many
+  tokens its context holds. The model, effort and context come from its
+  latest reply, so they read "Not known yet" until it has one. Clicking a
+  subagent shows its tab. Right-click it for **Open Subagent Conversation** in
+  its own window.
+- **Files** lists the files the agent sent you (under Received, each once, as
+  in the conversation: images as thumbnails, which open like there), the
+  files it changed and read, and the files you attached. Images show as
+  thumbnails. Clicking a changed or read file shows the agent's last tool
+  call on it in Now, and right-clicking it has Open File and Copy Path.
 - **Git** shows the session's project repository: its uncommitted changes and
   its history, with the lists above the changes; the sections have draggable
   dividers. It works like the project's
@@ -568,7 +673,7 @@ The toolbar's buttons, left to right, with their tooltips:
 | Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects, Other Folder… and New Project… | Ctrl+T |
 | Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects, Other Folder… and New Project… | — |
 | Grid | Dashboard (stays pressed while the dashboard shows); Overview on the Chats tab | — |
-| Clock with an arrow around it | History: opens the [History window](#the-history-window) | — |
+| Clock with an arrow around it | History: opens the [History window](#the-history-window); its arrow lists the 15 most recent conversations, each of which goes on in a chat (or comes forward, when a chat has it open), and More… | — |
 | Bullhorn | Send to Chats | — |
 | Bubble with a square | Stop (greyed out while the agent isn't working) | Esc in a chat |
 | Bubble with fast-forward | Send Now: stops the turn, and the agent goes on with the chat's queued messages | Ctrl+Enter |
@@ -579,7 +684,7 @@ The toolbar's buttons, left to right, with their tooltips:
 | Window with a right column | Activity Pane (stays pressed while the pane shows) | — |
 
 The status bar shows the session's harness, then how much of the context the conversation uses, when
-the agent last replied, and with Claude Code whether that reply's prompt cache
+the agent last replied, and whether that reply's prompt cache
 still lasts ("Cached for 4 min" or "Cache expired"). A message sent while the
 cache lasts costs less and starts faster. On the right are the usage limits of
 the Claude account the session's harness runs on, as Claude Code last reported
@@ -694,6 +799,9 @@ conversation from outside changed in the last 5 minutes, Continue in Chat and
 Continue in Terminal ask first: "This conversation changed N min ago and may
 still be open elsewhere. Continue anyway?"
 
+Once a conversation has opened, the History window closes. It stays open for
+Copy Session ID, Open Working Directory, a cancelled question and an error.
+
 ## Terminal sessions
 
 Open Project in Terminal, a project's New Terminal, and Continue in
@@ -772,7 +880,10 @@ the conversation at the same time. A chat closed without a message sent leaves
 nothing behind. Chats and terminal sessions are deleted by **Run log
 retention** (Settings → General), like other runs.
 
-Enter sends the message (Shift+Enter starts a new line). **Stop**, under the
+Enter sends the message (Shift+Enter starts a new line). The message box is
+three lines tall; drag its top border up to make it taller, up to half the
+chat's height. Looper remembers the height for the Chats window and for a chat's
+own window. **Stop**, under the
 Send button, ends the agent's turn while it works. While the agent works, or
 waits for your answer, a line above the message box says so. In an empty message
 box, Up brings back the messages you sent, newest first, and Down goes back
@@ -813,14 +924,18 @@ When you run a skill or command, your message shows as you typed it (`/name`
 and its arguments), and the skill's instructions the harness adds stay out of
 the conversation.
 
-The agent's thinking shows in a bubble outlined with dots, on a light
-see-through background. Thinking sits inside the tool groups, whose closed line
+The agent's thinking shows in a bubble outlined with dashes, in a softer text
+than the messages, with a faded white background in the light theme and no
+background in the dark theme.
+Thinking sits inside the tool groups, whose closed line
 reads "Thinking and 1 tool use", "Thinking and 5 tool uses" (", 2 failed" is
 added when calls failed), "Thinking" for a group of thinking alone, and "N tool
 uses" when there's no thinking; open the group to see each call and the
 thinking's text. With **Settings → Chats → Show thinking expanded**, thinking
 shows as a plain block between the messages instead, always with its text, in
-chats, the History window and the task builder. With Claude Code it's the summary of the thinking that
+chats, the History window and the task builder. **View → Show Thinking** in the
+Chats window, a chat's own window and the Chats tab is the same setting: checked
+shows the blocks, unchecked puts the thinking inside the tool groups. With Claude Code it's the summary of the thinking that
 Claude Code receives, not the full reasoning. Codex shows thinking only when
 its harness is set to write reasoning summaries (see
 [Harnesses](environments.md#harnesses)).
@@ -959,7 +1074,10 @@ When Claude Code sends you a file (its SendUserFile tool, for a diagram, a
 report or a screenshot), the conversation shows it as a message from the agent:
 the caption as its text, then each file under it, instead of a collapsed tool
 call. An image (PNG, JPEG, GIF, WebP or SVG) shows as a thumbnail, and clicking
-it opens the image window. Any other file, and an image the agent asked to
+it opens the image window. When the message has more than one image, the window
+has **Previous Image** and **Next Image** buttons (the Left and Right keys, and
+Home and End, do the same), "2 of 5" in its status bar, and its title follows
+the image it shows. Any other file, and an image the agent asked to
 attach rather than display, shows as a card with the file's name and size, and
 clicking it opens the file in its default app. From a browser or phone, both
 open in Looper's own viewer, as an attachment does, with **Download to This
@@ -1403,9 +1521,10 @@ On the Chats tab (all off by default):
 - **Show thinking expanded** shows the agent's thinking as a block between
   the messages, with its text, instead of inside the tool groups (see
   [Chats](#chats)).
-- **Close conversations without asking once their cache has expired** and
-  **Stop the harness once a conversation's cache expires** are described under
-  [the Chats window](#the-chats-window).
+- **Ask before closing a conversation**, **Close conversations without asking
+  once their cache has expired** (shown under it) and **Stop the harness once a
+  conversation's cache expires** are described under [the Chats
+  window](#the-chats-window).
 - **Ask before sending a message once the cache has expired** asks "The
   prompt cache of "&lt;chat&gt;" has expired. Send anyway?" when you send a
   message to a chat whose agent isn't working and whose last reply's cache has
@@ -1414,6 +1533,13 @@ On the Chats tab (all off by default):
   than** (on at first), followed on the same line by a box in thousands of
   tokens (1k at least, 200k by default), it asks only for a conversation that
   big. A message that waits in the queue behind a turn doesn't ask.
+- **Continue chats once the usage limit resets** turns on Continue When Limit
+  Resets for each new chat (see [the Chats window](#the-chats-window)).
+- **Don't continue once the cache has expired and the context is larger than**,
+  followed on the same line by a box in thousands of tokens (0 by default, which
+  counts any context), stops that continue for a chat whose cache has expired.
+  The chat offers **Continue Anyway** (see [the Chats
+  window](#the-chats-window)).
 
 The Rest Mode tab holds the three [Rest Mode](#rest-mode) settings, and the
 Environments tab the [environment list](environments.md).

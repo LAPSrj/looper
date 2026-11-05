@@ -73,6 +73,20 @@ export interface SentFileInfo {
   thumbnail?: string;
 }
 
+/** The call a subagent ends its session with: its final report is the `message` input. */
+export const HANDBACK_TOOL = 'SubagentHandback';
+
+/**
+ * The report of a SubagentHandback call (its `message`, else the rendered
+ * input); null when the row is another row, or a hand-back that failed and
+ * stays a tool call.
+ */
+export function handbackText(row: MessageRow): string | null {
+  if (row.kind !== 'tool' || row.tool !== HANDBACK_TOOL || row.resultError) return null;
+  const message = (row.input as { message?: unknown } | undefined)?.message;
+  return typeof message === 'string' ? message : row.text;
+}
+
 /** The image types SendUserFile shows inline. */
 export const SENT_IMAGE_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 

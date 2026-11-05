@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from 'react';
 import type { Environment, Harness, RemoteHelper } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { AGENT_LABELS, agentRows, type AgentField } from './agent-fields-model';
-import { Field, InputRow } from './ui';
+import { Field, FieldRow, InputRow, SelectInput, TextInput } from './ui';
 
 /** What a helper runs with. A helper has no permission mode. */
 export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort'> & {
@@ -127,14 +127,14 @@ export function AgentFields({
       case 'name':
         return (
           <Field key={f} label={label(f)}>
-            <input autoFocus value={draft.name} placeholder={namePlaceholder} onChange={(e) => onChange({ name: e.target.value })} />
+            <TextInput autoFocus value={draft.name} placeholder={namePlaceholder} onChange={(e) => onChange({ name: e.target.value })} />
           </Field>
         );
       case 'cwd':
         return (
           <Field key={f} label={label(f)}>
             <InputRow>
-              <input className="mono" autoFocus={firstInForm} disabled={lockCwd} value={draft.cwd} onChange={(e) => onChange({ cwd: e.target.value })} />
+              <TextInput code autoFocus={firstInForm} disabled={lockCwd} value={draft.cwd} onChange={(e) => onChange({ cwd: e.target.value })} />
               <button className="btn" disabled={lockCwd} onClick={() => void browse()}>
                 Browse…
               </button>
@@ -144,20 +144,20 @@ export function AgentFields({
       case 'environment':
         return (
           <Field key={f} label={label(f)}>
-            <select value={draft.environmentId} onChange={(e) => (pick?.environment ? pick.environment(e.target.value) : pickHarness(e.target.value))}>
+            <SelectInput value={draft.environmentId} onChange={(e) => (pick?.environment ? pick.environment(e.target.value) : pickHarness(e.target.value))}>
               {!env && <option value={draft.environmentId}>Unknown environment ({draft.environmentId || 'none'})</option>}
               {environments.map((e) => (
                 <option key={e.id} value={e.id} disabled={choice !== 'any' && offeredHarnesses(e, choice).length === 0}>
                   {e.name}
                 </option>
               ))}
-            </select>
+            </SelectInput>
           </Field>
         );
       case 'harness':
         return (
           <Field key={f} label={label(f)}>
-            <select
+            <SelectInput
               value={harness?.id ?? ''}
               disabled={!offered.length}
               onChange={(e) => (pick?.harness ? pick.harness(e.target.value) : pickHarness(draft.environmentId, e.target.value))}
@@ -168,14 +168,14 @@ export function AgentFields({
                   {choice === 'any' ? `${h.name} (${harnessKindLabel(h.kind)})` : h.name}
                 </option>
               ))}
-            </select>
+            </SelectInput>
           </Field>
         );
       case 'model':
         return (
           <Fragment key={f}>
             <Field label={label(f)}>
-              <select
+              <SelectInput
                 value={isCustom ? 'custom' : (draft.model ?? '')}
                 onChange={(e) => {
                   if (e.target.value === 'custom') return customModel?.onPin(true);
@@ -191,12 +191,12 @@ export function AgentFields({
                   </option>
                 ))}
                 {customModel && <option value="custom">Custom…</option>}
-              </select>
+              </SelectInput>
             </Field>
             {isCustom && (
               <Field label="Model id">
-                <input
-                  className="mono"
+                <TextInput
+                  code
                   value={draft.model ?? ''}
                   placeholder="model id"
                   onChange={(e) => {
@@ -213,7 +213,7 @@ export function AgentFields({
         if (!efforts.length) return null;
         return (
           <Field key={f} label={label(f)}>
-            <select value={draft.effort ?? ''} onChange={(e) => onChange({ effort: e.target.value || undefined })}>
+            <SelectInput value={draft.effort ?? ''} onChange={(e) => onChange({ effort: e.target.value || undefined })}>
               <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Default'}</option>
               {draft.effort && !efforts.some(([v]) => v === draft.effort) && <option value={draft.effort}>{draft.effort}</option>}
               {efforts.map(([v, text]) => (
@@ -221,28 +221,28 @@ export function AgentFields({
                   {text}
                 </option>
               ))}
-            </select>
+            </SelectInput>
           </Field>
         );
       case 'mode':
         return (
           <Field key={f} label={label(f)}>
-            <select value={draft.mode} onChange={(e) => onChange({ mode: e.target.value as 'interactive' | 'headless' })}>
+            <SelectInput value={draft.mode} onChange={(e) => onChange({ mode: e.target.value as 'interactive' | 'headless' })}>
               <option value="interactive">Interactive terminal{defaultMode === 'interactive' ? ' (default)' : ''}</option>
               <option value="headless">Headless{headlessNotes.length ? ` (${headlessNotes.join(', ')})` : ''}</option>
-            </select>
+            </SelectInput>
           </Field>
         );
       case 'permission':
         return (
           <Field key={f} label={label(f)}>
-            <select value={draft.permissionMode} onChange={(e) => onChange({ permissionMode: e.target.value })}>
+            <SelectInput value={draft.permissionMode} onChange={(e) => onChange({ permissionMode: e.target.value })}>
               {modes.map(([v, text]) => (
                 <option key={v} value={v}>
                   {text}
                 </option>
               ))}
-            </select>
+            </SelectInput>
           </Field>
         );
     }
@@ -255,9 +255,7 @@ export function AgentFields({
           // A part of the fields (`fields`) sits among the editor's own, which has its own first field.
           field(row[0], r === 0 && !fields)
         ) : (
-          <div className="row" key={row.join('-')}>
-            {row.map((f) => field(f, false))}
-          </div>
+          <FieldRow key={row.join('-')}>{row.map((f) => field(f, false))}</FieldRow>
         ),
       )}
     </>

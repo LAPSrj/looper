@@ -200,3 +200,45 @@ export function useDragResize({ axis, containerRef, onDrag, onEnd }: DragResizeO
     [axis, containerRef],
   );
 }
+
+/** Which kind of window this is, so a box's height is remembered for each: a single chat's window, the Chats window, any other. */
+function windowKind(): string {
+  const route = location.hash.replace(/^#\/?/, '');
+  return /^sessions\/[^/]+\/window$/.test(route) ? 'chat' : route.startsWith('sessions') ? 'chats' : 'main';
+}
+
+/**
+ * A desktop message box made taller by dragging its top border: its own height
+ * (the Send and Stop buttons') is the least, and the most is half of what holds
+ * the composer. `rootRef`: the composer; the height is saved for the window's kind.
+ * Returns the box's `minHeight` and the border's `onMouseDown`.
+ */
+export function useBoxHeight(rootRef: RefObject<HTMLElement | null>): { minHeight: string | undefined; onGrip: (e: ReactMouseEvent) => void } {
+  const key = `composer.height.${windowKind()}`;
+  const [height, setHeight] = useState<number | null>(() => {
+    const saved = Number(localStorage.getItem(key));
+    return saved > 0 ? saved : null;
+  });
+  const latest = useRef(height);
+  latest.current = height;
+  const onGrip = useDragResize({
+    axis: 'y',
+    containerRef: rootRef,
+    onDrag: (pos, rect) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const least = root.querySelector<HTMLElement>('.composer-actions')?.offsetHeight ?? 0;
+      const most = Math.max(least, (root.parentElement?.clientHeight ?? 0) / 2);
+      const wanted = rect.height - pos - (parseFloat(getComputedStyle(root).paddingBottom) || 0);
+      const next = Math.min(most, wanted);
+      latest.current = next <= least ? null : Math.round(next);
+      setHeight(latest.current);
+    },
+    onEnd: () => {
+      if (latest.current === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(latest.current));
+    },
+  });
+  // A height saved in a taller window still fits a smaller one.
+  return { minHeight: height === null ? undefined : `min(${height}px, 50vh)`, onGrip };
+}

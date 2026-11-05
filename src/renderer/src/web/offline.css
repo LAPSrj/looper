@@ -142,7 +142,7 @@ html:has(.offline-waiting.ios) {
 
 .offline-banner-icon {
   flex: none;
-  color: #ff9500;
+  color: #ff8d28;
 }
 
 .offline-banner-text {

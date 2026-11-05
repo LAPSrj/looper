@@ -110,6 +110,11 @@ selected commit, or a list of files and its changes. When the Files tab is too
 short to show both, the changes move to a third tab, **Diff**, beside Files.
 The same goes for the uncommitted files in the Chats window.
 
+A file's changes show the way GitHub shows them, light or dark with the theme:
+both files' line numbers, the added lines in green and the removed ones in red,
+the changed words darker, the code in its syntax colors, and a blue `@@` line
+above each part.
+
 The tab's title counts the uncommitted files: "Git (+2 ~3 −1)" means 2 new, 3
 changed (renamed and conflicted files included) and 1 deleted, and a count of
 zero is left out. Beside the Changes and History tabs (at the bottom in the

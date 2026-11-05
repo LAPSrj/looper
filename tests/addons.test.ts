@@ -43,6 +43,13 @@ describe('readAddonManifest', () => {
     expect(r.ok && r.manifest.panes).toEqual([]);
   });
 
+  it("accepts a toolbar button's view, and only Looper's views", () => {
+    const withView = (view: string) => readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'go', label: 'Go', view }] });
+    const r = withView('tasks');
+    expect(r.ok && r.manifest.toolbar[0].view).toBe('tasks');
+    expect(withView('nowhere').ok).toBe(false);
+  });
+
   it('tells a newer format from a file that is not an addon', () => {
     expect(readAddonManifest({ ...MANIFEST, $version: 2 })).toEqual({ ok: false, reason: 'newer' });
     expect(readAddonManifest({ $type: 'looper/task', $version: 1 })).toEqual({ ok: false, reason: 'not-addon' });

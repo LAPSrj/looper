@@ -1,4 +1,17 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  autoRowHeight,
+  columnTracks,
+  columnWidths,
+  gapBars,
+  placeCards,
+  resetSize,
+  rowCount,
+  rowHeights,
+  sizeColumn,
+  sizeRow,
+  type GapBar,
+} from '@shared/card-grid';
 import { chatCanCompact, contextText, type ChatState } from '@shared/chat';
 import type { SessionSummary, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
@@ -18,7 +31,7 @@ import { ChatView, PermissionButtons } from './components/ChatView';
 import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
 import { MessageBox, type MessageBoxStop } from './components/MessageBox';
-import { RunGuidance, TranscriptView } from './components/Transcript';
+import { RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
 import { useAutoGrow } from './components/phone/auto-grow';
 import { Group, LargeTitle, Row, Segmented } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
@@ -27,6 +40,7 @@ import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { SessionIcon, SessionList, statusText } from './components/SessionList';
 import { groupStatusText, subagentTabs } from './components/subagents';
+import { SubagentIcon } from './components/SubagentIcon';
 import { contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
 import { TerminalView } from './components/TerminalView';
 import { Tabs, type TabItem } from './components/Tabs';
@@ -34,6 +48,8 @@ import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components
 import { platform } from './platform';
 import { conversationMore, terminalTitle } from './phone-lists';
 import { subscribe } from './events';
+import { useAddons } from './components/AddonPane';
+import { addonMainGroups } from './components/AddonScreen';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 import type { PageNavAction } from './web/nav-bar-model';
@@ -141,10 +157,11 @@ function CardMessages({ s }: { s: SessionSummary }) {
   );
 }
 
-/** A desktop dashboard card's size: twice the normal one, or back. */
+/** A desktop dashboard card's size: twice the normal one, or back; `area` is where it goes in the dashboard's grid. */
 interface CardSize {
   big: boolean;
   onToggle: () => void;
+  area: React.CSSProperties;
 }
 
 /** A desktop dashboard card dragged by its title to another place; `mark` shows where a dragged card would go. */
@@ -182,8 +199,8 @@ function CardTitle({ s, size, drag }: { s: SessionSummary; size?: CardSize; drag
 
 const backgroundText = (n: number) => (n === 1 ? '1 running in the background' : `${n} running in the background`);
 
-const cardClass = (s: SessionSummary, size: CardSize | undefined, extra = '') =>
-  `overview-card${extra}${size?.big ? ' big' : ''}${s.waiting && s.waiting.reason !== 'turn' ? ' waiting' : ''}`;
+const cardClass = (s: SessionSummary, extra = '') =>
+  `overview-card${extra}${s.waiting && s.waiting.reason !== 'turn' ? ' waiting' : ''}`;
 
 const fail = (e: Error) => void window.looper.showError(e.message);
 
@@ -252,7 +269,8 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
   return (
     <div
       data-id={s.id}
-      className={cardClass(s, size, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '')}
+      className={cardClass(s, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '')}
+      style={size?.area}
       onClick={() => onOpen(s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -443,7 +461,8 @@ function LiveCard({
     <div
       ref={ref}
       data-id={s.id}
-      className={cardClass(s, size, ' overview-chat') + drag.mark}
+      className={cardClass(s, ' overview-chat') + drag.mark}
+      style={size.area}
       onFocus={seen}
     >
       <div
@@ -465,17 +484,110 @@ function LiveCard({
 /** A dragged dashboard card's data type: its session id, which a message box doesn't take as dropped text. */
 const CARD_DRAG_TYPE = 'application/x-looper-card';
 
+/** An element's content box (inside its padding), kept current. */
+function useContentSize(el: HTMLElement | null): { width: number; height: number } {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useLayoutEffect(() => {
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const width = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const height = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      setSize((s) => (s.width === width && s.height === height ? s : { width, height }));
+    };
+    // Measured before the first paint, so the cards don't show in one column first.
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return size;
+}
+
+/** The dashboard's column widths and row heights in pixels, from the first (0: automatic). */
+interface GridSizes {
+  columns: number[];
+  rows: number[];
+}
+
+/**
+ * The dashboard's gaps dragged to size its columns and rows: `sizes` are the
+ * saved ones, or the dragged ones while a gap is dragged (saved with the
+ * window's View settings when the mouse is released). `start` is a gap's
+ * mouse-down, `reset` its double-click, which makes its column or row automatic.
+ */
+function useGapResize(s: SessionsWindow, rootRef: RefObject<HTMLDivElement | null>) {
+  const saved: GridSizes = { columns: s.shown.cardColumns, rows: s.shown.cardRows };
+  const [draft, setDraft] = useState<GridSizes | null>(null);
+  const draftRef = useRef<GridSizes | null>(null);
+  // Kept until the settings come back with it, so the dragged sizes don't flick back meanwhile.
+  const savedKey = `${saved.columns.join()}/${saved.rows.join()}`;
+  useEffect(() => {
+    draftRef.current = null;
+    setDraft(null);
+  }, [savedKey]);
+  const drag = useRef<{ bar: GapBar; start: number; size: number; shown: number[]; room: number; moved: boolean } | null>(null);
+  const [active, setActive] = useState<GapBar | null>(null);
+  const onDrag = (pos: number) => {
+    const d = drag.current;
+    const el = rootRef.current;
+    if (!d || !el) return;
+    const size = d.size + (d.bar.axis === 'x' ? pos : pos + el.scrollTop) - d.start;
+    const cur = draftRef.current ?? saved;
+    const next =
+      d.bar.axis === 'x'
+        ? { ...cur, columns: sizeColumn(cur.columns, d.shown, d.bar.index, Math.min(size, d.room)) }
+        : { ...cur, rows: sizeRow(cur.rows, d.bar.index, size) };
+    d.moved = true;
+    draftRef.current = next;
+    setDraft(next);
+  };
+  const onEnd = () => {
+    const moved = drag.current?.moved;
+    drag.current = null;
+    setActive(null);
+    const d = draftRef.current;
+    if (moved && d) s.setShown({ cardColumns: d.columns, cardRows: d.rows });
+  };
+  const dragX = useDragResize({ axis: 'x', containerRef: rootRef, onDrag, onEnd });
+  const dragY = useDragResize({ axis: 'y', containerRef: rootRef, onDrag, onEnd });
+  const sizes = draft ?? saved;
+  /** A gap's mouse-down: `widths` and `heights` are the columns' and rows' as shown, `width` the dashboard's. */
+  const start = (e: React.MouseEvent, bar: GapBar, widths: number[], heights: number[], width: number) => {
+    const el = rootRef.current;
+    if (e.button !== 0 || !el) return;
+    const r = el.getBoundingClientRect();
+    const x = bar.axis === 'x';
+    const size = x ? widths[bar.index] : heights[bar.index];
+    // A column is at most as wide as the room from its left edge to the dashboard's right one.
+    drag.current = { bar, start: x ? e.clientX - r.left : e.clientY - r.top + el.scrollTop, size, shown: widths, room: width - (bar.at - size), moved: false };
+    setActive(bar);
+    (x ? dragX : dragY)(e);
+  };
+  const reset = (bar: GapBar) =>
+    s.setShown(bar.axis === 'x' ? { cardColumns: resetSize(sizes.columns, bar.index) } : { cardRows: resetSize(sizes.rows, bar.index) });
+  return { sizes, active, start, reset };
+}
+
 /**
  * The Chats window's dashboard: a card per session in the order the cards
  * were dragged to (the list's for the others), so cards don't move while you
  * work in them, unless Waiting Chats First puts the waiting ones first. Each
  * chat is a working chat and each task run its conversation with its guidance
- * box; terminal sessions are summaries. Any card can be twice its size.
+ * box; terminal sessions are summaries. Any card can be twice its size. The
+ * gaps between the cards are dragged to size the columns and rows.
  */
 function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const { sessions } = s.state;
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const setRoots = useCallback((el: HTMLDivElement | null) => {
+    rootRef.current = el;
+    setRoot(el);
+  }, []);
   const [inView, track] = useCardsInView(root);
+  const box = useContentSize(root);
+  const grid = useGapResize(s, rootRef);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
   const live = liveCards(sessions, inView);
@@ -485,6 +597,11 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
   if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
   const big = s.shown.bigCards;
+  const cards = dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst);
+  const widths = columnWidths(grid.sizes.columns, box.width);
+  const places = placeCards(cards.map((x) => big.includes(x.id)), widths.length);
+  const heights = rowHeights(grid.sizes.rows, rowCount(places), autoRowHeight(box.height));
+  const bars = gapBars(places, widths, heights);
   const endDrag = () => {
     setDragging(null);
     setDrop(null);
@@ -507,7 +624,8 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   return (
     <div
       className="sessions-overview sessions-dashboard"
-      ref={setRoot}
+      ref={setRoots}
+      style={{ gridTemplateColumns: columnTracks(grid.sizes.columns, box.width), gridTemplateRows: heights.map((h) => `${h}px`).join(' ') }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CARD_DRAG_TYPE)) return;
         e.preventDefault();
@@ -531,14 +649,25 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
         endDrag();
       }}
     >
-      {dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst).map((x) => {
-        const size = { big: big.includes(x.id), onToggle: () => s.toggleBig(x.id) };
+      {cards.map((x, i) => {
+        const p = places[i];
+        const area = { gridColumn: `${p.col + 1} / span ${p.cols}`, gridRow: `${p.row + 1} / span ${p.rows}` };
+        const size = { big: big.includes(x.id), onToggle: () => s.toggleBig(x.id), area };
         return showsConversation(x) ? (
           <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={s.setSelected} />
         ) : (
           <DashboardCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={s.setSelected} />
         );
       })}
+      {bars.map((bar) => (
+        <div
+          key={`${bar.axis}${bar.index}:${bar.from}`}
+          className={`card-gap ${bar.axis}${grid.active?.axis === bar.axis && grid.active.index === bar.index ? ' active' : ''}`}
+          style={bar.axis === 'x' ? { left: bar.at, top: bar.from, height: bar.length } : { top: bar.at, left: bar.from, width: bar.length }}
+          onMouseDown={(e) => grid.start(e, bar, widths, heights, box.width)}
+          onDoubleClick={() => grid.reset(bar)}
+        />
+      ))}
     </div>
   );
 }
@@ -561,6 +690,7 @@ function SubagentTabs({ s }: { s: SessionsWindow }) {
       label: a.description || a.type,
       title: `${a.description || a.type} (${a.type})`,
       status: a.status,
+      mark: <SubagentIcon a={a} />,
       onClose: follow === a.agentId && a.status !== 'running' ? () => s.setFollow(null) : undefined,
     })),
     ...workflows.map((run) => ({ id: `run:${run.runId}`, label: run.name, title: `${run.name} (workflow)`, status: tabStatus(run.status) })),
@@ -611,7 +741,7 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
       id: 'views',
       items: commandToolbar(CHAT_COMMANDS, 'views', {
         dashboard: { pressed: !s.selected, run: () => s.setSelected(null) },
-        history: { run: () => window.looper.history.open() },
+        history: { run: () => window.looper.history.open(), menu: { label: 'Recent Conversations', open: (x, y) => window.looper.sessions.showHistoryMenu(x, y) } },
         sendToChats: { run: () => window.looper.sessions.openSend() },
       }),
     },
@@ -643,7 +773,15 @@ export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
 }
 
 function SessionsToolbar({ s }: { s: SessionsWindow }) {
-  return <Toolbar groups={sessionsToolbarGroups(s)} className="sessions-toolbar" />;
+  const { addons } = useAddons();
+  const [hidden, setHidden] = useState<string[]>([]);
+  useEffect(() => {
+    void window.looper.info().then((i) => setHidden(i.settings.view.hiddenAddonToolbars));
+    return subscribe((e) => {
+      if (e.type === 'settings') setHidden(e.settings.view.hiddenAddonToolbars);
+    });
+  }, []);
+  return <Toolbar groups={[...sessionsToolbarGroups(s), ...addonMainGroups(addons, hidden, 'chats', true)]} className="sessions-toolbar" />;
 }
 
 /**
@@ -688,7 +826,13 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
       </div>
     );
   }
-  if (follow && followed) return <TranscriptView taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
+  if (follow && followed) {
+    // A chat on Claude Code that hasn't ended takes messages for its running subagents.
+    if (summary.kind === 'chat' && chat?.harnessKind === 'claude-code' && chat.status !== 'ended') {
+      return <SubagentConversation key={followed.agentId} taskId={summary.taskId} runId={summary.id} rows={s.subRows} chat={chat} agent={followed} />;
+    }
+    return <TranscriptView taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
+  }
   if (summary.kind === 'terminal') return <TerminalView key={summary.id} id={summary.id} />;
   if (summary.kind === 'run') {
     return (

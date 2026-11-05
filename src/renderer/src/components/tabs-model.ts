@@ -13,6 +13,8 @@ export interface TabItem {
   icon?: ReactNode;
   /** Drawn as a StatusMark before the label, and named after the label ("Explorer, running"). */
   status?: TabStatus;
+  /** Drawn instead of the StatusMark (a subagent's context ring); the status still names the tab. */
+  mark?: ReactNode;
   /** The full name, when the label is cut short. */
   title?: string;
   /** A close button after the tab; Delete closes it too. */

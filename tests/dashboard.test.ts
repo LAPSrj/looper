@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attentionRows, runningRows } from '../src/shared/dashboard';
+import { attentionKey, attentionRows, runningRows } from '../src/shared/dashboard';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { TaskSchema, type ActiveRun, type TaskInput, type TaskRuntime } from '../src/shared/types';
 
@@ -36,6 +36,16 @@ const run = (runId: string, startedAt: number, over: Partial<ActiveRun> = {}): A
 });
 
 describe('dashboard rows', () => {
+  it('gives a row a new key for a new problem, so Clear keeps only what it saw', () => {
+    const keyOf = (over: Partial<TaskRuntime>) => attentionKey(attentionRows([task('t')], { t: runtime('t', over) })[0]);
+    const failed = { lastResult: 'error' as const, lastDetail: 'boom', lastRunAt: 1, lastRunId: 'r1' };
+    expect(keyOf(failed)).toBe(keyOf({ ...failed }));
+    expect(keyOf({ ...failed, lastRunId: 'r2' })).not.toBe(keyOf(failed));
+    expect(keyOf({ ...failed, lastDetail: 'other' })).not.toBe(keyOf(failed));
+    const asks = (question: string) => ({ state: 'running' as const, runs: [run('r1', 1, { question })] });
+    expect(keyOf(asks('a?'))).not.toBe(keyOf(asks('b?')));
+  });
+
   it('lists a waiting run, an auto-pause and a failed last run, errors first', () => {
     const tasks = [task('waits'), task('paused'), task('failed'), task('fine')];
     const rows = attentionRows(tasks, {

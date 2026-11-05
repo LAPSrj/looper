@@ -3,7 +3,7 @@ import type { AppInfo, UiEvent } from '@shared/api';
 import type { RemoteState } from '@shared/remote';
 import { isStandInTaskId, projectTaskId } from '@shared/projects';
 import type { PreventSleepState, Project, ProjectFolder, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
-import { attentionRows, runningRows, type RecentRun } from '@shared/dashboard';
+import { attentionKey, attentionRows, runningRows, type AttentionRow, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { subscribe } from './events';
 import { useAddons, type AddonSelection } from './components/AddonPane';
@@ -64,8 +64,10 @@ export function useMainWindow(menuTab?: string) {
   const [addonSel, setAddonSel] = useState<AddonSelection | null>(null);
   const runningAddons = addons.filter((a) => a.status === 'running').length;
 
-  const attention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
-  const running = useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
+  const allAttention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
+  const attentionCleared = info?.settings.view.attentionCleared;
+  const attention = useMemo(() => allAttention.filter((r) => !attentionCleared?.includes(attentionKey(r))), [allAttention, attentionCleared]);
+  const running =useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
   // Remote Control's open conversations while it runs; null while it's stopped.
   const remoteOpen = useMemo(
     () => (remote?.running ? remote.conversations.filter((c) => c.status !== 'ended') : null),
@@ -472,6 +474,17 @@ export function useMainWindow(menuTab?: string) {
     void window.looper.updateSettings({ view: next }).catch((e) => void window.looper.showError((e as Error).message));
   };
 
+  /** Clear: these Needs attention rows leave the dashboards, and their runs show in Recent runs. */
+  const clearAttention = (rows: AttentionRow[]) => changeView({ attentionCleared: [...(attentionCleared ?? []), ...rows.map(attentionKey)] });
+  // A row that's gone is forgotten, so the same problem coming back (a run that holds again) shows.
+  useEffect(() => {
+    if (!loaded || !attentionCleared?.length) return;
+    const live = new Set(allAttention.map(attentionKey));
+    const kept = attentionCleared.filter((k) => live.has(k));
+    if (kept.length !== attentionCleared.length) changeView({ attentionCleared: kept });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, allAttention, attentionCleared]);
+
   const counts = useMemo(() => {
     const enabled = tasks.filter((t) => t.enabled).length;
     const completed = tasks.filter((t) => t.completedAt).length;
@@ -537,6 +550,7 @@ export function useMainWindow(menuTab?: string) {
     openFromDashboard,
     uiAction,
     changeView,
+    clearAttention,
   };
 }
 

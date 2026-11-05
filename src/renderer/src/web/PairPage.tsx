@@ -7,6 +7,7 @@ import { codeFromQr } from './pair-link';
 import { canScan } from './pair-scan';
 import { QrScanner } from './QrScanner';
 import { Field } from '../components/ui';
+import { IosField } from './IosField';
 import './phone.css';
 import './ios.css';
 import './android.css';
@@ -95,14 +96,8 @@ export function PairPage() {
           <PairLogo />
           <h1 className="ios-large-title">Pair This Device</h1>
           <div className="ios-group">
-            <label className="ios-cell ios-field">
-              <span className="ios-cell-label">Code</span>
-              {codeInput('mono')}
-            </label>
-            <label className="ios-cell ios-field">
-              <span className="ios-cell-label">Name</span>
-              {nameInput()}
-            </label>
+            <IosField label="Code">{codeInput('mono')}</IosField>
+            <IosField label="Name">{nameInput()}</IosField>
           </div>
           {scan && (
             <div className="ios-group">

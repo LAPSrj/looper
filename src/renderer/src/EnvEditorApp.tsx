@@ -3,7 +3,7 @@ import type { Environment, Harness } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
-import { EmptyWindow, Field, TabBar } from './components/ui';
+import { EmptyWindow, Field, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ConcurrencyLimit } from './components/form-blocks';
 import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
@@ -154,46 +154,49 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
 
   return (
     <div className="editor">
-      <TabBar tabs={tabs} active={shown} onSelect={setTab} className="editor-tabs" />
-      <div className="editor-body">
-        {shown === 'general' && (
+      <TabBar
+        tabs={tabs}
+        active={shown}
+        onSelect={setTab}
+        className="editor-tabs"
+        panels={(id) => id === 'general' ? (
           <div className="form">
-            <Field label="Name">
-              <input autoFocus value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
-            </Field>
-            <Field label="Type">
-              <select value={draft.kind} onChange={(e) => patch({ kind: e.target.value as Environment['kind'] })}>
-                {ENVIRONMENT_KINDS.filter(([k]) => kinds.includes(k)).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {draft.kind === 'wsl' && (
-              <Field label="WSL distro">
-                {distros.length > 0 ? (
-                  <select value={draft.distro ?? ''} onChange={(e) => patch({ distro: e.target.value || undefined })}>
-                    <option value="">Default distro</option>
-                    {draft.distro && !distros.includes(draft.distro) && (
-                      <option value={draft.distro}>{draft.distro} (not installed)</option>
-                    )}
-                    {distros.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input value={draft.distro ?? ''} onChange={(e) => patch({ distro: e.target.value || undefined })} />
-                )}
+            <FormGroup>
+              <Field label="Name">
+                <TextInput autoFocus value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
               </Field>
-            )}
+              <Field label="Type">
+                <SelectInput value={draft.kind} onChange={(e) => patch({ kind: e.target.value as Environment['kind'] })}>
+                  {ENVIRONMENT_KINDS.filter(([k]) => kinds.includes(k)).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              {draft.kind === 'wsl' && (
+                <Field label="WSL distro">
+                  {distros.length > 0 ? (
+                    <SelectInput value={draft.distro ?? ''} onChange={(e) => patch({ distro: e.target.value || undefined })}>
+                      <option value="">Default distro</option>
+                      {draft.distro && !distros.includes(draft.distro) && (
+                        <option value={draft.distro}>{draft.distro} (not installed)</option>
+                      )}
+                      {distros.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </SelectInput>
+                  ) : (
+                    <TextInput verbatim value={draft.distro ?? ''} onChange={(e) => patch({ distro: e.target.value || undefined })} />
+                  )}
+                </Field>
+              )}
+            </FormGroup>
             <ConcurrencyLimit value={draft.maxConcurrentTasks} onChange={(max) => patch({ maxConcurrentTasks: max })} />
           </div>
-        )}
-
-        {shown === 'harnesses' && (
+        ) : id === 'harnesses' ? (
           <div className="form env-tab">
             <SelectList
               items={harnesses}
@@ -213,6 +216,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
               onDelete={(h) => void removeHarness(h)}
             />
             <ListActions
+              item="Harness"
               onAdd={() => void addHarness()}
               onEdit={() => harness && void window.looper.openHarnessEditor(envId, harness.id)}
               editDisabled={!harness}
@@ -223,56 +227,56 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
               removeTitle={harnesses.length <= 1 ? 'At least one harness is required' : undefined}
             />
           </div>
-        )}
-
-        {shown === 'advanced' && (
+        ) : (
           <div className="form">
-            {posixShell && (
-              <Field label="Shell">
-                <select
-                  autoFocus
-                  value={customShell ? 'custom' : (draft.shell ?? DEFAULT_SHELL)}
-                  onChange={(e) => {
-                    if (e.target.value === 'custom') {
-                      setCustomShell(true);
-                    } else {
-                      setCustomShell(false);
-                      patch({ shell: e.target.value === DEFAULT_SHELL ? undefined : e.target.value });
-                    }
-                  }}
-                >
-                  {SHELL_PRESETS.map(([cmd, label]) => (
-                    <option key={cmd} value={cmd}>
-                      {label}
-                    </option>
-                  ))}
-                  <option value="custom">Custom</option>
-                </select>
-                {customShell && (
-                  <input
+            <FormGroup>
+              {posixShell && (
+                <Field label="Shell">
+                  <SelectInput
                     autoFocus
-                    className="mono"
-                    value={draft.shell ?? ''}
-                    placeholder={DEFAULT_SHELL}
-                    onChange={(e) => patch({ shell: e.target.value || undefined })}
+                    value={customShell ? 'custom' : (draft.shell ?? DEFAULT_SHELL)}
+                    onChange={(e) => {
+                      if (e.target.value === 'custom') {
+                        setCustomShell(true);
+                      } else {
+                        setCustomShell(false);
+                        patch({ shell: e.target.value === DEFAULT_SHELL ? undefined : e.target.value });
+                      }
+                    }}
+                  >
+                    {SHELL_PRESETS.map(([cmd, label]) => (
+                      <option key={cmd} value={cmd}>
+                        {label}
+                      </option>
+                    ))}
+                    <option value="custom">Custom</option>
+                  </SelectInput>
+                  {customShell && (
+                    <TextInput
+                      autoFocus
+                      code
+                      value={draft.shell ?? ''}
+                      placeholder={DEFAULT_SHELL}
+                      onChange={(e) => patch({ shell: e.target.value || undefined })}
+                    />
+                  )}
+                </Field>
+              )}
+              {isBridge && (
+                <Field label="Windows drive mount prefix">
+                  <TextInput
+                    autoFocus={!posixShell}
+                    code
+                    value={draft.mountPrefix ?? ''}
+                    placeholder={detectedPrefix ?? '/mnt'}
+                    onChange={(e) => patch({ mountPrefix: e.target.value || undefined })}
                   />
-                )}
-              </Field>
-            )}
-            {isBridge && (
-              <Field label="Windows drive mount prefix">
-                <input
-                  autoFocus={!posixShell}
-                  className="mono"
-                  value={draft.mountPrefix ?? ''}
-                  placeholder={detectedPrefix ?? '/mnt'}
-                  onChange={(e) => patch({ mountPrefix: e.target.value || undefined })}
-                />
-              </Field>
-            )}
+                </Field>
+              )}
+            </FormGroup>
           </div>
         )}
-      </div>
+      />
       <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
     </div>
   );

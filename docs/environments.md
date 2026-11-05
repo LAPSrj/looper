@@ -155,6 +155,44 @@ Notes on each row say "new", "available", "no longer supported", or how
 many tasks use it. **Update** applies the actions. Existing entries keep their
 names and settings, and added ones start with a Medium default effort.
 
+## Agent settings and MCP servers
+
+**Tools → Agent Settings…** edits Claude Code's and Codex's own settings files
+in an environment, as the harness sees them there (a WSL environment's files
+are the ones inside the distro). Pick the environment and the Claude Code or
+Codex harness at the top; the harness's variables count, so a harness that
+sets `CLAUDE_CONFIG_DIR` or `CODEX_HOME` edits that folder's files. Pick a
+project too and its own files join in. Nothing is written until **Save** or
+**Apply**, and then only the files that changed. A file that changed elsewhere
+since the window read it (Claude Code saving a "don't ask again" answer, for
+example) is replaced only after you agree.
+
+- **Settings** shows each file as text: for Claude Code the user
+  `settings.json` and, with a project, its `.claude/settings.json`,
+  `.claude/settings.local.json` and `.mcp.json`; for Codex the user
+  `config.toml` and the project's `.codex/config.toml`. A file that doesn't
+  exist yet is created on save. Save refuses text that isn't valid JSON or
+  TOML and names the line.
+- **MCP Servers** lists the servers with their scope: for Claude Code, User
+  (`~/.claude.json`, every project), Local (`~/.claude.json`, this project,
+  only you) and Project (`.mcp.json`, shared with the repository); for Codex,
+  User and Project. **Add…**, **Edit…** and **Duplicate** open a server
+  window: its name, scope, type (a command it starts, HTTP, or for Claude
+  Code SSE), then the command, arguments and environment variables, or the
+  URL and headers. Looper changes only the servers' part of `~/.claude.json`,
+  which Claude Code keeps its own state in, and only a server's own tables in
+  `config.toml`, so the rest of the file and its comments stay as they were.
+- **MCP Permissions** lists the servers; **+** asks a server for its tools (a
+  command server starts in the environment for that) and lists them under
+  it. Each server and tool has a setting: Default, Allow (no asking), Ask
+  (every time) or Deny, and Codex also has Ask before changes. For Claude
+  Code they're permission rules (`mcp__server__*` for a server,
+  `mcp__server__tool` for a tool) in the file **Rules in** picks; the last
+  column says what Claude Code does with the rules of every file together,
+  where Deny wins over Ask and Ask over Allow. For Codex they're the server's
+  own `enabled`, `default_tools_approval_mode`, `disabled_tools` and
+  `tools.<tool>.approval_mode` in the file the server is in.
+
 ## Limiting concurrent tasks
 
 Both an environment and a harness have a "Limit concurrent tasks" checkbox

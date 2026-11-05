@@ -287,9 +287,13 @@ export function addonPanesMenu(addons: AddonInfo[], view: View, update: (patch: 
   );
 }
 
-/** "<Addon> Toolbar" in the View menu and the main toolbar's right-click menu: whether each addon's buttons show there. */
-export function addonToolbarsMenu(addons: AddonInfo[], view: View, update: (patch: Partial<View>) => void): Electron.MenuItemConstructorOptions[] {
-  return addons.filter((a) => a.enabled).map((a) => ({
+/**
+ * "<Addon> Toolbar" in the View menu and the main toolbar's right-click menu:
+ * whether each addon's buttons show there. `only`: a view window's, which
+ * lists the addons with a button for that view.
+ */
+export function addonToolbarsMenu(addons: AddonInfo[], view: View, update: (patch: Partial<View>) => void, only?: string): Electron.MenuItemConstructorOptions[] {
+  return addons.filter((a) => a.enabled && (only === undefined || a.toolbar.some((b) => b.view === only))).map((a) => ({
     label: `${menuText(a.toolbarName ?? a.name)} Toolbar`,
     type: 'checkbox',
     checked: !view.hiddenAddonToolbars.includes(a.id),

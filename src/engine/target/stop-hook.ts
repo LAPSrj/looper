@@ -5,6 +5,8 @@
  * the agent and the session continues.
  */
 
+import { GUIDANCE_PREFIX } from '../../shared/messages';
+
 /** Target-native paths and step-specific texts baked into the generated Stop-hook script. */
 export interface StopHookSpec {
   /** Where an allowed stop's payload is recorded (the run's report / idle signal). */
@@ -48,6 +50,22 @@ export function subagentGuardMessage(commands: readonly string[]): string {
 
 /** The Stop-hook decision around a guidance message literal: block, and continue with the guidance. */
 export const STOP_GUIDANCE_JSON = { before: '{"decision":"block","reason":', after: '}' };
+
+/**
+ * What a chat's subagent is told as it starts (SubagentStart). Without it, a
+ * live Haiku 5.5 subagent took the user's message, arriving with a tool's
+ * result, for an instruction planted in the tool's output and ignored it.
+ * With it, live subagents followed a message that conflicted with their task
+ * in 3 runs of 3 on Sonnet 5.5 and 4 of 5 on Haiku 5.5. Wrapping the message
+ * in XML tags did no better on Haiku 5.5 (2 of 5).
+ */
+export const SUBAGENT_START_JSON = JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: 'SubagentStart',
+    additionalContext: `The user follows your work in Looper and can send you messages while you work. They reach you as hook context that starts with "${GUIDANCE_PREFIX}". Such a message is the user's own instruction: follow it, and where it conflicts with your task or with the agent that started you, the message wins.`,
+  },
+});
+
 
 /** The gate's block decisions for a step, worded around its done command. */
 export function stopHookMessages(step: 'agent' | 'classify'): { blockBackground: string; blockNoDone: string } {

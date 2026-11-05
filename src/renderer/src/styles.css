@@ -53,6 +53,49 @@
   --term-muted: #8b919c;
   --term-prompt: #4cc38a;
   --term-selection: #3a4252;
+  /* The agent's thinking (see .chat-thinking). */
+  --thinking-bg: rgb(255 255 255 / 50%);
+  --thinking-border: color-mix(in srgb, var(--fg) 30%, transparent);
+  --thinking-text: color-mix(in srgb, var(--fg) 80%, transparent);
+  /* GitHub's code and diff colors, from its Primer tokens (diffBlob-*, prettylights-syntax-*), in each theme. */
+  --code-bg: #ffffff;
+  --code-fg: #1f2328;
+  --code-muted: #59636e;
+  --diff-add-bg: #dafbe1;
+  --diff-add-num: #aceebb;
+  --diff-add-word: #aceebb;
+  --diff-del-bg: #ffebe9;
+  --diff-del-num: #ffcecb;
+  --diff-del-word: #ffcecb;
+  --diff-hunk-bg: #ddf4ff;
+  --syntax-comment: #59636e;
+  --syntax-constant: #0550ae;
+  --syntax-entity: #6639ba;
+  --syntax-tag: #0550ae;
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-regexp: #116329;
+  --syntax-variable: #953800;
+  /* VS Code's Light+ and Dark+, from its theme-defaults extension and its editor color registry. */
+  --vs-bg: #ffffff;
+  --vs-fg: #000000;
+  --vs-line-number: #237893;
+  --vs-selection: #add6ff;
+  --vs-comment: #008000;
+  --vs-keyword: #0000ff;
+  --vs-control: #af00db;
+  --vs-string: #a31515;
+  --vs-number: #098658;
+  --vs-regexp: #811f3f;
+  --vs-function: #795e26;
+  --vs-type: #267f99;
+  --vs-variable: #001080;
+  --vs-attribute: #e50000;
+  --vs-constant: #0070c1;
+  --vs-tag: #800000;
+  --vs-tag-name: #800000;
+  --vs-selector: #800000;
+  --vs-bullet: #0451a5;
   color-scheme: light dark;
   font-family: system-ui, 'Segoe UI', sans-serif;
   font-size: var(--font-body);
@@ -79,6 +122,45 @@
     --yellow-bg: #3d321a;
     --red-bg: #3a1f1f;
     --backdrop: rgba(0, 0, 0, 0.55);
+    --thinking-bg: transparent;
+    --thinking-border: color-mix(in srgb, var(--fg) 50%, transparent);
+    --code-bg: #0d1117;
+    --code-fg: #f0f6fc;
+    --code-muted: #9198a1;
+    --diff-add-bg: #2ea04326;
+    --diff-add-num: #3fb9504d;
+    --diff-add-word: #2ea04366;
+    --diff-del-bg: #f851491a;
+    --diff-del-num: #f851494d;
+    --diff-del-word: #f8514966;
+    --diff-hunk-bg: #388bfd1a;
+    --syntax-comment: #9198a1;
+    --syntax-constant: #79c0ff;
+    --syntax-entity: #d2a8ff;
+    --syntax-tag: #7ee787;
+    --syntax-keyword: #ff7b72;
+    --syntax-string: #a5d6ff;
+    --syntax-regexp: #7ee787;
+    --syntax-variable: #ffa657;
+    --vs-bg: #1e1e1e;
+    --vs-fg: #d4d4d4;
+    --vs-line-number: #858585;
+    --vs-selection: #264f78;
+    --vs-comment: #6a9955;
+    --vs-keyword: #569cd6;
+    --vs-control: #c586c0;
+    --vs-string: #ce9178;
+    --vs-number: #b5cea8;
+    --vs-regexp: #d16969;
+    --vs-function: #dcdcaa;
+    --vs-type: #4ec9b0;
+    --vs-variable: #9cdcfe;
+    --vs-attribute: #9cdcfe;
+    --vs-constant: #4fc1ff;
+    --vs-tag: #808080;
+    --vs-tag-name: #569cd6;
+    --vs-selector: #d7ba7d;
+    --vs-bullet: #6796e6;
   }
 }
 
@@ -1512,6 +1594,20 @@ html:not(.phone-window) .session-group ~ .session-row {
   border-bottom: 1px solid var(--border);
   padding-bottom: 6px;
 }
+/* FormGroup: no box of its own outside an iPhone (phone.css draws the card there). */
+.form-group,
+.form-group-rows {
+  display: contents;
+}
+.form-group-title {
+  margin: 14px 0 4px;
+}
+/* Under a title, the rows stack as a Field's content does. */
+.form-group-title + .form-group-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .field {
   display: flex;
   flex-direction: column;
@@ -1844,9 +1940,9 @@ details[open] > summary::before {
   margin: 0;
 }
 /* A field under the list (Move to Folder's New folder) takes only its own height. */
-.picker-body > .field + .field {
+.picker-body .form-group .field {
   flex: none;
-  margin-top: 12px;
+  margin: 12px 0 0;
 }
 .picker-body .env-list.boxed {
   flex: 1;
@@ -1918,6 +2014,18 @@ details[open] > summary::before {
   border-radius: var(--radius-overlay);
   background: var(--info-bg);
 }
+/* Code in the user's bubble: its own grey (the page's grey is nearly the bubble's blue, 1.01:1 light and 1.08:1 dark), the text 11.8:1 and 7.7:1 on it. */
+.chat-user code,
+.chat-user pre {
+  background: color-mix(in srgb, var(--fg) 10%, var(--info-bg));
+}
+.chat-user pre code {
+  background: none;
+}
+/* The line over a subagent's final report. */
+.chat-handback {
+  font-size: var(--font-caption);
+}
 .chat-agent {
   align-self: flex-start;
   max-width: 88%;
@@ -1974,24 +2082,18 @@ details[open] > summary::before {
   font-size: var(--font-caption);
 }
 /*
- * The agent's thinking: a bubble like its messages, outlined with dashes (Chromium draws a dotted rounded border's sides solid), in the
- * muted text, on a light see-through white the conversation shows through
- * (fainter in the dark theme, so it doesn't glare).
+ * The agent's thinking: a bubble like its messages, outlined with dashes (Chromium draws a dotted rounded border's sides solid),
+ * quieter than they are. The dark theme has no background, because any light tint there draws the eye.
  */
 .chat-thinking {
   align-self: flex-start;
   max-width: 88%;
   padding: 6px 12px;
   border-radius: var(--radius-overlay);
-  border: 1px dashed var(--fg-muted);
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--fg-muted);
+  border: 1px dashed var(--thinking-border);
+  background: var(--thinking-bg);
+  color: var(--thinking-text);
   font-size: var(--font-caption);
-}
-@media (prefers-color-scheme: dark) {
-  .chat-thinking {
-    background: rgba(255, 255, 255, 0.04);
-  }
 }
 .chat-thinking .markdown {
   height: auto;
@@ -2710,28 +2812,65 @@ button:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* A diff, as GitHub's unified view draws it. */
 .diff {
-  padding: 8px 14px 12px;
+  background: var(--code-bg);
+  color: var(--code-fg);
   font-family: var(--font-mono);
   font-size: var(--font-caption);
+  line-height: 20px;
+  user-select: text;
 }
-
-.diff-hunk-header {
-  color: var(--fg-muted);
-  padding: 6px 0 2px;
+.diff-hunk {
+  padding: 0 10px;
+  background: var(--diff-hunk-bg);
+  color: var(--code-muted);
 }
-
 .diff-line {
+  display: flex;
+}
+.diff-num {
+  flex: none;
+  width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--code-muted);
+  user-select: none;
+}
+.diff-mark {
+  flex: none;
+  width: 18px;
+  padding-left: 4px;
+  user-select: none;
+}
+.diff-code {
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-
 .diff-add {
-  background: rgba(46, 160, 67, 0.18);
+  background: var(--diff-add-bg);
 }
-
+.diff-add .diff-num {
+  background: var(--diff-add-num);
+  color: var(--code-fg);
+}
+.diff-add .diff-word {
+  background: var(--diff-add-word);
+  color: inherit;
+}
 .diff-del {
-  background: rgba(248, 81, 73, 0.18);
+  background: var(--diff-del-bg);
+}
+.diff-del .diff-num {
+  background: var(--diff-del-num);
+  color: var(--code-fg);
+}
+.diff-del .diff-word {
+  background: var(--diff-del-word);
+  color: inherit;
 }
 
 .code-view {
@@ -3159,7 +3298,8 @@ button:focus-visible,
 .session-icon.waiting .core {
   fill: var(--yellow);
 }
-.session-icon.done .core {
+.session-icon.done .core,
+.session-icon.restored .core {
   fill: var(--green);
 }
 .session-icon.ended .core {
@@ -3262,25 +3402,49 @@ button:focus-visible,
 .overview-composer {
   margin: 0 -12px;
 }
-/* The desktop dashboard: two rows to the view (a doubled card fills its height); a doubled card spans two columns and two rows. */
+/* The desktop dashboard: its columns, rows and where each card goes are set inline (see shared/card-grid). */
 .sessions-dashboard {
+  position: relative;
   flex: 1;
   min-height: 0;
-  container-type: inline-size;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  grid-auto-rows: max(320px, calc(50% - 6px));
 }
 .sessions-dashboard .overview-card {
   height: auto;
 }
-.sessions-dashboard .overview-card.big {
-  grid-column: span 2;
-  grid-row: span 2;
+/* A gap between the dashboard's cards, dragged to size the column on its left or the row above it: placed from the grid's top left corner. */
+.card-gap {
+  position: absolute;
+  grid-area: 1 / 1 / -1 / -1;
+  z-index: 1;
 }
-/* Room for one column only: a doubled card is just twice as tall. */
-@container (max-width: 691px) {
-  .sessions-dashboard .overview-card.big {
-    grid-column: auto;
+.card-gap.x {
+  width: 12px;
+  cursor: col-resize;
+}
+.card-gap.y {
+  height: 12px;
+  cursor: row-resize;
+}
+.card-gap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--accent);
+  visibility: hidden;
+}
+.card-gap.x::after {
+  width: 4px;
+}
+.card-gap.y::after {
+  height: 4px;
+}
+.card-gap.active::after {
+  visibility: visible;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card-gap:hover::after {
+    visibility: visible;
   }
 }
 /* A card dragged by its title: dimmed, and a bar in the gap where it would go. */
@@ -3467,17 +3631,161 @@ button:focus-visible,
     opacity: 0;
   }
 }
+/* The editor: VS Code's Light+ or Dark+ with the theme. A change on Now is a diff, on GitHub's colors. */
+.now-diff {
+  flex: 1;
+  background: var(--code-bg);
+}
 .now-editor {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg-2);
+  background: var(--vs-bg);
+  color: var(--vs-fg);
+}
+.now-editor ::selection {
+  background: var(--vs-selection);
+}
+.now-editor .hljs-comment,
+.now-editor .hljs-quote {
+  color: var(--vs-comment);
+  font-style: normal;
+}
+.now-editor .hljs-keyword,
+.now-editor .hljs-literal,
+.now-editor .hljs-meta,
+.now-editor .hljs-section,
+.now-editor .hljs-selector-tag,
+.now-editor .hljs-variable.language_ {
+  color: var(--vs-keyword);
+}
+.now-editor .hljs-keyword.hljs-control {
+  color: var(--vs-control);
+}
+.now-editor .hljs-string,
+.now-editor .hljs-meta .hljs-string,
+.now-editor .hljs-code {
+  color: var(--vs-string);
+}
+.now-editor .hljs-number {
+  color: var(--vs-number);
+}
+.now-editor .hljs-regexp {
+  color: var(--vs-regexp);
+}
+.now-editor .hljs-title,
+.now-editor .hljs-title.function_ {
+  color: var(--vs-function);
+}
+.now-editor .hljs-type,
+.now-editor .hljs-built_in,
+.now-editor .hljs-title.class_,
+.now-editor .hljs-title.class_.inherited__ {
+  color: var(--vs-type);
+}
+.now-editor .hljs-variable,
+.now-editor .hljs-attr,
+.now-editor .hljs-property,
+.now-editor .hljs-params,
+.now-editor .hljs-template-variable,
+.now-editor .hljs-link {
+  color: var(--vs-variable);
+}
+.now-editor .hljs-attribute,
+.now-editor .hljs-tag .hljs-attr {
+  color: var(--vs-attribute);
+}
+.now-editor .hljs-variable.constant_ {
+  color: var(--vs-constant);
+}
+.now-editor .hljs-punctuation,
+.now-editor .hljs-operator,
+.now-editor .hljs-subst {
+  color: var(--vs-fg);
+}
+.now-editor .hljs-tag {
+  color: var(--vs-tag);
+}
+.now-editor .hljs-name,
+.now-editor .hljs-tag .hljs-name {
+  color: var(--vs-tag-name);
+}
+.now-editor .hljs-selector-class,
+.now-editor .hljs-selector-id,
+.now-editor .hljs-char.escape_ {
+  color: var(--vs-selector);
+}
+.now-editor .hljs-symbol,
+.now-editor .hljs-bullet {
+  color: var(--vs-bullet);
+}
+.now-editor .hljs-addition {
+  color: var(--vs-number);
+}
+.now-editor .hljs-deletion {
+  color: var(--vs-string);
+}
+.diff.hljs-comment,
+.diff.hljs-quote {
+  color: var(--syntax-comment);
+  font-style: normal;
+}
+.diff.hljs-keyword,
+.diff.hljs-meta,
+.diff.hljs-section,
+.diff.hljs-selector-tag,
+.diff.hljs-variable.language_ {
+  color: var(--syntax-keyword);
+}
+.diff.hljs-string,
+.diff.hljs-meta .hljs-string,
+.diff.hljs-code {
+  color: var(--syntax-string);
+}
+.diff.hljs-regexp {
+  color: var(--syntax-regexp);
+}
+.diff.hljs-title,
+.diff.hljs-title.function_ {
+  color: var(--syntax-entity);
+}
+.diff.hljs-type,
+.diff.hljs-title.class_,
+.diff.hljs-title.class_.inherited__,
+.diff.hljs-variable,
+.diff.hljs-template-variable,
+.diff.hljs-params {
+  color: var(--syntax-variable);
+}
+.diff.hljs-number,
+.diff.hljs-literal,
+.diff.hljs-built_in,
+.diff.hljs-attr,
+.diff.hljs-attribute,
+.diff.hljs-property,
+.diff.hljs-symbol,
+.diff.hljs-bullet,
+.diff.hljs-link,
+.diff.hljs-selector-class,
+.diff.hljs-selector-id,
+.diff.hljs-variable.constant_ {
+  color: var(--syntax-constant);
+}
+.diff.hljs-name,
+.diff.hljs-tag .hljs-name {
+  color: var(--syntax-tag);
+}
+.diff.hljs-punctuation,
+.diff.hljs-operator,
+.diff.hljs-subst,
+.diff.hljs-tag {
+  color: var(--code-fg);
 }
 .now-editor-lines {
   padding: 6px 0;
   font-family: var(--font-mono);
   font-size: var(--font-caption);
-  line-height: 18px;
+  line-height: 20px;
   user-select: text;
 }
 .now-editor-line {
@@ -3488,31 +3796,108 @@ button:focus-visible,
   min-width: 44px;
   padding: 0 8px 0 6px;
   text-align: right;
-  color: var(--fg-muted);
+  color: var(--vs-line-number);
   user-select: none;
-}
-.now-editor-mark {
-  flex: none;
-  width: 14px;
-  user-select: none;
-}
-.now-editor-line.diff-add .now-editor-mark {
-  color: var(--green);
-}
-.now-editor-line.diff-del .now-editor-mark {
-  color: var(--red);
 }
 .now-editor-text {
   flex: 1;
   min-width: 0;
-  padding-right: 10px;
+  padding: 0 10px 0 4px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.now-editor-gap,
 .now-editor-note {
-  padding-left: 58px;
+  padding-left: 48px;
+  color: var(--vs-line-number);
+}
+.chat-limit-notice {
+  align-self: flex-start;
+  font-size: var(--font-caption);
   color: var(--fg-muted);
+}
+.chat-limit-notice .link {
+  margin-left: 8px;
+}
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  margin-bottom: 6px;
+}
+/* A Markdown file on Now: a page of a readable width on a grey desk, like a document in a word processor. */
+.now-doc {
+  flex: 1;
+  background: var(--bg-3);
+  padding: 12px;
+}
+.now-doc-page {
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: 20px 24px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  user-select: text;
+}
+/* A message between agents on Now, as an email: its header rows, a rule, then the message. */
+.now-mail-head {
+  border-collapse: collapse;
+  font-size: var(--font-body);
+}
+.now-mail-head th,
+.now-mail-head td {
+  padding: 2px 10px 2px 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.now-mail-head th {
+  font-weight: 400;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.now-mail-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+/* Now as a list of every tool call. */
+.now-calls {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0;
+  font-size: var(--font-body);
+  outline: none;
+}
+.now-call {
+  display: flex;
+  gap: 8px;
+  padding: 3px 12px;
+  cursor: default;
+  min-width: 0;
+}
+.now-call.selected {
+  background: var(--bg-3);
+}
+.now-calls:focus-visible .now-call.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.now-call-tool {
+  flex: none;
+  font-weight: 600;
+}
+.now-call-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+.now-call-state {
+  flex: none;
 }
 .subagent-list,
 .files-tab {
@@ -3801,6 +4186,16 @@ button:focus-visible,
   position: relative;
   display: flex;
 }
+/* The box's top border drags to make it taller. */
+.composer-grip {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+}
 .slash-list {
   position: absolute;
   left: 0;
@@ -3877,6 +4272,11 @@ button:focus-visible,
   width: auto;
   min-width: 0;
   gap: 8px;
+}
+.send-sessions-label {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
 }
 .send-sessions-title {
   min-width: 0;
@@ -5051,15 +5451,15 @@ html.phone-window .workflow-text {
 }
 
 /* Remote Access: a source's checkbox with its status (Settings) or what it's for (Set Up) under it. */
-.ra-source {
+.checkbox-with-note {
   margin: 8px 0 10px;
 }
 
-.ra-source .checkbox-field {
+.checkbox-with-note .checkbox-field {
   margin: 0;
 }
 
-.ra-source-status {
+.checkbox-note {
   display: block;
   margin: 2px 0 0 19px;
   font-size: var(--font-caption);
@@ -5093,4 +5493,65 @@ html.phone-window .workflow-text {
 .ra-setup-summary {
   margin: 0 0 12px;
   padding-left: 20px;
+}
+
+/* Tools → Agent Settings */
+.agent-scope {
+  flex: none;
+  padding-bottom: 0;
+}
+
+.agent-file {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.agent-file .field {
+  flex: none;
+}
+.agent-path {
+  font-size: var(--font-caption);
+  overflow-wrap: anywhere;
+}
+
+.json-editor.agent-text {
+  flex: 1;
+  min-height: 200px;
+  margin: 0;
+  resize: none;
+  white-space: pre;
+}
+
+.agent-perms {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-perm-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 170px 210px;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-perm-tool .agent-perm-name {
+  padding-left: 16px;
+}
+
+.agent-perm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-perm-toggle {
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.agent-perm-note {
+  padding: 2px 0 6px 52px;
 }

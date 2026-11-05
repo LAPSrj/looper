@@ -78,6 +78,18 @@ export function historySourceText(item: Pick<HistoryItem, 'source' | 'taskName'>
   }
 }
 
+/** How many conversations a Recent menu (the History button's drop-down, a project's Open Recent Chat) lists. */
+export const RECENT_CHATS = 15;
+
+/** A conversation's line in a Recent menu: its title, then where it ran when `where` is given, on one line. */
+export function recentChatLabel(title: string, where?: string): string {
+  const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
+  const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const name = clip(oneLine(title) || 'Untitled chat', 60);
+  const place = where ? clip(oneLine(where), 24) : '';
+  return place ? `${name} — ${place}` : name;
+}
+
 /** How many more conversations Show More reads. */
 export const HISTORY_PAGE = 100;
 

@@ -1,5 +1,7 @@
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { platform } from '../../platform';
+import { AxisDrag } from '../../web/gestures';
 import { tabKeyTarget, tabStop } from '../tabs-model';
 
 /**
@@ -50,6 +52,8 @@ export function Row({
   tone,
   valueTone,
   selected,
+  checked,
+  disabled,
   onOpen,
   onMenu,
 }: {
@@ -61,24 +65,31 @@ export function Row({
   lead?: ReactNode;
   /** It opens another screen (iOS shows a disclosure chevron). */
   chevron?: boolean;
-  tone?: 'error' | 'warning' | 'muted';
+  /** `action`: the row is a command; `destructive`: one that destroys something. */
+  tone?: 'error' | 'warning' | 'muted' | 'action' | 'destructive';
   /** The value's color (a limit close to its end). */
   valueTone?: 'error' | 'warning';
+  /** One option of a choice of one: true shows the check at its end (HIG: Lists and tables). */
+  checked?: boolean;
+  disabled?: boolean;
   /** `row` is the row's element, which a menu it opens anchors to. */
   onOpen?: (row: HTMLElement) => void;
   onMenu?: () => void;
 }) {
+  const open = disabled ? undefined : onOpen;
   return (
     <div
-      className={`pg-row${onOpen ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}`}
-      role={onOpen ? 'button' : undefined}
+      className={`pg-row${open ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}
+      role={checked !== undefined ? 'radio' : onOpen ? 'button' : undefined}
+      aria-checked={checked}
+      aria-disabled={disabled || undefined}
       aria-current={selected || undefined}
-      tabIndex={onOpen ? 0 : undefined}
-      onClick={onOpen && ((e) => onOpen(e.currentTarget))}
+      tabIndex={open ? 0 : undefined}
+      onClick={open && ((e) => open(e.currentTarget))}
       onKeyDown={
-        onOpen &&
+        open &&
         ((e) => {
-          if (e.key === 'Enter') onOpen(e.currentTarget);
+          if (e.key === 'Enter') open(e.currentTarget);
         })
       }
       onContextMenu={
@@ -95,11 +106,109 @@ export function Row({
         {sub && <span className="pg-row-sub">{sub}</span>}
       </span>
       {value !== undefined && <span className="pg-row-value">{value}</span>}
+      {checked && (
+        <svg className="pg-row-check" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m2 7.5 3.2 3.2L12 3.5" />
+        </svg>
+      )}
       {chevron && platform === 'ios' && (
         <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
           <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
+    </div>
+  );
+}
+
+/** How wide a row's swipe action sits while it stays open. */
+const SWIPE_ACTION_WIDTH = 88;
+/** The drag that keeps the action open: a third of this distance. */
+const SWIPE_OPEN_EXTENT = 120;
+/** A swipe this far across the row runs the action as it ends. */
+const SWIPE_FULL = 0.6;
+
+/** A row a swipe to the left slides aside to show its destructive command; a full swipe runs it. */
+export function SwipeRow({ action, children }: { action?: { label: string; run: () => void }; children: ReactNode }) {
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const host = useRef<HTMLDivElement>(null);
+  const drag = useRef(new AxisDrag('x', -1));
+  /** The click ending this touch belongs to the swipe, not to the row. */
+  const swallowClick = useRef(false);
+  const open = offset > 0 && !dragging;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!host.current?.contains(e.target as Node)) setOffset(0);
+    };
+    document.addEventListener('pointerdown', close, true);
+    return () => document.removeEventListener('pointerdown', close, true);
+  }, [open]);
+  if (!action) {
+    return (
+      <div className="pg-swipe">
+        <div className="pg-swipe-content">{children}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="pg-swipe" ref={host}>
+      {offset > 0 && (
+        <button
+          type="button"
+          className="pg-swipe-action"
+          style={{ width: Math.max(SWIPE_ACTION_WIDTH, offset) }}
+          onClick={() => {
+            setOffset(0);
+            action.run();
+          }}
+        >
+          {action.label}
+        </button>
+      )}
+      <div
+        className={`pg-swipe-content swipes${dragging ? ' dragging' : ''}`}
+        style={offset > 0 ? { transform: `translateX(${-offset}px)` } : undefined}
+        onPointerDown={(e) => {
+          swallowClick.current = false;
+          if (open) {
+            swallowClick.current = true;
+            setOffset(0);
+            return;
+          }
+          drag.current.begin(e.clientX, e.clientY, e.timeStamp);
+        }}
+        onPointerMove={(e) => {
+          const moved = drag.current.move(e.clientX, e.clientY, e.timeStamp);
+          if (!moved) return;
+          if (!dragging) {
+            setDragging(true);
+            swallowClick.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
+          setOffset(moved.offset);
+        }}
+        onPointerUp={() => {
+          const full = dragging && offset > (host.current?.clientWidth ?? Infinity) * SWIPE_FULL;
+          const stays = drag.current.end(SWIPE_OPEN_EXTENT);
+          setDragging(false);
+          setOffset(stays && !full ? SWIPE_ACTION_WIDTH : 0);
+          if (full) action.run();
+        }}
+        onPointerCancel={() => {
+          drag.current.end(SWIPE_OPEN_EXTENT);
+          setDragging(false);
+          setOffset(0);
+        }}
+        onClickCapture={(e) => {
+          if (!swallowClick.current) return;
+          swallowClick.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

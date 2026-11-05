@@ -78,6 +78,7 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
             />
           ))
         )}
+        {attention.length > 0 && <Row title="Clear" onOpen={() => m.clearAttention(attention)} />}
       </Group>
 
       <Group title="Running Now">

@@ -19,6 +19,7 @@ import { AddonSearchBox } from './components/AddonPane';
 import { ChatRow, ToolGroup } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
 import { HistoryList } from './components/HistoryList';
+import { SubagentIcon } from './components/SubagentIcon';
 import { useChatsSettings, useDragResize } from './components/hooks';
 import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
@@ -303,7 +304,13 @@ export function HistoryApp() {
   const ctx = { taskId: item?.taskId ?? '', runId: item?.runId ?? '' };
   const tabs: TabItem[] = [
     { id: 'conversation', label: 'Conversation', dividerAfter: true },
-    ...subagents.map((a) => ({ id: `agent:${a.agentId}`, label: a.description || a.type, title: `${a.description || a.type} (${a.type})`, status: a.status })),
+    ...subagents.map((a) => ({
+      id: `agent:${a.agentId}`,
+      label: a.description || a.type,
+      title: `${a.description || a.type} (${a.type})`,
+      status: a.status,
+      mark: <SubagentIcon a={a} />,
+    })),
   ];
   const emptyText =
     items === null ? 'Loading…' : found ? `No conversation’s messages contain “${query.trim()}”.` : query.trim() ? 'No conversation’s title contains that.' : 'No conversations.';

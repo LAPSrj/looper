@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
-import { CheckboxField, EmptyWindow, Field } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /**
@@ -68,17 +68,21 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Guidance">
-            <textarea
-              rows={5}
-              style={{ resize: 'none' }}
-              value={guidance}
-              onChange={(e) => setGuidance(e.target.value)}
-            />
-          </Field>
-          {task.check?.enabled && <CheckboxField label="Check" autoFocus checked={check} onChange={setCheck} />}
-          {task.classifier?.enabled && <CheckboxField label="Classifier" autoFocus={!task.check?.enabled} checked={classifier} onChange={setClassifier} />}
-          <CheckboxField label="Agent" autoFocus={!task.check?.enabled && !task.classifier?.enabled} checked={agent} onChange={setAgent} />
+          <FormGroup>
+            <Field label="Guidance">
+              <TextArea
+                rows={5}
+                style={{ resize: 'none' }}
+                value={guidance}
+                onChange={(e) => setGuidance(e.target.value)}
+              />
+            </Field>
+          </FormGroup>
+          <FormGroup>
+            {task.check?.enabled && <CheckboxField label="Check" autoFocus checked={check} onChange={setCheck} />}
+            {task.classifier?.enabled && <CheckboxField label="Classifier" autoFocus={!task.check?.enabled} checked={classifier} onChange={setClassifier} />}
+            <CheckboxField label="Agent" autoFocus={!task.check?.enabled && !task.classifier?.enabled} checked={agent} onChange={setAgent} />
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Run', run: () => void run(), disabled: nothingSelected }} busy={saving} />

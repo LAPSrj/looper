@@ -62,6 +62,11 @@ addon's screens shows in the main window, on the Tasks tab or in one of its
 tabs, that screen's buttons follow them, such as **Edit Server…** for the
 selected server.
 
+A button can belong to one view instead: Dashboard, Projects, Tasks or Chats.
+It then shows in that view's window, and in the main window only while that tab
+shows. A button that doesn't name a view shows only in the main window, on every
+tab, because a view's window has only what that view is about.
+
 The View menu has a check box for each installed addon after **Toolbar**,
 such as **Servers Toolbar** (the addon can give it another name), and
 right-clicking the toolbar lists the same check boxes. Clearing one leaves all of that addon's buttons out of the main
@@ -160,7 +165,7 @@ noted in the engine log.
 | `panes` | The panes on the Tasks tab, by id and title. |
 | `tabs` | Tabs in the main window, after Looper's own: `{ id, title, view, params?, icon? }`. Each one is filled by the addon's screen `view`, drawn with `params` like any screen. Its `toolbar` buttons join the main toolbar while the tab shows, and its `menuBar` is ignored there, as in the main window. `icon` is one of the toolbar icon names listed under [Menus and toolbars](#menus-and-toolbars), and without one the tab shows a window icon. A tab `id` can't repeat: a manifest that repeats one is invalid, with `tabs: duplicate id "<id>"`. View → the tab's title opens it in a window of its own. |
 | `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
-| `toolbar` | Buttons on the main toolbar, after Looper's own, there at all times: `{ id, label, icon?, tool?, destructive? }` (`destructive` as for a menu item, under [Menus and toolbars](#menus-and-toolbars)). With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
+| `toolbar` | Toolbar buttons, after Looper's own: `{ id, label, icon?, tool?, view?, destructive? }` (`destructive` as for a menu item, under [Menus and toolbars](#menus-and-toolbars)). Without `view`, a button is on the main window's toolbar at all times. With `view` (`dashboard`, `projects`, `tasks` or `chats`), it shows in that view's window, and in the main window only while that tab shows. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
 | `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
 | `toolCalls` | How calls to some tools show on the Now tab of the Chats window's activity pane (below). |
 

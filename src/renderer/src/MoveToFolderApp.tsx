@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Task, TaskFolder } from '@shared/types';
 import { SelectList } from './components/SelectList';
-import { EmptyWindow, Field, InputRow } from './components/ui';
+import { EmptyWindow, Field, FormGroup, InputRow, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { folderChoices } from './components/form-blocks';
 
@@ -90,24 +90,26 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
               autoFocus
             />
           </Field>
-          <Field label="New folder">
-            <InputRow>
-              <input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    void createFolder();
-                  }
-                }}
-              />
-              <button className="btn" disabled={!newName.trim()} onClick={() => void createFolder()}>
-                Create
-              </button>
-            </InputRow>
-          </Field>
+          <FormGroup>
+            <Field label="New folder">
+              <InputRow>
+                <TextInput
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void createFolder();
+                    }
+                  }}
+                />
+                <button className="btn" disabled={!newName.trim()} onClick={() => void createFolder()}>
+                  Create
+                </button>
+              </InputRow>
+            </Field>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Move', run: () => void move(), disabled: !task }} busy={saving} />

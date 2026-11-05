@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckboxField } from './components/ui';
+import { CheckboxField, FormGroup } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /**
@@ -30,9 +30,11 @@ export function MarkdownExportApp({
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <CheckboxField label="Include thinking" autoFocus checked={includeThinking} onChange={setIncludeThinking} />
-          <CheckboxField label="Include tool usage" checked={includeTools} onChange={setIncludeTools} />
-          <CheckboxField label="No formatting (plain text)" checked={plain} onChange={setPlain} />
+          <FormGroup>
+            <CheckboxField label="Include thinking" autoFocus checked={includeThinking} onChange={setIncludeThinking} />
+            <CheckboxField label="Include tool usage" checked={includeTools} onChange={setIncludeTools} />
+            <CheckboxField label="No formatting (plain text)" checked={plain} onChange={setPlain} />
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Save', run: save }} />

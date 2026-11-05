@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MessageImage } from '@shared/messages';
+import { fileImageId, type MessageImage } from '@shared/messages';
 import { Icon } from './components/Icon';
 import { NumberInput } from './components/ui';
 
@@ -46,22 +46,40 @@ const ICONS = {
       <path d="M4.5 8h7M7 5.5 4.5 8 7 10.5M9 5.5 11.5 8 9 10.5" />
     </>
   ),
+  previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
+  next: <path d="M6 3.5 10.5 8 6 12.5" />,
 };
 
-/** An image from a conversation in its own window, with zoom controls. */
+/** The window's title for a sent image's row id: "Image – name". */
+const sentTitle = (key: string): string | null => {
+  const file = fileImageId(key);
+  return file === null ? null : `Image – ${file.replace(/\\/g, '/').split('/').pop()}`;
+};
+
+/**
+ * An image from a conversation in its own window, with zoom controls.
+ * `siblings`: the row ids of every image the agent sent in the same message
+ * (this one included): the window steps through them, and its title follows.
+ */
 export function ImageApp({
   taskId,
   runId,
   agentId,
-  rowId,
-  title,
+  rowId: firstRowId,
+  title: firstTitle,
+  siblings,
 }: {
   taskId: string;
   runId: string;
   agentId?: string;
   rowId: string;
   title: string;
+  siblings?: string[];
 }) {
+  const [index, setIndex] = useState(() => Math.max(0, siblings?.indexOf(firstRowId) ?? 0));
+  const many = !!siblings && siblings.length > 1;
+  const rowId = many ? siblings[index] : firstRowId;
+  const title = many ? (sentTitle(rowId) ?? firstTitle) : firstTitle;
   const [image, setImage] = useState<MessageImage | 'missing' | null>(null);
   /** Percent; null until the fit-to-window zoom is computed on load. */
   const [zoom, setZoom] = useState<number | null>(null);
@@ -73,11 +91,37 @@ export function ImageApp({
   }, [title]);
 
   useEffect(() => {
+    let live = true;
+    setImage(null);
+    setZoom(null);
+    setNatural(null);
     void window.looper.runs
       .messageImage(taskId, runId, rowId, agentId)
-      .then((img) => setImage(img ?? 'missing'))
-      .catch(() => setImage('missing'));
+      .then((img) => live && setImage(img ?? 'missing'))
+      .catch(() => live && setImage('missing'));
+    return () => {
+      live = false;
+    };
   }, [taskId, runId, rowId, agentId]);
+
+  const count = siblings?.length ?? 1;
+  const go = (to: number) => setIndex(Math.max(0, Math.min(count - 1, to)));
+  const goRef = useRef(go);
+  goRef.current = go;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  useEffect(() => {
+    if (!many) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
+      const to = e.key === 'ArrowLeft' ? indexRef.current - 1 : e.key === 'ArrowRight' ? indexRef.current + 1 : e.key === 'Home' ? 0 : e.key === 'End' ? Infinity : null;
+      if (to === null) return;
+      e.preventDefault();
+      goRef.current(to);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [many]);
 
   const onLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const el = e.currentTarget;
@@ -125,6 +169,17 @@ export function ImageApp({
   return (
     <div className="image-app">
       <div className="toolbar">
+        {many && (
+          <>
+            <button title="Previous Image" aria-label="Previous Image" disabled={index <= 0} onClick={() => go(index - 1)}>
+              <Icon>{ICONS.previous}</Icon>
+            </button>
+            <button title="Next Image" aria-label="Next Image" disabled={index >= count - 1} onClick={() => go(index + 1)}>
+              <Icon>{ICONS.next}</Icon>
+            </button>
+            <span className="toolbar-sep" />
+          </>
+        )}
         <button title="Zoom Out" aria-label="Zoom Out" disabled={!url || (zoom ?? 100) <= MIN_ZOOM} onClick={() => step(-1)}>
           <Icon>{ICONS.zoomOut}</Icon>
         </button>
@@ -159,6 +214,7 @@ export function ImageApp({
       <div className="statusbar">
         <span>
           {[
+            many ? `${index + 1} of ${count}` : null,
             image !== null && image !== 'missing' ? image.mediaType.replace(/^image\//, '').toUpperCase() : null,
             natural ? `${natural.w} × ${natural.h}` : null,
           ]

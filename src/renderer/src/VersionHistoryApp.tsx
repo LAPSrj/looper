@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
 import { changeLabels, sourceLabel, type VersionSummary } from '@shared/versions';
-import { ListActions, SelectList } from './components/SelectList';
+import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
 
@@ -44,43 +44,30 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
   const version = versions.find((v) => v.n === selected);
   const current = versions[0]?.n;
 
-  const view = () => {
-    if (version) void window.looper.versions.openDetail(taskId, version.n, false);
+  const view = (target = version) => {
+    if (target) void window.looper.versions.openDetail(taskId, target.n, false);
   };
-  const compare = () => {
-    if (version) void window.looper.versions.openDetail(taskId, version.n, true);
+  const compare = (target = version) => {
+    if (target) void window.looper.versions.openDetail(taskId, target.n, true);
   };
-  const restore = async () => {
-    if (version && builderOpen) {
+  const restore = async (target = version) => {
+    if (target && builderOpen) {
       try {
-        await window.looper.builder.loadVersion(taskId, version.n);
+        await window.looper.builder.loadVersion(taskId, target.n);
       } catch (e) {
         void window.looper.showError((e as Error).message);
       }
       return;
     }
-    if (!version || !task || version.n === current) return;
-    const files = version.files.length > 0 ? ' and the files it recorded' : '';
-    if (!(await window.looper.confirm(`Restore version ${version.n} of "${task.name}"? Its definition${files} replace the current ones, and the restore is saved as a new version.`))) return;
+    if (!target || !task || target.n === current) return;
+    const files = target.files.length > 0 ? ' and the files it recorded' : '';
+    if (!(await window.looper.confirm(`Restore version ${target.n} of "${task.name}"? Its definition${files} replace the current ones, and the restore is saved as a new version.`))) return;
     try {
-      await window.looper.versions.restore(taskId, version.n);
+      await window.looper.versions.restore(taskId, target.n);
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
   };
-
-  // The context menu acts on the row it opened on, which is selected by then.
-  const actions = useRef({ view, compare, restore });
-  actions.current = { view, compare, restore };
-  useEffect(
-    () =>
-      window.looper.onUi((e) => {
-        if (e.type === 'version-view') actions.current.view();
-        else if (e.type === 'version-compare') actions.current.compare();
-        else if (e.type === 'version-restore') void actions.current.restore();
-      }),
-    [],
-  );
 
   const subOf = (v: VersionSummary): string => {
     const labels = changeLabels(v.changed);
@@ -103,24 +90,28 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
             empty="No versions yet. A version is saved each time the task's definition changes."
             onSelect={(v) => setSelected(v.n)}
             onOpen={(v) => void window.looper.versions.openDetail(taskId, v.n, false)}
-            onContextMenu={(v) => window.looper.showVersionContextMenu({ builder: builderOpen, current: v.n === current })}
+            menu={(v) => [
+              { label: 'View…', run: () => view(v) },
+              { label: 'Compare with Current…', enabled: v.n !== current, run: () => compare(v) },
+              { label: builderOpen ? 'Edit with Agent' : 'Restore', enabled: builderOpen || v.n !== current, separator: true, run: () => void restore(v) },
+            ]}
             autoFocus
           />
           <ListActions>
-            <button className="btn" disabled={!version} onClick={view}>
+            <ListButton row disabled={!version} onClick={() => view()}>
               View…
-            </button>
-            <button className="btn" disabled={!version || version.n === current} onClick={compare}>
+            </ListButton>
+            <ListButton row disabled={!version || version.n === current} onClick={() => compare()}>
               Compare with Current…
-            </button>
+            </ListButton>
             {builderOpen ? (
-              <button className="btn" disabled={!version} onClick={() => void restore()}>
+              <ListButton row disabled={!version} onClick={() => void restore()}>
                 Edit with Agent
-              </button>
+              </ListButton>
             ) : (
-              <button className="btn" disabled={!version || version.n === current} onClick={() => void restore()}>
+              <ListButton row disabled={!version || version.n === current} onClick={() => void restore()}>
                 Restore
-              </button>
+              </ListButton>
             )}
           </ListActions>
         </div>

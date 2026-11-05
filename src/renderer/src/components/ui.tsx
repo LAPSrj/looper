@@ -1,21 +1,22 @@
-import { useId, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+import { Children, cloneElement, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { ChangeEvent, ComponentProps, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from 'react';
 // On a phone, marks the window's page and keeps the keyboard and safe-area insets its styles use.
 import './phone/keyboard';
 import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
 import { NavBar } from './NavBar';
-import { bindField } from './field-model';
+import { bindField, textOptions, type TextOptions } from './field-model';
 import { ICON_STROKE_BOLD, StatusGlyph } from './icons';
 import { Group, Row } from './phone/PhoneList';
 import { Tabs } from './Tabs';
 import { WindowActions } from './WindowActions';
 
-const onIos = isPhone && platform === 'ios';
+export const onIos = isPhone && platform === 'ios';
 
-/** A check box with its text after it. */
+/** A check box with its text after it. `note`: a line under it (its status, what it's for). */
 export function CheckboxField({
   label,
+  note,
   checked,
   onChange,
   disabled,
@@ -24,6 +25,7 @@ export function CheckboxField({
   className,
 }: {
   label: ReactNode;
+  note?: ReactNode;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
@@ -32,13 +34,21 @@ export function CheckboxField({
   indeterminate?: boolean;
   className?: string;
 }) {
+  if (note) {
+    return (
+      <div className="checkbox-with-note">
+        <CheckboxField label={label} checked={checked} onChange={onChange} disabled={disabled} autoFocus={autoFocus} indeterminate={indeterminate} className={className} />
+        <span className="checkbox-note">{note}</span>
+      </div>
+    );
+  }
   return (
     <label className={`checkbox-field${className ? ` ${className}` : ''}`}>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
-        autoFocus={autoFocus}
+        autoFocus={autoFocus && !isPhone}
         ref={indeterminate === undefined ? undefined : (el) => void (el && (el.indeterminate = indeterminate))}
         onChange={(e) => onChange(e.target.checked)}
       />
@@ -156,15 +166,73 @@ export function Field({ label, help, children }: { label: string; help?: ReactNo
   const id = useId();
   const labelId = `${id}-label`;
   const bound = bindField(children, id);
+  const labelEl = (
+    <label id={labelId} className="field-label" htmlFor={bound.controlId}>
+      {label}
+    </label>
+  );
+  // An iPhone's row: the label and the first control on one line, any other control on a line of its own.
+  const [first, ...others] = onIos && bound.oneLine ? Children.toArray(bound.children) : [];
   return (
-    <div className="field" role={bound.group ? 'group' : undefined} aria-labelledby={bound.group ? labelId : undefined}>
-      <label id={labelId} className="field-label" htmlFor={bound.controlId}>
-        {label}
-      </label>
-      {bound.children}
+    <div className={`field${bound.oneLine ? ' field-one-line' : ''}`} role={bound.group ? 'group' : undefined} aria-labelledby={bound.group ? labelId : undefined}>
+      {first ? (
+        <>
+          <div className="field-line">
+            {labelEl}
+            {first}
+          </div>
+          {others}
+        </>
+      ) : (
+        <>
+          {labelEl}
+          {bound.children}
+        </>
+      )}
       {help && <p className="help">{help}</p>}
     </div>
   );
+}
+
+/**
+ * Fields that belong together: on an iPhone one inset card with a row per field and a hairline between rows,
+ * however they nest (FieldRow, StepFields, InlineField); on every other platform it adds no box.
+ * `title` names the group: a header above the card on an iPhone, a label above the fields elsewhere.
+ */
+export function FormGroup({ title, children }: { title?: string; children: ReactNode }) {
+  const titleId = useId();
+  return (
+    <div className="form-group" role={title ? 'group' : undefined} aria-labelledby={title ? titleId : undefined}>
+      {title && (
+        <div id={titleId} className="field-label form-group-title">
+          {title}
+        </div>
+      )}
+      <div className="form-group-rows">{children}</div>
+    </div>
+  );
+}
+
+/** Fields side by side on a desktop; on a phone they stack like any others. */
+export function FieldRow({ children }: { children: ReactNode }) {
+  return <div className="row">{children}</div>;
+}
+
+/**
+ * A checkbox whose text runs into a number box on the same line ("larger than [200 k tokens]").
+ * On an iPhone the number is a row of its own, named by the box's `label`, and shows only while it applies.
+ */
+export function InlineField({ children }: { children: ReactNode }) {
+  if (onIos) {
+    const [box, number] = Children.toArray(children) as [ReactNode, ReactElement<NumberInputProps>];
+    return (
+      <div className="inline-field">
+        {box}
+        {!number.props.disabled && <Field label={number.props.label ?? ''}>{cloneElement(number, { label: undefined })}</Field>}
+      </div>
+    );
+  }
+  return <div className="inline-field">{children}</div>;
 }
 
 /** A text box with its unit inside it at the right edge. */
@@ -176,6 +244,82 @@ export function InputSuffix({ suffix, className, children }: { suffix?: string; 
     </div>
   );
 }
+
+/**
+ * A form's one-line box (also time and date). A phone gets no focus on its own: its window opens
+ * without a keyboard, and the Return key says Done, as it runs the window's default button.
+ * On an iPhone an empty box says so (it has no outline to show where it is), and a box being edited has the Clear button at its end (HIG: Text fields).
+ * `selectWhen`: the text is selected once this turns true (a rename, so typing replaces it).
+ */
+export function TextInput({ code, verbatim, selectWhen, className, autoFocus, ...rest }: ComponentProps<'input'> & TextOptions & { selectWhen?: boolean }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectWhen && !isPhone) ref.current?.select();
+  }, [selectWhen]);
+  const input = <input ref={ref} enterKeyHint="done" autoFocus={autoFocus && !isPhone} {...textOptions({ code, verbatim }, className)} {...rest} />;
+  const clearable = onIos && !rest.readOnly && !rest.disabled && (rest.type === undefined || rest.type === 'text');
+  if (!clearable) return input;
+  const hinted = rest.placeholder === undefined ? cloneElement(input, { placeholder: 'Not Set' }) : input;
+  const clear = () => {
+    const el = ref.current;
+    if (!el) return;
+    // A value set directly doesn't reach React; the prototype's setter and an input event do.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  return (
+    <span className="text-control">
+      {hinted}
+      <button type="button" tabIndex={-1} className="input-clear" aria-label="Clear" hidden={!rest.value} onPointerDown={(e) => e.preventDefault()} onClick={clear}>
+        <svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true">
+          <circle cx="8.5" cy="8.5" r="8.5" fill="currentColor" />
+          <path d="m5.8 5.8 5.4 5.4m0-5.4-5.4 5.4" fill="none" stroke="var(--pg-cell)" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+    </span>
+  );
+}
+TextInput.labelable = true;
+
+/** A form's text box of several lines. */
+export function TextArea({ code, verbatim, className, autoFocus, ...rest }: ComponentProps<'textarea'> & TextOptions) {
+  return <textarea autoFocus={autoFocus && !isPhone} {...textOptions({ code, verbatim }, className)} {...rest} />;
+}
+TextArea.labelable = true;
+TextArea.multiline = true;
+
+/** A form's drop-down: the platform's own list, and no focus on its own on a phone. */
+export function SelectInput({ autoFocus, ...rest }: ComponentProps<'select'>) {
+  if (onIos) return <IosPopUp {...rest} />;
+  return <select autoFocus={autoFocus && !isPhone} {...rest} />;
+}
+
+/**
+ * iOS's pop-up button: the chosen option as ordinary text that wraps at the row's end, with the up-and-down
+ * chevrons. The select lies over it, unseen, so a tap opens the system's own menu (a select can't wrap its text).
+ */
+function IosPopUp({ onChange, ...rest }: ComponentProps<'select'>) {
+  const ref = useRef<HTMLSelectElement>(null);
+  const [text, setText] = useState('');
+  const sync = () => setText(ref.current?.selectedOptions[0]?.text.trim() ?? '');
+  useLayoutEffect(sync);
+  return (
+    <span className={`select-control${rest.disabled ? ' disabled' : ''}`}>
+      <span className="select-value" aria-hidden="true">
+        {text}
+      </span>
+      <select
+        ref={ref}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+          onChange?.(e);
+          sync();
+        }}
+        {...rest}
+      />
+    </span>
+  );
+}
+SelectInput.labelable = true;
 
 interface NumberInputProps {
   /** The unit, inside the box at its right edge; omit for a plain number (a port). */
@@ -204,10 +348,12 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
         id={id}
         aria-label={label}
         type="number"
+        inputMode="numeric"
+        enterKeyHint="done"
         min={min}
         max={max}
         disabled={disabled}
-        autoFocus={autoFocus}
+        autoFocus={autoFocus && !isPhone}
         value={value ?? ''}
         onChange={(e) => {
           // A cleared field is a keystroke on the way to a new number, not a 0.
@@ -222,7 +368,7 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
 }
 
 /**
- * The fields that depend on a checkbox right above them: indented under it, and dimmed and disabled (not hidden) while it's off.
+ * The fields that depend on a checkbox right above them: indented under it, and dimmed and disabled while it's off (hidden on an iPhone).
  * Stacked like the rest of the form, or with `row` side by side (Settings' stagger delays) or a lone sub-option that sits tight under its checkbox.
  */
 export function StepFields({
@@ -238,6 +384,8 @@ export function StepFields({
   children: ReactNode;
 }) {
   if (!when) return <>{children}</>;
+  // iOS shows a row only while it applies; everywhere else it stays visible, dimmed.
+  if (onIos && !on) return null;
   return (
     <fieldset className={`step-fields ${row ? 'step-row' : 'step-stack'}${on ? '' : ' disabled'}`} disabled={!on}>
       {children}
@@ -303,12 +451,17 @@ export function NumberField({ label, ...rest }: { label: string } & NumberInputP
 
 /** Up to this many tabs, an iPhone draws them as a segmented control. */
 const SEGMENTS = 5;
+/** Up to this many tabs with `panels`, an iPhone shows them all on one page. */
+const ONE_PAGE = 3;
 
 /**
  * A window's tabs (a thin wrapper over Tabs). With `sections`, the tabs'
  * panel is the TabBar's `children`: an iPhone shows the sections as a list of
  * rows and a section's panel in a screen of its own, which Back leaves; every
  * other platform shows the tabs with the panel below.
+ * With `panels`, the TabBar draws the window's body: an iPhone shows a short
+ * window as one page, each later tab's name heading its part; every other
+ * platform shows the tabs with the active panel below.
  */
 export function TabBar<T extends string>({
   tabs,
@@ -317,6 +470,7 @@ export function TabBar<T extends string>({
   className,
   label = 'Sections',
   sections,
+  panels,
   ctrlTab,
   children,
 }: {
@@ -329,6 +483,7 @@ export function TabBar<T extends string>({
   /** The tab list's accessible name. */
   label?: string;
   sections?: boolean;
+  panels?: (id: T) => ReactNode;
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -361,6 +516,18 @@ export function TabBar<T extends string>({
       </div>
     );
   }
+  if (onIos && panels && tabs.length <= ONE_PAGE) {
+    return (
+      <div className="editor-body tab-page">
+        {tabs.map(([id, text], i) => (
+          <section key={id}>
+            {i > 0 && <h2 className="pg-group-title">{text}</h2>}
+            {panels(id)}
+          </section>
+        ))}
+      </div>
+    );
+  }
   const segmented = onIos && !sections && tabs.length <= SEGMENTS;
   return (
     <>
@@ -372,7 +539,7 @@ export function TabBar<T extends string>({
         ctrlTab={ctrlTab}
         className={`${segmented ? 'tabs-segmented ' : ''}${className ?? ''}`.trim() || undefined}
       />
-      {children}
+      {panels ? <div className="editor-body">{panels(active)}</div> : children}
     </>
   );
 }

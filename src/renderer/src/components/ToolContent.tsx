@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toolImageKey, type MessageRow, type PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
+import { escapeHtml, hunkRows, markRanges, replacedRows, type DiffRow } from './editor-lines';
 import { Markdown, MessageBody, parseTagSections, TagSections } from './Markdown';
 
 type Rec = Record<string, unknown>;
@@ -129,40 +130,42 @@ export function ToolImage({ row, taskId, runId, agentId }: { row: MessageRow; ta
 
 /* ---------- Diff ---------- */
 
-export function DiffView({ hunks }: { hunks: PatchHunk[] }) {
+/**
+ * A diff as GitHub draws its unified view: both line numbers, a mark, the
+ * line tinted and the changed words darker, in the file's syntax colors. The
+ * old and the new file are colored apart, so neither breaks the other's strings.
+ */
+export function DiffRows({ rows, file }: { rows: DiffRow[]; file?: string }) {
+  const side = (keep: 'add' | 'del') => rows.map((r) => (r.kind === 'hunk' || r.kind === keep ? '' : r.text));
+  const oldHtml = useHighlight(side('add'), file);
+  const newHtml = useHighlight(side('del'), file);
   return (
     <div className="diff">
-      {hunks.map((h, i) => (
-        <div key={i}>
-          <div className="diff-hunk-header">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</div>
-          {h.lines.map((line, j) => {
-            const kind = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx';
-            return (
-              <div key={j} className={`diff-line diff-${kind}`}>
-                {line || ' '}
-              </div>
-            );
-          })}
-        </div>
-      ))}
+      {rows.map((r, i) => {
+        if (r.kind === 'hunk') {
+          return (
+            <div key={i} className="diff-hunk">
+              {r.text}
+            </div>
+          );
+        }
+        const html = (r.kind === 'del' ? oldHtml : newHtml)?.[i] ?? escapeHtml(r.text);
+        return (
+          <div key={i} className={`diff-line diff-${r.kind}`}>
+            <span className="diff-num">{r.oldN}</span>
+            <span className="diff-num">{r.newN}</span>
+            <span className="diff-mark">{r.kind === 'add' ? '+' : r.kind === 'del' ? '−' : ''}</span>
+            <span className="diff-code" dangerouslySetInnerHTML={{ __html: (r.words ? markRanges(html, r.words) : html) || ' ' }} />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-/** Before the harness records a patch: the replaced block and its replacement. */
-function OldNewDiff({ oldText, newText }: { oldText: string; newText: string }) {
-  const block = (text: string, kind: 'del' | 'add') =>
-    text.split('\n').map((line, i) => (
-      <div key={i} className={`diff-line diff-${kind}`}>
-        {(kind === 'del' ? '-' : '+') + line}
-      </div>
-    ));
-  return (
-    <div className="diff">
-      {block(oldText, 'del')}
-      {block(newText, 'add')}
-    </div>
-  );
+export function DiffView({ hunks, file }: { hunks: PatchHunk[]; file?: string }) {
+  const rows = useMemo(() => hunkRows(hunks), [hunks]);
+  return <DiffRows rows={rows} file={file} />;
 }
 
 /* ---------- Read result: line-number gutter ---------- */
@@ -332,7 +335,7 @@ function editInput(row: MessageRow, input: Rec): ReactNode {
     <>
       {fileHeader(row.file)}
       {input.replace_all === true && <div className="tc-caption muted">Replaces all occurrences</div>}
-      {row.patch ? <DiffView hunks={row.patch} /> : <OldNewDiff oldText={oldText} newText={newText} />}
+      {row.patch ? <DiffView hunks={row.patch} file={row.file} /> : <DiffRows rows={replacedRows(oldText, newText)} file={row.file} />}
     </>
   );
 }

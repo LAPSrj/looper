@@ -27,6 +27,15 @@ function track(): void {
   }
   const vv = top.visualViewport;
   if (!vv) return;
+  // The page shrinks for the keyboard and nothing else brings the row being typed in back above it.
+  const revealFormRow = () => {
+    const active = document.activeElement;
+    if (active?.closest('.form-group')) (active.closest('.field') ?? active).scrollIntoView({ block: 'nearest' });
+  };
+  document.addEventListener('focusin', () => {
+    if (root.classList.contains('keyboard-up')) revealFormRow();
+  });
+  let shownInset = 0;
   const update = () => {
     // html.tablet: an iPad or Android tablet (the screen's, not this iframe's, size), for its readable widths.
     root.classList.toggle('tablet', isTablet({ width: top.innerWidth, height: top.innerHeight }));
@@ -37,6 +46,8 @@ function track(): void {
     const inset = up ? Math.max(0, Math.round(bottom - (vv.offsetTop + vv.height))) : 0;
     root.style.setProperty('--keyboard-inset', `${inset}px`);
     root.classList.toggle('keyboard-up', up);
+    if (up && inset !== shownInset) revealFormRow();
+    shownInset = inset;
   };
   update();
   vv.addEventListener('resize', update);

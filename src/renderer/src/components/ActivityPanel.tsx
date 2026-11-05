@@ -1,23 +1,25 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import { formatTokens, type Attachment } from '@shared/chat';
 import { EFFORT_LEVELS } from '@shared/environments';
-import type { MessageRow } from '@shared/messages';
+import type { MessageRow, SentFile } from '@shared/messages';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { waitedText } from '@shared/sessions';
 import { WORKFLOW_STATUS_TEXT, tabStatus, workflowAgents, type WorkflowRun } from '@shared/workflows';
 import { stripAnsi } from '../format';
 import { MINUTE, useNow } from '../useNow';
-import { AttachmentList } from './ChatRows';
-import { changeLines, type EditorLine } from './editor-lines';
+import { AttachmentList, SentFileList } from './ChatRows';
+import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
-import { MessageBody } from './Markdown';
+import { useListNav } from './hooks';
+import { Markdown, MessageBody } from './Markdown';
 import { isPhone } from '../web/page-nav';
 import { StatusMark } from './StatusMark';
+import { newestFirst } from './subagents';
 import { ToolButton } from './ToolButton';
-import { CodeBlock, CodeText, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
+import { CodeBlock, CodeText, DiffRows, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
 
 export type ActivityTab = 'now' | 'background' | 'subagents' | 'files' | 'git';
@@ -31,8 +33,13 @@ const NAV_ICONS = {
   previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
   next: <path d="M6 3.5 10.5 8 6 12.5" />,
   latest: <path d="M4 3.5 8.5 8 4 12.5M12 3v10" />,
+  // A bulleted list: every tool call, one per row.
+  list: <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01M5.5 4h8M5.5 8h8M5.5 12h8" />,
+  // Angle brackets: a Markdown file as its source text.
+  source: <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />,
 };
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
+const MARKDOWN_RE = /\.(md|markdown)$/i;
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
 const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length)).replace(/[\\/]$/, '');
@@ -41,7 +48,143 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v 
 const inputOf = (row: MessageRow): Record<string, unknown> =>
   row.input !== null && typeof row.input === 'object' && !Array.isArray(row.input) ? (row.input as Record<string, unknown>) : {};
 
-/** The file in an editor: its lines with their numbers, colored for its language, added and removed ones marked. */
+/** A tool call's title and what it worked on: an addon's own title, else the tool and its file, command or preview. */
+function callTitle(row: MessageRow, addons: AddonInfo[]): { title: string | undefined; subject: string } {
+  const custom = row.tool ? findToolCall(addons, row.tool) : undefined;
+  if (custom?.call.title) return { title: toolCallTitle(custom.call.title, inputOf(row)), subject: '' };
+  return { title: row.tool, subject: row.file ?? str(inputOf(row).command)?.split('\n')[0] ?? row.preview };
+}
+
+/**
+ * The Markdown document a call read or wrote, which Now shows formatted: a
+ * finished Read's lines (without the notes the harness adds after them), or
+ * a Write's content. Null for any other call; an edit keeps its diff.
+ */
+function markdownDoc(row: MessageRow): string | null {
+  if (!MARKDOWN_RE.test(row.file ?? '') || row.resultError) return null;
+  if (row.tool === 'Write') return str(inputOf(row).content) ?? null;
+  if (row.tool !== 'Read' || row.result === undefined) return null;
+  const lines = gutterLines(row.result);
+  return lines ? lines.filter((l) => l.n !== '').map((l) => l.text).join('\n') : null;
+}
+
+/** The main agent's name in a message's From and To. */
+const MAIN_AGENT = 'Main agent';
+
+/** A message between agents, as an email: who sent it, to whom, its subject, and the message in Markdown. */
+interface Mail {
+  from: string;
+  to: string;
+  subject?: string;
+  /** The call's other parameters, as more header rows. */
+  rest: [string, unknown][];
+  text: string;
+}
+
+/**
+ * A call that's a message between agents: SendMessage (to another agent,
+ * by its id), SubagentHandback (a subagent's final report, to the agent that
+ * started it), or an Agent call's prompt (to the subagent it starts). `from`
+ * is the agent whose conversation it's in; `nameOf` names an agent by its id.
+ */
+function mailOf(row: MessageRow, from: string, nameOf: (id: string) => string): Mail | null {
+  const input = inputOf(row);
+  const rest = (shown: string[]) => Object.entries(input).filter(([k]) => !shown.includes(k));
+  const message = str(input.message);
+  if (row.tool === 'SendMessage' && message) {
+    const to = str(input.to);
+    // Claude Code records `type`, `recipient`, `recipient_kind` and `content` as copies of the fields above.
+    const shown = ['to', 'summary', 'message', 'type', 'recipient', 'recipient_kind', 'content'];
+    return { from, to: to ? nameOf(to) : '', subject: str(input.summary), rest: rest(shown), text: message };
+  }
+  if (row.tool === 'SubagentHandback' && message) return { from, to: MAIN_AGENT, rest: rest(['message']), text: message };
+  const prompt = str(input.prompt);
+  if ((row.tool === 'Agent' || row.tool === 'Task') && prompt) {
+    const to = str(input.subagent_type) ?? 'Subagent';
+    return { from, to, subject: str(input.description), rest: rest(['subagent_type', 'description', 'prompt']), text: prompt };
+  }
+  return null;
+}
+
+const headerValue = (v: unknown): string => (typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v)));
+
+/** A message between agents as an email: its header rows, then the message formatted. */
+function MailView({ mail }: { mail: Mail }) {
+  const rows: [string, string][] = [
+    ['From', mail.from],
+    ['To', mail.to],
+    ...(mail.subject ? ([['Subject', mail.subject]] as [string, string][]) : []),
+    ...mail.rest.map(([k, v]) => [k, headerValue(v)] as [string, string]),
+  ];
+  return (
+    <div className="now-mail">
+      <table className="now-mail-head">
+        <tbody>
+          {rows.map(([k, v]) => (
+            <tr key={k}>
+              <th scope="row">{k}</th>
+              <td>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="now-mail-body">
+        <MessageBody text={mail.text} />
+      </div>
+    </div>
+  );
+}
+
+/** A Markdown file as a document: formatted, on a page of a readable width. */
+function DocScreen({ text }: { text: string }) {
+  return (
+    <div className="now-doc">
+      <div className="now-doc-page">
+        <Markdown text={text} breaks={false} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every tool call of the conversation, one row each: the tool, what it worked
+ * on, and "Running" or "Failed". The shown call is selected; Up and Down move
+ * the selection, a click or Enter shows the call on the screen.
+ */
+function CallList({
+  tools,
+  index,
+  addons,
+  onIndex,
+  onShow,
+}: {
+  tools: MessageRow[];
+  index: number;
+  addons: AddonInfo[];
+  onIndex: (i: number) => void;
+  onShow: (i: number) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowId = (n: number) => `now-call-${tools[n]?.id}`;
+  const onKeyDown = useListNav({ count: tools.length, index, onIndex, onActivate: onShow, scrollToId: tools[index] ? rowId(index) : null });
+  useEffect(() => listRef.current?.focus(), []);
+  return (
+    <div ref={listRef} className="now-calls" role="listbox" aria-label="Tool calls" tabIndex={0} aria-activedescendant={tools[index] ? rowId(index) : undefined} onKeyDown={onKeyDown}>
+      {tools.map((t, n) => {
+        const { title, subject } = callTitle(t, addons);
+        return (
+          <div key={t.id} id={rowId(n)} role="option" aria-selected={n === index} className={`now-call${n === index ? ' selected' : ''}`} onClick={() => onShow(n)}>
+            <span className="now-call-tool">{title}</span>
+            <span className="mono now-call-subject">{subject}</span>
+            {t.result === undefined ? <span className="muted now-call-state">Running</span> : t.resultError ? <span className="error-text now-call-state">Failed</span> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The file in an editor: its lines with their numbers, colored for its language. */
 function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[]; note?: string }) {
   const html = useHighlight(
     lines.map((l) => l.text),
@@ -50,19 +193,12 @@ function EditorScreen({ file, lines, note }: { file?: string; lines: EditorLine[
   return (
     <div className="now-editor">
       <div className="now-editor-lines">
-        {lines.map((l, i) =>
-          l.kind === 'gap' ? (
-            <div key={i} className="now-editor-gap">
-              ⋯
-            </div>
-          ) : (
-            <div key={i} className={`now-editor-line${l.kind === 'ctx' ? '' : ` diff-${l.kind}`}`}>
-              <span className="now-editor-gutter">{l.n}</span>
-              <span className="now-editor-mark">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ''}</span>
-              <CodeText className="now-editor-text" html={html?.[i]} text={l.text} />
-            </div>
-          ),
-        )}
+        {lines.map((l, i) => (
+          <div key={i} className="now-editor-line">
+            <span className="now-editor-gutter">{l.n}</span>
+            <CodeText className="now-editor-text" html={html?.[i]} text={l.text} />
+          </div>
+        ))}
         {note && <div className="now-editor-note">{note}</div>}
       </div>
     </div>
@@ -172,21 +308,62 @@ function AddonCallScreen({ row, ctx, addon, call }: { row: MessageRow; ctx: { ta
   );
 }
 
-/** One tool call as the agent's screen: the file it read, the change it made, the command and its output. */
-function NowScreen({ row, taskId, runId, agentId, addons }: { row: MessageRow; taskId: string; runId: string; agentId?: string; addons: AddonInfo[] }) {
+/**
+ * One tool call as the agent's screen: the file it read, the change it made,
+ * the command and its output, a message to another agent as an email, a
+ * Markdown file as a document (or its source, with `source`).
+ */
+function NowScreen({
+  row,
+  taskId,
+  runId,
+  agentId,
+  addons,
+  source,
+  nameOf,
+}: {
+  row: MessageRow;
+  taskId: string;
+  runId: string;
+  agentId?: string;
+  addons: AddonInfo[];
+  source: boolean;
+  /** An agent's name by its id; null: the main agent. */
+  nameOf: (id: string | null) => string;
+}) {
   const ctx = { taskId, runId, agentId };
   const running = row.result === undefined;
   const custom = row.tool ? findToolCall(addons, row.tool) : undefined;
-  const title = custom?.call.title ? toolCallTitle(custom.call.title, inputOf(row)) : row.tool;
-  const subject = custom?.call.title ? '' : (row.file ?? row.preview);
+  const { title, subject } = callTitle(row, addons);
   const image = row.tool === 'Read' && !running && (!!row.image || (!row.resultError && IMAGE_RE.test(row.file ?? '')));
   const lines = row.tool === 'Read' && !running && !image ? gutterLines(row.result ?? '') : null;
-  const changed = row.tool && CHANGES.has(row.tool) ? changeLines(row) : null;
+  const changed = row.tool && CHANGES.has(row.tool) ? changeRows(row) : null;
+  const written = row.tool && CHANGES.has(row.tool) ? writtenLines(row) : null;
+  const doc = source ? null : markdownDoc(row);
+  const mail = custom ? null : mailOf(row, nameOf(agentId ?? null), nameOf);
   let body;
   let screen = true;
   if (custom) {
     screen = false;
     body = <AddonCallScreen row={row} ctx={ctx} addon={custom.addon} call={custom.call} />;
+  } else if (doc !== null) {
+    body = <DocScreen text={doc} />;
+  } else if (mail) {
+    screen = false;
+    body = (
+      <>
+        <MailView mail={mail} />
+        {running ? (
+          runningNote(row)
+        ) : (
+          row.result?.trim() && (
+            <div className="now-result">
+              <ToolResultView row={row} ctx={ctx} />
+            </div>
+          )
+        )}
+      </>
+    );
   } else if (row.tool && TERMINALS.has(row.tool)) {
     body = <TerminalScreen row={row} />;
   } else if (row.tool === 'Read' && running) {
@@ -211,9 +388,15 @@ function NowScreen({ row, taskId, runId, agentId, addons }: { row: MessageRow; t
       </>
     );
   } else if (lines) {
-    body = <EditorScreen file={row.file} lines={lines.map((l) => ({ ...l, kind: 'ctx' }))} />;
+    body = <EditorScreen file={row.file} lines={lines} />;
   } else if (changed) {
-    body = <EditorScreen file={row.file} lines={changed} />;
+    body = (
+      <div className="now-diff">
+        <DiffRows rows={changed} file={row.file} />
+      </div>
+    );
+  } else if (written) {
+    body = <EditorScreen file={row.file} lines={written} />;
   } else if (row.tool === 'Delete') {
     body = <EditorScreen file={row.file} lines={[]} note="Deleted." />;
   } else if (row.tool === 'Read' || (row.tool && CHANGES.has(row.tool))) {
@@ -271,7 +454,7 @@ function FileItem({ path, taskId, runId, onShow }: { path: string; taskId: strin
   );
 }
 
-/** One background command or subagent; opened, the end of its output, read again every few seconds. */
+/** One background command or workflow; opened, the end of a command's output, read again every few seconds. */
 function BackgroundItem({
   b,
   sessionId,
@@ -337,7 +520,7 @@ function BackgroundItem({
       >
         <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}${b.status === 'running' ? ' live-only' : ''}`}>{status}</span>
         <span className="bg-label">{b.label}</span>
-        <span className="muted bg-kind">{b.kind === 'agent' ? 'Subagent' : b.kind === 'workflow' ? 'Workflow' : ''}</span>
+        <span className="muted bg-kind">{b.kind === 'workflow' ? 'Workflow' : ''}</span>
         {isPhone && b.workflowRunId && (
           <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
             <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -372,10 +555,11 @@ export function nowIndex(count: number, pos: number | null): number {
 
 /**
  * The Sessions window's right panel: Now shows the agent's latest tool call
- * like its screen (the toolbar goes back through earlier ones, and the last
- * one follows new calls), Subagents lists each one's agent, model, effort and
- * context, Files lists what it worked on, and Background shows what runs in
- * the background (a workflow's item opens its tab beside the conversation).
+ * like its screen (the toolbar goes back through earlier ones, the last one
+ * follows new calls, and the list shows them all), Subagents lists each one's
+ * agent, model, effort and context, newest first, Files lists what it sent the
+ * user and worked on, and Background shows the commands and workflows that run
+ * in the background (a workflow's item opens its tab beside the conversation).
  */
 export function ActivityPanel({
   sessionId,
@@ -434,6 +618,14 @@ export function ActivityPanel({
   const i = nowIndex(tools.length, pos);
   const row = tools[i];
   const step = (to: number) => onPos(to >= tools.length - 1 ? null : Math.max(0, to));
+  // Now as a list of every tool call instead of the one call's screen; a Markdown file as its source.
+  const [listView, setListView] = useState(false);
+  const [mdSource, setMdSource] = useState(false);
+  const agentNames = new Map<string, string>([
+    ...subagents.map((a) => [a.agentId, a.description || a.type] as [string, string]),
+    ...(workflowRun ? workflowAgents(workflowRun).map((a) => [a.agentId, a.label] as [string, string]) : []),
+  ]);
+  const nameOf = (id: string | null) => (id === null ? MAIN_AGENT : (agentNames.get(id) ?? id));
 
   const files = new Map<string, { changed: boolean; index: number }>();
   tools.forEach((t, n) => {
@@ -443,12 +635,16 @@ export function ActivityPanel({
   });
   const changed = [...files].filter(([, f]) => f.changed);
   const read = [...files].filter(([, f]) => !f.changed);
+  // The files the agent sent the user (SendUserFile), each once.
+  const received = [...new Map(rows.flatMap((r) => r.sent?.files ?? []).map((f) => [f.path, f] as [string, SentFile])).values()];
   const showFile = (index: number) => {
     setTab('now');
     step(index);
   };
-  const running = background.filter((b) => b.status === 'running');
-  const finished = background.filter((b) => b.status !== 'running').slice(0, 5);
+  // Subagents are in their own tab, background ones too.
+  const own = background.filter((b) => b.kind !== 'agent');
+  const running = own.filter((b) => b.status === 'running');
+  const finished = own.filter((b) => b.status !== 'running').slice(0, 5);
 
   return (
     <aside className="activity-panel">
@@ -475,11 +671,29 @@ export function ActivityPanel({
                 <ToolButton icon={NAV_ICONS.previous} title="Previous Tool Call" enabled={i > 0} onClick={() => step(i - 1)} />
                 <ToolButton icon={NAV_ICONS.next} title="Next Tool Call" enabled={i < tools.length - 1} onClick={() => step(i + 1)} />
                 <ToolButton icon={NAV_ICONS.latest} title="Follow the Latest Tool Call" enabled onClick={() => onPos(null)} pressed={pos === null} />
+                <span className="toolbar-sep" />
+                <ToolButton icon={NAV_ICONS.list} title="Tool Call List" enabled onClick={() => setListView((v) => !v)} pressed={listView} />
+                {!listView && markdownDoc(row) !== null && (
+                  <ToolButton icon={NAV_ICONS.source} title="Markdown Source" enabled onClick={() => setMdSource((v) => !v)} pressed={mdSource} />
+                )}
                 <span className="muted now-place">
                   {i + 1} of {tools.length}
                 </span>
               </div>
-              <NowScreen row={row} taskId={taskId} runId={sessionId} agentId={rowsAgent ?? undefined} addons={addons} />
+              {listView ? (
+                <CallList
+                  tools={tools}
+                  index={i}
+                  addons={addons}
+                  onIndex={step}
+                  onShow={(n) => {
+                    step(n);
+                    setListView(false);
+                  }}
+                />
+              ) : (
+                <NowScreen row={row} taskId={taskId} runId={sessionId} agentId={rowsAgent ?? undefined} addons={addons} source={mdSource} nameOf={nameOf} />
+              )}
             </>
           ) : (
             <div className="empty">The agent hasn't used a tool yet.</div>
@@ -499,7 +713,7 @@ export function ActivityPanel({
         )}
         {tab === 'subagents' && (
           <div className="subagent-list">
-            {subagents.map((a) => (
+            {newestFirst(subagents).map((a) => (
               <div
                 key={a.agentId}
                 className={`subagent-item${following === a.agentId ? ' selected' : ''}`}
@@ -524,8 +738,6 @@ export function ActivityPanel({
                   <dd>{a.effort ? (EFFORT_LEVELS['claude-code'].find(([v]) => v === a.effort)?.[1] ?? a.effort) : 'Not known yet'}</dd>
                   <dt>Context</dt>
                   <dd>{a.contextTokens !== undefined ? `${formatTokens(a.contextTokens)} tokens` : 'Not known yet'}</dd>
-                  <dt>Runs</dt>
-                  <dd>{a.background ? 'In the background' : 'In the foreground'}</dd>
                 </dl>
               </div>
             ))}
@@ -559,6 +771,12 @@ export function ActivityPanel({
         )}
         {tab === 'files' && (
           <div className="files-tab">
+            {received.length > 0 && (
+              <>
+                <div className="pane-title files-heading">Received</div>
+                <SentFileList files={received} ctx={{ taskId, runId: sessionId }} />
+              </>
+            )}
             {changed.length > 0 && <div className="pane-title files-heading">Changed</div>}
             {changed.map(([p, f]) => (
               <FileItem key={p} path={p} taskId={taskId} runId={sessionId} onShow={() => showFile(f.index)} />
@@ -573,7 +791,7 @@ export function ActivityPanel({
                 <AttachmentList items={attachments} />
               </>
             )}
-            {files.size === 0 && attachments.length === 0 && <div className="empty">No files yet.</div>}
+            {files.size === 0 && attachments.length === 0 && received.length === 0 && <div className="empty">No files yet.</div>}
           </div>
         )}
         {tab === 'git' && gitProject && <GitView projectId={gitProject} watch={git} narrow />}

@@ -87,8 +87,9 @@ export interface DragResult {
 
 /**
  * A one-axis drag that decides early whether it's ours: it must start where
- * `accept` allows and move mostly along the axis. On release it commits past
- * a third of `extent`, or on a quick flick.
+ * `accept` allows and move mostly along the axis, in `direction` (-1: toward
+ * the start of the axis, a swipe to the left). On release it commits past a
+ * third of `extent`, or on a quick flick.
  */
 export class AxisDrag {
   private s: { x: number; y: number; t: number } | null = null;
@@ -96,7 +97,7 @@ export class AxisDrag {
   private velocity = 0;
   private claimed = false;
 
-  constructor(private readonly axis: 'x' | 'y') {}
+  constructor(private readonly axis: 'x' | 'y', private readonly direction: 1 | -1 = 1) {}
 
   get active(): boolean {
     return this.claimed;
@@ -113,7 +114,7 @@ export class AxisDrag {
   move(x: number, y: number, t: number): DragResult | null {
     const s = this.s;
     if (!s) return null;
-    const along = this.axis === 'x' ? x - s.x : y - s.y;
+    const along = this.direction * (this.axis === 'x' ? x - s.x : y - s.y);
     const across = this.axis === 'x' ? y - s.y : x - s.x;
     if (!this.claimed) {
       if (Math.abs(across) > 10 && Math.abs(across) > Math.abs(along)) {

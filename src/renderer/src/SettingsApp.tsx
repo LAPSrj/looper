@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
-import { CheckboxField, EmptyWindow, Field, InputRow, NumberField, NumberInput, RadioField, StepFields, TabBar } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { FolderOptions } from './components/form-blocks';
 import { rid } from './rid';
@@ -268,27 +268,31 @@ export function SettingsApp() {
       <div className="editor-body">
         {tab === 'general' && (
           <div className="form">
-            <Field label="Default environment">
-              <select autoFocus value={defaultEnvId} onChange={(e) => setDefaultEnvId(e.target.value)}>
-                {envs.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Move completed tasks to folder">
-              <select value={completedFolderId} onChange={(e) => setCompletedFolderId(e.target.value)}>
-                <option value="">Leave them where they are</option>
-                <FolderOptions folders={folders} />
-              </select>
-            </Field>
-            <CheckboxField label="Stagger overdue tasks on startup" checked={staggerEnabled} onChange={setStaggerEnabled} />
-            <StepFields row on={staggerEnabled}>
-              <NumberField label="Minimum delay" suffix="s" min={0} value={staggerMin} onChange={setStaggerMin} />
-              <NumberField label="Maximum delay" suffix="s" min={1} value={staggerMax} onChange={setStaggerMax} />
-              <NumberField label="Minimum interval" suffix="s" min={0} value={staggerInterval} onChange={setStaggerInterval} />
-            </StepFields>
+            <FormGroup>
+              <Field label="Default environment">
+                <SelectInput autoFocus value={defaultEnvId} onChange={(e) => setDefaultEnvId(e.target.value)}>
+                  {envs.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              <Field label="Move completed tasks to folder">
+                <SelectInput value={completedFolderId} onChange={(e) => setCompletedFolderId(e.target.value)}>
+                  <option value="">Leave them where they are</option>
+                  <FolderOptions folders={folders} />
+                </SelectInput>
+              </Field>
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField label="Stagger overdue tasks on startup" checked={staggerEnabled} onChange={setStaggerEnabled} />
+              <StepFields row on={staggerEnabled}>
+                <NumberField label="Minimum delay" suffix="s" min={0} value={staggerMin} onChange={setStaggerMin} />
+                <NumberField label="Maximum delay" suffix="s" min={1} value={staggerMax} onChange={setStaggerMax} />
+                <NumberField label="Minimum interval" suffix="s" min={0} value={staggerInterval} onChange={setStaggerInterval} />
+              </StepFields>
+            </FormGroup>
             <RadioField
               label="Open terminal sessions in"
               name="terminal"
@@ -299,65 +303,100 @@ export function SettingsApp() {
               ]}
               onChange={setTerminal}
             />
-            <CheckboxField label="Show run options before manually running a task" checked={promptRunOptions} onChange={setPromptRunOptions} />
-            <CheckboxField label="Show notifications" checked={notificationsEnabled} onChange={setNotificationsEnabled} />
-            <CheckboxField label="Close to system tray" checked={closeToTray} onChange={setCloseToTray} />
-            <CheckboxField label="Ask before quitting while tasks are running" checked={confirmQuitRuns} onChange={setConfirmQuitRuns} />
-            <StepFields row on={confirmQuitRuns}>
-              <CheckboxField label="Also while tasks are watching for events" checked={confirmQuitWatchers} onChange={setConfirmQuitWatchers} />
-            </StepFields>
-            <CheckboxField label="Start with the computer" checked={startWithSystem} onChange={setStartWithSystem} />
+            <FormGroup>
+              <CheckboxField label="Show run options before manually running a task" checked={promptRunOptions} onChange={setPromptRunOptions} />
+              <CheckboxField label="Show notifications" checked={notificationsEnabled} onChange={setNotificationsEnabled} />
+              <CheckboxField label="Close to system tray" checked={closeToTray} onChange={setCloseToTray} />
+              <CheckboxField label="Ask before quitting while tasks are running" checked={confirmQuitRuns} onChange={setConfirmQuitRuns} />
+              <StepFields row on={confirmQuitRuns}>
+                <CheckboxField label="Also while tasks are watching for events" checked={confirmQuitWatchers} onChange={setConfirmQuitWatchers} />
+              </StepFields>
+              <CheckboxField label="Start with the computer" checked={startWithSystem} onChange={setStartWithSystem} />
+            </FormGroup>
           </div>
         )}
 
         {tab === 'chats' && (
           <div className="form">
-            <CheckboxField label="Show thinking expanded" checked={chats.expandThinking} onChange={(on) => setChats({ ...chats, expandThinking: on })} />
-            <CheckboxField
-              label="Close conversations without asking once their cache has expired"
-              checked={chats.closeExpiredWithoutAsking}
-              onChange={(on) => setChats({ ...chats, closeExpiredWithoutAsking: on })}
-            />
-            <CheckboxField
-              label="Stop the harness once a conversation’s cache expires"
-              checked={chats.stopWhenCacheExpires}
-              onChange={(on) => setChats({ ...chats, stopWhenCacheExpires: on })}
-            />
-            <CheckboxField
-              label="Ask before sending a message once the cache has expired"
-              checked={chats.confirmExpiredSend.enabled}
-              onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, enabled: on } })}
-            />
-            <StepFields on={chats.confirmExpiredSend.enabled}>
-              <div className="inline-field">
+            <FormGroup>
+              <CheckboxField label="Show thinking expanded" checked={chats.expandThinking} onChange={(on) => setChats({ ...chats, expandThinking: on })} />
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField label="Ask before closing a conversation" checked={chats.confirmClose} onChange={(on) => setChats({ ...chats, confirmClose: on })} />
+              <StepFields row on={chats.confirmClose}>
                 <CheckboxField
-                  label="Only when the context is larger than"
-                  checked={chats.confirmExpiredSend.onlyAbove}
-                  onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, onlyAbove: on } })}
+                  label="Close conversations without asking once their cache has expired"
+                  checked={chats.closeExpiredWithoutAsking}
+                  onChange={(on) => setChats({ ...chats, closeExpiredWithoutAsking: on })}
                 />
-                {/* Thousands of tokens on screen; the setting stays in tokens, 1k at least. */}
+              </StepFields>
+              <CheckboxField
+                label="Stop the harness once a conversation’s cache expires"
+                checked={chats.stopWhenCacheExpires}
+                onChange={(on) => setChats({ ...chats, stopWhenCacheExpires: on })}
+              />
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField
+                label="Ask before sending a message once the cache has expired"
+                checked={chats.confirmExpiredSend.enabled}
+                onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, enabled: on } })}
+              />
+              <StepFields on={chats.confirmExpiredSend.enabled}>
+                <InlineField>
+                  <CheckboxField
+                    label="Only when the context is larger than"
+                    checked={chats.confirmExpiredSend.onlyAbove}
+                    onChange={(on) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, onlyAbove: on } })}
+                  />
+                  {/* Thousands of tokens on screen; the setting stays in tokens, 1k at least. */}
+                  <NumberInput
+                    label="Context size"
+                    suffix="k tokens"
+                    min={1}
+                    disabled={!chats.confirmExpiredSend.onlyAbove}
+                    value={chats.confirmExpiredSend.aboveTokens / 1000}
+                    onChange={(n) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: Math.round(n * 1000) } })}
+                    onBlur={() =>
+                      chats.confirmExpiredSend.aboveTokens < 1000 &&
+                      setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: 1000 } })
+                    }
+                  />
+                </InlineField>
+              </StepFields>
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField
+                label="Continue chats once the usage limit resets"
+                checked={chats.continueAfterLimit}
+                onChange={(on) => setChats({ ...chats, continueAfterLimit: on })}
+              />
+              <InlineField>
+                <CheckboxField
+                  label="Don’t continue once the cache has expired and the context is larger than"
+                  checked={chats.skipExpiredContinue.enabled}
+                  onChange={(on) => setChats({ ...chats, skipExpiredContinue: { ...chats.skipExpiredContinue, enabled: on } })}
+                />
                 <NumberInput
-                  label="Context size"
+                  label="Context size for continuing"
                   suffix="k tokens"
-                  min={1}
-                  disabled={!chats.confirmExpiredSend.onlyAbove}
-                  value={chats.confirmExpiredSend.aboveTokens / 1000}
-                  onChange={(n) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: Math.round(n * 1000) } })}
-                  onBlur={() =>
-                    chats.confirmExpiredSend.aboveTokens < 1000 &&
-                    setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: 1000 } })
-                  }
+                  min={0}
+                  disabled={!chats.skipExpiredContinue.enabled}
+                  value={chats.skipExpiredContinue.aboveTokens / 1000}
+                  onChange={(n) => setChats({ ...chats, skipExpiredContinue: { ...chats.skipExpiredContinue, aboveTokens: Math.max(0, Math.round(n * 1000)) } })}
                 />
-              </div>
-            </StepFields>
+              </InlineField>
+            </FormGroup>
           </div>
         )}
 
         {tab === 'rest' && (
           <div className="form">
-            <NumberField label="Minimum sleep" suffix="min" min={1} value={restMinSleep} onChange={setRestMinSleep} />
-            <NumberField label="Wait before sleeping" suffix="s" min={1} value={restGrace} onChange={setRestGrace} />
-            <CheckboxField label="Turn off when the computer is woken manually" checked={restDisarmOnWake} onChange={setRestDisarmOnWake} />
+            <FormGroup>
+              <NumberField label="Minimum sleep" suffix="min" min={1} value={restMinSleep} onChange={setRestMinSleep} />
+              <NumberField label="Wait before sleeping" suffix="s" min={1} value={restGrace} onChange={setRestGrace} />
+              <CheckboxField label="Turn off when the computer is woken manually" checked={restDisarmOnWake} onChange={setRestDisarmOnWake} />
+            </FormGroup>
           </div>
         )}
 
@@ -394,6 +433,7 @@ export function SettingsApp() {
               onDelete={(e) => void removeEnv(e)}
             />
             <ListActions
+              item="Environment"
               onAdd={() => void addEnv()}
               onEdit={() => env && void window.looper.openEnvironmentEditor(env.id)}
               editDisabled={!env}
@@ -408,27 +448,33 @@ export function SettingsApp() {
 
         {tab === 'advanced' && (
           <div className="form">
-            <Field label="Tasks file">
-              <InputRow>
-                <input type="text" readOnly value={tasksFile ?? defaultFile('tasks')} />
-                <button className="btn" onClick={() => void browseStoreFile('tasks')}>Browse…</button>
-                {tasksFile && <button className="btn" onClick={() => void resetStoreFile('tasks')}>Reset</button>}
-              </InputRow>
-            </Field>
-            <Field label="Templates file">
-              <InputRow>
-                <input type="text" readOnly value={templatesFile ?? defaultFile('templates')} />
-                <button className="btn" onClick={() => void browseStoreFile('templates')}>Browse…</button>
-                {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
-              </InputRow>
-            </Field>
-            <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
-            <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
-            <CheckboxField label="Move completed tasks to the Recycle Bin" checked={deleteCompleted} onChange={setDeleteCompleted} />
-            <StepFields row on={deleteCompleted}>
-              <NumberField label="After" suffix="days" min={1} value={completedDays} onChange={setCompletedDays} />
-            </StepFields>
-            <NumberField label="Delete tasks in the Recycle Bin after" suffix="days" min={1} value={binDays} onChange={setBinDays} />
+            <FormGroup>
+              <Field label="Tasks file">
+                <InputRow>
+                  <TextInput type="text" readOnly value={tasksFile ?? defaultFile('tasks')} />
+                  <button className="btn" onClick={() => void browseStoreFile('tasks')}>Browse…</button>
+                  {tasksFile && <button className="btn" onClick={() => void resetStoreFile('tasks')}>Reset</button>}
+                </InputRow>
+              </Field>
+              <Field label="Templates file">
+                <InputRow>
+                  <TextInput type="text" readOnly value={templatesFile ?? defaultFile('templates')} />
+                  <button className="btn" onClick={() => void browseStoreFile('templates')}>Browse…</button>
+                  {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
+                </InputRow>
+              </Field>
+            </FormGroup>
+            <FormGroup>
+              <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
+              <NumberField label="Engine log retention" suffix="days" min={1} value={engineLogDays} onChange={setEngineLogDays} />
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField label="Move completed tasks to the Recycle Bin" checked={deleteCompleted} onChange={setDeleteCompleted} />
+              <StepFields row on={deleteCompleted}>
+                <NumberField label="After" suffix="days" min={1} value={completedDays} onChange={setCompletedDays} />
+              </StepFields>
+              <NumberField label="Delete tasks in the Recycle Bin after" suffix="days" min={1} value={binDays} onChange={setBinDays} />
+            </FormGroup>
             <RadioField
               label="Show conversations with the agent in"
               name="builder-view"

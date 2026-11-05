@@ -10,6 +10,7 @@ import { resolveEnvironment } from '../../shared/environments';
 import { readContextTokens } from '../context';
 import { GUIDANCE_FILE, NOTICE_FILE, queueNotice, takeNotice, takePendingGuidance } from '../guidance';
 import { findStepTranscript, transcriptHostPath } from '../messages';
+import { claudeModelWindows, modelWindows } from '../model-windows';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
@@ -255,6 +256,38 @@ export function parseUsageLimitReset(text: string, now: number): number | null {
   return at.getTime();
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * Epoch ms of the time in Codex's usage-limit error, local: "try again at
+ * 2:21 AM" (the next one), or with a date, "try again at Sep 22nd, 2026 2:21
+ * AM" (seen in a rollout's task_complete error). Null without one.
+ */
+export function parseCodexLimitReset(text: string, now: number): number | null {
+  const m = /try again at\s+(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?/i.exec(text);
+  if (!m) return null;
+  let hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const ampm = m[6]?.toLowerCase();
+  if (hour > 23 || minute > 59 || (ampm && (hour > 12 || hour === 0))) return null;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  const at = new Date(now);
+  if (m[1]) {
+    const month = MONTHS.indexOf(m[1].toLowerCase());
+    if (month === -1) return null;
+    at.setFullYear(Number(m[3]), month, Number(m[2]));
+  }
+  at.setHours(hour, minute, 0, 0);
+  if (!m[1] && at.getTime() <= now) at.setDate(at.getDate() + 1);
+  return at.getTime();
+}
+
+/** When a usage-limit error says the limit resets: Claude's "resets 5:50am" or Codex's "try again at …"; null when it doesn't say. */
+export function usageLimitReset(text: string, now: number): number | null {
+  return parseUsageLimitReset(text, now) ?? parseCodexLimitReset(text, now);
+}
+
 /** Codex error wording that means the usage limit was hit, not that the job failed. */
 const CODEX_LIMIT_RE = /usage limit|rate limit/i;
 
@@ -312,6 +345,7 @@ export class HeadlessStream {
       if (typeof obj.total_cost_usd === 'number') this.costUsd = obj.total_cost_usd;
       if (typeof obj.terminal_reason === 'string') this.terminalReason = obj.terminal_reason;
       if (obj.api_error_status !== undefined) this.apiErrorStatus = obj.api_error_status as number | null;
+      modelWindows.learn(claudeModelWindows(obj));
     } else if (obj.type === 'thread.started') {
       if (typeof obj.thread_id === 'string') this.sessionId = obj.thread_id;
     } else if (obj.type === 'item.completed') {
@@ -324,7 +358,7 @@ export class HeadlessStream {
         this.errorMessage = msg;
         if (CODEX_LIMIT_RE.test(msg)) {
           this.usageLimit = true;
-          this.usageLimitResetMs ??= parseUsageLimitReset(msg, Date.now());
+          this.usageLimitResetMs ??= usageLimitReset(msg, Date.now());
         }
       }
     } else if (obj.type === 'turn.completed') {

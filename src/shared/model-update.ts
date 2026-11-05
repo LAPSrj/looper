@@ -29,7 +29,7 @@ export interface ModelUpdateRow {
 const CLAUDE_FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'];
 
 /** Context-window suffixes (`[1m]`) don't change which model an id names. */
-function bareId(id: string): string {
+export function bareId(id: string): string {
   return id.replace(/\[\w+\]$/, '').trim();
 }
 

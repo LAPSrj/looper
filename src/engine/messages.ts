@@ -13,7 +13,7 @@ import {
 import { commandAttachment, parseCommands, parseOutputOnly, withOutput } from '../shared/bash-mode';
 import { parseTaskNotification } from '../shared/sessions';
 import { compactRow, compactRows, withoutCompacted } from '../shared/compact';
-import { readContextTokens, readSubagentStats, type SubagentStats } from './context';
+import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
 import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
@@ -349,12 +349,23 @@ export class TranscriptAccumulator {
   private structuredAnswers = new Map<string, MessageRow>();
   /** The id of the record addLine is folding: its rows get it. */
   private recordUuid: string | undefined;
+  /** Claude's own name for the session (its ai-title records), the latest. */
+  aiTitle = '';
+  /** The name the user gave it in Claude Code (/rename, or a host's rename_session), the latest; '' takes it away. */
+  customTitle = '';
 
   constructor(protected readonly opts: AccumulatorOpts = {}) {}
+
+  /** The session's name in Claude Code: the user's, else Claude's own; '' before it has one. */
+  get sessionName(): string {
+    return this.customTitle || this.aiTitle;
+  }
 
   reset(): void {
     this.rows = [];
     this.dropped = 0;
+    this.aiTitle = '';
+    this.customTitle = '';
     this.evicted = [];
     this.nextId = 0;
     this.byToolId.clear();
@@ -422,6 +433,8 @@ export class TranscriptAccumulator {
   }
 
   private addRecord(rec: Rec): void {
+    if (rec.type === 'ai-title' && typeof rec.aiTitle === 'string' && rec.aiTitle.trim()) this.aiTitle = rec.aiTitle.trim();
+    else if (rec.type === 'custom-title' && typeof rec.customTitle === 'string') this.customTitle = rec.customTitle.trim();
     // The main transcript may inline sidechain records; they belong to the subagent view.
     if (!this.opts.sidechain && rec.isSidechain === true) return;
     const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
@@ -718,6 +731,11 @@ export class CodexAccumulator extends TranscriptAccumulator {
     const ts = typeof rec.timestamp === 'string' ? rec.timestamp : undefined;
     if (rec.type === 'response_item') this.addResponseItem(p, ts);
     else if (rec.type === 'event_msg' && p.type === 'item_completed') this.addItem(p.item as Rec | undefined, ts);
+    else if (rec.type === 'event_msg' && p.type === 'task_complete') {
+      // A turn that failed (the usage limit…) ends with its error (codex_error_info "usage_limit_exceeded", seen in a rollout).
+      const message = (p.error as Rec | null | undefined)?.message;
+      if (typeof message === 'string' && message.trim()) this.push({ kind: 'error', ts, text: message.trim() });
+    }
   }
 
   /** User prompts, assistant messages and reasoning summaries. */
@@ -983,6 +1001,43 @@ export async function findCodexRollout(sessionsDir: string, threadId: string): P
   return null;
 }
 
+/** Each Codex home's session index as last read, by its path: read again when its size or time changes. */
+const threadNames = new Map<string, { size: number; mtimeMs: number; names: Map<string, string> }>();
+
+/**
+ * A Codex thread's name: the TUI writes `{"id", "thread_name", "updated_at"}`
+ * lines to `<codex home>/session_index.jsonl`, and the last line for a thread
+ * counts. Undefined when it has none.
+ */
+export async function codexThreadName(codexHome: string, threadId: string): Promise<string | undefined> {
+  const file = path.join(codexHome, 'session_index.jsonl');
+  const st = await fs.promises.stat(file).catch(() => null);
+  if (!st) return undefined;
+  let kept = threadNames.get(file);
+  if (!kept || kept.size !== st.size || kept.mtimeMs !== st.mtimeMs) {
+    const names = new Map<string, string>();
+    const text = await fs.promises.readFile(file, 'utf8').catch(() => '');
+    for (const line of text.split('\n')) {
+      try {
+        const rec = JSON.parse(line) as Rec;
+        if (typeof rec.id === 'string' && typeof rec.thread_name === 'string') names.set(rec.id, rec.thread_name.trim());
+      } catch {
+        /* a blank or torn line */
+      }
+    }
+    kept = { size: st.size, mtimeMs: st.mtimeMs, names };
+    threadNames.set(file, kept);
+  }
+  return kept.names.get(threadId) || undefined;
+}
+
+/** The Codex home a rollout is under (`<home>/sessions/YYYY/MM/DD/rollout-….jsonl`); undefined for a file elsewhere. */
+export function codexHomeOfRollout(file: string): string | undefined {
+  const dayDir = path.dirname(file);
+  const sessions = path.dirname(path.dirname(path.dirname(dayDir)));
+  return path.basename(sessions) === 'sessions' ? path.dirname(sessions) : undefined;
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await fs.promises.stat(p);
@@ -999,7 +1054,6 @@ export interface SubagentMeta {
   type: string;
   description: string;
   model?: string;
-  background: boolean;
 }
 
 export interface MessagesDeps {
@@ -1085,6 +1139,28 @@ export class MessagesService {
       rows.push(...reader.acc.evicted, ...reader.acc.rows);
     }
     return compactRows(rows);
+  }
+
+  /**
+   * The harness's name for the run's conversation: Claude Code's from the
+   * transcript (custom-title, else ai-title), Codex's thread name from its
+   * session index. Undefined before it has one.
+   */
+  async sessionName(taskId: string, runId: string): Promise<string | undefined> {
+    const runDir = this.deps.runDir(taskId, runId);
+    const codex = readCodexRef(runDir);
+    if (codex) {
+      const home = await this.toHostPath(codex.codexHome, taskId);
+      return home ? codexThreadName(home, codex.threadId) : undefined;
+    }
+    const reader = await this.mainReader(taskId, runId, 'agent', false);
+    if (typeof reader === 'string') return undefined;
+    try {
+      await reader.read();
+    } catch {
+      return undefined;
+    }
+    return reader.acc.sessionName || undefined;
   }
 
   /**
@@ -1249,7 +1325,6 @@ export class MessagesService {
             type: typeof raw.agentType === 'string' ? raw.agentType : 'agent',
             description: typeof raw.description === 'string' ? raw.description : '',
             ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
-            background: raw.requestShape === 'background',
           };
           this.metas.set(file, meta);
         } catch {
@@ -1330,6 +1405,18 @@ export class MessagesService {
   async contextTokens(taskId: string, runId: string): Promise<number | null> {
     const found = await findStepTranscript(this.deps.runDir(taskId, runId), '', (p) => this.toHostPath(p, taskId));
     return found ? readContextTokens(found.file, found.kind) : null;
+  }
+
+  /** Codex: when the run's newest response came; null for Claude, or before its first. */
+  async codexLastResponse(taskId: string, runId: string): Promise<number | null> {
+    const found = await findStepTranscript(this.deps.runDir(taskId, runId), '', (p) => this.toHostPath(p, taskId));
+    return found?.kind === 'codex' ? readCodexLastResponse(found.file) : null;
+  }
+
+  /** Claude: the model the run's newest response came from; null when it can't tell (codex, no response yet). */
+  async contextModel(taskId: string, runId: string): Promise<string | null> {
+    const found = await findStepTranscript(this.deps.runDir(taskId, runId), '', (p) => this.toHostPath(p, taskId));
+    return found?.kind === 'claude' ? ((await readSubagentStats(found.file).catch(() => null))?.model ?? null) : null;
   }
 
   /** Translate the transcript path from the run target's form to the engine host's. */

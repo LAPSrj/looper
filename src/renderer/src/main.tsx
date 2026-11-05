@@ -21,6 +21,8 @@ import { Waiting } from './web/Waiting';
 // A new window app is added here as a lazy import, never as a static one (tests/code-splitting.test.ts).
 const AboutApp = lazy(() => import('./AboutApp').then((m) => ({ default: m.AboutApp })));
 const AddonEditApp = lazy(() => import('./AddonsApp').then((m) => ({ default: m.AddonEditApp })));
+const AgentSettingsApp = lazy(() => import('./AgentSettingsApp').then((m) => ({ default: m.AgentSettingsApp })));
+const McpServerApp = lazy(() => import('./McpServerApp').then((m) => ({ default: m.McpServerApp })));
 const AddonsApp = lazy(() => import('./AddonsApp').then((m) => ({ default: m.AddonsApp })));
 const AddonPaneWindowApp = lazy(() => import('./components/AddonPane').then((m) => ({ default: m.AddonPaneWindowApp })));
 const AddonWindowApp = lazy(() => import('./components/AddonScreen').then((m) => ({ default: m.AddonWindowApp })));
@@ -38,7 +40,8 @@ const ModelEditorApp = lazy(() => import('./ModelEditorApp').then((m) => ({ defa
 const ModelUpdateApp = lazy(() => import('./ModelUpdateApp').then((m) => ({ default: m.ModelUpdateApp })));
 const FilterApp = lazy(() => import('./FilterApp').then((m) => ({ default: m.FilterApp })));
 const HistoryApp = lazy(() => import('./HistoryApp').then((m) => ({ default: m.HistoryApp })));
-const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
+const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));
+const SessionNameApp = lazy(() => import('./SessionNameApp').then((m) => ({ default: m.SessionNameApp })));const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
 const ImageApp = lazy(() => import('./ImageApp').then((m) => ({ default: m.ImageApp })));
 const MarkdownExportApp = lazy(() => import('./MarkdownExportApp').then((m) => ({ default: m.MarkdownExportApp })));
@@ -80,7 +83,7 @@ const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|copy-\d+|\d+)$/.
 const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runOptionsMatch = /^run-options\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(\/report)?$/.exec(hash);
-const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
+const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(hash);
 const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
@@ -88,6 +91,7 @@ const continueRunMatch = /^(continue-run|send-guidance)\/([^/]+)\/([^/]+)$/.exec
 const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
+const sessionRenameMatch = /^session-rename\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderNewMatch = /^project-folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderRenameMatch = /^project-folder-rename\/([^/]+)$/.exec(hash);
@@ -102,9 +106,12 @@ const viewMatch = /^view\/(.+)$/.exec(hash);
 const itemMatch = /^item\/(task|project)\/(.+)$/.exec(hash);
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
 const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
+const mcpServerMatch = /^mcp-server\/([^/]+)$/.exec(hash);
 
 function pickRoot() {
   if (hash === 'addons') return <AddonsApp />;
+  if (hash === 'agent-settings') return <AgentSettingsApp />;
+  if (mcpServerMatch) return <McpServerApp requestKey={decodeURIComponent(mcpServerMatch[1])} />;
   if (addonEditMatch) return <AddonEditApp addonId={decodeURIComponent(addonEditMatch[1])} />;
   if (addonPaneWindowMatch) {
     return (
@@ -200,6 +207,7 @@ function pickRoot() {
   if (moveToFolderMatch) return <MoveToFolderApp taskId={decodeURIComponent(moveToFolderMatch[1])} />;
   if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;
   if (folderRenameMatch) return <FolderNameApp folderId={decodeURIComponent(folderRenameMatch[1])} />;
+  if (sessionRenameMatch) return <SessionNameApp sessionId={decodeURIComponent(sessionRenameMatch[1])} />;
   if (projectFolderRenameMatch) return <FolderNameApp scope="projects" folderId={decodeURIComponent(projectFolderRenameMatch[1])} />;
   if (projectFolderNewMatch) {
     const q = new URLSearchParams(projectFolderNewMatch[1] ? decodeURIComponent(projectFolderNewMatch[1]) : '');
@@ -263,6 +271,7 @@ function pickRoot() {
         agentId={imageMatch[3] === '-' ? undefined : decodeURIComponent(imageMatch[3])}
         rowId={decodeURIComponent(imageMatch[4])}
         title={decodeURIComponent(imageMatch[5])}
+        siblings={imageMatch[6] ? (JSON.parse(decodeURIComponent(imageMatch[6])) as string[]) : undefined}
       />
     );
   }

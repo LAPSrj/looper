@@ -17,11 +17,12 @@ export interface FileNewActions {
  * Task (blank, from a template, with the agent); New Chat with `chatItems`
  * (null: no New Chat); and New Folder, which chats don't have. `inChats`: the
  * Chats tab or window, where a terminal session takes Ctrl+N, so the task
- * items show no keys there and New Folder is off.
+ * items show no keys there and New Folder is off. `only`: a view window's,
+ * which has just what its view creates (by id).
  */
-export function fileNewItems(actions: FileNewActions, chatItems: MenuItem[] | null, inChats: boolean): MenuItem[] {
+export function fileNewItems(actions: FileNewActions, chatItems: MenuItem[] | null, inChats: boolean, only?: string[]): MenuItem[] {
   const key = (accelerator: string) => (inChats ? {} : { accelerator });
-  return [
+  const items: MenuItem[] = [
     { id: 'new-project', label: 'New P&roject…', glyph: 'newProject', click: actions.newProject },
     {
       id: 'new-task-menu',
@@ -36,6 +37,7 @@ export function fileNewItems(actions: FileNewActions, chatItems: MenuItem[] | nu
     ...(chatItems ? [{ id: 'new-chat-menu', label: 'New &Chat', glyph: 'newChat', submenu: chatItems }] : []),
     { id: 'new-folder', label: 'New &Folder…', glyph: 'folder', enabled: !inChats, click: actions.newFolder },
   ];
+  return only ? items.filter((it) => only.includes(it.id ?? '')) : items;
 }
 
 /**

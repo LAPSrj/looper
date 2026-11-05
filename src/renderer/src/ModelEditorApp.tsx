@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
-import { EmptyWindow, Field, ToggleButtons } from './components/ui';
+import { EmptyWindow, Field, FormGroup, SelectInput, TextInput, ToggleButtons } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 function findHarness(settings: Settings, envId: string, harnessId: string): Harness | undefined {
@@ -124,19 +124,21 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Model id">
-            <input autoFocus className="mono" value={id} onChange={(e) => setId(e.target.value)} />
-          </Field>
-          <Field label="Display name">
-            <input value={name} placeholder={id.trim() || undefined} onChange={(e) => setName(e.target.value)} />
-          </Field>
+          <FormGroup>
+            <Field label="Model id">
+              <TextInput autoFocus code value={id} onChange={(e) => setId(e.target.value)} />
+            </Field>
+            <Field label="Display name">
+              <TextInput value={name} placeholder={id.trim() || undefined} onChange={(e) => setName(e.target.value)} />
+            </Field>
+          </FormGroup>
           {kindLevels.length > 0 && (
-            <>
+            <FormGroup>
               <Field label="Effort levels">
                 <ToggleButtons options={kindLevels} value={efforts} onChange={setLevels} label="Effort levels" />
               </Field>
               <Field label="Default effort">
-                <select value={defaultEffort} onChange={(e) => setDefaultEffort(e.target.value)}>
+                <SelectInput value={defaultEffort} onChange={(e) => setDefaultEffort(e.target.value)}>
                   <option value="">CLI default</option>
                   {kindLevels
                     .filter(([value]) => efforts.includes(value))
@@ -145,9 +147,9 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
                         {label}
                       </option>
                     ))}
-                </select>
+                </SelectInput>
               </Field>
-            </>
+            </FormGroup>
           )}
         </div>
       </div>

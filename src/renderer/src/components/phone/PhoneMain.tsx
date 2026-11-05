@@ -491,7 +491,8 @@ function PhoneTasks({ m, container, onOpenFolder, current = null }: { m: MainWin
         .filter((p) => (view.addonPanes[addonPaneKey(a.id, p.id)] ?? { visible: true }).visible)
         .map((p) => ({ addon: a, pane: p, key: addonPaneKey(a.id, p.id) })),
     );
-  const toolbars = container !== '' ? [] : m.addons.filter((a) => a.enabled && a.toolbar.length && !view.hiddenAddonToolbars.includes(a.id));
+  const onTasks = (b: { view?: string }) => !b.view || b.view === 'tasks';
+  const toolbars = container !== '' ? [] : m.addons.filter((a) => a.enabled && a.toolbar.some(onTasks) && !view.hiddenAddonToolbars.includes(a.id));
   return (
     <div
       className="pg-scroll"
@@ -514,7 +515,7 @@ function PhoneTasks({ m, container, onOpenFolder, current = null }: { m: MainWin
         <Group key={`tb-${a.id}`} title={a.name}>
           <div className="toolbar pg-addon-toolbar">
             <AddonToolbarButtons
-              items={a.toolbar.map((b) => ({ ...b, disabled: a.status !== 'running' }))}
+              items={a.toolbar.filter(onTasks).map((b) => ({ ...b, disabled: a.status !== 'running' }))}
               onClick={(id) => {
                 const b = a.toolbar.find((x) => x.id === id);
                 if (b?.tool) void window.looper.addons.openTool(a.id, b.tool);

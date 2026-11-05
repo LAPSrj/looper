@@ -104,6 +104,8 @@ export const AddonMainButtonSchema = z
     label: z.string().min(1),
     icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
     tool: id.optional(),
+    /** The view it belongs to: it shows in that view's window, and in the main window while that tab shows. Unset: the main window, on every tab. */
+    view: z.enum(['dashboard', 'projects', 'tasks', 'chats']).optional(),
     /** It destroys or cuts something off: a phone draws it red, last in its menu. */
     destructive: z.boolean().optional(),
     platforms,
@@ -144,7 +146,7 @@ export const AddonManifestSchema = z
     /** Tabs in the main window, after Looper's own (not on a phone, whose tab bar has room for Looper's only). */
     tabs: z.array(AddonTabSchema).default([]),
     tools: z.array(AddonToolSchema).default([]),
-    /** Buttons on the main toolbar, there at all times. */
+    /** Toolbar buttons: on the main window's toolbar at all times, or with one view (`view`). */
     toolbar: z.array(AddonMainButtonSchema).default([]),
     /** Names the toolbar buttons in "<toolbarName> Toolbar" (View menu); the addon's name otherwise. */
     toolbarName: z.string().min(1).optional(),

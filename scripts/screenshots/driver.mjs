@@ -149,6 +149,27 @@ const COMMANDS = {
     await page.hover(sel);
     console.log('hovered', sel);
   },
+  /** drag <from selector>|<to selector>[|x,y]: drag with the mouse from one element to another (at x,y in it), as HTML drag and drop. */
+  async drag(arg) {
+    const [from, to, at] = arg.split('|');
+    const [x, y] = at ? at.split(',').map(Number) : [];
+    await page.dragAndDrop(from, to, at ? { targetPosition: { x, y } } : {});
+    console.log('dragged', from, '->', to);
+  },
+  /** mouse move|down|up|dblclick [x y]: the mouse at window coordinates, for drags made of pointer events. */
+  async mouse(arg) {
+    const [action, x, y] = arg.split(' ');
+    if (action === 'move') await page.mouse.move(Number(x), Number(y), { steps: 8 });
+    else if (action === 'down') await page.mouse.down();
+    else if (action === 'up') await page.mouse.up();
+    else if (action === 'dblclick') await page.mouse.dblclick(Number(x), Number(y));
+    else return console.log('mouse: move|down|up|dblclick');
+    console.log('mouse', arg);
+  },
+  async sleep(ms) {
+    await new Promise((r) => setTimeout(r, Number(ms) || 1000));
+    console.log('slept', ms);
+  },
   async fill(arg) {
     const [sel, ...rest] = arg.split(' ');
     await page.fill(sel, rest.join(' '));

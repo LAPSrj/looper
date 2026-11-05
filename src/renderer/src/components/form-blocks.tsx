@@ -1,6 +1,6 @@
 import type { Task, TaskFolder } from '@shared/types';
 import { folderTree } from '@shared/folders';
-import { CheckboxField, Field, NumberField, StepFields } from './ui';
+import { CheckboxField, Field, FormGroup, NumberField, StepFields, TextArea } from './ui';
 import { WindowActions } from './WindowActions';
 
 /** The folders as a flat list in tree order, each name indented by its depth (a no-break space, which a drop-down keeps). */
@@ -23,12 +23,12 @@ export function FolderOptions({ folders }: { folders: TaskFolder[] }) {
 /** "Limit concurrent tasks" and, under it, how many: an environment's or a harness's. Undefined = no limit. */
 export function ConcurrencyLimit({ value, onChange }: { value: number | undefined; onChange: (max: number | undefined) => void }) {
   return (
-    <>
+    <FormGroup>
       <CheckboxField label="Limit concurrent tasks" checked={value !== undefined} onChange={(on) => onChange(on ? 1 : undefined)} />
       <StepFields on={value !== undefined}>
         <NumberField label="Maximum concurrent tasks" suffix="tasks" min={1} value={value ?? 1} onChange={onChange} />
       </StepFields>
-    </>
+    </FormGroup>
   );
 }
 
@@ -62,10 +62,12 @@ export function GuidanceForm({
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label={label}>
-            <textarea autoFocus rows={7} value={text} onChange={(e) => onText(e.target.value)} />
-          </Field>
-          <NumberField label="Applies to next" suffix="runs" min={1} value={runsLeft} onChange={onRunsLeft} />
+          <FormGroup>
+            <Field label={label}>
+              <TextArea autoFocus rows={7} value={text} onChange={(e) => onText(e.target.value)} />
+            </Field>
+            <NumberField label="Applies to next" suffix="runs" min={1} value={runsLeft} onChange={onRunsLeft} />
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Save', run: onSave }} busy={saving} />

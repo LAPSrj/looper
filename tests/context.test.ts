@@ -2,11 +2,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { contextOfLine, readContextTokens } from '../src/engine/context';
+import { codexResponseAtOfLine, contextOfLine, readContextTokens } from '../src/engine/context';
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
+
+describe('codexResponseAtOfLine', () => {
+  const at = '2026-10-18T07:53:36.051Z';
+  const line = (payload: unknown) => JSON.stringify({ timestamp: at, type: 'event_msg', payload });
+
+  it('takes the time of a token_count that reports a response', () => {
+    expect(codexResponseAtOfLine(line({ type: 'token_count', info: { last_token_usage: { input_tokens: 5 } } }))).toBe(Date.parse(at));
+  });
+
+  it('skips a token_count with only rate limits, and every other line', () => {
+    expect(codexResponseAtOfLine(line({ type: 'token_count', info: null, rate_limits: {} }))).toBeNull();
+    expect(codexResponseAtOfLine(line({ type: 'agent_message', message: 'token_count' }))).toBeNull();
+    expect(codexResponseAtOfLine('{torn token_count')).toBeNull();
+  });
 });
 
 function file(lines: string[]): string {

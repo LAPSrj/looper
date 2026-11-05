@@ -42,8 +42,14 @@ export interface SessionSummary {
   background: number;
   /** When the agent's last reply came (ms since the epoch). */
   lastReplyAt?: number;
-  /** Claude: until when the prompt cache that reply wrote lasts. */
+  /** Until when the prompt cache of that reply lasts: what Claude's transcript says, or Codex's 30 minutes (CODEX_CACHE_MS). */
   cacheUntil?: number;
+  /**
+   * The last turn failed on the usage limit: set while the limit holds (until
+   * `resetsAt`, or until the next message when the harness didn't say), and
+   * `restored` once it has reset, until the user looks at the session.
+   */
+  limit?: { resetsAt?: number; restored?: boolean };
 }
 
 /** How much of one usage window is used (0 to 1), and when it resets (ms since the epoch). */
@@ -94,12 +100,15 @@ export interface SubagentInfo {
   description: string;
   /** The model the Agent call asked for ("haiku"), when it named one. */
   model?: string;
-  background: boolean;
   status: 'running' | 'done' | 'failed';
+  /** When the Agent call that started it was made (ISO), once the conversation has it. */
+  startedAt?: string;
   /** From its transcript's newest response: the model id it ran on, its effort, and its context in tokens. */
   modelId?: string;
   effort?: string;
   contextTokens?: number;
+  /** The context window of the model it runs on, when the chat's harness has reported it (Claude's result records). */
+  contextWindow?: number;
 }
 
 /** What the Sessions window's right panel shows for a session. */

@@ -122,6 +122,34 @@ export function readSubagentStats(file: string): Promise<SubagentStats | null> {
   return newestFromEnd(file, subagentStatsOfLine);
 }
 
+/**
+ * How long a Codex reply's prompt cache lasts: Codex sends no
+ * prompt_cache_options unless its host asks (codex-rs/core/src/client.rs), so
+ * GPT-5.6 and later get the API's default of at least 30 minutes after the
+ * last read, and GPT-5.5 about the same. Entries can outlast it, and a rollout
+ * records no expiry, so this is the time the cache is sure to last.
+ */
+export const CODEX_CACHE_MS = 30 * 60_000;
+
+/** When a rollout line's response came (a token_count with usage; one with only rate limits has none); null for any other line. */
+export function codexResponseAtOfLine(line: string): number | null {
+  if (!line.includes('token_count')) return null;
+  try {
+    const rec = obj(JSON.parse(line));
+    const payload = obj(rec?.payload);
+    if (rec?.type !== 'event_msg' || payload?.type !== 'token_count' || !obj(payload.info)?.last_token_usage) return null;
+    const at = Date.parse(String(rec.timestamp));
+    return Number.isNaN(at) ? null : at;
+  } catch {
+    return null;
+  }
+}
+
+/** When the newest response of a codex rollout came; null before its first. */
+export function readCodexLastResponse(file: string): Promise<number | null> {
+  return newestFromEnd(file, codexResponseAtOfLine);
+}
+
 /** Codex's context window, which each token_count names as info.model_context_window. */
 export function codexWindowOfLine(line: string): number | null {
   if (!line.includes('model_context_window')) return null;

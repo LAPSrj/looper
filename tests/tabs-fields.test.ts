@@ -1,7 +1,7 @@
-import { createElement, type ReactElement } from 'react';
+import { createElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { bindField } from '../src/renderer/src/components/field-model';
+import { bindField, textOptions } from '../src/renderer/src/components/field-model';
 import { ctrlTabTarget, isClear, mostCommon, panelDomId, readableText, tabAria, tabDomId, tabKeyTarget, tabName, tabStop, type TabItem } from '../src/renderer/src/components/tabs-model';
 import { resultParts, resultSummary } from '../src/renderer/src/components/workflow-summary';
 
@@ -168,6 +168,35 @@ describe('bindField', () => {
     expect(buttons).toMatchObject({ group: true, controlId: undefined });
     expect(fieldMarkup(createElement(Opaque))).toMatchObject({ group: true, controlId: undefined });
     expect(fieldMarkup('text')).toMatchObject({ group: true, controlId: undefined });
+  });
+
+  it('calls a field one line high only when a single one-line control is all it shows', () => {
+    const oneLine = (children: ReactNode) => bindField(children, 'f1').oneLine;
+    for (const tag of ['input', 'select']) expect(oneLine(createElement(tag)), tag).toBe(true);
+    expect(oneLine(createElement(NumberLike))).toBe(true);
+    // InputSuffix: a wrapper around the control and nothing else.
+    expect(oneLine(createElement('div', null, createElement('input')))).toBe(true);
+    // A warning that isn't showing changes nothing; one that is takes a line of its own.
+    expect(oneLine([createElement('input', { key: 'a' }), false])).toBe(true);
+    expect(oneLine([createElement('input', { key: 'a' }), createElement('p', { key: 'b' })])).toBe(false);
+    expect(oneLine(createElement('textarea'))).toBe(false);
+    expect(oneLine(createElement('div', null, createElement('input'), createElement('button', null, 'Browse…')))).toBe(false);
+    expect(oneLine(createElement(Opaque))).toBe(false);
+    expect(oneLine('text')).toBe(false);
+  });
+});
+
+describe('textOptions', () => {
+  const OFF = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false };
+
+  it('leaves an ordinary text box to the keyboard', () => {
+    expect(textOptions({})).toEqual({ className: undefined });
+    expect(textOptions({}, 'mine')).toEqual({ className: 'mine' });
+  });
+
+  it('stops the keyboard changing code, which is monospace, and verbatim text, which is not', () => {
+    expect(textOptions({ code: true }, 'json-editor')).toEqual({ ...OFF, className: 'mono json-editor' });
+    expect(textOptions({ verbatim: true })).toEqual({ ...OFF, className: undefined });
   });
 });
 

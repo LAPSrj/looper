@@ -85,6 +85,18 @@ export interface Target {
    * Looper's <id>.ans there, print it as the hook's answer, and delete both.
    */
   renderPermissionHook(queueDir: string): string;
+  /** File name of the subagent message hook script (task chats). */
+  readonly subagentHookFile: string;
+  /**
+   * Script for a chat's hooks that hand the user's messages to its subagents,
+   * run with the hook event as its argument. Each subagent's messages wait in
+   * `inboxDir`/<agent_id>/ as a guidance file (engine/guidance.ts). `start`
+   * (SubagentStart) tells the subagent such messages come; `post`
+   * (PostToolUse) hands the message over as context with the subagent's next
+   * tool result, except a hand-back's, which ends its run. The main agent's
+   * calls (no agent_id) get nothing.
+   */
+  renderSubagentHook(inboxDir: string): string;
   /** File name of the guidance hook script. */
   readonly guideHookFile: string;
   /**

@@ -54,7 +54,8 @@ const Menu = {
 export interface IpcHost {
   getWindow: () => AppWindow | null;
   openMessages: (taskId: string, runId: string, agentId?: string, label?: string) => void;
-  openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string) => void;
+  /** `siblings`: the row ids of every image sent in the same message (this one included), for the window's Previous and Next. */
+  openMessageImage: (taskId: string, runId: string, rowId: string, agentId?: string, label?: string, siblings?: string[]) => void;
   openEditor: (taskId?: string) => void;
   /** Modal step-selection window for a manual run; resolves whether a run started. */
   promptRunOptions: (taskId: string) => Promise<boolean>;
@@ -130,10 +131,16 @@ export interface IpcHost {
   historyRun: (from: AppWindow | null, id: string, command: HistoryCommand) => Promise<void>;
   /** A conversation's right-click menu in the History window. */
   historyMenu: (from: AppWindow | null, id: string) => void;
+  /** The Chats toolbar's History drop-down at (x, y): the recent conversations to continue in chat, then More… for the History window. */
+  showHistoryMenu: (from: AppWindow | null, x: number, y: number) => Promise<void>;
+  /** The most recent conversations (a project's when `projectId` is given) as menu items that continue each in a chat; empty when there are none. */
+  recentChatItems: (from: AppWindow, projectId?: string) => Promise<Electron.MenuItemConstructorOptions[]>;
   /** `select`: that session, on the main window's Chats tab or in the Chats window (showChat); none: the Chats window, opened or brought forward. */
   openSessions: (select?: string) => void;
   /** Open in New Window: the chat (or task run) alone in its own window, or that window brought forward. */
   openChatWindow: (sessionId: string) => void;
+  /** Rename… on a chat or terminal session, modal over `from`. */
+  openRenameSession: (sessionId: string, from?: AppWindow | null) => void;
   /**
    * A Projects tab folder's name window: Rename Folder with `folderId`, else New
    * Folder in `parentId` (unset: the top level), which `moveProject` goes into once it's made.
@@ -404,6 +411,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
   ipc.handle('chat:stopCommand', (_e, id: string, commandId: string) => engine.stopChatCommand(String(id), String(commandId ?? '')));
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
+  ipc.on('chat:setAutoContinue', (_e, id: string, on: boolean) => engine.setChatAutoContinue(String(id), !!on));
+  ipc.on('chat:continueAnyway', (_e, id: string) => engine.setChatContinueAnyway(String(id)));
   ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
   // A chat message's right-click menu; Quote and Edit as New Message hand text back to the window's message box.
   ipc.on(
@@ -507,6 +516,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
   ipc.handle('chat:compact', (_e, id: string) => host.compactChat(String(id)));
   ipc.handle('chat:unqueue', (_e, id: string, messageId: string) => engine.unqueueChat(String(id), String(messageId)) ?? null);
+  ipc.on('chat:message-subagent', (_e, id: string, agentId: string, text: string) => engine.messageSubagent(String(id), String(agentId), String(text ?? '')));
+  ipc.handle('chat:unmessage-subagent', (_e, id: string, agentId: string) => engine.unmessageSubagent(String(id), String(agentId)) ?? null);
   ipc.on('chat:draft', (_e, id: string, text: string, attachments: Attachment[]) => {
     engine.setChatDraft(String(id), String(text ?? ''), takeAttachments(attachments));
   });
@@ -521,6 +532,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:stop', (e, id: string) => stopSession(String(id), windowOf(e)));
   ipc.handle('sessions:restart', (e, id: string) => host.restartSession(String(id), windowOf(e)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
+  ipc.on('sessions:openRename', (e, id: string) => {
+    const kind = engine.sessionKind(String(id));
+    if (kind === 'chat' || kind === 'terminal') host.openRenameSession(String(id), windowOf(e));
+  });
+  ipc.handle('sessions:rename', (_e, id: string, name: string) => engine.renameSession(String(id), String(name ?? '')));
 
   // ---------- the History window ----------
 
@@ -552,6 +568,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('history:toggleActivity', (e) => host.historyToggleActivity(windowOf(e)));
   ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
   ipc.on('history:open', () => host.openHistory());
+  ipc.on('context-menu:history-recent', (e, x: unknown, y: unknown) => {
+    void host.showHistoryMenu(windowOf(e), Math.round(Number(x) || 0), Math.round(Number(y) || 0)).catch((err) => fail(windowOf(e), err));
+  });
   ipc.on('sessions:openWindow', (_e, id?: unknown) => host.openSessions(typeof id === 'string' && id ? id : undefined));
   ipc.on('window:openItem', (_e, kind: unknown, id: unknown) => {
     if ((kind === 'task' || kind === 'project' || kind === 'chat') && typeof id === 'string' && id) host.openItemWindow(kind, id);
@@ -601,6 +620,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       engine.updateSettings({ view: { ...view, sessions: { ...view.sessions, bigCards: big ? bigCards : [...bigCards, s.id] } } });
     };
     const restartable = engine.canRestartSession(id);
+    const chat = s.kind === 'chat' ? engine.getChat(id) : undefined;
     const items: Electron.MenuItemConstructorOptions[] = [
       ...(run
         ? [
@@ -618,6 +638,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             { type: 'separator' } as const,
           ]),
       ...(card === true ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { type: 'separator' } as const] : []),
+      ...(run
+        ? []
+        : [
+            { label: 'Rename…', accelerator: 'F2', registerAccelerator: false, click: () => host.openRenameSession(id, sender) },
+            ...(chat
+              ? [{ label: 'Continue When Limit Resets', type: 'checkbox' as const, checked: chat.autoContinue, click: (item: Electron.MenuItem) => engine.setChatAutoContinue(id, item.checked) }]
+              : []),
+            { type: 'separator' } as const,
+          ]),
       ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),
       { label: 'Open Working Directory', platforms: DESKTOP_ONLY, click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
       { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
@@ -626,13 +655,19 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     popupMenu(Menu.buildFromTemplate(items), { window: sender });
   });
   // A list group's right-click menu: New Chat in its project, then its chats and terminal sessions, never its task runs.
-  ipc.on('context-menu:session-group', (e, group: string) => {
+  ipc.on('context-menu:session-group', async (e, group: string) => {
     const sender = windowOf(e);
     const key = String(group);
     const listed = engine.sessionsState().sessions.filter((s) => s.kind !== 'run' && sessionGroupKey(s) === key);
     if (!sender) return;
     const items: Electron.MenuItemConstructorOptions[] = [];
-    if (engine.getProject(key)) items.push({ label: 'New &Chat', click: () => void projectChat(key, sender) });
+    if (engine.getProject(key)) {
+      const recent = await host.recentChatItems(sender, key).catch(() => []);
+      items.push(
+        { label: 'New &Chat', click: () => void projectChat(key, sender) },
+        { label: 'Open &Recent Chat', enabled: recent.length > 0, submenu: recent },
+      );
+    }
     if (listed.length > 0) {
       const sendable = listed.some((s) => s.status !== 'ended' && !s.stopped);
       if (items.length > 0) items.push({ type: 'separator' });
@@ -673,15 +708,24 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
    * Click on a file the agent sent. `image`: an image shown inline opens in
    * Looper's image window; a remote device and any other file get the path
    * shown or opened the way an attachment is (the device's file viewer, or the
-   * default app on the computer).
+   * default app on the computer). `images`: every image of the same message,
+   * which the image window steps through.
    */
-  ipc.handle('sessions:openFile', async (_e, taskId: string, runId: string, p: string, image: boolean) => {
+  ipc.handle('sessions:openFile', async (_e, taskId: string, runId: string, p: string, image: boolean, images?: string[]) => {
     const file = String(p);
     const hostPath = await sentFileHostPath(String(taskId), file);
     // The image window reads the image whole: a bigger one opens in the default app.
     const st = await fs.promises.stat(hostPath).catch(() => null);
     if (image && !caller() && SENT_IMAGE_RE.test(file) && st && st.size <= SENT_IMAGE_MAX) {
-      host.openMessageImage(String(taskId), String(runId), fileImageKey(file), undefined, path.basename(file.replace(/\\/g, '/')));
+      const siblings = Array.isArray(images) ? images.map(String).filter((f) => SENT_IMAGE_RE.test(f)) : [];
+      host.openMessageImage(
+        String(taskId),
+        String(runId),
+        fileImageKey(file),
+        undefined,
+        path.basename(file.replace(/\\/g, '/')),
+        siblings.length > 1 && siblings.includes(file) ? siblings.map(fileImageKey) : undefined,
+      );
       return;
     }
     const err = await openPath(hostPath);
@@ -1402,44 +1446,23 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
 
   // A list window's row menu: the window names the items; a pick comes back as a 'list-menu' event carrying the same token.
-  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true }[]) => {
+  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]) => {
     const sender = windowOf(e);
     if (!sender || !Array.isArray(items)) return;
     popupMenu(
       Menu.buildFromTemplate(
-        items.map((it) => ({
-          label: String(it.label),
-          enabled: it.enabled !== false,
-          ...(it.destructive === true ? { destructive: true as const } : {}),
-          click: () => sender.webContents.send('ui:event', { type: 'list-menu', token: String(token), id: String(it.id) }),
-        })),
+        items.flatMap((it) => [
+          ...(it.separator === true ? [{ type: 'separator' as const }] : []),
+          {
+            label: String(it.label),
+            enabled: it.enabled !== false,
+            ...(it.destructive === true ? { destructive: true as const } : {}),
+            click: () => sender.webContents.send('ui:event', { type: 'list-menu', token: String(token), id: String(it.id) }),
+          },
+        ]),
       ),
       { window: sender },
     );
-  });
-
-  ipc.on('context-menu:recycle-bin', (e) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    popupMenu(Menu.buildFromTemplate([
-      { label: 'Restore', click: () => sender.webContents.send('ui:event', { type: 'bin-restore' }) },
-      { label: 'Delete', destructive: true, click: () => sender.webContents.send('ui:event', { type: 'bin-delete' }) },
-    ]), { window: sender });
-  });
-
-  ipc.on('context-menu:version', (e, info?: { builder?: boolean; current?: boolean }) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    popupMenu(Menu.buildFromTemplate([
-      { label: 'View…', click: () => sender.webContents.send('ui:event', { type: 'version-view' }) },
-      { label: 'Compare with Current…', enabled: !info?.current, click: () => sender.webContents.send('ui:event', { type: 'version-compare' }) },
-      { type: 'separator' },
-      {
-        label: info?.builder ? 'Edit with Agent' : 'Restore',
-        enabled: !!info?.builder || !info?.current,
-        click: () => sender.webContents.send('ui:event', { type: 'version-restore' }),
-      },
-    ]), { window: sender });
   });
 
   ipc.on('context-menu:tasks-empty', (e) => {

@@ -10,12 +10,25 @@ import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { loadSettings } from '../src/engine/store/settings';
 import type { ChatInfo } from '../src/shared/chat';
-import { dateGroupOf, filterHistory, groupHistory, historySourceText, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
+import { dateGroupOf, filterHistory, groupHistory, historySourceText, recentChatLabel, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
 import { projectSessionTask, projectTaskId } from '../src/shared/projects';
 import { ProjectSchema, TaskSchema, type Project } from '../src/shared/types';
 
 /** The engine's list of every conversation: reading the folders, newest first. */
 const opts = (o: Partial<HistoryListOptions> = {}): HistoryListOptions => ({ fresh: true, limit: 100, showRuns: true, folder: '', ...o });
+
+describe('recentChatLabel', () => {
+  it('is the title, then where it ran, on one line', () => {
+    expect(recentChatLabel('Fix the\nlogin  bug', 'Web app')).toBe('Fix the login bug — Web app');
+    expect(recentChatLabel('Fix the login bug')).toBe('Fix the login bug');
+  });
+
+  it('shortens a long title or place, and names an empty one', () => {
+    expect(recentChatLabel('x'.repeat(80))).toBe(`${'x'.repeat(59)}…`);
+    expect(recentChatLabel('Title', 'y'.repeat(40))).toBe(`Title — ${'y'.repeat(23)}…`);
+    expect(recentChatLabel('  ')).toBe('Untitled chat');
+  });
+});
 
 const jsonl = (records: object[]) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
 
@@ -162,6 +175,7 @@ describe('the History scanner', () => {
       readRun: async () => [],
       compactableRun: async () => [],
       runSubagents: async () => [],
+    runSubagentStats: async () => null,
       subagentsAt: async () => [],
       ledger,
       configDirs: async (): Promise<ConfigDirs> => {

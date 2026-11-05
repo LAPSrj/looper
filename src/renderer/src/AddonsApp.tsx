@@ -3,8 +3,10 @@ import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type Add
 import type { Environment } from '@shared/types';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { useFitWindow } from './fit-window';
-import { ListActions, SelectList } from './components/SelectList';
-import { EmptyWindow, Field } from './components/ui';
+import { Group, Row } from './components/phone/PhoneList';
+import { isPhone } from './web/page-nav';
+import { ListActions, ListButton, SelectList } from './components/SelectList';
+import { EmptyWindow, Field, FormGroup, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 const STATUS: Record<AddonInfo['status'], string> = { starting: 'Starting', running: 'Running', stopped: 'Stopped' };
@@ -59,23 +61,29 @@ export function AddonsApp() {
             onDelete={(a) => void window.looper.addons.remove(a.id)}
           />
           <ListActions>
-            <button className="btn" onClick={() => void window.looper.addons.install()}>
-              Install…
-            </button>
-            <button className="btn" disabled={!addon} onClick={() => addon && void window.looper.addons.edit(addon.id)}>
+            <ListButton onClick={() => void window.looper.addons.install()}>Install…</ListButton>
+            <ListButton row disabled={!addon} onClick={() => addon && void window.looper.addons.edit(addon.id)}>
               Edit…
-            </button>
-            <button className="btn" disabled={!addon} onClick={() => addon && void window.looper.addons.setEnabled(addon.id, !running)}>
+            </ListButton>
+            <ListButton row disabled={!addon} onClick={() => addon && void window.looper.addons.setEnabled(addon.id, !running)}>
               {running ? 'Stop' : 'Start'}
-            </button>
-            <button className="btn" disabled={!addon?.enabled} onClick={() => addon && void window.looper.addons.restart(addon.id)}>
+            </ListButton>
+            <ListButton row disabled={!addon?.enabled} onClick={() => addon && void window.looper.addons.restart(addon.id)}>
               Restart
-            </button>
-            <button className="btn danger" disabled={!addon} onClick={() => addon && void window.looper.addons.remove(addon.id)}>
+            </ListButton>
+            <ListButton row danger disabled={!addon} onClick={() => addon && void window.looper.addons.remove(addon.id)}>
               Remove
-            </button>
+            </ListButton>
           </ListActions>
-          {addon && (
+          {addon && isPhone && (
+            <Group title={addon.name}>
+              {addon.description && <Row title="Description" sub={addon.description} />}
+              <Row title="Runs" sub={addon.localRun ? `${addon.run} (changed in Edit…)` : addon.run} />
+              <Row title="Panes" sub={addon.panes.map((p) => p.title).join(', ') || 'None'} />
+              {addon.error && <Row title="Stopped" sub={addon.error} tone="error" />}
+            </Group>
+          )}
+          {addon && !isPhone && (
             <dl className="props addon-details">
               {addon.description && (
                 <>
@@ -191,30 +199,32 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          {/* Only the environments that run programs on the addon's side (Settings → Environments). */}
-          <Field label="Environment">
-            <select value={draft.environmentId} onChange={(e) => patch({ environmentId: e.target.value })}>
-              {environments.length === 0 && <option value="">No environment runs {sideName(addon.ownRun.on)} programs</option>}
-              {environments.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Command">
-            <input autoFocus className="mono" value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
-          </Field>
-          <Field label="Working directory">
-            <input className="mono" value={draft.cwd} onChange={(e) => patch({ cwd: e.target.value })} />
-          </Field>
-          <Field label="Environment variables">
-            <input className="mono" value={draft.env} placeholder="NAME=value" onChange={(e) => patch({ env: e.target.value })} />
-          </Field>
+          <FormGroup>
+            {/* Only the environments that run programs on the addon's side (Settings → Environments). */}
+            <Field label="Environment">
+              <SelectInput value={draft.environmentId} onChange={(e) => patch({ environmentId: e.target.value })}>
+                {environments.length === 0 && <option value="">No environment runs {sideName(addon.ownRun.on)} programs</option>}
+                {environments.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </SelectInput>
+            </Field>
+            <Field label="Command">
+              <TextInput autoFocus code value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
+            </Field>
+            <Field label="Working directory">
+              <TextInput code value={draft.cwd} onChange={(e) => patch({ cwd: e.target.value })} />
+            </Field>
+            <Field label="Environment variables">
+              <TextInput code value={draft.env} placeholder="NAME=value" onChange={(e) => patch({ env: e.target.value })} />
+            </Field>
+          </FormGroup>
           <ListActions>
-            <button className="btn" disabled={isDefault} onClick={() => setDraft(defaults)}>
+            <ListButton disabled={isDefault} onClick={() => setDraft(defaults)}>
               Restore Defaults
-            </button>
+            </ListButton>
           </ListActions>
         </div>
       </div>

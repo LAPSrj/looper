@@ -143,11 +143,65 @@ describe('bash Stop-hook gate', () => {
 describe('guidance through the bash hooks', () => {
   const t = new BashTarget({ host: 'wsl' }, undefined);
 
-  function runScript(file: string, input: string, env: Record<string, string> = {}): string {
-    const r = spawnSync('bash', [file], { input, encoding: 'utf8', env: { ...process.env, ...env } });
+  function runScript(file: string, input: string, env: Record<string, string> = {}, args: string[] = []): string {
+    const r = spawnSync('bash', [file, ...args], { input, encoding: 'utf8', env: { ...process.env, ...env } });
     expect(r.status).toBe(0);
     return r.stdout;
   }
+
+  describe("a chat's subagent hook", () => {
+    const setup = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-subagent-'));
+      dirs.push(dir);
+      const inbox = path.join(dir, 'subagent-inbox');
+      const script = path.join(dir, t.subagentHookFile);
+      fs.writeFileSync(script, t.renderSubagentHook(inbox), { mode: 0o755 });
+      const box = (id: string) => {
+        fs.mkdirSync(path.join(inbox, id), { recursive: true });
+        return path.join(inbox, id);
+      };
+      // Key order as claude sends it: agent_id/agent_type only on a subagent's call, before tool_input.
+      const payload = (id: string, tool = 'Read') => JSON.stringify({ session_id: 's1', agent_id: id, agent_type: 'general-purpose', tool_name: tool, tool_input: {} });
+      return { run: (event: string, input: string) => runScript(script, input, {}, [event]), box, payload };
+    };
+
+    it('tells a starting subagent how the user’s messages reach it', () => {
+      const { run } = setup();
+      const out = JSON.parse(run('start', '{"session_id":"s1","agent_id":"a1b2","agent_type":"general-purpose","hook_event_name":"SubagentStart"}'));
+      expect(out.hookSpecificOutput.hookEventName).toBe('SubagentStart');
+      expect(out.hookSpecificOutput.additionalContext).toContain('Looper guidance from the user');
+      // The main agent isn't a subagent.
+      expect(run('start', '{"session_id":"s1"}')).toBe('');
+    });
+
+    it('hands the waiting message to that subagent alone, once, with its next tool result', () => {
+      const { run, box, payload } = setup();
+      expect(run('post', payload('a1b2'))).toBe('');
+      queueGuidance(box('a1b2'), 'also check the tests — café');
+      expect(run('post', payload('zz99'))).toBe('');
+      // The main agent's call, even one whose input names agent_id, gets nothing.
+      expect(run('post', JSON.stringify({ session_id: 's1', tool_name: 'Bash', tool_input: { command: 'echo "agent_id": "a1b2"' } }))).toBe('');
+      const out = JSON.parse(run('post', payload('a1b2'))).hookSpecificOutput;
+      expect(out).toEqual({ hookEventName: 'PostToolUse', additionalContext: expect.any(String) });
+      expect(guidanceText(out.additionalContext)).toBe('also check the tests — café');
+      expect(readPendingGuidance(box('a1b2'))).toBeNull();
+      expect(run('post', payload('a1b2'))).toBe('');
+    });
+
+    it('leaves the message waiting at a hand-back, which ends the subagent’s run', () => {
+      const { run, box, payload } = setup();
+      queueGuidance(box('a1b2'), 'too late');
+      expect(run('post', payload('a1b2', 'SubagentHandback'))).toBe('');
+      expect(readPendingGuidance(box('a1b2'))).toBe('too late');
+    });
+
+    it('ignores an agent id that could name another folder', () => {
+      const { run, box } = setup();
+      queueGuidance(box('a1b2'), 'for a1b2');
+      expect(run('post', '{"agent_id":"../a1b2","tool_input":{}}')).toBe('');
+      expect(readPendingGuidance(box('a1b2'))).toBe('for a1b2');
+    });
+  });
 
   it('the Stop gate continues the turn with waiting guidance, once', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guide-'));
@@ -377,5 +431,20 @@ describe('windows Stop-hook gate', () => {
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/me/looper/hooks/codex-looper-guide-hook.ps1',
     );
     expect(t.codexHookCommand('C:\\Users\\Jane Doe\\looper\\hooks\\x.ps1')).toBeNull();
+  });
+
+  it("renders a chat's subagent hook for PowerShell", () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    const hook = t.renderSubagentHook('C:\\data\\r1\\subagent-inbox');
+    expect(hook).toContain(`$head = ($payload -split '"tool_input"', 2)[0]`);
+    expect(hook).toContain(`[regex]::Match($head, '"agent_id"\\s*:\\s*"([A-Za-z0-9_-]+)"')`);
+    expect(hook).toContain("$dir = Join-Path 'C:\\data\\r1\\subagent-inbox' $m.Groups[1].Value");
+    // The start text's apostrophes are doubled inside its PowerShell string.
+    expect(hook).toContain("Write-Output '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\"");
+    expect(hook).toContain("the user''s own instruction");
+    expect(hook).toContain('the message wins');
+    expect(hook).toContain(`$g = (Join-Path $dir 'guidance.json')`);
+    expect(hook).toContain('"hookEventName":"PostToolUse"');
+    expect(hook).toContain(`if ($head -match '"tool_name"\\s*:\\s*"SubagentHandback"') { exit 0 }`);
   });
 });

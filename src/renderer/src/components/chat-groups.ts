@@ -1,10 +1,11 @@
-import type { MessageRow } from '../../../shared/messages';
+import { HANDBACK_TOOL, type MessageRow } from '../../../shared/messages';
 
 export type ChatItem = { kind: 'row'; row: MessageRow } | { kind: 'tools'; rows: MessageRow[] };
 
 /**
  * Messages stay as they are (a delivered SendUserFile call is the agent's
- * message); each run of tool calls (and the thinking between them) becomes
+ * message, and so is a subagent's SubagentHandback call, its final report);
+ * each run of tool calls (and the thinking between them) becomes
  * one group. `thinkingApart` (thinking shown expanded): thinking stays out of
  * the groups, between them.
  */
@@ -12,7 +13,7 @@ export function groupRows(rows: MessageRow[], thinkingApart = false): ChatItem[]
   const items: ChatItem[] = [];
   for (const row of rows) {
     const last = items[items.length - 1];
-    if ((row.kind === 'tool' && !row.sent) || (row.kind === 'thinking' && !thinkingApart)) {
+    if ((row.kind === 'tool' && !row.sent && row.tool !== HANDBACK_TOOL) || (row.kind === 'thinking' && !thinkingApart)) {
       if (last?.kind === 'tools') last.rows.push(row);
       else items.push({ kind: 'tools', rows: [row] });
     } else items.push({ kind: 'row', row });

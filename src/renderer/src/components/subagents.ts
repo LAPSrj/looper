@@ -1,5 +1,19 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 import type { SubagentInfo } from '../../../shared/sessions';
+import { contextFraction } from './usage';
+
+/** The subagents by when their Agent call was made, newest first; one the conversation doesn't show yet has just started, so it comes first. */
+export function newestFirst(subagents: SubagentInfo[]): SubagentInfo[] {
+  const at = (a: SubagentInfo) => (a.startedAt ? Date.parse(a.startedAt) || 0 : Infinity);
+  return subagents
+    .map((a, i) => ({ a, i }))
+    .sort((x, y) => at(y.a) - at(x.a) || y.i - x.i)
+    .map((x) => x.a);
+}
+
+/** How full a subagent's context is (0..1), for its icon's ring; null until both its context and its model's window are known. */
+export const subagentContext = (a: SubagentInfo): number | null =>
+  a.contextTokens === undefined ? null : contextFraction({ tokens: a.contextTokens, window: a.contextWindow });
 
 /**
  * The subagents that have a tab: the running ones, and the one open now

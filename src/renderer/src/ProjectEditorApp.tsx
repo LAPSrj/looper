@@ -4,7 +4,7 @@ import { folderName } from '@shared/projects';
 import { windowTitle } from '@shared/window-title';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { AgentFields } from './components/RemoteFields';
-import { CheckboxField, EmptyWindow, Field } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useFitWindow } from './fit-window';
 
@@ -98,24 +98,30 @@ export function ProjectEditorApp({ id }: { id?: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <AgentFields
-            draft={draft}
-            environments={environments}
-            host={host}
-            harnesses="any"
-            namePlaceholder={draft.cwd.trim() ? folderName(draft.cwd) : undefined}
-            onBrowsed={(picked) => (draft.name.trim() ? {} : { name: folderName(picked) })}
-            onChange={set}
-          />
-          <div className="row">
-            <Field label="Extra command-line arguments">
-              <input className="mono" value={argsText} onChange={(e) => setArgsText(e.target.value)} />
-            </Field>
-            <Field label="Extra environment variables">
-              <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
-            </Field>
-          </div>
-          <CheckboxField label="Keep a Remote Control conversation open" checked={draft.remote} onChange={(on) => set({ remote: on })} />
+          <FormGroup>
+            <AgentFields
+              draft={draft}
+              environments={environments}
+              host={host}
+              harnesses="any"
+              namePlaceholder={draft.cwd.trim() ? folderName(draft.cwd) : undefined}
+              onBrowsed={(picked) => (draft.name.trim() ? {} : { name: folderName(picked) })}
+              onChange={set}
+            />
+          </FormGroup>
+          <FormGroup>
+            <FieldRow>
+              <Field label="Extra command-line arguments">
+                <TextInput code value={argsText} onChange={(e) => setArgsText(e.target.value)} />
+              </Field>
+              <Field label="Extra environment variables">
+                <TextInput code value={envText} onChange={(e) => setEnvText(e.target.value)} />
+              </Field>
+            </FieldRow>
+          </FormGroup>
+          <FormGroup>
+            <CheckboxField label="Keep a Remote Control conversation open" checked={draft.remote} onChange={(on) => set({ remote: on })} />
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: id ? 'Save' : 'Create', run: () => void save() }} apply={id ? { run: () => void doSave() } : undefined} busy={saving} />

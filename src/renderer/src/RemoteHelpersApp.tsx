@@ -97,6 +97,7 @@ export function RemoteHelpersApp() {
             onDelete={(h) => void removeHelper(h)}
           />
           <ListActions
+            item="Helper"
             onAdd={() => void addHelper()}
             onEdit={() => selHelper && void window.looper.remote.openHelperEditor(selHelper.id)}
             editDisabled={!selHelper}

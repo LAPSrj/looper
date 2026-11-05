@@ -1219,6 +1219,33 @@
   ],
   "result": {}
  },
+ "chat.setAutoContinue": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "chat:setAutoContinue",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.continueAnyway": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "chat:continueAnyway",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "chat.runCommand": {
   "arity": 3,
   "calls": [
@@ -1354,6 +1381,37 @@
   ],
   "result": {
    "err": "Error invoking remote method 'chat:unqueue': Error: boom chat:unqueue"
+  }
+ },
+ "chat.messageSubagent": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "chat:message-subagent",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.unmessageSubagent": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:unmessage-subagent",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:unmessage-subagent': Error: boom chat:unmessage-subagent"
   }
  },
  "chat.setDraft": {
@@ -1689,6 +1747,35 @@
   ],
   "result": {}
  },
+ "sessions.openRename": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "sessions:openRename",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.rename": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:rename",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom sessions:rename"
+  }
+ },
  "sessions.openWindow": {
   "arity": 1,
   "calls": [
@@ -1697,6 +1784,20 @@
     "sessions:openWindow",
     [
      "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "sessions.showHistoryMenu": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "context-menu:history-recent",
+    [
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -1780,7 +1881,7 @@
   }
  },
  "sessions.openFile": {
-  "arity": 4,
+  "arity": 5,
   "calls": [
    [
     "invoke",
@@ -1789,7 +1890,8 @@
      "a0",
      "a1",
      "a2",
-     "a3"
+     "a3",
+     "a4"
     ]
    ]
   ],
@@ -2125,6 +2227,41 @@
    ]
   ],
   "result": {}
+ },
+ "agentSettings.open": {
+  "arity": 0,
+  "calls": [["invoke", "agentSettings:open", []]],
+  "result": { "err": "Error invoking remote method 'agentSettings:open': Error: boom agentSettings:open" }
+ },
+ "agentSettings.load": {
+  "arity": 1,
+  "calls": [["invoke", "agentSettings:load", ["a0"]]],
+  "result": { "err": "boom agentSettings:load" }
+ },
+ "agentSettings.save": {
+  "arity": 2,
+  "calls": [["invoke", "agentSettings:save", ["a0", "a1"]]],
+  "result": { "err": "boom agentSettings:save" }
+ },
+ "agentSettings.listTools": {
+  "arity": 2,
+  "calls": [["invoke", "agentSettings:listTools", ["a0", "a1"]]],
+  "result": { "err": "boom agentSettings:listTools" }
+ },
+ "agentSettings.editServer": {
+  "arity": 1,
+  "calls": [["invoke", "agentSettings:editServer", ["a0"]]],
+  "result": { "err": "boom agentSettings:editServer" }
+ },
+ "agentSettings.serverRequest": {
+  "arity": 1,
+  "calls": [["invoke", "agentSettings:serverRequest", ["a0"]]],
+  "result": { "err": "Error invoking remote method 'agentSettings:serverRequest': Error: boom agentSettings:serverRequest" }
+ },
+ "agentSettings.serverDone": {
+  "arity": 2,
+  "calls": [["invoke", "agentSettings:serverDone", ["a0", "a1"]]],
+  "result": { "err": "boom agentSettings:serverDone" }
  },
  "remoteAccess.state": {
   "arity": 0,
@@ -2799,30 +2936,6 @@
     [
      "a0",
      "a1"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "showRecycleBinContextMenu": {
-  "arity": 0,
-  "calls": [
-   [
-    "send",
-    "context-menu:recycle-bin",
-    []
-   ]
-  ],
-  "result": {}
- },
- "showVersionContextMenu": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "context-menu:version",
-    [
-     "a0"
     ]
    ]
   ],

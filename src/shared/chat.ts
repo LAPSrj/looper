@@ -89,6 +89,8 @@ export interface ChatState {
   /** The model the CLI says it runs (Claude Code's init), e.g. when the chat uses the default. */
   activeModel?: string;
   context?: ChatContext;
+  /** Claude: each model's context window by its id without a `[1m]` suffix, from the turns' result records, its subagents' models too. */
+  modelWindows?: Record<string, number>;
   status: 'starting' | 'ready' | 'working' | 'ended';
   /** Why the session ended, or why the last turn failed. */
   error?: string;
@@ -102,6 +104,8 @@ export interface ChatState {
   permissions: ChatPermissionRequest[];
   /** Messages sent while the agent works: they go to it together when its turn ends, or at once with Send Now. */
   queued: QueuedMessage[];
+  /** The user's messages waiting for a subagent to read them, by its agent id (Claude Code). */
+  subagentMessages?: Record<string, string>;
   /** The harness's slash commands and skills, for the message box's "/" list. */
   commands: SlashCommand[];
   /** What a picked command is written with: "/" for Claude Code, "$" for a Codex skill. */
@@ -111,7 +115,60 @@ export interface ChatState {
   /** When the agent last finished a turn (ms since the epoch). */
   turnEndedAt?: number;
   startedAt: number;
+  /** A name the user (Rename…) or the harness gave the chat; unset: its first message titles it. */
+  title?: string;
+  /** The last turn failed on the usage limit; it ends with the next message. */
+  limit?: UsageLimitHit;
+  /** Continue When Limit Resets: once the limit resets, Looper sends the agent CONTINUE_TEXT. */
+  autoContinue: boolean;
+  /** Continue Anyway: this limit's continue goes even though the cache has expired (Settings → Chats). */
+  continueAnyway?: boolean;
 }
+
+/** A turn that failed on the usage limit: when, and when the limit resets (ms since the epoch) when the harness said. */
+export interface UsageLimitHit {
+  at: number;
+  resetsAt?: number;
+}
+
+/** The message Continue When Limit Resets sends the agent. */
+export const CONTINUE_TEXT = 'Continue.';
+/** How long after the reset time the message goes: the harnesses give the time to the minute. */
+export const CONTINUE_MARGIN_MS = 60_000;
+/** How often it tries again when the harness didn't say when the limit resets. */
+export const CONTINUE_RETRY_MS = 3_600_000;
+
+/**
+ * How long Continue When Limit Resets waits from `now`: until just after the
+ * reset time, at once when that has passed; an hour when the time is unknown,
+ * or when it was already past as the turn failed (the limit is longer than it said).
+ */
+export function continueDelay(limit: UsageLimitHit, now: number): number {
+  if (limit.resetsAt === undefined || limit.resetsAt <= limit.at) return CONTINUE_RETRY_MS;
+  return Math.max(0, limit.resetsAt + CONTINUE_MARGIN_MS - now);
+}
+
+/** When Continue When Limit Resets sends; undefined when the harness didn't say when the limit resets. */
+export const continueAt = (limit: UsageLimitHit): number | undefined => (limit.resetsAt === undefined ? undefined : limit.resetsAt + CONTINUE_MARGIN_MS);
+
+/**
+ * Whether Settings → Chats' cache rule stops a continue sent at `at`: the
+ * prompt cache will have expired by then and the context is over the size. At
+ * size 0 any context counts, even one whose size isn't known. A harness that
+ * reports no cache time isn't stopped.
+ */
+export function continueSkipped(
+  rule: { enabled: boolean; aboveTokens: number },
+  at: number,
+  cacheUntil: number | undefined,
+  tokens: number | undefined,
+): boolean {
+  if (!rule.enabled || cacheUntil === undefined || cacheUntil > at) return false;
+  return rule.aboveTokens === 0 || (tokens ?? 0) > rule.aboveTokens;
+}
+
+/** Whose name a chat or terminal session has: the user's (Rename…) or the harness's; unset, its first message titles it. */
+export type TitleBy = 'user' | 'harness';
 
 /** A message box's unsent message and files. */
 export interface ChatDraft {
@@ -132,8 +189,16 @@ export interface ChatInfo {
   /** The harness the chat ran on, from the task's environment; unset: the task's own. */
   harnessId?: string;
   harnessKind: 'claude-code' | 'codex';
-  /** The first line of the chat's first message. */
+  /** The chat's name (`titleBy`), else the first line of its first message. */
   title: string;
+  /** Whose name `title` is; a harness's name never replaces the user's. */
+  titleBy?: TitleBy;
+  /** Continue When Limit Resets. */
+  autoContinue?: boolean;
+  /** Continue Anyway. */
+  continueAnyway?: boolean;
+  /** The last turn failed on the usage limit: Looper's next start goes on waiting for the reset. */
+  limit?: UsageLimitHit;
   settings: ChatSettings;
   context?: ChatContext;
   /** Continue in Chat on a run: the run whose conversation the chat went on with. */
@@ -153,8 +218,10 @@ export interface ChatInfo {
  */
 export interface TerminalInfo {
   harnessKind: 'claude-code' | 'codex';
-  /** The first line of the conversation's first message. */
+  /** The session's name (`titleBy`), else the first line of the conversation's first message. */
   title: string;
+  /** Whose name `title` is; a harness's name never replaces the user's. */
+  titleBy?: TitleBy;
   /** Continue in Terminal on a run: the run whose conversation the session went on with. */
   fromRunId?: string;
 }
@@ -257,7 +324,8 @@ export function chatCanCompact(chat: Pick<ChatState, 'history' | 'rows' | 'statu
 /** A chat's title: the first line of its first message, without Markdown markers. */
 export function chatTitle(rows: MessageRow[]): string {
   const first = rows.find((r) => r.kind === 'prompt');
-  const line = stripMarkdown(first?.text.trim().split('\n')[0] ?? '').trim();
+  const text = first?.text ?? '';
+  const line = stripMarkdown(text.trim().split('\n')[0] ?? '').trim();
   if (line) return line.length > 80 ? `${line.slice(0, 79)}…` : line;
   return first?.attachments?.length ? first.attachments.map((a) => a.name).join(', ') : 'Untitled chat';
 }

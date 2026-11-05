@@ -251,6 +251,13 @@ Android's, with one window on screen at a time.
   window or **Clear Filter** in the Filter window, are in **More**.
 - **Back** also answers the back gesture or button of the phone, and on an
   iPhone a swipe from the left edge.
+- Lists such as Environments, Templates and the Recycle Bin have no buttons for
+  the selected row: tapping a row opens it, or shows its commands if there's
+  nothing to open. A long press shows its commands, and a swipe to the left
+  offers **Remove** or **Delete**. **Add** and the list's other commands are
+  rows under the list.
+- On an iPhone, a setting that depends on a switch shows only while the switch
+  is on, and a short tabbed window, such as Edit Environment, is one page.
 - In a session's screen, the **Subagents** and **Workflows** rows above the
   conversation show how they're doing and open the Activity sheet on that list.
   A workflow there opens as a screen of its own: its phases as lists, with a row per agent

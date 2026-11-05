@@ -13,9 +13,16 @@ import type { Environment, Project, Settings, Task } from '../shared/types';
 import { envPrefix, envSide, runProbe } from './discover-models';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { CodexAccumulator, TranscriptAccumulator, transcriptHostPath, type SubagentMeta } from './messages';
+import { CodexAccumulator, TranscriptAccumulator, codexHomeOfRollout, codexThreadName, transcriptHostPath, type SubagentMeta } from './messages';
+import { readSubagentStats, type SubagentStats } from './context';
 import { subagentsOf } from './sessions';
 import { writeJsonAtomic } from './store/fsutil';
+
+/** Each subagent's model, effort and context, read from its transcript, by agent id; one not readable yet is left out. */
+async function statsOf(metas: SubagentMeta[], read: (agentId: string) => Promise<SubagentStats | null>): Promise<Map<string, SubagentStats>> {
+  const found = await Promise.all(metas.map(async (m) => [m.agentId, await read(m.agentId)] as const));
+  return new Map(found.filter((f): f is readonly [string, SubagentStats] => f[1] !== null));
+}
 
 // ---------- the ledger ----------
 
@@ -206,29 +213,17 @@ const lastTime = (rows: MessageRow[]): number => {
 const said = (rows: MessageRow[]) => rows.filter((r) => r.kind === 'prompt' || r.kind === 'agent').length;
 
 /** A transcript's rows, every one its accumulator kept (the ones past its row limit compacted). */
-async function readTranscript(file: string, format: 'claude' | 'codex'): Promise<{ acc: TranscriptAccumulator; extra: { aiTitle: string; customTitle: string | null; cwd?: string } }> {
+async function readTranscript(file: string, format: 'claude' | 'codex'): Promise<{ acc: TranscriptAccumulator; extra: { cwd?: string } }> {
   const acc = format === 'codex' ? new CodexAccumulator() : new TranscriptAccumulator();
-  const extra: { aiTitle: string; customTitle: string | null; cwd?: string } = { aiTitle: '', customTitle: null };
+  const extra: { cwd?: string } = {};
   await eachLine(file, (line) => {
-    if (format === 'claude') {
-      if (extra.cwd === undefined) {
-        const m = CWD_RE.exec(line);
-        if (m) {
-          try {
-            extra.cwd = JSON.parse(m[1]) as string;
-          } catch {
-            /* not a string after all */
-          }
-        }
-      }
-      if (line.includes('"ai-title"') || line.includes('"custom-title"')) {
+    if (format === 'claude' && extra.cwd === undefined) {
+      const m = CWD_RE.exec(line);
+      if (m) {
         try {
-          const rec = JSON.parse(line) as Record<string, unknown>;
-          if (rec.type === 'ai-title' && typeof rec.aiTitle === 'string' && rec.aiTitle.trim()) extra.aiTitle = rec.aiTitle.trim();
-          // The last one counts, and an empty one takes the name away (Claude Code's /rename).
-          else if (rec.type === 'custom-title' && typeof rec.customTitle === 'string') extra.customTitle = rec.customTitle.trim();
+          extra.cwd = JSON.parse(m[1]) as string;
         } catch {
-          /* a torn line */
+          /* not a string after all */
         }
       }
     }
@@ -242,16 +237,24 @@ export async function transcriptMeta(file: string, format: 'claude' | 'codex', m
   const { acc, extra } = await readTranscript(file, format);
   const rows = [...acc.evicted, ...acc.rows];
   const messages = said(rows);
-  const title = extra.customTitle || extra.aiTitle || (messages ? chatTitle(rows) : '');
+  // Claude's name for it: the last custom-title (an empty one takes the user's name away), else its ai-title.
+  const title = acc.sessionName || (messages ? chatTitle(rows) : '');
   // Claude names the file after the session; a Codex rollout's thread id is in its first record (codexHead).
   const sessionId = path.basename(file, '.jsonl');
   return { title, lastActive: lastTime(rows) || mtimeMs, messages, sessionId, ...(extra.cwd ? { cwd: extra.cwd } : {}) };
 }
 
-/** A transcript as a chat shows its history: its rows, and the whole conversation as compaction keeps it. */
-export async function transcriptHistory(file: string, format: 'claude' | 'codex'): Promise<{ rows: MessageRow[]; compact: MessageRow[] }> {
+/**
+ * A transcript as a chat shows its history: its rows, the whole conversation
+ * as compaction keeps it, and the harness's name for it (Claude Code's from
+ * the transcript, a Codex thread's from its home's session index).
+ */
+export async function transcriptHistory(file: string, format: 'claude' | 'codex'): Promise<{ rows: MessageRow[]; compact: MessageRow[]; name?: string }> {
   const { acc } = await readTranscript(file, format);
-  return { rows: acc.rows, compact: compactRows([...acc.evicted, ...acc.rows]) };
+  const home = format === 'codex' ? codexHomeOfRollout(file) : undefined;
+  const head = home ? await codexHead(file) : null;
+  const name = format === 'claude' ? acc.sessionName : home && head ? await codexThreadName(home, head.sessionId) : undefined;
+  return { rows: acc.rows, compact: compactRows([...acc.evicted, ...acc.rows]), ...(name ? { name } : {}) };
 }
 
 async function codexHead(file: string): Promise<CodexHead | null> {
@@ -339,6 +342,8 @@ export interface HistoryDeps {
   /** A run's whole conversation as compaction keeps it. */
   compactableRun: (taskId: string, runId: string) => Promise<MessageRow[]>;
   runSubagents: (taskId: string, runId: string) => Promise<SubagentMeta[]>;
+  /** A run's subagent's model, effort and context, from its transcript's newest response. */
+  runSubagentStats: (taskId: string, runId: string, agentId: string) => Promise<SubagentStats | null>;
   subagentsAt: (hostPath: string) => Promise<SubagentMeta[]>;
   ledger: SessionLedger;
   /** Tests give the folders; Looper asks the environment (probeConfigDirs). */
@@ -783,7 +788,9 @@ export class HistoryService {
     if (item.runId) {
       const rows = await this.d.readRun(item.taskId, item.runId, agentId);
       if (agentId !== undefined) return { rows, subagents: [] };
-      return { rows, subagents: subagentsOf(await this.d.runSubagents(item.taskId, item.runId), rows) };
+      const metas = await this.d.runSubagents(item.taskId, item.runId);
+      const stats = await statsOf(metas, (a) => this.d.runSubagentStats(item.taskId, item.runId!, a));
+      return { rows, subagents: subagentsOf(metas, rows, stats) };
     }
     if (!transcript) return null;
     if (agentId !== undefined) {
@@ -794,7 +801,9 @@ export class HistoryService {
     }
     const { acc } = await readTranscript(transcript.path, transcript.format);
     const metas = transcript.format === 'claude' ? await this.d.subagentsAt(transcript.path) : [];
-    return { rows: acc.rows, subagents: subagentsOf(metas, acc.rows) };
+    const dir = path.join(transcript.path.replace(/\.jsonl$/i, ''), 'subagents');
+    const stats = await statsOf(metas, (a) => readSubagentStats(path.join(dir, `agent-${a}.jsonl`)).catch(() => null));
+    return { rows: acc.rows, subagents: subagentsOf(metas, acc.rows, stats) };
   }
 
   /** The whole conversation as compaction keeps it: Continue Compacted starts from it, and Search reads it. */

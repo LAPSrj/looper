@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Field } from './components/ui';
+import { Field, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /**
@@ -41,9 +41,11 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
     <div className="editor">
       <div className="editor-body">
         <div className="form fill">
-          <Field label="Guidance">
-            <textarea autoFocus rows={10} value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
+          <FormGroup>
+            <Field label="Guidance">
+              <TextArea autoFocus rows={10} value={text} onChange={(e) => setText(e.target.value)} />
+            </Field>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: () => void start(), disabled: !text.trim() }} busy={starting} />

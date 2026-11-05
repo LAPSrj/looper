@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { QRCodeToDataURLOptions } from 'qrcode';
 import icon from '../../../assets/icon.png';
 import {
@@ -12,9 +12,9 @@ import {
   type RemoteAccessState,
 } from '@shared/remote-access';
 import type { RemoteAccessSettings } from '@shared/types';
-import { CheckboxField, EmptyWindow, Field, NumberInput } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, NumberInput, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { ListActions, SelectList } from './components/SelectList';
+import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { useFitWindow } from './fit-window';
@@ -45,10 +45,7 @@ function SourceRows({
   return (
     <>
       {REMOTE_ACCESS_SOURCES.map((id, i) => (
-        <div key={id} className="ra-source">
-          <CheckboxField label={SOURCE_NAMES[id]} autoFocus={autoFocus && i === 0} checked={sources.includes(id)} onChange={(on) => onChange(id, on)} />
-          <span className="ra-source-status">{note(id)}</span>
-        </div>
+        <CheckboxField key={id} label={SOURCE_NAMES[id]} note={note(id)} autoFocus={autoFocus && i === 0} checked={sources.includes(id)} onChange={(on) => onChange(id, on)} />
       ))}
     </>
   );
@@ -116,22 +113,26 @@ export function RemoteAccessSettingsApp() {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Name">
-            <input autoFocus value={draft.name} maxLength={64} placeholder={state?.defaultName} onChange={(e) => set({ name: e.target.value })} />
-          </Field>
-          <Field label="Sources">
-            <SourceRows sources={draft.sources} onChange={setSource} note={(id) => sourceLine(state, id)} />
-          </Field>
-          <div className="row">
-            {draft.sources.includes('tailscale') && (
-              <Field label="Machine name">
-                <input value={draft.hostname} spellCheck={false} onChange={(e) => set({ hostname: e.target.value })} />
-              </Field>
-            )}
-            <Field label="Port">
-              <NumberInput min={1} max={65535} value={draft.port} onChange={(n) => Number.isInteger(n) && set({ port: n })} />
+          <FormGroup>
+            <Field label="Name">
+              <TextInput autoFocus value={draft.name} maxLength={64} placeholder={state?.defaultName} onChange={(e) => set({ name: e.target.value })} />
             </Field>
-          </div>
+          </FormGroup>
+          <FormGroup title="Sources">
+            <SourceRows sources={draft.sources} onChange={setSource} note={(id) => sourceLine(state, id)} />
+          </FormGroup>
+          <FormGroup>
+            <FieldRow>
+              {draft.sources.includes('tailscale') && (
+                <Field label="Machine name">
+                  <TextInput value={draft.hostname} verbatim onChange={(e) => set({ hostname: e.target.value })} />
+                </Field>
+              )}
+              <Field label="Port">
+                <NumberInput min={1} max={65535} value={draft.port} onChange={(n) => Number.isInteger(n) && set({ port: n })} />
+              </Field>
+            </FieldRow>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void doSave() }} busy={saving} />
@@ -192,15 +193,15 @@ export function RemoteAccessDevicesApp() {
             onDelete={(d) => void remove(d)}
           />
           <ListActions>
-            <button className="btn" disabled={state.phase !== 'running'} onClick={() => void window.looper.remoteAccess.openPair()}>
+            <ListButton disabled={state.phase !== 'running'} onClick={() => void window.looper.remoteAccess.openPair()}>
               Pair Device…
-            </button>
-            <button className="btn" disabled={!device} onClick={() => device && void window.looper.remoteAccess.openRename(device.id)}>
+            </ListButton>
+            <ListButton row disabled={!device} onClick={() => device && void window.looper.remoteAccess.openRename(device.id)}>
               Rename…
-            </button>
-            <button className="btn danger" disabled={!device} onClick={() => void remove()}>
+            </ListButton>
+            <ListButton row danger disabled={!device} onClick={() => void remove()}>
               Remove
-            </button>
+            </ListButton>
           </ListActions>
         </div>
       </div>
@@ -298,13 +299,13 @@ export function RemoteAccessPairApp() {
     body = (
       <>
         {addresses.length > 1 && (
-          <select className="pair-source" value={Math.min(addressIndex, addresses.length - 1)} onChange={(e) => setAddressIndex(Number(e.target.value))} aria-label="Address">
+          <SelectInput className="pair-source" value={Math.min(addressIndex, addresses.length - 1)} onChange={(e) => setAddressIndex(Number(e.target.value))} aria-label="Address">
             {addresses.map((a, i) => (
               <option key={a.url} value={i}>
                 {a.label}
               </option>
             ))}
-          </select>
+          </SelectInput>
         )}
         <div className="pair-qr">{qr && <img src={qr} width={220} height={220} alt="QR code of the pairing link" />}</div>
         <div className="pair-code">{groupCode(code.code)}</div>
@@ -340,12 +341,6 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
-
-  // The current name starts selected, so typing replaces it.
-  useEffect(() => {
-    if (loaded) nameRef.current?.select();
-  }, [loaded]);
 
   useEffect(() => {
     document.title = 'Rename Device';
@@ -380,9 +375,11 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Name">
-            <input ref={nameRef} autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
-          </Field>
+          <FormGroup>
+            <Field label="Name">
+              <TextInput selectWhen={loaded} autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
+            </Field>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'Save', run: () => void save(), disabled: !name.trim() }} busy={saving} />
@@ -477,16 +474,20 @@ export function RemoteAccessSetupApp() {
     body = (
       <>
         <h2 className="ra-setup-title">How will devices reach this computer?</h2>
-        <SourceRows sources={sources} onChange={toggle} note={(id) => SOURCE_USES[id]} autoFocus />
+        <FormGroup>
+          <SourceRows sources={sources} onChange={toggle} note={(id) => SOURCE_USES[id]} autoFocus />
+        </FormGroup>
       </>
     );
   } else if (step === 'machine') {
     body = (
       <>
         <h2 className="ra-setup-title">Name this computer on your tailnet</h2>
-        <Field label="Machine name">
-          <input autoFocus value={hostname} spellCheck={false} onChange={(e) => setHostname(e.target.value.trim())} />
-        </Field>
+        <FormGroup>
+          <Field label="Machine name">
+            <TextInput autoFocus value={hostname} verbatim onChange={(e) => setHostname(e.target.value.trim())} />
+          </Field>
+        </FormGroup>
         {!HOSTNAME.test(hostname) && <p className="help error-text">Use lowercase letters, digits and hyphens.</p>}
       </>
     );
@@ -532,7 +533,9 @@ export function RemoteAccessSetupApp() {
             </li>
           ))}
         </ul>
-        <CheckboxField label="Pair a device after Finish" checked={pair} onChange={setPair} />
+        <FormGroup>
+          <CheckboxField label="Pair a device after Finish" checked={pair} onChange={setPair} />
+        </FormGroup>
       </>
     );
   }

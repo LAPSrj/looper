@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sendsOnEnter } from '../src/renderer/src/components/composer-text';
 import { draggedHeight, settleSheet } from '../src/renderer/src/components/phone/sheet-detents';
-import { groupStatusText, subagentTabs } from '../src/renderer/src/components/subagents';
+import { groupStatusText, newestFirst, subagentContext, subagentTabs } from '../src/renderer/src/components/subagents';
 import { cacheText, contextValue, limitFacts, sessionFacts, sessionLimits, usageLabel, usageTone } from '../src/renderer/src/components/usage';
 import type { SessionSummary, SubagentInfo } from '../src/shared/sessions';
 
@@ -94,7 +94,23 @@ describe('usageLabel', () => {
   });
 });
 
-const agent = (agentId: string, status: SubagentInfo['status']): SubagentInfo => ({ agentId, toolUseId: agentId, type: 't', description: agentId, background: true, status });
+const agent = (agentId: string, status: SubagentInfo['status']): SubagentInfo => ({ agentId, toolUseId: agentId, type: 't', description: agentId, status });
+
+describe('newestFirst', () => {
+  it('lists the subagents by when their Agent call was made, newest first, one not in the conversation yet first of all', () => {
+    const at = (id: string, startedAt?: string): SubagentInfo => ({ ...agent(id, 'done'), ...(startedAt ? { startedAt } : {}) });
+    const list = [at('a', '2026-11-04T10:00:00Z'), at('b', '2026-11-04T10:05:00Z'), at('c'), at('d', '2026-11-04T09:00:00Z')];
+    expect(newestFirst(list).map((a) => a.agentId)).toEqual(['c', 'b', 'a', 'd']);
+  });
+});
+
+describe('subagentContext', () => {
+  it('fills by its context in its window, and not without the window', () => {
+    expect(subagentContext({ ...agent('a', 'running'), contextTokens: 50_000, contextWindow: 200_000 })).toBe(0.25);
+    expect(subagentContext({ ...agent('a', 'running'), contextTokens: 50_000 })).toBeNull();
+    expect(subagentContext(agent('a', 'running'))).toBeNull();
+  });
+});
 
 describe('subagentTabs', () => {
   const all = [agent('a', 'done'), agent('b', 'running'), agent('c', 'failed'), agent('d', 'running')];

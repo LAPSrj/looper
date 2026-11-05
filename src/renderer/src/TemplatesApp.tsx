@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
-import { SelectList, ListActions } from './components/SelectList';
+import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
 
@@ -89,6 +89,7 @@ export function TemplatesApp() {
             onDelete={(t) => void remove(t)}
           />
           <ListActions
+            item="Template"
             onAdd={() => void window.looper.openTemplateEditor()}
             onEdit={() => tpl && void window.looper.openTemplateEditor(tpl.id)}
             editDisabled={!tpl}
@@ -98,12 +99,10 @@ export function TemplatesApp() {
             removeDisabled={!tpl}
           />
           <ListActions>
-            <button className="btn" onClick={() => void window.looper.templates.import()}>
-              Import…
-            </button>
-            <button className="btn" disabled={!tpl} onClick={() => tpl && void window.looper.templates.export(tpl.id)}>
+            <ListButton onClick={() => void window.looper.templates.import()}>Import…</ListButton>
+            <ListButton row disabled={!tpl} onClick={() => tpl && void window.looper.templates.export(tpl.id)}>
               Export…
-            </button>
+            </ListButton>
           </ListActions>
         </div>
       </div>

@@ -13,6 +13,8 @@ export interface MenuBinding {
   label?: string;
   /** A submenu built from state (Harness, Model, a list of projects). */
   submenu?: MenuItem[];
+  /** A checkbox item's state (Continue When Limit Resets). */
+  checked?: boolean;
 }
 
 /** A catalog command's menu item: id, label, accelerator, glyph and platforms from the catalog, the rest from the binding. */
@@ -29,6 +31,7 @@ export function commandMenuItem(c: Command, b: MenuBinding): MenuItem {
     ...(c.destructive ? { destructive: true as const } : {}),
     ...(b.enabled !== undefined ? { enabled: b.enabled } : {}),
     ...(b.submenu ? { submenu: b.submenu } : {}),
+    ...(b.checked !== undefined ? { type: 'checkbox' as const, checked: b.checked } : {}),
     ...(b.click ? { click: b.click } : {}),
   };
 }

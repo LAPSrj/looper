@@ -183,7 +183,7 @@ function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle
   if (!diff) body = <div className="muted git-diff-note">{loading ? 'Loading…' : ''}</div>;
   else if (diff.binary) body = <div className="muted git-diff-note">This is a binary file, so there are no lines to compare.</div>;
   else if (diff.hunks.length === 0) body = <div className="muted git-diff-note">No changed lines.</div>;
-  else body = <DiffView hunks={diff.hunks} />;
+  else body = <DiffView hunks={diff.hunks} file={title} />;
   return (
     <div className="git-diff">
       <div className="git-diff-head">

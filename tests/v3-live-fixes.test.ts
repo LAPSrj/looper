@@ -30,6 +30,6 @@ describe('V3 live check fixes', () => {
   });
 
   it('the task JSON editor has an accessible name', () => {
-    expect(read('components/TaskEditor.tsx')).toMatch(/<textarea className="json-editor mono" aria-label="Task JSON"/);
+    expect(read('components/TaskEditor.tsx')).toMatch(/<TextArea code className="json-editor" aria-label="Task JSON"/);
   });
 });

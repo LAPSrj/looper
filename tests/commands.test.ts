@@ -124,8 +124,11 @@ describe('menus built from the catalogs', () => {
       effort: { submenu: [] },
       permissionMode: { submenu: [] },
       compact: b,
+      rename: b,
+      autoContinue: { ...b, checked: true },
       copySessionId: b,
     });
+    expect(chat.find((i) => i.id === 'chat-auto-continue')).toMatchObject({ type: 'checkbox', checked: true });
     expect(shape(chat)).toEqual([
       ['chat-stop', '&Stop', 'Esc', 'stopChat', undefined, false],
       ['chat-send-now', 'Send &Now', 'CmdOrCtrl+Enter', 'sendNow', undefined, undefined],
@@ -137,6 +140,8 @@ describe('menus built from the catalogs', () => {
       ['chat-permission-mode', '&Permission Mode', undefined, undefined, undefined, undefined],
       '-',
       ['chat-compact', '&Compact into New Chat', undefined, 'compact', undefined, undefined],
+      ['chat-rename', 'Ren&ame…', 'F2', undefined, undefined, false],
+      ['chat-auto-continue', 'Continue &When Limit Resets', undefined, undefined, undefined, undefined],
       ['chat-copy-session-id', 'Copy Session &ID', undefined, 'copy', undefined, undefined],
     ]);
     const file = (single: boolean) =>

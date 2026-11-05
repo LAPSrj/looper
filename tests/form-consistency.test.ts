@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { AGENT_LABELS, agentRows, type AgentField } from '../src/renderer/src/components/agent-fields-model';
 import { SHORTCUTS, WELL_KNOWN_KEYS, hint } from '../src/shared/shortcuts';
@@ -71,10 +72,80 @@ describe('form elements', () => {
   it('draws checkboxes, groups under a checkbox, input rows and toggle buttons only through the shared components', () => {
     for (const [file, text] of files) {
       if (SHARED.has(file)) continue;
-      expect(text, file).not.toMatch(/className=["{`][^"}`]*\b(checkbox-field|stagger-fields|step-fields|browse-row|input-row|day-toggle)\b/);
+      expect(text, file).not.toMatch(/className=["{`][^"}`]*\b(checkbox-field|stagger-fields|step-fields|browse-row|input-row|day-toggle|form-group|inline-field|checkbox-note)\b/);
+      expect(text, file).not.toMatch(/className="row"/);
       // A label for a control is a Field (a value shown under a caption keeps a span).
       expect(text, file).not.toMatch(/<label className="field(-label)?"/);
     }
+  });
+
+  it('draws a form\'s controls with TextInput, TextArea, NumberInput and SelectInput, which set them up for a phone', () => {
+    // Message boxes and the browser frames' own dialogs keep their own: Enter sends there, and they have no Field.
+    const OWN = new Set(['components/ui.tsx', 'components/Composer.tsx', 'components/MessageBox.tsx', 'components/Transcript.tsx', 'components/AddonPane.tsx', 'BuilderApp.tsx', 'SessionsApp.tsx']);
+    for (const [file, text] of files) {
+      if (OWN.has(file) || file.startsWith('web/')) continue;
+      expect(text, file).not.toMatch(/<(input|textarea|select)\b/);
+    }
+  });
+
+  it('draws the iOS frame\'s own text cells with IosField', () => {
+    for (const [file, text] of files) {
+      if (file !== 'web/IosField.tsx') expect(text, file).not.toContain('className="ios-cell ios-field"');
+    }
+  });
+
+  it('keeps every field of a form in a FormGroup, which an iPhone draws as one card', () => {
+    /** What draws a form row; a RadioField outside a group has a header and a card of its own. */
+    const ROWS = new Set(['Field', 'NumberField', 'CheckboxField', 'FieldRow', 'StepFields', 'InlineField', 'InputRow', 'AgentFields', 'ActiveHours', 'SourceRows']);
+    const tagName = (n: ts.JsxOpeningLikeElement) => n.tagName.getText();
+    for (const [file, text] of files) {
+      if (!file.endsWith('.tsx')) continue;
+      const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      const check = (n: ts.Node, inForm: boolean) => {
+        let form = inForm;
+        if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n)) {
+          const open = ts.isJsxElement(n) ? n.openingElement : n;
+          if (tagName(open) === 'FormGroup') return;
+          if (form) expect(ROWS.has(tagName(open)) ? tagName(open) : '', `${file}: ${tagName(open)} outside a FormGroup`).toBe('');
+          const cls = open.attributes.properties.find((a) => ts.isJsxAttribute(a) && a.name.getText() === 'className');
+          if (cls && /"form\b/.test(cls.getText())) form = true;
+        }
+        ts.forEachChild(n, (c) => check(c, form));
+      };
+      check(source, false);
+    }
+  });
+
+  it('draws an iPhone form\'s card from its FormGroup, not from fields being next to each other', () => {
+    const css = fs.readFileSync(path.join(renderer, 'phone.css'), 'utf8');
+    expect(css).not.toMatch(/:is\(\.field, \.checkbox-field\)\s*\+/);
+    expect(css).not.toMatch(/:has\(\+ :is\(\.field, \.checkbox-field\)\)/);
+    // A row's layout comes from Field (field-one-line), not from a look at its children.
+    expect(css).not.toMatch(/\.field:has\(/);
+  });
+
+  it('draws a list\'s buttons with ListButton, which a phone turns into rows or leaves to the row\'s menu', () => {
+    for (const [file, text] of files) {
+      if (file === 'components/SelectList.tsx') continue;
+      for (const [block] of text.matchAll(/<ListActions\b[\s\S]*?<\/ListActions>/g)) {
+        expect(block, file).not.toMatch(/<button\b/);
+      }
+    }
+  });
+
+  it('gives a list that has row commands no way to skip them on a phone: the row\'s menu holds what its selection buttons do', () => {
+    for (const [file, text] of files) {
+      if (!/<ListButton\s+row\b/.test(text)) continue;
+      expect(text, `${file}: a row button with no menu`).toMatch(/\bmenu=\{/);
+    }
+  });
+
+  it('draws an iPhone form\'s values in one color and size, from the shared row metrics', () => {
+    const css = fs.readFileSync(path.join(renderer, 'phone.css'), 'utf8');
+    expect(css).toMatch(/\.form-group \.input-suffix \.suffix \{[^}]*color: var\(--pg-label-2\);[^}]*font-size: calc\(17 \* var\(--u\)\);/);
+    expect(css).toMatch(/\.select-value \{[^}]*color: var\(--pg-label-2\);/);
+    expect(css).toMatch(/\.pg-row \{\s*position: relative;\s*min-height: var\(--pg-row-min\);\s*padding: var\(--pg-row-y\) 16px;/);
+    expect(css).not.toMatch(/\.env-(list|item)\b/);
   });
 
   it('keeps no styles for the hand-written versions', () => {

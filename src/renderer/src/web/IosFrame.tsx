@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { createPortal } from 'react-dom';
 import type { MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
 import { useConnection } from './connection';
+import { IosField } from './IosField';
 import { tabKeyTarget, tabStop } from '../components/tabs-model';
 import { darkColor } from './nav-stack';
 import type { ShellController } from './controller';
@@ -516,10 +517,9 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
       )}
       {f.kind === 'save' && (
         <div className="ios-group">
-          <label className="ios-cell ios-field">
-            <span className="ios-cell-label">Name</span>
+          <IosField label="Name">
             <input value={f.name} onChange={(e) => f.setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && f.confirm()} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-          </label>
+          </IosField>
         </div>
       )}
       {onDevice ? (
@@ -637,8 +637,7 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
     >
       <div className="ios-grouped ph-scroll">
         <div className="ios-group">
-          <label className="ios-cell ios-field">
-            <span className="ios-cell-label">Name</span>
+          <IosField label="Name">
             <input
               value={draft ?? d.name}
               disabled={d.busy}
@@ -648,7 +647,7 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
               onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
               onBlur={commit}
             />
-          </label>
+          </IosField>
           <div className="ios-cell">
             <span className="ios-cell-label">Paired with</span>
             <span className="ios-cell-value">{d.computer}</span>

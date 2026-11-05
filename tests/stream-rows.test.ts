@@ -210,7 +210,7 @@ describe("a workflow agent's first message (WF-02)", () => {
 });
 
 describe('a subagent waiting on its own background work (ST-01)', () => {
-  const meta = (agentId: string): SubagentMeta => ({ agentId, toolUseId: `tu-${agentId}`, type: 'general-purpose', description: 'Sleep 240s', background: true });
+  const meta = (agentId: string): SubagentMeta => ({ agentId, toolUseId: `tu-${agentId}`, type: 'general-purpose', description: 'Sleep 240s' });
 
   // The notification as claude 2.1.316 writes it when a background subagent stops with its own background work still running.
   const waiting =

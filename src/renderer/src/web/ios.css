@@ -10,8 +10,7 @@ html[data-platform='ios'] {
   --ios-grouped: #f2f2f7;
   --ios-cell: #ffffff;
   --ios-label: #000000;
-  /* secondaryLabel at 0.78 instead of Apple's 0.6: 5.3:1 on the grouped gray, 5.6:1 on white (0.6 gives 3.3:1 and 3.4:1). */
-  --ios-label2: rgba(60, 60, 67, 0.78);
+  --ios-label2: rgba(60, 60, 67, 0.6); /* secondaryLabel */
   --ios-label3: rgba(60, 60, 67, 0.3);
   --ios-sep: rgba(60, 60, 67, 0.29);
   /* The hard scroll edge (iOS 27's default under a bar): opaque, with a hairline. */
@@ -181,7 +180,7 @@ html[data-platform='ios'] {
 }
 @media (prefers-contrast: more) {
   html[data-platform='ios'] {
-    --ios-tab-label: #0040dd;
+    --ios-tab-label: #1e6ef4;
   }
 }
 
@@ -869,8 +868,8 @@ html[data-platform='ios'] {
 /* Increase Contrast: the same high-contrast colors the pages use (phone.css). */
 @media (prefers-contrast: more) {
   html[data-platform='ios'] {
-    --ios-tint: #0040dd;
-    --ios-red: #d70015;
+    --ios-tint: #1e6ef4;
+    --ios-red: #e9152d;
     --ios-label2: rgba(60, 60, 67, 0.86);
     --ios-label3: rgba(60, 60, 67, 0.55);
     --ios-sep: rgba(60, 60, 67, 0.6);
@@ -878,8 +877,8 @@ html[data-platform='ios'] {
 }
 @media (prefers-contrast: more) and (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
-    --ios-tint: #409cff;
-    --ios-red: #ff6961;
+    --ios-tint: #5cb8ff;
+    --ios-red: #ff6165;
     --ios-label2: rgba(235, 235, 245, 0.78);
     --ios-label3: rgba(235, 235, 245, 0.5);
     --ios-sep: rgba(142, 142, 147, 0.8);

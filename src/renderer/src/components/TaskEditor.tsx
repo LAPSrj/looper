@@ -7,7 +7,7 @@ import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@sha
 import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
-import { CheckboxField, Field, InputRow, NumberField, NumberInput, RadioField, StepFields, TabBar, ToggleButtons } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InputRow, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons, onIos } from './ui';
 import { WindowActions } from './WindowActions';
 import { useDialogKeys } from './hooks';
 import { blankDraft, type Draft } from './blank-draft';
@@ -136,7 +136,7 @@ function defaultStopOn(): string {
 
 function TimezoneSelect({ value, onChange, id }: { value?: string; onChange: (tz?: string) => void; id?: string }) {
   return (
-    <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}>
+    <SelectInput id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}>
       <option value="">Use computer timezone</option>
       {value && !TIMEZONES.includes(value) && <option value={value}>{value}</option>}
       {TIMEZONE_GROUPS.map(([region, zones]) => (
@@ -148,7 +148,7 @@ function TimezoneSelect({ value, onChange, id }: { value?: string; onChange: (tz
           ))}
         </optgroup>
       ))}
-    </select>
+    </SelectInput>
   );
 }
 TimezoneSelect.labelable = true;
@@ -167,34 +167,46 @@ type Hours = { from: number; to: number };
  */
 function ActiveHours({ value, onChange }: { value: Hours | undefined; onChange: (hours: Hours | undefined) => void }) {
   const hour = (v: number) => Number.isInteger(v) && v >= 0 && v <= 23;
+  const mode = (
+    <SelectInput value={value ? 'window' : 'all'} onChange={(e) => onChange(e.target.value === 'window' ? { from: 9, to: 18 } : undefined)}>
+      <option value="all">All day</option>
+      <option value="window">Between…</option>
+    </SelectInput>
+  );
+  const box = (bound: 'from' | 'to', hours: Hours, label?: string) => (
+    <NumberInput
+      min={0}
+      max={23}
+      suffix="h"
+      label={label}
+      value={hours[bound]}
+      onChange={(v) => hour(v) && onChange({ ...hours, [bound]: v })}
+      onBlur={() => hours.from > hours.to && onChange({ from: hours[bound], to: hours[bound] })}
+    />
+  );
+  // An iPhone gives each its own row; elsewhere they share one line.
+  if (onIos) {
+    return (
+      <>
+        <Field label="Active hours">{mode}</Field>
+        {value && (
+          <>
+            <Field label="From">{box('from', value)}</Field>
+            <Field label="To">{box('to', value)}</Field>
+          </>
+        )}
+      </>
+    );
+  }
   return (
     <Field label="Active hours">
       <InputRow className="hours-row">
-        <select value={value ? 'window' : 'all'} onChange={(e) => onChange(e.target.value === 'window' ? { from: 9, to: 18 } : undefined)}>
-          <option value="all">All day</option>
-          <option value="window">Between…</option>
-        </select>
+        {mode}
         {value && (
           <>
-            <NumberInput
-              min={0}
-              max={23}
-              suffix="h"
-              label="From hour"
-              value={value.from}
-              onChange={(v) => hour(v) && onChange({ ...value, from: v })}
-              onBlur={() => value.from > value.to && onChange({ from: value.from, to: value.from })}
-            />
+            {box('from', value, 'From hour')}
             <span className="muted">to</span>
-            <NumberInput
-              min={0}
-              max={23}
-              suffix="h"
-              label="To hour"
-              value={value.to}
-              onChange={(v) => hour(v) && onChange({ ...value, to: v })}
-              onBlur={() => value.from > value.to && onChange({ from: value.to, to: value.to })}
-            />
+            {box('to', value, 'To hour')}
           </>
         )}
       </InputRow>
@@ -489,258 +501,264 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
       <div className="editor-body">
         <div className={`editor-panel${tab !== 'general' ? ' hidden' : ''}`}>
           <div className="form">
-            <Field label="Task name">
-              <input autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} />
-            </Field>
-            <div className="row">
-              <Field label="Status">
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as 'enabled' | 'disabled' | 'completed')}
-                >
-                  <option value="enabled">Enabled</option>
-                  <option value="disabled">Disabled</option>
-                  <option value="completed" disabled={!completion.allowed && !draft.completedAt}>
-                    Completed
-                  </option>
-                </select>
+            <FormGroup>
+              <Field label="Task name">
+                <TextInput autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} />
               </Field>
-            </div>
-            <CheckboxField label="Allow this task to be marked completed" checked={completion.allowed ?? false} onChange={(on) => setCompletion('allowed', on)} />
-            <Field label="Project">
-              <select value={project?.id ?? ''} onChange={(e) => pickProject(e.target.value)}>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-                <option value="">New project</option>
-              </select>
-            </Field>
-            {/* A project's folder is the project's: shown, not edited. */}
-            <AgentFields
-              draft={agentDraft}
-              environments={envChoices}
-              host={host}
-              harnesses="any"
-              fields={['cwd']}
-              lockCwd={!!project}
-              onChange={(p) => p.cwd !== undefined && set('cwd', p.cwd)}
-            />
-            {project && (
-              <CheckboxField
-                label="Override the project's environment"
-                checked={!!draft.overrideEnvironment}
-                onChange={(on) => setOverride('overrideEnvironment', on)}
-              />
-            )}
-            {/* Under a project the environment is the project's unless overridden: it hangs under the checkbox. */}
-            <StepFields when={!!project} on={!!draft.overrideEnvironment}>
+              <FieldRow>
+                <Field label="Status">
+                  <SelectInput
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as 'enabled' | 'disabled' | 'completed')}
+                  >
+                    <option value="enabled">Enabled</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="completed" disabled={!completion.allowed && !draft.completedAt}>
+                      Completed
+                    </option>
+                  </SelectInput>
+                </Field>
+              </FieldRow>
+              <CheckboxField label="Allow this task to be marked completed" checked={completion.allowed ?? false} onChange={(on) => setCompletion('allowed', on)} />
+            </FormGroup>
+            <FormGroup>
+              <Field label="Project">
+                <SelectInput value={project?.id ?? ''} onChange={(e) => pickProject(e.target.value)}>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                  <option value="">New project</option>
+                </SelectInput>
+              </Field>
+              {/* A project's folder is the project's: shown, not edited. */}
               <AgentFields
                 draft={agentDraft}
                 environments={envChoices}
                 host={host}
                 harnesses="any"
-                fields={['environment']}
-                pick={{ environment: setEnvironment }}
-                onChange={() => undefined}
+                fields={['cwd']}
+                lockCwd={!!project}
+                onChange={(p) => p.cwd !== undefined && set('cwd', p.cwd)}
               />
-            </StepFields>
+              {project && (
+                <CheckboxField
+                  label="Override the project's environment"
+                  checked={!!draft.overrideEnvironment}
+                  onChange={(on) => setOverride('overrideEnvironment', on)}
+                />
+              )}
+              {/* Under a project the environment is the project's unless overridden: it hangs under the checkbox. */}
+              <StepFields when={!!project} on={!!draft.overrideEnvironment}>
+                <AgentFields
+                  draft={agentDraft}
+                  environments={envChoices}
+                  host={host}
+                  harnesses="any"
+                  fields={['environment']}
+                  pick={{ environment: setEnvironment }}
+                  onChange={() => undefined}
+                />
+              </StepFields>
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'trigger' ? ' hidden' : ''}`}>
           <div className="form">
-            <Field label="Run this task">
-              <select value={trigMode} onChange={(e) => setTriggerMode(e.target.value as 'manual' | 'schedule' | 'watcher')}>
-                <option value="manual">Manually only</option>
-                <option value="schedule">On a schedule</option>
-                <option value="watcher">On events</option>
-              </select>
-            </Field>
-            {trigMode === 'schedule' && (
-              <>
-            <Field label="Frequency">
-              <select
-                value={schedForm.mode === 'minutes' || schedForm.mode === 'hours' ? 'every' : schedForm.mode}
-                onChange={(e) => setScheduleMode(e.target.value as 'every' | CronForm['mode'])}
-              >
-                <option value="every">Every…</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="custom">Custom</option>
-              </select>
-            </Field>
-              {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
-                <Field label="Every">
-                  <InputRow>
-                    <NumberInput
-                      min={0}
-                      max={23}
-                      suffix="h"
-                      value={everyH}
-                      onChange={(h) => {
-                        if (!Number.isInteger(h) || h < 0 || h > 23) return;
-                        if (h === 0) {
-                          setSchedule({ mode: 'minutes', step: Math.max(1, everyM), from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                        } else {
-                          setSchedule({ mode: 'hours', step: h, minute: everyM, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                        }
-                      }}
-                    />
-                    <NumberInput
-                      min={everyH > 0 ? 0 : 1}
-                      max={59}
-                      label="Minutes"
-                      suffix="min"
-                      value={everyM}
-                      onChange={(m) => {
-                        if (!Number.isInteger(m) || m < 0 || m > 59) return;
-                        if (everyH === 0) {
-                          if (m >= 1) setSchedule({ mode: 'minutes', step: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                        } else {
-                          setSchedule({ mode: 'hours', step: everyH, minute: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
-                        }
-                      }}
-                    />
-                  </InputRow>
-                </Field>
-              )}
-              {schedForm.mode === 'monthly' && (
-                <Field label="Days of month">
-                  <ToggleButtons wrap options={MONTH_DAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
-                </Field>
-              )}
-              {(schedForm.mode === 'weekly' || schedForm.mode === 'monthly') && (
-                <Field label="At">
-                  <input
-                    type="time"
-                    value={`${String(schedForm.hour).padStart(2, '0')}:${String(schedForm.minute).padStart(2, '0')}`}
-                    onChange={(e) => {
-                      const m = /^(\d{2}):(\d{2})$/.exec(e.target.value);
-                      if (m) setSchedule({ ...schedForm, hour: Number(m[1]), minute: Number(m[2]) });
-                    }}
-                  />
-                </Field>
-              )}
-            {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
-              <>
-                <ActiveHours
-                  value={schedForm.from !== undefined && schedForm.to !== undefined ? { from: schedForm.from, to: schedForm.to } : undefined}
-                  onChange={(h) => setSchedule({ ...schedForm, from: h?.from, to: h?.to })}
-                />
-                <Field label="On days">
-                  <ToggleButtons options={WEEKDAYS} value={constraintDays} onChange={(days) => setSchedule({ ...schedForm, days: days.length === 7 ? undefined : days })} />
-                </Field>
-              </>
-            )}
-            {schedForm.mode === 'daily' && (
-              <Field label="At">
-                <div className="time-chip-row">
-                  {schedForm.times.map((t, i) => (
-                    <span key={i} className="time-chip">
-                      <input
-                        type="time"
-                        value={`${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`}
-                        onChange={(e) => {
-                          const m = /^(\d{2}):(\d{2})$/.exec(e.target.value);
-                          if (!m) return;
-                          const times = schedForm.times.map((x, j) =>
-                            j === i ? { hour: Number(m[1]), minute: Number(m[2]) } : x,
-                          );
-                          setDailyTimes(times);
+            <FormGroup>
+              <Field label="Run this task">
+                <SelectInput value={trigMode} onChange={(e) => setTriggerMode(e.target.value as 'manual' | 'schedule' | 'watcher')}>
+                  <option value="manual">Manually only</option>
+                  <option value="schedule">On a schedule</option>
+                  <option value="watcher">On events</option>
+                </SelectInput>
+              </Field>
+              {trigMode === 'schedule' && (
+                <>
+              <Field label="Frequency">
+                <SelectInput
+                  value={schedForm.mode === 'minutes' || schedForm.mode === 'hours' ? 'every' : schedForm.mode}
+                  onChange={(e) => setScheduleMode(e.target.value as 'every' | CronForm['mode'])}
+                >
+                  <option value="every">Every…</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="custom">Custom</option>
+                </SelectInput>
+              </Field>
+                {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
+                  <Field label="Every">
+                    <InputRow>
+                      <NumberInput
+                        min={0}
+                        max={23}
+                        suffix="h"
+                        value={everyH}
+                        onChange={(h) => {
+                          if (!Number.isInteger(h) || h < 0 || h > 23) return;
+                          if (h === 0) {
+                            setSchedule({ mode: 'minutes', step: Math.max(1, everyM), from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                          } else {
+                            setSchedule({ mode: 'hours', step: h, minute: everyM, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                          }
                         }}
                       />
-                      {schedForm.times.length > 1 && (
-                        <button
-                          className="btn small"
-                          title="Remove this time"
-                          onClick={() => setDailyTimes(schedForm.times.filter((_, j) => j !== i))}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                  <button className="btn small" onClick={addDailyTime}>
-                    Add time
-                  </button>
-                </div>
-                {timesWarn && (
-                  <p className="help warn">Times must share the hour or the minute to fit one cron expression.</p>
+                      <NumberInput
+                        min={everyH > 0 ? 0 : 1}
+                        max={59}
+                        label="Minutes"
+                        suffix="min"
+                        value={everyM}
+                        onChange={(m) => {
+                          if (!Number.isInteger(m) || m < 0 || m > 59) return;
+                          if (everyH === 0) {
+                            if (m >= 1) setSchedule({ mode: 'minutes', step: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                          } else {
+                            setSchedule({ mode: 'hours', step: everyH, minute: m, from: schedForm.from, to: schedForm.to, days: schedForm.days });
+                          }
+                        }}
+                      />
+                    </InputRow>
+                  </Field>
                 )}
-              </Field>
-            )}
-            {schedForm.mode === 'weekly' && (
-              <Field label="On days">
-                <ToggleButtons options={WEEKDAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
-              </Field>
-            )}
-            {schedForm.mode === 'custom' && (
-              <Field label="Cron expression">
-                <input
-                  className="mono"
-                  value={cronExpr}
-                  onChange={(e) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: e.target.value } })}
-                  onBlur={(e) => setBlurredCron(e.target.value)}
-                />
-                {cronError && cronExpr === blurredCron && (
-                  <p className="help warn">Incorrect cron expression: {cronError}</p>
+                {schedForm.mode === 'monthly' && (
+                  <Field label="Days of month">
+                    <ToggleButtons wrap options={MONTH_DAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
+                  </Field>
                 )}
-              </Field>
-            )}
-            <Field label="Time zone">
-              <TimezoneSelect
-                value={trig.schedule?.timezone}
-                onChange={(tz) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: tz } })}
-              />
-            </Field>
-              </>
-            )}
-            {trigMode === 'watcher' && (() => {
-              const watcher = trig.watcher;
-              const setWatcher = (patch: Partial<NonNullable<NonNullable<Draft['trigger']>['watcher']>>) =>
-                set('trigger', { ...trig, watcher: { command: '', debounceSec: 5, ...watcher, ...patch } });
-              const watcherDays = watcher?.days ?? ALL_DAYS;
-              const hours = watcher?.activeHours;
-              return (
-              <>
-                <div className="row">
-                  <Field label="Watcher command">
-                    <input
-                      className="mono"
-                      value={watcher?.command ?? ''}
-                      onChange={(e) => setWatcher({ command: e.target.value })}
+                {(schedForm.mode === 'weekly' || schedForm.mode === 'monthly') && (
+                  <Field label="At">
+                    <TextInput
+                      type="time"
+                      value={`${String(schedForm.hour).padStart(2, '0')}:${String(schedForm.minute).padStart(2, '0')}`}
+                      onChange={(e) => {
+                        const m = /^(\d{2}):(\d{2})$/.exec(e.target.value);
+                        if (m) setSchedule({ ...schedForm, hour: Number(m[1]), minute: Number(m[2]) });
+                      }}
                     />
                   </Field>
-                  <NumberField
-                    label="Batch events for"
-                    suffix="s"
-                    min={0}
-                    value={watcher?.debounceSec ?? 5}
-                    onChange={(n) => setWatcher({ debounceSec: n })}
-                  />
-                </div>
-                <CheckboxField
-                  label="Run once when watching starts, to catch up on missed events"
-                  checked={watcher?.runOnStart ?? false}
-                  onChange={(on) => setWatcher({ runOnStart: on })}
-                />
-                <ActiveHours value={hours} onChange={(h) => setWatcher({ activeHours: h })} />
-                <Field label="On days">
-                  <ToggleButtons options={WEEKDAYS} value={watcherDays} onChange={(days) => setWatcher({ days: days.length === 7 ? undefined : days })} />
-                </Field>
-                {(hours || watcher?.days) && (
-                  <Field label="Time zone">
-                    <TimezoneSelect value={watcher?.timezone} onChange={(tz) => setWatcher({ timezone: tz })} />
-                  </Field>
                 )}
-              </>
-              );
-            })()}
+              {(schedForm.mode === 'minutes' || schedForm.mode === 'hours') && (
+                <>
+                  <ActiveHours
+                    value={schedForm.from !== undefined && schedForm.to !== undefined ? { from: schedForm.from, to: schedForm.to } : undefined}
+                    onChange={(h) => setSchedule({ ...schedForm, from: h?.from, to: h?.to })}
+                  />
+                  <Field label="On days">
+                    <ToggleButtons options={WEEKDAYS} value={constraintDays} onChange={(days) => setSchedule({ ...schedForm, days: days.length === 7 ? undefined : days })} />
+                  </Field>
+                </>
+              )}
+              {schedForm.mode === 'daily' && (
+                <Field label="At">
+                  <div className="time-chip-row">
+                    {schedForm.times.map((t, i) => (
+                      <span key={i} className="time-chip">
+                        <TextInput
+                          type="time"
+                          value={`${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`}
+                          onChange={(e) => {
+                            const m = /^(\d{2}):(\d{2})$/.exec(e.target.value);
+                            if (!m) return;
+                            const times = schedForm.times.map((x, j) =>
+                              j === i ? { hour: Number(m[1]), minute: Number(m[2]) } : x,
+                            );
+                            setDailyTimes(times);
+                          }}
+                        />
+                        {schedForm.times.length > 1 && (
+                          <button
+                            className="btn small"
+                            title="Remove this time"
+                            onClick={() => setDailyTimes(schedForm.times.filter((_, j) => j !== i))}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                    <button className="btn small" onClick={addDailyTime}>
+                      Add time
+                    </button>
+                  </div>
+                  {timesWarn && (
+                    <p className="help warn">Times must share the hour or the minute to fit one cron expression.</p>
+                  )}
+                </Field>
+              )}
+              {schedForm.mode === 'weekly' && (
+                <Field label="On days">
+                  <ToggleButtons options={WEEKDAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
+                </Field>
+              )}
+              {schedForm.mode === 'custom' && (
+                <Field label="Cron expression">
+                  <TextInput
+                    code
+                    value={cronExpr}
+                    onChange={(e) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: e.target.value } })}
+                    onBlur={(e) => setBlurredCron(e.target.value)}
+                  />
+                  {cronError && cronExpr === blurredCron && (
+                    <p className="help warn">Incorrect cron expression: {cronError}</p>
+                  )}
+                </Field>
+              )}
+              <Field label="Time zone">
+                <TimezoneSelect
+                  value={trig.schedule?.timezone}
+                  onChange={(tz) => set('trigger', { ...trig, schedule: { ...trig.schedule, cron: cronExpr, timezone: tz } })}
+                />
+              </Field>
+                </>
+              )}
+              {trigMode === 'watcher' && (() => {
+                const watcher = trig.watcher;
+                const setWatcher = (patch: Partial<NonNullable<NonNullable<Draft['trigger']>['watcher']>>) =>
+                  set('trigger', { ...trig, watcher: { command: '', debounceSec: 5, ...watcher, ...patch } });
+                const watcherDays = watcher?.days ?? ALL_DAYS;
+                const hours = watcher?.activeHours;
+                return (
+                <>
+                  <FieldRow>
+                    <Field label="Watcher command">
+                      <TextInput
+                        code
+                        value={watcher?.command ?? ''}
+                        onChange={(e) => setWatcher({ command: e.target.value })}
+                      />
+                    </Field>
+                    <NumberField
+                      label="Batch events for"
+                      suffix="s"
+                      min={0}
+                      value={watcher?.debounceSec ?? 5}
+                      onChange={(n) => setWatcher({ debounceSec: n })}
+                    />
+                  </FieldRow>
+                  <CheckboxField
+                    label="Run once when watching starts, to catch up on missed events"
+                    checked={watcher?.runOnStart ?? false}
+                    onChange={(on) => setWatcher({ runOnStart: on })}
+                  />
+                  <ActiveHours value={hours} onChange={(h) => setWatcher({ activeHours: h })} />
+                  <Field label="On days">
+                    <ToggleButtons options={WEEKDAYS} value={watcherDays} onChange={(days) => setWatcher({ days: days.length === 7 ? undefined : days })} />
+                  </Field>
+                  {(hours || watcher?.days) && (
+                    <Field label="Time zone">
+                      <TimezoneSelect value={watcher?.timezone} onChange={(tz) => setWatcher({ timezone: tz })} />
+                    </Field>
+                  )}
+                </>
+                );
+              })()}
+            </FormGroup>
             {trigMode !== 'manual' && (
-              <>
+              <FormGroup>
                 <CheckboxField
                   label="Stop on a date"
                   checked={stopOnEnabled}
@@ -748,144 +766,152 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 />
                 <StepFields on={stopOnEnabled}>
                   <Field label="Stop running on">
-                    <input
+                    <TextInput
                       type="datetime-local"
                       value={toLocalInput(stopOn?.at)}
                       onChange={(e) => setStopOn({ enabled: true, at: fromLocalInput(e.target.value) ?? stopOn!.at })}
                     />
                   </Field>
                 </StepFields>
-              </>
+              </FormGroup>
             )}
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'check' ? ' hidden' : ''}`}>
           <div className="form">
-            <CheckboxField
-              label="Run a command to check whether the agent should run"
-              checked={checkOn}
-              onChange={(on) => set('check', { ...(draft.check ?? { command: '', timeoutSec: 60 }), enabled: on })}
-            />
-            <StepFields on={checkOn}>
-              <Field label="Command">
-                <input className="mono" value={draft.check?.command ?? ''} onChange={(e) => setCheck('command', e.target.value)} />
-              </Field>
-              <NumberField label="Timeout" suffix="s" min={1} value={draft.check?.timeoutSec ?? 60} onChange={(n) => setCheck('timeoutSec', n)} />
-            </StepFields>
+            <FormGroup>
+              <CheckboxField
+                label="Run a command to check whether the agent should run"
+                checked={checkOn}
+                onChange={(on) => set('check', { ...(draft.check ?? { command: '', timeoutSec: 60 }), enabled: on })}
+              />
+              <StepFields on={checkOn}>
+                <Field label="Command">
+                  <TextInput code value={draft.check?.command ?? ''} onChange={(e) => setCheck('command', e.target.value)} />
+                </Field>
+                <NumberField label="Timeout" suffix="s" min={1} value={draft.check?.timeoutSec ?? 60} onChange={(n) => setCheck('timeoutSec', n)} />
+              </StepFields>
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'classifier' ? ' hidden' : ''}`}>
           <div className="form">
-            <CheckboxField
-              label="Ask a model whether the agent should run"
-              checked={clsOn}
-              onChange={(on) => set('classifier', { ...(draft.classifier ?? EXAMPLE_TASK.classifier!), enabled: on })}
-            />
-            {(() => {
-              const cls = draft.classifier;
-              // No pin: the harness the engine falls back to (resolveClassifierHarness), the
-              // agent's own unless it's custom, then the first non-custom one.
-              const agentHarness = harnesses.find((h) => h.id === draft.agent.harnessId) ?? harnesses[0];
-              const clsHarness =
-                harnesses.find((h) => h.id === cls?.harnessId) ??
-                (agentHarness && agentHarness.kind !== 'custom' ? agentHarness : harnesses.find((h) => h.kind !== 'custom')) ??
-                harnesses[0];
-              /** Model ids don't carry across harnesses: the model stays when the new harness has it, else its first preset. */
-              const pickClsHarness = (id: string) => {
-                const h = harnesses.find((x) => x.id === id);
-                const presets = h ? harnessModels(h) : [];
-                const cur = draft.classifier?.model;
-                const model = cur && presets.some((m) => m.id === cur) ? cur : (presets[0]?.id ?? cur ?? 'haiku');
-                setCustomClsModel(false);
-                set('classifier', { ...draft.classifier!, harnessId: id, model });
-              };
-              return (
-              <StepFields on={clsOn}>
-                <AgentFields
-                  // An unset model runs the schema's haiku; with Custom… picked, the Model id box shows it empty.
-                  draft={{ environmentId: draft.environmentId ?? '', cwd: draft.cwd, harnessId: cls?.harnessId, model: cls?.model ?? (customClsModel ? undefined : 'haiku'), mode: cls?.mode ?? 'headless' }}
-                  environments={environments}
-                  host={host}
-                  harnesses="any"
-                  fields={['harness', 'model', 'mode']}
-                  fallbackHarness={clsHarness}
-                  modelRequired
-                  defaultMode="headless"
-                  customModel={{ pinned: customClsModel, onPin: setCustomClsModel }}
-                  pick={{ harness: pickClsHarness }}
-                  // The classifier has no effort or permission mode, and its schema takes no other keys.
-                  onChange={(p) =>
-                    set('classifier', { ...draft.classifier!, ...('model' in p ? { model: p.model } : {}), ...(p.mode ? { mode: p.mode } : {}) })
-                  }
-                />
-                <div className="row">
-                  <NumberField
-                    label="Timeout"
-                    suffix="s"
-                    min={1}
-                    value={cls?.timeoutSec ?? 180}
-                    onChange={(n) => set('classifier', { ...draft.classifier!, timeoutSec: n })}
+            <FormGroup>
+              <CheckboxField
+                label="Ask a model whether the agent should run"
+                checked={clsOn}
+                onChange={(on) => set('classifier', { ...(draft.classifier ?? EXAMPLE_TASK.classifier!), enabled: on })}
+              />
+              {(() => {
+                const cls = draft.classifier;
+                // No pin: the harness the engine falls back to (resolveClassifierHarness), the
+                // agent's own unless it's custom, then the first non-custom one.
+                const agentHarness = harnesses.find((h) => h.id === draft.agent.harnessId) ?? harnesses[0];
+                const clsHarness =
+                  harnesses.find((h) => h.id === cls?.harnessId) ??
+                  (agentHarness && agentHarness.kind !== 'custom' ? agentHarness : harnesses.find((h) => h.kind !== 'custom')) ??
+                  harnesses[0];
+                /** Model ids don't carry across harnesses: the model stays when the new harness has it, else its first preset. */
+                const pickClsHarness = (id: string) => {
+                  const h = harnesses.find((x) => x.id === id);
+                  const presets = h ? harnessModels(h) : [];
+                  const cur = draft.classifier?.model;
+                  const model = cur && presets.some((m) => m.id === cur) ? cur : (presets[0]?.id ?? cur ?? 'haiku');
+                  setCustomClsModel(false);
+                  set('classifier', { ...draft.classifier!, harnessId: id, model });
+                };
+                return (
+                <StepFields on={clsOn}>
+                  <AgentFields
+                    // An unset model runs the schema's haiku; with Custom… picked, the Model id box shows it empty.
+                    draft={{ environmentId: draft.environmentId ?? '', cwd: draft.cwd, harnessId: cls?.harnessId, model: cls?.model ?? (customClsModel ? undefined : 'haiku'), mode: cls?.mode ?? 'headless' }}
+                    environments={environments}
+                    host={host}
+                    harnesses="any"
+                    fields={['harness', 'model', 'mode']}
+                    fallbackHarness={clsHarness}
+                    modelRequired
+                    defaultMode="headless"
+                    customModel={{ pinned: customClsModel, onPin: setCustomClsModel }}
+                    pick={{ harness: pickClsHarness }}
+                    // The classifier has no effort or permission mode, and its schema takes no other keys.
+                    onChange={(p) =>
+                      set('classifier', { ...draft.classifier!, ...('model' in p ? { model: p.model } : {}), ...(p.mode ? { mode: p.mode } : {}) })
+                    }
                   />
-                </div>
-                <Field
-                  label="Classifier prompt"
-                  help={
-                    <>
-                      Ask a yes/no question about the check output. <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code>{' '}
-                      insert it, <code>{'{{events}}'}</code> the watcher events; if you use none they are appended automatically.{' '}
-                      <code>{'{{file:path}}'}</code> inserts that file's contents.
-                    </>
-                  }
-                >
-                  <textarea rows={5} value={cls?.prompt ?? ''} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
-                </Field>
-              </StepFields>
-              );
-            })()}
+                  <FieldRow>
+                    <NumberField
+                      label="Timeout"
+                      suffix="s"
+                      min={1}
+                      value={cls?.timeoutSec ?? 180}
+                      onChange={(n) => set('classifier', { ...draft.classifier!, timeoutSec: n })}
+                    />
+                  </FieldRow>
+                  <Field
+                    label="Classifier prompt"
+                    help={
+                      <>
+                        Ask a yes/no question about the check output. <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code>{' '}
+                        insert it, <code>{'{{events}}'}</code> the watcher events; if you use none they are appended automatically.{' '}
+                        <code>{'{{file:path}}'}</code> inserts that file's contents.
+                      </>
+                    }
+                  >
+                    <TextArea rows={5} value={cls?.prompt ?? ''} onChange={(e) => set('classifier', { ...draft.classifier!, prompt: e.target.value })} />
+                  </Field>
+                </StepFields>
+                );
+              })()}
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'agent' ? ' hidden' : ''}`}>
           <div className="form">
-            <Field
-              label="Agent prompt"
-              help={
-                <>
-                  <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output,{' '}
-                  <code>{'{{events}}'}</code> the watcher events (appended automatically if you use none).{' '}
-                  <code>{'{{file:path}}'}</code> inserts that file's contents.
-                </>
-              }
-            >
-              <textarea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
-            </Field>
-            {project && (
-              <CheckboxField label="Override the project's agent settings" checked={!!draft.overrideAgent} onChange={(on) => setOverride('overrideAgent', on)} />
-            )}
-            {/* The same order and rows as the Project editor; under a project they hang under the override checkbox. */}
-            <StepFields when={!!project} on={!!draft.overrideAgent}>
-              <AgentFields
-                draft={agentDraft}
-                environments={environments}
-                host={host}
-                harnesses="any"
-                fields={['harness', 'model', 'effort', 'mode', 'permission']}
-                customModel={{ pinned: customModel, onPin: setCustomModel }}
-                pick={{ harness: setHarness, model: pickModel }}
-                onChange={(p) => setDraft((d) => ({ ...d, agent: { ...d.agent, ...p } }))}
-              />
-            </StepFields>
+            <FormGroup>
+              <Field
+                label="Agent prompt"
+                help={
+                  <>
+                    <code>{'{{summary}}'}</code> and <code>{'{{context}}'}</code> insert the check output,{' '}
+                    <code>{'{{events}}'}</code> the watcher events (appended automatically if you use none).{' '}
+                    <code>{'{{file:path}}'}</code> inserts that file's contents.
+                  </>
+                }
+              >
+                <TextArea rows={9} value={draft.agent.prompt} onChange={(e) => setAgent('prompt', e.target.value)} />
+              </Field>
+            </FormGroup>
+            <FormGroup>
+              {project && (
+                <CheckboxField label="Override the project's agent settings" checked={!!draft.overrideAgent} onChange={(on) => setOverride('overrideAgent', on)} />
+              )}
+              {/* The same order and rows as the Project editor; under a project they hang under the override checkbox. */}
+              <StepFields when={!!project} on={!!draft.overrideAgent}>
+                <AgentFields
+                  draft={agentDraft}
+                  environments={environments}
+                  host={host}
+                  harnesses="any"
+                  fields={['harness', 'model', 'effort', 'mode', 'permission']}
+                  customModel={{ pinned: customModel, onPin: setCustomModel }}
+                  pick={{ harness: setHarness, model: pickModel }}
+                  onChange={(p) => setDraft((d) => ({ ...d, agent: { ...d.agent, ...p } }))}
+                />
+              </StepFields>
+            </FormGroup>
             {(isClaude || isCodex) && (
-              <>
+              <FormGroup>
                 <CheckboxField
                   label="Continue one conversation across runs"
                   checked={continueOn}
                   onChange={(on) => setAgent('session', on ? 'continue' : 'fresh')}
                 />
                 <StepFields on={continueOn}>
-                  <div className="row">
+                  <FieldRow>
                     <NumberField
                       label="Start a new conversation after"
                       suffix="runs"
@@ -893,86 +919,90 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                       value={draft.agent.sessionMaxRuns ?? 10}
                       onChange={(n) => setAgent('sessionMaxRuns', n)}
                     />
-                  </div>
+                  </FieldRow>
                 </StepFields>
-              </>
+              </FormGroup>
             )}
-            <div className="row">
-              <Field label="Command">
-                <input
-                  className="mono"
-                  value={draft.agent.command ?? ''}
-                  placeholder={harness?.command}
-                  onChange={(e) => setAgent('command', e.target.value || undefined)}
-                />
-              </Field>
-              <Field
-                label="Extra command-line arguments"
-                help={project?.extraArgs.length ? `After the project's: ${joinTokens(project.extraArgs)}` : undefined}
-              >
-                <input className="mono" value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
-              </Field>
-              <Field
-                label="Extra environment variables"
-                help={Object.keys(project?.env ?? {}).length ? `Added to the project's: ${envToLine(project!.env)}` : undefined}
-              >
-                <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
-              </Field>
-            </div>
+            <FormGroup>
+              <FieldRow>
+                <Field label="Command">
+                  <TextInput
+                    code
+                    value={draft.agent.command ?? ''}
+                    placeholder={harness?.command}
+                    onChange={(e) => setAgent('command', e.target.value || undefined)}
+                  />
+                </Field>
+                <Field
+                  label="Extra command-line arguments"
+                  help={project?.extraArgs.length ? `After the project's: ${joinTokens(project.extraArgs)}` : undefined}
+                >
+                  <TextInput code value={extraArgsText} onChange={(e) => setExtraArgsText(e.target.value)} />
+                </Field>
+                <Field
+                  label="Extra environment variables"
+                  help={Object.keys(project?.env ?? {}).length ? `Added to the project's: ${envToLine(project!.env)}` : undefined}
+                >
+                  <TextInput code value={envText} onChange={(e) => setEnvText(e.target.value)} />
+                </Field>
+              </FieldRow>
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'settings' ? ' hidden' : ''}`}>
           <div className="form">
-            <div className="row">
-              <NumberField
-                label="Max runtime"
-                suffix="min"
-                min={1}
-                value={draft.agent.maxRuntimeMin ?? 120}
-                onChange={(n) => setAgent('maxRuntimeMin', n)}
-              />
-              <NumberField
-                label="Auto-pause after"
-                suffix="errors"
-                min={1}
-                value={draft.backoff?.maxConsecutiveErrors ?? 5}
-                onChange={(n) => set('backoff', { maxConsecutiveErrors: n })}
-              />
-            </div>
-            <div className="row">
-              <NumberField
-                label="Idle grace"
-                suffix="min"
-                min={1}
-                value={draft.agent.idleGraceMin ?? 3}
-                onChange={(n) => setAgent('idleGraceMin', n)}
-              />
-              <Field label="When idle too long">
-                <select value={draft.agent.onIdleTimeout ?? 'finish'} onChange={(e) => setAgent('onIdleTimeout', e.target.value as 'finish' | 'hold')}>
-                  <option value="finish">End the run</option>
-                  <option value="hold">Hold and wait for me</option>
-                </select>
-              </Field>
-            </div>
-            <div className="row">
-              <NumberField
-                label="Simultaneous runs"
-                suffix="runs"
-                min={1}
-                value={draft.maxConcurrentRuns ?? 1}
-                onChange={(n) => set('maxConcurrentRuns', n)}
-              />
-            </div>
+            <FormGroup>
+              <FieldRow>
+                <NumberField
+                  label="Max runtime"
+                  suffix="min"
+                  min={1}
+                  value={draft.agent.maxRuntimeMin ?? 120}
+                  onChange={(n) => setAgent('maxRuntimeMin', n)}
+                />
+                <NumberField
+                  label="Auto-pause after"
+                  suffix="errors"
+                  min={1}
+                  value={draft.backoff?.maxConsecutiveErrors ?? 5}
+                  onChange={(n) => set('backoff', { maxConsecutiveErrors: n })}
+                />
+              </FieldRow>
+              <FieldRow>
+                <NumberField
+                  label="Idle grace"
+                  suffix="min"
+                  min={1}
+                  value={draft.agent.idleGraceMin ?? 3}
+                  onChange={(n) => setAgent('idleGraceMin', n)}
+                />
+                <Field label="When idle too long">
+                  <SelectInput value={draft.agent.onIdleTimeout ?? 'finish'} onChange={(e) => setAgent('onIdleTimeout', e.target.value as 'finish' | 'hold')}>
+                    <option value="finish">End the run</option>
+                    <option value="hold">Hold and wait for me</option>
+                  </SelectInput>
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <NumberField
+                  label="Simultaneous runs"
+                  suffix="runs"
+                  min={1}
+                  value={draft.maxConcurrentRuns ?? 1}
+                  onChange={(n) => set('maxConcurrentRuns', n)}
+                />
+              </FieldRow>
+            </FormGroup>
             {(isClaude || isCodex) && (
-              <>
+              <FormGroup>
                 <CheckboxField
                   label="Restart the agent when its context passes a limit"
                   checked={contextOn}
                   onChange={(on) => setAgent('contextLimitK', on ? DEFAULT_CONTEXT_LIMIT_K : undefined)}
                 />
                 <StepFields on={contextOn}>
-                  <div className="row">
+                  <FieldRow>
                     <NumberField
                       label="Context limit"
                       suffix="k tokens"
@@ -987,66 +1017,74 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                       value={draft.agent.maxRestarts ?? 3}
                       onChange={(n) => setAgent('maxRestarts', n)}
                     />
-                  </div>
+                  </FieldRow>
                 </StepFields>
-              </>
+              </FormGroup>
             )}
-            <CheckboxField label="Allow the agent to ask questions" checked={ask.allowed} onChange={(on) => setAgent('ask', { ...ask, allowed: on })} />
-            <StepFields on={ask.allowed}>
-              <div className="row">
-                <NumberField
-                  label="Wait for an answer"
-                  suffix="min"
-                  min={1}
-                  value={ask.waitMin}
-                  onChange={(n) => setAgent('ask', { ...ask, waitMin: n })}
-                />
-              </div>
-            </StepFields>
+            <FormGroup>
+              <CheckboxField label="Allow the agent to ask questions" checked={ask.allowed} onChange={(on) => setAgent('ask', { ...ask, allowed: on })} />
+              <StepFields on={ask.allowed}>
+                <FieldRow>
+                  <NumberField
+                    label="Wait for an answer"
+                    suffix="min"
+                    min={1}
+                    value={ask.waitMin}
+                    onChange={(n) => setAgent('ask', { ...ask, waitMin: n })}
+                  />
+                </FieldRow>
+              </StepFields>
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'notifications' ? ' hidden' : ''}`}>
           <div className="form">
-            <CheckboxField label="Notify when a run starts" checked={notif.runStart ?? false} onChange={(on) => setNotif('runStart', on)} />
-            <CheckboxField label="Notify when the agent starts" checked={notif.agentStart ?? false} onChange={(on) => setNotif('agentStart', on)} />
-            <CheckboxField
-              label="Notify when the task ends"
-              checked={endOn}
-              onChange={(on) => {
-                if (!on) setRememberedEnd(endLevel);
-                setNotif('end', on ? endLevel : 'off');
-              }}
-            />
-            <StepFields on={endOn}>
-              <RadioField
+            <FormGroup>
+              <CheckboxField label="Notify when a run starts" checked={notif.runStart ?? false} onChange={(on) => setNotif('runStart', on)} />
+              <CheckboxField label="Notify when the agent starts" checked={notif.agentStart ?? false} onChange={(on) => setNotif('agentStart', on)} />
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField
                 label="Notify when the task ends"
-                hideLabel
-                name="notif-end"
-                value={endLevel}
-                options={[
-                  ['error', 'With an error'],
-                  ['warning', 'With an error or warning'],
-                  ['end', 'With any result except no action'],
-                  ['all', 'With any result'],
-                ]}
-                onChange={(value) => {
-                  setRememberedEnd(value);
-                  setNotif('end', value);
+                checked={endOn}
+                onChange={(on) => {
+                  if (!on) setRememberedEnd(endLevel);
+                  setNotif('end', on ? endLevel : 'off');
                 }}
               />
-              <CheckboxField label="Include network errors" checked={notif.networkErrors ?? false} onChange={(on) => setNotif('networkErrors', on)} />
-              <CheckboxField label="Include environment errors" checked={notif.environmentErrors ?? false} onChange={(on) => setNotif('environmentErrors', on)} />
-            </StepFields>
-            <CheckboxField label="Notify when the agent holds and waits for input" checked={notif.held ?? false} onChange={(on) => setNotif('held', on)} />
-            <CheckboxField label="Notify when the task auto-pauses" checked={notif.autoPaused ?? false} onChange={(on) => setNotif('autoPaused', on)} />
-            <CheckboxField label="Notify when the task completes" checked={notif.completed ?? false} onChange={(on) => setNotif('completed', on)} />
-            <CheckboxField label="Notify when the usage limit is reached" checked={notif.usageLimit ?? false} onChange={(on) => setNotif('usageLimit', on)} />
+              <StepFields on={endOn}>
+                <RadioField
+                  label="Notify when the task ends"
+                  hideLabel
+                  name="notif-end"
+                  value={endLevel}
+                  options={[
+                    ['error', 'With an error'],
+                    ['warning', 'With an error or warning'],
+                    ['end', 'With any result except no action'],
+                    ['all', 'With any result'],
+                  ]}
+                  onChange={(value) => {
+                    setRememberedEnd(value);
+                    setNotif('end', value);
+                  }}
+                />
+                <CheckboxField label="Include network errors" checked={notif.networkErrors ?? false} onChange={(on) => setNotif('networkErrors', on)} />
+                <CheckboxField label="Include environment errors" checked={notif.environmentErrors ?? false} onChange={(on) => setNotif('environmentErrors', on)} />
+              </StepFields>
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField label="Notify when the agent holds and waits for input" checked={notif.held ?? false} onChange={(on) => setNotif('held', on)} />
+              <CheckboxField label="Notify when the task auto-pauses" checked={notif.autoPaused ?? false} onChange={(on) => setNotif('autoPaused', on)} />
+              <CheckboxField label="Notify when the task completes" checked={notif.completed ?? false} onChange={(on) => setNotif('completed', on)} />
+              <CheckboxField label="Notify when the usage limit is reached" checked={notif.usageLimit ?? false} onChange={(on) => setNotif('usageLimit', on)} />
+            </FormGroup>
           </div>
         </div>
 
         <div className={`editor-panel${tab !== 'json' ? ' hidden' : ''}`}>
-          <textarea className="json-editor mono" aria-label="Task JSON" value={jsonText} onChange={(e) => setJsonText(e.target.value)} spellCheck={false} />
+          <TextArea code className="json-editor" aria-label="Task JSON" value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
         </div>
       </div>
       </TabBar>

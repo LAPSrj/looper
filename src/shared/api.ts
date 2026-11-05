@@ -21,6 +21,7 @@ import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryFolde
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
+import type { AgentSettingsData, AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest, McpTool } from './agent-config';
 import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
 import type { PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
@@ -211,10 +212,18 @@ export interface LooperApi {
     compact(id: string): Promise<void>;
     /** Take a message out of the queue (Cancel; Edit puts it back in the message box). */
     unqueue(id: string, messageId: string): Promise<QueuedMessage | null>;
+    /** To one of the agent's running subagents (Claude Code): it waits until the subagent's next tool call or hand-back. */
+    messageSubagent(id: string, agentId: string, text: string): void;
+    /** Take back what waits for the subagent: its text, or null when the subagent has already read it. */
+    unmessageSubagent(id: string, agentId: string): Promise<string | null>;
     /** The message box's unsent message changed: the chat keeps it for the next start of Looper. */
     setDraft(id: string, text: string, attachments: Attachment[]): void;
     /** Allow or deny the agent's permission request. */
     answer(id: string, requestId: string, allow: boolean): void;
+    /** Continue When Limit Resets, on or off. */
+    setAutoContinue(id: string, on: boolean): void;
+    /** Continue Anyway: the continue goes even though Settings → Chats' cache rule would stop it. */
+    continueAnyway(id: string): void;
     /** End the agent's turn (Esc), and the commands the user ran from the message box. */
     stop(id: string): Promise<void>;
     /**
@@ -275,10 +284,16 @@ export interface LooperApi {
     showGroupContextMenu(group: string): void;
     /** The Send to Sessions window. */
     openSend(): void;
+    /** Rename… on a chat or terminal session (F2 in the list). */
+    openRename(id: string): void;
+    /** The user's name for a chat or terminal session; '' goes back to its automatic name. Rejects with the reason. */
+    rename(id: string, name: string): Promise<void>;
     /** `id`: that session, on the main window's Chats tab or in the Chats window (a phone's Chats window); none: the Chats window, opened or brought forward. */
     openWindow(id?: string): void;
     /** New Chat's or New Terminal's drop-down list of projects, at (x, y) in the window. */
     showNewMenu(kind: 'chat' | 'terminal', x: number, y: number): void;
+    /** The History button's drop-down at (x, y): the recent conversations to continue in chat, then More… for the History window. */
+    showHistoryMenu(x: number, y: number): void;
     send(ids: string[], text: string): void;
     /** The end of a background command's output; null when it can't be read. */
     backgroundOutput(id: string, taskId: string): Promise<string | null>;
@@ -287,7 +302,7 @@ export interface LooperApi {
     /** A file the agent sent (a path in the session's own form): its size, and a thumbnail for an image; null when the file is gone. */
     sentFile(taskId: string, path: string): Promise<SentFileInfo | null>;
     /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
-    openFile(taskId: string, runId: string, path: string, image: boolean): Promise<void>;
+    openFile(taskId: string, runId: string, path: string, image: boolean, images?: string[]): Promise<void>;
   };
   /** The History window: the conversations on this computer, to read or continue. */
   history: {
@@ -379,6 +394,21 @@ export interface LooperApi {
     endSignIn(): Promise<void>;
     /** Set Up's Finish: save the sources and machine name and turn Remote Access on; with `pair`, Pair Device opens once it runs. */
     finishSetup(choice: { sources: RemoteAccessProviderId[]; hostname?: string }, pair: boolean): Promise<void>;
+  };
+  /** Tools → Agent Settings: Claude Code's and Codex's own settings files and MCP servers in an environment. */
+  agentSettings: {
+    open(): Promise<void>;
+    load(scope: AgentSettingsScope): Promise<AgentSettingsData>;
+    /** Write the changes; false when the user kept files that changed elsewhere since they were loaded. */
+    save(scope: AgentSettingsScope, save: AgentSettingsSave): Promise<boolean>;
+    /** Ask the server for its tools (a stdio server starts in the environment). Rejects with the reason. */
+    listTools(scope: AgentSettingsScope, server: McpServer): Promise<McpTool[]>;
+    /** The server window over this one: resolves the server as it was confirmed, or null when it closed without. */
+    editServer(request: McpServerRequest): Promise<McpServer | null>;
+    /** The server window: what it edits (null once it's gone). */
+    serverRequest(key: string): Promise<McpServerRequest | null>;
+    /** The server window's Create or Save. */
+    serverDone(key: string, server: McpServer): Promise<void>;
   };
   /** Continue-run window only: start a manual run that resumes the run's conversation with `guidance` as its whole prompt. */
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
@@ -478,11 +508,7 @@ export interface LooperApi {
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
   /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
-  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true }[]): void;
-  /** Context menu of a Recycle Bin item (Restore, Delete). */
-  showRecycleBinContextMenu(): void;
-  /** Context menu of a Version History item (View, Compare with Current, then Restore or, with Edit Task with Agent open on the task, Edit with Agent). */
-  showVersionContextMenu(info: { builder: boolean; /** The row is the current version: nothing to compare with or restore. */ current: boolean }): void;
+  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]): void;
   /** Context menu of the task list's empty space (New Folder…). */
   showTasksEmptyContextMenu(): void;
   /** Context menu of a task list's header: that pane's view options (no pane = the single list's), then New Folder…. */
@@ -572,14 +598,7 @@ export type UiEvent =
         | 'edit-with-agent'
         | 'version-history'
         /** Main window: clear the task selection, which shows the dashboard. */
-        | 'show-dashboard'
-        /** Recycle Bin window: act on the selected item. */
-        | 'bin-restore'
-        | 'bin-delete'
-        /** Version History window: act on the selected version. */
-        | 'version-view'
-        | 'version-compare'
-        | 'version-restore';
+        | 'show-dashboard';
     }
   /** A list window's row menu (showListContextMenu): the item picked. */
   | { type: 'list-menu'; token: string; id: string }

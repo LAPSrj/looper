@@ -197,7 +197,7 @@ export function Tabs({
             {...tabAria(ids, t, active, idBase)}
           >
             {t.icon}
-            {t.status && <StatusMark status={t.status} />}
+            {t.status && (t.mark ?? <StatusMark status={t.status} />)}
             <span className="tab-label">{t.label}</span>
           </button>
           {t.onClose && (

@@ -10,13 +10,24 @@ import { listContextMenu, parentIndex } from './list-nav';
 import { WaitedFor } from './Live';
 import { contextFraction } from './usage';
 
-/** Status and context in one icon: the ring fills with the context, the dot says what the agent is doing. */
+/**
+ * Status and context in one icon: the ring fills with the context, the dot says what the agent is doing.
+ * Out of its usage limit the dot is red; once the limit has reset it's green and larger, until the user looks.
+ */
 export function SessionIcon({ s }: { s: SessionSummary }) {
-  const state = s.waiting?.reason === 'error' ? 'failed' : s.waiting && s.waiting.reason !== 'turn' ? 'waiting' : s.waiting?.reason === 'turn' ? 'done' : s.status;
+  const state = s.limit?.restored
+    ? 'restored'
+    : s.limit || s.waiting?.reason === 'error'
+      ? 'failed'
+      : s.waiting && s.waiting.reason !== 'turn'
+        ? 'waiting'
+        : s.waiting?.reason === 'turn'
+          ? 'done'
+          : s.status;
   return (
     <svg className={`session-icon ${state}`} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
       <ContextRing frac={contextFraction(s.context)} />
-      <circle cx="9" cy="9" r="3" className="core" />
+      <circle cx="9" cy="9" r={state === 'restored' ? 4.5 : 3} className="core" />
     </svg>
   );
 }
@@ -205,6 +216,10 @@ export function SessionList({
       if (r.kind === 'session') void window.looper.sessions.close(r.s.id);
     },
     onMenu: (i) => rowMenu(rows[i]),
+    onRename: (i) => {
+      const r = rows[i];
+      if (r.kind === 'session' && r.s.kind !== 'run') window.looper.sessions.openRename(r.s.id);
+    },
     tree: {
       expanded: (i) => {
         const r = rows[i];

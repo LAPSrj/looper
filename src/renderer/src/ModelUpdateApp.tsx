@@ -3,7 +3,7 @@ import type { Environment, Harness, Settings, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
 import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
 import { Chevron } from './components/icons';
-import { EmptyWindow } from './components/ui';
+import { EmptyWindow, SelectInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 interface Group {
@@ -206,7 +206,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
                           {note && ` · ${note}`}
                         </div>
                       </div>
-                      <select
+                      <SelectInput
                         value={action}
                         onChange={(e) =>
                           patchGroup(g, { actions: { ...g.actions, [row.id]: e.target.value as ModelAction } })
@@ -214,7 +214,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
                       >
                         {row.inList ? <option value="remove">Remove</option> : <option value="add">Add</option>}
                         <option value="keep">Do nothing</option>
-                      </select>
+                      </SelectInput>
                     </div>
                   );
                 })}

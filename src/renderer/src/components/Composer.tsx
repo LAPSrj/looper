@@ -5,6 +5,7 @@ import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList } from './ChatRows';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from './chat-settings';
 import { bashModeEntry, commandAttachment } from '@shared/bash-mode';
+import { useBoxHeight } from './hooks';
 import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
 import { ICONS } from './icons';
 import { useAutoGrow } from './phone/auto-grow';
@@ -205,6 +206,8 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
   const [picker, setPicker] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const box = useBoxHeight(rootRef);
   /** Up/Down in the message box: which sent message is shown, and the draft to go back to. */
   const recall = useRef<{ index: number; draft: string } | null>(null);
   const ended = state.status === 'ended';
@@ -569,11 +572,12 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
   }
 
   return (
-    <div className="chat-composer">
+    <div className="chat-composer" ref={rootRef}>
       <div className="composer-main">
         <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
         {pendingList}
-        <div className={`composer-input${bash ? ' bash-mode' : ''}`}>
+        <div className={`composer-input${bash ? ' bash-mode' : ''}`} style={{ minHeight: box.minHeight }}>
+          <div className="composer-grip" onMouseDown={box.onGrip} />
           {slashList}
           {bash && BASH_PROMPT}
           {textarea}

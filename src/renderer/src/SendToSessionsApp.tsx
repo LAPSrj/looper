@@ -3,7 +3,7 @@ import { sessionGroupKey, type SessionSummary } from '@shared/sessions';
 import { subscribe } from './events';
 import { sendsOnEnter } from './components/composer-text';
 import { isPhone } from './web/page-nav';
-import { CheckboxField } from './components/ui';
+import { CheckboxField, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /**
@@ -89,18 +89,20 @@ export function SendToSessionsApp({ group }: { group?: string }) {
   return (
     <div className="editor send-sessions">
       <div className="send-sessions-pick">
-        {groupBox('Every chat', sessions)}
-        {harnesses.length > 1 &&
-          harnesses.map((h) =>
-            groupBox(
-              `Every ${h} chat`,
-              sessions.filter((s) => s.harnessName === h),
-            ),
-          )}
+        <FormGroup>
+          {groupBox('Every chat', sessions)}
+          {harnesses.length > 1 &&
+            harnesses.map((h) =>
+              groupBox(
+                `Every ${h} chat`,
+                sessions.filter((s) => s.harnessName === h),
+              ),
+            )}
+        </FormGroup>
       </div>
       <div className="send-sessions-list">
         {groups.map((g) => (
-          <div key={g.name}>
+          <FormGroup key={g.name}>
             {groupBox(g.name, g.items, 'send-sessions-group')}
             {g.items.map((s) => (
               <CheckboxField
@@ -109,21 +111,21 @@ export function SendToSessionsApp({ group }: { group?: string }) {
                 checked={picked.has(s.id)}
                 onChange={(on) => setAll([s.id], on)}
                 label={
-                  <>
+                  <span className="send-sessions-label">
                     <span className="send-sessions-title">{s.title}</span>
                     <span className="muted send-sessions-kind">
                       {s.harnessName}
                       {s.kind === 'terminal' ? ' · Terminal' : ''}
                     </span>
-                  </>
+                  </span>
                 }
               />
             ))}
-          </div>
+          </FormGroup>
         ))}
         {sessions.length === 0 && <div className="empty">No chats are open.</div>}
       </div>
-      <textarea
+      <TextArea
         className="send-sessions-text"
         value={text}
         placeholder="Message"

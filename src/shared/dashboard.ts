@@ -17,6 +17,9 @@ export interface AttentionRow {
   question?: true;
 }
 
+/** What Clear remembers a row by: the run it's about and its problem, so a new problem is a new row. */
+export const attentionKey = (r: AttentionRow): string => `${r.task.id}|${r.runId ?? r.lastRunId ?? ''}|${r.problem}`;
+
 /** A main-window dashboard row for a run in progress. */
 export interface RunningRow {
   task: Task;

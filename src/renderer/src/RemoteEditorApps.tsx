@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
 import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
-import { EmptyWindow, Field, NumberField } from './components/ui';
+import { EmptyWindow, Field, FormGroup, NumberField, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useDiscardUnsaved, useLiveSettings } from './components/hooks';
 import { useFitWindow } from './fit-window';
@@ -71,23 +71,27 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <AgentFields
-            draft={draft}
-            environments={live.environments}
-            host={host}
-            harnesses="claude-code"
-            onChange={(p) => setDraft((d) => (d ? { ...d, ...p } : d))}
-          />
-          <NumberField
-            label="Restart when idle for"
-            suffix="min"
-            min={1}
-            value={draft.idleRestartMin}
-            onChange={(n) => setDraft((d) => (d ? { ...d, idleRestartMin: n } : d))}
-          />
-          <Field label="Instructions">
-            <textarea rows={5} value={draft.instructions} onChange={(e) => setDraft((d) => (d ? { ...d, instructions: e.target.value } : d))} />
-          </Field>
+          <FormGroup>
+            <AgentFields
+              draft={draft}
+              environments={live.environments}
+              host={host}
+              harnesses="claude-code"
+              onChange={(p) => setDraft((d) => (d ? { ...d, ...p } : d))}
+            />
+            <NumberField
+              label="Restart when idle for"
+              suffix="min"
+              min={1}
+              value={draft.idleRestartMin}
+              onChange={(n) => setDraft((d) => (d ? { ...d, idleRestartMin: n } : d))}
+            />
+          </FormGroup>
+          <FormGroup>
+            <Field label="Instructions">
+              <TextArea rows={5} value={draft.instructions} onChange={(e) => setDraft((d) => (d ? { ...d, instructions: e.target.value } : d))} />
+            </Field>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => void save() }} apply={isNew ? undefined : { run: () => void doSave() }} busy={saving} />

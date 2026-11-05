@@ -180,13 +180,17 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const hiddenToolbars = view?.hiddenAddonToolbars ?? [];
 
   const chatProject = onChats && s.summary?.projectId ? (projects.find((p) => p.id === s.summary!.projectId) ?? null) : null;
+  // A view window's New buttons are only what its view creates; an item's own window creates nothing.
+  const newButtons = !fixed ? null : item ? [] : fixed === 'tasks' ? ['new-task'] : fixed === 'projects' ? ['new-project', 'new-chat'] : [];
   const toolbarGroups: ToolbarGroup[] = [
     ...newToolbarGroups({
       newTaskProject: onChats ? null : (m.project ?? projects.find((p) => p.id === m.targetTask?.projectId) ?? null),
       sessionProject: onChats ? chatProject : m.sessionProject,
       terminal: onChats,
       onAction: m.uiAction,
-    }),
+    })
+      .map((g) => (newButtons && g.id === 'new' ? { ...g, items: g.items.filter((it) => newButtons.includes(it.id)) } : g))
+      .filter((g) => g.items.length > 0),
     ...(tab === 'tasks'
       ? taskToolbarGroups({ task: m.task, runtime: m.task ? runtimes[m.task.id] : undefined, onAction: m.uiAction })
       : tab === 'projects'
@@ -194,7 +198,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         : onChats
           ? chatsToolbarGroups(s)
           : []),
-    ...addonMainGroups(addons, hiddenToolbars),
+    ...(item ? [] : addonMainGroups(addons, hiddenToolbars, tab, !!fixed)),
   ];
 
   const sidebarColumns = (shown: boolean) => ({ gridTemplateColumns: shown ? `${sidebarWidth}px 5px 1fr` : '1fr' });
@@ -217,6 +221,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         pick={m.livePick}
         onPick={m.setPick}
         onOpen={openTask}
+        onClearAttention={m.clearAttention}
       />,
     );
   } else if (tab === 'projects') {
@@ -309,6 +314,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               pick={m.livePick}
               onPick={m.setPick}
               onOpen={openTask}
+              onClearAttention={m.clearAttention}
             />
           )}
         </main>
@@ -369,7 +375,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
 
   return (
     <div className="app-shell">
-      {(view?.toolbar ?? true) && (
+      {(view?.toolbar ?? true) && (toolbarGroups.length > 0 || tab !== 'dashboard') && (
         <Toolbar
           groups={toolbarGroups}
           onContextMenu={(e) => {

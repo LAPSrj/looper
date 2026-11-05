@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
+import type { SubagentInfo } from '@shared/sessions';
 import { isPhone } from '../web/page-nav';
 import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
@@ -25,8 +27,8 @@ function rowMenu(taskId: string, runId: string, r: MessageRow): void {
  * A conversation read from its transcript (a task run's agent, a subagent's,
  * a workflow agent's), as a chat, read again while it runs: the Chats tab's
  * task runs and the run window show it. `pendingGuidance`: guidance the agent
- * hasn't picked up yet, at the end like a queued message. `footer`: what goes
- * under it (a task run's guidance box).
+ * hasn't picked up yet, at the end like a queued message, with `pendingStatus`
+ * under it. `footer`: what goes under it (a task run's guidance box).
  */
 export function TranscriptView({
   taskId,
@@ -34,6 +36,7 @@ export function TranscriptView({
   rows,
   waitingText,
   pendingGuidance,
+  pendingStatus = 'Waiting for the agent',
   footer,
 }: {
   taskId: string;
@@ -41,6 +44,7 @@ export function TranscriptView({
   rows: MessageRow[];
   waitingText: string;
   pendingGuidance?: string;
+  pendingStatus?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -88,11 +92,85 @@ export function TranscriptView({
             <div className="chat-msg chat-user">
               <PromptBody text={pendingGuidance} />
             </div>
-            <div className="chat-queued-actions muted">Waiting for the agent</div>
+            <div className="chat-queued-actions muted">{pendingStatus}</div>
           </div>
         )}
       </div>
       {footer}
+    </div>
+  );
+}
+
+/**
+ * A subagent's conversation in a chat on Claude Code that hasn't ended. While
+ * the subagent runs, a box under it sends the subagent a message, which waits
+ * at the end of the conversation (with Cancel) until the chat's subagent hook
+ * hands it over with the subagent's next tool call. A subagent that finishes
+ * first never gets it: the message is taken back, so a later resume doesn't
+ * hand it over either, and stays here, unread, while this tab shows.
+ */
+export function SubagentConversation({ taskId, runId, rows, chat, agent }: { taskId: string; runId: string; rows: MessageRow[]; chat: ChatState; agent: SubagentInfo }) {
+  const running = agent.status === 'running';
+  const waiting = chat.subagentMessages?.[agent.agentId];
+  const [unread, setUnread] = useState<string>();
+  useEffect(() => {
+    if (running || waiting === undefined) return;
+    void window.looper.chat.unmessageSubagent(chat.id, agent.agentId).then((text) => text && setUnread(text));
+  }, [running, waiting, chat.id, agent.agentId]);
+  return (
+    <TranscriptView
+      taskId={taskId}
+      runId={runId}
+      rows={rows}
+      waitingText="Waiting for the subagent's first message…"
+      pendingGuidance={waiting ?? unread}
+      pendingStatus={
+        waiting !== undefined && running ? (
+          <>
+            Waiting for the subagent{' '}
+            <button className="link" onClick={() => void window.looper.chat.unmessageSubagent(chat.id, agent.agentId)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          'The subagent finished before reading this.'
+        )
+      }
+      footer={running ? <SubagentMessageBox chat={chat} agent={agent} /> : undefined}
+    />
+  );
+}
+
+/** The box under a running subagent's conversation. Laid out like RunGuidance's box. */
+function SubagentMessageBox({ chat, agent }: { chat: ChatState; agent: SubagentInfo }) {
+  const [text, setText] = useState('');
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    window.looper.chat.messageSubagent(chat.id, agent.agentId, t);
+    // A phone without its computer (web/start.ts marks it) shows its own alert; the message stays to send later.
+    if ('stale' in document.documentElement.dataset) return;
+    setText('');
+  };
+  const placeholder = `Message ${agent.description || agent.type}`;
+  if (!isPhone) return <MessageBox text={text} onText={setText} placeholder={placeholder} canSend={!!text.trim()} onSend={() => void send()} />;
+  return (
+    <div className="guidance-compose">
+      <textarea
+        rows={3}
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (sendsOnEnter(e, true)) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <button className="btn primary" disabled={!text.trim()} onClick={() => void send()}>
+        Send
+      </button>
     </div>
   );
 }

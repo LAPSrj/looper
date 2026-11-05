@@ -208,10 +208,11 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     });
   }, [selected, active]);
 
-  // Looking at a session ends its wait for a finished turn or a notification.
-  const waitKey = summary?.waiting ? `${summary.id}:${summary.waiting.reason}:${summary.waiting.since}` : '';
+  // Looking at a session ends its wait for a finished turn or a notification, and the restored limit's mark.
+  const restored = !!summary?.limit?.restored;
+  const waitKey = summary?.waiting ? `${summary.id}:${summary.waiting.reason}:${summary.waiting.since}` : restored ? `${summary!.id}:restored` : '';
   useEffect(() => {
-    if (!summary?.waiting || summary.waiting.reason === 'permission' || !active) return;
+    if (!summary || (!summary.waiting && !restored) || summary.waiting?.reason === 'permission' || !active) return;
     if (document.hasFocus()) window.looper.sessions.seen(summary.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitKey, active]);

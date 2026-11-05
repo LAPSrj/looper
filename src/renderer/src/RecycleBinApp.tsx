@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RecycleBinEntry } from '@shared/types';
-import { ListActions, SelectList } from './components/SelectList';
+import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
 
@@ -23,20 +23,20 @@ export function RecycleBinApp() {
 
   const entry = entries.find((e) => e.task.id === selected);
 
-  const restore = async () => {
-    if (!entry) return;
+  const restore = async (target = entry) => {
+    if (!target) return;
     try {
-      await window.looper.recycleBin.restore(entry.task.id);
+      await window.looper.recycleBin.restore(target.task.id);
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
   };
 
-  const remove = async () => {
-    if (!entry) return;
-    if (!(await window.looper.confirm(`Permanently delete "${entry.task.name}"? Its run history is deleted too.`))) return;
+  const remove = async (target = entry) => {
+    if (!target) return;
+    if (!(await window.looper.confirm(`Permanently delete "${target.task.name}"? Its run history is deleted too.`))) return;
     try {
-      await window.looper.recycleBin.delete(entry.task.id);
+      await window.looper.recycleBin.delete(target.task.id);
     } catch (e) {
       void window.looper.showError((e as Error).message);
     }
@@ -49,18 +49,6 @@ export function RecycleBinApp() {
     if (!(await window.looper.confirm(`Permanently delete ${what}? Their run history is deleted too.`))) return;
     await window.looper.recycleBin.empty();
   };
-
-  // The context menu acts on the row it opened on, which is selected by then.
-  const actions = useRef({ restore, remove });
-  actions.current = { restore, remove };
-  useEffect(
-    () =>
-      window.looper.onUi((e) => {
-        if (e.type === 'bin-restore') void actions.current.restore();
-        else if (e.type === 'bin-delete') void actions.current.remove();
-      }),
-    [],
-  );
 
   return (
     <div className="editor">
@@ -76,20 +64,23 @@ export function RecycleBinApp() {
             itemSub={(e) => `Deleted ${fmtDateTime(e.deletedAt)}`}
             empty="The Recycle Bin is empty"
             onSelect={(e) => setSelected(e.task.id)}
-            onContextMenu={() => window.looper.showRecycleBinContextMenu()}
-            onDelete={() => void remove()}
+            menu={(e) => [
+              { label: 'Restore', run: () => void restore(e) },
+              { label: 'Delete', destructive: true, run: () => void remove(e) },
+            ]}
+            onDelete={(e) => void remove(e)}
             autoFocus
           />
           <ListActions>
-            <button className="btn" disabled={!entry} onClick={() => void restore()}>
+            <ListButton row disabled={!entry} onClick={() => void restore()}>
               Restore
-            </button>
-            <button className="btn danger" disabled={!entry} onClick={() => void remove()}>
+            </ListButton>
+            <ListButton row danger disabled={!entry} onClick={() => void remove()}>
               Delete
-            </button>
-            <button className="btn danger" disabled={!entries.length} onClick={() => void empty()}>
+            </ListButton>
+            <ListButton danger disabled={!entries.length} onClick={() => void empty()}>
               Empty Recycle Bin
-            </button>
+            </ListButton>
           </ListActions>
         </div>
       </div>

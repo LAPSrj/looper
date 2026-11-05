@@ -175,7 +175,15 @@ describe('a conversation’s More menu', () => {
 
   it('offers a chat its own commands, with Close Conversation last in a group of its own', () => {
     expect(conversationMore('chat')).toEqual([
-      [{ item: 'chat-find' }, { item: 'chat-save-markdown' }, { item: 'chat-copy-session-id' }, restart, { item: 'chat-compact', toolbar: 'compact' }],
+      [
+        { item: 'chat-find' },
+        { item: 'chat-save-markdown' },
+        { item: 'chat-rename' },
+        { item: 'chat-auto-continue' },
+        { item: 'chat-copy-session-id' },
+        restart,
+        { item: 'chat-compact', toolbar: 'compact' },
+      ],
       sessions,
       close,
     ]);

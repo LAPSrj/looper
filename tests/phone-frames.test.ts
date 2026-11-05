@@ -241,6 +241,15 @@ describe('AxisDrag', () => {
     expect(d.end(390)).toBe(false);
   });
 
+  it('follows a swipe to the left with a direction of -1, and ignores one to the right', () => {
+    const d = new AxisDrag('x', -1);
+    d.begin(300, 100, 0);
+    expect(d.move(320, 100, 16)).toBeNull();
+    expect(d.move(280, 100, 32)).toEqual({ offset: 20 });
+    expect(d.move(200, 101, 400)).toEqual({ offset: 100 });
+    expect(d.end(120)).toBe(true);
+  });
+
   it('lets a mostly vertical move go (the page scrolls)', () => {
     const d = new AxisDrag('x');
     d.begin(5, 100, 0);

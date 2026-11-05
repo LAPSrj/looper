@@ -4,12 +4,12 @@ import { SettingsSchema } from '@shared/types';
 import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { CheckboxField, EmptyWindow, Field, TabBar } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ConcurrencyLimit } from './components/form-blocks';
 import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
 import { useFitWindow } from './fit-window';
-import { SelectList, ListActions } from './components/SelectList';
+import { SelectList, ListActions, ListButton } from './components/SelectList';
 
 const DEFAULT_COMMANDS: Record<Harness['kind'], string> = {
   'claude-code': 'claude',
@@ -132,76 +132,82 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
 
   return (
     <div className="editor">
-      <TabBar tabs={TABS} active={tab} onSelect={setTab} className="editor-tabs" />
-      <div className="editor-body">
-        {tab === 'general' && (
+      <TabBar
+        tabs={TABS}
+        active={tab}
+        onSelect={setTab}
+        className="editor-tabs"
+        panels={(id) => id === 'general' ? (
         <div className="form">
-          <div className="row">
-            <Field label="Name">
-              <input autoFocus value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
+          <FormGroup>
+            <FieldRow>
+              <Field label="Name">
+                <TextInput autoFocus value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
+              </Field>
+              <Field label="Type">
+                <SelectInput
+                  value={draft.kind}
+                  onChange={(e) => {
+                    const kind = e.target.value as Harness['kind'];
+                    const p: Partial<Harness> = { kind };
+                    // Only swap command and name while they still are another kind's defaults.
+                    if (Object.values(DEFAULT_COMMANDS).includes(draft.command.trim()) && DEFAULT_COMMANDS[kind]) {
+                      p.command = DEFAULT_COMMANDS[kind];
+                    }
+                    if (HARNESS_KINDS.some(([, label]) => label === draft.name.trim())) {
+                      p.name = harnessKindLabel(kind);
+                    }
+                    patch(p);
+                  }}
+                >
+                  {HARNESS_KINDS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </FieldRow>
+            <Field label="Command" help={draft.kind === 'custom' ? 'Gets the prompt as its last argument.' : undefined}>
+              <TextInput code value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
             </Field>
-            <Field label="Type">
-              <select
-                value={draft.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as Harness['kind'];
-                  const p: Partial<Harness> = { kind };
-                  // Only swap command and name while they still are another kind's defaults.
-                  if (Object.values(DEFAULT_COMMANDS).includes(draft.command.trim()) && DEFAULT_COMMANDS[kind]) {
-                    p.command = DEFAULT_COMMANDS[kind];
-                  }
-                  if (HARNESS_KINDS.some(([, label]) => label === draft.name.trim())) {
-                    p.name = harnessKindLabel(kind);
-                  }
-                  patch(p);
-                }}
-              >
-                {HARNESS_KINDS.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+            <Field label="Default arguments">
+              <TextInput code value={argsText} onChange={(e) => setArgsText(e.target.value)} />
             </Field>
-          </div>
-          <Field label="Command" help={draft.kind === 'custom' ? 'Gets the prompt as its last argument.' : undefined}>
-            <input className="mono" value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
-          </Field>
-          <Field label="Default arguments">
-            <input className="mono" value={argsText} onChange={(e) => setArgsText(e.target.value)} />
-          </Field>
-          <Field label="Environment variables">
-            <input className="mono" value={envText} onChange={(e) => setEnvText(e.target.value)} />
-          </Field>
+            <Field label="Environment variables">
+              <TextInput code value={envText} onChange={(e) => setEnvText(e.target.value)} />
+            </Field>
+          </FormGroup>
           <ConcurrencyLimit value={draft.maxConcurrentTasks} onChange={(max) => patch({ maxConcurrentTasks: max })} />
           {draft.kind !== 'custom' && (
-            <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
-              <select
-                value={draft.options?.autoTrustWorkspace === false ? 'manual' : 'auto'}
-                onChange={(e) => patchOptions({ autoTrustWorkspace: e.target.value === 'auto' ? undefined : false })}
-              >
-                <option value="auto">Answer automatically (recommended)</option>
-                <option value="manual">Wait for user</option>
-              </select>
-            </Field>
-          )}
-          {draft.kind === 'claude-code' && (
-            <>
-              <CheckboxField
-                label="Start new conversations with Remote Control"
-                checked={draft.options?.remoteControl === true}
-                onChange={(on) => patchOptions({ remoteControl: on || undefined })}
-              />
-              <CheckboxField
-                label="Close idle Remote Control conversations once their prompt cache expires"
-                checked={draft.options?.closeWhenCacheExpires !== false}
-                onChange={(on) => patchOptions({ closeWhenCacheExpires: on ? undefined : false })}
-              />
-            </>
+            <FormGroup>
+              <Field label={draft.kind === 'claude-code' ? 'Folder trust and MCP server dialogs' : 'Folder trust dialog'}>
+                <SelectInput
+                  value={draft.options?.autoTrustWorkspace === false ? 'manual' : 'auto'}
+                  onChange={(e) => patchOptions({ autoTrustWorkspace: e.target.value === 'auto' ? undefined : false })}
+                >
+                  <option value="auto">Answer automatically (recommended)</option>
+                  <option value="manual">Wait for user</option>
+                </SelectInput>
+              </Field>
+              {draft.kind === 'claude-code' && (
+                <>
+                  <CheckboxField
+                    label="Start new conversations with Remote Control"
+                    checked={draft.options?.remoteControl === true}
+                    onChange={(on) => patchOptions({ remoteControl: on || undefined })}
+                  />
+                  <CheckboxField
+                    label="Close idle Remote Control conversations once their prompt cache expires"
+                    checked={draft.options?.closeWhenCacheExpires !== false}
+                    onChange={(on) => patchOptions({ closeWhenCacheExpires: on ? undefined : false })}
+                  />
+                </>
+              )}
+            </FormGroup>
           )}
         </div>
-        )}
-        {tab === 'models' && (
+        ) : (
           <div className="form env-tab">
             <SelectList
               items={models}
@@ -221,6 +227,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               onDelete={(_, i) => void removeModel(i)}
             />
             <ListActions
+              item="Model"
               onAdd={() => void window.looper.openModelEditor(envId, harnessId)}
               onEdit={() => modelIdx !== null && void window.looper.openModelEditor(envId, harnessId, modelIdx)}
               editDisabled={modelIdx === null}
@@ -230,15 +237,11 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
               onRemove={() => void removeModel()}
               removeDisabled={modelIdx === null}
             >
-              {draft.kind !== 'custom' && (
-                <button className="btn" onClick={() => void window.looper.openModelUpdate(envId, harnessId)}>
-                  Update…
-                </button>
-              )}
+              {draft.kind !== 'custom' && <ListButton onClick={() => void window.looper.openModelUpdate(envId, harnessId)}>Update…</ListButton>}
             </ListActions>
           </div>
         )}
-      </div>
+      />
       <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
     </div>
   );

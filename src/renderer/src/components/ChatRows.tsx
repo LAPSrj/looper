@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
-import type { MessageRow, SentFile, SentFileInfo, SentFiles } from '@shared/messages';
+import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
 import { MessageBody, PromptBody } from './Markdown';
@@ -205,7 +205,7 @@ function useSentFile(taskId: string, path: string): SentFileInfo | null | undefi
  * in the image window, or a device's file viewer), any other file as its name
  * and size (it opens in its default app, or a device's file viewer).
  */
-function SentFileItem({ f, ctx }: { f: SentFile; ctx: RowCtx }) {
+function SentFileItem({ f, ctx, images }: { f: SentFile; ctx: RowCtx; images?: string[] }) {
   const info = useSentFile(ctx.taskId, f.path);
   if (info === null) {
     return (
@@ -216,7 +216,7 @@ function SentFileItem({ f, ctx }: { f: SentFile; ctx: RowCtx }) {
     );
   }
   const open = (image: boolean) =>
-    void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image).catch((e) => void window.looper.showError((e as Error).message));
+    void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image, image ? images : undefined).catch((e) => void window.looper.showError((e as Error).message));
   if (f.inline && (info === undefined || info.thumbnail)) {
     return <ThumbButton name={f.name} src={info?.thumbnail ?? null} onOpen={() => open(true)} />;
   }
@@ -235,13 +235,14 @@ function SentFileItem({ f, ctx }: { f: SentFile; ctx: RowCtx }) {
 export function SentFileList({ files, ctx }: { files: SentFile[]; ctx: RowCtx }) {
   const inline = files.filter((f) => f.inline);
   const cards = files.filter((f) => !f.inline);
+  const images = inline.map((f) => f.path);
   return (
     <div className="chat-attachments">
       {inline.length > 0 && (
         <div className="chat-thumbs">
           {inline.map((f) => (
             <span key={f.path} className="chat-thumb-wrap">
-              <SentFileItem f={f} ctx={ctx} />
+              <SentFileItem f={f} ctx={ctx} images={images} />
             </span>
           ))}
         </div>
@@ -295,6 +296,26 @@ function ThinkingBubble({ text, onContextMenu }: { text: string; onContextMenu?:
   );
 }
 
+/** The user's message: its text and files. */
+export function UserMessage({
+  text,
+  attachments,
+  files,
+  onContextMenu,
+}: {
+  text: string;
+  attachments?: Attachment[];
+  files?: FileCtx;
+  onContextMenu?: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <div className="chat-msg chat-user" onContextMenu={onContextMenu}>
+      {text && <PromptBody text={text} />}
+      {attachments && <AttachmentList items={attachments} files={files} />}
+    </div>
+  );
+}
+
 const sameCtx = (a: RowCtx, b: RowCtx): boolean =>
   a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu);
 
@@ -311,12 +332,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
     case 'prompt':
     case 'guidance':
       // Guidance is the user's own message too: its text, without the header Looper sends the agent with it.
-      return (
-        <div className="chat-msg chat-user" onContextMenu={onContextMenu}>
-          {row.text && <PromptBody text={row.text} />}
-          {row.attachments && <AttachmentList items={row.attachments} files={ctx} />}
-        </div>
-      );
+      return <UserMessage text={row.text} attachments={row.attachments} files={ctx} onContextMenu={onContextMenu} />;
     case 'agent':
       return (
         <div className="chat-msg chat-agent" onContextMenu={onContextMenu}>
@@ -341,8 +357,20 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           {row.text}
         </div>
       );
-    case 'tool':
+    case 'tool': {
       if (row.sent) return <SentMessage sent={row.sent} ctx={ctx} onContextMenu={onContextMenu} />;
+      const report = handbackText(row);
+      if (report !== null) {
+        // A subagent's last call: its final report, the end of its session, as its message.
+        return (
+          <div className="chat-agent-group" onContextMenu={onContextMenu}>
+            <div className="chat-handback muted">Handed back to the main agent</div>
+            <div className="chat-msg chat-agent">
+              <MessageBody text={report} />
+            </div>
+          </div>
+        );
+      }
       return (
         <details className="chat-aside chat-tool" onContextMenu={onContextMenu}>
           <summary>
@@ -359,6 +387,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           </div>
         </details>
       );
+    }
     default:
       return null;
   }

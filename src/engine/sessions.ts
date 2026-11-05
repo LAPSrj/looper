@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { chatTitle, type ChatContext, type ChatState } from '../shared/chat';
+import { chatTitle, type ChatContext, type ChatState, type TitleBy, type UsageLimitHit } from '../shared/chat';
 import type { MessageRow, MessagesResult } from '../shared/messages';
 import { stripMarkdown } from '../shared/messages-md';
+import { bareId } from '../shared/model-update';
 import { projectIdOf } from '../shared/projects';
 import {
   limitsKey,
@@ -18,8 +19,10 @@ import type { EngineEvent, Project, Task } from '../shared/types';
 import type { SubagentStats } from './context';
 import type { Logger } from './log';
 import type { SubagentMeta } from './messages';
+import { USAGE_LIMIT_RE, usageLimitReset } from './steps/session';
 import type { WorkflowRun } from '../shared/workflows';
 import { workflowLaunchesOf, type WorkflowLaunch } from './workflows';
+import { modelWindows } from './model-windows';
 
 const POLL_MS = 1000;
 /** Transcripts are read every this many polls; a session's context size every CONTEXT_POLLS. */
@@ -68,10 +71,14 @@ export interface SessionHubDeps {
     opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean },
   ) => Promise<WorkflowRun[]>;
   contextTokens: (taskId: string, runId: string) => Promise<number | null>;
-  /** Claude: the last request's time and how long the cache it wrote lasts, from the transcript. */
+  /** Claude: the model the session's newest response came from, whose window (modelWindows) sizes its context. */
+  contextModel?: (taskId: string, runId: string) => Promise<string | null>;
+  /** The last request's time and how long its cache lasts, from the transcript. */
   cacheUse: (taskId: string, runId: string) => Promise<{ at?: number; ttlMs?: number }>;
-  /** A terminal session's title, once its first turn made it a run. */
-  terminalTitle: (taskId: string, runId: string) => string | undefined;
+  /** A terminal session's title and whose name it is, once its first turn made it a run. */
+  terminalTitle: (taskId: string, runId: string) => { title: string; titleBy?: TitleBy } | undefined;
+  /** The harness's name for a terminal session's conversation (Claude Code's custom-title or ai-title, a Codex thread name). */
+  sessionName?: (taskId: string, runId: string) => Promise<string | undefined>;
   emit: (e: EngineEvent) => void;
   log: Logger;
   pollMs?: number;
@@ -103,6 +110,8 @@ interface Track {
   /** When Stop sent a terminal session Esc: its turn is over though no Stop hook says so. */
   stoppedAt?: number;
   cache?: { at?: number; ttlMs?: number };
+  /** A terminal session's name in its harness, read with its transcript. */
+  harnessTitle?: string;
 }
 
 const HOOK_FILES = { prompt: 'prompt.json', stop: 'stop.json', notification: 'notification.json' } as const;
@@ -140,6 +149,39 @@ export function endingError(rows: MessageRow[]): { text: string; at?: number } |
     }
   }
   return undefined;
+}
+
+/** An error that is the usage limit: Claude's "You've hit your session limit · resets 5:50am", Codex's "You've hit your usage limit…". */
+const LIMIT_ERROR_RE = new RegExp(`${USAGE_LIMIT_RE.source}|usage limit`, 'i');
+
+/**
+ * The usage limit the conversation's latest turn ended on: when it was hit,
+ * and when the error says it resets. Undefined when the turn didn't end on
+ * the limit, or once the user has written again or the agent has said more.
+ */
+export function usageLimitOf(rows: MessageRow[], now: number): UsageLimitHit | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.kind === 'prompt' || r.kind === 'agent') return undefined;
+    if (r.kind !== 'error' || !r.text.trim()) continue;
+    if (!LIMIT_ERROR_RE.test(r.text)) return undefined;
+    const ts = r.ts ? Date.parse(r.ts) : NaN;
+    const at = Number.isFinite(ts) ? ts : now;
+    const resetsAt = usageLimitReset(r.text, at);
+    return { at, ...(resetsAt !== null ? { resetsAt } : {}) };
+  }
+  return undefined;
+}
+
+/**
+ * A summary's limit state: while the limit holds (until it resets, or with
+ * no reset time until the next message), then `restored` until the user looks
+ * at the session after the reset (`seenAt`). Undefined after that.
+ */
+export function limitState(limit: UsageLimitHit | undefined, now: number, seenAt: number): SessionSummary['limit'] {
+  if (!limit) return undefined;
+  if (limit.resetsAt === undefined || now < limit.resetsAt) return limit.resetsAt === undefined ? {} : { resetsAt: limit.resetsAt };
+  return seenAt < limit.resetsAt ? { resetsAt: limit.resetsAt, restored: true } : undefined;
 }
 
 /** Most of the agent's recent messages a dashboard card gets: the newest ones, cut to this many characters in all. */
@@ -199,27 +241,36 @@ export function backgroundOf(rows: MessageRow[]): BackgroundTask[] {
 
 /**
  * Each subagent's status, from the Agent call's row: done once it has a
- * result, or by its background notification. `stats` adds what its
- * transcript says about its model, effort and context.
+ * result, or by its background notification; and when that call was made.
+ * `stats` adds what its transcript says about its model, effort and context,
+ * and the context window of that model: the session's own (`windows`, a chat's
+ * modelWindows), else one Looper has seen it run with (modelWindows).
  */
-export function subagentsOf(metas: SubagentMeta[], rows: MessageRow[], stats?: Map<string, SubagentStats>): SubagentInfo[] {
+export function subagentsOf(
+  metas: SubagentMeta[],
+  rows: MessageRow[],
+  stats?: Map<string, SubagentStats>,
+  windows?: Record<string, number>,
+): SubagentInfo[] {
   return metas.map((m) => {
-    const row = rows.find((r) => r.agentId === m.agentId || r.background?.id === m.agentId);
+    const row = rows.find((r) => r.toolUseId === m.toolUseId) ?? rows.find((r) => r.agentId === m.agentId || r.background?.id === m.agentId);
     let status: SubagentInfo['status'] = 'running';
     if (row?.background) status = row.background.status === 'running' ? 'running' : row.background.status === 'completed' ? 'done' : 'failed';
     else if (row?.result !== undefined) status = row.resultError ? 'failed' : 'done';
     const s = stats?.get(m.agentId);
+    const window = s?.model ? (windows?.[bareId(s.model)] ?? modelWindows.pick(s.model, s.tokens)) : undefined;
     return {
       agentId: m.agentId,
       toolUseId: m.toolUseId,
       type: m.type,
       description: m.description,
       ...(m.model ? { model: m.model } : {}),
-      background: m.background,
       status,
+      ...(row?.ts ? { startedAt: row.ts } : {}),
       ...(s?.model ? { modelId: s.model } : {}),
       ...(s?.effort ? { effort: s.effort } : {}),
       ...(s ? { contextTokens: s.tokens } : {}),
+      ...(window ? { contextWindow: window } : {}),
     };
   });
 }
@@ -233,7 +284,7 @@ export function interruptedAt(rows: MessageRow[]): number {
   return 0;
 }
 
-/** The last reply's time and, with Claude, until when its prompt cache lasts. */
+/** The last reply's time and until when its prompt cache lasts. */
 function replyTimes(cache: Track['cache'], fallback: number | undefined): { lastReplyAt?: number; cacheUntil?: number } {
   const at = cache?.at ?? fallback;
   return {
@@ -347,7 +398,7 @@ export class SessionHub {
       ...(entry.kind !== 'chat' ? { rows: t.rows } : {}),
       ...(t.pendingGuidance ? { pendingGuidance: t.pendingGuidance } : {}),
       background: backgroundOf(t.rows),
-      subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats),
+      subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats, entry.kind === 'chat' ? entry.chat.modelWindows : undefined),
       workflows: t.workflows,
     };
   }
@@ -449,11 +500,13 @@ export class SessionHub {
         t.workflows = await this.d.workflows(e.taskId, e.id, { launches: workflowLaunchesOf(t.rows), detail: true, sessionEnded });
       }
       const now = force || this.watched.has(id) || this.polls % CONTEXT_POLLS === 0;
-      if (kind === 'claude-code' && now) t.cache = await this.d.cacheUse(e.taskId, e.id);
+      if (now) t.cache = await this.d.cacheUse(e.taskId, e.id);
       if (e.kind !== 'chat' && (force || this.polls % CONTEXT_POLLS === 0)) {
         const tokens = await this.d.contextTokens(e.taskId, e.id);
-        t.context = tokens === null ? undefined : { tokens, window: t.context?.window };
+        const model = tokens !== null && kind === 'claude-code' ? await this.d.contextModel?.(e.taskId, e.id) : null;
+        t.context = tokens === null ? undefined : { tokens, window: (model ? modelWindows.pick(model, tokens) : undefined) ?? t.context?.window };
       }
+      if (e.kind === 'terminal' && this.d.sessionName) t.harnessTitle = await this.d.sessionName(e.taskId, e.id);
     } catch (err) {
       this.d.log.warn(`sessions: cannot read ${id}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -530,13 +583,14 @@ export class SessionHub {
       waiting = { reason: 'turn', text: 'Finished its turn', since: c.turnEndedAt };
     }
     const background = backgroundOf(t.rows).filter((b) => b.status === 'running').length;
+    const limit = c.status === 'ready' ? limitState(c.limit, this.now(), t.seenAt) : undefined;
     return {
       id: c.id,
       kind: 'chat',
       taskId: c.taskId,
       ...(projectId ? { projectId } : {}),
       groupName,
-      title: rows.some((r) => r.kind === 'prompt') ? chatTitle(rows) : 'New chat',
+      title: c.title || (rows.some((r) => r.kind === 'prompt') ? chatTitle(rows) : 'New chat'),
       harnessKind: c.harnessKind,
       harnessName: c.harnessName,
       limitsKey: limitsKey(c.environmentId, c.harnessId),
@@ -549,6 +603,7 @@ export class SessionHub {
       startedAt: c.startedAt,
       background,
       ...replyTimes(t.cache, c.turnEndedAt),
+      ...(limit ? { limit } : {}),
     };
   }
 
@@ -575,7 +630,14 @@ export class SessionHub {
     const lastMessage = stopHook?.payload?.last_assistant_message ?? stopHook?.payload?.['last-assistant-message'];
     const latest = status !== 'working' && typeof lastMessage === 'string' && lastMessage.trim() ? oneLine(lastMessage) : latestLine(t.rows);
     const recent = recentMessages(t.rows);
-    const title = this.d.terminalTitle(e.taskId, e.id) ?? (t.rows.some((r) => r.kind === 'prompt') ? chatTitle(t.rows) : 'Terminal');
+    // The user's name, then the harness's, then the one its first turn recorded, then its first message.
+    const info = this.d.terminalTitle(e.taskId, e.id);
+    const title =
+      (info?.titleBy === 'user' ? info.title : undefined) ??
+      t.harnessTitle ??
+      info?.title ??
+      (t.rows.some((r) => r.kind === 'prompt') ? chatTitle(t.rows) : 'Terminal');
+    const limit = status === 'ready' ? limitState(usageLimitOf(t.rows, this.now()), this.now(), t.seenAt) : undefined;
     return {
       id: e.id,
       kind: 'terminal',
@@ -595,6 +657,7 @@ export class SessionHub {
       startedAt: e.startedAt,
       background: backgroundOf(t.rows).filter((b) => b.status === 'running').length,
       ...replyTimes(t.cache, stopHook?.at),
+      ...(limit ? { limit } : {}),
     };
   }
 

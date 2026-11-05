@@ -1,14 +1,18 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Children, isValidElement, useEffect, useId, useRef, useState } from 'react';
 import type { DragEvent, LiHTMLAttributes, ReactNode } from 'react';
+import { isPhone } from '../web/page-nav';
 import { useListNav } from './hooks';
 import { listContextMenu } from './list-nav';
+import { EmptyRow, Group, Row, SwipeRow } from './phone/PhoneList';
 
 /** One command of a row's context menu: the same as the button of that name under the list. */
 export interface ListMenuItem {
   label: string;
   enabled?: boolean;
-  /** It destroys or cuts something off (Remove): a phone draws it red, last. */
+  /** It destroys or cuts something off (Remove): a phone draws it red, last, and a swipe on the row offers it. */
   destructive?: true;
+  /** A separator above it. */
+  separator?: true;
   run: () => void;
 }
 
@@ -35,17 +39,12 @@ interface SelectListProps<T> {
   onOpen?: (item: T, i: number) => void;
   /** Makes rows draggable; called with the full key list in its new order. */
   onReorder?: (keys: string[]) => void;
-  /** Right-click: the row is selected first. */
-  onContextMenu?: (item: T, i: number) => void;
   /** Shown as a single muted row when there are no items. */
   empty?: ReactNode;
 }
 
-/** The classic list-then-window listbox: click selects, double-click/Enter opens. */
-export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, onContextMenu, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
-  const index = selectedKey === null ? -1 : items.findIndex((it, i) => itemKey(it, i) === selectedKey);
-
-  // The menu is the main process's; a pick comes back as an event carrying this list's token.
+/** Opens a row's menu: the main process's, whose pick comes back as an event carrying this list's token. */
+function useRowMenu() {
   const token = useId();
   const shown = useRef<ListMenuItem[]>([]);
   useEffect(
@@ -55,16 +54,78 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
       }),
     [token],
   );
-  const openMenu = (item: T, i: number) => {
-    if (menu) {
-      shown.current = menu(item, i);
-      window.looper.showListContextMenu(
-        token,
-        shown.current.map((m, n) => ({ id: String(n), label: m.label, enabled: m.enabled, ...(m.destructive ? { destructive: true as const } : {}) })),
-      );
-    } else onContextMenu?.(item, i);
+  return (items: ListMenuItem[]) => {
+    shown.current = items;
+    window.looper.showListContextMenu(
+      token,
+      items.map((m, n) => ({
+        id: String(n),
+        label: m.label,
+        enabled: m.enabled,
+        ...(m.destructive ? { destructive: true as const } : {}),
+        ...(m.separator ? { separator: true as const } : {}),
+      })),
+    );
   };
-  const hasMenu = !!(menu || onContextMenu);
+}
+
+/**
+ * A list of items, adapted to the platform from the same props. On a desktop, the classic
+ * list-then-window listbox: click selects, double-click/Enter opens. On a phone, a list section:
+ * a list with a `menu` has rows a tap opens (or shows the menu of, with no `onOpen`), a long press
+ * shows the menu of, and a swipe offers the menu's destructive command; one without is a choice of
+ * one, with a check on the chosen row.
+ */
+export function SelectList<T>(props: SelectListProps<T>) {
+  return isPhone ? <PhoneSelectList {...props} /> : <DesktopSelectList {...props} />;
+}
+
+function PhoneSelectList<T>({ items, label, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, menu, empty }: SelectListProps<T>) {
+  const openMenu = useRowMenu();
+  return (
+    <div role={menu ? undefined : 'radiogroup'} aria-label={label}>
+      <Group>
+        {items.length === 0 && empty !== undefined && <EmptyRow>{empty}</EmptyRow>}
+        {items.map((item, i) => {
+          const key = itemKey(item, i);
+          const commands = menu?.(item, i);
+          const destroy = commands?.find((m) => m.destructive && m.enabled !== false);
+          const showMenu = commands && (() => {
+            onSelect(item, i);
+            openMenu(commands);
+          });
+          return (
+            <SwipeRow key={key} action={destroy && { label: destroy.label, run: destroy.run }}>
+              <Row
+                title={itemName(item, i)}
+                sub={itemSub?.(item, i) || undefined}
+                chevron={!!commands && !!onOpen}
+                checked={commands ? undefined : key === selectedKey}
+                onMenu={showMenu}
+                onOpen={() => {
+                  if (!commands) onSelect(item, i);
+                  else if (onOpen) {
+                    onSelect(item, i);
+                    onOpen(item, i);
+                  } else showMenu?.();
+                }}
+              />
+            </SwipeRow>
+          );
+        })}
+      </Group>
+    </div>
+  );
+}
+
+function DesktopSelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
+  const index = selectedKey === null ? -1 : items.findIndex((it, i) => itemKey(it, i) === selectedKey);
+
+  const showMenu = useRowMenu();
+  const openMenu = (item: T, i: number) => {
+    if (menu) showMenu(menu(item, i));
+  };
+  const hasMenu = !!menu;
 
   const nav = useListNav({
     count: items.length,
@@ -160,7 +221,24 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
   );
 }
 
+/**
+ * One of a list's own buttons (Install…, Restore, Empty Recycle Bin). `row`: it acts on the selected row, so a phone,
+ * which has no selected row, leaves it to the row's menu; any other is a command row of its own under the list there.
+ */
+export function ListButton({ row, danger, disabled, onClick, children }: { row?: boolean; danger?: boolean; disabled?: boolean; onClick: () => void; children: string }) {
+  if (!isPhone) {
+    return (
+      <button className={`btn${danger ? ' danger' : ''}`} disabled={disabled} onClick={onClick}>
+        {children}
+      </button>
+    );
+  }
+  return row ? null : <Row title={children} tone={danger ? 'destructive' : 'action'} disabled={disabled} onOpen={onClick} />;
+}
+
 interface ListActionsProps {
+  /** What the list holds, one of them ("Harness"): a phone's Add row says "Add Harness…". */
+  item?: string;
   /** Each standard button shows only when its handler is given. */
   onAdd?: () => void;
   onEdit?: () => void;
@@ -170,12 +248,25 @@ interface ListActionsProps {
   onRemove?: () => void;
   removeDisabled?: boolean;
   removeTitle?: string;
-  /** The list's own buttons, after the standard ones (Update…, Restore, Pair Device…). */
+  /** The list's own ListButtons, after the standard ones (Update…, Restore, Pair Device…). */
   children?: ReactNode;
 }
 
-/** The button row under a SelectList: Add…, Edit…, Duplicate, Remove, then the list's own. */
-export function ListActions({ onAdd, onEdit, editDisabled, onDuplicate, duplicateDisabled, onRemove, removeDisabled, removeTitle, children }: ListActionsProps) {
+/**
+ * The button row under a SelectList: Add…, Edit…, Duplicate, Remove, then the list's own.
+ * On a phone, Edit, Duplicate and Remove are the rows' own commands; the rest are command rows in a section under the list.
+ */
+export function ListActions({ item, onAdd, onEdit, editDisabled, onDuplicate, duplicateDisabled, onRemove, removeDisabled, removeTitle, children }: ListActionsProps) {
+  if (isPhone) {
+    const own = Children.toArray(children).filter((c) => isValidElement<{ row?: boolean }>(c) && !c.props.row);
+    if (!onAdd && own.length === 0) return null;
+    return (
+      <Group>
+        {onAdd && <Row title={`Add${item ? ` ${item}` : ''}…`} tone="action" onOpen={onAdd} />}
+        {own}
+      </Group>
+    );
+  }
   return (
     <div className="env-actions">
       {onAdd && (

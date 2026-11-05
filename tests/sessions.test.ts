@@ -126,12 +126,11 @@ describe('background work in a transcript', () => {
 });
 
 describe('subagents and the latest line', () => {
-  const meta = (agentId: string, background = false): SubagentMeta => ({
+  const meta = (agentId: string): SubagentMeta => ({
     agentId,
     toolUseId: `tu-${agentId}`,
     type: 'Explore',
     description: `Look at ${agentId}`,
-    background,
   });
   const row = (r: Partial<MessageRow>): MessageRow => ({ id: String(Math.random()), kind: 'tool', preview: '', text: '', ...r });
 
@@ -141,12 +140,20 @@ describe('subagents and the latest line', () => {
       row({ tool: 'Agent', agentId: 'a2', result: 'failed', resultError: true }),
       row({ tool: 'Agent', agentId: 'a3', background: { id: 'a3', status: 'completed' } }),
     ];
-    expect(subagentsOf([meta('a1'), meta('a2'), meta('a3', true), meta('a4')], rows).map((s) => s.status)).toEqual([
+    expect(subagentsOf([meta('a1'), meta('a2'), meta('a3'), meta('a4')], rows).map((s) => s.status)).toEqual([
       'done',
       'failed',
       'done',
       'running',
     ]);
+  });
+
+  it("takes the start from its Agent call and the context window of the model its transcript names", () => {
+    const rows = [row({ tool: 'Agent', toolUseId: 'tu-a1', ts: '2026-11-04T10:00:00.000Z' })];
+    const stats = new Map([['a1', { model: 'claude-haiku-5-5', tokens: 50_000 }]]);
+    const [a] = subagentsOf([meta('a1')], rows, stats, { 'claude-haiku-5-5': 200_000 });
+    expect(a).toMatchObject({ status: 'running', startedAt: '2026-11-04T10:00:00.000Z', contextTokens: 50_000, contextWindow: 200_000 });
+    expect(subagentsOf([meta('a1')], rows, stats)[0].contextWindow).toBeUndefined();
   });
 
   it("previews the agent's last text message since the user's, never a tool call", () => {
@@ -275,6 +282,7 @@ describe('the session hub', () => {
     commandPrefix: '/',
     runningCommands: 0,
     startedAt: 1000,
+    autoContinue: false,
     ...over,
   });
 
@@ -312,6 +320,23 @@ describe('the session hub', () => {
     });
     return { h, events };
   }
+
+  it('shows a chat out of its usage limit until the reset, then restored until the user looks', () => {
+    let now = 5000;
+    const c = chat({ turnEndedAt: 4000, limit: { at: 4000, resetsAt: 10_000 }, title: 'My name' });
+    const { h } = hub({ chats: [c], now: () => now });
+    expect(h.state().sessions[0]).toMatchObject({ title: 'My name', limit: { resetsAt: 10_000 } });
+    expect(h.state().sessions[0].limit?.restored).toBeUndefined();
+    now = 10_000;
+    expect(h.state().sessions[0].limit).toEqual({ resetsAt: 10_000, restored: true });
+    h.seen('c1');
+    expect(h.state().sessions[0].limit).toBeUndefined();
+  });
+
+  it('keeps a chat with no reset time out of its limit until its next message', () => {
+    const { h } = hub({ chats: [chat({ limit: { at: 4000 } })], now: () => 99_999_999 });
+    expect(h.state().sessions[0].limit).toEqual({});
+  });
 
   it('groups a chat under its project and waits for the user once a turn ends, until they look', () => {
     let now = 5000;

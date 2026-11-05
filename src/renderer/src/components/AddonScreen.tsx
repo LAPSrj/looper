@@ -20,7 +20,7 @@ import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { ToolbarButtons } from './Toolbar';
 import { groupsAtSeparators, type ToolbarGroup } from './toolbar-model';
-import { CheckboxField, Field, InfoBar, InputRow, InputSuffix, NumberInput, TabBar } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
 
 type Value = string | number | boolean;
@@ -39,6 +39,18 @@ function fieldsOf(nodes: AddonNode[]): AddonField[] {
             ? n.items.flatMap((t) => fieldsOf(t.body))
             : [],
   );
+}
+
+/** A screen's nodes in order: each run of fields and rows together (a FormGroup), every other node alone. */
+function fieldRuns(nodes: AddonNode[]): { at: number; fields: boolean; nodes: AddonNode[] }[] {
+  const runs: { at: number; fields: boolean; nodes: AddonNode[] }[] = [];
+  nodes.forEach((n, at) => {
+    const fields = n.type === 'field' || n.type === 'row';
+    const last = runs[runs.length - 1];
+    if (fields && last?.fields) last.nodes.push(n);
+    else runs.push({ at, fields, nodes: [n] });
+  });
+  return runs;
 }
 
 const emptyValue = (f: AddonField): Value => (f.input === 'checkbox' ? false : f.input === 'number' ? 0 : '');
@@ -201,7 +213,7 @@ export function AddonScreenView({
   const field = (f: AddonField) => {
     const v = values[f.id] ?? emptyValue(f);
     const text = (type: string) => (
-      <input
+      <TextInput
         type={type}
         value={String(v)}
         placeholder={f.placeholder}
@@ -217,7 +229,7 @@ export function AddonScreenView({
       case 'textarea':
         return (
           <Field key={f.id} label={f.label}>
-            <textarea
+            <TextArea
               rows={5}
               value={String(v)}
               placeholder={f.placeholder}
@@ -248,13 +260,13 @@ export function AddonScreenView({
       case 'select':
         return (
           <Field key={f.id} label={f.label}>
-            <select value={String(v)} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, e.target.value)}>
+            <SelectInput value={String(v)} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, e.target.value)}>
               {(f.options ?? []).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </SelectInput>
           </Field>
         );
       case 'number':
@@ -355,21 +367,17 @@ export function AddonScreenView({
       case 'field':
         return field(n);
       case 'row':
-        return (
-          <div key={i} className="row">
-            {n.items.map(field)}
-          </div>
-        );
+        return <FieldRow key={i}>{n.items.map(field)}</FieldRow>;
       case 'section':
         return (
           <section key={i}>
             <h3>{n.title}</h3>
-            {n.body.map(node)}
+            {nodes(n.body)}
           </section>
         );
       case 'tabs': {
         const active = activeTab(n);
-        const body = <div key={`${n.id}:${active}`}>{n.items.find((t) => t.id === active)!.body.map(node)}</div>;
+        const body = <div key={`${n.id}:${active}`}>{nodes(n.items.find((t) => t.id === active)!.body)}</div>;
         if (n === windowTabs) return body;
         return (
           <div key={i} className="addon-tabs">
@@ -388,6 +396,12 @@ export function AddonScreenView({
     }
   };
 
+  /** A screen's nodes, each run of fields one group. */
+  const nodes = (list: AddonNode[]) =>
+    fieldRuns(list).map((run) =>
+      run.fields ? <FormGroup key={`fields-${run.at}`}>{run.nodes.map((n, j) => node(n, run.at + j))}</FormGroup> : node(run.nodes[0], run.at),
+    );
+
   const failed = error !== null && (
     <InfoBar stacked title={`${addonName} couldn't show this screen`} message={error} action={<button className="btn" onClick={load}>Try Again</button>} />
   );
@@ -396,7 +410,7 @@ export function AddonScreenView({
   // A phone draws no toolbar: the screen's buttons and its designed More menu go to the frame, after the window's own.
   const bar = mode === 'inline' || toolbarHidden ? null : <NavBar toolbar={groups} more={addonMore(screen?.mobileMore)} order={1} />;
 
-  if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || screen?.body.map(node)}</div>;
+  if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || (screen && nodes(screen.body))}</div>;
   if (mode === 'main') {
     return (
       <div className="detail addon-screen">
@@ -406,7 +420,7 @@ export function AddonScreenView({
         <div className="detail-bar">
           <span className="pane-title">{screen?.title ?? ''}</span>
         </div>
-        <div className="status-pane">{failed || screen?.body.map(node)}</div>
+        <div className="status-pane">{failed || (screen && nodes(screen.body))}</div>
       </div>
     );
   }
@@ -427,7 +441,7 @@ export function AddonScreenView({
         />
       )}
       <div className="editor-body">
-        <div className="form">{failed || screen?.body.map(node)}</div>
+        <div className="form">{failed || (screen && nodes(screen.body))}</div>
       </div>
       {footer?.type === 'footer' ? (
         <WindowActions
@@ -471,13 +485,20 @@ export function addonToolbarGroups(items: AddonToolbarItem[], { selected, busy, 
   );
 }
 
-/** The addons' main-toolbar buttons (manifest `toolbar`), one group per addon whose toolbar shows. */
-export function addonMainGroups(addons: AddonInfo[], hidden: string[]): ToolbarGroup[] {
+/**
+ * The addons' toolbar buttons (manifest `toolbar`) for a window showing `tab`,
+ * one group per addon with some. A button with a `view` shows with that view:
+ * in its own window, and in the main window while its tab shows. One without
+ * shows in the main window only, on every tab.
+ */
+export function addonMainGroups(addons: AddonInfo[], hidden: string[], tab: string, viewWindow: boolean): ToolbarGroup[] {
   return addons
-    .filter((a) => a.enabled && a.toolbar.length && !hidden.includes(a.id))
-    .map((a) => ({
+    .filter((a) => a.enabled && !hidden.includes(a.id))
+    .map((a) => ({ a, buttons: a.toolbar.filter((b) => (b.view ? b.view === tab : !viewWindow)) }))
+    .filter(({ buttons }) => buttons.length > 0)
+    .map(({ a, buttons }) => ({
       id: `addon:${a.id}`,
-      items: a.toolbar.map((b) => ({
+      items: buttons.map((b) => ({
         id: `${a.id}:${b.id}`,
         label: b.label,
         icon: b.icon,

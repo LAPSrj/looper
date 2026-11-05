@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Field } from './components/ui';
+import { Field, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
 /**
@@ -20,9 +20,11 @@ export function FilterApp({ current }: { current: string }) {
     <div className="editor">
       <div className="editor-body">
         <div className="form">
-          <Field label="Show messages containing">
-            <input autoFocus value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
+          <FormGroup>
+            <Field label="Show messages containing">
+              <TextInput autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+            </Field>
+          </FormGroup>
         </div>
       </div>
       <WindowActions confirm={{ label: 'OK', run: () => apply(text) }} extras={[{ id: 'clear-filter', label: 'Clear Filter', run: () => apply('') }]} />

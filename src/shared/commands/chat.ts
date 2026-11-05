@@ -35,6 +35,19 @@ export const CHAT_COMMANDS = {
     menu: { id: 'chat-save-markdown', in: 'file', group: 'conversation' },
     mobile: { group: 'conversation', kinds: ['chat', 'run'] },
   },
+  rename: {
+    // Not Re&name or &Rename: Send &Now and &Restart Agent have those letters.
+    label: 'Ren&ame…',
+    accelerator: 'F2',
+    pageKey: true,
+    menu: { id: 'chat-rename', in: 'chat', group: 'conversation' },
+    mobile: { group: 'conversation', kinds: ['chat'] },
+  },
+  autoContinue: {
+    label: 'Continue &When Limit Resets',
+    menu: { id: 'chat-auto-continue', in: 'chat', group: 'conversation' },
+    mobile: { group: 'conversation', kinds: ['chat'] },
+  },
   copySessionId: {
     label: 'Copy Session &ID',
     icon: 'copy',

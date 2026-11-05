@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { chatTitle, type TerminalInfo } from '../shared/chat';
+import { chatTitle, type TerminalInfo, type TitleBy } from '../shared/chat';
 import type { MessageRow } from '../shared/messages';
 import type { RunRecord } from '../shared/types';
 import { errMsg, type Logger } from './log';
@@ -48,6 +48,8 @@ interface Watch extends TerminalRunOpts {
   timer: NodeJS.Timeout;
   /** The first turn is being recorded (the title is read from the transcript). */
   busy: boolean;
+  /** A name given before the first turn, which recording it keeps: the user's, or the harness's. */
+  name?: { title: string; titleBy: TitleBy };
   /** The window closed while its first turn was being recorded: the run closes once it is. */
   closing?: boolean;
 }
@@ -185,16 +187,58 @@ export class TerminalRuns {
     return true;
   }
 
+  /**
+   * Rename…: the user's name for the session, or with '' its automatic one
+   * back (its first message's; the harness's name comes back with the next read).
+   */
+  async rename(runId: string, name: string): Promise<void> {
+    const w = this.watches.get(runId);
+    if (!w) throw new Error('This terminal session is closed.');
+    const title = name.trim();
+    if (!w.recorded) {
+      w.name = title ? { title, titleBy: 'user' } : undefined;
+      return;
+    }
+    this.save(w, title ? { title, titleBy: 'user' } : { title: await this.firstTitle(w) });
+  }
+
+  /** An open session's name as it stands, a name given before its first turn included; undefined before it has one. */
+  title(runId: string): { title: string; titleBy?: TitleBy } | undefined {
+    const w = this.watches.get(runId);
+    return w ? (w.recorded ? w.info : w.name) : undefined;
+  }
+
+  /** The harness named the conversation: the session takes the name, unless the user gave it one. */
+  nameFromHarness(runId: string, title: string): void {
+    const w = this.watches.get(runId);
+    if (!w || !title || (w.recorded ? w.info?.titleBy : w.name?.titleBy) === 'user') return;
+    if (!w.recorded) w.name = { title, titleBy: 'harness' };
+    else if (w.info?.title !== title) this.save(w, { title, titleBy: 'harness' });
+  }
+
+  /** The name a session's first message gives it. */
+  private async firstTitle(w: Watch): Promise<string> {
+    const rows = await this.d.readHistory(w.taskId, w.runId).catch(() => [] as MessageRow[]);
+    return rows.some((r) => r.kind === 'prompt') ? chatTitle(rows) : 'Terminal session';
+  }
+
+  private save(w: Watch, name: { title: string; titleBy?: TitleBy }): void {
+    w.info = { harnessKind: w.harnessKind, ...name, ...(w.fromRunId ? { fromRunId: w.fromRunId } : {}) };
+    try {
+      this.d.writeInfo(w.taskId, w.runId, w.info);
+    } catch (err) {
+      this.d.log.warn(`terminal ${w.runId}: cannot save: ${errMsg(err)}`);
+    }
+  }
+
   /** The window's first turn: the session is a run, with a "Terminal opened" record. */
   private async opened(w: Watch): Promise<void> {
-    let title = w.info?.title;
-    if (!title) {
-      const rows = await this.d.readHistory(w.taskId, w.runId).catch(() => [] as MessageRow[]);
-      title = rows.some((r) => r.kind === 'prompt') ? chatTitle(rows) : 'Terminal session';
-    }
+    // A name given meanwhile wins over the one the session had; else Continue in Terminal keeps the run's.
+    const named = w.name ?? (w.info?.titleBy ? { title: w.info.title, titleBy: w.info.titleBy } : undefined);
+    const title = named?.title ?? (w.info?.title || (await this.firstTitle(w)));
     w.openedAt = Date.now();
     w.recorded = true;
-    w.info = { harnessKind: w.harnessKind, title, ...(w.fromRunId ? { fromRunId: w.fromRunId } : {}) };
+    w.info = { harnessKind: w.harnessKind, title, ...(named ? { titleBy: named.titleBy } : {}), ...(w.fromRunId ? { fromRunId: w.fromRunId } : {}) };
     try {
       this.d.writeInfo(w.taskId, w.runId, w.info);
     } catch (err) {

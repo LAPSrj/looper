@@ -1,8 +1,10 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolUseIds } from '../src/engine/chat';
+import { guidanceText } from '../src/shared/messages';
 import { OUTPUT_PREVIEW, commandAttachment, sizeText } from '../src/shared/bash-mode';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { gitTabLabel } from '../src/shared/git';
@@ -87,7 +89,7 @@ async function turn() {
   return sh;
 }
 
-async function setUp(): Promise<{ engine: Engine; dir: string; chatId: string }> {
+async function setUp(): Promise<{ engine: Engine; dir: string; dataDir: string; chatId: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
   const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
   const engine = createEngine({ dataDir });
@@ -102,7 +104,7 @@ async function setUp(): Promise<{ engine: Engine; dir: string; chatId: string }>
   );
   const chatId = engine.startChat('t1').id;
   await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
-  return { engine, dir, chatId };
+  return { engine, dir, dataDir, chatId };
 }
 
 const lines = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : []);
@@ -132,6 +134,27 @@ describe('a chat queue on Claude', { timeout: 30_000 }, () => {
     const chat = s.engine.getChat(s.chatId)!;
     expect(chat.queued).toEqual([]);
     expect(chat.rows.map((r) => (r.kind === 'prompt' ? `prompt ${r.text}` : r.kind))).toEqual(['prompt first', 'tool', 'prompt second', 'agent']);
+  });
+
+  it("holds a subagent's messages for the chat's subagent hook, which hands them over once", async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const files = readdirSync(s.dataDir, { recursive: true, encoding: 'utf8' });
+    const hook = files.find((f) => f.endsWith('looper-subagent-hook'));
+    expect(hook).toBeDefined();
+    s.engine.messageSubagent(s.chatId, 'a1b2', 'check the tests');
+    s.engine.messageSubagent(s.chatId, 'a1b2', 'and the docs');
+    s.engine.messageSubagent(s.chatId, '../x', 'nowhere');
+    expect(s.engine.getChat(s.chatId)?.subagentMessages).toEqual({ a1b2: 'check the tests\n\nand the docs' });
+    const call = JSON.stringify({ session_id: 's1', agent_id: 'a1b2', tool_name: 'Read', tool_input: {} });
+    const r = spawnSync('bash', [join(s.dataDir, hook!), 'post'], { input: call, encoding: 'utf8' });
+    expect(guidanceText(JSON.parse(r.stdout).hookSpecificOutput.additionalContext)).toBe('check the tests\n\nand the docs');
+    await until(() => s.engine.getChat(s.chatId)?.subagentMessages === undefined, 'the message to leave the waiting list');
+    // Taken back before the subagent reads it: the text comes back, and the hook finds nothing.
+    s.engine.messageSubagent(s.chatId, 'a1b2', 'never mind');
+    expect(s.engine.unmessageSubagent(s.chatId, 'a1b2')).toBe('never mind');
+    expect(s.engine.unmessageSubagent(s.chatId, 'a1b2')).toBeUndefined();
+    expect(spawnSync('bash', [join(s.dataDir, hook!), 'post'], { input: call, encoding: 'utf8' }).stdout).toBe('');
   });
 
   it('keeps a message sent before any tool call in the queue, where it can be edited, and writes it when a call starts', async () => {

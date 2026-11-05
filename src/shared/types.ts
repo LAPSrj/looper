@@ -524,6 +524,8 @@ export const ViewSchema = z.object({
     .prefault({}),
   /** Addons whose buttons the main toolbar leaves out (View → "<Addon> Toolbar"), by addon id. */
   hiddenAddonToolbars: z.array(z.string()).default([]),
+  /** The Needs attention rows Clear took off the dashboards, by attentionKey; a row's key leaves once the row itself is gone. */
+  attentionCleared: z.array(z.string()).default([]),
   /** The single task list's share of the sidebar's height, against the addon panes below it. */
   singleWeight: z.number().positive().default(2),
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
@@ -554,6 +556,10 @@ export const ViewSchema = z.object({
       bigCards: z.array(z.string()).default([]),
       /** The dashboard's cards in the order they were dragged to, by session id. */
       cardOrder: z.array(z.string()).default([]),
+      /** The dashboard's column widths dragged to, from the first column, in pixels (0: automatic); more columns fill the rest. */
+      cardColumns: z.array(z.number().min(0)).default([]),
+      /** The dashboard's row heights dragged to, from the top, in pixels (0: automatic). */
+      cardRows: z.array(z.number().min(0)).default([]),
       /** The sessions waiting for the user show first: the list's Waiting for you group, and the dashboard's first cards. */
       waitingFirst: z.boolean().default(true),
     })
@@ -753,10 +759,21 @@ export const SettingsSchema = z.object({
     .object({
       /** Thinking blocks show open, outside the tool-call groups. */
       expandThinking: z.boolean().default(false),
-      /** Close Conversation doesn't ask once the prompt cache of the agent's last reply has expired. */
+      /** Close Conversation asks first; off, it closes at once unless the agent is working or waiting on a permission answer. */
+      confirmClose: z.boolean().default(false),
+      /** With confirmClose, Close Conversation doesn't ask once the prompt cache of the agent's last reply has expired. */
       closeExpiredWithoutAsking: z.boolean().default(false),
       /** An idle chat's or terminal session's agent stops once its prompt cache expires; the next message (or key) starts it again on the conversation. */
       stopWhenCacheExpires: z.boolean().default(false),
+      /** A new chat starts with Continue When Limit Resets on. */
+      continueAfterLimit: z.boolean().default(false),
+      /** Continue When Limit Resets doesn't send once the prompt cache has expired and the context is over `aboveTokens`; at 0, whatever its size. */
+      skipExpiredContinue: z
+        .object({
+          enabled: z.boolean().default(false),
+          aboveTokens: z.number().int().nonnegative().default(0),
+        })
+        .prefault({}),
       /** Ask before a chat's message goes to an agent whose prompt cache has expired, which re-reads the whole context at full price. */
       confirmExpiredSend: z
         .object({

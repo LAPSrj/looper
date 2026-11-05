@@ -6,7 +6,10 @@ import { agentArgs } from '../shared/projects';
 import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
 import { CommandStream } from './command-output';
 import {
+  CONTINUE_TEXT,
   chatTitle,
+  continueDelay,
+  continueSkipped,
   forkPoint,
   slashCommandsOf,
   usageLimitsOf,
@@ -18,6 +21,8 @@ import {
   type ChatSettings,
   type ChatState,
   type QueuedMessage,
+  type TitleBy,
+  type UsageLimitHit,
 } from '../shared/chat';
 import { limitsKey, type SlashCommand, type UsageLimits } from '../shared/sessions';
 import {
@@ -32,13 +37,16 @@ import {
 import { compactRows, compactedText } from '../shared/compact';
 import type { MessageRow } from '../shared/messages';
 import type { EngineEvent, Harness, RunRecord, Settings, Task } from '../shared/types';
+import { queueGuidance, readPendingGuidance, takePendingGuidance } from './guidance';
 import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream';
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, findCodexRollout, transcriptHostPath } from './messages';
+import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
-import { recordCodexHome } from './steps/session';
+import { usageLimitOf } from './sessions';
+import { recordCodexHome, usageLimitReset } from './steps/session';
 import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
 import type { OpenConversation } from './store/state';
@@ -64,6 +72,12 @@ export const MAX_INLINE_IMAGE = 3_750_000;
 
 /** How long a permission hook may wait for the user: the chat window stays open meanwhile. */
 const PERMISSION_TIMEOUT_SEC = 86_400;
+
+/** The chat folder's folder of subagent inboxes, one per agent id. */
+const SUBAGENT_INBOX = 'subagent-inbox';
+
+/** A Claude Code agent id ("a030e1626c74e4140"), which names a folder. */
+const SUBAGENT_ID = /^[A-Za-z0-9_-]+$/;
 
 /** The message the agent gets: the user's text, then the paths of the files it reads itself. */
 export function withFileList(text: string, files: string[]): string {
@@ -313,7 +327,9 @@ export interface ChatDeps {
   /** The same conversation whole, as a compacted one keeps it (compactRows): what Compact starts from. */
   readCompactable: (taskId: string, runId: string) => Promise<MessageRow[]>;
   /** A conversation from outside Looper, read from its transcript (a host path): its rows, and the whole of it as compaction keeps it. */
-  readTranscript?: (hostPath: string, format: 'claude' | 'codex') => Promise<{ rows: MessageRow[]; compact: MessageRow[] }>;
+  readTranscript?: (hostPath: string, format: 'claude' | 'codex') => Promise<{ rows: MessageRow[]; compact: MessageRow[]; name?: string }>;
+  /** The name a run's conversation has (the user's for a terminal session, else the harness's): Continue in Chat starts with it. */
+  readName?: (taskId: string, runId: string) => Promise<string | undefined>;
   /** The chat is a run and the harness named its conversation: Looper's ledger of sessions keeps it. */
   onSession?: (chat: { taskId: string; runId: string; sessionId: string }) => void;
   writeInfo: (taskId: string, runId: string, info: ChatInfo) => void;
@@ -322,6 +338,8 @@ export interface ChatDeps {
   taskVersion: (taskId: string) => number | undefined;
   /** Claude reported the usage limits of the account the harness (by limitsKey) runs on. */
   onLimits: (key: string, limits: UsageLimits) => void;
+  /** Until when the chat's prompt cache lasts, when its harness says. */
+  cacheUntil?: (chatId: string) => number | undefined;
   /**
    * Remote Control for a Claude chat starting on the harness: the name the
    * Claude app lists it under, or undefined to start without it.
@@ -340,6 +358,32 @@ export function remoteControlRequest(requestId: string, name: string | undefined
     request_id: requestId,
     request: name ? { subtype: 'remote_control', enabled: true, name } : { subtype: 'remote_control', enabled: false },
   });
+}
+
+/**
+ * Claude's stream-json control request that renames the session, as a host
+ * does (source "host": Claude Code counts it as the user's rename, and writes
+ * a custom-title record to the transcript). Claude Code refuses an empty title.
+ */
+export function renameSessionRequest(requestId: string, title: string, sessionId?: string): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: requestId,
+    request: { subtype: 'rename_session', title, source: 'host', ...(sessionId ? { session_id: sessionId } : {}) },
+  });
+}
+
+/** Most of the first message Claude Code gets to name a chat from. */
+const MAX_TITLE_DESCRIPTION = 2000;
+
+/**
+ * Claude's stream-json control request that names the session from
+ * `description` (Claude Code 2.1.318's generate_session_title handler: its
+ * answer is `{ title }`). `persist` keeps the name in the transcript, and a
+ * session that already has one answers with that.
+ */
+export function sessionTitleRequest(requestId: string, description: string): string {
+  return JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'generate_session_title', description, persist: true } });
 }
 
 /** The text of a user record's message: its content string, or its text blocks joined. */
@@ -415,7 +459,7 @@ export interface HarnessChoice {
 export type ChatOpening =
   /** Open Project in Chat: a new conversation. */
   | { kind: 'new' }
-  /** Continue in Chat on a run that isn't a chat: a new chat that goes on with the run's conversation. */
+  /** Continue in Chat on a run that isn't a chat: a new chat that goes on with the run's conversation (and its name, read with readName). */
   | { kind: 'continue'; runId: string; sessionId: string }
   /** Continue in Chat on a chat's run, or a chat Looper opens again at its start: the chat again, in its own run. */
   | { kind: 'reopen'; runId: string; info: ChatInfo; sessionId?: string }
@@ -500,6 +544,21 @@ class ChatSession {
   /** When this window's first message made its "Chat opened" record. */
   private openedAt?: number;
   private title: string;
+  /** Whose name `title` is (the user's, the harness's); unset: the first message's. */
+  private titleBy?: TitleBy;
+  /** Claude: a Rename… its process hasn't been told yet (it wasn't running). */
+  private pendingRename?: string;
+  /** Claude Code was asked to name the chat (askTitle). */
+  private titleAsked = false;
+  /** The last turn failed on the usage limit. */
+  private limit?: UsageLimitHit;
+  /** What this turn said about the limit: Claude's rejected rate_limit_event, Codex's usage-limit error. */
+  private turnLimit?: { resetsAt?: number };
+  /** Continue When Limit Resets. */
+  private autoContinue: boolean;
+  /** Continue Anyway: this limit's continue ignores the cache rule of Settings → Chats. */
+  private continueAnyway = false;
+  private continueTimer: NodeJS.Timeout | null = null;
   private fork?: ForkSource;
   private draft?: ChatDraft;
   /** Opened again at Looper's start: its agent starts with the next message, not before. */
@@ -507,6 +566,8 @@ class ChatSession {
   private settings: ChatSettings;
   private activeModel?: string;
   private context?: ChatContext;
+  /** Claude: each model's context window its result records named (ChatState.modelWindows). */
+  private modelWindows: Record<string, number> = {};
   /** Claude: what the running process was started with. */
   private launched?: { model?: string; effort?: string; bypass: boolean };
   private status: ChatState['status'] = 'starting';
@@ -531,6 +592,8 @@ class ChatSession {
    */
   private queued: QueuedMessage[] = [];
   private queueSeq = 0;
+  /** The user's messages waiting for a subagent to read them, by its agent id. */
+  private readonly subagentWaiting = new Map<string, string>();
   /** Each message written to claude that it hasn't replayed yet, in order: a queued one's id, or null for a message sent at once. */
   private unreplayed: (string | null)[] = [];
   /** Claude's tool calls of this turn without a result yet. */
@@ -587,6 +650,13 @@ class ChatSession {
     this.reopened = opening.kind === 'reopen';
     this.recorded = this.reopened;
     this.title = info?.title ?? '';
+    this.titleBy = info?.titleBy;
+    this.autoContinue = info ? !!info.autoContinue : d.settings.chats.continueAfterLimit;
+    // Quitting while it waited for the reset: Looper's next start goes on waiting.
+    if (saved) {
+      this.limit = info?.limit;
+      this.continueAnyway = !!info?.continueAnyway;
+    }
     const taskSettings: ChatSettings = { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '' };
     this.settings = saved
       ? (info?.settings ?? saved.settings)
@@ -670,18 +740,29 @@ class ChatSession {
       // A conversation from outside Looper has no run: its history is its transcript's.
       void this.d
         .readTranscript(this.opening.transcript, this.claude ? 'claude' : 'codex')
-        .then(({ rows, compact }) => {
+        .then(({ rows, compact, name }) => {
           this.history = historyRows(rows);
           this.historyCompact = compact;
+          if (name) this.nameFromHarness(name);
           this.scheduleEmit();
         })
         .catch(() => undefined);
     }
+    // Continue in Chat on a conversation that has a name: the chat starts with it.
+    if (this.opening.kind === 'continue' && this.d.readName) {
+      void this.d
+        .readName(this.taskId, this.opening.runId)
+        .then((name) => name && this.nameFromHarness(name))
+        .catch(() => undefined);
+    }
+    this.syncContinue();
     if (this.claude) {
       const hook = path.join(this.dir, 'bin', this.target.permissionHookFile);
       writeText(hook, this.target.renderPermissionHook(this.targetFile('permissions')), 0o755);
       this.remoteName = this.d.remoteName?.(this.task, this.harness);
       const pipe = (file: string) => [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile(file)) }] }];
+      writeText(path.join(this.dir, 'bin', this.target.subagentHookFile), this.target.renderSubagentHook(this.targetFile(SUBAGENT_INBOX)), 0o755);
+      const toSubagents = (event: string) => [{ type: 'command', command: `${this.target.stopHookCommand(this.targetFile('bin', this.target.subagentHookFile))} ${event}` }];
       writeJsonAtomic(path.join(this.dir, 'settings.json'), {
         ...projectMcpApproval(this.harness),
         hooks: {
@@ -691,6 +772,9 @@ class ChatSession {
           SessionStart: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('session.json')) }] }],
           // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
           Notification: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('notification.json')) }] }],
+          // The user's messages for a running subagent, with its next tool result.
+          SubagentStart: [{ hooks: toSubagents('start') }],
+          PostToolUse: [{ matcher: '', hooks: toSubagents('post') }],
           PermissionRequest: [
             {
               matcher: '',
@@ -705,7 +789,12 @@ class ChatSession {
           ],
         },
       });
-      this.timers.push(setInterval(() => this.pollPermissions(), 300));
+      this.timers.push(
+        setInterval(() => {
+          this.pollPermissions();
+          this.pollSubagentMessages();
+        }, 300),
+      );
       // A chat opened again at Looper's start runs nothing until its next message (writeClaude starts claude then).
       if (this.restored) this.setStatus('ready');
       else this.startClaude();
@@ -743,6 +832,7 @@ class ChatSession {
     this.closed = true;
     for (const t of this.timers) clearInterval(t);
     if (this.emitTimer) clearTimeout(this.emitTimer);
+    if (this.continueTimer) clearTimeout(this.continueTimer);
     if (this.stopTimer) clearTimeout(this.stopTimer);
     this.forkProc?.kill();
     await Promise.all([this.kill(), this.stopCommands()]);
@@ -990,6 +1080,107 @@ class ChatSession {
     this.drainQueue();
   }
 
+  // ---------- names ----------
+
+  /** The harness named the conversation (or the one it goes on with has a name): the chat takes it, unless the user named it. */
+  private nameFromHarness(name: string): void {
+    const t = name.trim();
+    if (!t || this.titleBy === 'user' || (this.titleBy === 'harness' && this.title === t)) return;
+    this.title = t;
+    this.titleBy = 'harness';
+    this.save();
+    this.scheduleEmit();
+  }
+
+  /**
+   * Rename…: the user's name for the chat, which a running Claude Code also
+   * gets (rename_session), so its transcript has it. '' goes back to the
+   * automatic title, the first message's.
+   */
+  rename(name: string): void {
+    if (this.closed) return;
+    const t = name.trim();
+    if (t) {
+      this.title = t;
+      this.titleBy = 'user';
+      if (this.claude) {
+        if (this.proc) this.proc.stdin?.write(renameSessionRequest(`rename-${++this.controlSeq}`, t, this.sessionId) + '\n');
+        else this.pendingRename = t;
+      }
+    } else {
+      this.titleBy = undefined;
+      this.pendingRename = undefined;
+      const own = this.acc.rows.some((r) => r.kind === 'prompt');
+      this.title = this.recorded ? chatTitle(own ? this.acc.rows : [...this.history, ...this.acc.rows]) : '';
+    }
+    this.save();
+    this.scheduleEmit();
+  }
+
+  // ---------- the usage limit ----------
+
+  /** Continue When Limit Resets, on or off. */
+  setAutoContinue(on: boolean): void {
+    if (this.closed || this.autoContinue === on) return;
+    this.autoContinue = on;
+    if (!on) this.continueAnyway = false;
+    this.save();
+    this.syncContinue();
+    this.scheduleEmit();
+  }
+
+  /** Continue Anyway: the continue goes at the reset, or at once when the reset has passed, whatever the cache rule says. */
+  setContinueAnyway(): void {
+    if (this.closed || !this.limit || !this.autoContinue || this.continueAnyway) return;
+    this.continueAnyway = true;
+    this.save();
+    this.syncContinue();
+    this.scheduleEmit();
+  }
+
+  /** The turn ended: it failed on the usage limit when it said so (`turnLimit`) or its error row does. */
+  private takeLimit(): void {
+    const now = Date.now();
+    const said = this.turnLimit;
+    this.turnLimit = undefined;
+    const fromRows = usageLimitOf(this.acc.rows, now);
+    if (!said && !fromRows) {
+      this.continueAnyway = false;
+      return;
+    }
+    const resetsAt = said?.resetsAt ?? fromRows?.resetsAt;
+    this.limit = { at: now, ...(resetsAt !== undefined ? { resetsAt } : {}) };
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: the usage limit was hit${resetsAt ? `, it resets ${new Date(resetsAt).toISOString()}` : ''}`);
+    this.syncContinue();
+  }
+
+  /** Schedule (or cancel) the message Continue When Limit Resets sends. */
+  private syncContinue(): void {
+    if (this.continueTimer) clearTimeout(this.continueTimer);
+    this.continueTimer = null;
+    if (!this.limit || !this.autoContinue || this.closed || this.status === 'ended') return;
+    this.continueTimer = setTimeout(() => this.continueAfterLimit(), continueDelay(this.limit, Date.now()));
+  }
+
+  /** The limit has reset: the agent gets CONTINUE_TEXT as the user's message, a Looper note above it. */
+  private continueAfterLimit(): void {
+    this.continueTimer = null;
+    if (this.closed || !this.limit || !this.autoContinue || this.status === 'ended') return;
+    if (this.status !== 'ready' || this.killing || this.queued.length > 0 || this.permissions.length > 0) {
+      // Something else is going on (a restart): try again shortly.
+      this.continueTimer = setTimeout(() => this.continueAfterLimit(), 60_000);
+      return;
+    }
+    // The chat's limit message says so and offers Continue Anyway, and the limit stays for it.
+    const rule = this.d.settings.chats.skipExpiredContinue;
+    if (!this.continueAnyway && continueSkipped(rule, Date.now(), this.d.cacheUntil?.(this.id), this.context?.tokens)) return;
+    this.acc.addNote('The usage limit has reset: continuing.');
+    // A limit whose reset time wasn't said tries again hourly, and Continue Anyway goes on applying to those tries.
+    const anyway = this.continueAnyway;
+    this.dispatch({ text: CONTINUE_TEXT, attachments: [] });
+    this.continueAnyway = anyway;
+  }
+
   // ---------- settings ----------
 
   /** Chat menu: a new model, effort or permission mode for this chat (the task keeps its own). */
@@ -1067,6 +1258,10 @@ class ChatSession {
     this.proc?.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `init-${++this.controlSeq}`, request: { subtype: 'initialize' } }) + '\n');
     // Each process connects anew, under a new claude.ai address.
     if (this.remoteName) this.proc?.stdin?.write(remoteControlRequest(`rc-${++this.controlSeq}`, this.remoteName) + '\n');
+    if (this.pendingRename) {
+      this.proc?.stdin?.write(renameSessionRequest(`rename-${++this.controlSeq}`, this.pendingRename, this.sessionId) + '\n');
+      this.pendingRename = undefined;
+    }
     if (this.status !== 'working') this.setStatus('ready');
   }
 
@@ -1109,6 +1304,7 @@ class ChatSession {
     this.spawnProc(this.launcher(`turn-${this.codexTurns}`, parts.join(' '), prelude), (code, stderr) => {
       if (code !== 0) this.acc.addNote(exitText(`Codex exited with code ${code}.`, stderr));
       this.turnEnded();
+      this.takeLimit();
       void this.readCodexContext().finally(() => this.save());
       this.drainQueue();
     });
@@ -1225,6 +1421,13 @@ class ChatSession {
     else this.acc.addLine(line);
     if (this.claude) this.onClaudeRecord(rec, line);
     else if (rec.type === 'thread.started' && typeof rec.thread_id === 'string') this.setSession(rec.thread_id);
+    else if (rec.type === 'error' || rec.type === 'turn.failed') {
+      const msg = rec.type === 'error' ? rec.message : obj(rec.error)?.message;
+      if (typeof msg === 'string' && /usage limit/i.test(msg)) {
+        const resetsAt = usageLimitReset(msg, Date.now());
+        this.turnLimit = resetsAt !== null ? { resetsAt } : {};
+      }
+    } else if (rec.type === 'turn.completed') this.turnLimit = undefined;
     this.scheduleEmit();
   }
 
@@ -1234,9 +1437,15 @@ class ChatSession {
       if (typeof rec.model === 'string') this.activeModel = rec.model;
     } else if (rec.type === 'system' && rec.subtype === 'commands_changed') {
       this.commands = slashCommandsOf(rec.commands);
+    } else if (rec.type === 'system' && rec.subtype === 'session_title_changed') {
+      // Claude Code says the session's name at startup when it has one, and after each rename (never an AI title).
+      if (typeof rec.title === 'string') this.nameFromHarness(rec.title);
     } else if (rec.type === 'rate_limit_event') {
       const limits = usageLimitsOf(rec);
       if (limits) this.d.onLimits(limitsKey(this.environmentId, this.harness.id), limits);
+      // The request was refused for the limit: the turn fails on it.
+      const info = obj(rec.rate_limit_info);
+      if (info?.status === 'rejected') this.turnLimit = typeof info.resetsAt === 'number' ? { resetsAt: info.resetsAt * 1000 } : {};
     } else if ((rec.type === 'assistant' && rec.parent_tool_use_id == null) || (rec.type === 'system' && rec.subtype === 'compact_boundary')) {
       // A subagent's messages (parent_tool_use_id set) fill its own context, not the chat's.
       const tokens = contextOfLine(line, 'claude');
@@ -1274,6 +1483,12 @@ class ChatSession {
         if (list.length) this.commands = list;
         return;
       }
+      if (id.startsWith('title-')) {
+        // An error, or no title: the chat keeps its first message's.
+        const title = res?.subtype === 'success' ? obj(res.response)?.title : undefined;
+        if (typeof title === 'string') this.nameFromHarness(title);
+        return;
+      }
       if (id.startsWith('rc-')) {
         const link = obj(res?.response)?.session_url;
         if (res?.subtype === 'error') {
@@ -1294,6 +1509,9 @@ class ChatSession {
     } else if (rec.type === 'result') {
       const window = claudeContextWindow(rec, this.activeModel);
       if (this.context && window) this.context = { ...this.context, window };
+      const windows = claudeModelWindows(rec);
+      this.modelWindows = { ...this.modelWindows, ...windows };
+      sharedWindows.learn(windows);
       this.toolsRunning.clear();
       if (this.queued.some((q) => q.sent)) {
         // Messages the agent didn't read yet: Claude starts its next turn with them by itself.
@@ -1305,9 +1523,26 @@ class ChatSession {
         return;
       }
       this.turnEnded();
+      this.takeLimit();
+      this.askTitle();
       this.save();
       this.drainQueue();
     }
+  }
+
+  /**
+   * After the first turn, Claude Code names a chat that has no name yet
+   * (generate_session_title, `persist` writes it to the transcript too):
+   * print mode doesn't name its sessions by itself. Asked once per chat window.
+   */
+  private askTitle(): void {
+    // A turn refused for the usage limit can't name it either: the next turn asks.
+    if (this.titleAsked || this.titleBy || this.limit || !this.proc) return;
+    const first = [...this.history, ...this.acc.rows].find((r) => r.kind === 'prompt');
+    const description = first?.text.trim().slice(0, MAX_TITLE_DESCRIPTION);
+    if (!description) return;
+    this.titleAsked = true;
+    this.proc.stdin?.write(sessionTitleRequest(`title-${++this.controlSeq}`, description) + '\n');
   }
 
   /** Codex: the context size and window from the thread's rollout, after each turn. */
@@ -1345,6 +1580,11 @@ class ChatSession {
   }
 
   private dispatch(p: Pending): void {
+    // A message ends the wait for the limit, and the continue that was to follow it.
+    this.limit = undefined;
+    this.turnLimit = undefined;
+    this.continueAnyway = false;
+    this.syncContinue();
     this.acc.addPrompt(p.text, p.attachments);
     this.markOpened();
     // A compacted chat's first message takes the earlier conversation to the agent, once.
@@ -1387,6 +1627,46 @@ class ChatSession {
     for (const m of this.queued) m.sent = false;
     this.unreplayed = [];
     this.toolsRunning.clear();
+  }
+
+  // ---------- messages for subagents (claude) ----------
+
+  private subagentInbox(agentId: string): string {
+    return path.join(this.dir, SUBAGENT_INBOX, agentId);
+  }
+
+  /**
+   * A message for one of the agent's running subagents. It waits in the
+   * subagent's inbox, after anything still waiting there, until the subagent
+   * hook hands it over (see Target.renderSubagentHook).
+   */
+  messageSubagent(agentId: string, text: string): void {
+    const t = text.trim();
+    if (!this.claude || this.closed || this.status === 'ended' || !t || !SUBAGENT_ID.test(agentId)) return;
+    const dir = this.subagentInbox(agentId);
+    fs.mkdirSync(dir, { recursive: true });
+    queueGuidance(dir, t);
+    this.subagentWaiting.set(agentId, readPendingGuidance(dir) ?? t);
+    this.scheduleEmit();
+  }
+
+  /** Take back what waits for the subagent; undefined when the subagent has already read it. */
+  unmessageSubagent(agentId: string): string | undefined {
+    if (!this.subagentWaiting.has(agentId)) return undefined;
+    this.subagentWaiting.delete(agentId);
+    this.scheduleEmit();
+    return takePendingGuidance(this.subagentInbox(agentId)) ?? undefined;
+  }
+
+  /** A message the hook has handed over leaves the waiting list: the subagent's transcript shows it from then on. */
+  private pollSubagentMessages(): void {
+    for (const [agentId, text] of this.subagentWaiting) {
+      const now = readPendingGuidance(this.subagentInbox(agentId));
+      if (now === text) continue;
+      if (now === null) this.subagentWaiting.delete(agentId);
+      else this.subagentWaiting.set(agentId, now);
+      this.scheduleEmit();
+    }
   }
 
   // ---------- permission requests (claude) ----------
@@ -1461,7 +1741,7 @@ class ChatSession {
     this.openedAt = Date.now();
     if (!this.recorded) {
       this.recorded = true;
-      this.title = chatTitle(this.acc.rows);
+      if (!this.titleBy) this.title = chatTitle(this.acc.rows);
       // The transcript holds the compacted conversation only as text inside the first message: the run keeps its rows.
       if (this.opening.kind === 'compact') writeJsonAtomic(path.join(this.dir, COMPACTED_FILE), this.opening.history);
       // chat.json says how it opens again from now on.
@@ -1501,6 +1781,10 @@ class ChatSession {
         harnessId: this.harness.id,
         harnessKind: this.claude ? 'claude-code' : 'codex',
         title: this.title,
+        ...(this.titleBy ? { titleBy: this.titleBy } : {}),
+        ...(this.autoContinue ? { autoContinue: true } : {}),
+        ...(this.continueAnyway ? { continueAnyway: true } : {}),
+        ...(this.limit ? { limit: this.limit } : {}),
         settings: this.settings,
         ...(this.context ? { context: this.context } : {}),
         ...(this.fromRunId ? { fromRunId: this.fromRunId } : {}),
@@ -1625,17 +1909,23 @@ class ChatSession {
       models: harnessModels(this.harness),
       ...(this.activeModel ? { activeModel: this.activeModel } : {}),
       ...(this.context ? { context: this.context } : {}),
+      ...(Object.keys(this.modelWindows).length ? { modelWindows: this.modelWindows } : {}),
       status: this.status,
       ...(this.error ? { error: this.error } : {}),
       history: this.history,
       rows: this.acc.rows,
       permissions: this.permissions,
       queued: this.queued,
+      ...(this.subagentWaiting.size ? { subagentMessages: Object.fromEntries(this.subagentWaiting) } : {}),
       commands: this.commands,
       commandPrefix: this.claude ? '/' : '$',
       runningCommands: this.shellCommands.size,
       ...(this.turnEndedAt !== undefined ? { turnEndedAt: this.turnEndedAt } : {}),
       startedAt: this.startedAt,
+      ...(this.titleBy ? { title: this.title } : {}),
+      ...(this.limit ? { limit: this.limit } : {}),
+      autoContinue: this.autoContinue,
+      ...(this.continueAnyway ? { continueAnyway: true } : {}),
     };
   }
 }
@@ -1787,6 +2077,14 @@ export class ChatManager {
     this.sessions.get(id)?.send(text, attachments);
   }
 
+  messageSubagent(id: string, agentId: string, text: string): void {
+    this.sessions.get(id)?.messageSubagent(agentId, text);
+  }
+
+  unmessageSubagent(id: string, agentId: string): string | undefined {
+    return this.sessions.get(id)?.unmessageSubagent(agentId);
+  }
+
   async stop(id: string): Promise<void> {
     await this.sessions.get(id)?.stop();
   }
@@ -1822,6 +2120,21 @@ export class ChatManager {
 
   answer(id: string, requestId: string, allow: boolean): void {
     this.sessions.get(id)?.answerPermission(requestId, allow);
+  }
+
+  /** Rename…: the user's name for the chat; '' goes back to the automatic one. */
+  rename(id: string, name: string): void {
+    this.sessions.get(id)?.rename(name);
+  }
+
+  /** Continue When Limit Resets, on or off. */
+  setAutoContinue(id: string, on: boolean): void {
+    this.sessions.get(id)?.setAutoContinue(on);
+  }
+
+  /** Continue Anyway, past Settings → Chats' cache rule. */
+  setContinueAnyway(id: string): void {
+    this.sessions.get(id)?.setContinueAnyway();
   }
 
   /** Chats in the middle of a turn or waiting on the user: quitting would stop their agents. */

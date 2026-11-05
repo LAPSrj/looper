@@ -5,10 +5,7 @@
  * child windows have no menu, so the keys are handled on every window's page.
  */
 import { BrowserWindow } from 'electron';
-import { DESKTOP_ONLY } from '../../shared/ui-platform';
 import { zoomKey, zoomStep, type ZoomDirection } from './zoom-steps';
-
-const steppers = new WeakMap<BrowserWindow, (direction: ZoomDirection) => void>();
 
 /**
  * Make `w`'s page zoomable, starting at `initial` (the last zoom of its kind).
@@ -27,7 +24,6 @@ export function attachZoom(w: BrowserWindow, initial: number | undefined, onChan
     apply();
     onChange(factor);
   };
-  steppers.set(w, step);
   // A page load resets the zoom to what the browser remembers for the page's origin.
   contents.on('dom-ready', apply);
   contents.on('did-finish-load', apply);
@@ -40,22 +36,4 @@ export function attachZoom(w: BrowserWindow, initial: number | undefined, onChan
   });
   // Ctrl+wheel.
   contents.on('zoom-changed', (_event, direction) => step(direction));
-}
-
-/** View → Zoom In / Zoom Out / Actual Size on the focused window. */
-export function zoomFocused(direction: ZoomDirection): void {
-  const w = BrowserWindow.getFocusedWindow();
-  if (w) steppers.get(w)?.(direction);
-}
-
-/**
- * The View menu's zoom items. The accelerators only show: the page handles the
- * keys itself (child windows have no menu), so the menu must not take them too.
- */
-export function zoomMenuItems(): Electron.MenuItemConstructorOptions[] {
-  return [
-    { label: 'Zoom &In', accelerator: 'CmdOrCtrl+Plus', registerAccelerator: false, platforms: DESKTOP_ONLY, click: () => zoomFocused('in') },
-    { label: 'Zoom &Out', accelerator: 'CmdOrCtrl+-', registerAccelerator: false, platforms: DESKTOP_ONLY, click: () => zoomFocused('out') },
-    { label: '&Actual Size', accelerator: 'CmdOrCtrl+0', registerAccelerator: false, platforms: DESKTOP_ONLY, click: () => zoomFocused('reset') },
-  ];
 }

@@ -49,6 +49,7 @@ interface Props {
   onPick: (pick: DashboardPick) => void;
   /** Double-click or Enter: select the task and show one of its tabs. */
   onOpen: (taskId: string, tab: DetailTab) => void;
+  onClearAttention: (rows: AttentionRow[]) => void;
 }
 
 /** What opening a dashboard row does (double-click or Enter; a tap on a phone). */
@@ -70,7 +71,7 @@ export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => voi
 export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, remote, recent, runtimes, pick, onPick, onOpen }: Props) {
+export function Dashboard({ attention, running, remote, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
   // Only names the day of a time: the running time ticks in its own component.
   const now = Date.now();
   const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
@@ -181,7 +182,12 @@ export function Dashboard({ attention, running, remote, recent, runtimes, pick, 
         </section>
 
         <section className="dashboard-section">
-          <span className="pane-title">Needs attention</span>
+          <div className="dashboard-section-head">
+            <span className="pane-title">Needs attention</span>
+            <button className="btn small" disabled={attention.length === 0} onClick={() => onClearAttention(attention)}>
+              Clear
+            </button>
+          </div>
           {attention.length === 0 ? (
             <div className="dashboard-empty muted">Nothing needs attention.</div>
           ) : (
