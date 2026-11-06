@@ -1,7 +1,7 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the catalogs.
 import type { SessionKind } from '../sessions';
 import { SHORTCUTS } from '../shortcuts';
-import { DESKTOP_ONLY, NOT_MOBILE } from '../ui-platform';
+import { NOT_MOBILE } from '../ui-platform';
 import type { Command } from './types';
 
 /** The menus these commands are in: Chat, the Chats window's File and Edit, File → New Chat's shown-project items, and its project pickers. */
@@ -148,10 +148,9 @@ export const CHAT_COMMANDS = {
   openWorkFolder: {
     label: 'Open &Working Directory',
     icon: 'openFolder',
-    platforms: DESKTOP_ONLY,
     menu: { id: 'chat-work-folder', in: 'file', group: 'open', glyph: false },
     toolbar: { id: 'open-work-folder', group: 'session' },
-    mobile: { hidden: 'Opens a folder on the computer.' },
+    mobile: { group: 'conversation' },
   },
   closeAll: {
     label: 'Close A&ll Conversations',
@@ -204,9 +203,8 @@ export const CHAT_COMMANDS = {
   history: {
     label: 'History',
     icon: 'history',
-    platforms: NOT_MOBILE,
     toolbar: { id: 'history', group: 'views' },
-    mobile: { hidden: 'The History window is a computer’s.' },
+    mobile: { hidden: 'Not about the conversation shown: it’s in the Chats list’s More, from the toolbar.' },
   },
   activityPane: {
     label: 'Activity Pane',

@@ -3,6 +3,7 @@ import { isLooperTab, mainTabs } from '@shared/main-tabs';
 import { sidebarHasPanes } from '@shared/panes';
 import { remoteAccessStatusItems } from '@shared/remote-access';
 import { addonMainGroups, AddonScreenView } from './components/AddonScreen';
+import { useSessionsState } from './components/phone/useSessionsState';
 import type { AddonSelection } from './components/AddonPane';
 import { Dashboard } from './components/Dashboard';
 import { useDragResize } from './components/hooks';
@@ -95,6 +96,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const m = useMainWindow(picked);
   useItemWindow(m, fixed, item);
   const s = useSessionsWindow(undefined, false, { active: picked === 'chats' });
+  const chatsState = useSessionsState();
   const { view, tasks, projects, runtimes, addons, rest, counts, remoteOpen } = m;
   const tabs = mainTabs(addons);
   const tabDef = tabs.find((t) => t.id === picked);
@@ -216,6 +218,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         attention={m.attention}
         running={m.running}
         remote={remoteOpen}
+        chats={chatsState?.sessions ?? []}
         recent={m.recentShown}
         runtimes={runtimes}
         pick={m.livePick}

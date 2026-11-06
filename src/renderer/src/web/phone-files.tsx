@@ -1,6 +1,7 @@
 import { Fragment, useRef } from 'react';
 import type { HostDirEntry } from '../../../shared/remote-access';
 import { Markdown } from '../components/Markdown';
+import { ZoomImage } from '../components/ZoomImage';
 import { fmtDateTime } from '../format';
 import { groupPlaces } from './dialog-flows';
 import type { FileView, HostBrowser } from './file-flows';
@@ -30,11 +31,11 @@ export const CHECK = (
   </svg>
 );
 
-/** A file shown before it's downloaded: an image fit to the screen, or a text file's text, Markdown rendered. */
+/** A file shown before it's downloaded: an image fit to the screen that zooms, or a text file's text, Markdown rendered. */
 export function FileViewBody({ view, name }: { view: FileView; name: string }) {
   let body;
   if (view.error) body = <div className="ph-viewer-note">{view.error}</div>;
-  else if (view.kind === 'image') body = view.url ? <img className="ph-viewer-image" src={view.url} alt={name} /> : <div className="ph-viewer-note">Loading…</div>;
+  else if (view.kind === 'image') body = view.url ? <ZoomImage key={view.url} src={view.url} alt={name} /> : <div className="ph-viewer-note">Loading…</div>;
   else if (view.text === null) body = <div className="ph-viewer-note">Loading…</div>;
   else body = view.kind === 'markdown' ? <Markdown text={view.text} breaks={false} /> : <pre className="ph-viewer-text">{view.text}</pre>;
   return <div className={`ph-viewer ph-scroll${view.kind === 'image' ? ' image' : ''}`}>{body}</div>;

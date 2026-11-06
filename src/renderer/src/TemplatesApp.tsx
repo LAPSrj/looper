@@ -4,7 +4,7 @@ import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
 
-/** Standalone template manager window (File → Templates…). All actions apply immediately. */
+/** Standalone template manager window (Tools → Templates). All actions apply immediately. */
 export function TemplatesApp() {
   const [templates, setTemplates] = useState<Task[]>([]);
   const [selected, setSelected] = useState<string | null>(null);

@@ -7,12 +7,19 @@ import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
 import { ChatRow, ToolGroup } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
 import { useChatsSettings } from './components/hooks';
+import { ARROW_UP } from './components/Composer';
 import { Icon } from './components/Icon';
+import { Inspector, useInspector } from './components/Inspector';
+import { InspectorHost } from './components/ListDetail';
+import { NavBar } from './components/NavBar';
+import { useAutoGrow } from './components/phone/auto-grow';
+import { useSplit } from './components/phone/PhoneSplit';
 import { EmptyWindow, TabBar } from './components/ui';
 import { openXterm } from './components/xterm';
 import { subscribe } from './events';
 import { fmtDateTime } from './format';
 import { settingLabel, settingValue } from './taskSettings';
+import { INSPECTOR_WIDTH } from './web/nav-stack';
 import { isPhone } from './web/page-nav';
 
 type Rec = Record<string, unknown>;
@@ -218,8 +225,8 @@ const TOOLBAR_ICONS = {
   ),
 };
 
-/** Save, Undo/Redo through the builder's changes, and the task's Version History. */
-function BuilderToolbar({ state }: { state: BuilderState }) {
+/** Save, Undo/Redo through the builder's changes, and the task's Version History, with their keys. */
+function useBuilderCommands(state: BuilderState) {
   const busy = state.status === 'working' || state.status === 'starting';
   const canSave = state.unsaved && draftValid(state) && !busy;
   const { canUndo, canRedo } = state.history;
@@ -246,6 +253,19 @@ function BuilderToolbar({ state }: { state: BuilderState }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [state.id, canSave, canUndo, canRedo]);
 
+  return {
+    canSave,
+    canUndo,
+    canRedo,
+    save: act(() => window.looper.builder.save(state.id)),
+    undo: act(() => window.looper.builder.undo(state.id)),
+    redo: act(() => window.looper.builder.redo(state.id)),
+    versions: act(() => window.looper.versions.open(state.taskId!)),
+  };
+}
+
+function BuilderToolbar({ state }: { state: BuilderState }) {
+  const c = useBuilderCommands(state);
   const button = (icon: React.ReactNode, title: string, enabled: boolean, onClick: () => void) => (
     <button title={title} aria-label={title} disabled={!enabled} onClick={onClick}>
       <Icon>{icon}</Icon>
@@ -253,13 +273,35 @@ function BuilderToolbar({ state }: { state: BuilderState }) {
   );
   return (
     <div className="toolbar builder-toolbar">
-      {button(TOOLBAR_ICONS.save, 'Save (Ctrl+S)', canSave, act(() => window.looper.builder.save(state.id)))}
+      {button(TOOLBAR_ICONS.save, 'Save (Ctrl+S)', c.canSave, c.save)}
       <span className="toolbar-sep" />
-      {button(TOOLBAR_ICONS.undo, 'Undo (Ctrl+Z)', canUndo, act(() => window.looper.builder.undo(state.id)))}
-      {button(TOOLBAR_ICONS.redo, 'Redo (Ctrl+Y)', canRedo, act(() => window.looper.builder.redo(state.id)))}
+      {button(TOOLBAR_ICONS.undo, 'Undo (Ctrl+Z)', c.canUndo, c.undo)}
+      {button(TOOLBAR_ICONS.redo, 'Redo (Ctrl+Y)', c.canRedo, c.redo)}
       <span className="toolbar-sep" />
-      {button(TOOLBAR_ICONS.history, 'Version History', !!state.taskId, act(() => window.looper.versions.open(state.taskId!)))}
+      {button(TOOLBAR_ICONS.history, 'Version History', !!state.taskId, c.versions)}
     </div>
+  );
+}
+
+/** A phone's or tablet's bar: Save is the confirming action, the draft has its button, and the rest is in More. */
+function BuilderBar({ state, onDraft, modal, beside }: { state: BuilderState; onDraft: () => void; modal: boolean; beside: boolean }) {
+  const c = useBuilderCommands(state);
+  return (
+    <NavBar
+      confirm={{ label: 'Save', disabled: !c.canSave, run: c.save }}
+      actions={[{ id: 'draft', label: beside ? 'Show or Hide Draft' : 'Draft', icon: 'activity', run: onDraft }]}
+      toolbar={[
+        {
+          id: 'edit',
+          items: [
+            { id: 'undo', label: 'Undo', enabled: c.canUndo, run: c.undo },
+            { id: 'redo', label: 'Redo', enabled: c.canRedo, run: c.redo },
+            { id: 'versions', label: 'Version History', icon: 'history', enabled: !!state.taskId, run: c.versions },
+          ],
+        },
+      ]}
+      modal={modal}
+    />
   );
 }
 
@@ -291,11 +333,31 @@ function Chat({ state }: { state: BuilderState }) {
     atBottom.current = true;
   };
 
-  const placeholder = state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run';
+  const placeholder = state.mode === 'edit' ? 'Describe what to change' : isPhone ? 'Describe the task' : 'Describe the task you want Looper to run';
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(boxRef, text, 150, isPhone);
   const items = groupRows(state.rows, expandThinking);
   const showCard = state.status === 'ready' && state.unsaved && draftValid(state);
   const last = items.at(-1);
   const cardUnder = showCard && last?.kind === 'row' && last.row.kind === 'agent';
+  const box = (
+    <textarea
+      ref={boxRef}
+      value={text}
+      placeholder={placeholder}
+      rows={isPhone ? 1 : 3}
+      autoFocus={!isPhone}
+      disabled={state.status === 'ended'}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        // On a phone or tablet Enter is a line break, and Ctrl+Enter or Cmd+Enter sends.
+        if (e.key === 'Enter' && (isPhone ? e.ctrlKey || e.metaKey : !e.shiftKey)) {
+          e.preventDefault();
+          send();
+        }
+      }}
+    />
+  );
   return (
     <section className="builder-chat">
       <div
@@ -322,26 +384,25 @@ function Chat({ state }: { state: BuilderState }) {
         {showCard && !cardUnder && <DraftCard state={state} />}
       </div>
       <ChatStatus state={state} />
-      <div className="chat-composer">
-        <textarea
-          value={text}
-          placeholder={placeholder}
-          rows={3}
-          autoFocus
-          disabled={state.status === 'ended'}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            // On a phone or tablet Enter is a line break, and Ctrl+Enter or Cmd+Enter sends.
-            if (e.key === 'Enter' && (isPhone ? e.ctrlKey || e.metaKey : !e.shiftKey)) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <button className="btn primary" disabled={!text.trim() || state.status === 'ended'} onClick={send}>
-          Send
-        </button>
-      </div>
+      {isPhone ? (
+        <div className="chat-composer phone-composer">
+          <div className="phone-composer-row">
+            <div className="composer-input phone-composer-box">
+              {box}
+              <button className="phone-composer-action send" aria-label="Send" disabled={!text.trim() || state.status === 'ended'} onMouseDown={(e) => e.preventDefault()} onClick={send}>
+                {ARROW_UP}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="chat-composer">
+          {box}
+          <button className="btn primary" disabled={!text.trim() || state.status === 'ended'} onClick={send}>
+            Send
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -389,12 +450,14 @@ function BuilderTerminal({ state }: { state: BuilderState }) {
   );
 }
 
-/** The task builder's window: the conversation on the left, the draft panel on the right. */
+/** The task builder's window: the conversation, and the draft panel beside it, or a phone's sheet (Inspector). */
 export function BuilderApp({ id }: { id: string }) {
   const [state, setState] = useState<BuilderState | null | undefined>(undefined);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [stored, setStored] = useState<Task | undefined>(undefined);
   const taskId = state?.taskId;
+  const beside = !!useSplit(isPhone);
+  const panel = useInspector('draft', beside);
 
   useEffect(() => {
     void window.looper.info().then((i) => setEnvironments(i.settings.environments));
@@ -424,10 +487,18 @@ export function BuilderApp({ id }: { id: string }) {
   if (!state) return <EmptyWindow gone={state === null && 'This conversation with the agent was closed.'} />;
   return (
     <div className="builder-app">
-      <BuilderToolbar state={state} />
-      <div className="builder">
+      {isPhone ? <BuilderBar state={state} onDraft={panel.toggle} modal={panel.sheetOpen} beside={beside} /> : <BuilderToolbar state={state} />}
+      <div className="builder" style={{ '--split-inspector': `${INSPECTOR_WIDTH}px` } as React.CSSProperties}>
         {state.view === 'terminal' ? <BuilderTerminal state={state} /> : <Chat state={state} />}
-        <DraftPanel state={state} environments={environments} stored={stored} />
+        {isPhone ? (
+          <InspectorHost.Provider value={{ split: beside ? { lead: 0, inspector: INSPECTOR_WIDTH } : null }}>
+            <Inspector title="Draft" open={panel.open} onClose={panel.dismiss}>
+              <DraftPanel state={state} environments={environments} stored={stored} />
+            </Inspector>
+          </InspectorHost.Provider>
+        ) : (
+          <DraftPanel state={state} environments={environments} stored={stored} />
+        )}
       </div>
     </div>
   );

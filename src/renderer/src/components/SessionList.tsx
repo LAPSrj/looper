@@ -2,11 +2,11 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { SessionSummary } from '@shared/sessions';
 import { sessionGroupKey, waitingOf } from '@shared/sessions';
-import { isPhone } from '../web/page-nav';
 import { ContextRing } from './ContextRing';
 import { GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
 import { listContextMenu, parentIndex } from './list-nav';
+import { itemWindows, selectsOnMenu } from './ListDetail';
 import { WaitedFor } from './Live';
 import { contextFraction } from './usage';
 
@@ -47,7 +47,6 @@ function Row({
   sub,
   live,
   onSelect,
-  selectOnMenu,
 }: {
   s: SessionSummary;
   id: string;
@@ -56,7 +55,6 @@ function Row({
   /** The subtitle counts a live time. */
   live?: boolean;
   onSelect: (id: string) => void;
-  selectOnMenu: boolean;
 }) {
   return (
     <div
@@ -67,11 +65,10 @@ function Row({
       className={`session-row${selected ? ' selected' : ''}${s.waiting?.reason === 'turn' ? ' unread' : ''}`}
       onClick={() => onSelect(s.id)}
       // A chat or a task run opens in a window of its own; terminal sessions stay in the Chats window.
-      onDoubleClick={isPhone || s.kind === 'terminal' ? undefined : () => window.looper.openItemWindow('chat', s.id)}
+      onDoubleClick={!itemWindows || s.kind === 'terminal' ? undefined : () => window.looper.openItemWindow('chat', s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
-        // On a phone a selection opens the chat: a long press only shows its menu (which names the session itself).
-        if (selectOnMenu && !isPhone) onSelect(s.id);
+        if (selectsOnMenu) onSelect(s.id);
         window.looper.sessions.showContextMenu(s.id);
       }}
     >
@@ -150,7 +147,6 @@ export function SessionList({
   waitingFirst,
   onToggle,
   onSelect,
-  selectOnMenu = true,
 }: {
   sessions: SessionSummary[];
   selected: string | null;
@@ -160,8 +156,6 @@ export function SessionList({
   waitingFirst: boolean;
   onToggle: (key: string) => void;
   onSelect: (id: string | null) => void;
-  /** A right-click (a long press) selects the row before its menu shows; off where selecting opens it. */
-  selectOnMenu?: boolean;
 }) {
   const waiting = waitingFirst ? waitingOf(sessions) : [];
   const groups: { key: string; name: string; items: SessionSummary[] }[] = [];
@@ -209,7 +203,7 @@ export function SessionList({
     onActivate: (i) => {
       const r = rows[i];
       if (r.kind === 'group') onToggle(r.key);
-      else if (!isPhone && r.s.kind !== 'terminal') window.looper.openItemWindow('chat', r.s.id);
+      else if (itemWindows && r.s.kind !== 'terminal') window.looper.openItemWindow('chat', r.s.id);
     },
     onDelete: (i) => {
       const r = rows[i];
@@ -263,7 +257,6 @@ export function SessionList({
               }
               live
               onSelect={pick}
-              selectOnMenu={selectOnMenu}
             />
           ))}
         </Group>
@@ -283,7 +276,7 @@ export function SessionList({
           onMenu={() => window.looper.sessions.showGroupContextMenu(g.key)}
         >
           {g.items.map((s) => (
-            <Row key={s.id} s={s} id={`session-${s.id}`} selected={selected === s.id} sub={kindText(s) + (s.latest ?? statusText(s))} onSelect={pick} selectOnMenu={selectOnMenu} />
+            <Row key={s.id} s={s} id={`session-${s.id}`} selected={selected === s.id} sub={kindText(s) + (s.latest ?? statusText(s))} onSelect={pick} />
           ))}
         </Group>
       ))}

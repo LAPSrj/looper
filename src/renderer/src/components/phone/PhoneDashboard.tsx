@@ -1,21 +1,22 @@
-import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../../format';
+import { REMOTE_STATUS_LABELS, fmtClock } from '../../format';
 import { splitAttention, taskSummary, waitingForYou } from '../../phone-lists';
 import { preventSleepStatus, type MainWindow } from '../../useMainWindow';
-import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners } from '../Dashboard';
-import { Elapsed, RestStatusText, WaitedFor } from '../Live';
-import { showTaskMenu } from '../TaskList';
+import { StatusIcon, dashboardOpeners } from '../Dashboard';
+import { RestStatusText, WaitedFor } from '../Live';
+import { statusText } from '../SessionList';
+import { AttentionGroup, RecentGroup, RunningGroup, taskRowMenu } from './overview-rows';
 import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
 import { useSessionsState } from './useSessionsState';
 
 /**
  * The main window's dashboard on a phone, in the order of what needs a
  * decision: what waits for you (chats and runs), what needs attention, what is
- * running, the latest runs, then one summary row of the task counts that opens
+ * running, the other chats, the latest runs, then one summary row of the task counts that opens
  * Tasks. A tap opens a row as a double-click does; a long press shows its menu,
  * which acts on that row's task.
  */
 export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks: () => void }) {
-  const { counts, loaded, rest, remoteOpen, addons, runtimes } = m;
+  const { counts, loaded, rest, remoteOpen, addons } = m;
   // Only names the day of a time: the waited and running times tick in their own components.
   const now = Date.now();
   const opens = dashboardOpeners(m.openFromDashboard);
@@ -25,6 +26,8 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
   const waitingRunIds = new Set(waiting.flatMap((w) => (w.kind === 'run' ? [w.attention.runId] : [])));
   const attention = splitAttention(m.attention).rest;
   const running = m.running.filter((r) => !waitingRunIds.has(r.runId));
+  const waitingChats = new Set(waiting.flatMap((w) => (w.kind === 'chat' ? [w.session.id] : [])));
+  const chats = (sessions?.sessions ?? []).filter((s) => !waitingChats.has(s.id));
   // Zero before the data arrives is wrong, not empty: each part joins the summary only once it has answered.
   const summary = taskSummary({
     counts,
@@ -32,13 +35,6 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
     addonsRunning: m.addonsLoaded && addons.length > 0 ? m.runningAddons : null,
     remoteSessions: m.remoteLoaded && remoteOpen ? remoteOpen.length : null,
   });
-  const taskMenu = (taskId: string, list: 'attention' | 'running', runId: string | null) => () => {
-    const task = m.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    m.setPick({ list, taskId, runId });
-    showTaskMenu(task, runtimes[taskId]);
-  };
-  const recent = m.recentShown ?? [];
 
   return (
     <div className="pg-scroll">
@@ -56,70 +52,33 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
               chevron
               // A chat opens on its conversation, ready to answer; a run on its run window (the question) or its terminal.
               onOpen={() => (w.kind === 'chat' ? window.looper.sessions.openWindow(w.session.id) : opens.attention(w.attention))}
-              onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskMenu(w.attention.task.id, 'attention', w.attention.runId)}
+              onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskRowMenu(m, w.attention.task.id, 'attention', w.attention.runId)}
             />
           ))}
         </Group>
       )}
 
-      <Group title="Needs Attention">
-        {attention.length === 0 ? (
-          <EmptyRow>Nothing needs attention.</EmptyRow>
-        ) : (
-          attention.map((r) => (
-            <Row
-              key={`${r.task.id}-${r.runId ?? 'last'}`}
-              lead={<StatusIcon level={r.level} />}
-              title={r.task.name}
-              sub={r.at !== null ? `${fmtClock(r.at, now)} · ${r.problem}` : r.problem}
-              chevron
-              onOpen={() => opens.attention(r)}
-              onMenu={taskMenu(r.task.id, 'attention', r.runId)}
-            />
-          ))
-        )}
-        {attention.length > 0 && <Row title="Clear" onOpen={() => m.clearAttention(attention)} />}
-      </Group>
-
-      <Group title="Running Now">
-        {running.length === 0 ? (
-          <EmptyRow>Nothing is running.</EmptyRow>
-        ) : (
-          running.map((r) => (
-            <Row
-              key={r.runId}
-              title={r.task.name}
-              sub={`${STEP_LABELS[r.run.state]} · ${TRIGGER_LABELS[r.run.trigger]} · ${fmtClock(r.run.startedAt, now)}`}
-              value={<span className="live-only"><Elapsed since={r.run.startedAt} /></span>}
-              chevron
-              onOpen={() => opens.running(r)}
-              onMenu={taskMenu(r.task.id, 'running', r.runId)}
-            />
-          ))
-        )}
-      </Group>
-
-      <Group title="Recent Runs">
-        {m.recentShown && recent.length === 0 ? (
-          <EmptyRow>No runs yet.</EmptyRow>
-        ) : (
-          recent.map((r) => (
-            <Row
-              key={`${r.taskId}-${r.runId}`}
-              title={r.taskName}
-              sub={[fmtClock(Date.parse(r.startTs), now), resultLabel(r.result), r.details].filter(Boolean).join(' · ')}
-              value={r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : undefined}
-              tone={r.result === 'error' ? 'error' : r.result === 'warning' ? 'warning' : r.result === 'noop' || r.result === 'skipped' ? 'muted' : undefined}
-              chevron
-              onOpen={() => opens.recent(r)}
-              onMenu={() => {
-                m.setPick({ list: 'recent', taskId: r.taskId, runId: r.runId });
-                window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details });
-              }}
-            />
-          ))
-        )}
-      </Group>
+      <AttentionGroup m={m} rows={attention} />
+      <RunningGroup m={m} rows={running} />
+      {sessions && (
+        <Group title="Chats">
+          {chats.length === 0 ? (
+            <EmptyRow>{waitingChats.size ? 'No other chats are open.' : 'No chats are open.'}</EmptyRow>
+          ) : (
+            chats.map((s) => (
+              <Row
+                key={s.id}
+                title={s.title}
+                sub={[s.groupName, s.lastReplyAt !== undefined ? fmtClock(s.lastReplyAt, now) : '', s.latest ?? statusText(s)].filter(Boolean).join(' · ')}
+                chevron
+                onOpen={() => window.looper.sessions.openWindow(s.id)}
+                onMenu={() => window.looper.sessions.showContextMenu(s.id, false)}
+              />
+            ))
+          )}
+        </Group>
+      )}
+      <RecentGroup m={m} />
 
       <Group title="Tasks" footer={
         rest?.armed || m.preventSleep ? (

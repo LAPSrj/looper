@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   followSelection,
   initialPhoneNav,
+  phoneTabs,
   popScreen,
   pushScreen,
   rootScreen,
@@ -193,5 +194,87 @@ describe('iPad split view (list column and detail column)', () => {
   it('a cleared selection from the list column leaves a folder shown', () => {
     const nav = rootScreen(selectTab(initialPhoneNav(), 'tasks'), { kind: 'folder', id: 'dev' });
     expect(followSelection(nav, none, true)).toBe(nav);
+  });
+});
+
+describe('how the views show', () => {
+  const servers = ['addon/a/servers', 'Servers'] as const;
+  const logs = ['addon/b/logs', 'Logs'] as const;
+  const addons = (n: number) => Array.from({ length: n }, (_, i) => [`addon/x/${i}`, `Addon ${i}`] as const);
+  const ids = (tabs: readonly (readonly [string, string])[]) => tabs.map(([id]) => id);
+  const VIEWS = ['dashboard', 'projects', 'tasks', 'sessions'];
+
+  describe('on iOS', () => {
+    it('fits one addon tab as the fifth', () => {
+      const t = phoneTabs([servers], 'ios', 402, false);
+      expect(t.form).toBe('bar');
+      expect(ids(t.shown)).toEqual([...VIEWS, 'addon/a/servers']);
+      expect(t.more).toEqual([]);
+    });
+
+    it('makes the trailing tab More when they do not fit an iPhone', () => {
+      const t = phoneTabs([servers, logs], 'ios', 402, false);
+      expect(ids(t.shown)).toEqual([...VIEWS, 'more']);
+      expect(t.more).toEqual([servers, logs]);
+      expect(t.menu).toBeNull();
+    });
+
+    it('shows every tab near the top of an iPad that has room', () => {
+      const t = phoneTabs([servers, logs], 'ios', 1376, true);
+      expect(t.form).toBe('top');
+      expect(ids(t.shown)).toEqual([...VIEWS, 'addon/a/servers', 'addon/b/logs']);
+      expect(t.more).toEqual([]);
+    });
+
+    it('moves only what does not fit under More on an iPad', () => {
+      const t = phoneTabs(addons(12), 'ios', 1032, true);
+      expect(ids(t.shown).at(-1)).toBe('more');
+      expect(ids(t.shown).slice(0, 4)).toEqual(VIEWS);
+      expect(t.shown.length - 1 + t.more.length).toBe(16);
+      expect(t.shown.length).toBeGreaterThan(5);
+    });
+  });
+
+  describe('on Android', () => {
+    it('uses a bar for up to five views under 840 dp', () => {
+      for (const width of [412, 800]) {
+        const t = phoneTabs([servers], 'android', width, false);
+        expect(t.form).toBe('bar');
+        expect(ids(t.shown)).toEqual([...VIEWS, 'addon/a/servers']);
+        expect(t.menu).toBeNull();
+      }
+    });
+
+    it('uses a rail from 840 dp', () => {
+      expect(phoneTabs([], 'android', 840, true).form).toBe('rail');
+      expect(phoneTabs([], 'android', 915, false).form).toBe('rail');
+    });
+
+    it('hides more than five views behind the menu icon in a compact window, with no bar and no More tab', () => {
+      const t = phoneTabs([servers, logs], 'android', 412, false);
+      expect(t.form).toBe('none');
+      expect(t.shown).toEqual([]);
+      expect(t.more).toEqual([]);
+      expect(ids(t.menu!)).toEqual([...VIEWS, 'addon/a/servers', 'addon/b/logs']);
+    });
+
+    it('takes the rail for more than five views in a medium window', () => {
+      const t = phoneTabs([servers, logs], 'android', 800, false);
+      expect(t.form).toBe('rail');
+      expect(t.shown).toHaveLength(6);
+      expect(t.menu).toBeNull();
+    });
+
+    it('keeps seven in the rail and all of them behind the menu icon beyond that', () => {
+      const t = phoneTabs(addons(4), 'android', 1280, true);
+      expect(t.shown).toHaveLength(7);
+      expect(t.menu).toHaveLength(8);
+    });
+  });
+
+  it('gives an addon tab that was never opened an empty stack', () => {
+    const nav = selectTab(initialPhoneNav(), 'addon/a/servers');
+    expect(topScreen(nav)).toBeNull();
+    expect(pushScreen(nav, { kind: 'task', id: 't' }).stacks['addon/a/servers']).toEqual([{ kind: 'task', id: 't' }]);
   });
 });

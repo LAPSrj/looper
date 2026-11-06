@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { fileImageId, type MessageImage } from '@shared/messages';
 import { Icon } from './components/Icon';
+import { ICONS as SHARED_ICONS } from './components/icons';
+import { NavBar } from './components/NavBar';
 import { NumberInput } from './components/ui';
+import { ZoomImage } from './components/ZoomImage';
+import { isPhone } from './web/page-nav';
 
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 800;
@@ -46,8 +50,6 @@ const ICONS = {
       <path d="M4.5 8h7M7 5.5 4.5 8 7 10.5M9 5.5 11.5 8 9 10.5" />
     </>
   ),
-  previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
-  next: <path d="M6 3.5 10.5 8 6 12.5" />,
 };
 
 /** The window's title for a sent image's row id: "Image – name". */
@@ -166,16 +168,35 @@ export function ImageApp({
   const url = image !== null && image !== 'missing' ? `data:${image.mediaType};base64,${image.data}` : null;
   const width = zoom !== null && natural ? Math.max(1, Math.round((natural.w * zoom) / 100)) : undefined;
 
+  if (isPhone) {
+    return (
+      <div className="image-app">
+        <NavBar
+          title={many ? `${index + 1} of ${count}` : title}
+          actions={
+            many
+              ? [
+                  { id: 'previous', label: 'Previous Image', icon: 'previous', disabled: index <= 0, run: () => go(index - 1) },
+                  { id: 'next', label: 'Next Image', icon: 'next', disabled: index >= count - 1, run: () => go(index + 1) },
+                ]
+              : undefined
+          }
+        />
+        {image === 'missing' ? <div className="muted image-missing">The image is no longer available.</div> : url ? <ZoomImage key={url} src={url} alt={title} /> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="image-app">
       <div className="toolbar">
         {many && (
           <>
             <button title="Previous Image" aria-label="Previous Image" disabled={index <= 0} onClick={() => go(index - 1)}>
-              <Icon>{ICONS.previous}</Icon>
+              <Icon>{SHARED_ICONS.previous}</Icon>
             </button>
             <button title="Next Image" aria-label="Next Image" disabled={index >= count - 1} onClick={() => go(index + 1)}>
-              <Icon>{ICONS.next}</Icon>
+              <Icon>{SHARED_ICONS.next}</Icon>
             </button>
             <span className="toolbar-sep" />
           </>

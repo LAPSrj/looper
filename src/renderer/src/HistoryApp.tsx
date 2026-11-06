@@ -13,14 +13,19 @@ import {
 } from '@shared/history';
 import type { MessageRow } from '@shared/messages';
 import { ViewSchema, type Project, type View } from '@shared/types';
-import { DESKTOP_ONLY, NOT_MOBILE } from '@shared/ui-platform';
+import { NOT_MOBILE } from '@shared/ui-platform';
 import { ActivityPanel } from './components/ActivityPanel';
 import { AddonSearchBox } from './components/AddonPane';
 import { ChatRow, ToolGroup } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
 import { HistoryList } from './components/HistoryList';
 import { SubagentIcon } from './components/SubagentIcon';
-import { useChatsSettings, useDragResize } from './components/hooks';
+import { useChatsSettings } from './components/hooks';
+import { Inspector, useInspector } from './components/Inspector';
+import { ListDetail } from './components/ListDetail';
+import { NavBar } from './components/NavBar';
+import { TreeListSection } from './components/phone/PhoneList';
+import { useSplit } from './components/phone/PhoneSplit';
 import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
 import type { ToolbarGroup } from './components/toolbar-model';
@@ -28,16 +33,6 @@ import { subscribe } from './events';
 
 const WIDTHS_KEY = 'history.widths';
 const DEFAULT_VIEW: View['history'] = ViewSchema.parse({}).history;
-
-function savedWidths(): { left: number; right: number } {
-  try {
-    const saved = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? '') as { left: number; right: number };
-    if (saved.left > 0 && saved.right > 0) return saved;
-  } catch {
-    /* the defaults */
-  }
-  return { left: 320, right: 400 };
-}
 
 const fail = (e: Error) => void window.looper.showError(e.message);
 
@@ -93,8 +88,9 @@ export function HistoryApp() {
   const [commands, setCommands] = useState<HistoryCommands>(NO_HISTORY_COMMANDS);
   const [activity, setActivity] = useState(false);
   const [nowPos, setNowPos] = useState<number | null>(null);
-  const [widths, setWidths] = useState(savedWidths);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  // A phone or tablet: its own Activity, as its bar's button; the desktop's follows View → Activity Pane (`activity`).
+  const split = useSplit();
+  const panel = useInspector<'now'>('now', !!split?.inspector);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -253,7 +249,11 @@ export function HistoryApp() {
 
   const shown = useMemo(() => filterHistory(items ?? [], { title: query, found }), [items, query, found]);
   const groups = useMemo(() => groupHistory(shown, view.groupBy, projects, Date.now()), [shown, view.groupBy, projects]);
-  const item = items?.find((i) => i.id === selected);
+  // A conversation stays open if a newer list no longer holds it (the folders' scan comes in after the first list, with more recent ones).
+  const opened = useRef<HistoryItem | null>(null);
+  const listed = items?.find((i) => i.id === selected);
+  if (listed) opened.current = listed;
+  const item = listed ?? (opened.current?.id === selected ? opened.current : undefined);
 
   const run = (command: HistoryCommand) => () => {
     if (selected) void window.looper.history.run(selected, command).catch(fail);
@@ -271,7 +271,7 @@ export function HistoryApp() {
       id: 'session',
       items: [
         { id: 'copy-id', label: 'Copy Session ID', icon: 'copy', enabled: !!commands.sessionId, run: run('copy-id') },
-        { id: 'open-folder', label: 'Open Working Directory', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: commands.folder, run: run('open-folder') },
+        { id: 'open-folder', label: 'Open Working Directory', icon: 'openFolder', enabled: commands.folder, run: run('open-folder') },
       ],
     },
     {
@@ -281,22 +281,7 @@ export function HistoryApp() {
     },
   ];
 
-  const saveWidths = (w: { left: number; right: number }) => {
-    setWidths(w);
-    localStorage.setItem(WIDTHS_KEY, JSON.stringify(w));
-  };
-  const dragLeft = useDragResize({
-    axis: 'x',
-    containerRef: bodyRef,
-    onDrag: (pos) => saveWidths({ ...widths, left: Math.min(560, Math.max(200, pos)) }),
-  });
-  const dragRight = useDragResize({
-    axis: 'x',
-    containerRef: bodyRef,
-    onDrag: (pos, rect) => saveWidths({ ...widths, right: Math.min(720, Math.max(280, rect.width - pos)) }),
-  });
-
-  const pane = activity && !!item && !!conv;
+  const pane = (activity || panel.open) && !!item && !!conv;
   const subagents = conv?.subagents ?? [];
   const followed = subagents.find((a) => a.agentId === follow);
   const rows = conv?.rows ?? [];
@@ -342,73 +327,99 @@ export function HistoryApp() {
           </button>
         </div>
       )}
-      <div
-        className="sessions-body"
-        ref={bodyRef}
-        style={{ gridTemplateColumns: `minmax(200px, ${widths.left}px) 5px minmax(480px, 1fr)${pane ? ` 5px minmax(280px, ${widths.right}px)` : ''}` }}
-      >
-        <HistoryList
-          groups={groups}
-          projects={projects}
-          selected={selected}
-          onSelect={setSelected}
-          emptyText={emptyText}
-          showPlace={view.groupBy !== 'folder'}
-          more={more && !found}
-          loadingMore={loadingMore}
-          onMore={() => {
-            setLoadingMore(true);
-            setLimit((l) => l + HISTORY_PAGE);
-          }}
-        />
-        <div className="sidebar-divider" onMouseDown={dragLeft} />
-        <main className="sessions-center">
-          {!item ? (
-            <div className="empty">No conversation is selected.</div>
-          ) : !conv ? (
-            <div className="empty">Loading…</div>
-          ) : (
-            <>
-              {subagents.length > 0 && (
-                <Tabs
-                  tabs={tabs}
-                  active={follow ? `agent:${follow}` : 'conversation'}
-                  onSelect={(id) => setFollow(id === 'conversation' ? null : id.slice('agent:'.length))}
-                  label="Conversation and agents"
-                  className="subagent-tabs"
-                  ctrlTab
-                />
-              )}
-              {follow && followed ? (
-                <ConversationView key={`${item.id}:${follow}`} rows={subRows} ctx={ctx} empty="The subagent has no messages." />
-              ) : (
-                <ConversationView key={item.id} rows={rows} ctx={ctx} empty="The conversation has no messages." />
-              )}
-            </>
-          )}
-        </main>
-        {pane && item && (
-          <>
-            <div className="sidebar-divider" onMouseDown={dragRight} />
-            <ActivityPanel
-              sessionId={item.runId ?? ''}
-              taskId={item.taskId}
-              rows={watched}
-              rowsAgent={follow}
-              attachments={watched.flatMap((r) => r.attachments ?? [])}
-              background={[]}
-              only={['now', 'files']}
-              subagents={subagents}
-              following={follow}
-              onFollow={setFollow}
-              onOpenWorkflow={() => undefined}
-              working={false}
-              pos={nowPos}
-              onPos={setNowPos}
+      <NavBar
+        title={split ? (item?.title ?? '') : 'History'}
+        actions={item ? [{ id: 'activity', label: 'Activity', icon: 'activity', run: panel.toggle }] : []}
+        largeTitle={false}
+        modal={panel.sheetOpen}
+        split={split ? { width: split.lead, title: 'History' } : undefined}
+      />
+      <ListDetail
+        sides={{ storageKey: WIDTHS_KEY, left: { initial: 320, min: 200, max: 560 }, right: { initial: 400, min: 280, max: 720 }, minDetail: 480 }}
+        split={split}
+        open={selected !== null}
+        onClose={() => setSelected(null)}
+        detailTitle={item?.title}
+        empty="No Conversation Selected"
+        list={
+          <TreeListSection>
+            <HistoryList
+              groups={groups}
+              projects={projects}
+              selected={selected}
+              onSelect={setSelected}
+              emptyText={emptyText}
+              showPlace={view.groupBy !== 'folder'}
+              more={more && !found}
+              loadingMore={loadingMore}
+              onMore={() => {
+                setLoadingMore(true);
+                setLimit((l) => l + HISTORY_PAGE);
+              }}
             />
-          </>
-        )}
-      </div>
+          </TreeListSection>
+        }
+        detail={
+          <main className="sessions-center">
+            {!item ? (
+              <div className="empty">No conversation is selected.</div>
+            ) : !conv ? (
+              <div className="empty">Loading…</div>
+            ) : (
+              <>
+                {subagents.length > 0 && (
+                  <Tabs
+                    tabs={tabs}
+                    active={follow ? `agent:${follow}` : 'conversation'}
+                    onSelect={(id) => setFollow(id === 'conversation' ? null : id.slice('agent:'.length))}
+                    label="Conversation and agents"
+                    className="subagent-tabs"
+                    ctrlTab
+                  />
+                )}
+                {follow && followed ? (
+                  <ConversationView key={`${item.id}:${follow}`} rows={subRows} ctx={ctx} empty="The subagent has no messages." />
+                ) : (
+                  <ConversationView key={item.id} rows={rows} ctx={ctx} empty="The conversation has no messages." />
+                )}
+                {commands.chat && (
+                  <div className="history-continue">
+                    <button className="btn primary" onClick={run('chat')}>
+                      Continue in Chat
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </main>
+        }
+        inspectorOpen={pane}
+        inspector={
+          item && (
+            <Inspector title="Activity" open={pane} onClose={panel.dismiss}>
+              <ActivityPanel
+                sessionId={item.runId ?? ''}
+                taskId={item.taskId}
+                rows={watched}
+                rowsAgent={follow}
+                attachments={watched.flatMap((r) => r.attachments ?? [])}
+                background={[]}
+                only={['now', 'files']}
+                subagents={subagents}
+                following={follow}
+                onFollow={(id) => {
+                  setFollow(id);
+                  panel.dismiss();
+                }}
+                onOpenWorkflow={() => undefined}
+                working={false}
+                pos={nowPos}
+                onPos={setNowPos}
+              />
+            </Inspector>
+          )
+        }
+      />
     </div>
   );
 }

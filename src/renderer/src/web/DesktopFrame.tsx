@@ -1003,6 +1003,7 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
     if (viewing) viewer.current?.focus();
   }, [viewing]);
   if (p.view) {
+    const steps = p.steps;
     return (
       <ShellDialog title={p.name} width={900} height={680} className="ws-viewer" onClose={p.close}>
         <div ref={viewer} className={`ws-viewer-body${p.view.kind === 'image' ? ' image' : ''}`} tabIndex={0}>
@@ -1011,7 +1012,15 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
         <WindowActions
           confirm={{ label: 'Download to This Device', run: p.view.toDevice }}
           cancel={p.close}
-          extras={[{ id: 'download-to-host', label: `Download to ${HOST_COMPUTER}`, run: p.view.toHost }]}
+          extras={[
+            ...(steps
+              ? [
+                  { id: 'previous-image', label: 'Previous', disabled: steps.index <= 0, run: () => steps.go(steps.index - 1) },
+                  { id: 'next-image', label: 'Next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
+                ]
+              : []),
+            { id: 'download-to-host', label: `Download to ${HOST_COMPUTER}`, run: p.view.toHost },
+          ]}
         />
         <LocalMessageBox msg={p.message} />
       </ShellDialog>

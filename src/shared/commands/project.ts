@@ -1,5 +1,4 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the catalogs.
-import { DESKTOP_ONLY } from '../ui-platform';
 import type { TaskMoreGroup } from './task';
 import type { Command } from './types';
 
@@ -35,9 +34,8 @@ export const PROJECT_COMMANDS = {
   },
   'open-folder': {
     label: 'Open &Folder',
-    platforms: DESKTOP_ONLY,
     menu: { id: 'project-folder', in: 'project', group: 'project' },
-    mobile: { hidden: 'Opens a folder on the computer.' },
+    mobile: { hidden: 'Not a command of the task shown: the project’s own screen has it (its toolbar’s Open Folder, in More).' },
   },
   delete: {
     label: '&Delete Project…',

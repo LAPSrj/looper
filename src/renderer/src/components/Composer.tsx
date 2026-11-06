@@ -74,7 +74,7 @@ const PLUS = (
     <path d="M10 4v12M4 10h12" />
   </svg>
 );
-const ARROW_UP = (
+export const ARROW_UP = (
   <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M9 14.5v-11M4.5 8 9 3.5 13.5 8" />
   </svg>

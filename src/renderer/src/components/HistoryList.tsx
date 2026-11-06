@@ -6,6 +6,7 @@ import { MINUTE, useNow } from '../useNow';
 import { GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
 import { listContextMenu, parentIndex } from './list-nav';
+import { selectsOnMenu } from './ListDetail';
 
 type NavRow = { kind: 'group'; key: string; id: string; open: boolean } | { kind: 'item'; item: HistoryItem; id: string };
 
@@ -134,7 +135,7 @@ export function HistoryList({
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  pick(item.id);
+                  if (selectsOnMenu) pick(item.id);
                   menu(item.id);
                 }}
               >

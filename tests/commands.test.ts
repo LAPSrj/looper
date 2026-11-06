@@ -101,7 +101,7 @@ describe('menus built from the catalogs', () => {
       ['task-move-folder', 'Move to &Folder…', undefined, 'folder', undefined, undefined],
       ['task-clear-runs', 'Clear Run &History…', undefined, undefined, undefined, undefined],
       '-',
-      ['task-work-folder', 'Open &Working Directory', undefined, undefined, ['desktop'], undefined],
+      ['task-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
     ]);
     const other = menu(true);
     expect(other.filter((i) => i.type !== 'separator').map((i) => [i.label, i.glyph]).filter((_x, n) => [2, 3, 4, 9].includes(n))).toEqual([
@@ -159,7 +159,7 @@ describe('menus built from the catalogs', () => {
       ['chat-save-markdown', '&Save as Markdown…', 'CmdOrCtrl+S', undefined, undefined, undefined],
       '-',
       ['chat-open-window', 'Open in &New Window', undefined, undefined, ['desktop', 'web'], undefined],
-      ['chat-work-folder', 'Open &Working Directory', undefined, undefined, ['desktop'], undefined],
+      ['chat-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
       ['chat-send-to-chats', 'Send to C&hats…', undefined, 'bullhorn', undefined, undefined],
       '-',
       ['chat-close', 'Close C&onversation', 'CmdOrCtrl+W', 'closeChat', undefined, false],
@@ -193,7 +193,7 @@ describe('menus built from the catalogs', () => {
       '-',
       [undefined, 'Open Project in Terminal', undefined, undefined, undefined, undefined],
       [undefined, 'Open Project in Chat', undefined, undefined, undefined, undefined],
-      ['task-work-folder', 'Open &Working Directory', undefined, undefined, ['desktop'], undefined],
+      ['task-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
     ]);
     // Each catalog command's item is the Task menu's, its destructive mark included; only the project's two are the menu's own.
     const byId = new Map<string, Command>(Object.values(TASK_COMMANDS).map((c) => [c.menu.id, c]));
@@ -231,7 +231,7 @@ describe('menus built from the catalogs', () => {
       ['project-new-terminal', 'New Ter&minal', undefined, 'terminal', undefined, undefined],
       '-',
       ['project-edit', '&Edit Project…', undefined, 'edit', undefined, undefined],
-      ['project-folder', 'Open &Folder', undefined, undefined, ['desktop'], undefined],
+      ['project-folder', 'Open &Folder', undefined, undefined, undefined, undefined],
       ['project-delete', '&Delete Project…', undefined, 'delete', undefined, undefined],
     ]);
   });
@@ -257,7 +257,7 @@ describe('toolbars built from the catalogs', () => {
   it('take the menu label without its & and "…", the key as a hint, and the icon', () => {
     expect(view(commandToolbar(TASK_COMMANDS, 'edit', { edit: { run }, workFolder: { run } }))).toEqual([
       ['edit-task', 'Edit Task', 'Ctrl+E', 'edit', undefined],
-      ['open-work-folder', 'Open Working Directory', undefined, 'openFolder', ['desktop']],
+      ['open-work-folder', 'Open Working Directory', undefined, 'openFolder', undefined],
     ]);
     expect(view(commandToolbar(TASK_COMMANDS, 'task', { runNow: { run }, stop: { run }, pauseResume: { run, alt: true }, enableDisable: { run }, complete: { run }, note: { run } }))).toEqual([
       ['run-now', 'Run Now', 'F5', 'run', undefined],
@@ -269,7 +269,7 @@ describe('toolbars built from the catalogs', () => {
     ]);
     expect(view(commandToolbar(CHAT_COMMANDS, 'views', { dashboard: { run }, history: { run }, sendToChats: { run } }))).toEqual([
       ['dashboard', 'Dashboard', undefined, 'dashboard', undefined],
-      ['history', 'History', undefined, 'history', ['desktop', 'web']],
+      ['history', 'History', undefined, 'history', undefined],
       ['send-to-chats', 'Send to Chats', undefined, 'bullhorn', undefined],
     ]);
     // A chat's Esc; a terminal's goes to the agent, so its tooltip names none.

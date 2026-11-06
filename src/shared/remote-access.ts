@@ -377,7 +377,7 @@ export type ServerMessage =
    */
   | { t: 'welcome'; device: { id: string; name: string }; version: string; clientId: string; resumed: boolean }
   /** shell.openPath / showItemInFolder from this device: a folder opens in the host computer's file browser, an image or text file in the viewer, any other file asks Open on Host Computer or Download. */
-  | { t: 'show-path'; path: string; isDir: boolean }
+  | { t: 'show-path'; path: string; isDir: boolean; siblings?: string[] }
   | { t: 'result'; id: number; ok: true; value: unknown }
   | { t: 'result'; id: number; ok: false; error: string }
   | ({ t: 'window-open' } & RemoteWindowSpec)

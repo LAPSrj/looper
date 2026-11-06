@@ -1,6 +1,5 @@
 import type { Project, Task, TaskRuntime } from '@shared/types';
 import type { UiEvent } from '@shared/api';
-import { DESKTOP_ONLY } from '@shared/ui-platform';
 import { SHORTCUTS, hint } from '@shared/shortcuts';
 import { TASK_COMMANDS } from '@shared/commands/task';
 import { commandToolbar, type ToolbarGroup } from './toolbar-model';
@@ -97,7 +96,7 @@ export function projectToolbarGroups(project: Project | null, onAction: (type: U
       id: 'project',
       items: [
         { id: 'edit-project', label: 'Edit Project', icon: 'edit', enabled: !!project, run: () => onAction('edit-project') },
-        { id: 'open-project-folder', label: 'Open Folder', icon: 'openFolder', platforms: DESKTOP_ONLY, enabled: !!project, run: () => onAction('open-project-folder') },
+        { id: 'open-project-folder', label: 'Open Folder', icon: 'openFolder', enabled: !!project, run: () => onAction('open-project-folder') },
       ],
     },
   ];

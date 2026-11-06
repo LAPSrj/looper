@@ -8,7 +8,7 @@ import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } fro
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree, folderTree } from '../shared/folders';
-import { DESKTOP_ONLY, NOT_MOBILE } from '../shared/ui-platform';
+import { NOT_MOBILE } from '../shared/ui-platform';
 import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
@@ -648,7 +648,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             { type: 'separator' } as const,
           ]),
       ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),
-      { label: 'Open Working Directory', platforms: DESKTOP_ONLY, click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
+      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
       { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
       ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
     ];
@@ -716,8 +716,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const hostPath = await sentFileHostPath(String(taskId), file);
     // The image window reads the image whole: a bigger one opens in the default app.
     const st = await fs.promises.stat(hostPath).catch(() => null);
+    const siblings = Array.isArray(images) ? images.map(String).filter((f) => SENT_IMAGE_RE.test(f)) : [];
     if (image && !caller() && SENT_IMAGE_RE.test(file) && st && st.size <= SENT_IMAGE_MAX) {
-      const siblings = Array.isArray(images) ? images.map(String).filter((f) => SENT_IMAGE_RE.test(f)) : [];
       host.openMessageImage(
         String(taskId),
         String(runId),
@@ -728,7 +728,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       );
       return;
     }
-    const err = await openPath(hostPath);
+    const many = image && siblings.length > 1 && siblings.includes(file);
+    const err = await openPath(hostPath, many ? await Promise.all(siblings.map((f) => sentFileHostPath(String(taskId), f))) : undefined);
     if (err) throw new Error(err);
   });
   /** An attachment opens in its default app; nothing outside Looper's attachment copies does. */
@@ -999,7 +1000,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       { label: '&Open File', enabled: info.exists, click: () => void openTargetPath(taskId, full).catch((err) => fail(sender, err)) },
       {
         label: 'Show in &Folder',
-        platforms: DESKTOP_ONLY,
         enabled: info.exists,
         click: () => void targetToHost(taskId, full).then((p) => showItemInFolder(p)).catch((err) => fail(sender, err)),
       },
@@ -1579,7 +1579,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => host.openContinueRun(info.taskId, info.runId),
       },
       { type: 'separator' },
-      { label: 'Open Run Folder', platforms: DESKTOP_ONLY, click: () => void openPath(engine.runDir(info.taskId, info.runId)) },
+      { label: 'Open Run Folder', click: () => void openPath(engine.runDir(info.taskId, info.runId)) },
       { label: 'Copy Run Folder Path', click: () => writeClipboard(engine.runDir(info.taskId, info.runId)) },
     ]);
     popupMenu(menu, { window: sender });

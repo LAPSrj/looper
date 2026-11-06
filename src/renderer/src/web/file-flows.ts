@@ -26,6 +26,7 @@ import {
   splitDefaultPath,
   viewerKind,
   VIEWER_MAX_BYTES,
+  HOST_COMPUTER,
   visibleEntries,
   withExtension,
   type FileSource,
@@ -380,6 +381,8 @@ export interface FileView {
   error: string;
   toDevice: () => void;
   toHost: () => void;
+  /** A phone's one Download button: asks where, naming this device. */
+  askDownload: (thisDevice: string) => void;
 }
 
 export interface PathFlow {
@@ -389,11 +392,15 @@ export interface PathFlow {
   /** A file the app shows itself; null: a folder, or a file asked about (Open on Host Computer, Download). */
   view: FileView | null;
   message: LocalMessage | null;
+  /** A message's several images: Previous and Next. */
+  steps: { index: number; count: number; go: (index: number) => void } | null;
   /** The selected file, or the request's file. */
   canDownload: boolean;
   download: () => void;
   openOnComputer: () => void;
   activate: (entry: HostDirEntry) => void;
+  /** A file tapped on a phone: the viewer over the folder, or Open on Host Computer | Download. */
+  openFile: (entry: HostDirEntry) => void;
   close: () => void;
 }
 
@@ -416,8 +423,11 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
   const browser = useHostBrowser(controller, { w, start: req.path, files: true, extensions: null, multi: false, skip: !req.isDir, onError: fail });
   const close = () => controller.closePath(req.id);
   const file = req.isDir ? browser.entries.find((e) => !e.dir && browser.selected.includes(e.path)) : undefined;
+  const siblings = req.siblings && req.siblings.length > 1 ? req.siblings : null;
+  const [index, setIndex] = useState(() => Math.max(0, siblings?.indexOf(req.path) ?? 0));
+  const current = siblings ? siblings[index] : req.path;
   // A file by its own name: an attachment copy's without the stamp in front.
-  const name = req.isDir ? baseName(req.path) : attachmentName(req.path);
+  const name = req.isDir ? baseName(current) : attachmentName(current);
   const kind = req.isDir ? null : viewerKind(name);
   const [shown, setShown] = useState<{ url: string | null; text: string | null; error: string }>({ url: null, text: null, error: '' });
 
@@ -425,13 +435,14 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
   useEffect(() => {
     if (!kind) return;
     let live = true;
+    setShown({ url: null, text: null, error: '' });
     void controller
-      .readHostFile(req.path, VIEWER_MAX_BYTES[kind])
+      .readHostFile(current, VIEWER_MAX_BYTES[kind])
       .then(async (blob) => {
         if (!live) return;
         if (!blob) return setShown({ url: null, text: null, error: `${name} is too big to show here.` });
         if (kind === 'image') {
-          const url = await dataUrl(new Blob([blob], { type: imageType(req.path) }));
+          const url = await dataUrl(new Blob([blob], { type: imageType(current) }));
           if (live) setShown({ url, text: null, error: '' });
         } else {
           const text = await blob.text();
@@ -442,7 +453,7 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
     return () => {
       live = false;
     };
-  }, [controller, req.path, kind]);
+  }, [controller, current, kind]);
 
   // Any other file: Open on Host Computer | Download | Cancel.
   useEffect(() => {
@@ -467,6 +478,12 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
     // Asked once, when the request arrives.
   }, []);
 
+  const toDevice = () => void controller.downloadHostFile(current).catch(fail);
+  const toHost = () =>
+    void controller
+      .saveOnHost(current)
+      .then((saved) => ask({ type: 'info', title: 'Looper', message: `Downloaded ${baseName(saved)} to the host computer.`, detail: saved, buttons: ['OK'], defaultId: 0, cancelId: 0 }))
+      .catch(fail);
   return {
     req,
     name,
@@ -475,15 +492,18 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
       ? {
           kind,
           ...shown,
-          toDevice: () => void controller.downloadHostFile(req.path).catch(fail),
-          toHost: () =>
-            void controller
-              .saveOnHost(req.path)
-              .then((saved) => ask({ type: 'info', title: 'Looper', message: `Downloaded ${baseName(saved)} to the host computer.`, detail: saved, buttons: ['OK'], defaultId: 0, cancelId: 0 }))
-              .catch(fail),
+          toDevice,
+          toHost,
+          askDownload: (thisDevice) =>
+            void ask({ type: 'question', title: 'Looper', message: name, buttons: [`Download to ${thisDevice}`, `Download to ${HOST_COMPUTER}`, 'Cancel'], defaultId: 0, cancelId: 2 }).then((r) => {
+              if (r === 0) toDevice();
+              else if (r === 1) toHost();
+            }),
         }
       : null,
     message,
+    steps: siblings ? { index, count: siblings.length, go: (to) => setIndex(Math.max(0, Math.min(siblings.length - 1, to))) } : null,
+    openFile: (entry) => controller.showPath(entry.path),
     canDownload: !!file,
     download: () => {
       if (file) void controller.downloadHostFile(file.path).catch(fail);

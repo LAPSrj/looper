@@ -4,7 +4,7 @@ import type { ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
 import { composeMore, THIS_DEVICE_ITEM, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
-import { plainLabel } from './nav-bar-model';
+import { plainLabel, type PageNavAction } from './nav-bar-model';
 import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
@@ -763,6 +763,17 @@ export function moreFor(sc: Screen, device: string): MoreMenu {
   });
 }
 
+/** A bar button's menu of choices, as the More menu is drawn. */
+export function actionMenu(action: PageNavAction): MoreMenu {
+  const run = new Map<string, () => void>();
+  const items = (action.menu ?? []).map((e): MenuItemSpec => {
+    const id = `__page:${action.id}:${e.id}`;
+    run.set(id, e.run);
+    return { id, type: 'radio', label: e.label, enabled: true, checked: !!e.checked };
+  });
+  return { items, run };
+}
+
 /** A pick in the More menu: This Device, a command of the page's, or the computer's menu item. */
 export function pickMore(controller: ShellController, more: OpenMore, item: MenuItemSpec, openDevice: () => void): void {
   if (item.id === THIS_DEVICE_ITEM) return openDevice();
@@ -783,8 +794,9 @@ export function menuGroups(items: MenuItemSpec[]): MenuItemSpec[][] {
 }
 
 
-/** Android: long menus open as a bottom sheet rather than a list at the finger (iOS keeps the menu, which scrolls). */
-export const isLongMenu = (items: MenuItemSpec[], height: number): boolean => {
+/** Android: under 600 dp long menus open as a bottom sheet rather than a list at the finger; wider, a menu that scrolls (iOS always keeps the menu). */
+export const isLongMenu = (items: MenuItemSpec[], width: number, height: number): boolean => {
+  if (width >= 600) return false;
   const rows = items.filter((i) => i.type !== 'separator').length;
   return rows > 8 || rows * 48 > height * 0.6;
 };

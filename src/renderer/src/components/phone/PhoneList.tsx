@@ -218,6 +218,16 @@ export function EmptyRow({ children, onMenu }: { children: ReactNode; onMenu?: (
   return <Row title={<span className="pg-empty">{children}</span>} onMenu={onMenu} />;
 }
 
+/** On a phone or tablet, a tree list (Chats, History) as a scrolling list section; on the desktop the list scrolls itself. */
+export function TreeListSection({ children }: { children: ReactNode }) {
+  if (platform !== 'ios' && platform !== 'android') return <>{children}</>;
+  return (
+    <div className="pg-scroll">
+      <section className="pg-group pg-sessions">{children}</section>
+    </div>
+  );
+}
+
 /** iOS's large title at the top of a root screen; Material's top app bar (the frame's) carries the title instead. */
 export function LargeTitle({ children }: { children: ReactNode }) {
   // data-large-title: the frame shows the title in its bar once this has scrolled under it.

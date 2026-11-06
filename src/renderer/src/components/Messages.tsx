@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageRow, MessagesResult } from '@shared/messages';
 import { messagesToMarkdown } from '@shared/messages-md';
 import { groupRuns } from '@shared/runs';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
-import { clockTime, dayGroups, resultTone, timeAndDuration } from '../phone-lists';
+import { clockTime, resultTone, timeAndDuration } from '../phone-lists';
 import { initialRow, rowMatches, runTableRows, type ConversationRow, type RunTableRow, type StepRow } from '../run-rows';
-import { isPhone } from '../web/page-nav';
+import { DataTable, type DataCol } from './DataTable';
+import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
-import { useDragResize, useListNav } from './hooks';
 import { Markdown } from './Markdown';
-import { EmptyRow, Group, Row as ListRow } from './phone/PhoneList';
+import { Group, Row as ListRow } from './phone/PhoneList';
 import { TranscriptView } from './Transcript';
-import { ResizableColumns, type TableCol } from './ui';
 
 const POLL_MS = 2000;
 
@@ -126,10 +125,10 @@ function typeLabel(row: RunTableRow): string {
   }
 }
 
-const MESSAGE_COLS: readonly TableCol[] = [
-  { label: 'Time', width: 76 },
-  { label: 'Type', width: 110, min: 60 },
-  { label: 'Details' },
+const MESSAGE_COLS: readonly DataCol<RunTableRow>[] = [
+  { label: 'Time', width: 76, cell: (r) => (r.ts ? fmtTime(r.ts) : '') },
+  { label: 'Type', width: 110, min: 60, cell: typeLabel },
+  { label: 'Details', cell: (r) => r.preview, title: (r) => r.preview },
 ];
 
 /** A conversation's text for Copy Content: as Save as Markdown writes it. */
@@ -165,11 +164,9 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const [rawOutput, setRawOutput] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [stepOutput, setStepOutput] = useState<Output | null>(null);
-  const [splitPct, setSplitPct] = useState(40);
   const [showRun, setShowRun] = useState(true);
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 
@@ -261,7 +258,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     const prevLast = prevLastRef.current;
     prevLastRef.current = lastId;
     // A phone's selection opens a row: the list doesn't follow the newest one.
-    if (isPhone || !autoScroll || lastId === null || selected === lastId) return;
+    if (!selectsFirstRow || !autoScroll || lastId === null || selected === lastId) return;
     if (selected !== null && selected !== prevLast) return;
     setSelected(lastId);
     atBottomRef.current = true;
@@ -275,7 +272,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const initialPicked = useRef(false);
   useEffect(() => {
     // A phone's list shows the run's result first: there's no row to open.
-    if (isPhone || agentId || initialPicked.current || result === null) return;
+    if (!selectsFirstRow || agentId || initialPicked.current || result === null) return;
     if (focusReport) {
       if (steps.length === 0) return;
       initialPicked.current = true;
@@ -315,20 +312,6 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     };
   }, [currentRecord, rawOutput, mode, taskId, runId]);
 
-  const nav = useListNav({
-    count: visible.length,
-    index: idx,
-    onIndex: (i) => setSelected(visible[i].id),
-    scrollToId: selected !== null ? `msg-${selected}` : null,
-  });
-
-  const onDragStart = useDragResize({
-    axis: 'y',
-    containerRef,
-    onDrag: (y, rect) => setSplitPct(Math.max(15, Math.min(90, (y / rect.height) * 100))),
-  });
-
-  /** The row's menu; it doesn't select the row (on a phone a selection opens it). */
   const showRowMenu = (r: RunTableRow) => {
     if (r.kind === 'step') {
       const text = r.record.body || r.record.stdoutTail || r.record.error || r.preview;
@@ -339,28 +322,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       window.looper.showMessageContextMenu({ taskId, runId, label: r.preview, text: r.text || undefined });
     }
   };
-  const onRowContextMenu = (e: React.MouseEvent, r: RunTableRow) => {
-    e.preventDefault();
-    setSelected(r.id);
-    showRowMenu(r);
-  };
 
-  // A phone: the list screen, and a row's own screen pushed over it (Back returns to the list where it was).
-  const listRef = useRef<HTMLDivElement>(null);
-  const listScroll = useRef(0);
-  const showingDetail = isPhone && current !== null;
-  useLayoutEffect(() => {
-    if (isPhone && !showingDetail && listRef.current) listRef.current.scrollTop = listScroll.current;
-  }, [showingDetail]);
-  const phoneBar = !isPhone ? null : agentId ? (
-    <NavBar title={phoneTitle} order={10} />
-  ) : (
-    <NavBar
-      title={current ? (current.kind === 'conversation' ? 'Conversation' : typeLabel(current)) : phoneTitle}
-      back={current ? () => setSelected(null) : undefined}
-      order={10}
-    />
-  );
+  const phoneBar = <NavBar title={phoneTitle} order={10} />;
   const run = useMemo(() => (agentId ? undefined : groupRuns(records)[0]), [records, agentId]);
 
   const emptyText = (): string => {
@@ -406,128 +369,72 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     return <pre className="output">{row.text}</pre>;
   };
 
-  const rowClass = (r: RunTableRow) =>
-    r.kind === 'step' ? `msg-row msg-step result-${r.record.result}` : `msg-row msg-${r.kind}`;
-
-  if (isPhone) {
-    if (current) {
-      return (
-        <div className="messages messages-phone">
-          {phoneBar}
-          <div className={`messages-detail${current.kind === 'conversation' ? ' messages-detail-chat' : ''}`}>{detail(current)}</div>
-        </div>
-      );
-    }
-    const now = Date.now();
-    const days = dayGroups(visible, (r) => (r.ts ? Date.parse(r.ts) : NaN), now);
-    const toneOf = (r: RunTableRow) => (r.kind === 'step' ? resultTone(r.record.result) : undefined);
-    return (
-      <div className="messages messages-phone" ref={containerRef}>
-        {phoneBar}
-        <div
-          className="messages-phone-scroll"
-          ref={listRef}
-          onScroll={(e) => {
-            listScroll.current = e.currentTarget.scrollTop;
-          }}
-        >
-          {run?.resultText && (
-            <Group title="Result">
-              <div className="pg-result">
-                <Markdown text={run.resultText} />
-              </div>
-            </Group>
-          )}
-          {run && (
-            <Group>
-              <ListRow
-                title="Outcome"
-                sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
-                value={running ? 'Running' : resultLabel(run.result)}
-                valueTone={resultTone(run.result)}
-              />
-            </Group>
-          )}
-          {(result?.dropped ?? 0) > 0 && <p className="pg-group-footer">{result!.dropped} earlier messages not shown</p>}
-          {visible.length === 0 ? (
-            <Group title="Run">
-              <EmptyRow>{rows.length > 0 ? 'No rows match the filter.' : emptyText()}</EmptyRow>
-            </Group>
-          ) : (
-            days.map((day) => (
-              <Group key={day.key} title={days.length > 1 ? `Run, ${day.title}` : 'Run'}>
-                {day.items.map((r) => (
-                  <ListRow
-                    key={r.id}
-                    title={r.preview}
-                    sub={<span className="pg-oneline">{[r.ts ? clockTime(r.ts) : '', typeLabel(r)].filter(Boolean).join(' · ')}</span>}
-                    tone={toneOf(r)}
-                    chevron
-                    onOpen={() => setSelected(r.id)}
-                    onMenu={() => showRowMenu(r)}
-                  />
-                ))}
-              </Group>
-            ))
-          )}
-        </div>
-      </div>
-    );
-  }
+  const rowClass = (r: RunTableRow) => (r.kind === 'step' ? `msg-row msg-step result-${r.record.result}` : `msg-row msg-${r.kind}`);
+  const dropped = result?.dropped ?? 0;
 
   return (
-    <div className="messages" ref={containerRef}>
-      <div
-        className="messages-table-wrap"
-        style={{ height: `${splitPct}%` }}
-        tabIndex={0}
-        onKeyDown={nav}
-        ref={wrapRef}
-        onScroll={() => {
-          const w = wrapRef.current;
-          if (w) atBottomRef.current = w.scrollHeight - w.scrollTop - w.clientHeight < 40;
-        }}
-      >
-        <table className="runlog-table">
-          <ResizableColumns cols={MESSAGE_COLS} storageKey="messages" />
-          <tbody>
-            {raw && (result?.dropped ?? 0) > 0 && (
-              <tr>
-                <td colSpan={3} className="muted">
-                  {result!.dropped} earlier messages not shown
-                </td>
-              </tr>
-            )}
-            {visible.map((r) => (
-              <tr
-                key={r.id}
-                id={`msg-${r.id}`}
-                className={`${rowClass(r)}${selected === r.id ? ' selected' : ''}`}
-                onClick={() => setSelected(r.id)}
-                onContextMenu={(e) => onRowContextMenu(e, r)}
-              >
-                <td>{r.ts ? fmtTime(r.ts) : ''}</td>
-                <td>{typeLabel(r)}</td>
-                <td title={r.preview}>{r.preview}</td>
-              </tr>
-            ))}
-            {visible.length === 0 && (
-              <tr>
-                <td colSpan={3} className="muted">
-                  {rows.length > 0 ? 'No rows match the current view or filter.' : emptyText()}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <div className="runlog-divider" onMouseDown={onDragStart} />
-      <div
-        className={`messages-detail${current?.kind === 'conversation' ? ' messages-detail-chat' : ''}`}
-        style={{ height: `calc(${100 - splitPct}% - 5px)` }}
-      >
-        {current === null ? <div className="messages-detail-empty muted">Select a row</div> : detail(current)}
-      </div>
+    <div className="messages">
+      {phoneBar}
+      <ListDetail
+        panes={{ axis: 'y', initial: 40, unit: '%', min: 15, max: 90 }}
+        open={current !== null}
+        onClose={() => setSelected(null)}
+        detailTitle={current ? (current.kind === 'conversation' ? 'Conversation' : typeLabel(current)) : undefined}
+        empty="Select a row"
+        list={
+          <DataTable
+            cols={MESSAGE_COLS}
+            rows={visible}
+            rowKey={(r) => r.id}
+            idPrefix="msg"
+            storageKey="messages"
+            rowClass={rowClass}
+            selected={selected}
+            onSelect={(r) => setSelected(r.id)}
+            onMenu={showRowMenu}
+            tableRef={wrapRef}
+            onTableScroll={(e) => {
+              const w = e.currentTarget;
+              atBottomRef.current = w.scrollHeight - w.scrollTop - w.clientHeight < 40;
+            }}
+            note={raw && dropped > 0 ? `${dropped} earlier messages not shown` : undefined}
+            empty={rows.length > 0 ? 'No rows match the current view or filter.' : emptyText()}
+            head={
+              run && (
+                <>
+                  {run.resultText && (
+                    <Group title="Result">
+                      <div className="pg-result">
+                        <Markdown text={run.resultText} />
+                      </div>
+                    </Group>
+                  )}
+                  <Group>
+                    <ListRow
+                      title="Outcome"
+                      sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
+                      value={running ? 'Running' : resultLabel(run.result)}
+                      valueTone={resultTone(run.result)}
+                    />
+                  </Group>
+                </>
+              )
+            }
+            dayOf={(r) => (r.ts ? Date.parse(r.ts) : NaN)}
+            sectionTitle={(day, days) => (days > 1 ? `Run, ${day}` : 'Run')}
+            phoneRow={(r) => ({
+              title: r.preview,
+              sub: [r.ts ? clockTime(r.ts) : '', typeLabel(r)].filter(Boolean).join(' · '),
+              tone: r.kind === 'step' ? resultTone(r.record.result) : undefined,
+            })}
+          />
+        }
+        detail={
+          <div className={`messages-detail${current?.kind === 'conversation' ? ' messages-detail-chat' : ''}`}>
+            {current === null ? <div className="messages-detail-empty muted">Select a row</div> : detail(current)}
+          </div>
+        }
+      />
     </div>
   );
 }

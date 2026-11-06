@@ -10,6 +10,10 @@ export interface PageNavAction {
   /** A usage ring instead of an icon (components/ContextRing.tsx): the context used, and the 5-hour limit used, as fractions. */
   ring?: { context: number | null; used: number | null };
   disabled?: boolean;
+  /** What it controls isn't at its default (a filter that's on): tinted. */
+  on?: boolean;
+  /** The button opens this menu of choices (a filter); `run` isn't called. */
+  menu?: { id: string; label: string; checked?: boolean; run: () => void }[];
   run: () => void;
 }
 
@@ -28,7 +32,8 @@ export const plainLabel = (label: string | undefined): string => (label ?? '').r
 export type BarLead =
   | { kind: 'back'; label: string; run: () => void }
   | { kind: 'cancel'; label: string; disabled?: boolean; run: () => void }
-  | { kind: 'close'; label: string; run: () => void };
+  | { kind: 'close'; label: string; run: () => void }
+  | { kind: 'menu'; label: string; run: () => void };
 
 /** What a bar's container does when nothing of the page's takes the leading place. */
 export type Dismiss = { kind: 'back' | 'close'; run: () => void } | null;
@@ -43,6 +48,8 @@ export interface BarInput {
   confirm?: NavCommand;
   actions?: PageNavAction[];
   dismiss: Dismiss;
+  /** Android: the views are behind a menu icon, which shows where nothing else takes the leading place. */
+  menu?: () => void;
 }
 
 export interface BarModel {
@@ -66,7 +73,8 @@ export function dismissFor(pres: Presentation, run: { back: () => void; close: (
 /**
  * The one place a bar's buttons are decided, on every phone frame. The leading
  * button is the page's Back, else its Cancel, else the container's own Back or
- * Close; the trailing edge has the page's actions and its Confirm.
+ * Close, else the views' menu; the trailing edge has the page's actions and its
+ * Confirm.
  */
 export function barModel(i: BarInput): BarModel {
   const back = i.back;
@@ -79,7 +87,9 @@ export function barModel(i: BarInput): BarModel {
         ? i.dismiss.kind === 'back'
           ? { kind: 'back', label: 'Back', run: i.dismiss.run }
           : { kind: 'close', label: 'Close', run: i.dismiss.run }
-        : null;
+        : i.menu
+          ? { kind: 'menu', label: 'Open navigation menu', run: i.menu }
+          : null;
   const confirm = i.confirm ? { label: plainLabel(i.confirm.label ?? 'Save'), disabled: i.confirm.disabled, run: i.confirm.run } : null;
   return { lead, title: plainLabel(i.title), actions: i.actions ?? [], confirm };
 }

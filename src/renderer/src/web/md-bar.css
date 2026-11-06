@@ -67,3 +67,18 @@
 .md-bar-title.no-lead {
   margin-left: 12px;
 }
+
+.md-icon-btn.on {
+  color: var(--md-primary);
+}
+/* Two panes (Material: List-detail): a bar over each. */
+.md-bar-split {
+  display: flex;
+}
+.md-bar-pane {
+  flex: none;
+  min-width: 0;
+}
+.md-bar-pane.main {
+  flex: 1;
+}

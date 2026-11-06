@@ -284,6 +284,11 @@ export class ShellController {
     this.store.dispatch({ t: 'path-done', id });
   }
 
+  /** A file the device's own file browser opens: as the computer's show-path would. */
+  showPath(path: string): void {
+    this.store.dispatch({ t: 'show-path', path, isDir: false });
+  }
+
   /** Download a file on the computer to this device. */
   downloadHostFile(path: string): Promise<void> {
     const w = this.anyWindow();

@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
-import type { RemoteMessage, RemoteState } from '@shared/remote';
-import { useDragResize, useListNav } from './components/hooks';
+import { useEffect, useState } from 'react';
+import type { RemoteConversation, RemoteMessage, RemoteState } from '@shared/remote';
+import { DataTable, type DataCol } from './components/DataTable';
+import { ListDetail } from './components/ListDetail';
 import { Markdown } from './components/Markdown';
-import { EmptyWindow, ResizableColumns, type TableCol } from './components/ui';
+import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { REMOTE_STATUS_LABELS, fmtDate, fmtTime } from './format';
 
-const COLS: readonly TableCol[] = [
-  { label: 'Date', width: 92 },
-  { label: 'Start', width: 76 },
-  { label: 'Status', width: 76 },
-  { label: 'From', width: 150 },
-  { label: 'Details' },
+const lastLine = (c: RemoteConversation) => c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '');
+
+const COLS: readonly DataCol<RemoteConversation>[] = [
+  { label: 'Date', width: 92, cell: (c) => fmtDate(c.startedAt) },
+  { label: 'Start', width: 76, cell: (c) => fmtTime(c.startedAt) },
+  { label: 'Status', width: 76, cell: (c) => REMOTE_STATUS_LABELS[c.status] },
+  { label: 'From', width: 150, cell: (c) => c.name, title: (c) => c.cwd },
+  { label: 'Details', cell: lastLine, title: (c) => c.lastMessage },
 ];
 
 /**
@@ -24,8 +27,6 @@ export function RemoteConversationsApp() {
   const [state, setState] = useState<RemoteState | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState<RemoteMessage | null>(null);
-  const [splitPct, setSplitPct] = useState(60);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.title = 'Remote Control Conversations';
@@ -56,71 +57,47 @@ export function RemoteConversationsApp() {
     };
   }, [selected, status]);
 
-  const list = state?.conversations ?? [];
-  const idx = list.findIndex((c) => c.id === selected);
-  const nav = useListNav({
-    count: list.length,
-    index: idx,
-    onIndex: (i) => setSelected(list[i].id),
-    onActivate: (i) => void window.looper.remote.open(list[i].id),
-    scrollToId: selected ? `conv-${selected}` : null,
-  });
-  const onDragStart = useDragResize({
-    axis: 'y',
-    containerRef,
-    onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
-  });
-
   if (!state) return <EmptyWindow />;
 
   return (
     <div className="editor">
-      <div className="runlog" ref={containerRef}>
-        <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={nav}>
-          <table className="runlog-table">
-            <ResizableColumns cols={COLS} storageKey="remote-conversations" />
-            <tbody>
-              {list.map((c) => (
-                <tr
-                  key={c.id}
-                  id={`conv-${c.id}`}
-                  className={`run-row${selected === c.id ? ' selected' : ''}`}
-                  onClick={() => setSelected(c.id)}
-                  onDoubleClick={() => void window.looper.remote.open(c.id)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setSelected(c.id);
-                    window.looper.remote.showContextMenu(c.id);
-                  }}
-                >
-                  <td>{fmtDate(c.startedAt)}</td>
-                  <td>{fmtTime(c.startedAt)}</td>
-                  <td>{REMOTE_STATUS_LABELS[c.status]}</td>
-                  <td title={c.cwd}>{c.name}</td>
-                  <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
-                </tr>
-              ))}
-              {list.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    {state.running ? 'No conversations yet.' : 'Remote Control is off.'}
-                  </td>
-                </tr>
+      <div className="runlog">
+        <ListDetail
+          preview
+          panes={{ axis: 'y', initial: 60, unit: '%', min: 20, max: 90 }}
+          list={
+            <DataTable
+              cols={COLS}
+              rows={state.conversations}
+              rowKey={(c) => c.id}
+              idPrefix="conv"
+              storageKey="remote-conversations"
+              selected={selected}
+              onSelect={(c) => setSelected(c.id)}
+              onOpen={(c) => void window.looper.remote.open(c.id)}
+              onMenu={(c) => window.looper.remote.showContextMenu(c.id)}
+              empty={state.running ? 'No conversations yet.' : 'Remote Control is off.'}
+              dayOf={(c) => Date.parse(c.startedAt)}
+              phoneRow={(c) => ({
+                title: c.name,
+                sub: [fmtTime(c.startedAt), lastLine(c)].filter(Boolean).join(' · '),
+                value: REMOTE_STATUS_LABELS[c.status],
+              })}
+            />
+          }
+          detail={
+            <div className="runlog-result">
+              {message ? (
+                <>
+                  {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
+                  <Markdown text={message.text} />
+                </>
+              ) : (
+                <div className="runlog-result-empty muted">{conv ? 'No message yet' : 'Select a conversation'}</div>
               )}
-            </tbody>
-          </table>
-        </div>
-        <div className="runlog-divider" onMouseDown={onDragStart} />
-        <div className="runlog-result" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
-          {message ? (
-            <>
-              {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
-              <Markdown text={message.text} />
-            </>
-          ) : (
-            <div className="runlog-result-empty muted">{conv ? 'No message yet' : 'Select a conversation'}</div>
-          )}
-        </div>
+            </div>
+          }
+        />
       </div>
       <WindowActions close />
     </div>

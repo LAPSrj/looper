@@ -89,8 +89,22 @@ const COMMANDS = {
       const closing = app.close();
       // With a session open, Looper asks before it quits; Electron numbers a message box's buttons from 100, so Quit is 100.
       const answer = execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, 'dialog.ps1'), '-Title', 'Looper', '-Click', '100'], () => undefined);
+      const proc = app.process();
       await closing;
       answer.kill();
+      // With this driver attached, a finished Electron can stay alive for a minute or more, and a launch meanwhile exits at once.
+      if (proc.exitCode === null) {
+        await new Promise((done) => {
+          const stop = setTimeout(() => {
+            proc.kill();
+            done();
+          }, 5000);
+          proc.once('exit', () => {
+            clearTimeout(stop);
+            done();
+          });
+        });
+      }
     }
     app = null;
     console.log('closed');

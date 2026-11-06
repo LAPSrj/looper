@@ -681,7 +681,7 @@ html:not(.phone-window) .session-group ~ .session-row {
   display: block;
   margin-bottom: 6px;
 }
-.dashboard-list .runlog-table:focus-visible {
+.dashboard-list:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1076,13 +1076,8 @@ html:not(.phone-window) .session-group ~ .session-row {
 }
 .runlog-table-wrap {
   overflow: auto;
-  flex: none;
-}
-.runlog-divider {
-  height: 5px;
-  flex: none;
-  cursor: row-resize;
-  background: var(--border);
+  flex: 1;
+  min-height: 0;
 }
 .runlog-result {
   overflow: auto;
@@ -1175,8 +1170,7 @@ html:not(.phone-window) .session-group ~ .session-row {
     color: var(--accent-fg);
   }
 }
-.runlog-table-wrap:focus-visible,
-.run-detail-table-wrap:focus-visible {
+.runlog-table-wrap:focus-visible {
   outline: none;
 }
 
@@ -1186,10 +1180,6 @@ html:not(.phone-window) .session-group ~ .session-row {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-}
-.run-detail-app .run-detail-table-wrap {
-  overflow: auto;
-  flex: none;
 }
 .run-detail-app .runlog-table tr {
   cursor: default;
@@ -1202,28 +1192,6 @@ html:not(.phone-window) .session-group ~ .session-row {
 .run-detail-app .runlog-table tr.selected td {
   background: var(--accent);
   color: var(--accent-fg);
-}
-.run-detail-divider {
-  height: 5px;
-  flex: none;
-  cursor: row-resize;
-  background: var(--border);
-}
-.run-detail-output {
-  overflow: auto;
-  background: var(--bg-2);
-}
-.run-detail-output .output {
-  margin: 0;
-  padding: 12px 14px;
-  white-space: pre-wrap;
-  font-family: var(--font-mono);
-  font-size: var(--font-caption);
-  height: 100%;
-  overflow: auto;
-}
-.run-detail-empty {
-  padding: 20px 14px;
 }
 
 /* Rendered markdown in the run log and run detail output panels. */
@@ -2217,20 +2185,12 @@ details[open] > summary::before {
   overflow: hidden;
   padding: 0;
 }
-.compare-list {
-  max-height: 34%;
-  border-bottom: 1px solid var(--border);
-}
 /* Group headers, as in Explorer's Details view: the editor tab the settings below are on. */
 .compare-list tr.list-group td {
   padding: 8px 10px 3px;
   font-weight: 600;
   color: var(--accent);
   border-bottom: 1px solid var(--border);
-}
-/* A version lists every setting: more of the window goes to the list. */
-.compare-list.view-list {
-  max-height: 50%;
 }
 .compare-list .runlog-table td {
   border-bottom: none;
@@ -2567,15 +2527,6 @@ button:focus-visible,
 .guidance-compose textarea {
   flex: 1;
   resize: none;
-}
-
-.messages-table-wrap {
-  overflow: auto;
-  flex: none;
-}
-
-.messages-table-wrap:focus-visible {
-  outline: none;
 }
 
 .messages .runlog-table tr.msg-row {
@@ -4559,58 +4510,62 @@ html.phone-window .workflow-text {
   display: flex;
   flex-direction: column;
 }
-.git-split {
+.split-pane {
   flex: 1;
   min-height: 0;
   min-width: 0;
   display: flex;
 }
-.git-split.y {
+.split-pane.y {
   flex-direction: column;
 }
-.git-pane {
+.split-cell {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
-.git-pane > * {
+.split-cell > * {
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
-.git-divider {
+.split-divider {
   flex: none;
   background: var(--border);
 }
-.git-divider.x {
+.split-divider:focus-visible {
+  outline: none;
+  background: var(--accent);
+}
+.split-divider.x {
   width: 5px;
   cursor: col-resize;
 }
-.git-divider.y {
+.split-divider.y {
   height: 5px;
   cursor: row-resize;
 }
-.git-files-changes {
+.list-detail-tabs {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
-.git-subtabs {
+.list-detail-tabbar {
   flex: none;
   --tabs-pad: 8px;
 }
-.git-tabbody {
+.list-detail-tabbody {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.git-tabbody > * {
+.list-detail-tabbody > * {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -5554,4 +5509,12 @@ html.phone-window .workflow-text {
 
 .agent-perm-note {
   padding: 2px 0 6px 52px;
+}
+
+.history-continue {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
 }

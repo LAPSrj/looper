@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
 import { folderParents, folderSubtree, siblingOrder, type Filed, type FolderLayout } from '@shared/folders';
 import type { TaskFolder } from '@shared/types';
-import { isPhone } from '../web/page-nav';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
 import { listContextMenu, parentIndex } from './list-nav';
+import { selectsOnMenu } from './ListDetail';
 
 /** What a list's drag and drop sends its store: the new order, items' new folders (null: the top level), the layout and folders' new parents. */
 export type FolderReorder = (
@@ -371,8 +371,7 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          // On a phone a selection is a push: the long press mustn't open the item.
-          if (!isPhone) onSelect(t.id);
+          if (selectsOnMenu) onSelect(t.id);
           p.onItemMenu(t);
         }}
       >

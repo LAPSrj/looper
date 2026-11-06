@@ -1,21 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { engineLogSource } from '@shared/addons';
 import { capFirst, fmtDate, fmtTime } from './format';
-import { useDragResize, useListNav } from './components/hooks';
-import { ResizableColumns, type TableCol } from './components/ui';
-
-const LOG_COLS: readonly TableCol[] = [
-  { label: 'Date', width: 92 },
-  { label: 'Time', width: 76 },
-  { label: 'Level', width: 64 },
-  { label: 'Message' },
-];
+import { DataTable, type DataCol } from './components/DataTable';
+import { ListDetail, selectsFirstRow } from './components/ListDetail';
 
 interface LogEntry {
   ts: string;
   level: string;
   message: string;
 }
+
+const LOG_COLS: readonly DataCol<LogEntry>[] = [
+  { label: 'Date', width: 92, cell: (en) => fmtDate(en.ts) },
+  { label: 'Time', width: 76, cell: (en) => fmtTime(en.ts) },
+  { label: 'Level', width: 64, cell: (en) => capFirst(en.level) },
+  { label: 'Message', cell: (en) => en.message.split('\n')[0], title: (en) => en.message },
+];
 
 const LINE_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(debug|info|warn|error)\] (.*)$/;
 
@@ -45,11 +45,11 @@ export function EngineLogApp() {
   const [hidden, setHidden] = useState<Hidden>({ sources: [], levels: [] });
   const entries = useMemo(() => all.filter(shown(hidden)), [all, hidden]);
   const [selected, setSelected] = useState<number | null>(null);
-  const [splitPct, setSplitPct] = useState(65);
-  const containerRef = useRef<HTMLDivElement>(null);
+  // The selection is the tail's until a row is picked: on a phone or tablet only a pick opens a line.
+  const [followsTail, setFollowsTail] = useState(true);
   const lastTextRef = useRef<string | null>(null);
-  const stateRef = useRef({ count: 0, selected: null as number | null, hidden });
-  stateRef.current = { count: entries.length, selected, hidden };
+  const stateRef = useRef({ count: 0, selected: null as number | null, hidden, opened: false });
+  stateRef.current = { count: entries.length, selected, hidden, opened: !selectsFirstRow && !followsTail };
 
   useEffect(() => {
     document.title = 'Engine Log';
@@ -59,11 +59,11 @@ export function EngineLogApp() {
       if (cancelled || text === lastTextRef.current) return;
       lastTextRef.current = text;
       const next = parseLog(text);
-      const { count, selected: sel, hidden: h } = stateRef.current;
+      const { count, selected: sel, hidden: h, opened } = stateRef.current;
       const visible = next.filter(shown(h)).length;
       setAll(next);
-      // Follow the tail unless the user moved off the last entry.
-      if (sel === null || sel === count - 1 || sel >= visible) {
+      // Follow the tail unless the user moved off the last entry, or opened it to read.
+      if (!opened && (sel === null || sel === count - 1 || sel >= visible)) {
         setSelected(visible > 0 ? visible - 1 : null);
       }
     };
@@ -89,64 +89,42 @@ export function EngineLogApp() {
   );
 
   const current = selected === null ? null : (entries[selected] ?? null);
-  const nav = useListNav({
-    count: entries.length,
-    index: selected ?? -1,
-    onIndex: (i) => setSelected(i),
-    scrollToId: selected !== null ? `line-${selected}` : null,
-  });
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 'c' && current) {
-      void navigator.clipboard.writeText(current.message);
-      e.preventDefault();
-      return;
-    }
-    nav(e);
-  };
-
-  const onDragStart = useDragResize({
-    axis: 'y',
-    containerRef,
-    onDrag: (y, rect) => setSplitPct(Math.max(15, Math.min(85, (y / rect.height) * 100))),
-  });
 
   return (
-    <div className="run-detail-app" ref={containerRef}>
-      <div className="run-detail-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
-        <table className="runlog-table">
-          <ResizableColumns cols={LOG_COLS} storageKey="engine-log" />
-          <tbody>
-            {entries.map((en, i) => (
-              <tr
-                key={i}
-                id={`line-${i}`}
-                className={`level-${en.level}${selected === i ? ' selected' : ''}`}
-                onClick={() => setSelected(i)}
-              >
-                <td>{fmtDate(en.ts)}</td>
-                <td>{fmtTime(en.ts)}</td>
-                <td>{capFirst(en.level)}</td>
-                <td title={en.message}>{en.message.split('\n')[0]}</td>
-              </tr>
-            ))}
-            {entries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="muted">
-                  No log entries.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <div className="run-detail-divider" onMouseDown={onDragStart} />
-      <div className="run-detail-output" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
-        {current ? (
-          <pre className="output">{current.message}</pre>
-        ) : (
-          <div className="run-detail-empty muted">Select a line</div>
-        )}
-      </div>
+    <div className="run-detail-app">
+      <ListDetail
+        panes={{ axis: 'y', initial: 65, unit: '%', min: 15, max: 85 }}
+        open={!followsTail && current !== null}
+        onClose={() => {
+          setFollowsTail(true);
+          setSelected(entries.length > 0 ? entries.length - 1 : null);
+        }}
+        detailTitle={current ? capFirst(current.level) : undefined}
+        empty="Select a line"
+        list={
+          <DataTable
+            cols={LOG_COLS}
+            rows={entries}
+            rowKey={(_en, i) => String(i)}
+            idPrefix="line"
+            storageKey="engine-log"
+            rowClass={(en) => `level-${en.level}`}
+            selected={followsTail && !selectsFirstRow ? null : selected === null ? null : String(selected)}
+            onSelect={(_en, i) => {
+              setFollowsTail(false);
+              setSelected(i);
+            }}
+            copyText={(en) => en.message}
+            empty="No log entries."
+            phoneRow={(en) => ({
+              title: en.message.split('\n')[0],
+              sub: `${fmtDate(en.ts)} ${fmtTime(en.ts)} · ${capFirst(en.level)}`,
+              tone: en.level === 'error' ? 'error' : en.level === 'warn' ? 'warning' : en.level === 'debug' ? 'muted' : undefined,
+            })}
+          />
+        }
+        detail={<div className="runlog-result">{current ? <pre className="output">{current.message}</pre> : <div className="runlog-result-empty muted">Select a line</div>}</div>}
+      />
     </div>
   );
 }

@@ -1,12 +1,14 @@
-import type { ActiveRun, Task, TaskRuntime } from '@shared/types';
+import type { ActiveRun, TaskRuntime } from '@shared/types';
 import type { AttentionRow, RecentRun, RunningRow } from '@shared/dashboard';
 import type { RemoteConversation } from '@shared/remote';
+import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
 import type { DetailTab } from './TaskDetail';
+import { DataTable, type DataCol } from './DataTable';
 import { showTaskMenu } from './TaskList';
-import { useListNav } from './hooks';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
+import { statusText } from './SessionList';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
@@ -42,6 +44,8 @@ interface Props {
   running: RunningRow[];
   /** Remote Control's open conversations; null while it is stopped (no section shows). */
   remote: RemoteConversation[] | null;
+  /** The open chats and terminal sessions; unset where they have a list of their own (the Tasks tab's dashboard). */
+  chats?: SessionSummary[];
   /** The latest finished runs, newest first; null until they load. */
   recent: RecentRun[] | null;
   runtimes: Record<string, TaskRuntime>;
@@ -71,59 +75,62 @@ export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => voi
 export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, remote, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
+export function Dashboard({ attention, running, remote, chats, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
   // Only names the day of a time: the running time ticks in its own component.
   const now = Date.now();
-  const isPicked = (list: DashboardPick['list'], taskId: string, runId: string | null) =>
-    pick?.list === list && pick.taskId === taskId && pick.runId === runId;
-
-  const rowId = (p: DashboardPick) => `dash-${p.list}-${p.taskId}-${p.runId ?? 'last'}`;
-  const activeId = (list: DashboardPick['list']) => (pick?.list === list ? rowId(pick) : undefined);
+  const pickKey = (p: DashboardPick) => `${p.taskId}-${p.runId ?? 'last'}`;
+  const pickedIn = (list: DashboardPick['list']) => (pick?.list === list ? pickKey(pick) : null);
 
   const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
   const opens = dashboardOpeners(onOpen);
-  const openAttention = opens.attention;
-  const openRunning = opens.running;
-
-  const attentionIndex = attention.findIndex((r) => isPicked('attention', r.task.id, r.runId));
-  const runningIndex = running.findIndex((r) => isPicked('running', r.task.id, r.runId));
-  const attentionKeys = useListNav({
-    count: attention.length,
-    index: attentionIndex,
-    onIndex: (i) => onPick(attentionPick(attention[i])),
-    onActivate: (i) => openAttention(attention[i]),
-  });
-  const runningKeys = useListNav({
-    count: running.length,
-    index: runningIndex,
-    onIndex: (i) => onPick(runningPick(running[i])),
-    onActivate: (i) => openRunning(running[i]),
-  });
   const conversations = remote ?? [];
   const remotePick = (c: RemoteConversation): DashboardPick => ({ list: 'remote', taskId: c.taskId, runId: c.id });
-  const openRemote = opens.remote;
-  const remoteKeys = useListNav({
-    count: conversations.length,
-    index: conversations.findIndex((c) => isPicked('remote', c.taskId, c.id)),
-    onIndex: (i) => onPick(remotePick(conversations[i])),
-    onActivate: (i) => openRemote(conversations[i]),
-  });
   const recentRuns = recent ?? [];
   const recentPick = (r: RecentRun): DashboardPick => ({ list: 'recent', taskId: r.taskId, runId: r.runId });
-  const openRecent = opens.recent;
-  const recentKeys = useListNav({
-    count: recentRuns.length,
-    index: recentRuns.findIndex((r) => isPicked('recent', r.taskId, r.runId)),
-    onIndex: (i) => onPick(recentPick(recentRuns[i])),
-    onActivate: (i) => openRecent(recentRuns[i]),
-  });
 
-  const menu = (task: Task, p: DashboardPick) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    onPick(p);
-    showTaskMenu(task, runtimes[task.id]);
-  };
+  const runningCols: DataCol<RunningRow>[] = [
+    { label: 'Task', width: 240, cell: (r) => r.task.name, title: (r) => r.task.name },
+    { label: 'Step', cell: (r) => (r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]) },
+    { label: 'Trigger', width: 110, cell: (r) => TRIGGER_LABELS[r.run.trigger] },
+    { label: 'Started', width: STARTED_WIDTH, num: true, cell: (r) => fmtClock(r.run.startedAt, now) },
+    { label: 'Elapsed', width: 100, num: true, cellClass: 'live-only', cell: (r) => <Elapsed since={r.run.startedAt} /> },
+  ];
+  const attentionCols: DataCol<AttentionRow>[] = [
+    {
+      label: 'Task',
+      width: 240,
+      title: (r) => r.task.name,
+      cell: (r) => (
+        <>
+          <StatusIcon level={r.level} />
+          {r.task.name}
+        </>
+      ),
+    },
+    { label: 'Problem', cell: (r) => r.problem, title: (r) => r.problem },
+    { label: 'Run started', width: STARTED_WIDTH, num: true, cell: (r) => (r.at !== null ? fmtClock(r.at, now) : '') },
+  ];
+  const recentCols: DataCol<RecentRun>[] = [
+    { label: 'Task', width: 240, cell: (r) => r.taskName, title: (r) => r.taskName },
+    { label: 'Result', width: 110, cell: (r) => resultLabel(r.result) },
+    { label: 'Details', cell: (r) => r.details, title: (r) => r.details },
+    { label: 'Started', width: STARTED_WIDTH, num: true, cell: (r) => fmtClock(Date.parse(r.startTs), now) },
+    { label: 'Duration', width: 100, num: true, cell: (r) => (r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : '') },
+  ];
+  const chatCols: DataCol<SessionSummary>[] = [
+    { label: 'Chat', width: 240, cell: (s) => s.title, title: (s) => s.title },
+    { label: 'Project', width: 160, cell: (s) => s.groupName, title: (s) => s.groupName },
+    { label: 'Status', width: 110, cell: statusText },
+    { label: 'Last message', cell: (s) => s.latest ?? '', title: (s) => s.latest },
+    { label: 'Last reply', width: STARTED_WIDTH, num: true, cell: (s) => (s.lastReplyAt !== undefined ? fmtClock(s.lastReplyAt, now) : '') },
+  ];
+  const remoteCols: DataCol<RemoteConversation>[] = [
+    { label: 'Session', width: 240, cell: (c) => c.name, title: (c) => c.cwd },
+    { label: 'Status', width: 110, cell: (c) => REMOTE_STATUS_LABELS[c.status] },
+    { label: 'Last message', cell: (c) => c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : ''), title: (c) => c.lastMessage },
+    { label: 'Started', width: STARTED_WIDTH, num: true, cell: (c) => fmtClock(Date.parse(c.startedAt), now) },
+  ];
 
   return (
     <div className="detail">
@@ -136,48 +143,20 @@ export function Dashboard({ attention, running, remote, recent, runtimes, pick, 
           {running.length === 0 ? (
             <div className="dashboard-empty muted">Nothing is running.</div>
           ) : (
-            <div className="dashboard-list">
-              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Running now" aria-activedescendant={activeId('running')} onKeyDown={runningKeys}>
-                <colgroup>
-                  <col style={{ width: 240 }} />
-                  <col />
-                  <col style={{ width: 110 }} />
-                  <col style={{ width: STARTED_WIDTH }} />
-                  <col style={{ width: 100 }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th>Step</th>
-                    <th>Trigger</th>
-                    <th className="num">Started</th>
-                    <th className="num">Elapsed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {running.map((r) => {
-                    const p = runningPick(r);
-                    return (
-                      <tr
-                        key={r.runId}
-                        id={rowId(p)}
-                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
-                        className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
-                        onClick={() => onPick(p)}
-                        onDoubleClick={() => openRunning(r)}
-                        onContextMenu={menu(r.task, p)}
-                      >
-                        <td title={r.task.name}>{r.task.name}</td>
-                        <td>{r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]}</td>
-                        <td>{TRIGGER_LABELS[r.run.trigger]}</td>
-                        <td className="num">{fmtClock(r.run.startedAt, now)}</td>
-                        <td className="num live-only"><Elapsed since={r.run.startedAt} /></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              wrapClass="dashboard-list"
+              label="Running now"
+              cols={runningCols}
+              rows={running}
+              rowKey={(r) => pickKey(runningPick(r))}
+              idPrefix="dash-running"
+              storageKey="dashboard-running"
+              selected={pickedIn('running')}
+              onSelect={(r) => onPick(runningPick(r))}
+              onOpen={opens.running}
+              onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
+              empty={null}
+            />
           )}
         </section>
 
@@ -191,99 +170,65 @@ export function Dashboard({ attention, running, remote, recent, runtimes, pick, 
           {attention.length === 0 ? (
             <div className="dashboard-empty muted">Nothing needs attention.</div>
           ) : (
-            <div className="dashboard-list">
-              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Needs attention" aria-activedescendant={activeId('attention')} onKeyDown={attentionKeys}>
-                <colgroup>
-                  <col style={{ width: 240 }} />
-                  <col />
-                  <col style={{ width: STARTED_WIDTH }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th>Problem</th>
-                    <th className="num">Run started</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attention.map((r) => {
-                    const p = attentionPick(r);
-                    return (
-                      <tr
-                        key={`${r.task.id}-${r.runId ?? 'last'}`}
-                        id={rowId(p)}
-                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
-                        className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
-                        onClick={() => onPick(p)}
-                        onDoubleClick={() => openAttention(r)}
-                        onContextMenu={menu(r.task, p)}
-                      >
-                        <td title={r.task.name}>
-                          <StatusIcon level={r.level} />
-                          {r.task.name}
-                        </td>
-                        <td title={r.problem}>{r.problem}</td>
-                        <td className="num">{r.at !== null ? fmtClock(r.at, now) : ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              wrapClass="dashboard-list"
+              label="Needs attention"
+              cols={attentionCols}
+              rows={attention}
+              rowKey={(r) => pickKey(attentionPick(r))}
+              idPrefix="dash-attention"
+              storageKey="dashboard-attention"
+              selected={pickedIn('attention')}
+              onSelect={(r) => onPick(attentionPick(r))}
+              onOpen={opens.attention}
+              onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
+              empty={null}
+            />
           )}
         </section>
+
+        {chats && (
+          <section className="dashboard-section">
+            <span className="pane-title">Chats</span>
+            {chats.length === 0 ? (
+              <div className="dashboard-empty muted">No chats are open.</div>
+            ) : (
+              <DataTable
+                wrapClass="dashboard-list"
+                label="Chats"
+                cols={chatCols}
+                rows={chats}
+                rowKey={(s) => s.id}
+                idPrefix="dash-chats"
+                storageKey="dashboard-chats"
+                onOpen={(s) => window.looper.sessions.openWindow(s.id)}
+                onMenu={(s) => window.looper.sessions.showContextMenu(s.id, false)}
+                empty={null}
+              />
+            )}
+          </section>
+        )}
 
         <section className="dashboard-section">
           <span className="pane-title">Recent runs</span>
           {recent && recentRuns.length === 0 ? (
             <div className="dashboard-empty muted">No runs yet.</div>
           ) : (
-            <div className="dashboard-list">
-              <table className="runlog-table" tabIndex={0} role="grid" aria-label="Recent runs" aria-activedescendant={activeId('recent')} onKeyDown={recentKeys}>
-                <colgroup>
-                  <col style={{ width: 240 }} />
-                  <col style={{ width: 110 }} />
-                  <col />
-                  <col style={{ width: STARTED_WIDTH }} />
-                  <col style={{ width: 100 }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th>Result</th>
-                    <th>Details</th>
-                    <th className="num">Started</th>
-                    <th className="num">Duration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRuns.map((r) => {
-                    const p = recentPick(r);
-                    return (
-                      <tr
-                        key={`${r.taskId}-${r.runId}`}
-                        id={rowId(p)}
-                        aria-selected={isPicked(p.list, p.taskId, p.runId)}
-                        className={`result-${r.result} run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
-                        onClick={() => onPick(p)}
-                        onDoubleClick={() => openRecent(r)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          onPick(p);
-                          window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details });
-                        }}
-                      >
-                        <td title={r.taskName}>{r.taskName}</td>
-                        <td>{resultLabel(r.result)}</td>
-                        <td title={r.details}>{r.details}</td>
-                        <td className="num">{fmtClock(Date.parse(r.startTs), now)}</td>
-                        <td className="num">{r.totalDurationMs > 0 ? formatDuration(r.totalDurationMs) : ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              wrapClass="dashboard-list"
+              label="Recent runs"
+              cols={recentCols}
+              rows={recentRuns}
+              rowKey={(r) => pickKey(recentPick(r))}
+              idPrefix="dash-recent"
+              storageKey="dashboard-recent"
+              rowClass={(r) => `result-${r.result}`}
+              selected={pickedIn('recent')}
+              onSelect={(r) => onPick(recentPick(r))}
+              onOpen={opens.recent}
+              onMenu={(r) => window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details })}
+              empty={null}
+            />
           )}
         </section>
 
@@ -293,49 +238,20 @@ export function Dashboard({ attention, running, remote, recent, runtimes, pick, 
             {conversations.length === 0 ? (
               <div className="dashboard-empty muted">No conversations are open.</div>
             ) : (
-              <div className="dashboard-list">
-                <table className="runlog-table" tabIndex={0} role="grid" aria-label="Remote Control" aria-activedescendant={activeId('remote')} onKeyDown={remoteKeys}>
-                  <colgroup>
-                    <col style={{ width: 240 }} />
-                    <col style={{ width: 110 }} />
-                    <col />
-                    <col style={{ width: STARTED_WIDTH }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>Session</th>
-                      <th>Status</th>
-                      <th>Last message</th>
-                      <th className="num">Started</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conversations.map((c) => {
-                      const p = remotePick(c);
-                      return (
-                        <tr
-                          key={c.id}
-                          id={rowId(p)}
-                          aria-selected={isPicked(p.list, p.taskId, p.runId)}
-                          className={`run-row${isPicked(p.list, p.taskId, p.runId) ? ' selected' : ''}`}
-                          onClick={() => onPick(p)}
-                          onDoubleClick={() => openRemote(c)}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            onPick(p);
-                            window.looper.remote.showContextMenu(c.id);
-                          }}
-                        >
-                          <td title={c.cwd}>{c.name}</td>
-                          <td>{REMOTE_STATUS_LABELS[c.status]}</td>
-                          <td title={c.lastMessage}>{c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')}</td>
-                          <td className="num">{fmtClock(Date.parse(c.startedAt), now)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                wrapClass="dashboard-list"
+                label="Remote Control"
+                cols={remoteCols}
+                rows={conversations}
+                rowKey={(c) => pickKey(remotePick(c))}
+                idPrefix="dash-remote"
+                storageKey="dashboard-remote"
+                selected={pickedIn('remote')}
+                onSelect={(c) => onPick(remotePick(c))}
+                onOpen={opens.remote}
+                onMenu={(c) => window.looper.remote.showContextMenu(c.id)}
+                empty={null}
+              />
             )}
           </section>
         )}

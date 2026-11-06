@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Environment } from '@shared/types';
 import { definitionFields, fileName, lineDiff, type VersionDetail } from '@shared/versions';
+import { DataTable, type DataCol } from './components/DataTable';
+import { ListDetail, selectsFirstRow } from './components/ListDetail';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { settingGroup, settingLabel, settingValue } from './taskSettings';
@@ -156,114 +158,42 @@ function SideBySide({ d, n }: { d: Difference; n: number }) {
 }
 
 /** Compare: the differences from the current version as a list, the selected one side by side underneath. */
-interface ListRow {
-  key: string;
-  /** Hover text of the first cell: the field's path or the file's full path. */
-  title: string;
-  cells: string[];
-  /** A group header above the rows that follow it; it can't be selected. */
-  group?: boolean;
-}
-
-/** A details list (column headers, one row per item, full-row selection, arrow keys move it). */
-function DetailsList({
-  columns,
-  rows,
-  selected,
-  onSelect,
-  className,
-}: {
-  columns: string[];
-  rows: ListRow[];
-  selected: string;
-  onSelect: (key: string) => void;
-  className: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const items = rows.filter((r) => !r.group);
-  const move = (delta: number) => {
-    const i = items.findIndex((r) => r.key === selected);
-    const next = items[Math.min(items.length - 1, Math.max(0, i + delta))];
-    onSelect(next.key);
-    ref.current?.querySelector(`[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
-  };
-  return (
-    <div
-      className={`runlog-table-wrap ${className}`}
-      ref={ref}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          move(e.key === 'ArrowDown' ? 1 : -1);
-        }
-      }}
-    >
-      <table className="runlog-table">
-        <colgroup>
-          <col style={{ width: '28%' }} />
-          {columns.slice(1).map((c) => (
-            <col key={c} />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c}>{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) =>
-            r.group ? (
-              <tr key={r.key} className="list-group">
-                <td colSpan={columns.length}>{r.cells[0]}</td>
-              </tr>
-            ) : (
-            <tr
-              key={r.key}
-              data-key={r.key}
-              className={`run-row${r.key === selected ? ' selected' : ''}`}
-              onMouseDown={() => {
-                onSelect(r.key);
-                ref.current?.focus();
-              }}
-            >
-              {r.cells.map((c, i) => (
-                <td key={i} title={i === 0 ? r.title : c}>
-                  {c}
-                </td>
-              ))}
-            </tr>
-            ),
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function CompareView({ detail, n, environments }: { detail: VersionDetail; n: number; environments: Environment[] }) {
   const diffs = differencesOf(detail, environments);
   const [selected, setSelected] = useState<string | null>(null);
-  const current = diffs.find((d) => d.key === selected) ?? diffs[0];
+  const current = diffs.find((d) => d.key === selected) ?? (selectsFirstRow ? diffs[0] : undefined);
 
   if (diffs.length === 0) {
     return <div className="compare-same">Version {n} is the same as the current version.</div>;
   }
+  type Diff = (typeof diffs)[number];
+  const cols: DataCol<Diff>[] = [
+    { label: 'Name', percent: 28, cell: (d) => d.name, title: (d) => d.title },
+    { label: `Version ${n}`, cell: (d) => d.a, title: (d) => d.a },
+    { label: 'Current', cell: (d) => d.b, title: (d) => d.b },
+  ];
   return (
-    <>
-      <DetailsList
-        className="compare-list"
-        columns={['Name', `Version ${n}`, 'Current']}
-        rows={diffs.map((d) => ({ key: d.key, title: d.title, cells: [d.name, d.a, d.b] }))}
-        selected={current.key}
-        onSelect={setSelected}
-      />
-      <div className="compare-pane">
-        <SideBySide d={current} n={n} />
-      </div>
-    </>
+    <ListDetail
+      panes={{ axis: 'y', initial: 34, unit: '%', min: 15, max: 85 }}
+      open={selected !== null}
+      onClose={() => setSelected(null)}
+      detailTitle={current?.name}
+      empty="Select a difference"
+      list={
+        <DataTable
+          wrapClass="runlog-table-wrap compare-list"
+          cols={cols}
+          rows={diffs}
+          rowKey={(d) => d.key}
+          idPrefix="compare"
+          selected={current?.key}
+          onSelect={(d) => setSelected(d.key)}
+          empty={null}
+          phoneRow={(d) => ({ title: d.name, sub: `${d.a} → ${d.b}` })}
+        />
+      }
+      detail={<div className="compare-pane">{current && <SideBySide d={current} n={n} />}</div>}
+    />
   );
 }
 
@@ -277,6 +207,11 @@ interface Item {
   text: string | null;
   missing: string;
 }
+
+const VIEW_COLS: readonly DataCol<Item>[] = [
+  { label: 'Name', percent: 28, cell: (i) => i.name, title: (i) => i.title },
+  { label: 'Value', cell: (i) => i.value, title: (i) => i.value },
+];
 
 const GROUP_ORDER = ['General', 'Trigger', 'Check', 'Classifier', 'Agent', 'Notifications', 'Files'];
 
@@ -345,28 +280,31 @@ function TextView({ item }: { item: Item }) {
 function VersionView({ detail, environments }: { detail: VersionDetail; environments: Environment[] }) {
   const items = itemsOf(detail, environments);
   const [selected, setSelected] = useState<string | null>(null);
-  const current = items.find((i) => i.key === selected) ?? items[0];
-  if (!current) return <div className="compare-same">This version has no settings.</div>;
-  const rows: ListRow[] = [];
-  for (const i of items) {
-    if (rows.length === 0 || items[items.indexOf(i) - 1]?.group !== i.group) {
-      rows.push({ key: `group:${i.group}`, title: i.group, cells: [i.group], group: true });
-    }
-    rows.push({ key: i.key, title: i.title, cells: [i.name, i.value] });
-  }
+  const current = items.find((i) => i.key === selected) ?? (selectsFirstRow ? items[0] : undefined);
+  if (items.length === 0) return <div className="compare-same">This version has no settings.</div>;
   return (
-    <>
-      <DetailsList
-        className="compare-list view-list"
-        columns={['Name', 'Value']}
-        rows={rows}
-        selected={current.key}
-        onSelect={setSelected}
-      />
-      <div className="compare-pane">
-        <TextView item={current} />
-      </div>
-    </>
+    <ListDetail
+      panes={{ axis: 'y', initial: 50, unit: '%', min: 15, max: 85 }}
+      open={selected !== null}
+      onClose={() => setSelected(null)}
+      detailTitle={current?.name}
+      empty="Select a setting"
+      list={
+        <DataTable
+          wrapClass="runlog-table-wrap compare-list"
+          cols={VIEW_COLS}
+          rows={items}
+          rowKey={(i) => i.key}
+          idPrefix="setting"
+          selected={current?.key}
+          onSelect={(i) => setSelected(i.key)}
+          empty={null}
+          groupOf={(i) => i.group}
+          phoneRow={(i) => ({ title: i.name, sub: i.value })}
+        />
+      }
+      detail={<div className="compare-pane">{current && <TextView item={current} />}</div>}
+    />
   );
 }
 

@@ -31,7 +31,7 @@ function listItems(
   ];
 }
 
-/** The label of a task pane's Show check box in View (beside View → Tasks, which opens the Tasks window). */
+/** The label of a task pane's Show check box in View. */
 const SHOW_LABELS: Record<PaneId, string> = { tasks: 'Ta&sks Pane', goals: 'Go&als Pane', watchers: '&Watchers Pane' };
 
 /** A task pane's Show check box. */

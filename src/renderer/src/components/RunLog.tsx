@@ -1,25 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { groupRuns, runShown, type RunFilter } from '@shared/runs';
+import { useEffect, useMemo, useState } from 'react';
+import { groupRuns, runShown, type RunFilter, type RunGroup } from '@shared/runs';
 import type { RunRecord, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
-import { dayGroups, resultTone, timeAndDuration } from '../phone-lists';
-import { useDragResize, useListNav } from './hooks';
+import { resultTone, timeAndDuration } from '../phone-lists';
+import { DataTable, type DataCol } from './DataTable';
+import { ListDetail } from './ListDetail';
 import { Markdown } from './Markdown';
-import { EmptyRow, Group, Row } from './phone/PhoneList';
-import { ResizableColumns, type TableCol } from './ui';
-import { isPhone } from '../web/page-nav';
-
-const RUN_COLS: readonly TableCol[] = [
-  { label: 'Date', width: 92 },
-  { label: 'Start', width: 76 },
-  { label: 'End', width: 76 },
-  { label: 'Result', width: 96 },
-  { label: 'Duration', width: 72 },
-  { label: 'Details' },
-];
-
-/** A project's chats and terminal sessions all share one result, so they have no Result column. */
-const SESSION_COLS: readonly TableCol[] = RUN_COLS.filter((c) => c.label !== 'Result');
 
 interface Props {
   /** The records to group into runs: a task's, or the chat and terminal records of a project's Chat tab. */
@@ -41,15 +27,12 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
   useEffect(() => {
     if (focusRun) setSelected(focusRun.runId);
   }, [focusRun]);
-  const [splitPct, setSplitPct] = useState(65);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(
     () => groupRuns(records).filter((g) => sessions || runShown(g, filter)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [records, filter.hideSkipped, filter.hideNoAction, sessions],
   );
-  const cols = sessions ? SESSION_COLS : RUN_COLS;
   // A run's records are all its own task's (a project's Chat tab mixes its tasks' sessions with its own).
   const taskOf = (g: { records: RunRecord[] }) => g.records[0].taskId;
 
@@ -61,112 +44,54 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
     }
   }, [groups, selected]);
 
-  const idx = groups.findIndex((g) => g.runId === selected);
-  const selectedGroup = idx >= 0 ? groups[idx] : null;
-  const nav = useListNav({
-    count: groups.length,
-    index: idx,
-    onIndex: (i) => setSelected(groups[i].runId),
-    onActivate: (i) => void window.looper.openMessages(taskOf(groups[i]), groups[i].runId),
-    scrollToId: selected ? `run-${selected}` : null,
-  });
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 'c' && selectedGroup) {
-      void navigator.clipboard.writeText(selectedGroup.resultText || selectedGroup.details);
-      e.preventDefault();
-      return;
-    }
-    nav(e);
-  };
-
+  const selectedGroup = groups.find((g) => g.runId === selected) ?? null;
   const isRunning = (runId: string) => runtime?.runs.some((r) => r.runId === runId) ?? false;
+  const duration = (g: RunGroup) => (g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : '');
 
-  const onDragStart = useDragResize({
-    axis: 'y',
-    containerRef,
-    onDrag: (y, rect) => setSplitPct(Math.max(20, Math.min(90, (y / rect.height) * 100))),
-  });
-
-  if (isPhone) {
-    // iOS list rows by day: what happened, when and how long, and the result as text. A tap opens the run's screen.
-    const now = Date.now();
-    return (
-      <div className="runlog runlog-phone">
-        <div className="runlog-phone-scroll">
-          {groups.length === 0 ? (
-            <Group>
-              <EmptyRow>{sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}</EmptyRow>
-            </Group>
-          ) : (
-            dayGroups(groups, (g) => Date.parse(g.startTs), now).map((day) => (
-              <Group key={day.key} title={day.title}>
-                {day.items.map((g) => (
-                  <Row
-                    key={g.runId}
-                    title={g.details || (sessions ? 'Session' : resultLabel(g.result))}
-                    sub={<span className="pg-oneline">{timeAndDuration(g.startTs, g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : '')}</span>}
-                    value={sessions ? undefined : isRunning(g.runId) ? 'Running' : resultLabel(g.result)}
-                    valueTone={resultTone(g.result)}
-                    chevron
-                    onOpen={() => void window.looper.openMessages(taskOf(g), g.runId)}
-                    onMenu={() => window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details })}
-                  />
-                ))}
-              </Group>
-            ))
-          )}
-        </div>
-      </div>
-    );
-  }
+  // A project's chats and terminal sessions all share one result, so they have no Result column.
+  const cols: DataCol<RunGroup>[] = [
+    { label: 'Date', width: 92, cell: (g) => fmtDate(g.startTs) },
+    { label: 'Start', width: 76, cell: (g) => fmtTime(g.startTs) },
+    { label: 'End', width: 76, cell: (g) => fmtTime(g.endTs) },
+    ...(sessions ? [] : [{ label: 'Result', width: 96, cell: (g: RunGroup) => (isRunning(g.runId) ? 'Running' : resultLabel(g.result)) }]),
+    { label: 'Duration', width: 72, cell: duration },
+    { label: 'Details', cell: (g) => g.details, title: (g) => g.details },
+  ];
 
   return (
-    <div className="runlog" ref={containerRef}>
-      <div className="runlog-table-wrap" style={{ height: `${splitPct}%` }} tabIndex={0} onKeyDown={onKeyDown}>
-        <table className="runlog-table">
-          <ResizableColumns cols={cols} storageKey={sessions ? 'runlog-sessions' : 'runlog'} />
-          <tbody>
-            {groups.map((g) => (
-              <tr
-                key={g.runId}
-                id={`run-${g.runId}`}
-                className={`result-${g.result} run-row${selected === g.runId ? ' selected' : ''}`}
-                onClick={() => setSelected(g.runId)}
-                onDoubleClick={() => void window.looper.openMessages(taskOf(g), g.runId)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setSelected(g.runId);
-                  window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details });
-                }}
-              >
-                <td>{fmtDate(g.startTs)}</td>
-                <td>{fmtTime(g.startTs)}</td>
-                <td>{fmtTime(g.endTs)}</td>
-                {!sessions && <td>{isRunning(g.runId) ? 'Running' : resultLabel(g.result)}</td>}
-                <td>{g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : ''}</td>
-                <td title={g.details}>{g.details}</td>
-              </tr>
-            ))}
-            {groups.length === 0 && (
-              <tr>
-                <td colSpan={cols.length} className="muted">
-                  {sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <div className="runlog-divider" onMouseDown={onDragStart} />
-      <div className="runlog-result" style={{ height: `calc(${100 - splitPct}% - 5px)` }}>
-        {selectedGroup?.resultText ? (
-          <Markdown text={selectedGroup.resultText} />
-        ) : (
-          <div className="runlog-result-empty muted">
-            {selectedGroup ? 'No result' : 'Select a run'}
+    <div className="runlog">
+      <ListDetail
+        preview
+        panes={{ axis: 'y', initial: 65, unit: '%', min: 20, max: 90 }}
+        list={
+          <DataTable
+            cols={cols}
+            rows={groups}
+            rowKey={(g) => g.runId}
+            idPrefix="run"
+            storageKey={sessions ? 'runlog-sessions' : 'runlog'}
+            rowClass={(g) => `result-${g.result}`}
+            selected={selected}
+            onSelect={(g) => setSelected(g.runId)}
+            onOpen={(g) => void window.looper.openMessages(taskOf(g), g.runId)}
+            onMenu={(g) => window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details })}
+            copyText={(g) => g.resultText || g.details}
+            empty={sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}
+            dayOf={(g) => Date.parse(g.startTs)}
+            phoneRow={(g) => ({
+              title: g.details || (sessions ? 'Session' : resultLabel(g.result)),
+              sub: timeAndDuration(g.startTs, duration(g)),
+              value: sessions ? undefined : isRunning(g.runId) ? 'Running' : resultLabel(g.result),
+              valueTone: resultTone(g.result),
+            })}
+          />
+        }
+        detail={
+          <div className="runlog-result">
+            {selectedGroup?.resultText ? <Markdown text={selectedGroup.resultText} /> : <div className="runlog-result-empty muted">{selectedGroup ? 'No result' : 'Select a run'}</div>}
           </div>
-        )}
-      </div>
+        }
+      />
     </div>
   );
 }

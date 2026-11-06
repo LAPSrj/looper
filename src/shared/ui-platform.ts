@@ -7,7 +7,7 @@
 export const UI_PLATFORMS = ['desktop', 'web', 'mobile'] as const;
 export type UiPlatform = (typeof UI_PLATFORMS)[number];
 
-/** Things that open something on the computer (a folder in its file browser): the desktop only, for now. */
+/** The computer's own windows (a list of them, to bring one forward): a browser's or a phone's are its own. */
 export const DESKTOP_ONLY: UiPlatform[] = ['desktop'];
 /** Window, pane and toolbar layout, the clipboard Edit menu and the like: nothing a phone can use. */
 export const NOT_MOBILE: UiPlatform[] = ['desktop', 'web'];

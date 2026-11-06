@@ -183,6 +183,7 @@ describe('a conversation’s More menu', () => {
         { item: 'chat-copy-session-id' },
         restart,
         { item: 'chat-compact', toolbar: 'compact' },
+        { item: 'chat-work-folder', toolbar: 'open-work-folder' },
       ],
       sessions,
       close,
@@ -190,11 +191,11 @@ describe('a conversation’s More menu', () => {
   });
 
   it('gives a terminal session its text size and Restart Agent instead of a transcript’s commands', () => {
-    expect(conversationMore('terminal')).toEqual([[{ toolbar: 'terminal-text-smaller' }, { toolbar: 'terminal-text-larger' }, restart], sessions, close]);
+    expect(conversationMore('terminal')).toEqual([[{ toolbar: 'terminal-text-smaller' }, { toolbar: 'terminal-text-larger' }, restart, { item: 'chat-work-folder', toolbar: 'open-work-folder' }], sessions, close]);
   });
 
   it('gives a task run’s agent its export and session id, no Find', () => {
-    expect(conversationMore('run')).toEqual([[{ item: 'chat-save-markdown' }], sessions, close]);
+    expect(conversationMore('run')).toEqual([[{ item: 'chat-save-markdown' }, { item: 'chat-work-folder', toolbar: 'open-work-folder' }], sessions, close]);
   });
 
   it('shows the toolbar’s Restart Agent where the window has no Chat menu, and the Chat menu’s where it has', () => {
@@ -219,7 +220,7 @@ describe('a task screen’s More menu', () => {
     expect(taskScreenMore()).toEqual([
       [{ item: 'task-run-now', toolbar: 'run-now' }, { item: 'task-stop', toolbar: 'stop-task' }, { item: 'task-pause-resume', toolbar: 'pause-resume' }, { item: 'task-enable-disable', toolbar: 'enable-disable' }, { item: 'task-complete', toolbar: 'complete-reopen' }],
       [{ item: 'task-edit', toolbar: 'edit-task' }, { item: 'task-edit-agent' }, { item: 'task-note', toolbar: 'edit-note' }, { item: 'task-note-clear' }],
-      [{ item: 'task-move-folder' }, { item: 'task-versions' }, { item: 'task-export' }, { item: 'task-clear-runs' }],
+      [{ item: 'task-move-folder' }, { item: 'task-versions' }, { item: 'task-export' }, { item: 'task-clear-runs' }, { item: 'task-work-folder', toolbar: 'open-work-folder' }],
       [{ item: 'project-new-chat' }, { item: 'project-new-terminal' }],
       [{ item: 'task-delete' }],
     ]);

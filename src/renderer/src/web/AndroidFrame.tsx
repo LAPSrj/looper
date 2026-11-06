@@ -14,6 +14,7 @@ import {
   deviceNoun,
   isLongMenu,
   menuGroups,
+  actionMenu,
   moreFor,
   PhoneWindows,
   pickMore,
@@ -26,9 +27,11 @@ import {
   type Screen,
 } from './phone-shell';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
-import { barModel, dismissFor, plainLabel } from './nav-bar-model';
-import { ARROW_BACK, CLOSE, MdBarRow, NavIcon } from './NavBarRow';
+import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
+import { ARROW_BACK, CLOSE, MENU_OPEN, MdBarRow, NavIcon } from './NavBarRow';
+import type { PageNavTabs } from './page-nav';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
+import { TabIcon } from '../components/phone/tab-icons';
 import './android.css';
 
 const ARROW_RIGHT = (
@@ -46,12 +49,14 @@ const NEW_FOLDER = (
 export function AndroidFrame({ controller }: { controller: ShellController }) {
   const [more, setMore] = useState<OpenMore | null>(null);
   const [device, setDevice] = useState(false);
+  const [railOpen, setRailOpen] = useState(false);
   const local: BackLayer[] = [];
   if (device) local.push(() => setDevice(false));
   if (more) local.push(() => setMore(null));
+  if (railOpen) local.push(() => setRailOpen(false));
   const shell = usePhoneShell(controller, 'android', local);
   const { s } = shell;
-  const overlay = !!more || device;
+  const overlay = !!more || device || railOpen;
   useEffect(() => {
     if (!overlay) return;
     controller.setOverlay(true);
@@ -59,6 +64,7 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
   }, [overlay, controller]);
 
   const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
+  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
     <div ref={shell.rootRef} className={`ph-root android${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`}>
@@ -66,9 +72,10 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
       <PhoneWindows
         shell={shell}
         controller={controller}
-        renderBar={(sc) => <TopBar shell={shell} controller={controller} sc={sc} onMore={openMore} />}
+        renderBar={(sc) => <TopBar shell={shell} controller={controller} sc={sc} onMore={openMore} onActionMenu={openActionMenu} onMenu={() => setRailOpen(true)} />}
         dragToDismiss={(p) => p === 'bottom-sheet'}
       />
+      {railOpen && shell.top?.nav?.navigation && <ModalRail tabs={shell.top.nav.navigation} onClose={() => setRailOpen(false)} />}
       {!s.connected && !s.everConnected && (
         <div className="ph-connection" role="status">
           Connecting…
@@ -109,9 +116,25 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
 /** The label of This device in the main window's overflow menu. */
 const DEVICE_LABEL = 'This device';
 
-function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controller: ShellController; sc: Screen; onMore: (sc: Screen, button: HTMLElement) => void }) {
+function TopBar({
+  shell,
+  controller,
+  sc,
+  onMore,
+  onActionMenu,
+  onMenu,
+}: {
+  shell: PhoneShell;
+  controller: ShellController;
+  sc: Screen;
+  onMore: (sc: Screen, button: HTMLElement) => void;
+  onActionMenu: (sc: Screen, action: PageNavAction, button: HTMLElement) => void;
+  onMenu: () => void;
+}) {
   const nav = sc.nav;
   const goBack = () => shell.goBack();
+  const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
+  const menu = nav?.navigation ? onMenu : undefined;
   const model = barModel({
     title: nav?.title ?? sc.win.title,
     back: nav?.back ? goBack : undefined,
@@ -119,21 +142,74 @@ function TopBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
     confirm: nav?.confirm,
     actions: nav?.actions,
     dismiss: dismissFor(sc.pres, { back: goBack, close: () => controller.close(sc.win.w) }),
+    menu,
   });
   const more = moreFor(sc, DEVICE_LABEL).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
   const connection = useConnection(controller);
+  const split = shell.tablet ? nav?.split : undefined;
+  if (split) {
+    // Two panes (Material: List-detail): a bar over each. The list's has the window's own Back, the detail's the page's.
+    const list = barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: goBack } : null, menu });
+    const detail = barModel({ title: nav?.title ?? '', back: nav?.back ? goBack : undefined, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
+    return (
+      <header className="md-bar">
+        <div className="md-bar-split">
+          <div className="md-bar-pane" style={{ width: split.width }}>
+            <MdBarRow model={list} onActionMenu={actionMenuHere} />
+          </div>
+          <div className="md-bar-pane main">
+            <MdBarRow model={detail} onMore={more} onActionMenu={actionMenuHere} />
+          </div>
+          {split.inspector && (
+            <div className="md-bar-pane" style={{ width: split.inspector.width }}>
+              <MdBarRow model={barModel({ title: split.inspector.title, dismiss: null })} />
+            </div>
+          )}
+        </div>
+        <OfflineBanner connection={connection} />
+      </header>
+    );
+  }
   return (
     <header className={`md-bar${sc.pres === 'bottom-sheet' ? ' sheet' : ''}`}>
       {sc.pres === 'bottom-sheet' && <div className="md-handle" aria-hidden="true" />}
-      <MdBarRow model={model} onMore={more} dialogLike={sc.pres === 'full-dialog' || sc.pres === 'dialog'} />
+      <MdBarRow model={model} onMore={more} onActionMenu={actionMenuHere} dialogLike={sc.pres === 'full-dialog' || sc.pres === 'dialog'} />
       <OfflineBanner connection={connection} />
     </header>
   );
 }
 
+/** Material's modal expanded navigation rail: the views over the content, opened from the top app bar's menu icon. */
+function ModalRail({ tabs, onClose }: { tabs: PageNavTabs; onClose: () => void }) {
+  return (
+    <div className="md-sheet-layer">
+      <Scrim className="md-scrim" onTap={onClose} />
+      <nav className="md-modal-rail ph-scroll" aria-label="Looper">
+        <button className="md-icon-btn" aria-label="Close navigation menu" onClick={onClose}>
+          {MENU_OPEN}
+        </button>
+        {tabs.items.map(([id, label, icon]) => (
+          <button
+            key={id}
+            className={`md-rail-item${id === tabs.value ? ' on' : ''}`}
+            aria-current={id === tabs.value ? 'page' : undefined}
+            onClick={() => {
+              tabs.select(id);
+              onClose();
+            }}
+          >
+            <TabIcon id={id} addonIcon={icon} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
 // ---------- menus ----------
 
-const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'radio';
+const isChoice =(it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'radio';
 
 function MenuItems({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
   const checks = items.some(isChoice);
@@ -191,14 +267,14 @@ function Menu({ items, style, onPick, onClose }: { items: MenuItemSpec[]; style:
   );
 }
 
-/** A menu the computer popped up (a long press): at the finger, or a bottom sheet when it's long. */
+/** A menu the computer popped up (a long press): at the finger, or a bottom sheet when it's long on a phone. */
 function PopupMenu({ controller, shell, menu: m }: { controller: ShellController; shell: PhoneShell; menu: OpenMenu }) {
   const at = useMemo(() => controller.popupPoint(m), [controller, m]);
   const items = useMemo(() => phoneMenu(m.items), [m.items]);
   const sub = useSubmenus(items);
   const pick = (it: MenuItemSpec) => (it.type === 'submenu' ? sub.open(it) : controller.pick(m.menuId, m.w, it));
   const dismiss = () => controller.dismissMenu(m.menuId);
-  if (isLongMenu(sub.level, shell.vp.height)) {
+  if (isLongMenu(sub.level, shell.vp.width, shell.vp.height)) {
     return (
       <BottomSheet onClose={dismiss} label="Menu">
         <MenuItems items={sub.level} title={sub.title} onUp={sub.up} onItem={pick} />
@@ -209,7 +285,8 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
   // 44 dp items, 4 dp padding in each group, 2 dp between groups.
   const groups = menuGroups(sub.level);
   const rows = groups.reduce((n, g) => n + g.length, 0) + (sub.title !== null ? 1 : 0);
-  const height = rows * 44 + Math.max(1, groups.length) * 8 + Math.max(0, groups.length - 1) * 2;
+  // A long one stops at .md-menu's max-height and scrolls.
+  const height = Math.min(rows * 44 + Math.max(1, groups.length) * 8 + Math.max(0, groups.length - 1) * 2, shell.vp.height * 0.7);
   const left = Math.max(8, Math.min(at.x, shell.vp.width - width - 8));
   const top = at.y + height + 8 <= shell.vp.height ? at.y : Math.max(8, at.y - height);
   return <Menu items={items} style={{ left, top, minWidth: width }} onPick={(it) => controller.pick(m.menuId, m.w, it)} onClose={dismiss} />;
@@ -447,8 +524,23 @@ function FileScreen({ controller, shell, dialog }: { controller: ShellController
 function PathScreen({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
   if (p.view) {
+    const steps = p.steps;
     return (
-      <FullDialog shell={shell} title={p.name} onClose={p.close}>
+      <FullDialog
+        shell={shell}
+        title={steps ? `${steps.index + 1} of ${steps.count}` : p.name}
+        onClose={p.close}
+        bar={
+          steps
+            ? {
+                actions: [
+                  { id: 'previous', label: 'Previous', disabled: steps.index <= 0, run: () => steps.go(steps.index - 1) },
+                  { id: 'next', label: 'Next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
+                ],
+              }
+            : undefined
+        }
+      >
         <FileViewBody view={p.view} name={p.name} />
         <div className="md-bottom-actions">
           <button className="md-text-btn" onClick={p.view.toHost}>
@@ -465,14 +557,9 @@ function PathScreen({ controller, shell, req }: { controller: ShellController; s
   if (!p.browser) return <LocalDialog msg={p.message} />;
   const browser = p.browser;
   return (
-    <FullDialog
-      shell={shell}
-      title={p.name}
-      onClose={p.close}
-      bar={{ confirm: { label: 'Download', disabled: !p.canDownload, run: p.download } }}
-    >
+    <FullDialog shell={shell} title={p.name} onClose={p.close}>
       <Crumbs browser={browser} />
-      <FileRows os="android" browser={browser} onFile={(entry) => browser.select(entry)} />
+      <FileRows os="android" browser={browser} onFile={p.openFile} />
       <div className="md-bottom-actions">
         <button className="md-text-btn" onClick={p.openOnComputer}>
           Open on host computer

@@ -17,7 +17,7 @@ interface Props {
   task: Task | null;
   /** Prefill for a NEW task (e.g. the example task); ignored when editing. */
   initial?: TaskInput;
-  /** The configured environments (File → Settings → Environments). */
+  /** The configured environments (Tools → Settings → Environments). */
   environments: Environment[];
   projects: Project[];
   /** A new task's project (a project's New Task…). */

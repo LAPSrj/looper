@@ -83,8 +83,8 @@ or button shown at the same time looks like it.
 
 ## Other places
 
-- The phone's tab bar draws its own 24 px icons (`TAB_ICONS` in
-  `phone/PhoneMain.tsx`), not these.
+- The phone's tab bar and rail draw their own 24 px icons (`TabIcon` in
+  `phone/tab-icons.tsx`), not these.
 - The phone's Projects and Tasks screens use the plain `add` plus for their
   bar button, as iPhone apps do for a list's add button.
 - Addons can use only the icons in `ADDON_ICONS` (`src/shared/addons.ts`).

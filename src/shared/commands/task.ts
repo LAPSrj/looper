@@ -1,6 +1,5 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the catalogs.
 import { SHORTCUTS } from '../shortcuts';
-import { DESKTOP_ONLY } from '../ui-platform';
 import type { Command } from './types';
 
 /** The menus these commands are in: the Task menu, and File (Export Task). */
@@ -120,10 +119,9 @@ export const TASK_COMMANDS = {
   workFolder: {
     label: 'Open &Working Directory',
     icon: 'openFolder',
-    platforms: DESKTOP_ONLY,
     menu: { id: 'task-work-folder', in: 'task', group: 'folder', glyph: false },
     toolbar: { id: 'open-work-folder', group: 'edit' },
-    mobile: { hidden: 'Opens a folder on the computer.' },
+    mobile: { group: 'organize' },
   },
 } as const satisfies Record<string, TaskCommand>;
 

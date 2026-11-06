@@ -15,6 +15,20 @@ export type FolderLayout = Record<string, string[]>;
  * doesn't know append, and ones that don't exist or sit elsewhere drop. An
  * item filed in a deleted or unknown folder lists at the top level.
  */
+export function moveKey(keys: readonly string[], from: number, to: number): string[] {
+  const next = [...keys];
+  next.splice(to, 0, ...next.splice(from, 1));
+  return next;
+}
+
+/** The layout with `shown`, the members of `container` a list shows, in their new order; members it doesn't show keep their places. */
+export function withSiblingsOrdered(order: Map<string, string[]>, container: string, shown: readonly string[]): FolderLayout {
+  const moving = new Set(shown);
+  const next = [...shown];
+  const all = order.get(container) ?? [];
+  return { ...Object.fromEntries(order), [container]: all.map((k) => (moving.has(k) ? next.shift()! : k)) };
+}
+
 export function siblingOrder(items: Filed[], folders: TaskFolder[], layout: FolderLayout, parents: Map<string, string> = folderParents(folders)): Map<string, string[]> {
   const containerOf = (t: Filed) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
   const out = new Map<string, string[]>();

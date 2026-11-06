@@ -1,4 +1,4 @@
-import { Children, Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   CHANGE_LABELS,
   branchText,
@@ -12,10 +12,9 @@ import {
   type GitStatusResult,
 } from '@shared/git';
 import { fmtDateTime } from '../format';
-import { isPhone } from '../web/page-nav';
-import { NavBar } from './NavBar';
-import { useDragResize, useListNav } from './hooks';
-import { Group, Row } from './phone/PhoneList';
+import { RowList, type PhoneRowModel } from './DataTable';
+import { ListDetail, selectsFirstRow } from './ListDetail';
+import { Group } from './phone/PhoneList';
 import { DiffView } from './ToolContent';
 import { TabBar } from './ui';
 
@@ -29,152 +28,31 @@ const baseName = (p: string) => p.split('/').pop() || p;
 const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length - 1));
 const fail = (e: unknown) => void window.looper.showError((e as Error).message);
 
-const DIVIDER = 5;
-const MIN_PANE = 60;
-/** A stacked list-over-diff area shorter than this (px) splits into tabs instead. */
-const SHORT = 260;
-
-/** The drag handle between two panes of a Split; `index` is the pane before it. */
-function SplitDivider({
-  axis,
-  index,
-  containerRef,
-  sizes,
-  count,
-  onSize,
-}: {
-  axis: 'x' | 'y';
-  index: number;
-  containerRef: RefObject<HTMLDivElement | null>;
-  sizes: number[];
-  count: number;
-  onSize: (index: number, size: number) => void;
-}) {
-  const onMouseDown = useDragResize({
-    axis,
-    containerRef,
-    onDrag: (pos, rect) => {
-      const total = axis === 'x' ? rect.width : rect.height;
-      let start = index * DIVIDER;
-      for (let i = 0; i < index; i++) start += sizes[i];
-      let after = (count - 1 - index) * DIVIDER + MIN_PANE;
-      for (let i = index + 1; i < count - 1; i++) after += sizes[i];
-      const max = Math.max(MIN_PANE, total - start - DIVIDER - after);
-      onSize(index, Math.round(Math.max(MIN_PANE, Math.min(max, pos - start - DIVIDER / 2))));
-    },
-  });
-  return <div className={`git-divider ${axis}`} onMouseDown={onMouseDown} />;
-}
-
-/**
- * Panes in a row (`x`) or a column (`y`) with a drag handle between each pair.
- * `initial` sizes every pane but the last, which takes the rest.
- */
-function Split({ axis, initial, children }: { axis: 'x' | 'y'; initial: number[]; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [sizes, setSizes] = useState(initial);
-  const panes = Children.toArray(children);
-  const onSize = (i: number, size: number) => setSizes((prev) => prev.map((s, j) => (j === i ? size : s)));
-  return (
-    <div ref={ref} className={`git-split ${axis}`}>
-      {panes.map((pane, i) => (
-        <Fragment key={i}>
-          {i > 0 && <SplitDivider axis={axis} index={i - 1} containerRef={ref} sizes={sizes} count={panes.length} onSize={onSize} />}
-          <div className="git-pane" style={i < panes.length - 1 ? { flex: `0 1 ${sizes[i]}px` } : { flex: '1 1 0' }}>
-            {pane}
-          </div>
-        </Fragment>
-      ))}
-    </div>
-  );
-}
-
-type PaneId = 'message' | 'files' | 'changes';
-
-/**
- * A file list with the selected file's changes beside it (`x`) or below it
- * (`y`), a drag handle between them. When a stacked area is too short for
- * both, they become two tabs, Files and Diff. `message`, when given, is a
- * first tab of its own (the commit message).
- */
-function FilesChanges({ axis, message, files, changes }: { axis: 'x' | 'y'; message?: ReactNode; files: ReactNode; changes: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [short, setShort] = useState(false);
-  const [pane, setPane] = useState<PaneId>(message ? 'message' : 'files');
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => setShort(axis === 'y' && el.clientHeight < SHORT);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [axis]);
-
-  const together = !short;
-  const tabs: [PaneId, string][] = [];
-  if (message) tabs.push(['message', 'Commit Message']);
-  tabs.push(['files', 'Files']);
-  if (!together) tabs.push(['changes', 'Diff']);
-  // The Diff tab goes away once there's room for both again.
-  const active = together && pane === 'changes' ? 'files' : pane;
-  let body: ReactNode;
-  if (active === 'message') body = message;
-  else if (together) {
-    body = (
-      <Split axis={axis} initial={[axis === 'x' ? 360 : 160]}>
-        {files}
-        {changes}
-      </Split>
-    );
-  } else body = active === 'files' ? files : changes;
-  return (
-    <div ref={ref} className="git-files-changes">
-      {tabs.length > 1 && <TabBar tabs={tabs} active={active} onSelect={setPane} className="git-subtabs" />}
-      <div className="git-tabbody">{body}</div>
-    </div>
-  );
-}
-
-/** One file in a list: its name, its folder, and what happened to it. */
-function FileRow({
-  id,
-  path,
-  origPath,
-  status,
-  selected,
-  onSelect,
-  onMenu,
-}: {
-  id: string;
+interface FileLine {
   path: string;
   origPath?: string;
   status: string;
-  selected: boolean;
-  onSelect: () => void;
-  onMenu: () => void;
-}) {
+}
+
+/** One file in a list: its name, its folder, and what happened to it. */
+function FileRow({ path, origPath, status }: FileLine) {
   return (
-    <div
-      id={id}
-      role="option"
-      aria-selected={selected}
-      className={`git-file${selected ? ' selected' : ''}`}
-      onClick={onSelect}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onSelect();
-        onMenu();
-      }}
-    >
+    <>
       <div className="git-file-name">
         <span>{baseName(path)}</span>
         <span className="muted git-file-status">{status}</span>
       </div>
       <div className="muted mono git-file-dir">{origPath ? `from ${origPath}` : dirName(path) || ' '}</div>
-    </div>
+    </>
   );
 }
+
+/** The same on a phone: the name, its folder under it, what happened to it at the end. */
+const filePhoneRow = ({ path, origPath, status }: FileLine): PhoneRowModel => ({
+  title: baseName(path),
+  sub: <span className="pg-oneline mono">{origPath ? `from ${origPath}` : dirName(path) || '/'}</span>,
+  value: status,
+});
 
 /** A file's diff, or why there's none to show. */
 function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle?: string; diff: GitFileDiff | null; loading: boolean }) {
@@ -198,55 +76,17 @@ function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle
   );
 }
 
-/**
- * The in-view Back a phone's sheet shows over a pushed screen (hidden elsewhere: the frame's bar has it,
- * from the NavBar beside it, which gives the deeper screen's title and Back).
- */
-function PhoneBack({ label, onBack }: { label: string; onBack: () => void }) {
-  return (
-    <button className="pg-inline-back" onClick={onBack}>
-      <svg width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
-        <path d="M6.5 1.5 1.5 6.5l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      {label}
-    </button>
-  );
-}
-
-/** Files as list rows: the name, its folder under it, what happened to it at the end. A tap pushes the diff. */
-function PhoneFiles({ files, onOpen, onMenu }: { files: { key: string; path: string; origPath?: string; status: string }[]; onOpen: (i: number) => void; onMenu: (i: number) => void }) {
-  return (
-    <Group>
-      {files.map((f, i) => (
-        <Row
-          key={f.key}
-          title={baseName(f.path)}
-          sub={<span className="pg-oneline mono">{f.origPath ? `from ${f.origPath}` : dirName(f.path) || '/'}</span>}
-          value={f.status}
-          chevron
-          onOpen={() => onOpen(i)}
-          onMenu={() => onMenu(i)}
-        />
-      ))}
-    </Group>
-  );
-}
-
-/** Uncommitted changes: the files, and the selected one's diff against HEAD beside or below them. A phone lists the files and pushes the diff. */
-function ChangesView({ projectId, status, narrow, onDetail }: { projectId: string; status: GitStatus; narrow: boolean; onDetail: (open: boolean) => void }) {
+/** Uncommitted changes: the files, and the selected one's diff against HEAD. */
+function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId: string; status: GitStatus; narrow: boolean; note?: ReactNode; onDetail: (pushed: boolean) => void }) {
   const [sel, setSel] = useState<string | null>(null);
-  // A phone: the diff screen shows (a file was tapped).
-  const [open, setOpen] = useState(false);
   const [diff, setDiff] = useState<{ key: string; diff: GitFileDiff } | null>(null);
   const changes = status.changes;
-  const current = changes.find((c) => c.path === sel) ?? changes[0];
-  const diffShown = !isPhone || open;
-  useEffect(() => onDetail(isPhone && open), [open, onDetail]);
+  const current = changes.find((c) => c.path === sel) ?? (selectsFirstRow || sel !== null ? changes[0] : undefined);
   // A change's diff is read again whenever the status says something changed.
   const statusKey = JSON.stringify(changes);
   const key = current ? `${current.path}\n${current.kind}\n${statusKey}` : '';
   useEffect(() => {
-    if (!current || !diffShown) return;
+    if (!current) return;
     let live = true;
     window.looper.git
       .changeDiff(projectId, { path: current.path, origPath: current.origPath, kind: current.kind }, status.initial)
@@ -256,72 +96,44 @@ function ChangesView({ projectId, status, narrow, onDetail }: { projectId: strin
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, projectId, diffShown]);
-  const index = current ? changes.indexOf(current) : -1;
-  const onKey = useListNav({
-    count: changes.length,
-    index,
-    onIndex: (i) => setSel(changes[i].path),
-    scrollToId: current ? `change-${index}` : null,
-  });
-  if (changes.length === 0) return <div className="empty">There are no uncommitted changes.</div>;
-  const menu = (c: GitChange) =>
-    window.looper.git.showFileMenu({ projectId, root: status.root, path: c.path, exists: c.kind !== 'deleted' });
-  if (isPhone) {
-    const diffPane = (
-      <DiffPane
-        title={current?.path}
-        subtitle={current ? changeText(current) : undefined}
-        diff={diff && diff.key === key ? diff.diff : null}
-        loading={!!current}
-      />
-    );
-    return open ? (
-      <div className="git-phone-detail">
-        {current && <NavBar title={baseName(current.path)} back={() => setOpen(false)} order={10} />}
-        <PhoneBack label="Changes" onBack={() => setOpen(false)} />
-        {diffPane}
-      </div>
-    ) : (
-      <div className="git-phone-list">
-        <PhoneFiles
-          files={changes.map((c) => ({ key: c.path, path: c.path, origPath: c.origPath, status: changeText(c) }))}
-          onOpen={(i) => {
-            setSel(changes[i].path);
-            setOpen(true);
-          }}
-          onMenu={(i) => menu(changes[i])}
-        />
-      </div>
+  }, [key, projectId]);
+  if (changes.length === 0) {
+    return (
+      <>
+        {note}
+        <div className="empty">There are no uncommitted changes.</div>
+      </>
     );
   }
+  const line = (c: GitChange): FileLine => ({ path: c.path, origPath: c.origPath, status: changeText(c) });
   return (
-    <FilesChanges
-      axis={narrow ? 'y' : 'x'}
-      files={
-        <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Changes">
-          {changes.map((c, i) => (
-            <FileRow
-              key={c.path}
-              id={`change-${i}`}
-              path={c.path}
-              origPath={c.origPath}
-              status={changeText(c)}
-              selected={c === current}
-              onSelect={() => setSel(c.path)}
-              onMenu={() => menu(c)}
-            />
-          ))}
-        </div>
-      }
-      changes={
-        <DiffPane
-          title={current?.path}
-          subtitle={current ? changeText(current) : undefined}
-          diff={diff && diff.key === key ? diff.diff : null}
-          loading={!!current}
+    <ListDetail
+      panes={{ axis: narrow ? 'y' : 'x', initial: narrow ? 160 : 360 }}
+      tabs={{ list: 'Files', detail: 'Diff' }}
+      open={sel !== null}
+      onClose={() => setSel(null)}
+      detailTitle={current && baseName(current.path)}
+      backLabel="Changes"
+      onPushed={onDetail}
+      empty="Select a file to see its changes."
+      list={
+        <RowList
+          listClass="git-list"
+          rowClass="git-file"
+          label="Changes"
+          idPrefix="change"
+          rows={changes}
+          rowKey={(c) => c.path}
+          selected={current?.path}
+          onSelect={(c) => setSel(c.path)}
+          onMenu={(c) => window.looper.git.showFileMenu({ projectId, root: status.root, path: c.path, exists: c.kind !== 'deleted' })}
+          empty=""
+          head={note}
+          row={(c) => <FileRow {...line(c)} />}
+          phoneRow={(c) => filePhoneRow(line(c))}
         />
       }
+      detail={<DiffPane title={current?.path} subtitle={current ? changeText(current) : undefined} diff={diff && diff.key === key ? diff.diff : null} loading={!!current} />}
     />
   );
 }
@@ -342,50 +154,11 @@ function CommitMessage({ detail }: { detail: GitCommitDetail }) {
   );
 }
 
-/** The files a commit changed. */
-function CommitFiles({
-  projectId,
-  root,
-  detail,
-  file,
-  onFile,
-}: {
-  projectId: string;
-  root: string;
-  detail: GitCommitDetail;
-  file: GitFileChange | undefined;
-  onFile: (path: string) => void;
-}) {
-  const index = file ? detail.files.indexOf(file) : -1;
-  const onKey = useListNav({
-    count: detail.files.length,
-    index,
-    onIndex: (i) => onFile(detail.files[i].path),
-    scrollToId: index >= 0 ? `commit-file-${index}` : null,
-  });
-  return (
-    <div className="git-list" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Files">
-      {detail.files.map((f, i) => (
-        <FileRow
-          key={`${f.path}\n${f.origPath ?? ''}`}
-          id={`commit-file-${i}`}
-          path={f.path}
-          origPath={f.origPath}
-          status={CHANGE_LABELS[f.kind]}
-          selected={f === file}
-          onSelect={() => onFile(f.path)}
-          // The file as the working tree has it now, which may differ from the commit's.
-          onMenu={() => window.looper.git.showFileMenu({ projectId, root, path: f.path, exists: f.kind !== 'deleted' })}
-        />
-      ))}
-    </div>
-  );
-}
+const fileKey = (f: GitFileChange) => `${f.path}\n${f.origPath ?? ''}`;
+const fileLine = (f: GitFileChange): FileLine => ({ path: f.path, origPath: f.origPath, status: CHANGE_LABELS[f.kind] });
 
-/** The branch's history: the commits, and beside or below them the selected one's message, files and the selected file's diff. */
-function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projectId: string; root: string; refreshKey: number; narrow: boolean; onDetail: (open: boolean) => void }) {
-  // A phone: the commit's screen (its message and files) shows, then a file's diff over it.
-  const [phoneOpen, setPhoneOpen] = useState<'commit' | 'file' | null>(null);
+/** The branch's history: the commits, and the selected one's message, files and the selected file's diff. */
+function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { projectId: string; root: string; refreshKey: number; narrow: boolean; note?: ReactNode; onDetail: (pushed: boolean) => void }) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [more, setMore] = useState(true);
@@ -431,13 +204,11 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
       });
   };
 
-  const current = commits.find((c) => c.hash === sel) ?? commits[0];
-  // A phone reads a commit once it's opened.
-  const wantDetail = !isPhone || phoneOpen !== null;
+  const current = commits.find((c) => c.hash === sel) ?? (selectsFirstRow ? commits[0] : undefined);
   useEffect(() => {
     setDetail(null);
     setFilePath(null);
-    if (!current || !wantDetail) return;
+    if (!current) return;
     let live = true;
     window.looper.git
       .commit(projectId, current.hash)
@@ -446,13 +217,12 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
     return () => {
       live = false;
     };
-  }, [projectId, current?.hash, wantDetail]);
+  }, [projectId, current?.hash]);
 
-  const file = detail ? (detail.files.find((f) => f.path === filePath) ?? detail.files[0]) : undefined;
+  const file = detail ? (detail.files.find((f) => f.path === filePath) ?? (selectsFirstRow ? detail.files[0] : undefined)) : undefined;
   const diffKey = detail && file ? `${detail.hash}\n${file.path}` : '';
-  useEffect(() => onDetail(isPhone && phoneOpen !== null), [phoneOpen, onDetail]);
   useEffect(() => {
-    if (!detail || !file || (isPhone && phoneOpen !== 'file')) return;
+    if (!detail || !file) return;
     let live = true;
     window.looper.git
       .commitDiff(projectId, detail.hash, file.path, file.origPath)
@@ -462,143 +232,100 @@ function HistoryView({ projectId, root, refreshKey, narrow, onDetail }: { projec
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffKey, projectId, phoneOpen === 'file']);
-
-  const index = current ? commits.indexOf(current) : -1;
-  const onKey = useListNav({
-    count: commits.length,
-    index,
-    onIndex: (i) => setSel(commits[i].hash),
-    scrollToId: index >= 0 ? `commit-${index}` : null,
-  });
+  }, [diffKey, projectId]);
 
   if (loaded && commits.length === 0) return <div className="empty">The branch has no commits yet.</div>;
   const pending = <div className="empty">{current ? 'Loading…' : ''}</div>;
-  if (isPhone) {
-    if (phoneOpen === 'file') {
-      return (
-        <div className="git-phone-detail">
-          <NavBar title={file ? baseName(file.path) : ''} back={() => setPhoneOpen('commit')} order={10} />
-          <PhoneBack label="Commit" onBack={() => setPhoneOpen('commit')} />
-          {detail ? (
-            <DiffPane
-              title={file?.path}
-              subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
-              diff={diff && diff.key === diffKey ? diff.diff : null}
-              loading={!!file}
-            />
-          ) : (
-            pending
-          )}
-        </div>
-      );
-    }
-    if (phoneOpen === 'commit') {
-      return (
-        <div className="git-phone-list">
-          <NavBar title={current?.subject ?? ''} back={() => setPhoneOpen(null)} order={10} />
-          <PhoneBack label="History" onBack={() => setPhoneOpen(null)} />
-          {detail ? (
-            <>
-              <Group title="Message">
-                <div className="pg-result">
-                  <CommitMessage detail={detail} />
-                </div>
-              </Group>
-              <PhoneFiles
-                files={detail.files.map((f) => ({ key: `${f.path}\n${f.origPath ?? ''}`, path: f.path, origPath: f.origPath, status: CHANGE_LABELS[f.kind] }))}
-                onOpen={(i) => {
-                  setFilePath(detail.files[i].path);
-                  setPhoneOpen('file');
-                }}
-                onMenu={(i) => window.looper.git.showFileMenu({ projectId, root, path: detail.files[i].path, exists: detail.files[i].kind !== 'deleted' })}
-              />
-            </>
-          ) : (
-            pending
-          )}
-        </div>
-      );
-    }
-    return (
-      <div
-        className="git-phone-list"
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore();
-        }}
-      >
-        <Group>
-          {commits.map((c) => (
-            <Row
-              key={c.hash}
-              title={c.subject}
-              sub={<span className="pg-oneline">{`${c.author} · ${fmtDateTime(c.at)} · ${c.shortHash}`}</span>}
-              chevron
-              onOpen={() => {
-                setSel(c.hash);
-                setPhoneOpen('commit');
-              }}
-              onMenu={() => window.looper.git.showCommitMenu({ hash: c.hash, subject: c.subject })}
-            />
-          ))}
-        </Group>
-      </div>
-    );
-  }
   return (
-    <Split axis={narrow ? 'y' : 'x'} initial={[narrow ? 150 : 360]}>
-      <div
-        className="git-list"
-        role="listbox"
-        tabIndex={0}
-        aria-label="Commits"
-        onKeyDown={onKey}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore();
-        }}
-      >
-        {commits.map((c, i) => (
-          <div
-            key={c.hash}
-            id={`commit-${i}`}
-            role="option"
-            aria-selected={c === current}
-            className={`git-commit${c === current ? ' selected' : ''}`}
-            onClick={() => setSel(c.hash)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setSel(c.hash);
-              window.looper.git.showCommitMenu({ hash: c.hash, subject: c.subject });
-            }}
-          >
-            <div className="git-commit-line">{c.subject}</div>
-            <div className="muted git-commit-meta">
-              {c.author} · {fmtDateTime(c.at)} · <span className="mono">{c.shortHash}</span>
-              {c.refs.length > 0 ? ` · ${c.refs.join(', ')}` : ''}
-            </div>
-          </div>
-        ))}
-      </div>
-      <FilesChanges
-        axis="y"
-        message={detail ? <CommitMessage detail={detail} /> : pending}
-        files={detail ? <CommitFiles projectId={projectId} root={root} detail={detail} file={file} onFile={setFilePath} /> : pending}
-        changes={
-          detail ? (
-            <DiffPane
-              title={file?.path}
-              subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
-              diff={diff && diff.key === diffKey ? diff.diff : null}
-              loading={!!file}
-            />
-          ) : (
-            pending
-          )
-        }
-      />
-    </Split>
+    <ListDetail
+      panes={{ axis: narrow ? 'y' : 'x', initial: narrow ? 150 : 360 }}
+      open={sel !== null}
+      onClose={() => setSel(null)}
+      detailTitle={current?.subject}
+      backLabel="History"
+      onPushed={onDetail}
+      empty="Select a commit to see its changes."
+      list={
+        <RowList
+          listClass="git-list"
+          rowClass="git-commit"
+          label="Commits"
+          idPrefix="commit"
+          rows={commits}
+          rowKey={(c) => c.hash}
+          selected={current?.hash}
+          onSelect={(c) => setSel(c.hash)}
+          onMenu={(c) => window.looper.git.showCommitMenu({ hash: c.hash, subject: c.subject })}
+          onListScroll={(e) => {
+            const el = e.currentTarget;
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore();
+          }}
+          empty=""
+          head={note}
+          row={(c) => (
+            <>
+              <div className="git-commit-line">{c.subject}</div>
+              <div className="muted git-commit-meta">
+                {c.author} · {fmtDateTime(c.at)} · <span className="mono">{c.shortHash}</span>
+                {c.refs.length > 0 ? ` · ${c.refs.join(', ')}` : ''}
+              </div>
+            </>
+          )}
+          phoneRow={(c) => ({ title: c.subject, sub: `${c.author} · ${fmtDateTime(c.at)} · ${c.shortHash}` })}
+        />
+      }
+      detail={
+        <ListDetail
+          panes={{ axis: 'y', initial: 160 }}
+          tabs={{ list: 'Files', detail: 'Diff', head: { label: 'Commit Message', body: detail ? <CommitMessage detail={detail} /> : pending } }}
+          open={filePath !== null}
+          onClose={() => setFilePath(null)}
+          detailTitle={file && baseName(file.path)}
+          backLabel="Commit"
+          empty="Select a file to see its changes."
+          list={
+            detail ? (
+              <RowList
+                listClass="git-list"
+                rowClass="git-file"
+                label="Files"
+                idPrefix="commit-file"
+                rows={detail.files}
+                rowKey={fileKey}
+                selected={file && fileKey(file)}
+                onSelect={(f) => setFilePath(f.path)}
+                // The file as the working tree has it now, which may differ from the commit's.
+                onMenu={(f) => window.looper.git.showFileMenu({ projectId, root, path: f.path, exists: f.kind !== 'deleted' })}
+                empty="This commit changed no files."
+                head={
+                  <Group title="Message">
+                    <div className="pg-result">
+                      <CommitMessage detail={detail} />
+                    </div>
+                  </Group>
+                }
+                row={(f) => <FileRow {...fileLine(f)} />}
+                phoneRow={(f) => filePhoneRow(fileLine(f))}
+              />
+            ) : (
+              pending
+            )
+          }
+          detail={
+            detail ? (
+              <DiffPane
+                title={file?.path}
+                subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
+                diff={diff && diff.key === diffKey ? diff.diff : null}
+                loading={!!file}
+              />
+            ) : (
+              pending
+            )
+          }
+        />
+      }
+    />
   );
 }
 
@@ -670,13 +397,15 @@ export function useGitStatus(projectId: string | undefined, active: boolean): Gi
 
 /**
  * A project's git repository, read-only: the uncommitted changes and the
- * branch's history. `narrow` stacks the panes and puts the
- * branch at the bottom, for the Sessions window's activity pane; wide puts
- * the panes side by side and the branch beside the tabs.
+ * branch's history. `narrow` stacks the panes and puts the branch at the
+ * bottom, for the Sessions window's activity pane; wide puts the panes side by
+ * side and the branch beside the tabs. A phone or tablet stacks them too, with
+ * the branch as the list's header.
  */
-export function GitView({ projectId, watch, narrow = false }: { projectId: string; watch: GitWatch; narrow?: boolean }) {
+export function GitView({ projectId, watch, narrow: narrowPane = false }: { projectId: string; watch: GitWatch; narrow?: boolean }) {
+  const narrow = narrowPane || !selectsFirstRow;
   const [tab, setTab] = useState<Tab>('changes');
-  // A phone: a pushed screen (a diff, a commit) shows instead of the tabs and the list.
+  // A pushed screen (a diff, a commit) shows instead of the tabs and the list.
   const [detailOpen, setDetailOpen] = useState(false);
   const { status, refreshKey } = watch;
   const className = `git-view${narrow ? ' narrow' : ''}`;
@@ -689,6 +418,8 @@ export function GitView({ projectId, watch, narrow = false }: { projectId: strin
     );
   }
   const branch = <span className="muted git-branch">{branchText(status)}</span>;
+  // On a phone or tablet the branch is the list's header (HIG: Lists and tables), not a strip of its own at the bottom.
+  const note = selectsFirstRow ? undefined : <div className="pg-list-note">{branchText(status)}</div>;
   return (
     <div className={className}>
       {!detailOpen && (
@@ -707,12 +438,12 @@ export function GitView({ projectId, watch, narrow = false }: { projectId: strin
       )}
       <div className="git-body">
         {tab === 'changes' ? (
-          <ChangesView projectId={projectId} status={status} narrow={narrow} onDetail={setDetailOpen} />
+          <ChangesView projectId={projectId} status={status} narrow={narrow} note={note} onDetail={setDetailOpen} />
         ) : (
-          <HistoryView projectId={projectId} root={status.root} refreshKey={refreshKey} narrow={narrow} onDetail={setDetailOpen} />
+          <HistoryView projectId={projectId} root={status.root} refreshKey={refreshKey} narrow={narrow} note={note} onDetail={setDetailOpen} />
         )}
       </div>
-      {narrow && !detailOpen && <div className="git-foot">{branch}</div>}
+      {narrowPane && selectsFirstRow && !detailOpen && <div className="git-foot">{branch}</div>}
     </div>
   );
 }

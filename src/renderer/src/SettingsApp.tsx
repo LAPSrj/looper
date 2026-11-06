@@ -19,7 +19,7 @@ const TABS: [SettingsTab, string][] = [
   ['advanced', 'Advanced'],
 ];
 
-/** Standalone settings window (File → Settings…). */
+/** Standalone settings window (Tools → Settings). */
 export function SettingsApp() {
   // Environments operate on the live settings (managed through their own editor
   // window and applied immediately); General/Advanced are a draft saved on OK.

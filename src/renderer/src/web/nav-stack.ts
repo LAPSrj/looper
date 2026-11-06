@@ -32,16 +32,16 @@ const leadWidth = (width: number): number => (width >= 1200 ? 375 : 320);
 export const INSPECTOR_WIDTH = 360;
 /** The detail column keeps at least this much beside an inspector; with less, the inspector is a sheet. */
 const MIN_DETAIL_BESIDE_INSPECTOR = 600;
-/** Narrower than this (iPad split-screen multitasking), a page shows one column, as on a phone. */
-const MIN_SPLIT_WIDTH = 700;
+/** Narrower than this a page shows one column, as on a phone: iPad split-screen multitasking, and Material's two panes starting at expanded. */
+const MIN_SPLIT_WIDTH: Record<PhoneOs, number> = { ios: 700, android: 840 };
 
 /**
- * Whether a page `width` wide on `screen` shows a list beside its detail
- * (iPad), and the columns' widths; null shows one column (a phone, or a narrow
+ * Whether a page or pane `width` wide on `screen` shows a list beside its
+ * detail, and the columns' widths; null shows one column (a phone, or a narrow
  * window on a tablet).
  */
-export function splitLayout(width: number, screen: ScreenSize): SplitLayout | null {
-  if (!isTablet(screen) || width < MIN_SPLIT_WIDTH) return null;
+export function splitLayout(width: number, screen: ScreenSize, os: PhoneOs = 'ios'): SplitLayout | null {
+  if (!isTablet(screen) || width < MIN_SPLIT_WIDTH[os]) return null;
   const lead = leadWidth(width);
   return { lead, inspector: width - lead - INSPECTOR_WIDTH >= MIN_DETAIL_BESIDE_INSPECTOR ? INSPECTOR_WIDTH : 0 };
 }
@@ -53,8 +53,9 @@ const isLarge = (win: Pick<RemoteWindowSpec, 'width' | 'height'>, screen: Screen
 export function presentation(os: PhoneOs, win: Pick<RemoteWindowSpec, 'modal' | 'width' | 'height'>, isMain: boolean, screen: ScreenSize): Presentation {
   if (isMain) return 'root';
   if (isTablet(screen)) {
+    // On an iPad only a window made for most of a desktop is pushed: the sheet is sized to the screen, so every other one is a sheet at every iPad size.
+    if (os === 'ios') return win.width >= 900 ? 'push' : win.width <= 560 && win.height <= 640 ? 'form-sheet' : 'page-sheet';
     if (isLarge(win, screen)) return 'push';
-    if (os === 'ios') return win.width <= 560 && win.height <= 640 ? 'form-sheet' : 'page-sheet';
     return win.modal ? 'dialog' : 'push';
   }
   if (!win.modal) return 'push';

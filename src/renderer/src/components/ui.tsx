@@ -456,9 +456,9 @@ const ONE_PAGE = 3;
 
 /**
  * A window's tabs (a thin wrapper over Tabs). With `sections`, the tabs'
- * panel is the TabBar's `children`: an iPhone shows the sections as a list of
- * rows and a section's panel in a screen of its own, which Back leaves; every
- * other platform shows the tabs with the panel below.
+ * panel is the TabBar's `children`: a phone or tablet shows the sections as a list of
+ * rows and a section's panel in a screen of its own, which Back leaves; the
+ * desktop shows the tabs with the panel below.
  * With `panels`, the TabBar draws the window's body: an iPhone shows a short
  * window as one page, each later tab's name heading its part; every other
  * platform shows the tabs with the active panel below.
@@ -487,7 +487,7 @@ export function TabBar<T extends string>({
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const rows = onIos && !!sections;
+  const rows = isPhone && !!sections;
   const close = () => setOpen(false);
   if (rows) {
     if (open) {
@@ -549,6 +549,10 @@ export interface TableCol {
   /** Starting width in px; omit for the flex column that takes the remaining space. */
   width?: number;
   min?: number;
+  /** A share of the table's width, that can't be dragged (in place of `width`). */
+  percent?: number;
+  /** Right-aligned numbers. */
+  num?: boolean;
 }
 
 /** Stored widths keyed by column label, so entries survive column reorder/insertion. */
@@ -628,13 +632,13 @@ export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol
     <>
       <colgroup>
         {cols.map((c, i) => (
-          <col key={i} style={widths[i] !== undefined ? { width: widths[i] } : undefined} />
+          <col key={i} style={widths[i] !== undefined ? { width: widths[i] } : c.percent !== undefined ? { width: `${c.percent}%` } : undefined} />
         ))}
       </colgroup>
       <thead>
         <tr>
           {cols.map((c, i) => (
-            <th key={i}>
+            <th key={i} className={c.num ? 'num' : undefined}>
               {c.label}
               {widths[i] !== undefined && (
                 <span className="col-resize" onMouseDown={(e) => startDrag(i, e)} onDoubleClick={() => reset(i)} />

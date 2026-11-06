@@ -100,6 +100,10 @@ html[data-platform='ios'] {
   flex: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: transparent;
+  /* Timed with the bar title's fade (ios-bar.css). */
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
 }
 .ios-bar.edge {
   background: var(--ios-bar);
@@ -149,6 +153,9 @@ html[data-platform='ios'] {
 }
 .ios-bar-split > .ios-bar-row {
   min-width: 0;
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
 }
 /* A narrow column: the title takes what its buttons leave, rather than staying centered on the column. */
 .ios-bar-list {
@@ -247,7 +254,11 @@ html[data-platform='ios'] {
   background: var(--ios-sheet);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
-.ph-root .ios-own-sheet :is(.ios-group, .ph-files) {
+.ph-root .ios-own-sheet .ph-files {
+  background: transparent;
+  border-top: none;
+}
+.ph-root .ios-own-sheet .ios-group {
   background: var(--ios-sheet-cell);
 }
 /* A sheet that doesn't need the full height floats inset from the screen's edges (a medium detent). */
@@ -487,22 +498,6 @@ html[data-platform='ios'] {
 }
 
 /* ---------- the computer's folders ---------- */
-.ios-folder-bar {
-  display: grid;
-  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 6px 16px;
-}
-.ios-folder-title {
-  min-width: 0;
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
 .ios .ph-files {
   background: var(--ios-cell);
   border-top: 0.5px solid var(--ios-sep);
@@ -518,8 +513,7 @@ html[data-platform='ios'] {
   bottom: 0;
   left: 56px;
   right: 0;
-  height: 0.5px;
-  background: var(--ios-sep);
+  border-bottom: 0.5px solid var(--ios-sep);
 }
 .ios .ph-file-row:active,
 .ios .ph-file-row.selected {
@@ -553,18 +547,6 @@ html[data-platform='ios'] {
 }
 .ios .ph-viewer-note {
   color: var(--ios-label2);
-}
-/* The viewer's two downloads, one above the other: their names don't fit side by side on an iPhone. */
-.ios-toolbar.stacked {
-  flex-direction: column;
-  align-items: stretch;
-}
-/* A bottom toolbar: its buttons float as glass capsules over the list. */
-.ios-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 16px;
 }
 
 /* ---------- menus ---------- */

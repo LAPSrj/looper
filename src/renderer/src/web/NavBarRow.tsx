@@ -44,6 +44,16 @@ export const CLOSE = (
     <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor" />
   </svg>
 );
+export const MENU = (
+  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor" />
+  </svg>
+);
+export const MENU_OPEN = (
+  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z" fill="currentColor" />
+  </svg>
+);
 export const MORE_VERT = (
   <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
     <circle cx="12" cy="5.5" r="2" fill="currentColor" />
@@ -81,6 +91,8 @@ export interface IosBarRowProps {
   model: BarModel;
   /** The screen has a More menu: its button, before Confirm. */
   onMore?: (button: HTMLElement) => void;
+  /** A bar button with a menu was pressed. */
+  onActionMenu?: (action: PageNavAction, button: HTMLElement) => void;
   /** The title waits for the page's large title to scroll away. */
   titleFaded?: boolean;
   /** A column's bar on an iPad (ios-bar-list, ios-bar-detail, ios-bar-inspector) and its scroll edge. */
@@ -91,7 +103,7 @@ export interface IosBarRowProps {
 }
 
 /** iOS's bar row: Back or the xmark at the leading edge, the title, then the actions, More and the Confirm checkmark. */
-export function IosBarRow({ model, onMore, titleFaded, className, style, titleAs: Title = 'h1' }: IosBarRowProps) {
+export function IosBarRow({ model, onMore, onActionMenu, titleFaded, className, style, titleAs: Title = 'h1' }: IosBarRowProps) {
   const { lead, confirm } = model;
   return (
     <div className={`ios-bar-row${className ? ` ${className}` : ''}`} style={style}>
@@ -110,7 +122,7 @@ export function IosBarRow({ model, onMore, titleFaded, className, style, titleAs
       <Title className={`ios-bar-title${titleFaded ? ' faded' : ''}`}>{model.title}</Title>
       <div className="ios-bar-trail">
         {model.actions.map((a) => (
-          <button key={a.id} className={a.icon || a.ring ? 'ios-icon-btn' : 'ios-text-btn'} aria-label={a.label} disabled={a.disabled} onClick={() => a.run()}>
+          <button key={a.id} className={`${a.icon || a.ring ? 'ios-icon-btn' : 'ios-text-btn'}${a.on ? ' on' : ''}`} aria-label={a.label} aria-haspopup={a.menu ? 'menu' : undefined} disabled={a.disabled} onClick={(e) => (a.menu ? onActionMenu?.(a, e.currentTarget) : a.run())}>
             {a.icon || a.ring ? <ActionGlyph action={a} /> : a.label}
           </button>
         ))}
@@ -135,24 +147,26 @@ export interface MdBarRowProps {
   model: BarModel;
   /** The screen has an overflow menu: its button, last. */
   onMore?: (button: HTMLElement) => void;
+  /** A bar button with a menu was pressed. */
+  onActionMenu?: (action: PageNavAction, button: HTMLElement) => void;
   /** A dialog's actions are text buttons, as Material draws them. */
   dialogLike?: boolean;
 }
 
 /** Material's top app bar row: the navigation icon, the title, the actions, Confirm as a text button, then the overflow menu. */
-export function MdBarRow({ model, onMore, dialogLike }: MdBarRowProps) {
+export function MdBarRow({ model, onMore, onActionMenu, dialogLike }: MdBarRowProps) {
   const { lead, confirm } = model;
   return (
     <div className="md-bar-row">
       {lead && (
         <button className="md-icon-btn" aria-label={lead.label} disabled={lead.kind === 'cancel' ? lead.disabled : undefined} onClick={() => lead.run()}>
-          {lead.kind === 'back' ? ARROW_BACK : CLOSE}
+          {lead.kind === 'back' ? ARROW_BACK : lead.kind === 'menu' ? MENU : CLOSE}
         </button>
       )}
       <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{model.title}</h1>
       {model.actions.map((a) =>
         (a.icon || a.ring) && !dialogLike ? (
-          <button key={a.id} className="md-icon-btn" aria-label={a.label} title={a.label} disabled={a.disabled} onClick={() => a.run()}>
+          <button key={a.id} className={`md-icon-btn${a.on ? ' on' : ''}`} aria-label={a.label} title={a.label} aria-haspopup={a.menu ? 'menu' : undefined} disabled={a.disabled} onClick={(e) => (a.menu ? onActionMenu?.(a, e.currentTarget) : a.run())}>
             <ActionGlyph action={a} size={24} />
           </button>
         ) : (

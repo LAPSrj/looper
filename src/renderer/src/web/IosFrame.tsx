@@ -17,6 +17,7 @@ import { phoneMenu } from './more-menu';
 import {
   deviceNoun,
   menuGroups,
+  actionMenu,
   moreFor,
   PhoneWindows,
   pickMore,
@@ -29,20 +30,14 @@ import {
 } from './phone-shell';
 import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
-import { barModel, dismissFor, plainLabel } from './nav-bar-model';
-import { BACK, IosBarRow, NavIcon } from './NavBarRow';
+import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
+import { IosBarRow, NavIcon } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import './ios.css';
 
 const CHEVRON_LEFT = (
   <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true">
     <path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const NEW_FOLDER = (
-  <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true">
-    <path d="M2 5.5A2 2 0 0 1 4 3.5h5l2 2h9a2 2 0 0 1 2 2V9M2 5.5V17a2 2 0 0 0 2 2h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M20 12v8M16 16h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 );
 
@@ -78,6 +73,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
   }, [overlay, controller]);
 
   const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
+  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
     <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
@@ -85,7 +81,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
       <PhoneWindows
         shell={shell}
         controller={controller}
-        renderBar={(sc) => <IosBar shell={shell} controller={controller} sc={sc} onMore={openMore} />}
+        renderBar={(sc) => <IosBar shell={shell} controller={controller} sc={sc} onMore={openMore} onActionMenu={openActionMenu} />}
         dragToDismiss={(p) => p === 'page-sheet' || p === 'form-sheet'}
       />
       {!s.connected && !s.everConnected && (
@@ -128,7 +124,20 @@ export function IosFrame({ controller }: { controller: ShellController }) {
 /** The label of This Device in the main window's More menu. */
 const DEVICE_LABEL = 'This Device';
 
-function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controller: ShellController; sc: Screen; onMore: (sc: Screen, button: HTMLElement) => void }) {
+function IosBar({
+  shell,
+  controller,
+  sc,
+  onMore,
+  onActionMenu,
+}: {
+  shell: PhoneShell;
+  controller: ShellController;
+  sc: Screen;
+  onMore: (sc: Screen, button: HTMLElement) => void;
+  onActionMenu: (sc: Screen, action: PageNavAction, button: HTMLElement) => void;
+}) {
+  const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
   const nav = sc.nav;
   const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
   const more = moreFor(sc, DEVICE_LABEL).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
@@ -149,6 +158,7 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
         <div className="ios-bar-split">
           <IosBarRow
             model={list}
+            onActionMenu={actionMenuHere}
             className={`ios-bar-list${edge?.scrolled ? ' edge' : ''}`}
             style={{ width: split.width }}
             titleAs="h2"
@@ -157,6 +167,7 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
           <IosBarRow
             model={detail}
             onMore={more}
+            onActionMenu={actionMenuHere}
             className={`ios-bar-detail${edge?.detail?.scrolled ? ' edge' : ''}${edge?.detail && !edge.detail.scrolled && darkColor(edge.detail.color) ? ' on-dark' : ''}`}
             style={edge?.detail ? { background: edge.detail.scrolled ? 'var(--ios-bar)' : edge.detail.color } : undefined}
           />
@@ -182,7 +193,8 @@ function IosBar({ shell, controller, sc, onMore }: { shell: PhoneShell; controll
       style={edge && !edge.scrolled ? { background: edge.color } : undefined}
     >
       {sc.pres === 'page-sheet' && !shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
-      <IosBarRow model={model} onMore={more} titleFaded={!showTitle} />
+      {shell.tablet && nav?.tabs && <IosTabBar tabs={nav.tabs} />}
+      <IosBarRow model={model} onMore={more} onActionMenu={actionMenuHere} titleFaded={!showTitle} />
       <OfflineBanner connection={connection} />
     </header>
   );
@@ -380,8 +392,8 @@ function Sheet({
 }: {
   shell: PhoneShell;
   label: string;
-  /** The bar's Cancel, Confirm and actions; without a Cancel, its xmark closes the sheet. */
-  bar?: Pick<NavBarProps, 'cancel' | 'confirm' | 'actions'>;
+  /** The bar's Back, Cancel, Confirm and actions; without a Back or a Cancel, its xmark closes the sheet. */
+  bar?: Pick<NavBarProps, 'back' | 'cancel' | 'confirm' | 'actions'>;
   onClose: () => void;
   small?: boolean;
   children: ReactNode;
@@ -431,32 +443,6 @@ function Sheet({
   );
 }
 
-/** The folder level inside a file sheet: back to the parent, the folder's name, New Folder. */
-function FolderBar({ browser, onNewFolder }: { browser: HostBrowser; onNewFolder?: () => void }) {
-  const crumbs = browser.crumbs;
-  const here = crumbs[crumbs.length - 1];
-  const parent = crumbs[crumbs.length - 2];
-  return (
-    <div className="ios-folder-bar">
-      <div className="ios-bar-lead">
-        {parent && (
-          <button className="ios-back" aria-label={`Back to ${parent.label}`} onClick={browser.up}>
-            {BACK}
-          </button>
-        )}
-      </div>
-      <div className="ios-folder-title">{here.label}</div>
-      <div className="ios-bar-trail">
-        {onNewFolder && (
-          <button className="ios-icon-btn" aria-label="New Folder" disabled={browser.path === null} onClick={onNewFolder}>
-            {NEW_FOLDER}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   const ids = options.map((o) => o.value);
   return (
@@ -495,14 +481,21 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
   const onDevice = f.source === 'device';
   const noun = deviceNoun('ios', shell.tablet);
   const showConfirm = !(onDevice && f.kind === 'open');
+  // One bar: inside a folder its name and Back take the title's and Cancel's places, and Cancel moves to the end, as the system's file picker has it.
+  const parent = !onDevice && f.browser.crumbs.length > 1;
   return (
     <Sheet
       shell={shell}
-      label={f.title}
+      label={parent ? f.browser.crumbs[f.browser.crumbs.length - 1].label : f.title}
       onClose={f.cancel}
       bar={{
+        back: parent ? f.browser.up : undefined,
         cancel: { run: f.cancel },
         confirm: showConfirm ? { label: f.confirmLabel, disabled: !f.canConfirm, run: f.confirm } : undefined,
+        actions: [
+          ...(parent ? [{ id: 'cancel', label: 'Cancel', icon: 'close', run: f.cancel }] : []),
+          ...(!onDevice && f.browser.path !== null ? [{ id: 'new-folder', label: 'New Folder', icon: 'newProject', run: () => setNaming(true) }] : []),
+        ],
       }}
     >
       {f.sources.length > 1 && (
@@ -543,18 +536,15 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
           </div>
         )
       ) : (
-        <>
-          <FolderBar browser={f.browser} onNewFolder={() => setNaming(true)} />
-          <FileRows
-            os="ios"
-            browser={f.browser}
-            onFile={(entry) => {
-              if (f.kind === 'save') f.setName(entry.name);
-              else if (f.multi) f.browser.select(entry, { toggle: true });
-              else f.activate(entry);
-            }}
-          />
-        </>
+        <FileRows
+          os="ios"
+          browser={f.browser}
+          onFile={(entry) => {
+            if (f.kind === 'save') f.setName(entry.name);
+            else if (f.multi) f.browser.select(entry, { toggle: true });
+            else f.activate(entry);
+          }}
+        />
       )}
       {naming && <NewFolderAlert browser={f.browser} onDone={() => setNaming(false)} />}
       <LocalAlert msg={f.message} />
@@ -566,43 +556,47 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
 function PathSheet({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
   if (p.view) {
+    const view = p.view;
+    const steps = p.steps;
     return (
       <Sheet
         shell={shell}
-        label={p.name}
+        label={steps ? `${steps.index + 1} of ${steps.count}` : p.name}
         onClose={p.close}
+        bar={{
+          actions: [
+            ...(steps
+              ? [
+                  { id: 'previous', label: 'Previous Image', icon: 'previous', disabled: steps.index <= 0, run: () => steps.go(steps.index - 1) },
+                  { id: 'next', label: 'Next Image', icon: 'next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
+                ]
+              : []),
+            { id: 'download', label: 'Download', icon: 'download', run: () => view.askDownload(`This ${deviceNoun('ios', shell.tablet)}`) },
+          ],
+        }}
       >
-        <FileViewBody view={p.view} name={p.name} />
-        <div className="ios-toolbar stacked">
-          <button className="ios-text-btn" onClick={p.view.toDevice}>
-            Download to This {deviceNoun('ios', shell.tablet)}
-          </button>
-          <button className="ios-text-btn" onClick={p.view.toHost}>
-            Download to {HOST_COMPUTER}
-          </button>
-        </div>
+        <FileViewBody view={view} name={p.name} />
         <LocalAlert msg={p.message} />
       </Sheet>
     );
   }
   if (!p.browser) return <LocalAlert msg={p.message} />;
   const browser = p.browser;
+  const parent = browser.crumbs.length > 1;
   return (
     <Sheet
       shell={shell}
-      label={p.name}
+      label={browser.crumbs[browser.crumbs.length - 1].label}
       onClose={p.close}
+      bar={{
+        back: parent ? browser.up : undefined,
+        actions: [
+          { id: 'open-on-host', label: `Open on ${HOST_COMPUTER}`, icon: 'openFolder', run: p.openOnComputer },
+          ...(parent ? [{ id: 'close', label: 'Close', icon: 'close', run: p.close }] : []),
+        ],
+      }}
     >
-      <FolderBar browser={browser} />
-      <FileRows os="ios" browser={browser} onFile={(entry) => browser.select(entry)} />
-      <div className="ios-toolbar">
-        <button className="ios-text-btn" onClick={p.openOnComputer}>
-          Open on {HOST_COMPUTER}
-        </button>
-        <button className="ios-text-btn" disabled={!p.canDownload} onClick={p.download}>
-          Download
-        </button>
-      </div>
+      <FileRows os="ios" browser={browser} onFile={p.openFile} />
       <LocalAlert msg={p.message} />
     </Sheet>
   );

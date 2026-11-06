@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Markdown } from './components/Markdown';
+import { NavBar } from './components/NavBar';
+import { isPhone } from './web/page-nav';
 
 const HOME = 'README.md';
 
@@ -118,12 +120,27 @@ export function InstructionsApp() {
 
   return (
     <div className="instructions-app">
-      <div className="toolbar">
-        {button(ICONS.back, 'Back (Alt+Left)', back, pos > 0)}
-        {button(ICONS.forward, 'Forward (Alt+Right)', forward, pos < history.length - 1)}
-        <span className="toolbar-sep" />
-        {button(ICONS.home, 'Home', () => open(HOME), page !== HOME)}
-      </div>
+      {isPhone ? (
+        <NavBar
+          back={pos > 0 ? back : undefined}
+          toolbar={[
+            {
+              id: 'pages',
+              items: [
+                { id: 'forward', label: 'Forward', enabled: pos < history.length - 1, run: forward },
+                { id: 'home', label: 'Home', enabled: page !== HOME, run: () => open(HOME) },
+              ],
+            },
+          ]}
+        />
+      ) : (
+        <div className="toolbar">
+          {button(ICONS.back, 'Back (Alt+Left)', back, pos > 0)}
+          {button(ICONS.forward, 'Forward (Alt+Right)', forward, pos < history.length - 1)}
+          <span className="toolbar-sep" />
+          {button(ICONS.home, 'Home', () => open(HOME), page !== HOME)}
+        </div>
+      )}
       <div className="instructions" ref={scrollRef}>
         {text !== null && (
           <Markdown

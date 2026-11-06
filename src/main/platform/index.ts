@@ -228,21 +228,24 @@ export async function openExternal(url: string): Promise<void> {
   else await shell.openExternal(url);
 }
 
-function showPath(client: RemoteClient, p: string, asParent: boolean): string {
+function showPath(client: RemoteClient, p: string, asParent: boolean, siblings?: string[]): string {
   let isDir: boolean;
   try {
     isDir = fs.statSync(p).isDirectory();
   } catch {
     return `${p} doesn't exist.`;
   }
-  client.send(asParent ? { t: 'show-path', path: path.dirname(p), isDir: true } : { t: 'show-path', path: p, isDir });
+  client.send(asParent ? { t: 'show-path', path: path.dirname(p), isDir: true } : { t: 'show-path', path: p, isDir, ...(siblings ? { siblings } : {}) });
   return '';
 }
 
-/** shell.openPath (the error message, or ''); a remote caller's shows the path on the device. */
-export async function openPath(p: string): Promise<string> {
+/**
+ * shell.openPath (the error message, or ''); a remote caller's shows the path on the device.
+ * `siblings`: the files that device's viewer steps through with this one (this one included).
+ */
+export async function openPath(p: string, siblings?: string[]): Promise<string> {
   const ctx = caller();
-  return ctx ? showPath(ctx.client, p, false) : shell.openPath(p);
+  return ctx ? showPath(ctx.client, p, false, siblings) : shell.openPath(p);
 }
 
 /** shell.showItemInFolder; a remote caller gets the folder it's in. */

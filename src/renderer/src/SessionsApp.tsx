@@ -30,12 +30,16 @@ import { CHAT_COMMANDS } from '@shared/commands/chat';
 import { ChatView, PermissionButtons } from './components/ChatView';
 import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
+import { Inspector, useInspector } from './components/Inspector';
+import { ListDetail } from './components/ListDetail';
 import { MessageBox, type MessageBoxStop } from './components/MessageBox';
 import { RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
 import { useAutoGrow } from './components/phone/auto-grow';
-import { Group, LargeTitle, Row, Segmented } from './components/phone/PhoneList';
+import { OverviewSwitch, type OverviewChoice } from './components/phone/OverviewSwitch';
+import { Group, LargeTitle, Row } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
-import { SplitEmpty, SplitView, useSplit } from './components/phone/PhoneSplit';
+import { ReorderSheet } from './components/phone/ReorderSheet';
+import { useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { SessionIcon, SessionList, statusText } from './components/SessionList';
@@ -126,19 +130,24 @@ function CardStatus({ s }: { s: SessionSummary }) {
  * to the newest. A phone shows the question a waiting session asks in full, then the
  * agent's last message as whole lines, at most four, with an ellipsis after them.
  */
-function CardMessages({ s }: { s: SessionSummary }) {
+function CardMessages({ s, big }: { s: SessionSummary; big?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const key = s.recent?.join('\n') ?? s.latest ?? '';
   useLayoutEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [key]);
   if (isPhone) {
-    const last = s.recent?.length ? s.recent[s.recent.length - 1] : s.latest;
+    // Cards don't scroll inside on a phone or tablet (Material: Cards), so Double Size shows more of the chat in place.
+    const shown = big && s.recent?.length ? s.recent : [s.recent?.length ? s.recent[s.recent.length - 1] : s.latest].filter(Boolean);
     const question = s.waiting && s.waiting.reason !== 'turn' ? s.waiting.text : null;
     return (
       <div className="overview-messages">
         {question && <div className="overview-question">{question}</div>}
-        {last && <div className="overview-msg overview-last">{last}</div>}
+        {shown.map((m, i) => (
+          <div key={i} className="overview-msg overview-last">
+            {m}
+          </div>
+        ))}
       </div>
     );
   }
@@ -269,7 +278,7 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
   return (
     <div
       data-id={s.id}
-      className={cardClass(s, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '')}
+      className={cardClass(s, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '') + (size?.big ? ' big' : '')}
       style={size?.area}
       onClick={() => onOpen(s.id)}
       onContextMenu={(e) => {
@@ -278,7 +287,7 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
       }}
     >
       <CardTitle s={s} size={size} drag={drag} />
-      <CardMessages s={s} />
+      <CardMessages s={s} big={size?.big} />
       {s.background > 0 && <div className="muted">{backgroundText(s.background)}</div>}
       {bottom}
     </div>
@@ -286,15 +295,44 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
 }
 
 /** The Overview on a phone: a summary card per session, in the desktop dashboard's order. */
-function Dashboard({ s }: { s: SessionsWindow }) {
-  const { sessions } = s.state;
+export function PhoneOverview({
+  sessions,
+  shown,
+  setShown,
+  onOpen,
+  reordering,
+  onReordered,
+}: {
+  sessions: SessionSummary[];
+  shown: SessionsWindow['shown'];
+  setShown: (patch: Partial<SessionsWindow['shown']>) => void;
+  onOpen: (id: string) => void;
+  /** The bar's Reorder was picked: the cards' sheet shows, until it closes. */
+  reordering: boolean;
+  onReordered: () => void;
+}) {
   if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
+  const big = shown.bigCards;
+  const toggleBig = (id: string) => {
+    const others = big.filter((x) => x !== id && sessions.some((c) => c.id === x));
+    setShown({ bigCards: big.includes(id) ? others : [...others, id] });
+  };
   return (
-    <div className="sessions-overview">
-      {dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst).map((x) => (
-        <DashboardCard key={x.id} s={x} onOpen={s.setSelected} />
-      ))}
-    </div>
+    <>
+      <div className="sessions-overview">
+        {dashboardOrder(sessions, shown.cardOrder, shown.waitingFirst).map((x) => (
+          <DashboardCard key={x.id} s={x} onOpen={onOpen} size={{ big: big.includes(x.id), onToggle: () => toggleBig(x.id), area: {} }} />
+        ))}
+      </div>
+      {reordering && (
+        <ReorderSheet
+          title="Reorder Cards"
+          sections={[{ key: 'cards', items: dashboardOrder(sessions, shown.cardOrder, false).map((x) => ({ key: x.id, title: x.title, sub: x.groupName })) }]}
+          onReorder={(_section, keys) => setShown({ cardOrder: keys })}
+          onClose={onReordered}
+        />
+      )}
+    </>
   );
 }
 
@@ -852,17 +890,6 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
   return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
 }
 
-/** The list's and the activity pane's widths, as last dragged. */
-function savedWidths(key: string): { left: number; right: number } {
-  try {
-    const saved = JSON.parse(localStorage.getItem(key) ?? '') as { left: number; right: number };
-    if (saved.left > 0 && saved.right > 0) return saved;
-  } catch {
-    /* the defaults */
-  }
-  return { left: 280, right: 400 };
-}
-
 function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) {
   const { state, summary, chat, shown } = s;
   return (
@@ -881,37 +908,13 @@ function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) 
  */
 export function SessionsBody({ s, single = false }: { s: SessionsWindow; single?: boolean }) {
   const { state, selected, summary, activity, shown, subagents } = s;
-  const widthsKey = single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY;
-  const [widths, setWidths] = useState(() => savedWidths(widthsKey));
-  const bodyRef = useRef<HTMLDivElement>(null);
-
-  const saveWidths = (w: { left: number; right: number }) => {
-    setWidths(w);
-    localStorage.setItem(widthsKey, JSON.stringify(w));
-  };
-  const dragLeft = useDragResize({
-    axis: 'x',
-    containerRef: bodyRef,
-    onDrag: (pos) => saveWidths({ ...widths, left: Math.min(480, Math.max(200, pos)) }),
-  });
-  const dragRight = useDragResize({
-    axis: 'x',
-    containerRef: bodyRef,
-    onDrag: (pos, rect) => saveWidths({ ...widths, right: Math.min(720, Math.max(280, rect.width - pos)) }),
-  });
-
   const pane = !!summary && (single ? shown.windowActivityPane : shown.activityPane);
-  // The list and the Activity pane shrink to their smallest widths before the conversation drops under 480 px.
-  const list = single ? '' : `minmax(200px, ${widths.left}px) 5px `;
 
   return (
-    <div
-      className="sessions-body"
-      ref={bodyRef}
-      style={{ gridTemplateColumns: pane ? `${list}minmax(${single ? 0 : 480}px, 1fr) 5px minmax(280px, ${widths.right}px)` : `${list}1fr` }}
-    >
-      {!single && (
-        <>
+    <ListDetail
+      sides={{ storageKey: single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY, left: { initial: 280, min: 200, max: 480 }, right: { initial: 400, min: 280, max: 720 }, minDetail: single ? 0 : 480 }}
+      list={
+        !single && (
           <SessionList
             sessions={state.sessions}
             selected={selected}
@@ -920,45 +923,42 @@ export function SessionsBody({ s, single = false }: { s: SessionsWindow; single?
             onToggle={s.toggleGroup}
             onSelect={s.setSelected}
           />
-          <div className="sidebar-divider" onMouseDown={dragLeft} />
-        </>
-      )}
-      <main className="sessions-center">
-        {summary && hasTabs(s) && <SubagentTabs s={s} />}
-        <SessionCenter s={s} />
-      </main>
-      {pane && summary && (
-        <>
-          <div className="sidebar-divider" onMouseDown={dragRight} />
-          <ActivityPanel
-            sessionId={summary.id}
-            taskId={summary.taskId}
-            rows={s.watchedRows}
-            rowsAgent={s.watchedAgent}
-            attachments={s.attachments}
-            background={activity?.background ?? []}
-            subagents={subagents}
-            gitProject={s.gitRepo ? summary.projectId : undefined}
-            following={s.follow}
-            onFollow={s.setFollow}
-            onOpenWorkflow={(runId) => s.showWorkflow(runId)}
-            workflowRun={s.workflow?.run ?? null}
-            onOpenWorkflowAgent={(runId, agentId) => s.showWorkflow(runId, agentId)}
-            working={summary.status === 'working'}
-            pos={s.nowPos}
-            onPos={s.setNowPos}
-          />
-        </>
-      )}
-    </div>
+        )
+      }
+      detail={
+        <main className="sessions-center">
+          {summary && hasTabs(s) && <SubagentTabs s={s} />}
+          <SessionCenter s={s} />
+        </main>
+      }
+      inspectorOpen={pane}
+      inspector={
+        summary && (
+          <Inspector title="Activity" open={pane}>
+            <ActivityPanel
+              sessionId={summary.id}
+              taskId={summary.taskId}
+              rows={s.watchedRows}
+              rowsAgent={s.watchedAgent}
+              attachments={s.attachments}
+              background={activity?.background ?? []}
+              subagents={subagents}
+              gitProject={s.gitRepo ? summary.projectId : undefined}
+              following={s.follow}
+              onFollow={s.setFollow}
+              onOpenWorkflow={(runId) => s.showWorkflow(runId)}
+              workflowRun={s.workflow?.run ?? null}
+              onOpenWorkflowAgent={(runId, agentId) => s.showWorkflow(runId, agentId)}
+              working={summary.status === 'working'}
+              pos={s.nowPos}
+              onPos={s.setNowPos}
+            />
+          </Inspector>
+        )
+      }
+    />
   );
 }
-
-type PhoneList = 'sessions' | 'overview';
-const PHONE_LISTS: [PhoneList, string][] = [
-  ['sessions', 'Chats'],
-  ['overview', 'Overview'],
-];
 
 /**
  * The Chats window on a phone: the session list (or the Overview, as a
@@ -972,14 +972,21 @@ const PHONE_LISTS: [PhoneList, string][] = [
 function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boolean; opened: boolean }) {
   const { state, summary, chat, activity, subagents } = s;
   const limits = sessionLimits(state, summary);
-  const [list, setList] = useState<PhoneList>('sessions');
-  const [sheet, setSheet] = useState<{ kind: 'activity'; tab: ActivityTab } | { kind: 'usage' } | null>(null);
-  useEffect(() => setSheet(null), [summary?.id]);
   const closesWindow = single || opened;
   // iPad: the list in a leading column and the conversation beside it; Activity a trailing inspector when there's room.
   const split = useSplit(!single);
-  const [inspector, setInspector] = useState<{ open: boolean; tab: ActivityTab; n: number }>({ open: true, tab: 'now', n: 0 });
-  const inspectorShown = !!split?.inspector && inspector.open && !!summary;
+  const [listShow, setListShow] = useState<OverviewChoice>('list');
+  const [reordering, setReordering] = useState(false);
+  const reorderGroup = !summary && state.sessions.length > 1 && listShow === 'overview' ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReordering(true) }] }] : [];
+  const panel = useInspector<ActivityTab>('now', !!split?.inspector);
+  const [usage, setUsage] = useState(false);
+  useEffect(() => {
+    panel.dismiss();
+    setUsage(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary?.id]);
+  const sheet = panel.sheetOpen || usage;
+  const inspectorShown = !!split?.inspector && panel.open && !!summary;
   // A conversation that isn't listed yet (a new chat or terminal is on its way) shows "Starting…" instead of the list.
   const starting = !summary && !!s.selected && !single;
   const listed = useRef(false);
@@ -988,11 +995,6 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     // With the list beside it (iPad), the window stays and shows the list (useSessionsWindow drops the selection).
     else if (opened && listed.current && !split) window.close();
   }, [summary, opened, split]);
-  // A row of the conversation (Subagents, Workflows) opens Activity on its list: the inspector when it fits, else the sheet.
-  const openActivity = (tab: ActivityTab = 'now') =>
-    split?.inspector ? setInspector((i) => ({ open: true, tab, n: i.n + 1 })) : setSheet({ kind: 'activity', tab });
-  // The bar's Activity button shows or hides the inspector, or opens the sheet.
-  const toggleActivity = () => (split?.inspector ? setInspector((i) => ({ ...i, open: !i.open })) : openActivity());
 
   const listActions: PageNavAction[] = [
     // The toolbar's ids: the More menu leaves these out.
@@ -1004,12 +1006,12 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   const actions: PageNavAction[] = summary
     ? [
         ...(s.stoppable && summary.kind !== 'chat' ? [{ id: 'stop', label: 'Stop', icon: 'stopChat', run: () => void window.looper.sessions.stop(summary.id).catch(fail) }] : []),
-        { id: 'activity', label: 'Activity', icon: 'activity', run: toggleActivity },
+        { id: 'activity', label: 'Activity', icon: 'activity', run: panel.toggle },
         {
           id: 'usage',
           label: usageLabel(chat?.context ?? summary.context, limits),
           ring: { context: contextFraction(chat?.context ?? summary.context), used: limits.fiveHour?.used ?? null },
-          run: () => setSheet({ kind: 'usage' }),
+          run: () => setUsage(true),
         },
       ]
     : split
@@ -1019,8 +1021,10 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   const workflow = s.workflow;
   const subagent = s.follow && s.followed ? s.followed : null;
   const back = (): void => {
-    if (sheet) setSheet(null);
-    else if (workflow) s.showWorkflow(workflow.agent ? workflow.run.runId : null);
+    if (sheet) {
+      panel.dismiss();
+      setUsage(false);
+    } else if (workflow) s.showWorkflow(workflow.agent ? workflow.run.runId : null);
     else if (s.follow) s.setFollow(null);
     else s.setSelected(null);
   };
@@ -1049,9 +1053,9 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
             largeTitle: platform === 'ios',
             inspector: inspectorShown ? { width: split.inspector, title: 'Activity' } : undefined,
           },
-          toolbar: sessionsToolbarGroups(s),
+          toolbar: [...sessionsToolbarGroups(s), ...reorderGroup],
           more: summary ? conversationMore(summary.kind) : undefined,
-          modal: !!sheet,
+          modal: sheet,
         }
       : {
           title: title ?? (single ? undefined : 'Chats'),
@@ -1059,11 +1063,11 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           actions: single && !summary ? [] : actions,
           // The list's large title; a conversation on its way has none to scroll past.
           largeTitle: platform === 'ios' && !summary && !single && !starting,
-          toolbar: sessionsToolbarGroups(s),
+          toolbar: [...sessionsToolbarGroups(s), ...reorderGroup],
           // A conversation's More menu: the chat catalog's commands for its kind (phone-lists.ts conversationMore).
           more: summary ? conversationMore(summary.kind) : undefined,
           // The Activity and Usage sheets are drawn in the page: the frame's bar stays out of reach under them.
-          modal: !!sheet,
+          modal: sheet,
         })}
     />
   );
@@ -1071,94 +1075,88 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   const sessionsList = (
     <div className="pg-scroll">
       <LargeTitle>Chats</LargeTitle>
-      <div className="pg-segmented-wrap">
-        <Segmented items={PHONE_LISTS} value={list} onChange={setList} label="Show" />
-      </div>
-      {list === 'sessions' ? (
-        <section className="pg-group pg-sessions">
-          <SessionList
-            sessions={state.sessions}
-            selected={split ? s.selected : null}
-            collapsed={s.shown.collapsed}
-            waitingFirst={s.shown.waitingFirst}
-            onToggle={s.toggleGroup}
-            onSelect={s.setSelected}
-            selectOnMenu={false}
-          />
-        </section>
-      ) : (
-        <Dashboard s={s} />
-      )}
+      <OverviewSwitch
+        listLabel="Chats"
+        list={
+          <section className="pg-group pg-sessions">
+            <SessionList
+              sessions={state.sessions}
+              selected={split ? s.selected : null}
+              collapsed={s.shown.collapsed}
+              waitingFirst={s.shown.waitingFirst}
+              onToggle={s.toggleGroup}
+              onSelect={s.setSelected}
+            />
+          </section>
+        }
+        value={listShow}
+        onChange={setListShow}
+        overview={<PhoneOverview sessions={state.sessions} shown={s.shown} setShown={s.setShown} onOpen={s.setSelected} reordering={reordering} onReordered={() => setReordering(false)} />}
+      />
     </div>
   );
-  // Activity, in the sheet (closes when it opens a page) or the inspector (stays).
-  const activityPanel = (closes: boolean, tab: ActivityTab) =>
-    summary && (
-      <ActivityPanel
-        sessionId={summary.id}
-        taskId={summary.taskId}
-        rows={s.watchedRows}
-        rowsAgent={s.watchedAgent}
-        attachments={s.attachments}
-        background={activity?.background ?? []}
-        subagents={subagents}
-        gitProject={s.gitRepo ? summary.projectId : undefined}
-        following={s.follow}
-        onFollow={(id) => {
-          s.setFollow(id);
-          if (closes) setSheet(null);
-        }}
-        onOpenWorkflow={(runId) => {
-          s.showWorkflow(runId);
-          if (closes) setSheet(null);
-        }}
-        working={summary.status === 'working'}
-        pos={s.nowPos}
-        onPos={s.setNowPos}
-        initialTab={tab}
-      />
-    );
-  const sheets = summary && (
-    <>
-      {sheet?.kind === 'usage' && (
-        <PhoneSheet title="Usage" detent="medium" onClose={() => setSheet(null)}>
-          <UsagePanel summary={summary} chat={chat} limits={limits} />
-        </PhoneSheet>
-      )}
-      {sheet?.kind === 'activity' && (
-        <PhoneSheet title="Activity" onClose={() => setSheet(null)}>
-          {activityPanel(true, sheet.tab)}
-        </PhoneSheet>
-      )}
-    </>
+  // Activity: opening a page from it takes a sheet away, and an inspector stays.
+  const activityPanel = summary && (
+    <Inspector title="Activity" open={panel.open} onClose={panel.dismiss}>
+      <Fragment key={panel.showKey}>
+        <ActivityPanel
+          sessionId={summary.id}
+          taskId={summary.taskId}
+          rows={s.watchedRows}
+          rowsAgent={s.watchedAgent}
+          attachments={s.attachments}
+          background={activity?.background ?? []}
+          subagents={subagents}
+          gitProject={s.gitRepo ? summary.projectId : undefined}
+          following={s.follow}
+          onFollow={(id) => {
+            s.setFollow(id);
+            panel.dismiss();
+          }}
+          onOpenWorkflow={(runId) => {
+            s.showWorkflow(runId);
+            panel.dismiss();
+          }}
+          working={summary.status === 'working'}
+          pos={s.nowPos}
+          onPos={s.setNowPos}
+          initialTab={panel.tab}
+        />
+      </Fragment>
+    </Inspector>
+  );
+  const usageSheet = summary && usage && (
+    <PhoneSheet title="Usage" detent="medium" onClose={() => setUsage(false)}>
+      <UsagePanel summary={summary} chat={chat} limits={limits} />
+    </PhoneSheet>
   );
 
   if (split) {
     return (
       <div className="phone-sessions phone-page split">
         {bar}
-        <SplitView
+        <ListDetail
           split={split}
-          lead={sessionsList}
+          list={sessionsList}
+          open={!!summary || starting}
           detail={
             summary ? (
               <div className={`pg-split-pane phone-conversation kind-${summary.kind}`}>
-                {!workflow && !s.follow && <ConversationAgents s={s} onOpen={openActivity} />}
+                {!workflow && !s.follow && <ConversationAgents s={s} onOpen={panel.show} />}
                 <main className="sessions-center">
                   <SessionCenter s={s} />
                 </main>
               </div>
-            ) : starting ? (
+            ) : (
               <div className="pg-split-pane phone-starting">
                 <TerminalOverlay />
               </div>
-            ) : (
-              <SplitEmpty>No Chat Selected</SplitEmpty>
             )
           }
-          inspector={inspectorShown ? <Fragment key={inspector.n}>{activityPanel(false, inspector.tab)}</Fragment> : undefined}
+          empty="No Chat Selected"
+          inspector={activityPanel}
         />
-        {sheets}
+        {usageSheet}
       </div>
     );
   }
@@ -1191,11 +1189,12 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   return (
     <div className={`phone-sessions phone-page phone-conversation kind-${summary.kind}`}>
       {bar}
-      {!workflow && !s.follow && <ConversationAgents s={s} onOpen={openActivity} />}
+      {!workflow && !s.follow && <ConversationAgents s={s} onOpen={panel.show} />}
       <main className="sessions-center">
         <SessionCenter s={s} />
       </main>
-      {sheets}
+      {activityPanel}
+      {usageSheet}
     </div>
   );
 }

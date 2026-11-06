@@ -34,6 +34,8 @@ export interface PathRequest {
   id: number;
   path: string;
   isDir: boolean;
+  /** The files the viewer steps through with this one (this one included): the images of one message. */
+  siblings?: string[];
 }
 
 export interface ShellState {
@@ -154,7 +156,7 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
       return { ...s, toasts: s.toasts.filter((x) => x.id !== a.id) };
     case 'show-path': {
       const id = s.seq + 1;
-      return { ...s, seq: id, paths: [...s.paths, { id, path: a.path, isDir: a.isDir }] };
+      return { ...s, seq: id, paths: [...s.paths, { id, path: a.path, isDir: a.isDir, siblings: a.siblings }] };
     }
     case 'path-done':
       return { ...s, paths: s.paths.filter((p) => p.id !== a.id) };

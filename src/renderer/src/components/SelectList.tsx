@@ -4,6 +4,7 @@ import { isPhone } from '../web/page-nav';
 import { useListNav } from './hooks';
 import { listContextMenu } from './list-nav';
 import { EmptyRow, Group, Row, SwipeRow } from './phone/PhoneList';
+import { ReorderSheet } from './phone/ReorderSheet';
 
 /** One command of a row's context menu: the same as the button of that name under the list. */
 export interface ListMenuItem {
@@ -80,8 +81,9 @@ export function SelectList<T>(props: SelectListProps<T>) {
   return isPhone ? <PhoneSelectList {...props} /> : <DesktopSelectList {...props} />;
 }
 
-function PhoneSelectList<T>({ items, label, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, menu, empty }: SelectListProps<T>) {
+function PhoneSelectList<T>({ items, label, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, empty }: SelectListProps<T>) {
   const openMenu = useRowMenu();
+  const [reordering, setReordering] = useState(false);
   return (
     <div role={menu ? undefined : 'radiogroup'} aria-label={label}>
       <Group>
@@ -113,7 +115,16 @@ function PhoneSelectList<T>({ items, label, selectedKey, itemKey, itemName, item
             </SwipeRow>
           );
         })}
+        {onReorder && items.length > 1 && <Row title="Reorder" tone="action" onOpen={() => setReordering(true)} />}
       </Group>
+      {reordering && onReorder && (
+        <ReorderSheet
+          title={`Reorder ${label}`}
+          sections={[{ key: 'list', items: items.map((item, i) => ({ key: itemKey(item, i), title: itemName(item, i), sub: itemSub?.(item, i) || undefined })) }]}
+          onReorder={(_section, keys) => onReorder(keys)}
+          onClose={() => setReordering(false)}
+        />
+      )}
     </div>
   );
 }

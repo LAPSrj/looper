@@ -8,6 +8,9 @@
 - **Clean up the full stack when removing a feature.** Check and delete all
   references: types, engine, IPC handler, preload bridge, API, renderer
   components, routes, CSS, and menu items.
+- **Every feature works on every device.** No "not available on this device".
+  A `platforms` mark is only for what lays out a desktop's windows or what the
+  device itself provides, and `tests/ui-roles.test.ts` fails on any other.
 - **Interactive mode is the primary mode.** Design features (output viewing,
   terminal tabs, idle detection) for the interactive path first; headless is
   secondary.
@@ -29,6 +32,12 @@
 
 ## UI style
 
+- **Components adapt to each OS by themselves.** Looper's UI is made of
+  components that follow each system's guidelines and look like a native app.
+  On iOS and Android close enough isn't acceptable: it must look the same as
+  the system. The long-term goal is that an agent building a screen doesn't
+  think about design, because it places the components and they adjust to the
+  system. When creating or updating a screen, always try to reuse components.
 - **No badges or pills.** Show status and result values as plain text, not
   colored badges, pills, or chips.
 - **No help text by default.** Don't add `help` props, hints, or tooltips

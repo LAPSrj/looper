@@ -108,9 +108,21 @@ export const ICONS: Record<
   | 'projectsTab'
   | 'tasksTab'
   | 'chatsTab'
-  | 'window',
+  | 'window'
+  | 'previous'
+  | 'next'
+  | 'close'
+  | 'download'
+  | 'filter',
   ReactNode
 > = {
+  previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
+  next: <path d="M6 3.5 10.5 8 6 12.5" />,
+  close: <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />,
+  // An arrow down into a tray.
+  download: <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M2.5 13.5h11" />,
+  // Lines that get shorter, as a funnel does.
+  filter: <path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" />,
   dashboard: (
     <>
       <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />

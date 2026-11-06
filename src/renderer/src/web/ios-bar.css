@@ -89,6 +89,9 @@
 .ios-text-btn.destructive {
   color: var(--ios-red);
 }
+.ios-icon-btn.on {
+  color: var(--ios-tint);
+}
 .ios-back:active:not(:disabled),
 .ios-text-btn:active:not(:disabled),
 .ios-icon-btn:active:not(:disabled) {

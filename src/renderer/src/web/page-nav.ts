@@ -55,6 +55,8 @@ export interface PageNav {
   split?: PageNavSplit;
   /** iPad: the main window's tabs, which the frame draws as the tab bar near the top. */
   tabs?: PageNavTabs;
+  /** Android: the views behind the top app bar's menu icon, which the frame draws as a modal expanded rail. */
+  navigation?: PageNavTabs;
 }
 
 export interface PageNavSplit {
@@ -68,7 +70,8 @@ export interface PageNavSplit {
 }
 
 export interface PageNavTabs {
-  items: readonly (readonly [string, string])[];
+  /** Each tab's id, its label, and an addon tab's icon (an ICONS key). */
+  items: readonly (readonly [string, string, string?])[];
   value: string;
   select: (id: string) => void;
 }
@@ -114,14 +117,15 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
     const n = nav!;
     if (n.title !== undefined) out.title = n.title;
     if (n.back) out.back = () => latest.current?.back?.();
-    if (n.actions) out.actions = n.actions.map((a) => ({ ...a, run: () => latest.current?.actions?.find((x) => x.id === a.id)?.run() }));
+    if (n.actions) out.actions = n.actions.map((a) => wrapAction(a, () => latest.current?.actions));
     if (n.split) {
       out.split = {
         ...n.split,
-        actions: n.split.actions?.map((a) => ({ ...a, run: () => latest.current?.split?.actions?.find((x) => x.id === a.id)?.run() })),
+        actions: n.split.actions?.map((a) => wrapAction(a, () => latest.current?.split?.actions)),
       };
     }
     if (n.tabs) out.tabs = { ...n.tabs, select: (id) => latest.current?.tabs?.select(id) };
+    if (n.navigation) out.navigation = { ...n.navigation, select: (id) => latest.current?.navigation?.select(id) };
     if (n.ownsBottom !== undefined) out.ownsBottom = n.ownsBottom;
     if (n.largeTitle !== undefined) out.largeTitle = n.largeTitle;
     if (n.modal !== undefined) out.modal = n.modal;
@@ -135,6 +139,12 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
     }
   }
   return out;
+}
+
+/** A bar button whose callbacks, and its menu's, look up the part's current ones by id. */
+function wrapAction(a: PageNavAction, current: () => PageNavAction[] | undefined): PageNavAction {
+  const now = () => current()?.find((x) => x.id === a.id);
+  return { ...a, run: () => now()?.run(), menu: a.menu?.map((e) => ({ ...e, run: () => now()?.menu?.find((x) => x.id === e.id)?.run() })) };
 }
 
 /** A toolbar whose callbacks look up the part's current ones by id. */
@@ -196,3 +206,6 @@ export function usePageNav(nav: PageNav | null, order = 0): void {
 }
 
 export const isPhone = phone;
+
+// A page that replaces another in the same window (New Task with Agent's setup, then its builder) starts without the old page's bar.
+if (phone) publish();

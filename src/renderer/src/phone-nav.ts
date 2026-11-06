@@ -1,14 +1,70 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 
-/** The main window's bottom tabs on a phone. */
-export type PhoneTab = 'dashboard' | 'projects' | 'tasks' | 'sessions';
+/** The main window's tabs on a phone or tablet: Looper's own, an addon's (its main-tabs id), and iOS's More for what doesn't fit. */
+export type PhoneTab = 'dashboard' | 'projects' | 'tasks' | 'sessions' | 'more' | `addon/${string}`;
+export type PhoneTabEntry = readonly [PhoneTab, string];
 
-export const PHONE_TABS: readonly (readonly [PhoneTab, string])[] = [
+export const PHONE_TABS: readonly PhoneTabEntry[] = [
   ['dashboard', 'Dashboard'],
   ['projects', 'Projects'],
   ['tasks', 'Tasks'],
   ['sessions', 'Chats'],
 ];
+
+/** A bottom bar holds five destinations (HIG: Tab bars; Material: Navigation bar). */
+export const MAX_BAR_TABS = 5;
+/** A collapsed navigation rail holds three to seven (Material: Navigation rail). */
+export const MAX_RAIL_TABS = 7;
+/** Material's breakpoints, in dp: compact under 600, medium under 840. */
+export const MEDIUM_WIDTH = 600;
+export const EXPANDED_WIDTH = 840;
+
+const MORE: PhoneTabEntry = ['more', 'More'];
+
+/** iPad's tab bar near the top: a tab's padding and its name's width at 15 pt, and the row's margins and capsule (ios.css). */
+const topTabWidth = (label: string) => 40 + label.length * 9.5;
+const TOP_BAR_CHROME = 40;
+
+/** How the main window shows its views. */
+export interface PhoneTabs {
+  /** bar: at the bottom. top: iPad's, in the frame's bar. rail: beside the content. none: behind the menu icon. */
+  form: 'bar' | 'top' | 'rail' | 'none';
+  /** The tabs that form shows. */
+  shown: PhoneTabEntry[];
+  /** iOS: the tabs the More tab lists. */
+  more: PhoneTabEntry[];
+  /** Android: every view, when `shown` doesn't have them all; the top app bar's menu icon opens them in a modal expanded rail. */
+  menu: PhoneTabEntry[] | null;
+}
+
+/** iOS: as many tabs as the space holds, and "the trailing tab becomes a More tab" when they don't all fit (HIG: Tab bars). */
+function iosTabs(all: PhoneTabEntry[], width: number, top: boolean): PhoneTabs {
+  const form = top ? 'top' : 'bar';
+  const room = width - TOP_BAR_CHROME;
+  const fits = (tabs: PhoneTabEntry[]) => (top ? tabs.reduce((sum, [, label]) => sum + topTabWidth(label), 0) <= room : tabs.length <= MAX_BAR_TABS);
+  if (fits(all)) return { form, shown: all, more: [], menu: null };
+  let count = all.length - 1;
+  while (count > PHONE_TABS.length && !fits([...all.slice(0, count), MORE])) count--;
+  return { form, shown: [...all.slice(0, count), MORE], more: all.slice(count), menu: null };
+}
+
+/**
+ * Android, after Material: a bar for up to five views under the expanded width, and a rail from
+ * there. With more than five, a bar is out: medium windows take the rail, and compact ones hide
+ * the views behind a menu icon. A rail with more than seven keeps the rest behind the same icon.
+ */
+function androidTabs(all: PhoneTabEntry[], width: number): PhoneTabs {
+  const crowded = all.length > MAX_BAR_TABS;
+  if (width >= EXPANDED_WIDTH || (width >= MEDIUM_WIDTH && crowded)) {
+    return { form: 'rail', shown: all.slice(0, MAX_RAIL_TABS), more: [], menu: all.length > MAX_RAIL_TABS ? all : null };
+  }
+  return crowded ? { form: 'none', shown: [], more: [], menu: all } : { form: 'bar', shown: all, more: [], menu: null };
+}
+
+export function phoneTabs(addonTabs: readonly PhoneTabEntry[], os: 'ios' | 'android', width: number, top: boolean): PhoneTabs {
+  const all = [...PHONE_TABS, ...addonTabs];
+  return os === 'ios' ? iosTabs(all, width, top) : androidTabs(all, width);
+}
 
 /** A screen pushed over a tab's list: what the desktop shows in the main pane. */
 export type PhoneScreen =
@@ -21,7 +77,7 @@ export type PhoneScreen =
 /** Each tab keeps its own stack, as iOS's tab bar and Material's navigation bar do. */
 export interface PhoneNav {
   tab: PhoneTab;
-  stacks: Record<PhoneTab, PhoneScreen[]>;
+  stacks: Partial<Record<PhoneTab, PhoneScreen[]>>;
 }
 
 /** The main window's selection: the task, project or addon item its main pane shows. */
@@ -36,8 +92,11 @@ export const initialPhoneNav = (tab: PhoneTab = 'dashboard'): PhoneNav => ({
   stacks: { dashboard: [], projects: [], tasks: [], sessions: [] },
 });
 
+/** The screens over a tab's list; a tab that hasn't been opened has none. */
+export const stackOf = (nav: PhoneNav, tab: PhoneTab = nav.tab): PhoneScreen[] => nav.stacks[tab] ?? [];
+
 export function topScreen(nav: PhoneNav): PhoneScreen | null {
-  const stack = nav.stacks[nav.tab];
+  const stack = stackOf(nav);
   return stack.length ? stack[stack.length - 1] : null;
 }
 
@@ -53,19 +112,19 @@ const withStack = (nav: PhoneNav, stack: PhoneScreen[]): PhoneNav => ({ ...nav, 
 /** Show a screen over the current one (nothing changes when it's already on top). */
 export function pushScreen(nav: PhoneNav, screen: PhoneScreen): PhoneNav {
   if (sameScreen(topScreen(nav), screen)) return nav;
-  return withStack(nav, [...nav.stacks[nav.tab], screen]);
+  return withStack(nav, [...stackOf(nav), screen]);
 }
 
 /** iPad: a row of the list column tapped; its screen replaces what the detail column shows. */
 export function rootScreen(nav: PhoneNav, screen: PhoneScreen): PhoneNav {
-  const stack = nav.stacks[nav.tab];
+  const stack = stackOf(nav);
   if (stack.length === 1 && sameScreen(stack[0], screen)) return nav;
   return withStack(nav, [screen]);
 }
 
 /** Back: the screen under the current one, or the tab's list. */
 export function popScreen(nav: PhoneNav): PhoneNav {
-  const stack = nav.stacks[nav.tab];
+  const stack = stackOf(nav);
   return stack.length ? withStack(nav, stack.slice(0, -1)) : nav;
 }
 
