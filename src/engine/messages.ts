@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   SENT_IMAGE_RE,
+  eventsText,
   guidanceText,
   toolImageId,
   type MessageImage,
@@ -610,6 +611,7 @@ export class TranscriptAccumulator {
       last.tool === 'Skill' &&
       last.skill === undefined &&
       guidanceText(text) === null &&
+      eventsText(text) === null &&
       !text.trimStart().startsWith('<task-notification>')
         ? last
         : undefined);
@@ -668,11 +670,16 @@ export class TranscriptAccumulator {
     }
   }
 
-  /** A Guidance row when `text` is a guidance message (see GUIDANCE_PREFIX); false when it is not one. */
+  /** A row of its own when `text` is a guidance or events message (see GUIDANCE_PREFIX, EVENTS_PREFIX); false when it is neither. */
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
-    if (g === null) return false;
-    this.push({ kind: 'guidance', ts, text: g });
+    if (g !== null) {
+      this.push({ kind: 'guidance', ts, text: g });
+      return true;
+    }
+    const events = eventsText(text);
+    if (events === null) return false;
+    this.push({ kind: 'events', ts, text: events });
     return true;
   }
 

@@ -98,6 +98,9 @@ export function messagesToMarkdown(rows: readonly MessageRow[], opts: MessagesMa
       case 'guidance':
         parts.push(heading(2, 'Guidance', row.ts, plain), prose(row.text));
         break;
+      case 'events':
+        parts.push(heading(2, 'Trigger events', row.ts, plain), row.text);
+        break;
       case 'agent':
         parts.push(heading(2, row.source === 'classifier' ? 'Classifier' : 'Agent', row.ts, plain), prose(row.text));
         break;

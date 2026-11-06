@@ -5,10 +5,10 @@ import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
-import { guidanceMessage } from '../../shared/messages';
+import { eventsMessage, guidanceMessage } from '../../shared/messages';
 import { resolveEnvironment } from '../../shared/environments';
 import { readContextTokens } from '../context';
-import { GUIDANCE_FILE, NOTICE_FILE, queueNotice, takeNotice, takePendingGuidance } from '../guidance';
+import { EVENTS_FILE, GUIDANCE_FILE, NOTICE_FILE, queueNotice, takeEvents, takeNotice, takePendingGuidance } from '../guidance';
 import { findStepTranscript, transcriptHostPath } from '../messages';
 import { claudeModelWindows, modelWindows } from '../model-windows';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
@@ -571,10 +571,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('session.json'))) }] }],
     };
     if (opts.guidance) {
-      // Guidance the user sends mid-run (and Looper's own notice) reaches the agent with its next tool result.
+      // Guidance the user sends mid-run (and related events, and Looper's own notice) reaches the agent with its next tool result.
       writeText(
         path.join(ctx.runDir, 'bin', target.guideHookFile),
-        target.renderGuideHook('claude', { guidance: targetFile(ctx, GUIDANCE_FILE), notice: targetFile(ctx, NOTICE_FILE) }),
+        target.renderGuideHook('claude', {
+          guidance: targetFile(ctx, GUIDANCE_FILE),
+          events: targetFile(ctx, EVENTS_FILE),
+          notice: targetFile(ctx, NOTICE_FILE),
+        }),
         0o755,
       );
       hooks.PostToolUse = [
@@ -595,6 +599,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           doneFile: targetFile(ctx, f('done')),
           reminderFile: targetFile(ctx, f('stop-reminded')),
           guidanceFile: opts.guidance ? targetFile(ctx, GUIDANCE_FILE) : undefined,
+          eventsFile: opts.guidance ? targetFile(ctx, EVENTS_FILE) : undefined,
           noticeFile: opts.guidance ? targetFile(ctx, NOTICE_FILE) : undefined,
           ...stopHookMessages(opts.step),
         }),
@@ -1200,10 +1205,11 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (!opts.guidance || headless || ended || doneMtime !== null) return;
     if (idleSince === null && !held) return;
     const text = takePendingGuidance(ctx.runDir);
-    // Looper's own notice waits behind the user's guidance.
-    const message = text !== null ? guidanceMessage(text) : takeNotice(ctx.runDir);
+    // Related events wait behind the user's guidance, and Looper's own notice behind both.
+    const events = text === null ? takeEvents(ctx.runDir) : null;
+    const message = text !== null ? guidanceMessage(text) : events !== null ? eventsMessage(events) : takeNotice(ctx.runDir);
     if (message === null) return;
-    ctx.log.info(`[${task.id}] typing ${text !== null ? "the user's guidance" : "Looper's notice"} into the idle session`);
+    ctx.log.info(`[${task.id}] typing ${text !== null ? "the user's guidance" : events !== null ? 'related events' : "Looper's notice"} into the idle session`);
     input('\x1b[200~' + message.replace(/\r?\n/g, '\r') + '\x1b[201~');
     setTimeout(() => input('\r'), 300);
   }

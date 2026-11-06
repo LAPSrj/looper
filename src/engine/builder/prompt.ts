@@ -53,6 +53,7 @@ A run has up to three steps, in this order:
 2. Classifier (optional): a cheap model answers yes or no about the check's output.
 3. Agent: a fresh Claude Code or Codex session in the working directory, started with the task's prompt. The check's summary and context are appended to the prompt, unless the prompt places them itself with {{summary}}, {{context}} or {{events}}. Looper tells the agent how to end the run; don't explain looper-done in the prompt.
 What starts a run is the trigger: manual, schedule (a cron expression), or watcher (a long-running command whose stdout lines are events).
+With trigger.sendRelatedEvents on, a watcher's JSON line or a check's JSON with an "looper_related_id" (a Slack thread's id, an issue number) is related to every other event with that id: if a run is handling that id, its agent gets the new event mid-run; a new id starts its own run, up to Simultaneous runs (maxConcurrentRuns). With a schedule, the check must report only what is new.
 
 ## The draft
 - The task's definition is the JSON file ${o.draftFile}. Change it with your file tools. It must stay one JSON object that follows the field reference below.

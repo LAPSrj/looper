@@ -22,7 +22,7 @@ export function compactRow(r: MessageRow): MessageRow | null {
   if (r.kind === 'prompt' || r.kind === 'guidance') {
     return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.attachments?.length ? { attachments: r.attachments } : {}) };
   }
-  if (r.kind === 'agent') return { ...base, kind: 'agent', preview: r.preview, text: r.text };
+  if (r.kind === 'agent' || r.kind === 'events') return { ...base, kind: r.kind, preview: r.preview, text: r.text };
   if (r.kind !== 'tool') return null;
   if (r.sent) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.sent.caption ?? '', sent: r.sent };
   if (!AGENT_TOOLS.has(r.tool ?? '')) return null;
@@ -55,6 +55,7 @@ export function compactedText(rows: MessageRow[], path: (hostPath: string) => st
     }
     if (r.kind === 'tool') return `[Subagent report: ${r.text}]\n${r.result ?? ''}`;
     if (r.kind === 'agent') return `[Agent]\n${r.text}`;
+    if (r.kind === 'events') return `[Trigger events, while the agent worked]\n${r.text}`;
     const attached = fileAttachments(r.attachments ?? []);
     const files = attached.length ? `\n\nAttached files:\n${attached.map((a) => `- ${path(a.path)}`).join('\n')}` : '';
     // The commands the user ran go ahead of the text, as they went to the agent.

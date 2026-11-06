@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
-import type { Environment, Project, Task, TaskInput } from '@shared/types';
+import { RELATED_ID_FIELD, type Environment, type Project, type Task, type TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
@@ -756,6 +756,14 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 </>
                 );
               })()}
+            </FormGroup>
+            <FormGroup>
+              <CheckboxField
+                label="Send new related events to the running agent"
+                note={`Events are related when they have the same ${RELATED_ID_FIELD}.`}
+                checked={trig.sendRelatedEvents ?? false}
+                onChange={(on) => set('trigger', { ...trig, sendRelatedEvents: on })}
+              />
             </FormGroup>
             {trigMode !== 'manual' && (
               <FormGroup>

@@ -1376,7 +1376,8 @@ export function createEngine(opts: EngineOptions): Engine {
       onCommand: async (cmd: InboxCommand) => {
         switch (cmd.op) {
           case 'run':
-            scheduler.runNow(cmd.taskId);
+            if (cmd.event !== undefined) scheduler.receiveEvent(cmd.taskId, cmd.event);
+            else scheduler.runNow(cmd.taskId);
             break;
           case 'pause':
             scheduler.pause(cmd.taskId, cmd.reason);

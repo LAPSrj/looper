@@ -351,6 +351,16 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <MessageBody text={row.text} />
         </details>
       );
+    case 'events':
+      // Related events a trigger sent the running agent: from outside, not the user's message.
+      return (
+        <details className="chat-aside" onContextMenu={onContextMenu}>
+          <summary>
+            Trigger events <span className="chat-tool-preview">{row.preview}</span>
+          </summary>
+          <pre className="chat-tool-pre">{row.text}</pre>
+        </details>
+      );
     case 'error':
       return (
         <div className="chat-msg chat-agent error-text" onContextMenu={onContextMenu}>

@@ -49,6 +49,7 @@ const FIELD_LABELS: Record<string, string> = {
   'trigger.watcher.activeHours': 'Active hours',
   'trigger.watcher.days': 'On days',
   'trigger.watcher.timezone': 'Watcher timezone',
+  'trigger.sendRelatedEvents': 'Send new related events to the running agent',
   'trigger.stopOn': 'Stop running on',
   'trigger.stopOn.enabled': 'Stop on a date',
   'trigger.stopOn.at': 'Stop running on',

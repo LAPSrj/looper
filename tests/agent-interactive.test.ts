@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { queueGuidance, readPendingGuidance } from '../src/engine/guidance';
+import { queueEvents, queueGuidance, readPendingGuidance, takeEvents } from '../src/engine/guidance';
 import { Logger } from '../src/engine/log';
 import { startAgent } from '../src/engine/steps/agent';
 import type { RunContext } from '../src/engine/steps/common';
@@ -96,5 +96,19 @@ describe('guidance for an interactive session', () => {
     const end = await handle.finished;
     expect(end.reason).toBe('done');
     expect(fs.readFileSync(path.join(ctx.runDir, 'typed.txt'), 'utf8')).toContain('skip the flaky test');
+  }, 30_000);
+
+  it('types related events sent while the session sits idle, framed as events', async () => {
+    const ctx = makeCtx();
+    const handle = await startAgent(ctx, { onData: () => {} });
+    await new Promise((r) => setTimeout(r, 1500));
+    queueEvents(ctx.runDir, ['skip the flaky test']);
+    handle.deliverGuidance();
+    const end = await handle.finished;
+    expect(end.reason).toBe('done');
+    const typed = fs.readFileSync(path.join(ctx.runDir, 'typed.txt'), 'utf8');
+    expect(typed).toContain('Looper trigger events');
+    expect(typed).not.toContain('Looper guidance');
+    expect(takeEvents(ctx.runDir)).toBeNull();
   }, 30_000);
 });

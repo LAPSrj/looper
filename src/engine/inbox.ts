@@ -83,6 +83,9 @@ export class Inbox {
         if (cmd.op === 'guide' && (typeof cmd.text !== 'string' || (cmd.runId !== undefined && typeof cmd.runId !== 'string'))) {
           throw new Error('invalid guide command: text must be a string, runId a string when given');
         }
+        if (cmd.op === 'run' && cmd.event !== undefined && typeof cmd.event !== 'string') {
+          throw new Error('invalid run command: event must be a string');
+        }
         await this.handlers.onCommand(cmd);
         this.log.info(`inbox: ${cmd.op} ${cmd.taskId} (${name})`);
       } else {

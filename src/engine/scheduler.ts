@@ -14,7 +14,7 @@ import type {
   Task,
   TaskRuntime,
 } from '../shared/types';
-import { scheduleOf, watcherOf } from '../shared/types';
+import { RELATED_ID_FIELD, scheduleOf, watcherOf } from '../shared/types';
 import { cronTz, runWindowOpen } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
@@ -35,7 +35,7 @@ import {
 } from './steps/agent';
 import { headlineOf, RESTART_STATUS, type SessionHandle } from './steps/session';
 import type { RunContext } from './steps/common';
-import { GUIDANCE_FILE, queueGuidance, takePendingGuidance } from './guidance';
+import { EVENTS_FILE, relatedIdOfLine, GUIDANCE_FILE, queueEvents, queueGuidance, takeEvents, takePendingGuidance } from './guidance';
 import { newRunId, type RunStore } from './store/runs';
 import { fileExists, writeText } from './store/fsutil';
 import type { StateStore } from './store/state';
@@ -84,8 +84,47 @@ interface MachineRetry {
   attempt: number;
   /** The failed run's detail, for the retry's run log. */
   reason: string;
-  check?: { summary?: string; context?: unknown };
+  check?: { summary?: string; context?: unknown; relatedId?: string };
   classified: boolean;
+}
+
+/** Trigger events waiting for a run: one batch per task, or with sendRelatedEvents one per related id. */
+interface PendingEvents {
+  /** Unset = the events that have no id, which coalesce into one run. */
+  relatedId?: string;
+  trigger: ActiveRun['trigger'];
+  lines: string[];
+  /** They came out of a check, which told only once: the run that takes them doesn't run it again. */
+  checked?: boolean;
+}
+
+/** How a cycle relates to sendRelatedEvents. */
+interface CycleEvents {
+  relatedId?: string;
+  checked?: boolean;
+  /** A slot past the task's cap: it only runs the check, to see where its event goes. */
+  overCap?: boolean;
+}
+
+/** A check's answer as a trigger event line. */
+function checkEventLine(relatedId: string | undefined, summary: string | undefined, context: unknown): string {
+  return JSON.stringify({ ...(relatedId !== undefined ? { [RELATED_ID_FIELD]: relatedId } : {}), summary, context });
+}
+
+/** What the check said about the events it produced, for a run that takes them without checking again. */
+function checkOutputOf(lines: readonly string[]): { summary?: string; context?: unknown } {
+  const said = lines.flatMap((line) => {
+    try {
+      const v: unknown = JSON.parse(line);
+      const told = v !== null && typeof v === 'object' && ('summary' in v || 'context' in v);
+      return told ? [v as { summary?: string; context?: unknown }] : [];
+    } catch {
+      return [];
+    }
+  });
+  const summary = said.map((s) => s.summary).filter(Boolean).join('\n');
+  const context = said.length > 1 ? said.map((s) => s.context) : said[0]?.context;
+  return { summary: summary || undefined, context };
 }
 
 /** How far along a run is; the task's aggregate state is its most advanced run. */
@@ -94,6 +133,11 @@ const ADVANCE: Record<ActiveRun['state'], number> = { checking: 0, classifying: 
 /** The newest run in flight (runs are appended in start order). */
 function newestRun(rt: TaskRuntime | undefined): ActiveRun | undefined {
   return rt && rt.runs.length ? rt.runs[rt.runs.length - 1] : undefined;
+}
+
+/** What starts the task's runs, in a run's terms. */
+function triggerOf(task: Task): ActiveRun['trigger'] {
+  return scheduleOf(task) ? 'timer' : watcherOf(task) ? 'watcher' : 'manual';
 }
 
 /**
@@ -118,12 +162,14 @@ export class Scheduler extends EventEmitter {
   private readonly sleptRuns = new Set<string>();
   /** Per run with guidance waiting for its agent: the poll that records the delivery. */
   private readonly guidanceWatches = new Map<string, NodeJS.Timeout>();
+  /** Per run with related events waiting for its agent: the poll that records the delivery. */
+  private readonly eventWatches = new Map<string, NodeJS.Timeout>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
   /** Per task: the retry a machine-failed scheduled run is owed (see MachineRetry). */
   private readonly machineRetries = new Map<string, MachineRetry>();
-  /** Watcher event lines waiting for a run slot, per task; a batch never queues a second run. */
-  private readonly pendingEvents = new Map<string, string[]>();
+  /** Trigger event lines waiting for a run slot or for the agent of the run they relate to, per task. */
+  private readonly pendingEvents = new Map<string, PendingEvents[]>();
   /**
    * Tasks owed a runOnStart catch-up: watching started cold (app launch,
    * enable, pause lifted, system wake, run window opening) and the check
@@ -246,7 +292,7 @@ export class Scheduler extends EventEmitter {
    * prompt. A rolling conversation (agent.session 'continue') follows it: the
    * continuation books onto the resumed id like any resumed run.
    */
-  continueRun(taskId: string, fromRunId: string, guidance: string): boolean {
+  continueRun(taskId: string, fromRunId: string, guidance: string, relatedId?: string): boolean {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
@@ -257,7 +303,27 @@ export class Scheduler extends EventEmitter {
     }
     const sessionId = readRunSessionId(this.d.runs.runDir(taskId, fromRunId), kind);
     if (!sessionId) throw new Error('No conversation was recorded for this run.');
-    return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance });
+    return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance, relatedId });
+  }
+
+  /**
+   * One trigger event from outside (the `run` command's `event`): it starts a
+   * run or goes to the run it relates to, like a watcher's, lifting a pause
+   * like any manual run. A task that can't take it says so, so the event
+   * isn't dropped without a word.
+   */
+  receiveEvent(taskId: string, event: string): void {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    if (!task.enabled || task.completedAt) throw new Error('This task is disabled or completed, so it takes no events.');
+    const lines = event.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) throw new Error('The event is empty.');
+    this.liftPause(task, rt);
+    rt.lastEventAt = this.now();
+    this.emitRuntime(rt);
+    this.holdEvents(task, lines, { trigger: 'manual' });
+    this.flushEvents(task);
   }
 
   /** Whether the run takes guidance now: its agent is running on Claude Code or Codex, or waits on an answer to its question. */
@@ -309,14 +375,69 @@ export class Scheduler extends EventEmitter {
 
   /** Record the delivery once the waiting guidance is gone from the run dir. */
   private watchGuidance(taskId: string, runId: string, runDir: string): void {
-    if (this.guidanceWatches.has(runId)) return;
+    this.watchDelivery(this.guidanceWatches, path.join(runDir, GUIDANCE_FILE), taskId, runId, 'guidance', 'the agent got the guidance');
+  }
+
+  private watchDelivery(
+    watches: Map<string, NodeJS.Timeout>,
+    file: string,
+    taskId: string,
+    runId: string,
+    phase: RunPhase,
+    summary: string,
+  ): void {
+    if (watches.has(runId)) return;
     const timer = setInterval(() => {
-      if (fileExists(path.join(runDir, GUIDANCE_FILE))) return;
+      if (fileExists(file)) return;
       clearInterval(timer);
-      this.guidanceWatches.delete(runId);
-      this.record(taskId, runId, 'guidance', 'delivered', { summary: 'the agent got the guidance' });
+      watches.delete(runId);
+      this.record(taskId, runId, phase, 'delivered', { summary });
     }, this.d.settings.signalPollMs);
-    this.guidanceWatches.set(runId, timer);
+    watches.set(runId, timer);
+  }
+
+  /**
+   * Leave related events for a run's agent, handed over the way guidance is.
+   * False when it can't take them yet or at all (the agent hasn't started, a
+   * harness without hooks): they stay pending, for this agent or the next run.
+   */
+  private sendEvents(task: Task, run: ActiveRun, lines: string[]): boolean {
+    const handle = this.agents.get(run.runId);
+    if (run.state !== 'running' || !handle || !this.takesGuidance(task)) return false;
+    const runDir = this.d.runs.runDir(task.id, run.runId);
+    try {
+      queueEvents(runDir, lines);
+    } catch (e) {
+      this.d.log.error(`[${task.id}] cannot leave events for run ${run.runId}: ${errMsg(e)}`);
+      return false;
+    }
+    this.record(task.id, run.runId, 'events', 'sent', {
+      summary: `${lines.length} event(s)`,
+      body: '```\n' + lines.join('\n') + '\n```',
+    });
+    this.watchDelivery(this.eventWatches, path.join(runDir, EVENTS_FILE), task.id, run.runId, 'events', 'the agent got the events');
+    handle.deliverGuidance();
+    return true;
+  }
+
+  /** The run is over: related events its agent never got go to the next run. */
+  private settleEvents(task: Task, runId: string, runDir: string): void {
+    const watch = this.eventWatches.get(runId);
+    if (watch) {
+      clearInterval(watch);
+      this.eventWatches.delete(runId);
+    }
+    const lines = takeEvents(runDir);
+    if (lines === null) {
+      if (watch) this.record(task.id, runId, 'events', 'delivered', { summary: 'the agent got the events' });
+      return;
+    }
+    this.record(task.id, runId, 'events', 'undelivered', {
+      summary: 'the run ended before the agent read them; they go to the next run',
+      body: '```\n' + lines.join('\n') + '\n```',
+    });
+    // A check told about these once already, and won't again.
+    this.holdEvents(task, lines, { trigger: triggerOf(task), checked: !!scheduleOf(task) });
   }
 
   /**
@@ -356,19 +477,12 @@ export class Scheduler extends EventEmitter {
   private startManual(
     taskId: string,
     skips?: RunSkips,
-    continuation?: { fromRunId: string; sessionId: string; prompt: string },
+    continuation?: { fromRunId: string; sessionId: string; prompt: string; relatedId?: string },
   ): boolean {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
-    // A manual run lifts a pause — parked, or still pending behind runs in flight.
-    if (rt.state === 'paused' || rt.state === 'disabled' || rt.state === 'completed' || rt.pausedReason) {
-      rt.pausedReason = null;
-      rt.consecutiveErrors = 0;
-      if (!ACTIVE.has(rt.state)) rt.state = 'idle';
-      // The lifted pause revives the trigger too: a watcher task starts watching again.
-      this.syncWatcher(task);
-    }
+    this.liftPause(task, rt);
     if (rt.runs.length >= task.maxConcurrentRuns) {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
         summary: `manual run ignored: ${this.atCapReason(rt, task)}`,
@@ -384,6 +498,17 @@ export class Scheduler extends EventEmitter {
     }
     void this.runCycle(task, 'manual', undefined, undefined, skips, continuation);
     return true;
+  }
+
+  /** A manual run lifts a pause — parked, or still pending behind runs in flight. */
+  private liftPause(task: Task, rt: TaskRuntime): void {
+    if (rt.state === 'paused' || rt.state === 'disabled' || rt.state === 'completed' || rt.pausedReason) {
+      rt.pausedReason = null;
+      rt.consecutiveErrors = 0;
+      if (!ACTIVE.has(rt.state)) rt.state = 'idle';
+      // The lifted pause revives the trigger too: a watcher task starts watching again.
+      this.syncWatcher(task);
+    }
   }
 
   /**
@@ -901,6 +1026,14 @@ export class Scheduler extends EventEmitter {
           }
           this.deferLogged.delete(task.id);
           void this.runCycle(task, 'timer');
+        } else if (
+          ACTIVE.has(rt.state) &&
+          task.trigger.sendRelatedEvents &&
+          task.check?.enabled &&
+          !rt.runs.some((r) => r.state === 'checking')
+        ) {
+          // Only the check knows whether this slot's event belongs to a run in flight.
+          void this.runCycle(task, 'timer', undefined, undefined, undefined, undefined, { overCap: true });
         } else if (ACTIVE.has(rt.state)) {
           this.record(task.id, rt.currentRunId ?? '-', 'skip', 'skipped', {
             summary: `scheduled run skipped: ${this.atCapReason(rt, task)}`,
@@ -958,17 +1091,37 @@ export class Scheduler extends EventEmitter {
     if (!task || !rt || !task.enabled || task.completedAt || rt.pausedReason) return;
     rt.lastEventAt = this.now();
     this.emitRuntime(rt);
-    const pending = this.pendingEvents.get(taskId) ?? [];
-    pending.push(...lines);
-    if (pending.length > MAX_PENDING_EVENTS) pending.splice(0, pending.length - MAX_PENDING_EVENTS);
-    this.pendingEvents.set(taskId, pending);
+    this.holdEvents(task, lines, { trigger: 'watcher' });
     this.flushEvents(task);
   }
 
   /**
-   * Turn what the watcher collected into one run. At the concurrency cap the
-   * batch stays pending and keeps growing until a slot frees up (retried every
-   * tick): watcher events coalesce into the next run, they never queue runs.
+   * Keep event lines until `flushEvents` can place them: all in one batch, or
+   * with sendRelatedEvents one batch per related id (`relatedId`, or each line's own).
+   */
+  private holdEvents(task: Task, lines: readonly string[], from: Pick<PendingEvents, 'relatedId' | 'trigger' | 'checked'>): void {
+    if (!this.d.tasks.get(task.id)) return;
+    const groups = this.pendingEvents.get(task.id) ?? [];
+    for (const line of lines) {
+      const relatedId = task.trigger.sendRelatedEvents ? (from.relatedId ?? relatedIdOfLine(line)) : undefined;
+      let group = groups.find((g) => g.relatedId === relatedId);
+      if (!group) {
+        group = { relatedId, trigger: from.trigger, lines: [] };
+        groups.push(group);
+      }
+      if (from.checked) group.checked = true;
+      group.lines.push(line);
+      if (group.lines.length > MAX_PENDING_EVENTS) group.lines.splice(0, group.lines.length - MAX_PENDING_EVENTS);
+    }
+    this.pendingEvents.set(task.id, groups);
+  }
+
+  /**
+   * Place what's waiting. A batch related to a run in flight goes to its agent
+   * as soon as it can take it; any other batch becomes one run. At the
+   * concurrency cap a batch stays pending and keeps growing until a slot frees
+   * up (retried every tick): events coalesce into the next run, they never
+   * queue runs.
    */
   private flushEvents(task: Task): void {
     const rt = this.runtimes.get(task.id);
@@ -978,19 +1131,29 @@ export class Scheduler extends EventEmitter {
       this.pendingEvents.delete(task.id);
       return;
     }
-    const block = this.watcherBlock(task, rt);
-    if (block) {
-      if (!this.deferLogged.has(task.id)) {
-        this.deferLogged.add(task.id);
-        this.d.log.info(`[${task.id}] watcher run deferred: ${block}`);
+    const placed = (group: PendingEvents) => pending.splice(pending.indexOf(group), 1);
+    for (const group of [...pending]) {
+      const relatedId = task.trigger.sendRelatedEvents ? group.relatedId : undefined;
+      const owner = relatedId !== undefined ? rt.runs.find((r) => r.relatedId === relatedId) : undefined;
+      if (owner) {
+        if (this.sendEvents(task, owner, group.lines)) placed(group);
+        continue;
       }
-      return;
+      const block = this.watcherBlock(task, rt);
+      if (block) {
+        if (!this.deferLogged.has(task.id)) {
+          this.deferLogged.add(task.id);
+          this.d.log.info(`[${task.id}] watcher run deferred: ${block}`);
+        }
+        continue;
+      }
+      this.deferLogged.delete(task.id);
+      placed(group);
+      // Whatever happened while nothing was watching rides along in this run.
+      this.catchUpOwed.delete(task.id);
+      void this.runCycle(task, group.trigger, group.lines, undefined, undefined, undefined, { relatedId, checked: group.checked });
     }
-    this.deferLogged.delete(task.id);
-    this.pendingEvents.delete(task.id);
-    // Whatever happened while nothing was watching rides along in this run.
-    this.catchUpOwed.delete(task.id);
-    void this.runCycle(task, 'watcher', pending);
+    if (!pending.length) this.pendingEvents.delete(task.id);
   }
 
   /** Why a watcher run may not start right now (run window, caps), or null. */
@@ -1014,7 +1177,7 @@ export class Scheduler extends EventEmitter {
       this.catchUpOwed.delete(task.id);
       return;
     }
-    if (this.pendingEvents.get(task.id)?.length) return; // the events run will settle it
+    if (this.pendingEvents.has(task.id)) return; // the events run will settle it
     if (this.watcherBlock(task, rt)) return;
     this.catchUpOwed.delete(task.id);
     void this.runCycle(task, 'watcher', undefined, 'catch-up: watching started');
@@ -1047,14 +1210,16 @@ export class Scheduler extends EventEmitter {
     /** Steps the Run Options window switched off; manual runs only. */
     skips?: RunSkips,
     /** Continuation of a finished run: resume its conversation with this prompt; check/classifier never run. */
-    continuation?: { fromRunId: string; sessionId: string; prompt: string },
+    continuation?: { fromRunId: string; sessionId: string; prompt: string; relatedId?: string },
+    related: CycleEvents = {},
   ): Promise<void> {
     const rt = this.runtimes.get(task.id);
-    if (!rt || rt.runs.length >= task.maxConcurrentRuns) return;
+    if (!rt || (rt.runs.length >= task.maxConcurrentRuns && !related.overCap)) return;
     // Any new cycle takes the place of a pending retry; only the retry's own
-    // slot (a timer run) starts where the failed run stopped.
-    const pendingRetry = this.machineRetries.get(task.id);
-    this.machineRetries.delete(task.id);
+    // slot (a timer run) starts where the failed run stopped. A slot past the
+    // cap is no such cycle, as it starts no agent.
+    const pendingRetry = related.overCap ? undefined : this.machineRetries.get(task.id);
+    if (!related.overCap) this.machineRetries.delete(task.id);
     const retry = trigger === 'timer' ? pendingRetry : undefined;
     const runId = newRunId(new Date(this.now()));
     let runDir: string;
@@ -1064,12 +1229,14 @@ export class Scheduler extends EventEmitter {
       this.d.log.error(`[${task.id}] cannot create run dir: ${errMsg(e)}`);
       rt.consecutiveErrors += 1;
       rt.nextRunAt = this.computeNext(task, this.now());
+      if (events?.length) this.holdEvents(task, events, { relatedId: related.relatedId, trigger, checked: related.checked });
       return;
     }
 
     // The task as it stood when the cycle started; what completes during it is the news.
     const wasCompleted = !!task.completedAt;
-    rt.runs.push({ runId, state: 'checking', held: false, question: null, startedAt: this.now(), trigger });
+    const relatedId = related.relatedId ?? continuation?.relatedId ?? retry?.check?.relatedId;
+    rt.runs.push({ runId, state: 'checking', held: false, question: null, startedAt: this.now(), trigger, relatedId });
     rt.lastRunAt = this.now();
     // Advanced once, here: finishCycle only recomputes it when the task goes idle.
     rt.nextRunAt = task.enabled ? this.computeNext(task, this.now()) : null;
@@ -1086,7 +1253,7 @@ export class Scheduler extends EventEmitter {
       } catch (e) {
         this.d.log.error(`[${task.id}] cannot write the trigger events: ${errMsg(e)}`);
       }
-      this.record(task.id, runId, 'watcher', 'act', {
+      this.record(task.id, runId, trigger === 'watcher' ? 'watcher' : 'system', 'act', {
         summary: `${events.length} event(s)`,
         body: '```\n' + events.join('\n') + '\n```',
       });
@@ -1106,10 +1273,11 @@ export class Scheduler extends EventEmitter {
     // the task has configured. A continuation run goes straight to the agent:
     // its gates already passed when the run it continues started. A retry
     // skips the steps that passed in the run it retries.
-    const willCheck = !continuation && !!task.check?.enabled && !skips?.check && !retry?.check;
+    const checkedEvents = related.checked && events ? checkOutputOf(events) : undefined;
+    const willCheck = !continuation && !!task.check?.enabled && !skips?.check && !retry?.check && !checkedEvents;
     const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier && !retry?.classified;
     /** The steps that passed, kept for a retry should the machine fail this run. */
-    let passedCheck = retry?.check;
+    let passedCheck = retry?.check ?? (checkedEvents && { ...checkedEvents, relatedId });
     let passedClassify = !!retry?.classified;
     // Only steps the task actually has are worth naming; the rest of the run
     // log would otherwise report a skip of something that never ran anyway.
@@ -1125,7 +1293,7 @@ export class Scheduler extends EventEmitter {
 
     // Without a gate step the run goes straight to the agent: one toast, not two.
     const gated = willCheck || willClassify;
-    if (task.notifications.runStart && (gated || !task.notifications.agentStart)) {
+    if (task.notifications.runStart && !related.overCap && (gated || !task.notifications.agentStart)) {
       this.notify(task, runId, 'run-start', 'Run started');
     }
 
@@ -1149,6 +1317,8 @@ export class Scheduler extends EventEmitter {
     let agentEnd: AgentEnd | undefined;
     /** Guidance the agent never got, to continue its conversation with once the cycle is over. */
     let guidanceLeft: string | null = null;
+    /** The related id a continuation of this run goes on handling. */
+    let relatedIdLeft: string | undefined;
     try {
       const ctx: RunContext = {
         task,
@@ -1175,10 +1345,10 @@ export class Scheduler extends EventEmitter {
       // No check step configured (or disabled): every slot goes straight to classifier/agent.
       let go = true;
       let checkSummary: string | undefined = continuation ? `continuing run ${continuation.fromRunId}` : undefined;
-      if (retry?.check) {
-        ctx.vars.summary = retry.check.summary ?? '';
-        ctx.vars.context = retry.check.context;
-        checkSummary = retry.check.summary;
+      if (passedCheck) {
+        ctx.vars.summary = passedCheck.summary ?? '';
+        ctx.vars.context = passedCheck.context;
+        checkSummary = passedCheck.summary;
       }
       if (willCheck) {
         const check = await this.steps.runCheck(ctx);
@@ -1214,6 +1384,26 @@ export class Scheduler extends EventEmitter {
             ctx.vars.context = check.context;
             checkSummary = check.summary;
             passedCheck = { summary: check.summary, context: check.context };
+            if (task.trigger.sendRelatedEvents) {
+              const run = rt.runs.find((r) => r.runId === runId)!;
+              const checkId = run.relatedId ? undefined : check.relatedId;
+              const others = rt.runs.filter((r) => r.runId !== runId);
+              const owner = checkId !== undefined ? others.find((r) => r.relatedId === checkId) : undefined;
+              if (owner || others.length >= task.maxConcurrentRuns) {
+                this.holdEvents(task, [checkEventLine(checkId, check.summary, check.context), ...(events ?? [])], {
+                  relatedId: checkId,
+                  trigger: triggerOf(task),
+                  checked: true,
+                });
+                go = false;
+                detail = owner ? `goes to run ${owner.runId}` : 'waits for a free run';
+                this.record(task.id, runId, 'result', 'noop', { summary: detail, body: `# Agent not started\n\nThe check's event ${detail}.` });
+              } else if (checkId !== undefined) {
+                run.relatedId = checkId;
+                passedCheck.relatedId = checkId;
+                this.emitRuntime(rt);
+              }
+            }
           }
         }
       }
@@ -1342,6 +1532,8 @@ export class Scheduler extends EventEmitter {
       this.agents.delete(runId);
       this.cycleStops.delete(runId);
       guidanceLeft = this.settleGuidance(task.id, runId, runDir, agentEnd);
+      this.settleEvents(task, runId, runDir);
+      relatedIdLeft = rt.runs.find((r) => r.runId === runId)?.relatedId;
       // Cut short by the system suspending, or a step that provably spanned a
       // sleep: either way the machine went down mid-run and the task is owed
       // a fresh run once it is back up.
@@ -1361,7 +1553,7 @@ export class Scheduler extends EventEmitter {
     }
     if (guidanceLeft !== null && !this.stopping) {
       try {
-        this.continueRun(task.id, runId, guidanceLeft);
+        this.continueRun(task.id, runId, guidanceLeft, relatedIdLeft);
       } catch (e) {
         this.record(task.id, runId, 'guidance', 'error', { summary: `cannot continue the conversation: ${errMsg(e)}` });
       }

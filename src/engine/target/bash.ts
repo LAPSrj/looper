@@ -3,7 +3,7 @@ import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec
 import { guideHookJson, STOP_GUIDANCE_JSON, SUBAGENT_START_JSON, type GuideHookFormat, type StopHookSpec } from './stop-hook';
 import { HANDBACK_TOOL } from '../../shared/messages';
 import { translatePath, translateToHost } from './paths';
-import { GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
+import { EVENTS_FILE, GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
 import { detectedDefaultWslDistro, wslDistroName } from '../host';
 import { DEFAULT_SHELL } from '../../shared/environments';
 
@@ -165,6 +165,7 @@ export class BashTarget implements Target {
       `if [ -e ${q(spec.doneFile)} ]; then printf '%s' "$payload" > ${q(spec.stopJson)}; exit 0; fi`,
       // Guidance that arrived after the agent's last tool call: the turn goes on with it.
       ...(spec.guidanceFile ? this.takeGuidance(q(spec.guidanceFile), STOP_GUIDANCE_JSON) : []),
+      ...(spec.eventsFile ? this.takeGuidance(q(spec.eventsFile), STOP_GUIDANCE_JSON) : []),
       ...(spec.noticeFile ? this.takeGuidance(q(spec.noticeFile), STOP_GUIDANCE_JSON) : []),
       '# Emit the background_tasks array up to its real closing ], tracking',
       '# string/escape state and bracket depth, with whitespace outside strings',
@@ -273,7 +274,7 @@ export class BashTarget implements Target {
 
   readonly guideHookFile = 'looper-guide-hook';
 
-  renderGuideHook(format: GuideHookFormat, files?: { guidance: string; notice: string }): string {
+  renderGuideHook(format: GuideHookFormat, files?: { guidance: string; events: string; notice: string }): string {
     const json = guideHookJson(format);
     return [
       '#!/usr/bin/env bash',
@@ -282,6 +283,7 @@ export class BashTarget implements Target {
       // A subagent's tool call: the guidance is for the session's own agent.
       `case "\${payload%%'"tool_input"'*}" in ${SUBAGENT_PATTERN}) exit 0 ;; esac`,
       ...this.takeGuidance(files ? this.quote(files.guidance) : `"$LOOPER_RUN_DIR/${GUIDANCE_FILE}"`, json),
+      ...this.takeGuidance(files ? this.quote(files.events) : `"$LOOPER_RUN_DIR/${EVENTS_FILE}"`, json),
       ...this.takeGuidance(files ? this.quote(files.notice) : `"$LOOPER_RUN_DIR/${NOTICE_FILE}"`, json),
       'exit 0',
       '',

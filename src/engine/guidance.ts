@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { guidanceMessage, guidanceText } from '../shared/messages';
+import { eventsMessage, eventsText, guidanceMessage, guidanceText } from '../shared/messages';
+import { relatedIdIn } from '../shared/types';
 
 /**
  * Guidance for a running agent waits in the run dir until something hands it
@@ -30,10 +31,10 @@ function readGuidanceFile(file: string): string | null {
   }
 }
 
-/** Rename the waiting guidance to `dest`; false when there was none (or a hook took it first). */
-function claim(runDir: string, dest: string): boolean {
+/** Rename the waiting file to `dest`; false when there was none (or a hook took it first). */
+function claim(runDir: string, file: string, dest: string): boolean {
   try {
-    fs.renameSync(path.join(runDir, GUIDANCE_FILE), dest);
+    fs.renameSync(path.join(runDir, file), dest);
     return true;
   } catch {
     return false;
@@ -48,7 +49,7 @@ export function readPendingGuidance(runDir: string): string | null {
 /** Take the waiting guidance for delivery; null when there is none. */
 export function takePendingGuidance(runDir: string): string | null {
   const dest = path.join(runDir, `guidance-${Date.now()}.json`);
-  return claim(runDir, dest) ? readGuidanceFile(dest) : null;
+  return claim(runDir, GUIDANCE_FILE, dest) ? readGuidanceFile(dest) : null;
 }
 
 /**
@@ -79,11 +80,54 @@ export function takeNotice(runDir: string): string | null {
   }
 }
 
+/**
+ * Related trigger events wait in their own file, handed over the same way as
+ * guidance, after it. Whatever the agent never got goes back to the scheduler
+ * with `takeEvents`, for the next run.
+ */
+export const EVENTS_FILE = 'events-waiting.json';
+
+/** The related id of a trigger event line; a line that isn't JSON has none. */
+export function relatedIdOfLine(line: string): string | undefined {
+  try {
+    return relatedIdIn(JSON.parse(line));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Take the waiting events (for delivery, or back from a run that ended); null when there are none. */
+export function takeEvents(runDir: string): string[] | null {
+  const dest = path.join(runDir, `events-waiting-${Date.now()}.json`);
+  if (!claim(runDir, EVENTS_FILE, dest)) return null;
+  try {
+    const v: unknown = JSON.parse(fs.readFileSync(dest, 'utf8'));
+    const text = typeof v === 'string' ? eventsText(v) : null;
+    return text ? text.split('\n') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Add events for the agent, after whatever is still waiting, and keep them with the run's events file. */
+export function queueEvents(runDir: string, lines: readonly string[]): void {
+  const earlier = takeEvents(runDir) ?? [];
+  const file = path.join(runDir, EVENTS_FILE);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, asciiJson(eventsMessage([...earlier, ...lines])), 'utf8');
+  fs.renameSync(tmp, file);
+  try {
+    fs.appendFileSync(path.join(runDir, 'events.jsonl'), lines.join('\n') + '\n', 'utf8');
+  } catch {
+    /* only a copy: the agent gets the events from the file above */
+  }
+}
+
 /** Add guidance for the agent, after whatever is still waiting from earlier. */
 export function queueGuidance(runDir: string, text: string): void {
   const merging = path.join(runDir, `guidance-merging-${process.pid}.json`);
   let combined = text;
-  if (claim(runDir, merging)) {
+  if (claim(runDir, GUIDANCE_FILE, merging)) {
     const earlier = readGuidanceFile(merging);
     if (earlier) combined = earlier + '\n\n' + text;
     fs.rmSync(merging, { force: true });

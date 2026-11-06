@@ -12,7 +12,7 @@ import {
 } from '../src/engine/messages';
 import { Logger } from '../src/engine/log';
 import { endAgentSession } from '../src/engine/steps/agent';
-import { guidanceMessage, toolImageKey } from '../src/shared/messages';
+import { eventsMessage, guidanceMessage, toolImageKey } from '../src/shared/messages';
 import { SettingsSchema } from '../src/shared/types';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
@@ -87,6 +87,15 @@ describe('TranscriptAccumulator', () => {
       ['guidance', 'and stop after'],
       ['guidance', 'one more\nthing'],
     ]);
+  });
+
+  it('shows related trigger events in rows of their own, however they reached the agent', () => {
+    const acc = new TranscriptAccumulator();
+    const msg = eventsMessage(['{"looper_related_id":"t1"}', '{"looper_related_id":"t1","n":2}']);
+    acc.addLine(rec({ type: 'attachment', isSidechain: false, attachment: { type: 'hook_additional_context', content: [msg], hookName: 'PostToolUse', hookEvent: 'PostToolUse' } }));
+    acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n${msg}` } }));
+    acc.addLine(userPrompt(msg));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual(Array(3).fill(['events', '{"looper_related_id":"t1"}\n{"looper_related_id":"t1","n":2}']));
   });
 
   it("shows a slash command or skill as the user's /name and arguments, without the skill's content", () => {

@@ -64,8 +64,8 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
   const result: RunGroup[] = [];
   for (const [runId, recs] of map) {
     const sorted = [...recs].sort((a, b) => a.ts.localeCompare(b.ts));
-    // Guidance and question records say nothing about how the run went; guidance may even land after its result.
-    const steps = sorted.filter((r) => r.phase !== 'guidance' && r.phase !== 'question');
+    // Guidance, events and question records say nothing about how the run went; guidance may even land after its result.
+    const steps = sorted.filter((r) => r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question');
     const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
     result.push({
       runId,

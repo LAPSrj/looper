@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { CheckOutput } from '../../shared/types';
+import { relatedIdIn, type CheckOutput } from '../../shared/types';
 import { classifyFailure, looksLikeEnvironmentError, sleptThrough } from '../network';
 import { tail, writeText } from '../store/fsutil';
 import { runCaptured, writeLauncher, type RunContext } from './common';
@@ -8,6 +8,7 @@ export interface CheckResult {
   status: 'act' | 'noop' | 'error';
   summary?: string;
   context?: unknown;
+  relatedId?: string;
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
@@ -41,6 +42,8 @@ export function parseCheckOutput(stdout: string): ParsedCheck {
   const value: CheckOutput = { act: rec.act };
   if (rec.summary !== undefined) value.summary = String(rec.summary);
   if (rec.context !== undefined) value.context = rec.context;
+  const relatedId = relatedIdIn(rec);
+  if (relatedId !== undefined) value.relatedId = relatedId;
   return { ok: true, value };
 }
 
@@ -87,6 +90,7 @@ export async function runCheck(ctx: RunContext): Promise<CheckResult> {
     status: parsed.value.act ? 'act' : 'noop',
     summary: parsed.value.summary,
     context: parsed.value.context,
+    relatedId: parsed.value.relatedId,
     ...base,
   };
 }

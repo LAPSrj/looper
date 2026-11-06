@@ -21,6 +21,7 @@ const STEP_NAMES: Record<string, string> = {
   classify: 'Classifier',
   agent: 'Agent',
   guidance: 'Guidance',
+  events: 'Events',
 };
 
 const STEP_OUTCOMES: Record<string, string> = {

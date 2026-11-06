@@ -31,6 +31,11 @@ describe('parseCheckOutput', () => {
     const r = parseCheckOutput('noise\nmore noise\n{"act": true, "summary": "3 items", "context": {"ids":[1]}}\n');
     expect(r).toEqual({ ok: true, value: { act: true, summary: '3 items', context: { ids: [1] } } });
   });
+  it('reads the related id, a string or a number', () => {
+    expect(parseCheckOutput('{"act": true, "looper_related_id": "t1"}')).toEqual({ ok: true, value: { act: true, relatedId: 't1' } });
+    expect(parseCheckOutput('{"act": true, "looper_related_id": 42}')).toEqual({ ok: true, value: { act: true, relatedId: '42' } });
+    expect(parseCheckOutput('{"act": true, "looper_related_id": ""}')).toEqual({ ok: true, value: { act: true } });
+  });
   it('rejects missing act', () => {
     expect(parseCheckOutput('{"summary": "x"}').ok).toBe(false);
   });

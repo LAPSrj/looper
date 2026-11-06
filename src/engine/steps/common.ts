@@ -197,7 +197,7 @@ export function buildPrompt(tpl: string, vars: Record<string, unknown>): string 
   let text = renderTemplate(tpl, vars);
   if (hasPlaceholder(tpl, 'events', 'summary', 'context')) return text;
   if (typeof vars.events === 'string' && vars.events) {
-    text += "\n\n## Trigger events\nThis run was triggered by the task's watcher. One event per line:\n\n" + vars.events + '\n';
+    text += "\n\n## Trigger events\nThese events triggered this run. One event per line:\n\n" + vars.events + '\n';
   }
   if (vars.summary || vars.context !== undefined) {
     text += '\n\n## Check output\n';

@@ -263,12 +263,12 @@ describe('validateTask with environments', () => {
   });
 
   it('accepts a known schedule timezone and rejects an unknown one', () => {
-    const tz = (timezone: string) => task({ trigger: { mode: 'schedule', schedule: { cron: '0 9 * * *', timezone } } });
+    const tz = (timezone: string) => task({ trigger: { mode: 'schedule', sendRelatedEvents: false, schedule: { cron: '0 9 * * *', timezone } } });
     expect(validateTask(tz('Asia/Tokyo'), environments).ok).toBe(true);
     expect(validateTask(tz('America/Rio_de_Janeiro'), environments).ok).toBe(true);
     // The watcher's window fields get the same treatment.
     const watcher = (extra: object) =>
-      task({ trigger: { mode: 'watcher', watcher: { command: 'x', debounceSec: 5, runOnStart: false, ...extra } } });
+      task({ trigger: { mode: 'watcher', sendRelatedEvents: false, watcher: { command: 'x', debounceSec: 5, runOnStart: false, ...extra } } });
     expect(validateTask(watcher({ timezone: 'Asia/Tokyo' }), environments).ok).toBe(true);
     expect(validateTask(watcher({ timezone: 'Not/AZone' }), environments).ok).toBe(false);
     expect(validateTask(watcher({ activeHours: { from: 7, to: 22 } }), environments).ok).toBe(true);

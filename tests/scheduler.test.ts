@@ -9,7 +9,7 @@ import { StateStore } from '../src/engine/store/state';
 import { TaskStore } from '../src/engine/store/tasks';
 import { SettingsSchema, type ActiveRun, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
 import type { AgentEnd, AgentHandle } from '../src/engine/steps/agent';
-import { readPendingGuidance, takePendingGuidance } from '../src/engine/guidance';
+import { readPendingGuidance, takeEvents, takePendingGuidance } from '../src/engine/guidance';
 import type { CheckResult } from '../src/engine/steps/check';
 import type { ClassifyResult } from '../src/engine/steps/classify';
 
@@ -1816,6 +1816,337 @@ describe('interrupted runs', () => {
     expect(sched.get('t1')!.state).toBe('idle');
     await sched.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('related events', () => {
+  const inject = (lines: string[]) =>
+    (h.sched as unknown as { onWatcherEvents(id: string, l: string[]): void }).onWatcherEvents('t1', lines);
+  const line = (id: string, n = 1) => JSON.stringify({ looper_related_id: id, n });
+  const watcherTask = (maxConcurrentRuns = 1, sendRelatedEvents = true) =>
+    h.tasks.patch('t1', { maxConcurrentRuns, trigger: { mode: 'watcher', sendRelatedEvents, watcher: { command: 'sleep 60', debounceSec: 0, runOnStart: false } } });
+  const scheduleTask = () => h.tasks.patch('t1', { trigger: { mode: 'schedule', sendRelatedEvents: true, schedule: { cron: '*/1 * * * *' } } });
+  const runs = () => h.sched.get('t1')!.runs;
+  const dirOf = (runId: string) => h.runs.runDir('t1', runId);
+  const eventRecords = () => records().filter((r) => r.phase === 'events');
+  const agentStarts = () => records().filter((r) => r.phase === 'agent' && r.result === 'started');
+
+  it('off: an id means nothing, and events wait for the next run', async () => {
+    watcherTask(1, false);
+    h.checks.push(check('act'));
+    inject([line('t1')]);
+    await flush();
+    expect(runs()[0].relatedId).toBeUndefined();
+    inject([line('t1', 2)]);
+    await h.tickN(1);
+    expect(takeEvents(dirOf(h.liveAgent!.runId))).toBeNull();
+    expect(eventRecords()).toEqual([]);
+    h.checks.push(check('act'));
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+    expect(agentStarts()[1].body).toContain(line('t1', 2));
+  });
+
+  it('sends an event with the same id to the running agent, without a new run', async () => {
+    watcherTask();
+    h.checks.push(check('act'));
+    inject([line('t1')]);
+    await flush();
+    const live = h.liveAgent!;
+    expect(runs()[0].relatedId).toBe('t1');
+    inject([line('t1', 2)]);
+    expect(h.agentStarted).toBe(1);
+    expect(eventRecords().map((r) => r.result)).toEqual(['sent']);
+    // The hook takes it, as the agent's next tool call would.
+    expect(takeEvents(dirOf(live.runId))).toEqual([line('t1', 2)]);
+    expect(fs.readFileSync(path.join(dirOf(live.runId), 'events.jsonl'), 'utf8')).toBe(`${line('t1')}\n${line('t1', 2)}\n`);
+    live.end(agentEnd('done', 'ok'));
+    await flush();
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(eventRecords().map((r) => r.result)).toEqual(['sent', 'delivered']);
+  });
+
+  it('starts a run for a new id, and past the cap the new id waits for a free slot', async () => {
+    watcherTask(2);
+    h.checks.push(check('act'), check('act'), check('act'));
+    inject([line('a'), line('b'), line('c'), line('c', 2)]);
+    await flush();
+    expect(runs().map((r) => r.relatedId)).toEqual(['a', 'b']);
+    expect(h.agentStarted).toBe(2);
+    const [first] = h.liveAgents;
+    first.end(agentEnd('done'));
+    await flush();
+    await h.tickN(1);
+    expect(runs().map((r) => r.relatedId)).toEqual(['b', 'c']);
+    expect(agentStarts()[2].body).toContain(line('c', 2));
+    for (const live of h.liveAgents.slice(1)) live.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("doesn't group by a payload's own id fields", async () => {
+    watcherTask(3);
+    h.checks.push(check('act'));
+    inject([JSON.stringify({ event_id: 'Ev1', thread_id: 't' }), JSON.stringify({ event_id: 'Ev2', thread_id: 't' })]);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(runs()[0].relatedId).toBeUndefined();
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('events without an id coalesce into one run, as they do with the option off', async () => {
+    watcherTask(3);
+    h.checks.push(check('act'), check('act'));
+    inject(['plain', 'also plain']);
+    await flush();
+    expect(h.agentStarted).toBe(1);
+    expect(runs()[0].relatedId).toBeUndefined();
+    expect(records().filter((r) => r.phase === 'watcher').map((r) => r.summary)).toEqual(['2 event(s)']);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('holds an event until the agent of the run it relates to has started', async () => {
+    watcherTask();
+    h.checks.push(check('act'));
+    inject([line('t1')]);
+    inject([line('t1', 2)]); // the first run is still at its check
+    expect(eventRecords()).toEqual([]);
+    await flush();
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(takeEvents(dirOf(h.liveAgent!.runId))).toEqual([line('t1', 2)]);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('sends what waited to the next run when the run it related to never reached its agent', async () => {
+    watcherTask();
+    h.checks.push(check('noop'));
+    inject([line('t1')]);
+    inject([line('t1', 2)]);
+    await flush();
+    expect(h.agentStarted).toBe(0);
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    expect(agentStarts()[0].body).toContain(line('t1', 2));
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  for (const [how, end] of [
+    ['finishes', () => h.liveAgent!.end(agentEnd('done', 'ok'))],
+    ['fails', () => h.liveAgent!.end(agentEnd('error', 'boom'))],
+    ['is stopped', () => void h.sched.stopTask('t1', 'stopped by user')],
+  ] as const) {
+    it(`sends events the agent never read to the next run when the run ${how}`, async () => {
+      watcherTask();
+      h.checks.push(check('act'));
+      inject([line('t1')]);
+      await flush();
+      const first = h.liveAgent!;
+      inject([line('t1', 2)]);
+      h.checks.push(check('act'));
+      end();
+      await flush();
+      expect(takeEvents(dirOf(first.runId))).toBeNull();
+      expect(eventRecords().map((r) => r.result)).toEqual(['sent', 'undelivered']);
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(2);
+      expect(runs()[0].relatedId).toBe('t1');
+      expect(agentStarts()[1].body).toContain(line('t1', 2));
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+  }
+
+  it('sends the next event to the continuation of a run that goes on with guidance', async () => {
+    watcherTask();
+    h.checks.push(check('act'));
+    inject([line('t1')]);
+    await flush();
+    const first = h.liveAgent!;
+    fs.writeFileSync(path.join(dirOf(first.runId), 'session.json'), JSON.stringify({ session_id: 'sess-e' }));
+    h.sched.sendGuidance('t1', first.runId, 'also this');
+    first.end(agentEnd('done', 'ok'));
+    await flush();
+    expect(h.agentStarted).toBe(2);
+    expect(runs()[0].relatedId).toBe('t1');
+    inject([line('t1', 2)]);
+    expect(takeEvents(dirOf(h.liveAgent!.runId))).toEqual([line('t1', 2)]);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('waits for a free run on a harness that takes no messages, and misses nothing', async () => {
+    h.settings.environments[0].harnesses[0] = { id: 'plain', name: 'Plain', kind: 'custom', command: 'x', args: [], env: {} };
+    watcherTask();
+    h.checks.push(check('act'));
+    inject([line('t1')]);
+    await flush();
+    inject([line('t1', 2)]);
+    await h.tickN(1);
+    expect(eventRecords()).toEqual([]);
+    h.checks.push(check('act'));
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(2);
+    expect(agentStarts()[1].body).toContain(line('t1', 2));
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  describe('on a schedule', () => {
+    const nextSlot = () => {
+      h.clock.now += 60_000;
+    };
+    const act = (relatedId: string | undefined, summary: string) => check('act', { relatedId, summary, context: { summary } });
+
+    async function runningOn(relatedId: string): Promise<LiveAgent> {
+      scheduleTask();
+      h.checks.push(act(relatedId, 'first'));
+      nextSlot();
+      await h.tickN(1);
+      expect(runs().map((r) => r.relatedId)).toEqual([relatedId]);
+      return h.liveAgent!;
+    }
+
+    it("runs the check past the cap and sends its event to the run with that id", async () => {
+      const live = await runningOn('t1');
+      h.checks.push(act('t1', 'second'));
+      nextSlot();
+      await h.tickN(2);
+      expect(h.agentStarted).toBe(1);
+      expect(runs()).toHaveLength(1);
+      expect(records().find((r) => r.phase === 'result')!.summary).toBe(`goes to run ${live.runId}`);
+      expect(eventRecords().map((r) => r.result)).toEqual(['sent']);
+      const [sent] = takeEvents(dirOf(live.runId))!;
+      expect(JSON.parse(sent)).toEqual({ looper_related_id: 't1', summary: 'second', context: { summary: 'second' } });
+      live.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('keeps the event of a new id for the next run, which trusts the check that found it', async () => {
+      h.tasks.patch('t1', { notifications: { ...h.tasks.get('t1')!.notifications, runStart: true } });
+      const live = await runningOn('t1');
+      h.checks.push(act('t2', 'other thread'));
+      nextSlot();
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(1);
+      expect(records().some((r) => r.phase === 'result' && r.summary === 'waits for a free run')).toBe(true);
+      expect(notifies().filter((n) => n.kind === 'run-start')).toHaveLength(1);
+      live.end(agentEnd('done'));
+      await flush();
+      const checks = records().filter((r) => r.phase === 'check').length;
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(2);
+      expect(runs()[0].relatedId).toBe('t2');
+      expect(runs()[0].trigger).toBe('timer');
+      expect(records().filter((r) => r.phase === 'check')).toHaveLength(checks);
+      const started = agentStarts()[1];
+      expect(started.summary).toBe('other thread');
+      expect(started.body).toContain('Summary: other thread');
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('keeps an event without an id for the next run instead of skipping the slot', async () => {
+      const live = await runningOn('t1');
+      h.checks.push(act(undefined, 'no id'));
+      nextSlot();
+      await h.tickN(1);
+      expect(records().some((r) => r.result === 'skipped')).toBe(false);
+      live.end(agentEnd('done'));
+      await flush();
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(2);
+      expect(agentStarts()[1].summary).toBe('no id');
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('ends a slot past the cap quietly when the check finds nothing', async () => {
+      const live = await runningOn('t1');
+      h.checks.push(check('noop'));
+      nextSlot();
+      await h.tickN(2);
+      expect(h.agentStarted).toBe(1);
+      expect(runs()).toHaveLength(1);
+      expect(takeEvents(dirOf(live.runId))).toBeNull();
+      live.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('sends what the agent never read to the next run without checking again', async () => {
+      const live = await runningOn('t1');
+      h.checks.push(act('t1', 'second'));
+      nextSlot();
+      await h.tickN(2);
+      live.end(agentEnd('done'));
+      await flush();
+      const checks = records().filter((r) => r.phase === 'check').length;
+      await h.tickN(1);
+      expect(records().filter((r) => r.phase === 'check')).toHaveLength(checks);
+      expect(agentStarts()[1].summary).toBe('second');
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('skips the slot as before with the option off', async () => {
+      h.tasks.patch('t1', { trigger: { mode: 'schedule', sendRelatedEvents: false, schedule: { cron: '*/1 * * * *' } } });
+      h.checks.push(check('act', { relatedId: 't1' }));
+      nextSlot();
+      await h.tickN(1);
+      nextSlot();
+      await h.tickN(1);
+      expect(records().at(-1)).toMatchObject({ phase: 'skip', result: 'skipped' });
+      expect(runs()[0].relatedId).toBeUndefined();
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+  });
+
+  describe('from the run command', () => {
+    const manualTask = (maxConcurrentRuns = 1) => h.tasks.patch('t1', { maxConcurrentRuns, trigger: { mode: 'manual', sendRelatedEvents: true } });
+
+    it('starts a run, sends the next one with the id to its agent, and a new id waits for a slot', async () => {
+      manualTask();
+      h.checks.push(check('act'));
+      h.sched.receiveEvent('t1', line('t1'));
+      await flush();
+      const live = h.liveAgent!;
+      expect(runs()[0]).toMatchObject({ relatedId: 't1', trigger: 'manual' });
+      h.sched.receiveEvent('t1', line('t1', 2));
+      expect(takeEvents(dirOf(live.runId))).toEqual([line('t1', 2)]);
+      h.sched.receiveEvent('t1', line('t2'));
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(1);
+      h.checks.push(check('act'));
+      live.end(agentEnd('done'));
+      await flush();
+      await h.tickN(1);
+      expect(runs()[0].relatedId).toBe('t2');
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('lifts a pause like a manual run, and refuses on a disabled task', async () => {
+      manualTask();
+      h.sched.pause('t1');
+      h.checks.push(check('noop'));
+      h.sched.receiveEvent('t1', line('t1'));
+      await flush();
+      expect(h.sched.get('t1')!.pausedReason).toBeNull();
+      expect(records().some((r) => r.phase === 'check')).toBe(true);
+      h.tasks.patch('t1', { enabled: false });
+      expect(() => h.sched.receiveEvent('t1', line('t1'))).toThrow(/disabled/);
+      expect(() => h.sched.receiveEvent('nope', line('t1'))).toThrow(/unknown task/);
+    });
   });
 });
 

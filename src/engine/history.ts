@@ -823,7 +823,7 @@ export class HistoryService {
     const listed = ids.filter((id) => this.entries.has(id));
     const hits = await mapLimit(listed, 4, async (id) => {
       const rows = await this.compactable(id).catch(() => [] as MessageRow[]);
-      return rows.some((r) => (r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent') && r.text.toLowerCase().includes(q));
+      return rows.some((r) => (r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'events' || r.kind === 'agent') && r.text.toLowerCase().includes(q));
     });
     return listed.filter((_id, i) => hits[i]);
   }

@@ -9,12 +9,6 @@ export interface Filed {
 /** Sibling order per container ('' = the top level): `folder:<id>` entries mixed with item ids. */
 export type FolderLayout = Record<string, string[]>;
 
-/**
- * Sibling order per container ('' = top level): `folder:<id>` entries mixed
- * with item ids, in the layout's order, self-healed: members the layout
- * doesn't know append, and ones that don't exist or sit elsewhere drop. An
- * item filed in a deleted or unknown folder lists at the top level.
- */
 export function moveKey(keys: readonly string[], from: number, to: number): string[] {
   const next = [...keys];
   next.splice(to, 0, ...next.splice(from, 1));
@@ -29,6 +23,12 @@ export function withSiblingsOrdered(order: Map<string, string[]>, container: str
   return { ...Object.fromEntries(order), [container]: all.map((k) => (moving.has(k) ? next.shift()! : k)) };
 }
 
+/**
+ * Sibling order per container ('' = top level): `folder:<id>` entries mixed
+ * with item ids, in the layout's order, self-healed: members the layout
+ * doesn't know append, and ones that don't exist or sit elsewhere drop. An
+ * item filed in a deleted or unknown folder lists at the top level.
+ */
 export function siblingOrder(items: Filed[], folders: TaskFolder[], layout: FolderLayout, parents: Map<string, string> = folderParents(folders)): Map<string, string[]> {
   const containerOf = (t: Filed) => (t.folderId && parents.has(t.folderId) ? t.folderId : '');
   const out = new Map<string, string[]>();

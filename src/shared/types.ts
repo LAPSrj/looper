@@ -75,9 +75,26 @@ export const TriggerSchema = z
         at: z.string().min(1),
       })
       .optional(),
+    /**
+     * An event whose `looper_related_id` matches a run in flight goes to that run's agent
+     * instead of starting a run, and one with a new id gets a run of its own.
+     * Watcher lines and the check's output carry the id. Whatever can't reach
+     * the agent waits for the next run.
+     */
+    sendRelatedEvents: z.boolean().default(false),
   })
   .strict();
 export type Trigger = z.infer<typeof TriggerSchema>;
+
+/** The field of a watcher line or a check's output that says which events are related. */
+export const RELATED_ID_FIELD = 'looper_related_id';
+
+/** The related id in a parsed line or check output, as a string; undefined when it has none. */
+export function relatedIdIn(value: unknown): string | undefined {
+  const id = (value as Record<string, unknown> | null | undefined)?.[RELATED_ID_FIELD];
+  if (typeof id === 'number') return String(id);
+  return typeof id === 'string' && id ? id : undefined;
+}
 
 /** The task's cron schedule when the schedule trigger is selected, else null. */
 export function scheduleOf(task: { trigger: Trigger }): { cron: string; timezone?: string } | null {
@@ -861,6 +878,8 @@ export interface ActiveRun {
   question: string | null;
   startedAt: number;
   trigger: 'timer' | 'manual' | 'watcher';
+  /** The related events this run handles (trigger.sendRelatedEvents): later ones with this id go to its agent. */
+  relatedId?: string;
 }
 
 /**
@@ -926,7 +945,8 @@ export interface PreventSleepState {
 
 /**
  * `guidance`: text the user sent the running agent (sent, delivered, or
- * undelivered when it never got there). `question`: the agent asked the user
+ * undelivered when it never got there). `events`: related trigger events sent
+ * to the running agent, the same way. `question`: the agent asked the user
  * something (sent), the user answered (delivered), or nobody answered in
  * time (undelivered). `chat` and `terminal`: a chat or
  * terminal window opened or closed on the run (result the same as the phase,
@@ -938,6 +958,7 @@ export type RunPhase =
   | 'classify'
   | 'agent'
   | 'guidance'
+  | 'events'
   | 'question'
   | 'result'
   | 'skip'
@@ -996,12 +1017,15 @@ export interface CheckOutput {
   act: boolean;
   summary?: string;
   context?: unknown;
+  relatedId?: string;
 }
 
 export interface InboxCommand {
   op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen' | 'guide';
   taskId: string;
   reason?: string;
+  /** run: one trigger event, a line like a watcher's. */
+  event?: string;
   /** guide: the run to send the guidance to; unset = the task's newest run in flight. */
   runId?: string;
   /** guide: the guidance text. */
