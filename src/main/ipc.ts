@@ -7,7 +7,7 @@ import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
 import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
-import { folderSubtree, folderTree } from '../shared/folders';
+import { folderSubtree } from '../shared/folders';
 import { NOT_MOBILE } from '../shared/ui-platform';
 import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey } from '../shared/sessions';
@@ -16,11 +16,10 @@ import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentF
 import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { commandAttachment, commandFrom } from '../shared/bash-mode';
-import { attachmentName, type Attachment, type AttachmentInput, type ChatSettingMenu } from '../shared/chat';
+import { attachmentName, type Attachment, type AttachmentInput, type ChatSettings } from '../shared/chat';
 import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions } from '../shared/history';
-import type { PaneId } from '../shared/panes';
 import type { RunFilter } from '../shared/runs';
-import { TailnetHostnameSchema, type EngineEvent, type Task, type View } from '../shared/types';
+import { TailnetHostnameSchema, type EngineEvent, type Task } from '../shared/types';
 import {
   allWindows,
   caller,
@@ -41,10 +40,10 @@ import {
 } from './platform';
 import { fitWindowHeight } from './platform/fit-window';
 import { withAccessKeys } from './platform/menus';
-import { projectMenuItems, type ProjectCommand } from './project-menu';
-import { taskContextMenuItems, type TaskMenuInfo } from './task-menu';
+import { specTemplate } from './command-menu';
+import type { HostCommand } from '../shared/commands/context';
+import type { MenuItemSpec } from '../shared/remote-access';
 import type { RemoteAccess } from './remote-access';
-import { paneMenuItems, projectsPaneMenuItems, singleMenuItems } from './view-menu';
 
 /** Every context menu built here: each item gets an access key (withAccessKeys) unless its label has one. */
 const Menu = {
@@ -125,8 +124,6 @@ export interface IpcHost {
   /** The History window, opened or brought forward. */
   openHistory: () => void;
   /** That History window shows this conversation now (null: none): its menus act on it. */
-  historySelect: (window: AppWindow | null, id: string | null) => void;
-  historyToggleActivity: (window: AppWindow | null) => void;
   /** A History window's command on a conversation, asking first over `from` when it may still be open elsewhere. Rejects with the reason. */
   historyRun: (from: AppWindow | null, id: string, command: HistoryCommand) => Promise<void>;
   /** A conversation's right-click menu in the History window. */
@@ -149,7 +146,6 @@ export interface IpcHost {
   /** A task, project or chat in a window of its own (a double-click on its row), or that window brought forward. */
   openItemWindow: (kind: 'task' | 'project' | 'chat', id: string) => void;
   /** A chat's Harness, Model, Effort or Permission Mode menu, as the Chat menu has them ('all': the four as submenus). */
-  chatSettingMenu: (chatId: string, which: ChatSettingMenu | 'all') => Electron.MenuItemConstructorOptions[];
   /** A Remote Control conversation: an open one in a Looper terminal window (a chat or terminal it lists in the Chats window), an ended one in its run window. */
   openRemoteConversation: (id: string) => Promise<void>;
   openRemoteHelperEditor: (id: string, isNew: boolean, parent: AppWindow | null) => void;
@@ -171,20 +167,10 @@ export interface IpcHost {
   openLooperFile: (file: string) => Promise<void>;
   /** A Dashboard or Projects window's task, shown on the caller's main window's Tasks tab. */
   showTaskInMain: (taskId: string, view: 'status' | 'runs') => void;
-  /** The selection a main window (`from`) reported, and the tab it shows: its menu bar follows them. */
-  updateTaskMenu: (
-    from: AppWindow | null,
-    hasTask: boolean,
-    taskEnabled?: boolean,
-    taskPaused?: boolean,
-    taskState?: string,
-    hasNote?: boolean,
-    canRunNow?: boolean,
-    taskCompleted?: boolean,
-    allowComplete?: boolean,
-    hasProject?: boolean,
-    tab?: string,
-  ) => void;
+  /** A page's menu bar, as data: the main process draws it. */
+  setCommandMenu: (w: AppWindow | null, items: MenuItemSpec[]) => void;
+  /** Something a command asks for that only the main process can do. */
+  runHostCommand: (w: AppWindow | null, name: HostCommand, args: string[]) => void;
 }
 
 /** Height of an attachment's thumbnail in a chat message. */
@@ -564,8 +550,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!HISTORY_COMMANDS.includes(command as HistoryCommand)) throw new Error(`unknown command ${String(command)}`);
     return host.historyRun(windowOf(e), String(id), command as HistoryCommand);
   });
-  ipc.on('history:select', (e, id: unknown) => host.historySelect(windowOf(e), typeof id === 'string' && id ? id : null));
-  ipc.on('history:toggleActivity', (e) => host.historyToggleActivity(windowOf(e)));
   ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
   ipc.on('history:open', () => host.openHistory());
   ipc.on('context-menu:history-recent', (e, x: unknown, y: unknown) => {
@@ -575,30 +559,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('window:openItem', (_e, kind: unknown, id: unknown) => {
     if ((kind === 'task' || kind === 'project' || kind === 'chat') && typeof id === 'string' && id) host.openItemWindow(kind, id);
   });
-  /** New Chat's or New Terminal's drop-down, under the button that asked: the projects, another folder, and New Project. */
-  ipc.on('context-menu:new-session', (e, kind: string, x: number, y: number) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    const terminal = kind === 'terminal';
-    const open = terminal ? projectTerminal : projectChat;
-    const items: Electron.MenuItemConstructorOptions[] = engine.listProjects().map((p) => ({
-      label: p.name.replace(/&/g, '&&'),
-      click: () => void open(p.id, sender),
-    }));
-    if (items.length > 0) items.push({ type: 'separator' });
-    items.push(
-      { label: 'Other &Folder…', click: () => void host.openInFolder(terminal ? 'terminal' : 'chat', sender).catch((err) => fail(sender, err)) },
-      { label: 'New P&roject…', click: () => host.openProjectEditor() },
-    );
-    popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
-  });
-  /** The message box's Harness, Model, Effort and Permission Mode buttons, or the one button a narrow chat has for them ('all'). */
-  ipc.on('context-menu:chat-setting', (e, chatId: string, which: string, x: number, y: number) => {
-    const sender = windowOf(e);
-    if (!sender || (which !== 'all' && which !== 'harness' && which !== 'model' && which !== 'effort' && which !== 'permission')) return;
-    const items = host.chatSettingMenu(String(chatId), which);
-    if (items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender, x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) });
-  });
+  ipc.handle('chat:configure', (_e, id: string, patch: Partial<ChatSettings>) => engine.configureChat(String(id), patch));
+  ipc.handle('chat:setHarness', (_e, id: string, harnessId: string) => engine.setChatHarness(String(id), String(harnessId)));
+  ipc.handle('sessions:harnessSessionId', (_e, id: string) => engine.harnessSessionId(String(id)) ?? null);
+  ipc.handle('runs:canContinue', (_e, id: string, runId: string) => engine.canContinueRun(String(id), String(runId)));
   ipc.on('sessions:send', (_e, ids: unknown, text: string) => {
     engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''));
   });
@@ -919,51 +883,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('projects:newTask', (_e, id: string) => host.openNewTaskIn(String(id)));
   ipc.handle('projects:newChat', (e, id: string) => projectChat(String(id), windowOf(e)));
   ipc.handle('projects:newTerminal', (e, id: string) => projectTerminal(String(id), windowOf(e)));
-  // A project's menu; with no id, the Projects tab's list header's (Group By, then New Project).
-  ipc.on('context-menu:project', (e, id: string) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    const pid = String(id ?? '');
-    if (!pid || !engine.getProject(pid)) {
-      const update = (patch: Partial<View>) => engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
-      popupMenu(Menu.buildFromTemplate([
-        ...projectsPaneMenuItems(engine.settings.view, update),
-        { type: 'separator' },
-        { label: 'New P&roject…', click: () => host.openProjectEditor() },
-        { label: 'New &Folder…', click: () => host.openProjectFolderName() },
-      ]), { window: sender });
-      return;
-    }
-    // Move to Folder: the top level, each folder (at the end of it), or a new one.
-    const current = engine.getProject(pid)?.folderId;
-    const moveTo = (folderId: string | null) => () => engine.reorderProjects(engine.listProjects().map((p) => p.id), { [pid]: folderId });
-    const tree = folderTree(engine.listProjectFolders());
-    const moveMenu: Electron.MenuItemConstructorOptions = {
-      label: 'Move to F&older',
-      submenu: [
-        { label: '&Top Level', type: 'radio', checked: !current, click: moveTo(null) },
-        ...(tree.length ? [{ type: 'separator' } as const] : []),
-        ...tree.map(({ folder: f, depth }): Electron.MenuItemConstructorOptions => ({
-          label: ' '.repeat(depth * 3) + f.name.replace(/&/g, '&&'),
-          type: 'radio',
-          checked: current === f.id,
-          click: moveTo(f.id),
-        })),
-        { type: 'separator' },
-        { label: '&New Folder…', click: () => host.openProjectFolderName({ moveProject: pid }) },
-      ],
-    };
-    const run: Record<ProjectCommand, () => void> = {
-      'new-task': () => host.openNewTaskIn(pid),
-      'new-chat': () => void projectChat(pid, sender),
-      'new-terminal': () => void projectTerminal(pid, sender),
-      edit: () => host.openProjectEditor(pid),
-      'open-folder': () => void openTargetPath(projectTaskId(pid), engine.getProject(pid)?.cwd ?? '').catch((err) => fail(sender, err)),
-      delete: () => void removeProject(pid, sender),
-    };
-    popupMenu(Menu.buildFromTemplate([...projectMenuItems((command) => run[command]()), { type: 'separator' }, moveMenu]), { window: sender });
-  });
-
   // ---------- the Git tabs ----------
 
   const gitPath = (v: unknown): string => {
@@ -1242,23 +1161,21 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       return result.canceled ? null : result.filePath;
     },
   );
-  ipc.on(
-    'ui:selection',
-    (
-      e,
-      hasTask: boolean,
-      taskEnabled?: boolean,
-      taskPaused?: boolean,
-      taskState?: string,
-      hasNote?: boolean,
-      canRunNow?: boolean,
-      taskCompleted?: boolean,
-      allowComplete?: boolean,
-      hasProject?: boolean,
-      tab?: unknown,
-    ) =>
-      host.updateTaskMenu(windowOf(e), hasTask, taskEnabled, taskPaused, taskState, hasNote, canRunNow, taskCompleted, allowComplete, hasProject, typeof tab === 'string' ? tab : undefined),
-  );
+  ipc.on('commands:menuBar', (e, items: MenuItemSpec[]) => host.setCommandMenu(windowOf(e), Array.isArray(items) ? items : []));
+  ipc.on('commands:host', (e, name: HostCommand, ...args: unknown[]) => host.runHostCommand(windowOf(e), name, args.map(String)));
+  // A page's own menu at a point (or at the finger); the id picked comes back, or null once it closes without a pick.
+  ipc.handle('commands:popup', (e, items: MenuItemSpec[], at?: { x: number; y: number }) => {
+    const sender = windowOf(e);
+    if (!sender || !Array.isArray(items) || !items.length) return null;
+    return new Promise<string | null>((resolve) => {
+      popupMenu(Menu.buildFromTemplate(specTemplate(items, resolve)), {
+        window: sender,
+        ...(at ? { x: Math.round(Number(at.x) || 0), y: Math.round(Number(at.y) || 0) } : {}),
+        // A pick's click comes just after the menu closes.
+        callback: () => setTimeout(() => resolve(null), 200),
+      });
+    });
+  });
   ipc.on('ui:showTaskInMain', (_e, taskId: unknown, view: unknown) => {
     if (typeof taskId !== 'string' || !engine.getTask(taskId)) return;
     host.showTaskInMain(taskId, view === 'runs' ? view : 'status');
@@ -1324,13 +1241,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.handle('wsl:distros', () => listWslDistros());
   ipc.handle('wsl:mountPrefix', (_e, distro?: string) => detectWslMountPrefix(distro));
-
-  ipc.on('context-menu:task', (e, info: TaskMenuInfo) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    const menu = Menu.buildFromTemplate(taskContextMenuItems(info, (type) => sender.webContents.send('ui:event', { type })));
-    popupMenu(menu, { window: sender });
-  });
 
   /** Delete Folder…: asks first, and with tasks inside offers to delete them too (unchecked, they move up to the folder's parent). */
   const deleteFolder = (sender: AppWindow, folderId: string) => {
@@ -1463,25 +1373,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       ),
       { window: sender },
     );
-  });
-
-  ipc.on('context-menu:tasks-empty', (e) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    popupMenu(Menu.buildFromTemplate([{ label: 'New Folder…', click: () => host.openNewFolder() }]), { window: sender });
-  });
-
-  // A task list's header: its View-menu options (the pane's, or the single list's), then New Folder.
-  ipc.on('context-menu:pane', (e, info: { pane?: PaneId }) => {
-    const sender = windowOf(e);
-    if (!sender) return;
-    const view = engine.settings.view;
-    const update = (patch: Partial<View>) => engine.updateSettings({ view: { ...engine.settings.view, ...patch } });
-    popupMenu(Menu.buildFromTemplate([
-      ...(info.pane ? paneMenuItems(view, info.pane, update) : singleMenuItems(view, update)),
-      { type: 'separator' },
-      { label: 'New Folder…', click: () => host.openNewFolder() },
-    ]), { window: sender });
   });
 
   ipc.on(

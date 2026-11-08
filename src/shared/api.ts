@@ -1,30 +1,26 @@
 import type {
   AddonEvent,
-  AddonEventSource,
   AddonInfo,
-  AddonMenuBar,
-  AddonMenuItem,
   AddonLocalRun,
   AddonPaneContent,
   AddonScreen,
   AddonUiEvent,
-  EngineLogLevel,
 } from './addons';
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
 import type { CommandOutput } from './bash-mode';
-import type { Attachment, ChatSettingMenu, ChatState, QueuedMessage } from './chat';
+import type { Attachment, ChatSettings, ChatState, QueuedMessage } from './chat';
+import type { HostCommand } from './commands/context';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
-import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryFolderFilter, HistoryList, HistoryListOptions } from './history';
+import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { AgentSettingsData, AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest, McpTool } from './agent-config';
-import type { PaneId } from './panes';
 import type { RemoteMessage, RemoteState } from './remote';
-import type { PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
+import type { MenuItemSpec, PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
 import type { EngineEvent, PreventSleepState, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -75,8 +71,6 @@ export interface LooperApi {
     /** A new chat or terminal session in the project, on its harness and settings; shows why when it can't start. */
     newChat(id: string): Promise<void>;
     newTerminal(id: string): Promise<void>;
-    /** A project row's right-click menu; '' = the pane's (New Project…, New Folder…). */
-    showContextMenu(id: string): void;
     /** The Projects tab's folders, which work as task folders do. */
     folders(): Promise<ProjectFolder[]>;
     /** Sibling order per container ('' = top level): `folder:<id>` entries mixed with project ids. */
@@ -169,6 +163,8 @@ export interface LooperApi {
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
+    /** What a finished run can continue in. */
+    canContinue(id: string, runId: string): Promise<{ chat: boolean; terminal: boolean; guidance: boolean; compact: boolean }>;
     /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
     recent(limit: number, filter: RunFilter): Promise<RecentRun[]>;
     output(id: string, runId: string, raw?: boolean): Promise<string>;
@@ -234,8 +230,10 @@ export interface LooperApi {
     runCommand(id: string, command: string, commandId: string): Promise<CommandOutput>;
     /** Stop under a running "!" command: that one alone ends. */
     stopCommand(id: string, commandId: string): Promise<void>;
-    /** The message box's Harness, Model, Effort or Permission Mode menu ('all': one menu with the four as submenus), at (x, y) in the window. */
-    showSettingMenu(id: string, which: ChatSettingMenu | 'all', x: number, y: number): void;
+    /** The chat's model, effort or permission mode; rejects with the reason. */
+    configure(id: string, patch: Partial<ChatSettings>): Promise<void>;
+    /** The chat's harness, until its first message; rejects with the reason. */
+    setHarness(id: string, harnessId: string): Promise<void>;
     /** Attach Files: the open dialog, then the picked files copied in like dropped ones. */
     pickFiles(id: string): Promise<Attachment[]>;
     /** Copy pasted or dropped files into the task's attachments, ready to send. */
@@ -290,8 +288,8 @@ export interface LooperApi {
     rename(id: string, name: string): Promise<void>;
     /** `id`: that session, on the main window's Chats tab or in the Chats window (a phone's Chats window); none: the Chats window, opened or brought forward. */
     openWindow(id?: string): void;
-    /** New Chat's or New Terminal's drop-down list of projects, at (x, y) in the window. */
-    showNewMenu(kind: 'chat' | 'terminal', x: number, y: number): void;
+    /** The harness's own id for the conversation, once it has started it. */
+    harnessSessionId(id: string): Promise<string | null>;
     /** The History button's drop-down at (x, y): the recent conversations to continue in chat, then More… for the History window. */
     showHistoryMenu(x: number, y: number): void;
     send(ids: string[], text: string): void;
@@ -316,10 +314,6 @@ export interface LooperApi {
     commands(id: string): Promise<HistoryCommands>;
     /** Continue in Chat, Continue Compacted, Continue in Terminal, Copy Session ID or Open Working Directory; asks first when the conversation may still be open elsewhere. Rejects with the reason. */
     run(id: string, command: HistoryCommand): Promise<void>;
-    /** The window shows this conversation now (null: none): its menus act on it. */
-    select(id: string | null): void;
-    /** The toolbar's Activity Pane button: the pane shows or hides, as View → Activity Pane does. */
-    toggleActivity(): void;
     /** A conversation's right-click menu. */
     showContextMenu(id: string): void;
     /** The History window, opened or brought forward. */
@@ -474,49 +468,23 @@ export interface LooperApi {
   fitWindow(contentHeight: number): void;
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
-  /** Tell the main process whether a task is currently selected (enables/disables the Task menu). */
-  reportSelection(
-    hasTask: boolean,
-    taskEnabled?: boolean,
-    taskPaused?: boolean,
-    taskState?: string,
-    hasNote?: boolean,
-    canRunNow?: boolean,
-    taskCompleted?: boolean,
-    /** The task's "Allow this task to be marked completed" option. */
-    allowComplete?: boolean,
-    /** A project is selected, or the selected task has one: enables the Project menu. */
-    hasProject?: boolean,
-    /** The main window's shown tab (main-tabs.ts), whose menus the menu bar shows; unset on a phone, which has them all. */
-    tab?: string,
-  ): void;
+  /** What commands (shared/commands) ask of the main process. */
+  commands: {
+    /** This window's menu bar, sent again whenever it changes; a click comes back as a `command` ui event. */
+    setMenuBar(items: MenuItemSpec[]): void;
+    /** A menu at a point in the window, or at the finger: the id picked, or null once it closes. */
+    popup(items: MenuItemSpec[], at?: { x: number; y: number }): Promise<string | null>;
+    /** Something only the main process can do. */
+    host(name: HostCommand, ...args: string[]): void;
+  };
   /** Show the task on the main window's Tasks tab, at one of its tabs (from a Dashboard or Projects window). */
   showTaskInMain(taskId: string, view: 'status' | 'runs'): void;
-  showTaskContextMenu(info: {
-    enabled: boolean;
-    /** The task is finished for good: the menu offers Reopen instead of Complete. */
-    completed: boolean;
-    /** The task's "Allow this task to be marked completed" option. */
-    allowComplete: boolean;
-    state?: string;
-    held: boolean;
-    hasNote: boolean;
-    /** Runs in flight and the task's cap: Run Now stays enabled below it. */
-    activeRuns?: number;
-    maxRuns?: number;
-  }): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
   /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
   showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]): void;
-  /** Context menu of the task list's empty space (New Folder…). */
-  showTasksEmptyContextMenu(): void;
-  /** Context menu of a task list's header: that pane's view options (no pane = the single list's), then New Folder…. */
-  showPaneContextMenu(info: { pane?: PaneId }): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }): void;
-  /** Report the conversation window's current filter text (drives the Filter… checkmark and the filter window's initial value). */
-  reportMessagesFilter(filter: string): void;
   /** Filter window only: apply this filter to the parent conversation window and close. */
   applyMessagesFilter(value: string): void;
   /** Export-options window only: confirm the Save-as-Markdown choice and close. */
@@ -550,18 +518,12 @@ export interface LooperApi {
     pickFile(id: string, accept?: { label: string; extensions: string[] }[]): Promise<string | null>;
     /** Start (true) or stop (false) an addon; Looper remembers it, and a stopped addon's windows close. */
     setEnabled(id: string, enabled: boolean): Promise<void>;
-    /** The main toolbar's right-click menu: a check box per addon for whether its buttons show. */
-    showToolbarMenu(): void;
-    /** One of the addon's Tools windows, or the open one brought forward. */
-    openTool(id: string, toolId: string): Promise<void>;
+    /** The window a command's `opens` names, or the open one brought forward. */
+    open(id: string, command: string): Promise<void>;
     /** Asks first. */
     remove(id: string): Promise<void>;
     /** Pick a .looperaddon file, then confirm and install it. */
     install(): Promise<void>;
-    /** A pane item's or pane header's right-click menu; a pick goes to the addon. */
-    showMenu(id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }): void;
-    /** This window's menu bar (null: none). `item`: the selected pane item and its menu, for `needsItem` items (commandOn) and the events. */
-    setMenuBar(id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: { id: string; menu?: AddonMenuItem[] }): void;
     onEvent(cb: (e: AddonUiEvent) => void): () => void;
   };
   onEvent(cb: (e: EngineEvent) => void): () => void;
@@ -570,52 +532,16 @@ export interface LooperApi {
 }
 
 export type UiEvent =
-  | {
-      type:
-        | 'run-now'
-        | 'stop-task'
-        | 'pause-resume'
-        | 'edit-task'
-        | 'edit-note'
-        | 'clear-note'
-        | 'move-to-folder'
-        | 'export-task'
-        | 'delete-task'
-        | 'enable-disable'
-        | 'complete-reopen'
-        | 'open-terminal'
-        | 'open-chat'
-        | 'open-work-folder'
-        /** Project menu: the selected project, or the selected task's. */
-        | 'edit-project'
-        | 'open-project-folder'
-        | 'delete-project'
-        /** Main toolbar: a new task, in the selected project or the selected task's project. */
-        | 'new-task'
-        /** Chat window: Edit → Find…. */
-        | 'chat-find'
-        | 'clear-runs'
-        | 'edit-with-agent'
-        | 'version-history'
-        /** Main window: clear the task selection, which shows the dashboard. */
-        | 'show-dashboard';
-    }
+  /** A click on the menu bar a page sent: the item's id, for the page to run. */
+  | { type: 'command'; id: string }
+  /** Chat window: Edit → Find…. */
+  | { type: 'chat-find' }
   /** A list window's row menu (showListContextMenu): the item picked. */
   | { type: 'list-menu'; token: string; id: string }
   /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */
   | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'runs' }
-  /** Run window View menu: the Show Run Log toggle changed. */
-  | { type: 'messages-show-run'; checked: boolean }
-  /** Conversation window View menu: the Raw Messages toggle changed. */
-  | { type: 'messages-raw'; checked: boolean }
-  /** Run window View menu: the Raw Agent Output toggle changed. */
-  | { type: 'messages-raw-output'; checked: boolean }
-  /** Conversation window View menu: the Auto Scroll toggle changed. */
-  | { type: 'messages-auto-scroll'; checked: boolean }
   /** The filter window applied a filter (empty = cleared). */
   | { type: 'messages-filter'; value: string }
-  /** Engine Log window View menu: the sources (engineLogSource keys) and levels it hides. */
-  | { type: 'engine-log-view'; hiddenSources: string[]; hiddenLevels: EngineLogLevel[] }
   /** Terminal window right-click menu: copy the selection, paste the clipboard. */
   | { type: 'terminal-copy' | 'terminal-paste' }
   /** Terminal window: Attach Files… copied the files; paste their paths. */
@@ -628,21 +554,7 @@ export type UiEvent =
   | { type: 'chat-quote'; chatId: string; text: string }
   /** Sessions window: show this session (a chat or terminal opened elsewhere). */
   | { type: 'sessions-select'; id: string }
-  /** Sessions window View menu: the next or previous session, or waiting session. */
-  | { type: 'sessions-nav'; dir: 1 | -1; waiting: boolean }
-  /** Sessions window View menu: show the dashboard. */
-  | { type: 'sessions-dashboard' }
-  /** Sessions window View menu: move the focus to the next or previous pane (list, conversation, activity pane). */
-  | { type: 'sessions-pane'; dir: 1 | -1 }
   /** Send to Chats window: check the open chats of this list group (sessionGroupKey) instead. */
   | { type: 'send-to-sessions-pick'; group: string }
-  /** History window View menu: the Activity Pane shows or hides. */
-  | { type: 'history-activity'; checked: boolean }
-  /** History window: read the list again (View → Refresh). */
-  | { type: 'history-refresh' }
-  /** History window: show the find bar and put the focus in it (Edit → Find…). */
-  | { type: 'history-find' }
-  /** History window View menu: the folders the list shows (View → Folder). */
-  | { type: 'history-folder'; folder: HistoryFolderFilter }
   /** History window: the list a `history.list` call (by its `request`) has read so far. */
   | { type: 'history-progress'; request: number; list: HistoryList };

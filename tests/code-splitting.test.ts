@@ -22,7 +22,7 @@ describe('window code splitting (PF-02)', () => {
       expect(main, `${app} lazy import`).toContain(`import('./${app}')`);
       expect(main, `${app} static import`).not.toMatch(new RegExp(`^import .* from './${app}';`, 'm'));
     }
-    for (const file of ['components/AddonPane', 'components/AddonScreen', 'web/PairPage']) {
+    for (const file of ['components/AddonScreen', 'web/PairPage']) {
       expect(main, `${file} lazy import`).toContain(`import('./${file}')`);
       expect(main, `${file} static import`).not.toMatch(new RegExp(`^import .* from './${file}';`, 'm'));
     }

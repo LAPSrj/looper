@@ -1,6 +1,10 @@
 import { useRef } from 'react';
 import { sendsOnEnter } from './composer-text';
 import { useBoxHeight } from './hooks';
+import { isPhone } from '../web/page-nav';
+
+/** Whether this key sends here: Enter on the desktop (Shift+Enter breaks the line), and a phone's Enter breaks it. */
+export const sendsOnEnterHere = (e: Parameters<typeof sendsOnEnter>[0]): boolean => sendsOnEnter(e, isPhone);
 
 /** Stop beside a message box's Send: whether it applies now, and what it does. */
 export interface MessageBoxStop {

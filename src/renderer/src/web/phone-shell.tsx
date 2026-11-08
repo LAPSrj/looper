@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import type { ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
-import { composeMore, THIS_DEVICE_ITEM, type MoreMenu } from './more-menu';
+import { composeMore, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
 import { plainLabel, type PageNavAction } from './nav-bar-model';
 import type { PageNav } from './page-nav';
@@ -751,16 +751,10 @@ export interface OpenMore extends MoreMenu {
   anchor: DOMRect;
 }
 
-/** A screen's More menu (more-menu.ts): This Device ends the main window's. */
-export function moreFor(sc: Screen, device: string): MoreMenu {
+/** A screen's More menu (more-menu.ts). */
+export function moreFor(sc: Screen): MoreMenu {
   const nav = sc.nav;
-  return composeMore({
-    toolbar: nav?.toolbar,
-    barIds: [...(nav?.actions ?? []), ...(nav?.split?.actions ?? [])].map((a) => a.id),
-    menu: sc.win.menu,
-    more: nav?.more,
-    device: sc.pres === 'root' ? device : undefined,
-  });
+  return composeMore({ toolbar: nav?.toolbar, more: nav?.more });
 }
 
 /** A bar button's menu of choices, as the More menu is drawn. */
@@ -768,15 +762,16 @@ export function actionMenu(action: PageNavAction): MoreMenu {
   const run = new Map<string, () => void>();
   const items = (action.menu ?? []).map((e): MenuItemSpec => {
     const id = `__page:${action.id}:${e.id}`;
+    if (e.separator) return { id, type: 'separator', enabled: true };
     run.set(id, e.run);
-    return { id, type: 'radio', label: e.label, enabled: true, checked: !!e.checked };
+    if (e.checked === undefined) return { id, type: 'normal', label: e.label, enabled: true };
+    return { id, type: e.type ?? 'radio', label: e.label, enabled: true, checked: e.checked };
   });
   return { items, run };
 }
 
-/** A pick in the More menu: This Device, a command of the page's, or the computer's menu item. */
-export function pickMore(controller: ShellController, more: OpenMore, item: MenuItemSpec, openDevice: () => void): void {
-  if (item.id === THIS_DEVICE_ITEM) return openDevice();
+/** A pick in the More menu: a command of the page's, or the computer's menu item. */
+export function pickMore(controller: ShellController, more: OpenMore, item: MenuItemSpec): void {
   const own = more.run.get(item.id);
   if (own) own();
   else controller.pick(more.w, more.w, item);

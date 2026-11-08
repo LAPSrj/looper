@@ -343,7 +343,7 @@ describe('Session', () => {
 // ---------- shell state and small helpers ----------
 
 describe('reduceShell', () => {
-  const open = (w: string, hash = ''): ServerMessage => ({ t: 'window-open', w, modal: false, hash, title: w, width: 100, height: 100, resizable: true });
+  const open = (w: string, hash = ''): ServerMessage => ({ t: 'window-open', w, role: 'tool', modal: false, hash, title: w, width: 100, height: 100, resizable: true });
 
   it('tracks windows, menus and dialogs', () => {
     let s = initialShellState;

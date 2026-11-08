@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { engineLogSource } from '@shared/addons';
+import { ENGINE_LOG_LOOPER, engineLogAddonSource, engineLogSource } from '@shared/addons';
+import { ENGINE_LOG_VIEWS } from '@shared/commands/build';
+import { menuText } from '@shared/commands/command';
+import type { CommandContext } from '@shared/commands/context';
 import { capFirst, fmtDate, fmtTime } from './format';
+import { phoneNav } from './components/command-surfaces';
 import { DataTable, type DataCol } from './components/DataTable';
 import { ListDetail, selectsFirstRow } from './components/ListDetail';
+import { NavBar } from './components/NavBar';
+import { useCommandMenu, useCommandState } from './components/useCommands';
 
 interface LogEntry {
   ts: string;
@@ -75,23 +81,31 @@ export function EngineLogApp() {
     };
   }, []);
 
-  // A change in the View menu lists a different set of entries: select its last one.
-  useEffect(
-    () =>
-      window.looper.onUi((e) => {
-        if (e.type !== 'engine-log-view') return;
-        const h = { sources: e.hiddenSources, levels: e.hiddenLevels };
-        const visible = parseLog(lastTextRef.current ?? '').filter(shown(h)).length;
-        setHidden(h);
-        setSelected(visible > 0 ? visible - 1 : null);
-      }),
-    [],
-  );
+  // The View menu: a change lists a different set of entries, so its last one is selected.
+  const base = useCommandState();
+  const setShown = (h: Hidden) => {
+    const visible = parseLog(lastTextRef.current ?? '').filter(shown(h)).length;
+    setHidden(h);
+    setSelected(visible > 0 ? visible - 1 : null);
+  };
+  const toggled = (list: string[], key: string) => (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+  const commands: CommandContext = {
+    ...base,
+    engineLog: {
+      sources: [{ key: ENGINE_LOG_LOOPER, label: '&Looper' }, ...base.addons.map((a) => ({ key: engineLogAddonSource(a.id), label: menuText(a.name) }))],
+      hiddenSources: hidden.sources,
+      hiddenLevels: hidden.levels,
+      toggleSource: (key) => setShown({ ...hidden, sources: toggled(hidden.sources, key) }),
+      toggleLevel: (level) => setShown({ ...hidden, levels: toggled(hidden.levels, level) }),
+    },
+  };
+  useCommandMenu(ENGINE_LOG_VIEWS, commands);
 
   const current = selected === null ? null : (entries[selected] ?? null);
 
   return (
     <div className="run-detail-app">
+      <NavBar more={phoneNav(ENGINE_LOG_VIEWS, commands).more} />
       <ListDetail
         panes={{ axis: 'y', initial: 65, unit: '%', min: 15, max: 85 }}
         open={!followsTail && current !== null}

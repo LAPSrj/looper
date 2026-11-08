@@ -97,7 +97,7 @@ export class RemoteClients {
     conn.send({ t: 'welcome', device: conn.device, version: this.opts.version, clientId: client.id, resumed: !!resume });
     if (resume) client.resend();
     else {
-      client.main = client.openWindow({ hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
+      client.main = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
       for (const cb of this.mainCbs) {
         try {
           cb(client.main);

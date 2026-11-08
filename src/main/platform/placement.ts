@@ -53,7 +53,7 @@ export function placeKey(hash: string): string {
   const route = parts[0];
   if (!route) return 'main';
   if (route === 'sessions' && parts[2] === 'window') return 'chat';
-  if (route === 'addon' || route === 'addon-pane') return parts.slice(0, 3).join('/');
+  if (route === 'addon') return parts.slice(0, 3).join('/');
   return SAME_KIND[route] ?? route;
 }
 

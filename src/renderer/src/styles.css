@@ -430,12 +430,13 @@ code,
   cursor: col-resize;
   background: var(--border);
 }
+/* A list's header and the detail bar beside it share one height, so their borders line up. */
 .sidebar-header {
   display: flex;
   align-items: center;
-  padding: 12px 14px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
-  min-height: 41px;
+  min-height: 44px;
   box-sizing: border-box;
 }
 /* Multiple-pane sidebar: stacked panes, each a header over its own scrolling list. */
@@ -494,9 +495,9 @@ code,
 .detail-bar {
   display: flex;
   align-items: center;
-  padding: 12px 18px;
+  padding: 0 18px;
   border-bottom: 1px solid var(--border);
-  min-height: 41px;
+  min-height: 44px;
   box-sizing: border-box;
 }
 /* The detail bar's title is the item's own name (a task, a project, an addon screen): a page title shown as written, not an uppercase section label. */

@@ -1,4 +1,7 @@
 import type { ChatSettingMenu, ChatState } from '@shared/chat';
+import { chatSettingEntries } from '@shared/chat-settings';
+import { entriesMenu } from '@shared/commands/build';
+import type { Entry } from '@shared/commands/command';
 import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/environments';
 
 export const permissionLabel = (state: ChatState): string =>
@@ -26,5 +29,11 @@ export const settingDisabled = (state: ChatState, which: ChatSettingMenu): boole
 
 /** Open a setting's menu (or `all` of them) below `box`. */
 export function showSettingMenu(state: ChatState, which: ChatSettingMenu | 'all', box: DOMRect): void {
-  window.looper.chat.showSettingMenu(state.id, which, box.left, box.bottom);
+  const all = chatSettingEntries(state, window.looper);
+  const entries: Entry[] =
+    which === 'all'
+      ? SETTINGS.map((k) => ({ id: k, label: SETTING_TITLES[k], entries: all[k].map((e) => ('separator' in e ? e : { ...e, id: `${k}-${e.id}` })) }))
+      : all[which];
+  const { items, pick } = entriesMenu('setting', entries);
+  void window.looper.commands.popup(items, { x: box.left, y: box.bottom }).then((id) => id && pick(id));
 }

@@ -4,6 +4,7 @@ import { groupProjects, type ProjectGroupBy } from '@shared/projects';
 import { FolderTree } from './FolderTree';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
+import { showProjectMenu, showProjectsListMenu } from './row-menus';
 import { listContextMenu, parentIndex } from './list-nav';
 
 /** A project's row: its name, then its folder unless the list is compact. */
@@ -47,7 +48,7 @@ export function ProjectList({
   compact: boolean;
   onSelect: (id: string | null) => void;
 }) {
-  const paneMenu = () => window.looper.projects.showContextMenu('');
+  const paneMenu = showProjectsListMenu;
   if (!projects.length && !folders.length) {
     return (
       <div
@@ -81,7 +82,7 @@ export function ProjectList({
       onActivate={(p) => window.looper.openItemWindow('project', p.id)}
       // Delete Project… asks first.
       onDelete={(p) => void window.looper.projects.remove(p.id)}
-      onItemMenu={(p) => window.looper.projects.showContextMenu(p.id)}
+      onItemMenu={showProjectMenu}
       onFolderCommand={(id, command) => window.looper.projects.folderCommand(id, command)}
       onFolderMenu={(id) => window.looper.projects.showFolderMenu(id)}
       onEmptyMenu={paneMenu}
@@ -131,7 +132,7 @@ function GroupedProjects({
     setActiveGroup(null);
     onSelect(id);
   };
-  const showRowMenu = (r: NavRow) => window.looper.projects.showContextMenu(r.kind === 'project' ? r.p.id : '');
+  const showRowMenu = (r: NavRow) => (r.kind === 'project' ? showProjectMenu(r.p) : showProjectsListMenu());
   const nav = useListNav({
     count: rows.length,
     index,
@@ -174,7 +175,7 @@ function GroupedProjects({
       onClick={(e) => {
         if (e.target === e.currentTarget) onSelect(null);
       }}
-      onContextMenu={(e) => listContextMenu(e, index, (i) => showRowMenu(rows[i]), () => window.looper.projects.showContextMenu(''))}
+      onContextMenu={(e) => listContextMenu(e, index, (i) => showRowMenu(rows[i]), showProjectsListMenu)}
     >
       {groups.map((g) => [
         <GroupHeader
@@ -193,7 +194,7 @@ function GroupedProjects({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            window.looper.projects.showContextMenu('');
+            showProjectsListMenu();
           }}
         />,
         ...(closed.has(g.key)
@@ -213,7 +214,7 @@ function GroupedProjects({
                   e.preventDefault();
                   e.stopPropagation();
                   pick(p.id);
-                  window.looper.projects.showContextMenu(p.id);
+                  showProjectMenu(p);
                 }}
               >
                 <ProjectRow p={p} compact={compact} />

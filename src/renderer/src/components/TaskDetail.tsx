@@ -28,6 +28,8 @@ interface Props {
   runFilter?: RunFilter;
   /** Run to select in the run log (notification click). */
   focusRun?: { runId: string } | null;
+  /** The task's own window, whose title bar already names it. */
+  untitled?: boolean;
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -138,6 +140,7 @@ export function TaskDetail({
   onTab,
   runFilter,
   focusRun,
+  untitled = false,
 }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
   const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
@@ -163,9 +166,11 @@ export function TaskDetail({
 
   return (
     <div className="detail">
-      <div className="detail-bar">
-        <span className="pane-title">{task.name}</span>
-      </div>
+      {!untitled && (
+        <div className="detail-bar">
+          <span className="pane-title">{task.name}</span>
+        </div>
+      )}
       <TabBar tabs={TABS} active={tab} onSelect={onTab} />
       <section className="tab-body">
         {tab === 'status' && (

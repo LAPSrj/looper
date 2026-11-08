@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo, UiEvent } from '@shared/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { AppInfo } from '@shared/api';
+import type { AddonContext, CommandContext } from '@shared/commands/context';
+import { mainTabs } from '@shared/main-tabs';
 import type { RemoteState } from '@shared/remote';
-import { isStandInTaskId, projectTaskId } from '@shared/projects';
+import { isStandInTaskId } from '@shared/projects';
 import type { PreventSleepState, Project, ProjectFolder, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { attentionKey, attentionRows, runningRows, type AttentionRow, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { subscribe } from './events';
 import { useAddons, type AddonSelection } from './components/AddonPane';
-import { MenuTarget } from './menu-target';
 import type { DashboardPick } from './components/Dashboard';
 import type { DetailTab } from './components/TaskDetail';
 import { useDialogKeys } from './components/hooks';
@@ -25,9 +26,8 @@ export function preventSleepStatus(state: PreventSleepState): string | null {
 /**
  * The main window's state and commands, shared by its desktop and phone
  * views: the tasks, projects and runtimes it shows and keeps current, what is
- * selected, the dashboard's lists, and the toolbar and menu commands.
- * `menuTab`: the desktop's shown tab, which the menu bar follows (a phone has
- * every menu at once).
+ * selected, and the dashboard's lists. `menuTab`: the desktop's shown tab, which
+ * the commands follow.
  */
 export function useMainWindow(menuTab?: string) {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -102,195 +102,17 @@ export function useMainWindow(menuTab?: string) {
   const taskPick = livePick?.list === 'remote' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
 
-  // Menu and toolbar commands act on the target task; the ref keeps them acting on current state.
   // On the dashboard, Stop Task stops the picked row's run.
   // The selected project, while no task is: the toolbar's edit, chat, terminal and folder buttons act on it.
-  const projectTarget = selected ? null : projectSel;
-  // The project the Project menu acts on: the selected project, else the target task's.
   const taskProject = tasks.find((t) => t.id === target)?.projectId;
   const menuProject = projectSel ?? (taskProject && projects.some((p) => p.id === taskProject) ? taskProject : null);
   const pickedRun = selected ? null : (taskPick?.runId ?? null);
-  const uiRef = useRef({ selected: target, project: projectTarget, menuProject, tasks, runtimes, pickedRun });
-  uiRef.current = { selected: target, project: projectTarget, menuProject, tasks, runtimes, pickedRun };
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: DetailTab }) => {
     setSelected(e.taskId);
     setTab(e.view);
     setFocusRun(e.view === 'runs' && e.runId ? { runId: e.runId } : null);
   }, []);
-
-  // The task a long-pressed row's menu is open for: its command acts on it, not on the selection (which the press must not change).
-  const menuTarget = useRef(new MenuTarget()).current;
-  const setMenuTarget = useCallback((taskId: string | null) => menuTarget.set(taskId), [menuTarget]);
-  useEffect(() => {
-    // The popup is drawn outside this page: a touch on the page means it closed without a command.
-    const drop = () => menuTarget.clear();
-    document.addEventListener('pointerdown', drop, true);
-    return () => document.removeEventListener('pointerdown', drop, true);
-  }, [menuTarget]);
-
-  const uiAction = useCallback((type: UiEvent['type']) => {
-    const forced = menuTarget.take<string | null>(null);
-    const ui = uiRef.current;
-    const { menuProject: menuProj, tasks: ts, runtimes: rts } = ui;
-    const sel = forced ?? ui.selected;
-    const proj = forced ? null : ui.project;
-    const pickedRun = forced ? null : ui.pickedRun;
-    switch (type) {
-      case 'edit-project':
-        if (menuProj) void window.looper.projects.openEditor(menuProj);
-        return;
-      case 'open-project-folder':
-        if (menuProj) void window.looper.openTaskWorkFolder(projectTaskId(menuProj)).catch((e) => void window.looper.showError((e as Error).message));
-        return;
-      case 'delete-project':
-        if (menuProj) void window.looper.projects.remove(menuProj);
-        return;
-    }
-    if (proj) {
-      switch (type) {
-        case 'edit-task':
-          void window.looper.projects.openEditor(proj);
-          return;
-        case 'open-chat':
-          void window.looper.projects.newChat(proj);
-          return;
-        case 'open-terminal':
-          void window.looper.projects.newTerminal(proj);
-          return;
-        case 'open-work-folder':
-          void window.looper.openTaskWorkFolder(projectTaskId(proj)).catch((e) => void window.looper.showError((e as Error).message));
-          return;
-        case 'new-task':
-          void window.looper.projects.newTask(proj);
-          return;
-      }
-    }
-    switch (type) {
-      case 'new-task': {
-        const t = ts.find((x) => x.id === sel);
-        if (t?.projectId) void window.looper.projects.newTask(t.projectId);
-        else void window.looper.openEditor();
-        break;
-      }
-      case 'run-now':
-        if (sel) {
-          const rt = rts[sel];
-          if (rt?.state === 'disabled' || rt?.state === 'completed') {
-            const t = ts.find((x) => x.id === sel);
-            const what = rt.state === 'completed' ? 'completed' : 'disabled';
-            void window.looper.confirm(`"${t?.name ?? sel}" is ${what}. Run it anyway?`).then((ok) => {
-              if (ok) void window.looper.runtime.runNow(sel).catch(() => undefined);
-            });
-          } else {
-            void window.looper.runtime.runNow(sel).catch(() => undefined);
-          }
-        }
-        break;
-      case 'stop-task':
-        if (sel) void window.looper.runtime.stopTask(sel, pickedRun ?? undefined);
-        break;
-      case 'pause-resume':
-        if (sel) {
-          const rt = rts[sel];
-          if (rt?.state === 'paused') void window.looper.runtime.resume(sel);
-          else void window.looper.runtime.pause(sel);
-        }
-        break;
-      case 'edit-task':
-        if (sel) void window.looper.openEditor(sel);
-        break;
-      case 'edit-with-agent':
-        if (sel) void window.looper.builder.editTask(sel);
-        break;
-      case 'version-history':
-        if (sel) void window.looper.versions.open(sel);
-        break;
-      case 'edit-note':
-        if (sel) void window.looper.openNoteEditor(sel);
-        break;
-      case 'move-to-folder':
-        if (sel) void window.looper.openMoveToFolder(sel);
-        break;
-      case 'clear-note': {
-        const t = ts.find((x) => x.id === sel);
-        if (t?.note) void window.looper.tasks.save({ ...t, note: undefined });
-        break;
-      }
-      case 'export-task':
-        if (sel) void window.looper.tasks.export(sel);
-        break;
-      case 'enable-disable': {
-        const t = ts.find((x) => x.id === sel);
-        if (t && !t.completedAt) void window.looper.tasks.save({ ...t, enabled: !t.enabled });
-        break;
-      }
-      case 'complete-reopen': {
-        const t = ts.find((x) => x.id === sel);
-        if (!t) break;
-        if (t.completedAt) {
-          void window.looper.runtime.reopen(t.id);
-        } else if (!t.completion.allowed) {
-          break;
-        } else {
-          void window.looper
-            .confirm(`Mark "${t.name}" as completed? It won't run again, and after a while it moves to the Recycle Bin.`)
-            .then((ok) => {
-              if (ok) void window.looper.runtime.complete(t.id);
-            });
-        }
-        break;
-      }
-      case 'delete-task': {
-        // The Recycle Bin can undo a delete, but not a run it stopped: only that asks first.
-        const t = ts.find((x) => x.id === sel);
-        if (!t) break;
-        if ((rts[t.id]?.runs.length ?? 0) > 0) {
-          void window.looper
-            .confirm(`"${t.name}" is running. Stop it and move it to the Recycle Bin?`)
-            .then((ok) => { if (ok) void window.looper.tasks.remove(t.id); });
-        } else {
-          void window.looper.tasks.remove(t.id);
-        }
-        break;
-      }
-      // A task's project: a new session there, on the project's harness and settings.
-      case 'open-terminal': {
-        const t = ts.find((x) => x.id === sel);
-        if (t?.projectId) void window.looper.projects.newTerminal(t.projectId);
-        break;
-      }
-      case 'open-chat': {
-        const t = ts.find((x) => x.id === sel);
-        if (t?.projectId) void window.looper.projects.newChat(t.projectId);
-        break;
-      }
-      case 'open-work-folder':
-        if (sel) void window.looper.openTaskWorkFolder(sel).catch((e) => void window.looper.showError((e as Error).message));
-        break;
-      case 'show-dashboard':
-        setSelected(null);
-        setAddonSel(null);
-        setProjectSel(null);
-        setDashboardShown((n) => n + 1);
-        break;
-      case 'clear-runs': {
-        const t = ts.find((x) => x.id === sel);
-        if (!t) break;
-        void window.looper.confirm(`Clear the run history of "${t.name}"? All run logs and outputs are deleted.`).then((ok) => {
-          if (!ok) return;
-          void window.looper.runs
-            .clear(t.id)
-            .then(() => {
-              setRecords((m) => ({ ...m, [t.id]: [] }));
-              setRunsChanged((n) => n + 1);
-            })
-            .catch((e) => void window.looper.showError((e as Error).message));
-        });
-        break;
-      }
-    }
-  }, [menuTarget]);
 
   useEffect(() => {
     void window.looper.info().then(setInfo);
@@ -355,7 +177,6 @@ export function useMainWindow(menuTab?: string) {
     });
     const unsubUi = window.looper.onUi((e) => {
       if (e.type === 'open-task') openTask(e);
-      else uiAction(e.type);
     });
     const unsubAddons = window.looper.addons.onEvent((e) => {
       if (e.type !== 'select') return;
@@ -408,27 +229,6 @@ export function useMainWindow(menuTab?: string) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, infoLoaded, filterKey, runsChanged, recentLimit]);
-
-  const selectedState = target ? runtimes[target]?.state : undefined;
-  const selectedActiveRuns = target ? runtimes[target]?.runs.length ?? 0 : 0;
-
-  useEffect(() => {
-    const t = tasks.find((x) => x.id === target);
-    const active = selectedState === 'running' || selectedState === 'checking' || selectedState === 'classifying';
-    const canRunNow = !active || selectedActiveRuns < (t?.maxConcurrentRuns ?? 1);
-    window.looper.reportSelection(
-      !!target,
-      t?.enabled,
-      selectedState === 'paused',
-      selectedState,
-      !!t?.note,
-      canRunNow,
-      !!t?.completedAt,
-      !!t?.completion.allowed,
-      !!menuProject,
-      menuTab,
-    );
-  }, [target, tasks, selectedState, selectedActiveRuns, menuProject, menuTab]);
 
   const select = useCallback((id: string | null) => {
     setSelected(id);
@@ -484,6 +284,56 @@ export function useMainWindow(menuTab?: string) {
     if (kept.length !== attentionCleared.length) changeView({ attentionCleared: kept });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, allAttention, attentionCleared]);
+
+  /** Show the dashboard, its tab on a phone (Window → Dashboard). */
+  const showDashboard = useCallback(() => {
+    setSelected(null);
+    setAddonSel(null);
+    setProjectSel(null);
+    setDashboardShown((n) => n + 1);
+  }, []);
+  const runsCleared = useCallback((taskId: string) => {
+    setRecords((m) => ({ ...m, [taskId]: [] }));
+    setRunsChanged((n) => n + 1);
+  }, []);
+  /** What the commands read, on `base` (useCommandState). */
+  /**
+   * The addon a tab of the window is (its panes tab, or one its screen fills),
+   * for the commands it placed there: the pane picked from (or its first), the
+   * item picked, and the screen showing.
+   */
+  const addonContext = (tab: string | undefined, screen: NonNullable<AddonContext['screen']> | null): AddonContext | undefined => {
+    const addon = tab ? mainTabs(addons).find((t) => t.id === tab)?.addon : undefined;
+    if (!addon) return undefined;
+    const own = { id: addon.id, ...(screen ? { screen } : {}) };
+    if (addon.tab) return own;
+    const sel = addonSel?.addonId === addon.id ? addonSel : null;
+    const pane = sel?.pane ?? addons.find((a) => a.id === addon.id)?.panes[0]?.id;
+    if (!pane) return own;
+    const content = addonPanes[addonPaneKey(addon.id, pane)];
+    const picked = sel && addonShown?.addon.id === addon.id ? { pane: sel.pane, id: sel.item, state: addonShown.item.commands } : null;
+    return { ...own, panes: { pane, state: content?.status === 'ready' ? content.content.commands : undefined }, item: picked };
+  };
+
+  const commandContext = (base: CommandContext): CommandContext => ({
+    ...base,
+    settings: info?.settings ?? base.settings,
+    tab: menuTab,
+    task: targetTask,
+    runtime: targetTask ? runtimes[targetTask.id] : undefined,
+    pickedRun,
+    project: projects.find((p) => p.id === menuProject) ?? null,
+    projectSelected: !!projectSel && !selected,
+    projects,
+    taskFolders: folders,
+    projectFolders,
+    addons,
+    rest,
+    preventSleep,
+    setView: changeView,
+    runsCleared,
+    showDashboard,
+  });
 
   const counts = useMemo(() => {
     const enabled = tasks.filter((t) => t.enabled).length;
@@ -546,9 +396,9 @@ export function useMainWindow(menuTab?: string) {
     selectAddon,
     setTab,
     setPick,
-    setMenuTarget,
     openFromDashboard,
-    uiAction,
+    commandContext,
+    addonContext,
     changeView,
     clearAttention,
   };

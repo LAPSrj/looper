@@ -25,9 +25,6 @@ const find = (id) => {
   return s;
 };
 
-const filterItems = () =>
-  ['All', 'Linux', 'Windows'].map((o) => ({ id: `show:${o}`, label: `&${o}`, checked: show === o, radio: true }));
-
 function pane() {
   return {
     items: servers
@@ -40,30 +37,11 @@ function pane() {
         keywords: s.os,
         view: 'server',
         params: { id: s.id },
-        menu: [
-          { id: 'copy-host', label: 'Copy &Host' },
-          { id: 'copy-password', label: 'Copy &Password' },
-          { separator: true },
-          { id: 'edit', label: '&Edit Server…' },
-        ],
       })),
     search: { placeholder: 'Search servers' },
-    menu: [...filterItems(), { separator: true }, { id: 'new', label: '&New Server…' }],
+    // The filter's bullet: the commands themselves are in the manifest.
+    commands: Object.fromEntries(['All', 'Linux', 'Windows'].map((o) => [`show:${o}`, { checked: show === o }])),
     empty: 'No servers yet.',
-    toolbar: [{ id: 'new', label: 'New Server…', icon: 'add' }],
-    menuBar: [
-      { label: '&File', items: [{ id: 'new', label: '&New Server…' }] },
-      {
-        label: '&Edit',
-        items: [
-          { id: 'edit', label: '&Edit Server…', needsItem: true },
-          { separator: true },
-          { id: 'copy-host', label: 'Copy &Host', needsItem: true },
-          { id: 'copy-password', label: 'Copy &Password', needsItem: true },
-        ],
-      },
-      { label: '&View', items: filterItems() },
-    ],
   };
 }
 
@@ -74,7 +52,6 @@ function render({ view, params }) {
   if (view === 'overview') {
     return {
       title: 'Servers',
-      toolbar: [{ id: 'new', label: 'New Server…', icon: 'add' }],
       body: ['Production', 'Staging', 'Development'].map((env) => ({
         type: 'section',
         title: env,
@@ -91,7 +68,6 @@ function render({ view, params }) {
     const s = find(params.id);
     return {
       title: s.name,
-      toolbar: [{ id: 'edit', label: 'Edit Server…', icon: 'edit' }],
       body: [
         {
           type: 'props',

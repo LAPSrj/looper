@@ -1,10 +1,6 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import { CHAT_COMMANDS, CHAT_MORE_GROUPS } from '../../shared/commands/chat';
-import { PROJECT_COMMANDS } from '../../shared/commands/project';
-import { TASK_COMMANDS, TASK_MORE_GROUPS } from '../../shared/commands/task';
 import type { AttentionRow } from '../../shared/dashboard';
-import { waitedText, waitingOf, type SessionKind, type SessionSummary } from '../../shared/sessions';
-import { catalogMore, type MoreGroup } from './web/more-menu';
+import { waitedText, waitingOf, type SessionSummary } from '../../shared/sessions';
 
 // ---------- lists by day ----------
 
@@ -149,18 +145,6 @@ export function taskSummary(input: { counts: TaskCounts; loaded: boolean; addons
   if (input.remoteSessions !== null) add(input.remoteSessions, input.remoteSessions === 1 ? 'Remote Control session' : 'Remote Control sessions');
   return parts.join(' · ');
 }
-
-// ---------- the More menus built from the command catalogs ----------
-
-/**
- * A conversation screen's More menu on a phone: the chat catalog's commands
- * for the kind of session shown (shared/commands/chat.ts says where each one
- * goes, or why it isn't on a phone).
- */
-export const conversationMore = (kind: SessionKind): MoreGroup[] => catalogMore([CHAT_COMMANDS], CHAT_MORE_GROUPS, kind);
-
-/** A task screen's More menu on a phone: the Task menu's commands, and its project's New Chat and New Terminal. */
-export const taskScreenMore = (): MoreGroup[] => catalogMore([TASK_COMMANDS, PROJECT_COMMANDS], TASK_MORE_GROUPS);
 
 // ---------- terminals ----------
 

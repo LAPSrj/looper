@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { WindowRole } from '../src/shared/remote-access';
 import { AxisDrag, LongPress, LONG_PRESS_MS } from '../src/renderer/src/web/gestures';
 import { BACK_SETTLE_MS, BackStack, coversScreen, darkColor, INSPECTOR_WIDTH, presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
 
@@ -262,27 +263,27 @@ describe('AxisDrag', () => {
 describe('presentation', () => {
   const phone = { width: 393, height: 852 };
   const ipad = { width: 820, height: 1180 };
-  const win = (w: number, h: number, modal: boolean) => ({ width: w, height: h, modal });
+  const win = (role: WindowRole, modal: boolean) => ({ role, modal });
 
   it('on a phone: the main window is the root, modeless windows push, modal ones are sheets', () => {
-    expect(presentation('ios', win(1400, 900, false), true, phone)).toBe('root');
-    expect(presentation('ios', win(900, 700, false), false, phone)).toBe('push');
-    expect(presentation('ios', win(760, 620, true), false, phone)).toBe('page-sheet');
-    expect(presentation('android', win(900, 700, false), false, phone)).toBe('push');
-    expect(presentation('android', win(760, 620, true), false, phone)).toBe('full-dialog');
-    expect(presentation('android', win(420, 260, true), false, phone)).toBe('bottom-sheet');
+    expect(presentation('ios', win('workspace', false), true, phone)).toBe('root');
+    expect(presentation('ios', win('workspace', false), false, phone)).toBe('push');
+    expect(presentation('ios', win('editor', true), false, phone)).toBe('page-sheet');
+    expect(presentation('android', win('workspace', false), false, phone)).toBe('push');
+    expect(presentation('android', win('editor', true), false, phone)).toBe('full-dialog');
+    expect(presentation('android', win('prompt', true), false, phone)).toBe('bottom-sheet');
   });
 
   it('on an iPad: form sheets for small windows, page sheets for bigger ones, full screen for large ones', () => {
-    expect(presentation('ios', win(480, 300, true), false, ipad)).toBe('form-sheet');
-    expect(presentation('ios', win(480, 300, false), false, ipad)).toBe('form-sheet');
-    expect(presentation('ios', win(760, 620, false), false, ipad)).toBe('page-sheet');
-    expect(presentation('ios', win(1388, 895, false), false, ipad)).toBe('push');
+    expect(presentation('ios', win('tool', true), false, ipad)).toBe('form-sheet');
+    expect(presentation('ios', win('tool', false), false, ipad)).toBe('form-sheet');
+    expect(presentation('ios', win('editor', false), false, ipad)).toBe('page-sheet');
+    expect(presentation('ios', win('workspace', false), false, ipad)).toBe('push');
   });
 
   it('on an Android tablet: modal windows are dialogs', () => {
-    expect(presentation('android', win(760, 620, true), false, ipad)).toBe('dialog');
-    expect(presentation('android', win(760, 620, false), false, ipad)).toBe('push');
+    expect(presentation('android', win('editor', true), false, ipad)).toBe('dialog');
+    expect(presentation('android', win('editor', false), false, ipad)).toBe('push');
   });
 
   it('knows which presentations hide what is under them', () => {

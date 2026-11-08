@@ -11,6 +11,14 @@
   },
   "panes": [{ "id": "servers", "title": "Servers" }],
   "tabs": [{ "id": "overview", "title": "Servers", "view": "overview", "icon": "terminal" }],
-  "tools": [{ "id": "servers", "label": "Servers", "pane": "servers" }],
-  "toolbar": [{ "id": "servers", "label": "Servers", "icon": "terminal", "tool": "servers" }]
+  "commands": [
+    { "id": "new", "label": "New &Server…", "icon": "add", "in": { "new": { "toolbar": true }, "panes": { "menu": "file", "main": true } } },
+    { "id": "servers", "label": "&Servers", "icon": "terminal", "opens": { "tab": "panes" }, "in": { "app": { "menu": "tools", "toolbar": true } } },
+    { "id": "edit", "label": "&Edit Server…", "icon": "edit", "group": "server", "in": { "item": { "menu": "edit", "toolbar": true, "main": true } } },
+    { "id": "copy-host", "label": "Copy &Host", "group": "copy", "in": { "item": { "menu": "edit" } } },
+    { "id": "copy-password", "label": "Copy &Password", "group": "copy", "in": { "item": { "menu": "edit" } } },
+    { "id": "show:All", "label": "&All", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } },
+    { "id": "show:Linux", "label": "&Linux", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } },
+    { "id": "show:Windows", "label": "&Windows", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } }
+  ]
 }

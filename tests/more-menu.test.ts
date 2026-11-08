@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { hideOffPlatform, serializeMenu, type MenuLike } from '../src/main/platform/menus';
-import { AddonPaneContentSchema, AddonScreenSchema, readAddonManifest } from '../src/shared/addons';
+import { readAddonManifest } from '../src/shared/addons';
 import type { MenuItemSpec } from '../src/shared/remote-access';
 import { menuForPlatform, showsOn, uiPlatformOf } from '../src/shared/ui-platform';
 import { findToolbarItem, groupsAtSeparators, toolbarFor, type ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
-import { composeMore, phoneMenu, THIS_DEVICE_ITEM } from '../src/renderer/src/web/more-menu';
+import { composeMore, phoneMenu } from '../src/renderer/src/web/more-menu';
 
 const labels = (items: MenuItemSpec[]): string[] => items.map((i) => (i.type === 'separator' ? '—' : (i.label ?? '')));
 const item = (id: string, label: string, extra: Partial<MenuItemSpec> = {}): MenuItemSpec => ({ id, type: 'normal', label, enabled: true, ...extra });
@@ -130,30 +130,15 @@ describe('phoneMenu', () => {
 });
 
 describe('composeMore', () => {
-  const menu: MenuItemSpec[] = [
-    {
-      id: '0',
-      key: 'file',
-      type: 'submenu',
-      label: 'File',
-      enabled: true,
-      submenu: [item('0.0', 'New Task…', { key: 'new-task' }), sep('0.1'), item('0.2', 'Settings…', { key: 'settings' })],
-    },
-    {
-      id: '1',
-      key: 'task',
-      type: 'submenu',
-      label: 'Task',
-      enabled: true,
-      submenu: [
-        item('1.0', 'Run Now', { key: 'task-run-now' }),
-        item('1.1', 'Stop Task', { key: 'task-stop', enabled: false }),
-        item('1.2', 'Delete Task', { key: 'task-delete', destructive: true }),
-        item('1.3', 'Open Working Directory', { key: 'task-work-folder', platforms: ['desktop'] }),
-      ],
-    },
-    { id: '2', type: 'submenu', label: 'View', enabled: true, submenu: [item('2.0', 'Toolbar', { platforms: ['desktop', 'web'] })] },
+  const pick = vi.fn();
+  const commands: MenuItemSpec[] = [
+    item('new-task', 'New Task…'),
+    sep('s1'),
+    item('stop', 'Stop Task', { enabled: false }),
+    item('run-now', 'Run Now'),
+    item('delete', 'Delete Task', { destructive: true }),
   ];
+  const more = { items: commands, run: pick };
   const run = vi.fn();
   const open = vi.fn();
   const toolbar: ToolbarGroup[] = [
@@ -176,65 +161,50 @@ describe('composeMore', () => {
     },
   ];
 
-  it('defaults to the toolbar, then the menu bar as submenus, then This Device on the root screen', () => {
-    const m = composeMore({ toolbar, barIds: ['new-task'], menu, device: 'This Device' });
+  it('puts the toolbar first, then the screen’s commands', () => {
+    const m = composeMore({ toolbar, more });
     expect(labels(m.items)).toEqual([
       'Dashboard',
+      'New Task',
       '—',
       'New Chat in A',
       'New Chat in Project',
       'New Terminal',
       'Pick',
       '—',
-      'File',
-      'Task',
+      'New Task…',
       '—',
-      'This Device',
+      'Run Now',
+      '—',
+      'Delete Task',
     ]);
     expect(m.items[0]).toMatchObject({ type: 'checkbox', checked: true });
     // The split button with entries is a submenu: its command, then its entries.
-    expect(labels(m.items[5].submenu!)).toEqual(['Pick', '—', 'One']);
-    // The Task menu without what doesn't apply on a phone or can't be done now; Delete last.
-    expect(labels(m.items[8].submenu!)).toEqual(['Run Now', '—', 'Delete Task']);
-    expect(m.items[m.items.length - 1].id).toBe(THIS_DEVICE_ITEM);
+    expect(labels(m.items[6].submenu!)).toEqual(['Pick', '—', 'One']);
+    // What can't be done now is left out, and Delete goes last in a group of its own.
+    expect(labels(m.items)).not.toContain('Stop Task');
+    expect(m.items[m.items.length - 1]).toMatchObject({ label: 'Delete Task', destructive: true });
   });
 
-  it("runs the page's own items itself and leaves the menu bar's to the computer", () => {
-    const m = composeMore({ toolbar, menu });
+  it('runs the page’s own items itself, and a command’s pick through the screen’s run', () => {
+    const m = composeMore({ toolbar, more });
     m.run.get(m.items.find((i) => i.label === 'New Terminal')!.id)!();
     expect(open).toHaveBeenCalledWith(0, 0);
-    const file = m.items.find((i) => i.label === 'File')!;
-    expect(m.run.has(file.submenu![0].id)).toBe(false);
-    expect(file.submenu![0].id).toBe('0.0');
+    const runNow = m.items.find((i) => i.label === 'Run Now')!;
+    m.run.get(runNow.id)!();
+    expect(pick).toHaveBeenCalledWith('run-now');
   });
 
-  it('builds a designed menu from actions, toolbar items, whole menus and single items, flattened', () => {
-    const del = vi.fn();
-    const m = composeMore({
-      toolbar,
-      menu,
-      more: [
-        [{ item: 'task-run-now' }, { item: 'task-stop' }, { toolbar: 'new-task' }],
-        [{ menu: 'file' }],
-        [{ action: { id: 'gone', label: 'Hidden', disabled: true, run: del } }, { action: { id: 'del', label: 'Delete Everything', run: del } }, { item: 'task-work-folder' }],
-      ],
-    });
-    expect(labels(m.items)).toEqual(['Run Now', 'New Task', '—', 'New Task…', '—', 'Settings…', '—', 'Delete Everything']);
-    m.run.get(m.items[m.items.length - 1].id)!();
-    expect(del).toHaveBeenCalled();
-  });
-
-  it('finds a menu by its label too, as an addon names it', () => {
-    const m = composeMore({ menu, more: [[{ menu: '&Task' }]] });
-    expect(labels(m.items)).toEqual(['Run Now', '—', 'Delete Task']);
+  it('takes no commands from a screen without any', () => {
+    expect(labels(composeMore({ toolbar }).items)).not.toContain('Run Now');
   });
 
   it('is empty when there is nothing to offer', () => {
-    expect(composeMore({ menu: null }).items).toEqual([]);
+    expect(composeMore({}).items).toEqual([]);
   });
 });
 
-describe('addon platform marks and mobileMore', () => {
+describe('an addon command’s marks', () => {
   const MANIFEST = {
     $type: 'looper/addon',
     $version: 1,
@@ -244,62 +214,20 @@ describe('addon platform marks and mobileMore', () => {
     run: { on: 'wsl', command: ['node', 'addon.mjs'] },
     panes: [{ id: 'things', title: 'Things' }],
   };
+  const withCommand = (over: object) => readAddonManifest({ ...MANIFEST, commands: [{ id: 'c', label: 'C', in: { app: { menu: 'tools' } }, ...over }] });
 
-  it('accepts platforms on main-toolbar buttons and tools', () => {
-    const r = readAddonManifest({
-      ...MANIFEST,
-      tools: [{ id: 't', label: 'Things', pane: 'things', platforms: ['desktop', 'web'] }],
-      toolbar: [{ id: 'b', label: 'Open', tool: 't', platforms: ['mobile'] }],
-    });
-    expect(r.ok && r.manifest.toolbar[0].platforms).toEqual(['mobile']);
-    expect(r.ok && r.manifest.tools[0].platforms).toEqual(['desktop', 'web']);
+  it('accepts platforms, and rejects unknown, empty or repeated lists', () => {
+    const r = withCommand({ platforms: ['desktop', 'web'] });
+    expect(r.ok && r.manifest.commands[0].platforms).toEqual(['desktop', 'web']);
+    expect(withCommand({ platforms: ['phone'] }).ok).toBe(false);
+    expect(withCommand({ platforms: [] }).ok).toBe(false);
+    expect(withCommand({ platforms: ['web', 'web'] }).ok).toBe(false);
   });
 
-  it('rejects unknown, empty or repeated platform lists', () => {
-    expect(readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'B', platforms: ['phone'] }] }).ok).toBe(false);
-    expect(readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'B', platforms: [] }] }).ok).toBe(false);
-    expect(readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'B', platforms: ['web', 'web'] }] }).ok).toBe(false);
-  });
-
-  const screen = {
-    toolbar: [{ id: 'new', label: 'New', platforms: ['mobile'] }, { separator: true }, { id: 'refresh', label: 'Refresh', icon: 'refresh', iconOnly: true }],
-    menuBar: [
-      { label: '&File', items: [{ id: 'export', label: 'Export…', platforms: ['desktop'] }] },
-      { label: '&View', platforms: ['desktop', 'web'], items: [{ id: 'compact', label: 'Compact', checked: false }] },
-    ],
-    body: [],
-  };
-
-  it('accepts platforms on screen toolbar items and menu-bar menus and items, and a mobileMore naming them', () => {
-    const r = AddonScreenSchema.safeParse({ ...screen, mobileMore: [[{ toolbar: 'new' }, { item: 'export' }], [{ menu: 'File' }]] });
-    expect(r.success).toBe(true);
-    const pane = AddonPaneContentSchema.safeParse({ items: [], toolbar: screen.toolbar, menuBar: screen.menuBar, mobileMore: [[{ menu: 'view' }]] });
-    expect(pane.success).toBe(true);
-  });
-
-  it('rejects a mobileMore that names nothing on the screen', () => {
-    const r = AddonScreenSchema.safeParse({ ...screen, mobileMore: [[{ toolbar: 'nope' }, { menu: 'Edit' }, { item: 'missing' }]] });
-    expect(r.success).toBe(false);
-    const messages = r.success ? [] : r.error.issues.map((i) => i.message);
-    expect(messages).toEqual(['mobileMore names no toolbar button "nope"', 'mobileMore names no menu "Edit"', 'mobileMore names no menu item "missing"']);
-    expect(AddonScreenSchema.safeParse({ ...screen, mobileMore: [] }).success).toBe(false);
-    expect(AddonScreenSchema.safeParse({ ...screen, mobileMore: [[{ toolbar: 'new', menu: 'File' }]] }).success).toBe(false);
-  });
-
-  it('accepts destructive on menu items, screen toolbar buttons and main-toolbar buttons, and carries it to the menu', () => {
-    const r = AddonScreenSchema.safeParse({
-      toolbar: [{ id: 'del', label: 'Delete Server', icon: 'delete', destructive: true }],
-      menuBar: [{ label: '&Edit', items: [{ id: 'del', label: '&Delete Server', destructive: true }] }],
-      body: [],
-    });
-    expect(r.success).toBe(true);
-    expect(readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'Stop All', destructive: true }] }).ok).toBe(true);
-    expect(AddonScreenSchema.safeParse({ toolbar: [{ id: 'a', label: 'A', destructive: 'yes' }], body: [] }).success).toBe(false);
+  it('accepts destructive, and carries it to the menu', () => {
+    expect(withCommand({ destructive: true }).ok).toBe(true);
+    expect(withCommand({ destructive: 'yes' }).ok).toBe(false);
     const { items } = serializeMenu({ items: [{ label: 'Delete Server', destructive: true }, { label: 'Stop Rest Mode' }] });
     expect(items.map((i) => i.destructive)).toEqual([true, undefined]);
-  });
-
-  it('leaves a screen with none of these as it was', () => {
-    expect(AddonScreenSchema.safeParse({ toolbar: [{ id: 'a', label: 'A' }], body: [] }).success).toBe(true);
   });
 });

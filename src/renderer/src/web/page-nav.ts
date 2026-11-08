@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { uiPlatformOf } from '../../../shared/ui-platform';
 import { findToolbarItem, toolbarKey, type ToolbarGroup } from '../components/toolbar-model';
 import { platform } from '../platform';
-import { findMoreAction, type MoreGroup } from './more-menu';
+import type { MoreMenuInput } from './more-menu';
 import type { NavCommand, PageNavAction } from './nav-bar-model';
 
 /**
@@ -19,11 +19,7 @@ export interface PageNav {
    * closing the window.
    */
   back?: () => void;
-  /**
-   * Buttons at the bar's end (iOS) or the top app bar's actions (Android). An
-   * action with the id of a toolbar item stands for it: the More menu leaves
-   * that item out.
-   */
+  /** Buttons at the bar's end (iOS) or the top app bar's actions (Android). */
   actions?: PageNavAction[];
   /**
    * The page draws its own bottom bar (tabs): the frame leaves the bottom safe
@@ -37,10 +33,10 @@ export interface PageNav {
    * without one, the bar shows the title.
    */
   largeTitle?: boolean;
-  /** The screen's toolbar, which the phone doesn't draw: the default More menu starts with it. */
+  /** A toolbar the phone doesn't draw (an addon's buttons, a terminal's text size): More starts with it. */
   toolbar?: ToolbarGroup[];
-  /** A designed More menu in place of the default one: only what applies to the screen (more-menu.ts). */
-  more?: MoreGroup[];
+  /** The screen's More menu, from the command list: its items as data, and what picking one does. */
+  more?: MoreMenuInput;
   /** An editor's Cancel: the bar's leading button (an xmark on iOS), in place of Back or Close. */
   cancel?: NavCommand;
   /** An editor's Save or Create: the bar's trailing button. */
@@ -55,8 +51,6 @@ export interface PageNav {
   split?: PageNavSplit;
   /** iPad: the main window's tabs, which the frame draws as the tab bar near the top. */
   tabs?: PageNavTabs;
-  /** Android: the views behind the top app bar's menu icon, which the frame draws as a modal expanded rail. */
-  navigation?: PageNavTabs;
 }
 
 export interface PageNavSplit {
@@ -79,6 +73,8 @@ export interface PageNavTabs {
 /** What the top frame offers its iframes, as `window.top.__looperFrame`. */
 export interface PageNavHost {
   setNav(windowId: string, nav: PageNav | null): void;
+  /** This Device's sheet, which the frame draws. */
+  openDevice?(): void;
 }
 
 declare global {
@@ -125,18 +121,13 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
       };
     }
     if (n.tabs) out.tabs = { ...n.tabs, select: (id) => latest.current?.tabs?.select(id) };
-    if (n.navigation) out.navigation = { ...n.navigation, select: (id) => latest.current?.navigation?.select(id) };
     if (n.ownsBottom !== undefined) out.ownsBottom = n.ownsBottom;
     if (n.largeTitle !== undefined) out.largeTitle = n.largeTitle;
     if (n.modal !== undefined) out.modal = n.modal;
     if (n.cancel) out.cancel = { ...n.cancel, run: () => latest.current?.cancel?.run() };
     if (n.confirm) out.confirm = { ...n.confirm, run: () => latest.current?.confirm?.run() };
     if (n.toolbar) out.toolbar = [...(out.toolbar ?? []), ...wrapToolbar(n.toolbar, () => latest.current?.toolbar)];
-    if (n.more) {
-      out.more = n.more.map((g) =>
-        g.map((r) => ('action' in r ? { action: { ...r.action, run: () => findMoreAction(latest.current?.more, r.action.id)?.run() } } : r)),
-      );
-    }
+    if (n.more) out.more = { items: n.more.items, run: (id) => latest.current?.more?.run(id) };
   }
   return out;
 }

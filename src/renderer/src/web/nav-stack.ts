@@ -46,21 +46,19 @@ export function splitLayout(width: number, screen: ScreenSize, os: PhoneOs = 'io
   return { lead, inspector: width - lead - INSPECTOR_WIDTH >= MIN_DETAIL_BESIDE_INSPECTOR ? INSPECTOR_WIDTH : 0 };
 }
 
-/** A window made for most of a desktop (Sessions, a run) shows full screen on a tablet rather than in a sheet. */
-const isLarge = (win: Pick<RemoteWindowSpec, 'width' | 'height'>, screen: ScreenSize): boolean =>
-  win.width >= 900 || win.width > screen.width * 0.95 || win.height > screen.height * 0.95;
-
-export function presentation(os: PhoneOs, win: Pick<RemoteWindowSpec, 'modal' | 'width' | 'height'>, isMain: boolean, screen: ScreenSize): Presentation {
+/** From the window's declared role and the device, never its desktop size. */
+export function presentation(os: PhoneOs, win: Pick<RemoteWindowSpec, 'modal' | 'role'>, isMain: boolean, screen: ScreenSize): Presentation {
   if (isMain) return 'root';
+  // A row looked at closely: a sheet over its list, which stays in view behind it (HIG: Sheets; Material: bottom sheets).
+  if (win.role === 'detail') return os === 'ios' ? 'page-sheet' : 'bottom-sheet';
   if (isTablet(screen)) {
-    // On an iPad only a window made for most of a desktop is pushed: the sheet is sized to the screen, so every other one is a sheet at every iPad size.
-    if (os === 'ios') return win.width >= 900 ? 'push' : win.width <= 560 && win.height <= 640 ? 'form-sheet' : 'page-sheet';
-    if (isLarge(win, screen)) return 'push';
+    if (win.role === 'workspace') return 'push';
+    if (os === 'ios') return win.role === 'editor' ? 'page-sheet' : 'form-sheet';
     return win.modal ? 'dialog' : 'push';
   }
   if (!win.modal) return 'push';
   if (os === 'ios') return 'page-sheet';
-  return win.height <= 360 && win.width <= 520 ? 'bottom-sheet' : 'full-dialog';
+  return win.role === 'prompt' ? 'bottom-sheet' : 'full-dialog';
 }
 
 /** Whether the presentation covers the whole screen, so what's under it needn't be drawn. */

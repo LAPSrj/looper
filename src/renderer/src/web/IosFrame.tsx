@@ -72,7 +72,12 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     return () => controller.setOverlay(false);
   }, [overlay, controller]);
 
-  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
+  // The More view's This Device row asks for the sheet.
+  useEffect(() => {
+    if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
+  }, []);
+
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, anchor: button.getBoundingClientRect() });
   const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
@@ -107,7 +112,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
           onClose={() => setMore(null)}
           onPick={(item) => {
             setMore(null);
-            pickMore(controller, more, item, () => setDevice(true));
+            pickMore(controller, more, item);
           }}
         />
       )}
@@ -120,9 +125,6 @@ export function IosFrame({ controller }: { controller: ShellController }) {
 }
 
 // ---------- the navigation bar ----------
-
-/** The label of This Device in the main window's More menu. */
-const DEVICE_LABEL = 'This Device';
 
 function IosBar({
   shell,
@@ -140,7 +142,7 @@ function IosBar({
   const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
   const nav = sc.nav;
   const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
-  const more = moreFor(sc, DEVICE_LABEL).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
+  const more = moreFor(sc).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
   const goBack = () => shell.goBack();
   const back = nav?.back ? goBack : undefined;
   // The bar has no fill of its own: it's the page's top color, with the hard scroll edge once the page scrolls.

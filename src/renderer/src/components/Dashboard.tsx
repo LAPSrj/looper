@@ -5,7 +5,7 @@ import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
 import type { DetailTab } from './TaskDetail';
 import { DataTable, type DataCol } from './DataTable';
-import { showTaskMenu } from './TaskList';
+import { showTaskMenu } from './row-menus';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
 import { statusText } from './SessionList';

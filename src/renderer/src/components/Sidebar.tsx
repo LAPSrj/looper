@@ -1,12 +1,10 @@
 import { useRef, useState } from 'react';
 import { Chevron } from './icons';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
-import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneItem } from '@shared/addons';
-import type { UiEvent } from '@shared/api';
 import type { Environment, Project, ProjectFolder, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { ALL_FILTERS, PANES, passesFilter, type PaneId } from '@shared/panes';
-import { AddonPaneList, type AddonPaneState, type AddonSelection } from './AddonPane';
 import { ProjectList } from './ProjectList';
+import { showPaneMenu, showProjectsListMenu } from './row-menus';
 import { TaskList } from './TaskList';
 import { useDragResize } from './hooks';
 
@@ -17,31 +15,19 @@ interface Props {
   runtimes: Record<string, TaskRuntime>;
   selected: string | null;
   onSelect: (id: string | null) => void;
-  /** The main window's task commands, for the list's Delete key. */
-  onCommand: (type: UiEvent['type']) => void;
   view: View;
   onView: (patch: Partial<View>) => void;
-  addons: AddonInfo[];
-  addonPanes: Record<string, AddonPaneState>;
-  addonSelected: AddonSelection | null;
-  onAddonSelect: (sel: AddonSelection, item: AddonPaneItem) => void;
-  onAddonRetry: (addonId: string) => void;
 }
 
 /** A pane never shrinks below its header and about one row. */
 const MIN_PANE_PX = 72;
-/** A pane that fits its content keeps room for its header and about three rows when its share is smaller. */
-const FIT_PANE_MIN_PX = 160;
 /** One arrow press on a focused splitter moves it this far. */
 const SASH_STEP_PX = 24;
-/** The single task list's key among the panes. */
-const SINGLE = 'single';
-const DEFAULT_ADDON_PANE = { visible: true, collapsed: false, weight: 1 };
 
 /** The pair of panes a splitter drag resizes, measured when the drag starts. */
 interface SashDrag {
-  above: string;
-  below: string;
+  above: PaneId;
+  below: PaneId;
   startY: number;
   heightAbove: number;
   heightBelow: number;
@@ -49,22 +35,15 @@ interface SashDrag {
 }
 
 interface PaneEntry {
-  key: string;
+  key: PaneId;
   title: string;
-  /** Unset: the header shows no count. */
-  count?: number | string;
-  /** A header that collapses the pane on click, with its chevron. */
-  collapsible: boolean;
+  count: number;
   open: boolean;
   weight: number;
-  /** Sized to its content, up to its share of the height: a short list shows whole and the task list gets the rest. */
-  fit?: boolean;
-  onToggle?: () => void;
+  onToggle: () => void;
   onMenu: () => void;
   body: ReactNode;
 }
-
-const isTaskPane = (key: string): key is PaneId => PANES.some((p) => p.id === key);
 
 /** The Projects tab's list of projects, under its header (a right-click there: Group By and New Project). */
 export function ProjectsSidebar({
@@ -90,7 +69,7 @@ export function ProjectsSidebar({
         className="sidebar-header"
         onContextMenu={(e) => {
           e.preventDefault();
-          window.looper.projects.showContextMenu('');
+          showProjectsListMenu();
         }}
       >
         <span className="pane-title">Projects</span>
@@ -110,7 +89,7 @@ export function ProjectsSidebar({
   );
 }
 
-/** The Tasks tab's task list (one list of every task, or the Tasks / Goals / Watchers panes stacked), and the installed addons' panes below it. */
+/** The Tasks tab's task list: one list of every task, or the Tasks, Goals and Watchers panes stacked. */
 export function Sidebar({
   tasks,
   folders,
@@ -118,35 +97,23 @@ export function Sidebar({
   runtimes,
   selected,
   onSelect,
-  onCommand,
   view,
   onView,
-  addons,
-  addonPanes,
-  addonSelected,
-  onAddonSelect,
-  onAddonRetry,
 }: Props) {
   const asideRef = useRef<HTMLElement>(null);
   const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const sash = useRef<SashDrag | null>(null);
   // Weights while a splitter is dragged; saved to the view when it is released.
-  const [dragWeights, setDragWeights] = useState<Record<string, number> | null>(null);
-  // Each addon pane's search, by pane key.
-  const [queries, setQueries] = useState<Record<string, string>>({});
+  const [dragWeights, setDragWeights] = useState<Partial<Record<PaneId, number>> | null>(null);
 
   /** The view patch that stores these pane weights. */
-  const weightPatch = (weights: Record<string, number>): Partial<View> => {
-    const patch: Partial<View> = {};
-    for (const [key, weight] of Object.entries(weights)) {
-      if (key === SINGLE) patch.singleWeight = weight;
-      else if (isTaskPane(key)) patch.panes = { ...(patch.panes ?? view.panes), [key]: { ...view.panes[key], weight } };
-      else {
-        const prev = patch.addonPanes ?? view.addonPanes;
-        patch.addonPanes = { ...prev, [key]: { ...(prev[key] ?? DEFAULT_ADDON_PANE), weight } };
-      }
+  const weightPatch = (weights: Partial<Record<PaneId, number>>): Partial<View> => {
+    const panes = { ...view.panes };
+    for (const p of PANES) {
+      const weight = weights[p.id];
+      if (weight !== undefined) panes[p.id] = { ...panes[p.id], weight };
     }
-    return patch;
+    return { panes };
   };
 
   const onSashDown = useDragResize({
@@ -173,59 +140,19 @@ export function Sidebar({
     runtimes,
     selected,
     onSelect,
-    onCommand,
     compact: view.taskList === 'compact',
     autoOpenFolders: view.autoOpenFolders,
   };
 
-  const addonEntries: PaneEntry[] = addons.filter((a) => a.enabled).flatMap((a) =>
-    a.panes.flatMap((p): PaneEntry[] => {
-      const key = addonPaneKey(a.id, p.id);
-      const state = view.addonPanes[key] ?? DEFAULT_ADDON_PANE;
-      if (!state.visible) return [];
-      const pane = addonPanes[key];
-      const query = queries[key] ?? '';
-      const items = pane?.status === 'ready' ? pane.content.items : [];
-      const shown = items.filter((it) => matchesSearch(it, query)).length;
-      return [
-        {
-          key,
-          title: p.title,
-          count: a.status === 'running' && pane?.status === 'ready' ? (query.trim() ? `${shown} of ${items.length}` : items.length) : undefined,
-          collapsible: true,
-          open: !state.collapsed,
-          weight: state.weight,
-          fit: true,
-          onToggle: () => onView({ addonPanes: { ...view.addonPanes, [key]: { ...state, collapsed: !state.collapsed } } }),
-          onMenu: () =>
-            window.looper.addons.showMenu(a.id, p.id, pane?.status === 'ready' ? (pane.content.menu ?? []) : [], { header: true }),
-          body: (
-            <AddonPaneList
-              addon={a}
-              pane={p.id}
-              state={pane}
-              selected={addonSelected?.addonId === a.id && addonSelected.pane === p.id ? addonSelected.item : null}
-              compact={view.taskList === 'compact'}
-              query={query}
-              onQuery={(q) => setQueries((m) => ({ ...m, [key]: q }))}
-              onSelect={(item) => onAddonSelect({ addonId: a.id, pane: p.id, item: item.id }, item)}
-              onRetry={() => onAddonRetry(a.id)}
-            />
-          ),
-        },
-      ];
-    }),
-  );
-
-  const singleCount = tasks.filter((t) => passesFilter(t, view.single, ALL_FILTERS)).length;
-  if (view.sidebar === 'single' && view.single.visible && !addonEntries.length) {
+  if (view.sidebar === 'single') {
+    const singleCount = tasks.filter((t) => passesFilter(t, view.single, ALL_FILTERS)).length;
     return (
       <aside className="sidebar">
         <div
           className="sidebar-header"
           onContextMenu={(e) => {
             e.preventDefault();
-            window.looper.showPaneContextMenu({});
+            showPaneMenu();
           }}
         >
           <span className="pane-title">Tasks</span>
@@ -236,48 +163,23 @@ export function Sidebar({
     );
   }
 
-  const taskEntries: PaneEntry[] =
-    view.sidebar === 'single'
-      ? [
-          {
-            key: SINGLE,
-            title: 'Tasks',
-            count: singleCount,
-            collapsible: true,
-            open: !view.single.collapsed,
-            weight: view.singleWeight,
-            onToggle: () => onView({ single: { ...view.single, collapsed: !view.single.collapsed } }),
-            onMenu: () => window.looper.showPaneContextMenu({}),
-            body: <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders />,
-          },
-        ].filter(() => view.single.visible)
-      : PANES.filter((p) => view.panes[p.id].visible).map((p, i) => {
-          const options = view.panes[p.id];
-          return {
-            key: p.id,
-            title: p.title,
-            count: tasks.filter((t) => p.member(t) && passesFilter(t, options, p.filters)).length,
-            collapsible: true,
-            open: !options.collapsed,
-            weight: options.weight,
-            onToggle: () => onView({ panes: { ...view.panes, [p.id]: { ...options, collapsed: !options.collapsed } } }),
-            onMenu: () => window.looper.showPaneContextMenu({ pane: p.id }),
-            // Folders with no tasks in them would otherwise show in no pane at all.
-            body: <TaskList {...listProps} pane={p} options={options} showEmptyFolders={i === 0} />,
-          };
-        });
+  const shown: PaneEntry[] = PANES.filter((p) => view.panes[p.id].visible).map((p, i) => {
+    const options = view.panes[p.id];
+    return {
+      key: p.id,
+      title: p.title,
+      count: tasks.filter((t) => p.member(t) && passesFilter(t, options, p.filters)).length,
+      open: !options.collapsed,
+      weight: options.weight,
+      onToggle: () => onView({ panes: { ...view.panes, [p.id]: { ...options, collapsed: !options.collapsed } } }),
+      onMenu: () => showPaneMenu(p.id),
+      // Folders with no tasks in them would otherwise show in no pane at all.
+      body: <TaskList {...listProps} pane={p} options={options} showEmptyFolders={i === 0} />,
+    };
+  });
 
-  const shown = [...taskEntries, ...addonEntries];
   const weight = (e: PaneEntry) => dragWeights?.[e.key] ?? e.weight;
-  // A pane that fits its content needs a pane that fills the rest; with none open they all share the height by weight.
-  const filling = shown.some((e) => e.open && !e.fit);
-  const openWeight = shown.reduce((sum, e) => sum + (e.open ? weight(e) : 0), 0);
-  const paneStyle = (e: PaneEntry): React.CSSProperties =>
-    !e.open
-      ? { flex: '0 0 auto' }
-      : e.fit && filling
-        ? { flex: '0 1 auto', maxHeight: `max(${((weight(e) / openWeight) * 100).toFixed(2)}%, ${FIT_PANE_MIN_PX}px)` }
-        : { flex: `${weight(e)} 1 0px` };
+  const paneStyle = (e: PaneEntry): React.CSSProperties => (e.open ? { flex: `${weight(e)} 1 0px` } : { flex: '0 0 auto' });
 
   /** The splitter above pane `i` resizes the nearest open pane above it and the nearest open one from `i` down. */
   const sashPair = (i: number): [PaneEntry, PaneEntry] | null => {
@@ -346,25 +248,25 @@ export function Sidebar({
               />
             )}
             <div
-              className={p.collapsible ? 'sidebar-header pane-header' : 'sidebar-header'}
+              className="sidebar-header pane-header"
               onClick={p.onToggle}
-              // A collapsible header is a button: Enter or Space opens and closes the pane.
-              role={p.collapsible ? 'button' : undefined}
-              tabIndex={p.collapsible ? 0 : undefined}
-              aria-expanded={p.collapsible ? p.open : undefined}
+              // The header is a button: Enter or Space opens and closes the pane.
+              role="button"
+              tabIndex={0}
+              aria-expanded={p.open}
               onKeyDown={(e) => {
-                if (!p.collapsible || e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
                 e.preventDefault();
-                p.onToggle?.();
+                p.onToggle();
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 p.onMenu();
               }}
             >
-              {p.collapsible && <Chevron open={p.open} />}
+              <Chevron open={p.open} />
               <span className="pane-title">{p.title}</span>
-              {p.count !== undefined && <span className="pane-count">{p.count}</span>}
+              <span className="pane-count">{p.count}</span>
             </div>
             {p.open && p.body}
           </div>

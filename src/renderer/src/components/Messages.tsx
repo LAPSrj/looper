@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RUN_VIEWS } from '@shared/commands/build';
+import type { CommandContext } from '@shared/commands/context';
 import type { MessageRow, MessagesResult } from '@shared/messages';
 import { messagesToMarkdown } from '@shared/messages-md';
 import { groupRuns } from '@shared/runs';
@@ -7,7 +9,9 @@ import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
 import { clockTime, resultTone, timeAndDuration } from '../phone-lists';
 import { initialRow, rowMatches, runTableRows, type ConversationRow, type RunTableRow, type StepRow } from '../run-rows';
+import { phoneNav } from './command-surfaces';
 import { DataTable, type DataCol } from './DataTable';
+import { useCommandMenu, useCommandState } from './useCommands';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
 import { Markdown } from './Markdown';
@@ -165,29 +169,56 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const [rawOutput, setRawOutput] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [stepOutput, setStepOutput] = useState<Output | null>(null);
-  const [showRun, setShowRun] = useState(true);
+  const [showResult, setShowResult] = useState(true);
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 
-  // The window's View menu drives the toggles; the filter window sends its value.
+  // The filter window sends its value.
+  useEffect(
+    () =>
+      window.looper.onUi((e) => {
+        if (e.type === 'messages-filter') setFilter(e.value);
+      }),
+    [],
+  );
+
+  // The window's menu bar (a phone's More), from the one list.
+  const commandState = useCommandState();
+  const [canContinue, setCanContinue] = useState({ chat: false, terminal: false, guidance: false, compact: false });
+  const [workFolder, setWorkFolder] = useState(false);
   useEffect(() => {
-    return window.looper.onUi((e) => {
-      if (e.type === 'messages-show-run') {
-        setShowRun(e.checked);
-      } else if (e.type === 'messages-raw') {
-        setRaw(e.checked);
-      } else if (e.type === 'messages-raw-output') {
-        setRawOutput(e.checked);
-      } else if (e.type === 'messages-auto-scroll') {
-        setAutoScroll(e.checked);
-      } else if (e.type === 'messages-filter') {
-        setFilter(e.value);
-        window.looper.reportMessagesFilter(e.value);
-      }
-    });
-  }, []);
+    if (agentId) return;
+    // Read once as the window opens: a run still going keeps the Continue items off.
+    void window.looper.runs.canContinue(taskId, runId).then(setCanContinue);
+  }, [taskId, runId, agentId]);
+  useEffect(() => {
+    void window.looper.tasks.list().then((tasks) => setWorkFolder(!!tasks.find((x) => x.id === taskId)?.cwd));
+  }, [taskId]);
+  const run = useMemo(() => (agentId ? undefined : groupRuns(records)[0]), [records, agentId]);
+  const commands: CommandContext = {
+    ...commandState,
+    run: {
+      taskId,
+      runId,
+      agentId,
+      title: document.title,
+      workFolder,
+      canContinue,
+      raw,
+      rawOutput,
+      autoScroll,
+      filter,
+      tab: run && showResult ? 'result' : 'details',
+      set: (patch) => {
+        if (patch.raw !== undefined) setRaw(patch.raw);
+        if (patch.rawOutput !== undefined) setRawOutput(patch.rawOutput);
+        if (patch.autoScroll !== undefined) setAutoScroll(patch.autoScroll);
+      },
+    },
+  };
+  useCommandMenu(RUN_VIEWS, commands);
 
   // The run's own records: loaded once, then appended as the engine writes them.
   useEffect(() => {
@@ -241,14 +272,14 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const rows = useMemo(() => runTableRows(result?.rows ?? [], steps, { raw, running }), [result, steps, raw, running]);
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    return rows.filter((r) => (r.kind !== 'step' || showRun) && (!f || rowMatches(r, f)));
-  }, [rows, showRun, filter]);
+    return rows.filter((r) => !f || rowMatches(r, f));
+  }, [rows, filter]);
 
-  // Follow the table while the reader is at its bottom.
+  // Follow the table while the reader is at its bottom. A phone's list stays where it's read, unless Auto Scroll is on.
   useEffect(() => {
     const wrap = wrapRef.current;
-    if (wrap && atBottomRef.current) wrap.scrollTop = wrap.scrollHeight;
-  }, [visible.length]);
+    if (wrap && (selectsFirstRow ? atBottomRef.current : autoScroll)) wrap.scrollTop = wrap.scrollHeight;
+  }, [visible.length, autoScroll]);
 
   // Auto Scroll: while the last row is selected (or none is), a new last row
   // takes the selection and the table scrolls to the bottom. Selecting an
@@ -324,8 +355,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     }
   };
 
-  const phoneBar = <NavBar title={phoneTitle} order={10} />;
-  const run = useMemo(() => (agentId ? undefined : groupRuns(records)[0]), [records, agentId]);
+  const phoneBar = <NavBar title={phoneTitle} more={phoneNav(RUN_VIEWS, commands).more} order={10} />;
 
   const emptyText = (): string => {
     if (result === null) return '';
@@ -382,6 +412,33 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
         onClose={() => setSelected(null)}
         detailTitle={current ? (current.kind === 'conversation' ? 'Conversation' : typeLabel(current)) : undefined}
         empty="Select a row"
+        summary={
+          run && {
+            label: 'Result',
+            listLabel: 'Details',
+            shown: showResult,
+            onShown: setShowResult,
+            body: (
+              <>
+                {run.resultText && (
+                  <Group>
+                    <div className="pg-result">
+                      <Markdown text={run.resultText} />
+                    </div>
+                  </Group>
+                )}
+                <Group>
+                  <ListRow
+                    title="Outcome"
+                    sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
+                    value={running ? 'Running' : resultLabel(run.result)}
+                    valueTone={resultTone(run.result)}
+                  />
+                </Group>
+              </>
+            ),
+          }
+        }
         list={
           <DataTable
             cols={MESSAGE_COLS}
@@ -399,28 +456,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
               atBottomRef.current = w.scrollHeight - w.scrollTop - w.clientHeight < 40;
             }}
             note={raw && dropped > 0 ? `${dropped} earlier messages not shown` : undefined}
-            empty={rows.length > 0 ? 'No rows match the current view or filter.' : emptyText()}
-            head={
-              run && (
-                <>
-                  {run.resultText && (
-                    <Group title="Result">
-                      <div className="pg-result">
-                        <Markdown text={run.resultText} />
-                      </div>
-                    </Group>
-                  )}
-                  <Group>
-                    <ListRow
-                      title="Outcome"
-                      sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
-                      value={running ? 'Running' : resultLabel(run.result)}
-                      valueTone={resultTone(run.result)}
-                    />
-                  </Group>
-                </>
-              )
-            }
+            empty={rows.length > 0 ? 'No rows match the filter.' : emptyText()}
             dayOf={(r) => (r.ts ? Date.parse(r.ts) : NaN)}
             sectionTitle={(day, days) => (days > 1 ? `Run, ${day}` : 'Run')}
             phoneRow={(r) => ({

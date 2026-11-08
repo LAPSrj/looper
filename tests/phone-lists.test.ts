@@ -1,19 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { AttentionRow } from '../src/shared/dashboard';
-import type { MenuItemSpec } from '../src/shared/remote-access';
+import { noMnemonic } from '../src/shared/commands/command';
+import { EMPTY_CONTEXT, type CommandContext } from '../src/shared/commands/context';
 import type { SessionSummary } from '../src/shared/sessions';
 import type { Task } from '../src/shared/types';
-import type { ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
-import { composeMore } from '../src/renderer/src/web/more-menu';
+import { phoneMore } from '../src/renderer/src/components/command-surfaces';
 import {
   clockTime,
-  conversationMore,
   dayGroups,
   dayTitle,
   resultTone,
   splitAttention,
   taskNameOf,
-  taskScreenMore,
   taskSummary,
   terminalOverlay,
   terminalTitle,
@@ -167,69 +165,47 @@ describe('terminals on a phone', () => {
 });
 
 describe('a conversation’s More menu', () => {
-  // What the hand-written list gave before the catalog: the menu item where the window's menu bar has it,
-  // the toolbar item where it doesn't (a terminal has no Chat menu).
-  const sessions = [{ item: 'chat-new-in-project' }, { item: 'chat-send-to-chats', toolbar: 'send-to-chats' }];
-  const close = [{ item: 'chat-close', toolbar: 'close-conversation' }];
-  const restart = { item: 'chat-restart', toolbar: 'restart-agent' };
+  const chatState = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code' };
+  const phone = (kind: 'chat' | 'terminal' | 'run'): CommandContext => {
+    const summary = { id: 'c', kind, taskId: 't', status: 'idle' };
+    return { ...EMPTY_CONTEXT, here: 'mobile', chats: { single: false, tab: true, selected: 'c', summary, chat: kind === 'chat' ? chatState : null, sessions: [summary], shown: {} } as never };
+  };
+  const moreOf = (kind: 'chat' | 'terminal' | 'run'): string[] => phoneMore(['conversation'], phone(kind)).map((i) => (i.type === 'separator' ? '-' : noMnemonic(i.label ?? '')));
 
-  it('offers a chat its own commands, with Close Conversation last in a group of its own', () => {
-    expect(conversationMore('chat')).toEqual([
-      [
-        { item: 'chat-find' },
-        { item: 'chat-save-markdown' },
-        { item: 'chat-rename' },
-        { item: 'chat-auto-continue' },
-        { item: 'chat-copy-session-id' },
-        restart,
-        { item: 'chat-compact', toolbar: 'compact' },
-        { item: 'chat-work-folder', toolbar: 'open-work-folder' },
-      ],
-      sessions,
-      close,
-    ]);
+  it('offers a chat its own commands, with Close Conversation in a group of its own', () => {
+    const more = moreOf('chat');
+    for (const l of ['Find…', 'Save as Markdown…', 'Rename…', 'Copy Session ID', 'Restart Agent', 'Compact into New Chat', 'Open Working Directory']) expect(more, l).toContain(l);
+    const at = more.indexOf('Close Conversation');
+    expect(at).toBeGreaterThan(0);
+    expect(more[at - 1]).toBe('-');
+    expect(more[at + 1]).toBe('-');
   });
 
-  it('gives a terminal session its text size and Restart Agent instead of a transcript’s commands', () => {
-    expect(conversationMore('terminal')).toEqual([[{ toolbar: 'terminal-text-smaller' }, { toolbar: 'terminal-text-larger' }, restart, { item: 'chat-work-folder', toolbar: 'open-work-folder' }], sessions, close]);
+  it('gives a terminal session Restart Agent instead of a transcript’s commands', () => {
+    const more = moreOf('terminal');
+    expect(more).toContain('Restart Agent');
+    for (const l of ['Find…', 'Save as Markdown…', 'Rename…', 'Compact into New Chat']) expect(more, l).not.toContain(l);
   });
 
-  it('gives a task run’s agent its export and session id, no Find', () => {
-    expect(conversationMore('run')).toEqual([[{ item: 'chat-save-markdown' }, { item: 'chat-work-folder', toolbar: 'open-work-folder' }], sessions, close]);
-  });
-
-  it('shows the toolbar’s Restart Agent where the window has no Chat menu, and the Chat menu’s where it has', () => {
-    const toolbar: ToolbarGroup[] = [{ id: 'session', items: [{ id: 'restart-agent', label: 'Restart Agent', run: () => {} }] }];
-    const chatMenu: MenuItemSpec = {
-      id: '0',
-      key: 'chat',
-      type: 'submenu',
-      label: 'Chat',
-      enabled: true,
-      submenu: [{ id: '0.0', key: 'chat-restart', type: 'normal', label: 'Restart Agent', enabled: true }],
-    };
-    const terminal = composeMore({ toolbar, menu: [], more: conversationMore('terminal') });
-    expect(terminal.items.map((i) => i.id)).toEqual(['__page:tb:restart-agent']);
-    const chat = composeMore({ toolbar, menu: [chatMenu], more: conversationMore('chat') });
-    expect(chat.items.map((i) => i.id)).toEqual(['0.0']);
+  it('gives a task run’s agent its export, no Find and no Restart Agent', () => {
+    const more = moreOf('run');
+    expect(more).toContain('Save as Markdown…');
+    expect(more).toContain('Open Working Directory');
+    for (const l of ['Find…', 'Restart Agent']) expect(more, l).not.toContain(l);
   });
 });
 
 describe('a task screen’s More menu', () => {
-  it('has the Task menu’s commands, its project’s New Chat and New Terminal, and Delete last', () => {
-    expect(taskScreenMore()).toEqual([
-      [{ item: 'task-run-now', toolbar: 'run-now' }, { item: 'task-stop', toolbar: 'stop-task' }, { item: 'task-pause-resume', toolbar: 'pause-resume' }, { item: 'task-enable-disable', toolbar: 'enable-disable' }, { item: 'task-complete', toolbar: 'complete-reopen' }],
-      [{ item: 'task-edit', toolbar: 'edit-task' }, { item: 'task-edit-agent' }, { item: 'task-note', toolbar: 'edit-note' }, { item: 'task-note-clear' }],
-      [{ item: 'task-move-folder' }, { item: 'task-versions' }, { item: 'task-export' }, { item: 'task-clear-runs' }, { item: 'task-work-folder', toolbar: 'open-work-folder' }],
-      [{ item: 'project-new-chat' }, { item: 'project-new-terminal' }],
-      [{ item: 'task-delete' }],
-    ]);
+  const phone: CommandContext = { ...EMPTY_CONTEXT, here: 'mobile', task: { id: 't1', name: 'N', enabled: true, maxConcurrentRuns: 1, completion: { allowed: true } } as unknown as Task, project: { id: 'p', name: 'Site' } as never };
+  const more = phoneMore(['task'], phone).map((i) => (i.type === 'separator' ? '-' : noMnemonic(i.label ?? '')));
+
+  it('has the task’s commands, its project’s New Chat and New Terminal, and Delete Task', () => {
+    for (const l of ['Stop Task', 'Pause', 'Disable', 'Complete', 'Edit with Agent…', 'Move to Folder…', 'Version History', 'Clear Run History…', 'Open Working Directory', 'Delete Task', 'New Chat', 'New Terminal']) expect(more, l).toContain(l);
   });
 
-  it('uses the menu bar’s items: a task’s screen has no toolbar', () => {
-    const menu: MenuItemSpec[] = [
-      { id: '1', key: 'task', type: 'submenu', label: 'Task', enabled: true, submenu: [{ id: '1.0', key: 'task-edit', type: 'normal', label: 'Edit Task…', enabled: true }] },
-    ];
-    expect(composeMore({ menu, more: taskScreenMore() }).items.map((i) => i.label)).toEqual(['Edit Task…']);
+  it('keeps Delete Task apart from the commands around it', () => {
+    const at = more.indexOf('Delete Task');
+    expect(more[at - 1]).toBe('-');
+    expect(more[at + 1]).toBe('-');
   });
 });

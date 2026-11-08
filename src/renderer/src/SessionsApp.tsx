@@ -12,7 +12,9 @@ import {
   sizeRow,
   type GapBar,
 } from '@shared/card-grid';
-import { chatCanCompact, contextText, type ChatState } from '@shared/chat';
+import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS } from '@shared/commands/build';
+import type { CommandContext } from '@shared/commands/context';
+import { contextText, type ChatState } from '@shared/chat';
 import type { SessionSummary, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
 import { canStop, dashboardOrder, liveCards, showsConversation, waitedText } from '@shared/sessions';
@@ -24,9 +26,8 @@ import { MINUTE, useNow } from './useNow';
 import { ICONS } from './components/icons';
 import { ToolButton } from './components/ToolButton';
 import { Toolbar } from './components/Toolbar';
-import { commandToolbar, type ToolbarGroup } from './components/toolbar-model';
-import { NOT_MOBILE } from '@shared/ui-platform';
-import { CHAT_COMMANDS } from '@shared/commands/chat';
+import { commandToolbar, phoneNav } from './components/command-surfaces';
+import { useCommandMenu, useCommandState } from './components/useCommands';
 import { ChatView, PermissionButtons } from './components/ChatView';
 import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
@@ -50,10 +51,8 @@ import { TerminalView } from './components/TerminalView';
 import { Tabs, type TabItem } from './components/Tabs';
 import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components/WorkflowView';
 import { platform } from './platform';
-import { conversationMore, terminalTitle } from './phone-lists';
+import { terminalTitle } from './phone-lists';
 import { subscribe } from './events';
-import { useAddons } from './components/AddonPane';
-import { addonMainGroups } from './components/AddonScreen';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 import type { PageNavAction } from './web/nav-bar-model';
@@ -747,79 +746,9 @@ const hasTabs = (s: SessionsWindow): boolean => subagentTabs(s.subagents, s.foll
 /** Send guidance to a task run's agent, which it gets mid-run; rejects with the reason it can't take it. */
 const sendRunGuidance = (s: SessionSummary, text: string): Promise<void> => window.looper.sendGuidance(s.taskId, s.id, text);
 
-/**
- * The Chats window's toolbar as data: new sessions (in the shown session's
- * project, or a picked one), the dashboard, History and Send to Chats, the
- * conversation's Stop, Send Now, Compact and Close and its folder, and the
- * activity pane. The desktop draws it; a phone's More menu offers it
- * (pass it to usePageNav as `toolbar`).
- */
-export function sessionsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
-  const { summary, chat, stoppable, shown } = s;
-  const project = summary?.projectId;
-  return [
-    {
-      id: 'new',
-      items: commandToolbar(CHAT_COMMANDS, 'new', {
-        newChat: {
-          label: project ? `New Chat in ${summary!.groupName}` : undefined,
-          shortcut: !!project,
-          run: project ? () => void window.looper.projects.newChat(project) : null,
-          menu: { label: 'New Chat in Project', open: (x, y) => window.looper.sessions.showNewMenu('chat', x, y) },
-        },
-        newTerminal: {
-          label: project ? `New Terminal in ${summary!.groupName}` : undefined,
-          shortcut: !!project,
-          run: project ? () => void window.looper.projects.newTerminal(project) : null,
-          menu: { label: 'New Terminal in Project', open: (x, y) => window.looper.sessions.showNewMenu('terminal', x, y) },
-        },
-      }),
-    },
-    {
-      id: 'views',
-      items: commandToolbar(CHAT_COMMANDS, 'views', {
-        dashboard: { pressed: !s.selected, run: () => s.setSelected(null) },
-        history: { run: () => window.looper.history.open(), menu: { label: 'Recent Conversations', open: (x, y) => window.looper.sessions.showHistoryMenu(x, y) } },
-        sendToChats: { run: () => window.looper.sessions.openSend() },
-      }),
-    },
-    {
-      id: 'session',
-      items: commandToolbar(CHAT_COMMANDS, 'session', {
-        // Esc is a chat's: a terminal's goes to its agent.
-        stop: { shortcut: summary?.kind === 'chat', enabled: stoppable, run: () => void window.looper.sessions.stop(summary!.id).catch(fail) },
-        sendNow: { enabled: (chat?.queued.length ?? 0) > 0, run: () => void window.looper.chat.sendNow(chat!.id).catch(fail) },
-        restart: {
-          // A chat, or a terminal session on Claude Code or Codex (a custom harness has no conversation to go on with).
-          enabled: !!summary && (summary.kind === 'chat' || (summary.kind === 'terminal' && summary.harnessKind !== 'custom')),
-          run: () => void window.looper.sessions.restart(summary!.id).catch(fail),
-        },
-        compact: { enabled: !!chat && chatCanCompact(chat), run: () => void window.looper.chat.compact(chat!.id).catch(fail) },
-        close: { enabled: !!summary && summary.kind !== 'run', run: () => void window.looper.sessions.close(summary!.id) },
-        openWorkFolder: { enabled: !!summary, run: () => void window.looper.openTaskWorkFolder(summary!.taskId) },
-      }),
-    },
-    {
-      // A phone shows the activity in a sheet, from its own bar button.
-      id: 'panes',
-      platforms: NOT_MOBILE,
-      items: commandToolbar(CHAT_COMMANDS, 'panes', {
-        activityPane: { enabled: !!summary, pressed: !!summary && shown.activityPane, run: () => s.setShown({ activityPane: !shown.activityPane }) },
-      }),
-    },
-  ];
-}
-
-function SessionsToolbar({ s }: { s: SessionsWindow }) {
-  const { addons } = useAddons();
-  const [hidden, setHidden] = useState<string[]>([]);
-  useEffect(() => {
-    void window.looper.info().then((i) => setHidden(i.settings.view.hiddenAddonToolbars));
-    return subscribe((e) => {
-      if (e.type === 'settings') setHidden(e.settings.view.hiddenAddonToolbars);
-    });
-  }, []);
-  return <Toolbar groups={[...sessionsToolbarGroups(s), ...addonMainGroups(addons, hidden, 'chats', true)]} className="sessions-toolbar" />;
+/** The Chats window's toolbar; a single chat's window has only its conversation's buttons. */
+function SessionsToolbar({ c, single }: { c: CommandContext; single: boolean }) {
+  return <Toolbar groups={commandToolbar(single ? ['conversation'] : ['new', 'chats', 'conversation'], c)} className="sessions-toolbar" />;
 }
 
 /**
@@ -892,9 +821,12 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
 
 function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) {
   const { state, summary, chat, shown } = s;
+  const commandState = useCommandState();
+  const commands: CommandContext = { ...commandState, chats: s.chatsContext() };
+  useCommandMenu(single ? CHAT_WINDOW_VIEWS : CHATS_WINDOW_VIEWS, commands);
   return (
     <div className="sessions-app">
-      {!single && shown.toolbar && <SessionsToolbar s={s} />}
+      {(single ? shown.windowToolbar : shown.toolbar) && <SessionsToolbar c={commands} single={single} />}
       <SessionsBody s={s} single={single} />
       {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={sessionLimits(state, summary)} />}
     </div>
@@ -996,27 +928,23 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     else if (opened && listed.current && !split) window.close();
   }, [summary, opened, split]);
 
-  const listActions: PageNavAction[] = [
-    // The toolbar's ids: the More menu leaves these out.
-    { id: 'new-chat', label: 'New Chat', icon: 'newChat', run: () => window.looper.sessions.showNewMenu('chat', 0, 0) },
-    { id: 'new-terminal', label: 'New Terminal', icon: 'terminal', run: () => window.looper.sessions.showNewMenu('terminal', 0, 0) },
-    { id: 'send-to-chats', label: 'Send to Chats', icon: 'bullhorn', run: () => window.looper.sessions.openSend() },
-  ];
-  // A chat's Stop and Send Now are in its message box; a terminal session has no message box, so its Stop stays in the bar.
-  const actions: PageNavAction[] = summary
-    ? [
-        ...(s.stoppable && summary.kind !== 'chat' ? [{ id: 'stop', label: 'Stop', icon: 'stopChat', run: () => void window.looper.sessions.stop(summary.id).catch(fail) }] : []),
-        { id: 'activity', label: 'Activity', icon: 'activity', run: panel.toggle },
-        {
-          id: 'usage',
-          label: usageLabel(chat?.context ?? summary.context, limits),
-          ring: { context: contextFraction(chat?.context ?? summary.context), used: limits.fiveHour?.used ?? null },
-          run: () => setUsage(true),
-        },
-      ]
-    : split
-      ? []
-      : listActions;
+  // The bar and More, from the one list: the Activity sheet and the Usage sheet answer for what the desktop's status bar and pane do.
+  const commandState = useCommandState();
+  const commands: CommandContext = {
+    ...commandState,
+    chats: s.chatsContext({
+      activityOpen: panel.open,
+      toggleActivity: panel.toggle,
+      showUsage: () => setUsage(true),
+      usageLabel: summary ? usageLabel(chat?.context ?? summary.context, limits) : undefined,
+      usageRing: summary ? { context: contextFraction(chat?.context ?? summary.context), used: limits.fiveHour?.used ?? null } : undefined,
+    }),
+  };
+  useCommandMenu(null, commands);
+  const listNav = phoneNav(['chats'], commands);
+  const conversationNav = phoneNav(['conversation'], commands);
+  const actions: PageNavAction[] = summary ? conversationNav.actions : split ? [] : listNav.actions;
+  const more = summary ? conversationNav.more : listNav.more;
   // A workflow is a page pushed over the conversation, and its agent's conversation one over the workflow; a subagent's is one over the conversation.
   const workflow = s.workflow;
   const subagent = s.follow && s.followed ? s.followed : null;
@@ -1049,12 +977,12 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           split: {
             width: split.lead,
             title: 'Chats',
-            actions: listActions,
+            actions: listNav.actions,
             largeTitle: platform === 'ios',
             inspector: inspectorShown ? { width: split.inspector, title: 'Activity' } : undefined,
           },
-          toolbar: [...sessionsToolbarGroups(s), ...reorderGroup],
-          more: summary ? conversationMore(summary.kind) : undefined,
+          toolbar: reorderGroup,
+          more,
           modal: sheet,
         }
       : {
@@ -1063,9 +991,8 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           actions: single && !summary ? [] : actions,
           // The list's large title; a conversation on its way has none to scroll past.
           largeTitle: platform === 'ios' && !summary && !single && !starting,
-          toolbar: [...sessionsToolbarGroups(s), ...reorderGroup],
-          // A conversation's More menu: the chat catalog's commands for its kind (phone-lists.ts conversationMore).
-          more: summary ? conversationMore(summary.kind) : undefined,
+          toolbar: reorderGroup,
+          more,
           // The Activity and Usage sheets are drawn in the page: the frame's bar stays out of reach under them.
           modal: sheet,
         })}

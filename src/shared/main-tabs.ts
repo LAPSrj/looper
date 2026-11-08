@@ -16,7 +16,8 @@ export interface MainTabDef {
   label: string;
   /** An ICONS key (renderer components/icons.tsx). */
   icon: string;
-  addon?: { id: string; name: string; tab: AddonTab };
+  /** With no `tab`: the addon's panes fill it. */
+  addon?: { id: string; name: string; tab?: AddonTab };
 }
 
 /** An addon tab's id among the main window's tabs. */
@@ -25,13 +26,22 @@ export const addonTabId = (addonId: string, tabId: string): string => `addon/${a
 /** The icon of an addon tab that names none. */
 export const ADDON_TAB_ICON = 'window';
 
+/** An addon's panes tab: its one pane's title, or else the addon's name, told apart from a screen's tab of that title. */
+function panesTabLabel(a: Pick<AddonInfo, 'name' | 'tabs' | 'panes'>): string {
+  const label = a.panes.length === 1 ? a.panes[0].title : a.name;
+  return a.tabs.some((t) => t.title === label) ? `${label} List` : label;
+}
+
 /** The main window's tabs: Looper's, then each started addon's in the order the addons are listed. */
-export function mainTabs(addons: Pick<AddonInfo, 'id' | 'name' | 'enabled' | 'tabs'>[]): MainTabDef[] {
+export function mainTabs(addons: Pick<AddonInfo, 'id' | 'name' | 'enabled' | 'tabs' | 'panes'>[]): MainTabDef[] {
   return [
     ...LOOPER_TABS.map((t) => ({ ...t })),
     ...addons
       .filter((a) => a.enabled)
-      .flatMap((a) => a.tabs.map((tab) => ({ id: addonTabId(a.id, tab.id), label: tab.title, icon: tab.icon ?? ADDON_TAB_ICON, addon: { id: a.id, name: a.name, tab } }))),
+      .flatMap((a): MainTabDef[] => [
+        ...a.tabs.map((tab) => ({ id: addonTabId(a.id, tab.id), label: tab.title, icon: tab.icon ?? ADDON_TAB_ICON, addon: { id: a.id, name: a.name, tab } })),
+        ...(a.panes.length > 0 ? [{ id: addonTabId(a.id, 'panes'), label: panesTabLabel(a), icon: ADDON_TAB_ICON, addon: { id: a.id, name: a.name } }] : []),
+      ]),
   ];
 }
 

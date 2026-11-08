@@ -1,26 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
+import { mainToolbarViews, mainWindowViews } from '@shared/commands/build';
+import { addonToolbarEntries } from '@shared/commands/list';
+import type { CommandContext } from '@shared/commands/context';
 import { isLooperTab, mainTabs } from '@shared/main-tabs';
+import { addonPaneKey } from '@shared/addons';
 import { sidebarHasPanes } from '@shared/panes';
 import { remoteAccessStatusItems } from '@shared/remote-access';
-import { addonMainGroups, AddonScreenView } from './components/AddonScreen';
+import { AddonScreenView, type AddonScreenReport } from './components/AddonScreen';
 import { useSessionsState } from './components/phone/useSessionsState';
-import type { AddonSelection } from './components/AddonPane';
+import { AddonPaneList, showPaneItemMenu, showPaneMenu } from './components/AddonPane';
+import { commandToolbar, popupEntries } from './components/command-surfaces';
+import { setRowMenuContext } from './components/row-menus';
+import { useCommandMenu, useCommandState } from './components/useCommands';
 import { Dashboard } from './components/Dashboard';
 import { useDragResize } from './components/hooks';
 import { RestStatusText } from './components/Live';
 import { PhoneMain } from './components/phone/PhoneMain';
 import { ProjectDetail } from './components/ProjectDetail';
-import { ProjectsSidebar, Sidebar } from './components/Sidebar';
+import { ProjectsSidebar } from './components/Sidebar';
+import { TaskCollection } from './components/TaskCollection';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
-import { newToolbarGroups, projectToolbarGroups, taskToolbarGroups } from './components/TaskToolbar';
 import { Toolbar } from './components/Toolbar';
 import type { ToolbarGroup } from './components/toolbar-model';
 import { sessionLimits } from './components/usage';
 import { ViewTabs } from './components/ViewTabs';
-import { SessionsBody, SessionsStatusBar, sessionsToolbarGroups } from './SessionsApp';
+import { SessionsBody, SessionsStatusBar } from './SessionsApp';
 import { preventSleepStatus, useMainWindow, type MainWindow } from './useMainWindow';
 import { useRemoteAccessState } from './useRemoteAccess';
-import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
+import { useSessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 
 /**
@@ -73,14 +80,7 @@ function useItemWindow(m: MainWindow, fixed: string | undefined, item: string | 
 /** What each tab had selected when it was left, so coming back shows it again. */
 interface TabMemory {
   projects: string | null;
-  tasks: { task: string } | { addon: AddonSelection } | null;
-}
-
-/** The Chats tab's toolbar part: the Chats window's, without the New buttons (the main window's are there already), its Dashboard named Overview, as the phone names it. */
-function chatsToolbarGroups(s: SessionsWindow): ToolbarGroup[] {
-  return sessionsToolbarGroups(s)
-    .filter((g) => g.id !== 'new')
-    .map((g) => (g.id === 'views' ? { ...g, items: g.items.map((it) => (it.id === 'dashboard' ? { ...it, label: 'Overview' } : it)) } : g));
+  tasks: string | null;
 }
 
 /**
@@ -96,13 +96,15 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const m = useMainWindow(picked);
   useItemWindow(m, fixed, item);
   const s = useSessionsWindow(undefined, false, { active: picked === 'chats' });
+  const commandState = useCommandState();
   const chatsState = useSessionsState();
   const { view, tasks, projects, runtimes, addons, rest, counts, remoteOpen } = m;
   const tabs = mainTabs(addons);
   const tabDef = tabs.find((t) => t.id === picked);
-  // The main toolbar's end, where the shown addon screen puts its buttons.
-  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
+  // The addon screen showing (a tab's, or a pane item's), for the commands its addon placed on it.
+  const [addonScreen, setAddonScreen] = useState<AddonScreenReport | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
+  const [addonQueries, setAddonQueries] = useState<Record<string, string>>({});
   const appRef = useRef<HTMLDivElement>(null);
   const memory = useRef<TabMemory>({ projects: null, tasks: null });
   const pickedRef = useRef(picked);
@@ -120,10 +122,8 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     showTab(id);
     const { projects: project, tasks: kept } = memory.current;
     if (id === 'projects') m.selectProject(project);
-    else if (id === 'tasks' && kept) {
-      if ('task' in kept) m.select(kept.task);
-      else m.selectAddon(kept.addon);
-    } else m.selectProject(null);
+    else if (id === 'tasks' && kept) m.select(kept);
+    else m.selectProject(null);
   };
 
   // A tab whose addon was stopped or removed leaves the window on the Dashboard.
@@ -138,17 +138,19 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   useEffect(() => {
     const mem = memory.current;
     const at = pickedRef.current;
-    if (m.selected) mem.tasks = { task: m.selected };
-    else if (m.addonSel) mem.tasks = { addon: m.addonSel };
-    else if (m.projectSel) mem.projects = m.projectSel;
+    if (m.selected) mem.tasks = m.selected;
+    else if (m.addonSel) {
+      // Showing an addon's item doesn't change what the Tasks tab remembers.
+    } else if (m.projectSel) mem.projects = m.projectSel;
     else if (at === 'tasks') mem.tasks = null;
     else if (at === 'projects') mem.projects = null;
-    const to = m.selected || m.addonSel ? 'tasks' : m.projectSel ? 'projects' : null;
+    const addonTab = m.addonSel && tabs.find((t) => t.addon?.id === m.addonSel!.addonId && !t.addon.tab)?.id;
+    const to = m.selected ? 'tasks' : (addonTab ?? (m.projectSel ? 'projects' : null));
     if (to && to !== at) showTab(to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.selected, m.projectSel, addonKey]);
 
-  // View → Dashboard (the menu bar before the page reports its tab).
+  // Window → Dashboard.
   useEffect(() => {
     if (m.dashboardShown) showTab('dashboard');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,7 +160,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   useEffect(
     () =>
       window.looper.onUi((e) => {
-        if (e.type === 'sessions-select' || e.type === 'sessions-dashboard') pick('chats');
+        if (e.type === 'sessions-select') pick('chats');
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -179,29 +181,19 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const environments = m.info?.settings.environments ?? [];
   // A view window other than the Tasks one has no Tasks tab: its tasks open in the main window.
   const openTask = (id: string, at: DetailTab) => (fixed && fixed !== 'tasks' ? window.looper.showTaskInMain(id, at) : m.openFromDashboard(id, at));
-  const hiddenToolbars = view?.hiddenAddonToolbars ?? [];
 
-  const chatProject = onChats && s.summary?.projectId ? (projects.find((p) => p.id === s.summary!.projectId) ?? null) : null;
-  // A view window's New buttons are only what its view creates; an item's own window creates nothing.
-  const newButtons = !fixed ? null : item ? [] : fixed === 'tasks' ? ['new-task'] : fixed === 'projects' ? ['new-project', 'new-chat'] : [];
-  const toolbarGroups: ToolbarGroup[] = [
-    ...newToolbarGroups({
-      newTaskProject: onChats ? null : (m.project ?? projects.find((p) => p.id === m.targetTask?.projectId) ?? null),
-      sessionProject: onChats ? chatProject : m.sessionProject,
-      terminal: onChats,
-      onAction: m.uiAction,
-    })
-      .map((g) => (newButtons && g.id === 'new' ? { ...g, items: g.items.filter((it) => newButtons.includes(it.id)) } : g))
-      .filter((g) => g.items.length > 0),
-    ...(tab === 'tasks'
-      ? taskToolbarGroups({ task: m.task, runtime: m.task ? runtimes[m.task.id] : undefined, onAction: m.uiAction })
-      : tab === 'projects'
-        ? projectToolbarGroups(m.project, m.uiAction)
-        : onChats
-          ? chatsToolbarGroups(s)
-          : []),
-    ...(item ? [] : addonMainGroups(addons, hiddenToolbars, tab, !!fixed)),
-  ];
+  // The menu bar and the toolbar, from the one list: what this tab shows, in this window.
+  const commands: CommandContext = {
+    ...m.commandContext(commandState),
+    fixed: !!fixed,
+    item: !!item,
+    ...(fixed ? {} : { openTab: pick }),
+    ...(onChats ? { chats: s.chatsContext() } : {}),
+    addon: m.addonContext(tab, addonScreen),
+  };
+  useCommandMenu(mainWindowViews(tab, !!fixed, !!item), commands);
+  setRowMenuContext(commands);
+  const toolbarGroups: ToolbarGroup[] = commandToolbar(mainToolbarViews(tab, !!fixed, !!item), commands);
 
   const sidebarColumns = (shown: boolean) => ({ gridTemplateColumns: shown ? `${sidebarWidth}px 5px 1fr` : '1fr' });
   const divider = <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />;
@@ -245,6 +237,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               environments={environments}
               remote={m.remote}
               onSelectTask={(id) => window.looper.openItemWindow('task', id)}
+              untitled={!!item}
             />
           ) : (
             <div className="empty">{item ? 'Loading…' : 'No project selected.'}</div>
@@ -254,31 +247,11 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     );
   } else if (tab === 'tasks') {
     // With every pane hidden (View menu) there is no sidebar: the task takes the whole width. A task's own window has the task alone.
-    const sidebar = !item && (!view || sidebarHasPanes(view, addons));
-    const { task, addonShown } = m;
+    const sidebar = !item && (!view || sidebarHasPanes(view));
+    const { task } = m;
     body = (
       <div className="app" ref={appRef} style={sidebarColumns(sidebar)}>
-        {sidebar &&
-          (view ? (
-            <Sidebar
-              tasks={tasks}
-              folders={m.folders}
-              layout={m.layout}
-              runtimes={runtimes}
-              selected={m.selected}
-              onSelect={m.select}
-              onCommand={m.uiAction}
-              view={view}
-              onView={m.changeView}
-              addons={addons}
-              addonPanes={m.addonPanes}
-              addonSelected={m.addonSel}
-              onAddonSelect={m.selectAddon}
-              onAddonRetry={m.reloadAddon}
-            />
-          ) : (
-            <aside className="sidebar" />
-          ))}
+        {sidebar && <TaskCollection m={m} />}
         {sidebar && divider}
         <main className="main">
           {task ? (
@@ -293,16 +266,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               onTab={m.setTab}
               runFilter={view?.runFilter}
               focusRun={m.focusRun}
-            />
-          ) : addonShown ? (
-            <AddonScreenView
-              key={`${addonShown.addon.id}/${addonShown.item.view}/${JSON.stringify(addonShown.item.params ?? {})}`}
-              addonId={addonShown.addon.id}
-              addonName={addonShown.addon.name}
-              view={addonShown.item.view}
-              params={addonShown.item.params ?? {}}
-              mode="main"
-              toolbarSlot={hiddenToolbars.includes(addonShown.addon.id) ? null : toolbarSlot}
+              untitled={!!item}
             />
           ) : item ? (
             <div className="empty">Loading…</div>
@@ -325,8 +289,62 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     );
   } else if (onChats) {
     body = <SessionsBody s={s} />;
-  } else if (tabDef?.addon) {
-    const { addon } = tabDef;
+  } else if (tabDef?.addon && !tabDef.addon.tab) {
+    // An addon with only panes: its panes as the list, the item picked beside them.
+    const addon = addons.find((a) => a.id === tabDef.addon!.id);
+    const { addonShown } = m;
+    body = (
+      <div className="app" ref={appRef} style={sidebarColumns(true)}>
+        <aside className="sidebar">
+          {addon?.panes.map((p) => {
+            const state = m.addonPanes[addonPaneKey(addon.id, p.id)];
+            return (
+              <div key={p.id} className="sidebar-pane" style={{ flex: '1 1 0px' }}>
+                <div
+                  className="sidebar-header"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    showPaneMenu(commands, addon.id, p.id, state);
+                  }}
+                >
+                  <span className="pane-title">{p.title}</span>
+                </div>
+                <AddonPaneList
+                  addon={addon}
+                  pane={p.id}
+                  state={state}
+                  selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === p.id ? m.addonSel.item : null}
+                  compact={view?.taskList === 'compact'}
+                  query={addonQueries[p.id] ?? ''}
+                  onQuery={(q) => setAddonQueries((all) => ({ ...all, [p.id]: q }))}
+                  onSelect={(it) => m.selectAddon({ addonId: addon.id, pane: p.id, item: it.id })}
+                  onMenu={(it) => showPaneItemMenu(commands, addon.id, p.id, state, it)}
+                  onRetry={() => m.reloadAddon(addon.id)}
+                />
+              </div>
+            );
+          })}
+        </aside>
+        {divider}
+        <main className="main">
+          {addonShown ? (
+            <AddonScreenView
+              key={`${addonShown.addon.id}/${addonShown.item.view}/${JSON.stringify(addonShown.item.params ?? {})}`}
+              addonId={addonShown.addon.id}
+              addonName={addonShown.addon.name}
+              view={addonShown.item.view}
+              params={addonShown.item.params ?? {}}
+              mode="main"
+              onScreen={setAddonScreen}
+            />
+          ) : (
+            <div className="empty">Nothing selected.</div>
+          )}
+        </main>
+      </div>
+    );
+  } else if (tabDef?.addon?.tab) {
+    const addon = { ...tabDef.addon, tab: tabDef.addon.tab };
     body = alone(
       <AddonScreenView
         key={tabDef.id}
@@ -335,7 +353,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         view={addon.tab.view}
         params={addon.tab.params ?? {}}
         mode="main"
-        toolbarSlot={hiddenToolbars.includes(addon.id) ? null : toolbarSlot}
+        onScreen={setAddonScreen}
       />,
     );
   } else {
@@ -383,11 +401,9 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
           groups={toolbarGroups}
           onContextMenu={(e) => {
             e.preventDefault();
-            window.looper.addons.showToolbarMenu();
+            popupEntries(commands, 'addon-toolbars', addonToolbarEntries(commands));
           }}
-        >
-          <span className="toolbar-slot" ref={setToolbarSlot} />
-        </Toolbar>
+        />
       )}
       {position === 'top' && strip}
       <div className="app-views">

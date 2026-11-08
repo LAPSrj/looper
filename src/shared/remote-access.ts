@@ -305,8 +305,17 @@ export type DialogResult =
 
 // ---------- WebSocket ----------
 
+/**
+ * How a window shows on a phone or tablet, declared by the window:
+ * prompt = a small question or name field; tool = a compact form or picker;
+ * editor = a full editing window; workspace = a window made for most of a desktop;
+ * detail = one row of a list looked at closely (a task's run), a sheet over the list.
+ */
+export type WindowRole = 'prompt' | 'editor' | 'tool' | 'workspace' | 'detail';
+
 export interface RemoteWindowSpec {
   w: string;
+  role: WindowRole;
   /** The window it opened over; a modal one blocks it. */
   parent?: string;
   modal: boolean;

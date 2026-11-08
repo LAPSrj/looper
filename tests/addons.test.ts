@@ -9,7 +9,6 @@ import {
   addonAdditions,
   AddonPaneContentSchema,
   AddonScreenSchema,
-  commandOn,
   engineLogSource,
   findToolCall,
   matchesSearch,
@@ -43,11 +42,18 @@ describe('readAddonManifest', () => {
     expect(r.ok && r.manifest.panes).toEqual([]);
   });
 
-  it("accepts a toolbar button's view, and only Looper's views", () => {
-    const withView = (view: string) => readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'go', label: 'Go', view }] });
-    const r = withView('tasks');
-    expect(r.ok && r.manifest.toolbar[0].view).toBe('tasks');
-    expect(withView('nowhere').ok).toBe(false);
+  it("places a command on Looper's tabs, its panes and screens, and nowhere else", () => {
+    const placed = (where: object) => readAddonManifest({ ...MANIFEST, commands: [{ id: 'go', label: 'Go', in: where }] });
+    const r = placed({ tasks: { menu: 'edit', toolbar: true } });
+    expect(r.ok && r.manifest.commands[0].in.tasks).toEqual({ menu: 'edit', toolbar: true });
+    expect(placed({ nowhere: { menu: 'edit' } }).ok).toBe(false);
+    expect(placed({}).ok).toBe(false);
+    expect(placed({ tasks: { toolbar: true } }).ok).toBe(false);
+    expect(placed({ tasks: { menu: 'window' } }).ok).toBe(false);
+  });
+
+  it('refuses the old toolbar, tools and new lists', () => {
+    for (const old of ['toolbar', 'tools', 'new']) expect(readAddonManifest({ ...MANIFEST, [old]: [] }).ok).toBe(false);
   });
 
   it('tells a newer format from a file that is not an addon', () => {
@@ -63,16 +69,18 @@ describe('readAddonManifest', () => {
     const dup = readAddonManifest({ ...MANIFEST, panes: [MANIFEST.panes[0], MANIFEST.panes[0]] });
     expect(!dup.ok && dup.error).toBe('panes: duplicate id "things"');
     expect(readAddonManifest({ ...MANIFEST, id: 'a/b' }).ok).toBe(false);
-    const noPane = readAddonManifest({ ...MANIFEST, tools: [{ id: 't', label: 'T', pane: 'nope' }] });
-    expect(!noPane.ok && noPane.error).toBe('tools: "t" names no pane "nope"');
-    const both = readAddonManifest({ ...MANIFEST, tools: [{ id: 't', label: 'T', pane: 'things', view: 'v' }] });
-    expect(!both.ok && both.error).toBe('tools.0: give either "pane" or "view"');
-    expect(readAddonManifest({ ...MANIFEST, tools: [{ id: 't', label: 'T', pane: 'things' }] }).ok).toBe(true);
-    const tools = [{ id: 't', label: 'T', pane: 'things' }];
-    const button = readAddonManifest({ ...MANIFEST, tools, toolbar: [{ id: 'b', label: 'B', icon: 'key', tool: 't' }] });
-    expect(button.ok && button.manifest.toolbar).toEqual([{ id: 'b', label: 'B', icon: 'key', tool: 't' }]);
-    const noTool = readAddonManifest({ ...MANIFEST, toolbar: [{ id: 'b', label: 'B', tool: 'nope' }] });
-    expect(!noTool.ok && noTool.error).toBe('toolbar: "b" names no tool "nope"');
+    const command = { id: 'c', label: 'C', in: { app: { menu: 'tools' } } };
+    const twice = readAddonManifest({ ...MANIFEST, commands: [command, command] });
+    expect(!twice.ok && twice.error).toBe('commands: duplicate id "c"');
+    const twoMenus = readAddonManifest({ ...MANIFEST, commands: [{ ...command, in: { app: { menu: 'tools' }, panes: { menu: 'file' } } }] });
+    expect(!twoMenus.ok && twoMenus.error).toBe('commands: "c" is in the tools and file menus; use one menu in every place');
+    const newAndTools = readAddonManifest({ ...MANIFEST, commands: [{ ...command, in: { new: {}, app: { menu: 'tools' } } }] });
+    expect(!newAndTools.ok && newAndTools.error).toBe('commands: "c" is in the file and tools menus; use one menu in every place');
+    const { panes: _, ...noPanes } = MANIFEST;
+    const noPane = readAddonManifest({ ...noPanes, commands: [{ ...command, in: { item: { menu: 'edit' } } }] });
+    expect(!noPane.ok && noPane.error).toBe('commands: "c" is placed in panes the addon doesn\'t have');
+    const panesTab = readAddonManifest({ ...MANIFEST, tabs: [{ id: 'panes', title: 'P', view: 'v' }] });
+    expect(!panesTab.ok && panesTab.error).toBe('tabs: "panes" is the id of the panes\' own tab');
     expect(readAddonManifest({ ...MANIFEST, extra: 1 }).ok).toBe(false);
   });
 });
@@ -82,6 +90,25 @@ describe('addon file names', () => {
     expect(isLooperFileName('C:\\x\\lapm.looperaddon')).toBe(true);
     expect(isAddonFileName('LAPM.LOOPERADDON')).toBe(true);
     expect(isAddonFileName('task.loopertask')).toBe(false);
+  });
+});
+
+describe('what a command opens', () => {
+  const command = { id: 'c', label: 'C', in: { app: { menu: 'tools' } } };
+  const opening = (opens: object, more: object = {}) => readAddonManifest({ ...MANIFEST, ...more, commands: [{ ...command, opens }] });
+
+  it('opens a screen in a window, or a tab the addon has', () => {
+    expect(opening({ view: 'settings', width: 500 }).ok).toBe(true);
+    expect(opening({ tab: 'panes' }).ok).toBe(true);
+    expect(opening({ tab: 'main' }, { tabs: [{ id: 'main', title: 'Main', view: 'v' }] }).ok).toBe(true);
+  });
+
+  it('refuses a tab the addon doesn’t have, and both at once', () => {
+    const noTab = opening({ tab: 'nope' });
+    expect(!noTab.ok && noTab.error).toBe('commands: "c" opens a tab the addon doesn\'t have: "nope"');
+    const noPanes = opening({ tab: 'panes' }, { panes: [] });
+    expect(!noPanes.ok && noPanes.error).toBe('commands: "c" opens a tab the addon doesn\'t have: "panes"');
+    expect(opening({ tab: 'panes', view: 'v' }).ok).toBe(false);
   });
 });
 
@@ -104,9 +131,10 @@ describe('tabs, icon-only buttons and a toolbar name', () => {
   });
 
   it('shows a toolbar button as its icon only when it has one', () => {
-    const toolbar = (item: unknown) => AddonScreenSchema.safeParse({ body: [], toolbar: [item] }).success;
-    expect(toolbar({ id: 'r', label: 'Refresh', icon: 'refresh', iconOnly: true })).toBe(true);
-    expect(toolbar({ id: 'r', label: 'Refresh', iconOnly: true })).toBe(false);
+    const iconOnly = (over: object) => readAddonManifest({ ...MANIFEST, commands: [{ id: 'r', label: 'Refresh', iconOnly: true, in: { app: { menu: 'view', toolbar: true } }, ...over }] }).ok;
+    expect(iconOnly({ icon: 'refresh' })).toBe(true);
+    expect(iconOnly({})).toBe(false);
+    expect(iconOnly({ icon: 'rocket' })).toBe(false);
   });
 
   it('takes tabs for the main window, each with a screen, and refuses one id twice', () => {
@@ -119,7 +147,7 @@ describe('tabs, icon-only buttons and a toolbar name', () => {
   });
 
   it("puts the started addons' tabs after Looper's own, with a window icon when they name none", () => {
-    const addon = (id: string, enabled: boolean) => ({ id, name: id.toUpperCase(), enabled, tabs: [{ id: 'main', title: `${id} tab`, view: 'v' }] });
+    const addon = (id: string, enabled: boolean) => ({ id, name: id.toUpperCase(), enabled, tabs: [{ id: 'main', title: `${id} tab`, view: 'v' }], panes: [] });
     expect(mainTabs([addon('a', true), addon('b', false)]).map((t) => [t.id, t.label, t.icon])).toEqual([
       ['dashboard', 'Dashboard', 'dashboardTab'],
       ['projects', 'Projects', 'projectsTab'],
@@ -129,22 +157,40 @@ describe('tabs, icon-only buttons and a toolbar name', () => {
     ]);
   });
 
+  it('gives an addon’s panes a tab of their own, named after its one pane or else the addon', () => {
+    const panes = [{ id: 'list', title: 'Servers' }] as never[];
+    const only = { id: 'srv', name: 'Servers addon', enabled: true, tabs: [], panes };
+    const tab = (title: string) => [{ id: 'main', title, view: 'v' }];
+    const added = mainTabs([
+      only,
+      { ...only, id: 'off', enabled: false },
+      { ...only, id: 'other', tabs: tab('Main') },
+      { ...only, id: 'same', tabs: tab('Servers') },
+      { ...only, id: 'two', panes: [...panes, { id: 'more', title: 'More' }] as never[] },
+      { ...only, id: 'clash', panes: [...panes, { id: 'more', title: 'More' }] as never[], tabs: tab('Servers addon') },
+    ]).slice(4);
+    expect(added.map((t) => [t.id, t.label, t.icon])).toEqual([
+      ['addon/srv/panes', 'Servers', 'window'],
+      [addonTabId('other', 'main'), 'Main', 'window'],
+      ['addon/other/panes', 'Servers', 'window'],
+      [addonTabId('same', 'main'), 'Servers', 'window'],
+      ['addon/same/panes', 'Servers List', 'window'],
+      ['addon/two/panes', 'Servers addon', 'window'],
+      [addonTabId('clash', 'main'), 'Servers addon', 'window'],
+      ['addon/clash/panes', 'Servers addon List', 'window'],
+    ]);
+  });
+
   it('takes a name for the toolbar', () => {
     const r = readAddonManifest({ ...MANIFEST, toolbarName: 'Password' });
     expect(r.ok && r.manifest.toolbarName).toBe('Password');
   });
-});
 
-describe('commandOn', () => {
-  it("follows the selected item's own menu for commands that need an item", () => {
-    const copyTotp = { id: 'copy-totp', needsItem: true };
-    const withTotp = { menu: [{ id: 'copy-totp', label: 'Copy 2FA Code' }, { id: 'edit', label: 'Edit…', enabled: false }] };
-    expect(commandOn(copyTotp, withTotp)).toBe(true);
-    expect(commandOn({ id: 'edit', needsItem: true }, withTotp)).toBe(false);
-    expect(commandOn(copyTotp, { menu: [{ id: 'edit', label: 'Edit…' }] })).toBe(false);
-    expect(commandOn(copyTotp, {})).toBe(true);
-    expect(commandOn(copyTotp, undefined)).toBe(false);
-    expect(commandOn({ id: 'new' }, undefined)).toBe(true);
+  it('takes a New item, with its toolbar button or without', () => {
+    const r = readAddonManifest({ ...MANIFEST, commands: [{ id: 'server', label: 'New Server…', icon: 'add', in: { new: { toolbar: true } } }] });
+    expect(r.ok && r.manifest.commands[0].in.new).toEqual({ toolbar: true });
+    expect(readAddonManifest({ ...MANIFEST, commands: [{ id: 'server', label: 'New Server…', in: { new: {} } }] }).ok).toBe(true);
+    expect(readAddonManifest({ ...MANIFEST, commands: [{ id: 'server', label: 'New Server…', in: { new: { menu: 'file' } } }] }).ok).toBe(false);
   });
 });
 
@@ -167,16 +213,17 @@ describe('withAddonDir', () => {
 
 describe('addonAdditions', () => {
   it('says in plain words where each thing the addon adds appears', () => {
+    const command = (id: string, label: string, where: object) => ({ id, label, in: where });
     expect(
       addonAdditions({
         panes: [{ id: 'a', title: 'Passwords' }],
-        toolbar: [{ id: 'p', label: 'Passwords' }],
-        tools: [
-          { id: 'p', label: 'Passwords', pane: 'a' },
-          { id: 's', label: 'LAPM Settings', view: 'settings' },
+        commands: [
+          command('p', '&Passwords', { app: { menu: 'tools', toolbar: true } }),
+          command('s', 'LAPM &Settings…', { app: { menu: 'tools' } }),
+          command('edit', '&Edit…', { item: { menu: 'edit', toolbar: true } }),
         ],
-      }),
-    ).toEqual(['A Passwords pane on the Tasks tab', 'A Passwords button on the toolbar', 'Passwords… and LAPM Settings… in the Tools menu']);
+      } as never),
+    ).toEqual(['A Passwords pane in a tab of its own', 'Passwords and LAPM Settings… in the Tools menu', 'A Passwords button on the toolbar']);
     expect(
       addonAdditions({
         panes: [
@@ -184,15 +231,16 @@ describe('addonAdditions', () => {
           { id: 'b', title: 'Keys' },
           { id: 'c', title: 'Logs' },
         ],
-        toolbar: [],
-        tools: [],
+        commands: [],
       }),
-    ).toEqual(['Servers, Keys and Logs panes on the Tasks tab']);
-    expect(addonAdditions({ panes: [], toolbar: [], tools: [], tabs: [{ id: 'm', title: 'Monitor', view: 'monitor' }] })).toEqual(['A Monitor tab in the main window']);
-    expect(addonAdditions({ panes: [], toolbar: [], tools: [] })).toEqual([]);
-    expect(addonAdditions({ panes: [], toolbar: [], tools: [], toolCalls: [{ tool: 'a' }, { tool: 'b' }] })).toEqual([
-      'How 2 tools’ calls show on the Now tab',
+    ).toEqual(['Servers, Keys and Logs panes in a tab of their own']);
+    expect(addonAdditions({ panes: [], commands: [command('n', '&New Server…', { new: { toolbar: true } })] } as never)).toEqual([
+      'New Server… in the File menu',
+      'A New Server button on the toolbar',
     ]);
+    expect(addonAdditions({ panes: [], commands: [], tabs: [{ id: 'm', title: 'Monitor', view: 'monitor' }] })).toEqual(['A Monitor tab in the main window']);
+    expect(addonAdditions({ panes: [], commands: [] })).toEqual([]);
+    expect(addonAdditions({ panes: [], commands: [], toolCalls: [{ tool: 'a' }, { tool: 'b' }] })).toEqual(['How 2 tools’ calls show on the Now tab']);
   });
 });
 
@@ -325,15 +373,10 @@ describe('AddonScreenSchema', () => {
     expect(bad.success).toBe(false);
   });
 
-  it('takes a toolbar with Looper icons and a menu bar', () => {
-    const screen = {
-      body: [],
-      toolbar: [{ id: 'edit', label: 'Edit…', icon: 'edit' }, { separator: true }, { id: 'go', label: 'Go' }],
-      menuBar: [{ label: '&File', items: [{ id: 'new', label: '&New…' }, { separator: true }] }],
-    };
-    expect(AddonScreenSchema.safeParse(screen).success).toBe(true);
-    const ownIcon = { body: [], toolbar: [{ id: 'x', label: 'X', icon: 'rocket' }] };
-    expect(AddonScreenSchema.safeParse(ownIcon).success).toBe(false);
+  it('says how commands are, and has no toolbar or menu bar of its own', () => {
+    expect(AddonScreenSchema.safeParse({ body: [], commands: { edit: { enabled: false }, lock: { label: '&Unlock', checked: true, hidden: false } } }).success).toBe(true);
+    expect(AddonScreenSchema.safeParse({ body: [], commands: { edit: { icon: 'edit' } } }).success).toBe(false);
+    for (const old of ['toolbar', 'menuBar', 'mobileMore']) expect(AddonScreenSchema.safeParse({ body: [], [old]: [] }).success).toBe(false);
   });
 });
 
@@ -352,11 +395,11 @@ describe('matchesSearch', () => {
 });
 
 describe('the fields lapm asked for', () => {
-  it('takes search, keywords, checked and radio menu items, file fields', () => {
+  it('takes search, keywords, a check mark’s state, file fields', () => {
     const pane = {
       items: [{ id: 'a', label: 'A', view: 'v', keywords: 'alpha beta' }],
       search: { placeholder: 'Search accounts' },
-      menu: [{ id: 'all', label: '&All', checked: true, radio: true }],
+      commands: { all: { checked: true } },
     };
     expect(AddonPaneContentSchema.safeParse(pane).success).toBe(true);
     const screen = {
@@ -372,14 +415,18 @@ describe('the fields lapm asked for', () => {
 });
 
 describe('AddonPaneContentSchema', () => {
-  it('takes groups, a toolbar and a menu bar', () => {
+  it('takes groups and how commands are, for the pane and an item', () => {
     const pane = {
-      items: [{ id: 'a', label: 'A', view: 'v', group: 'github.com' }],
-      toolbar: [{ id: 'edit', label: 'Edit…', icon: 'edit', needsItem: true }],
-      menuBar: [{ label: '&Edit', items: [{ id: 'edit', label: '&Edit…', needsItem: true }] }],
+      items: [{ id: 'a', label: 'A', view: 'v', group: 'github.com', commands: { edit: { hidden: true } } }],
+      commands: { all: { checked: true } },
     };
     expect(AddonPaneContentSchema.safeParse(pane).success).toBe(true);
     expect(AddonPaneContentSchema.safeParse({ items: [{ id: 'a', label: 'A', view: 'v', group: '' }] }).success).toBe(false);
+  });
+
+  it('has no toolbar, menu bar or item menus of its own', () => {
+    for (const old of ['toolbar', 'menuBar', 'menu', 'mobileMore']) expect(AddonPaneContentSchema.safeParse({ items: [], [old]: [] }).success).toBe(false);
+    expect(AddonPaneContentSchema.safeParse({ items: [{ id: 'a', label: 'A', view: 'v', menu: [] }] }).success).toBe(false);
   });
 });
 

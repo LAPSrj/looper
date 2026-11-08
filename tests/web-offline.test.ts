@@ -595,8 +595,8 @@ describe('a session meeting a server of another version', () => {
 
 const stored: StoredShell = {
   windows: [
-    { w: 'main', modal: false, hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, menu: [{ id: '0', type: 'normal', label: 'New Task', enabled: true }] },
-    { w: 'chat1', parent: 'main', modal: false, hash: 'sessions/c1', title: 'Chat', width: 800, height: 600, resizable: true, menu: null },
+    { w: 'main', role: 'workspace', modal: false, hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, menu: [{ id: '0', type: 'normal', label: 'New Task', enabled: true }] },
+    { w: 'chat1', role: 'workspace', parent: 'main', modal: false, hash: 'sessions/c1', title: 'Chat', width: 800, height: 600, resizable: true, menu: null },
   ],
   order: ['main', 'chat1', 'gone'],
   focused: 'chat1',
@@ -652,7 +652,7 @@ describe('the shell restored from a stored stack', () => {
     const store = new ShellStore(session);
     expect(store.getState().windows).toEqual([]);
     connect();
-    store.dispatch({ t: 'window-open', w: 'main', modal: false, hash: '', title: 'Looper', width: 1, height: 1, resizable: true });
+    store.dispatch({ t: 'window-open', w: 'main', role: 'workspace', modal: false, hash: '', title: 'Looper', width: 1, height: 1, resizable: true });
     await vi.advanceTimersByTimeAsync(499);
     expect(offline.shell()).toBe(stored);
     await vi.advanceTimersByTimeAsync(1);

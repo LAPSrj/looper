@@ -42,7 +42,7 @@ interface Rows<T> {
   empty: ReactNode;
   /** A line above the rows. */
   note?: ReactNode;
-  /** On a phone or tablet, list sections above the rows (a run's result). */
+  /** On a phone or tablet, list sections above the rows (a repository's state). */
   head?: ReactNode;
   /** Its name, for assistive technology. */
   label?: string;
@@ -77,7 +77,23 @@ function useRowKeys<T>({ rows, rowKey, idPrefix, selected, onSelect, onOpen, onM
 }
 
 /** A scrolling list of PhoneList rows in sections, for a phone or tablet: a tap opens, a long press shows the menu. */
-function PhoneRows<T>({ rows, rowKey, selected, onSelect, onOpen, onMenu, empty, note, head, phoneRow, groupOf, dayOf, sectionTitle, onRowsScroll }: Rows<T> & { onRowsScroll?: (e: UIEvent<HTMLDivElement>) => void }) {
+function PhoneRows<T>({
+  rows,
+  rowKey,
+  selected,
+  onSelect,
+  onOpen,
+  onMenu,
+  empty,
+  note,
+  head,
+  phoneRow,
+  groupOf,
+  dayOf,
+  sectionTitle,
+  onRowsScroll,
+  rowsRef,
+}: Rows<T> & { onRowsScroll?: (e: UIEvent<HTMLDivElement>) => void; rowsRef?: Ref<HTMLDivElement> }) {
   const keyed = rows.map((row, index) => ({ row, index }));
   const sections: { key: string; title: string; items: typeof keyed }[] = dayOf
     ? dayGroups(keyed, (k) => dayOf(k.row), Date.now())
@@ -92,7 +108,7 @@ function PhoneRows<T>({ rows, rowKey, selected, onSelect, onOpen, onMenu, empty,
       : [{ key: 'all', title: '', items: keyed }];
   const tappable = !!(onOpen || onSelect);
   return (
-    <div className="pg-rows" onScroll={onRowsScroll}>
+    <div className="pg-rows" onScroll={onRowsScroll} ref={rowsRef}>
       {head}
       {note && <p className="pg-group-footer">{note}</p>}
       {rows.length === 0 ? (
@@ -157,7 +173,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       .filter((v) => typeof v === 'string' && v)
       .join(' · '),
   });
-  return isPhone ? <PhoneRows {...props} phoneRow={phoneRow ?? firstLine} /> : <DesktopTable {...props} />;
+  return isPhone ? <PhoneRows {...props} phoneRow={phoneRow ?? firstLine} rowsRef={props.tableRef} onRowsScroll={props.onTableScroll} /> : <DesktopTable {...props} />;
 }
 
 function DesktopTable<T>(props: DataTableProps<T>) {

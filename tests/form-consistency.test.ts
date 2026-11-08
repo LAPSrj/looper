@@ -204,14 +204,14 @@ describe('shortcuts', () => {
   it('keeps New Chat on Ctrl+T and New Terminal on Ctrl+Shift+T in the main window and the Chats window', () => {
     expect(SHORTCUTS.newChat).toBe('CmdOrCtrl+T');
     expect(SHORTCUTS.newTerminal).toBe('CmdOrCtrl+Shift+T');
-    // The menus of both windows (index.ts, and the Chats commands' catalog) take the keys from the one table.
-    const main = src('main', 'index.ts') + src('shared', 'commands', 'chat.ts');
+    // The menus of both windows are built from the one list, which takes the keys from the one table.
+    const main = src('shared', 'commands', 'list.ts');
     expect(main.match(/accelerator: SHORTCUTS\.newChat/g)?.length).toBeGreaterThanOrEqual(2);
     expect(main.match(/accelerator: SHORTCUTS\.newTerminal/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it('writes no well-known key, and none of the shared keys, as a literal in a menu', () => {
-    const main = ['index.ts', 'file-menu.ts'].map((f) => src('main', f)).join('') + ['chat.ts', 'task.ts', 'project.ts'].map((f) => src('shared', 'commands', f)).join('');
+    const main = src('main', 'index.ts') + src('shared', 'commands', 'list.ts');
     // The literal accelerators of the menu templates and the shared ones the table gives.
     const literals = [...main.matchAll(/accelerator: '([^']+)'/g)].map((m) => m[1]);
     for (const k of WELL_KNOWN_KEYS) expect(literals, k).not.toContain(k);

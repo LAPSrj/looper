@@ -513,7 +513,9 @@ export const ViewSchema = z.object({
   taskList: z.enum(['standard', 'compact']).default('standard'),
   /** One task list, or the Tasks / Goals / Watchers panes stacked. */
   sidebar: z.enum(['single', 'multiple']).default('single'),
-  single: TaskListOptionsSchema.extend({ visible: z.boolean().default(true), collapsed: z.boolean().default(false) }).prefault({}),
+  /** What a phone's Tasks tab lists (its Filter button): everything, or one of the desktop's panes. */
+  phoneTaskKind: z.enum(['all', 'tasks', 'goals', 'watchers']).default('all'),
+  single: TaskListOptionsSchema.extend({ visible: z.boolean().default(true) }).prefault({}),
   panes: z
     .object({
       tasks: SidebarPaneSchema.prefault({}),
@@ -521,17 +523,6 @@ export const ViewSchema = z.object({
       watchers: SidebarPaneSchema.prefault({}),
     })
     .prefault({}),
-  /** Addon panes by addonPaneKey (shared/addons); a pane missing here shows, open. */
-  addonPanes: z
-    .record(
-      z.string(),
-      z.object({
-        visible: z.boolean().default(true),
-        collapsed: z.boolean().default(false),
-        weight: z.number().positive().default(1),
-      }),
-    )
-    .default({}),
   /** The Projects tab's list. */
   projectsPane: z
     .object({
@@ -543,8 +534,6 @@ export const ViewSchema = z.object({
   hiddenAddonToolbars: z.array(z.string()).default([]),
   /** The Needs attention rows Clear took off the dashboards, by attentionKey; a row's key leaves once the row itself is gone. */
   attentionCleared: z.array(z.string()).default([]),
-  /** The single task list's share of the sidebar's height, against the addon panes below it. */
-  singleWeight: z.number().positive().default(2),
   /** On: folders start open and opening one opens its whole subtree. Off: folders start closed. */
   autoOpenFolders: z.boolean().default(true),
   /** View → Task Runs: what the Runs tabs and the dashboards' Recent runs leave out. */
@@ -566,6 +555,8 @@ export const ViewSchema = z.object({
       showRuns: z.boolean().default(false),
       /** A single chat's window (Open in New Window) shows the activity pane. */
       windowActivityPane: z.boolean().default(false),
+      /** A single chat's window shows the toolbar. */
+      windowToolbar: z.boolean().default(true),
       /** A single chat's window shows the status bar. */
       windowStatusBar: z.boolean().default(true),
       collapsed: z.array(z.string()).default([]),

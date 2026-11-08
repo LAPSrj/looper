@@ -66,25 +66,6 @@ export const AddonPaneDefSchema = z.object({ id, title: z.string().min(1) }).str
 
 const ParamsSchema = z.record(z.string(), z.unknown());
 
-/**
- * A Tools menu item: it opens a window with a pane (its list, and the
- * selected item's screen beside it) or with one screen.
- */
-export const AddonToolSchema = z
-  .object({
-    id,
-    label: z.string().min(1),
-    pane: id.optional(),
-    view: id.optional(),
-    params: ParamsSchema.optional(),
-    width: z.number().int().min(320).max(2000).optional(),
-    height: z.number().int().min(200).max(1400).optional(),
-    platforms,
-  })
-  .strict()
-  .refine((t) => !!t.pane !== !!t.view, 'give either "pane" or "view"');
-export type AddonTool = z.infer<typeof AddonToolSchema>;
-
 /** A tab of the main window's own: one of the addon's screens fills it, and View → its title opens it in a window of its own. */
 export const AddonTabSchema = z
   .object({
@@ -97,21 +78,112 @@ export const AddonTabSchema = z
   .strict();
 export type AddonTab = z.infer<typeof AddonTabSchema>;
 
-/** A main-toolbar button: it opens one of the addon's tools, or else sends it a `click` event. */
-export const AddonMainButtonSchema = z
+// ---------- Commands ----------
+
+/** The menus an addon's command can go in: Looper's own, so every window's menu bar keeps one order. */
+export const ADDON_MENUS = ['file', 'edit', 'view', 'tools', 'help'] as const;
+export type AddonMenuName = (typeof ADDON_MENUS)[number];
+
+/** The id of the main window's tab an addon's panes fill (mainTabs): no tab of the manifest's can take it. */
+export const PANES_TAB = 'panes';
+
+const placement = {
+  /** Every command is a menu item, its toolbar button only a shortcut to it (Win32: the menu bar lists every command). */
+  menu: z.enum(ADDON_MENUS),
+  toolbar: z.boolean().optional(),
+  /** On a phone's bar while it can run and fits there; otherwise in the screen's More menu. */
+  main: z.boolean().optional(),
+  /** false: left out of the right-click menu (a pane item's, or a pane header's). */
+  context: z.boolean().optional(),
+};
+const PlacementSchema = z.object(placement).strict();
+export type AddonPlacement = z.infer<typeof PlacementSchema>;
+
+/**
+ * One thing the addon can do, written once: where it goes in Looper's menus,
+ * toolbars and a phone's bar and More (`in`), and Looper draws it on each from
+ * this entry. A screen, a pane or a pane item says how it is now (its `commands`
+ * state). Picking it sends a `command` event, or opens one of the addon's screens.
+ */
+export const AddonCommandSchema = z
   .object({
     id,
+    /** "&New Server…": a menu shows it with its access key, a toolbar and a phone without the "&" and the "…". */
     label: z.string().min(1),
     icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
-    tool: id.optional(),
-    /** The view it belongs to: it shows in that view's window, and in the main window while that tab shows. Unset: the main window, on every tab. */
-    view: z.enum(['dashboard', 'projects', 'tasks', 'chats']).optional(),
+    /** On a toolbar, the icon alone, its label the tooltip: for commands people know by their icon (Refresh, Settings). */
+    iconOnly: z.boolean().optional(),
+    /** A separator falls between groups, in a menu and on a toolbar; unset: the group of the addon's ungrouped commands. */
+    group: id.optional(),
     /** It destroys or cuts something off: a phone draws it red, last in its menu. */
     destructive: z.boolean().optional(),
+    /** Asked in a Yes/No dialog first; No sends nothing. */
+    confirm: z.string().min(1).optional(),
+    /** A check mark (`checked` in its state), or a radio bullet, one of its group's. */
+    check: z.enum(['check', 'radio']).optional(),
+    /**
+     * Instead of a `command` event: one of the addon's screens in a window of its
+     * own (picked again, it comes forward), or one of its main window's tabs
+     * ("panes" is its panes' tab). A phone's More view lists the tab, so a command
+     * that opens one stays off phones.
+     */
+    opens: z
+      .union([
+        z
+          .object({
+            view: id,
+            params: ParamsSchema.optional(),
+            width: z.number().int().min(320).max(2000).optional(),
+            height: z.number().int().min(200).max(1400).optional(),
+          })
+          .strict(),
+        z.object({ tab: id }).strict(),
+      ])
+      .optional(),
     platforms,
+    in: z
+      .object({
+        /** With Looper's New: in File, after Looper's New items, and with `toolbar`, in the toolbar's New group. */
+        new: z.object({ toolbar: z.boolean().optional() }).strict().optional(),
+        /** The main window, on every tab: its menus, and its toolbar after the tab's own buttons. */
+        app: PlacementSchema.optional(),
+        /** While that tab shows: in the main window and in the tab's own window (the Chats window, for `chats`). */
+        dashboard: PlacementSchema.optional(),
+        projects: PlacementSchema.optional(),
+        tasks: PlacementSchema.optional(),
+        chats: PlacementSchema.optional(),
+        /** The addon's panes tab: its menus and toolbar while it shows, and a pane header's right-click menu. */
+        panes: PlacementSchema.optional(),
+        /** A pane item: its right-click menu, and the panes tab's menus and toolbar while one is selected (off while none is). */
+        item: PlacementSchema.optional(),
+        /** The addon's screens, wherever one shows (a tab, beside its pane, a window of its own); `views` keeps it to those. */
+        screen: z
+          .object({ ...placement, views: z.array(id).min(1).optional() })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .refine((p) => Object.keys(p).length > 0, 'give at least one place'),
+  })
+  .strict()
+  .refine((c) => !c.iconOnly || c.icon, { error: '"iconOnly" needs an "icon"', path: ['iconOnly'] });
+export type AddonCommand = z.infer<typeof AddonCommandSchema>;
+export type AddonPlace = keyof AddonCommand['in'];
+
+/** How one of the addon's commands is now. A screen, a pane and a pane item each send theirs, and the most specific one wins. */
+export const AddonCommandStateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    checked: z.boolean().optional(),
+    /** Left out (a command that doesn't apply to this item, or to the state the addon is in). */
+    hidden: z.boolean().optional(),
+    /** The label it has now, for a command whose words change with the state ("&Lock Vault", "&Unlock Vault"). */
+    label: z.string().min(1).optional(),
   })
   .strict();
-export type AddonMainButton = z.infer<typeof AddonMainButtonSchema>;
+export type AddonCommandState = z.infer<typeof AddonCommandStateSchema>;
+const CommandStatesSchema = z.record(z.string(), AddonCommandStateSchema);
+export type AddonCommandStates = z.infer<typeof CommandStatesSchema>;
 
 /**
  * How a tool call shows on the Now tab: an addon's own tools (an MCP server
@@ -145,10 +217,9 @@ export const AddonManifestSchema = z
     panes: z.array(AddonPaneDefSchema).default([]),
     /** Tabs in the main window, after Looper's own (not on a phone, whose tab bar has room for Looper's only). */
     tabs: z.array(AddonTabSchema).default([]),
-    tools: z.array(AddonToolSchema).default([]),
-    /** Toolbar buttons: on the main window's toolbar at all times, or with one view (`view`). */
-    toolbar: z.array(AddonMainButtonSchema).default([]),
-    /** Names the toolbar buttons in "<toolbarName> Toolbar" (View menu); the addon's name otherwise. */
+    /** Everything it can do, each once, in the order its menus and toolbars list them. */
+    commands: z.array(AddonCommandSchema).default([]),
+    /** Names its toolbar buttons in "<toolbarName> Toolbar" (View menu), which hides them; the addon's name otherwise. */
     toolbarName: z.string().min(1).optional(),
     /** How tool calls show on the Now tab. */
     toolCalls: z.array(AddonToolCallSchema).default([]),
@@ -177,19 +248,19 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
   const tabIds = new Set<string>();
   for (const t of parsed.data.tabs) {
     if (tabIds.has(t.id)) return { ok: false, reason: 'invalid', error: `tabs: duplicate id "${t.id}"` };
+    if (t.id === PANES_TAB) return { ok: false, reason: 'invalid', error: `tabs: "${PANES_TAB}" is the id of the panes' own tab` };
     tabIds.add(t.id);
   }
-  const toolIds = new Set<string>();
-  for (const t of parsed.data.tools) {
-    if (toolIds.has(t.id)) return { ok: false, reason: 'invalid', error: `tools: duplicate id "${t.id}"` };
-    toolIds.add(t.id);
-    if (t.pane && !ids.has(t.pane)) return { ok: false, reason: 'invalid', error: `tools: "${t.id}" names no pane "${t.pane}"` };
-  }
-  const buttonIds = new Set<string>();
-  for (const b of parsed.data.toolbar) {
-    if (buttonIds.has(b.id)) return { ok: false, reason: 'invalid', error: `toolbar: duplicate id "${b.id}"` };
-    buttonIds.add(b.id);
-    if (b.tool && !toolIds.has(b.tool)) return { ok: false, reason: 'invalid', error: `toolbar: "${b.id}" names no tool "${b.tool}"` };
+  const commandIds = new Set<string>();
+  for (const c of parsed.data.commands) {
+    if (commandIds.has(c.id)) return { ok: false, reason: 'invalid', error: `commands: duplicate id "${c.id}"` };
+    commandIds.add(c.id);
+    // A command has one position in the list, which keeps one menu's order, not two.
+    const menus = new Set(Object.entries(c.in).map(([place, p]) => (place === 'new' ? 'file' : (p as AddonPlacement).menu)));
+    if (menus.size > 1) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" is in the ${[...menus].join(' and ')} menus; use one menu in every place` };
+    if ((c.in.panes || c.in.item) && !parsed.data.panes.length) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" is placed in panes the addon doesn't have` };
+    const tab = c.opens && 'tab' in c.opens ? c.opens.tab : undefined;
+    if (tab && !(tab === PANES_TAB ? parsed.data.panes.length : tabIds.has(tab))) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" opens a tab the addon doesn't have: "${tab}"` };
   }
   const callTools = new Set<string>();
   for (const c of parsed.data.toolCalls) {
@@ -257,17 +328,34 @@ function listText(items: string[]): string {
   return items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
+/** The places of Looper's own windows a command can be in; the others are the addon's own panes and screens. */
+const LOOPER_PLACES = ['new', 'app', 'dashboard', 'projects', 'tasks', 'chats'] as const;
+const MENU_TITLES: Record<AddonMenuName, string> = { file: 'File', edit: 'Edit', view: 'View', tools: 'Tools', help: 'Help' };
+/** A label without its "&" access keys. */
+const plainLabel = (label: string): string => label.replace(/&(&?)/g, '$1');
+
 /** What installing the addon adds to Looper, one line per place, for the install confirmation. */
-export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'toolbar' | 'tools'> & { tabs?: AddonTab[]; toolCalls?: AddonToolCall[] }): string[] {
+export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { tabs?: AddonTab[]; toolCalls?: AddonToolCall[] }): string[] {
   const lines: string[] = [];
   const tabs = (m.tabs ?? []).map((t) => t.title);
   if (tabs.length) lines.push(`${tabs.length === 1 ? 'A ' : ''}${listText(tabs)} tab${tabs.length === 1 ? '' : 's'} in the main window`);
   const panes = m.panes.map((p) => p.title);
-  if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} on the Tasks tab`);
-  const buttons = m.toolbar.map((b) => b.label);
+  if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} in a tab of ${panes.length === 1 ? 'its' : 'their'} own`);
+  // Only what joins Looper's own windows: the rest is in the addon's tabs and panes, listed above.
+  const inMenu = new Map<AddonMenuName, string[]>();
+  const buttons: string[] = [];
+  for (const c of m.commands) {
+    const places = LOOPER_PLACES.filter((p) => c.in[p]);
+    if (!places.length) continue;
+    const label = plainLabel(c.label);
+    for (const menu of new Set(places.map((p) => (p === 'new' ? 'file' : c.in[p]!.menu)))) inMenu.set(menu, [...(inMenu.get(menu) ?? []), label]);
+    if (places.some((p) => c.in[p]!.toolbar)) buttons.push(label.replace(/…$/, ''));
+  }
+  for (const menu of ADDON_MENUS) {
+    const labels = inMenu.get(menu);
+    if (labels) lines.push(`${listText(labels)} in the ${MENU_TITLES[menu]} menu`);
+  }
   if (buttons.length) lines.push(`${buttons.length === 1 ? 'A ' : ''}${listText(buttons)} button${buttons.length === 1 ? '' : 's'} on the toolbar`);
-  const tools = m.tools.map((t) => `${t.label}…`);
-  if (tools.length) lines.push(`${listText(tools)} in the Tools menu`);
   const calls = m.toolCalls?.length ?? 0;
   if (calls) lines.push(`How ${calls === 1 ? 'a tool’s calls show' : `${calls} tools’ calls show`} on the Now tab`);
   return lines;
@@ -389,127 +477,19 @@ export const ADDON_ICONS = [
 ] as const;
 export type AddonIconName = (typeof ADDON_ICONS)[number];
 
-/** `needsItem`: in a pane window, off while no item is selected, and the event carries the selected one. */
-const MenuItemSchema = z.union([
-  z
-    .object({
-      id,
-      label: z.string().min(1),
-      enabled: z.boolean().optional(),
-      confirm: z.string().min(1).optional(),
-      needsItem: z.boolean().optional(),
-      /** Set: the item shows a check mark when true. */
-      checked: z.boolean().optional(),
-      /** With `checked`: a bullet instead, for one choice among the items next to it. */
-      radio: z.boolean().optional(),
-      /** It destroys or cuts something off: a phone draws it red, last in its menu. */
-      destructive: z.boolean().optional(),
-      platforms,
-    })
-    .strict(),
-  z.object({ separator: z.literal(true) }).strict(),
-]);
-export type AddonMenuItem = z.infer<typeof MenuItemSchema>;
-
-/**
- * Whether a menu-bar item or pane-window toolbar button is available for the
- * selected pane item. One with `needsItem` follows the item's own menu: the
- * entry with its id gives its `enabled`, and with no such entry it's off. An
- * item without a menu leaves it on.
- */
-export function commandOn(command: { id: string; needsItem?: boolean }, item: { menu?: AddonMenuItem[] } | undefined): boolean {
-  if (!command.needsItem) return true;
-  if (!item) return false;
-  if (!item.menu) return true;
-  const own = item.menu.find((m) => 'id' in m && m.id === command.id);
-  return own !== undefined && 'id' in own && (own.enabled ?? true);
-}
-
-/** A window's menu bar: its menus, left to right. `&` in a label marks its access key. */
-const MenuBarSchema = z.array(z.object({ label: z.string().min(1), items: z.array(MenuItemSchema), platforms }).strict());
-export type AddonMenuBar = z.infer<typeof MenuBarSchema>;
-
-/**
- * One entry of a designed phone More menu: a toolbar button (by id), a whole
- * menu-bar menu (by its label, `&` aside) whose items show in its place, or
- * one menu-bar item (by id).
- */
-const MoreRefSchema = z.union([
-  z.object({ toolbar: id }).strict(),
-  z.object({ menu: z.string().min(1) }).strict(),
-  z.object({ item: id }).strict(),
-]);
-export type AddonMoreRef = z.infer<typeof MoreRefSchema>;
-
-/**
- * A designed More menu for phones, instead of the default one (the toolbar's
- * buttons, then the menu bar's menus): groups of entries, each group set off
- * from the next. Only what applies to the screen.
- */
-const MobileMoreSchema = z.array(z.array(MoreRefSchema).min(1)).min(1);
-export type AddonMobileMore = z.infer<typeof MobileMoreSchema>;
-
-const menuLabel = (label: string): string => label.replace(/&(&?)/g, (_m, amp: string) => amp).toLowerCase();
-
-/** The entries of a `mobileMore` that name nothing in the screen's toolbar or menu bar. */
-function strayMoreRefs(s: { toolbar?: AddonToolbarItem[]; menuBar?: AddonMenuBar; mobileMore?: AddonMobileMore }): string[] {
-  const buttons = new Set((s.toolbar ?? []).flatMap((t) => ('id' in t ? [t.id] : [])));
-  const menus = new Set((s.menuBar ?? []).map((m) => menuLabel(m.label)));
-  const items = new Set((s.menuBar ?? []).flatMap((m) => m.items.flatMap((it) => ('id' in it ? [it.id] : []))));
-  return (s.mobileMore ?? []).flat().flatMap((r) =>
-    'toolbar' in r
-      ? buttons.has(r.toolbar) ? [] : [`no toolbar button "${r.toolbar}"`]
-      : 'menu' in r
-        ? menus.has(menuLabel(r.menu)) ? [] : [`no menu "${r.menu}"`]
-        : items.has(r.item) ? [] : [`no menu item "${r.item}"`],
-  );
-}
-
-const checkMobileMore = (s: Parameters<typeof strayMoreRefs>[0], ctx: z.RefinementCtx) => {
-  for (const message of strayMoreRefs(s)) ctx.addIssue({ code: 'custom', path: ['mobileMore'], message: `mobileMore names ${message}` });
-};
-
-const ToolbarItemSchema = z.union([
-  z
-    .object({
-      id,
-      /** Shown after the icon; with `iconOnly`, the button's tooltip and accessible name. */
-      label: z.string().min(1),
-      icon: z.enum(ADDON_ICONS).optional(),
-      /** Show only the icon, for commands users know by it (Refresh, Settings). */
-      iconOnly: z.boolean().optional(),
-      disabled: z.boolean().optional(),
-      confirm: z.string().min(1).optional(),
-      needsItem: z.boolean().optional(),
-      /** It destroys or cuts something off: a phone draws it red, last in its menu. */
-      destructive: z.boolean().optional(),
-      platforms,
-    })
-    .strict()
-    .refine((t) => !t.iconOnly || t.icon, { error: '"iconOnly" needs an "icon"', path: ['iconOnly'] }),
-  z.object({ separator: z.literal(true) }).strict(),
-]);
-export type AddonToolbarItem = z.infer<typeof ToolbarItemSchema>;
-
 export const AddonScreenSchema = z
   .object({
     title: z.string().optional(),
-    /** Its buttons join the window's toolbar while the screen shows (the main window's after Looper's own). */
-    toolbar: z.array(ToolbarItemSchema).optional(),
-    /** The menu bar of a window this screen fills (ignored in the main window). */
-    menuBar: MenuBarSchema.optional(),
-    /** The phone's More menu for this screen; unset: its toolbar buttons, then its menu bar. */
-    mobileMore: MobileMoreSchema.optional(),
+    /** How the addon's commands are while the screen shows (placed in `screen`, or anywhere else it shows). */
+    commands: CommandStatesSchema.optional(),
     body: z.array(AddonNodeSchema),
     /** Draw the screen again this often while it shows (a countdown, a live value). */
     refreshSec: z.number().min(1).optional(),
   })
-  .strict()
-  .superRefine(checkMobileMore);
+  .strict();
 export type AddonScreen = z.infer<typeof AddonScreenSchema>;
 
 // ---------- Panes ----------
-
 
 export const AddonPaneItemSchema = z
   .object({
@@ -519,8 +499,8 @@ export const AddonPaneItemSchema = z
     /** The screen the main window shows while the item is selected. */
     view: id,
     params: ParamsSchema.optional(),
-    /** Its right-click menu. */
-    menu: z.array(MenuItemSchema).optional(),
+    /** How the commands placed on an item are for this one: one it doesn't have is `hidden`, one it can't do now is off. */
+    commands: CommandStatesSchema.optional(),
     /** Shown dimmed, like a disabled task. */
     dimmed: z.boolean().optional(),
     /** Items with the same group show under a collapsible heading with that name, in the order the groups first appear. */
@@ -534,20 +514,14 @@ export type AddonPaneItem = z.infer<typeof AddonPaneItemSchema>;
 export const AddonPaneContentSchema = z
   .object({
     items: z.array(AddonPaneItemSchema),
-    /** The pane header's right-click menu (Looper adds Hide Pane after it). */
-    menu: z.array(MenuItemSchema).optional(),
-    /** In a pane window (Tools menu): its toolbar and menu bar. */
-    toolbar: z.array(ToolbarItemSchema).optional(),
-    menuBar: MenuBarSchema.optional(),
+    /** How the addon's commands are while the pane shows (a filter's check mark, what a locked vault can't do). */
+    commands: CommandStatesSchema.optional(),
     /** Shown instead of the list when it has no items. */
     empty: z.string().optional(),
     /** A search box above the list; Looper filters the items as the user types. */
     search: z.object({ placeholder: z.string().min(1).optional() }).strict().optional(),
-    /** In a pane window on a phone: its More menu; unset: the toolbar's buttons, then the menu bar. */
-    mobileMore: MobileMoreSchema.optional(),
   })
-  .strict()
-  .superRefine(checkMobileMore);
+  .strict();
 export type AddonPaneContent = z.infer<typeof AddonPaneContentSchema>;
 
 const WORD = /[^\p{L}\p{N}]+/u;
@@ -571,21 +545,22 @@ export function matchesSearch(item: AddonPaneItem, query: string): boolean {
 
 // ---------- Events ----------
 
-export type AddonEventKind = 'click' | 'open' | 'menu' | 'reveal' | 'copy';
+/** `click`: a screen's button; `command`: one of the manifest's commands; `open`: a pane item double-clicked. */
+export type AddonEventKind = 'click' | 'open' | 'command' | 'reveal' | 'copy';
 
-/** `toolbar`: one of the addon's main-toolbar buttons (manifest `toolbar`). */
-export type AddonEventSource =
-  | { pane: string }
-  | { view: string; params: Record<string, unknown> }
-  | { toolbar: 'main' };
+/**
+ * Where it happened: a pane (with the item a command acts on in `item`), a
+ * screen, or Looper's own window for a command placed there (`app`).
+ */
+export type AddonEventSource = { pane: string } | { view: string; params: Record<string, unknown> } | { app: true };
 
 /** What Looper sends with the `event` method. */
 export interface AddonEvent {
   source: AddonEventSource;
   kind: AddonEventKind;
-  /** The button, menu item, secret, or (open) pane item. */
+  /** The button, command, secret, or (open) pane item. */
   id: string;
-  /** The pane item a menu was opened on. */
+  /** The pane item it acts on: a command placed on items, or the one opened. */
   item?: string;
   /** The screen's field values, by field id. */
   values?: Record<string, string | number | boolean>;
@@ -643,8 +618,7 @@ export interface AddonInfo {
   run: string;
   panes: { id: string; title: string }[];
   tabs: AddonTab[];
-  tools: AddonTool[];
-  toolbar: AddonMainButton[];
+  commands: AddonCommand[];
   toolbarName?: string;
   /** How tool calls show on the Now tab (findToolCall). */
   toolCalls: AddonToolCall[];

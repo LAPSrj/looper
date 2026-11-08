@@ -567,6 +567,7 @@ html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab.acti
     0 3px 1px rgba(0, 0, 0, 0.04);
 }
 html.phone-window[data-platform='android'] .pg-segmented,
+html.phone-window[data-platform='android'] .list-summary > .tabs,
 html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
   display: flex;
   flex: none;
@@ -576,6 +577,7 @@ html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
   background: var(--pg-bg);
 }
 html.phone-window[data-platform='android'] .pg-segmented button,
+html.phone-window[data-platform='android'] .list-summary > .tabs .tab,
 html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab {
   flex: 1;
   min-width: 0;
@@ -592,9 +594,24 @@ html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab 
   white-space: nowrap;
 }
 html.phone-window[data-platform='android'] .pg-segmented button.active,
+html.phone-window[data-platform='android'] .list-summary > .tabs .tab.active,
 html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab.active {
   color: var(--pg-tint);
   border-bottom-color: var(--pg-tint);
+}
+/* A list with a summary tab (a run's Result): the tabs over whichever of the two shows, on the page's gray. */
+html.phone-window .list-summary {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--pg-bg);
+}
+html.phone-window .list-summary-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0 16px;
 }
 
 /* ---------- the main window's tab bar ---------- */
@@ -1156,30 +1173,6 @@ html.phone-window[data-platform='android'] .pg-sessions .session-empty {
   border-radius: 16px;
   background: var(--pg-container);
 }
-html.phone-window[data-platform='android'] .pg-addon-toolbar {
-  border-radius: 16px;
-  background: var(--pg-container);
-}
-html.phone-window[data-platform='android'] .phone-detail > .pg-addon-toolbar {
-  border-radius: 0;
-}
-html.phone-window .pg-addon-toolbar {
-  margin: 0 16px;
-  border-radius: 26px;
-  background: var(--pg-cell);
-}
-html.phone-window .phone-detail > .pg-addon-toolbar {
-  margin: 0;
-  border-radius: 0;
-}
-/* In a Group, the list around it is already inset. */
-html.phone-window .pg-list > .pg-addon-toolbar {
-  margin: 0;
-}
-html.phone-window .pg-addon-toolbar:empty {
-  display: none;
-}
-
 /* The Sessions window's Overview: its cards as a list. */
 html.phone-window .phone-sessions .sessions-overview {
   display: flex;
@@ -2187,8 +2180,27 @@ html.phone-window .msg-sections {
 html.phone-window .msg-section-label {
   margin-top: 8px;
 }
-html.phone-window .addon-prop {
+/* .addon-prop is display: contents, so its row is the dd: actions that don't fit go below the value, whole. */
+html.phone-window .addon-prop dd {
   flex-wrap: wrap;
+  column-gap: 10px;
+}
+html.phone-window .addon-prop-actions {
+  margin-left: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  overflow-wrap: normal;
+}
+/* A phone's Show toggle fills its row, so a secret's actions take the line below the value. */
+html.phone-window .addon-prop-actions:has(.addon-reveal) {
+  flex: 0 0 100%;
+}
+html.phone-window .addon-prop-actions .addon-reveal {
+  flex: 1;
+  margin: 0;
+}
+html.phone-window[data-platform='android'] .addon-screen section {
+  margin-inline: 16px;
 }
 html.phone-window .addon-search input {
   min-height: 44px;
@@ -2907,24 +2919,24 @@ html.phone-window .tab-sections {
   padding-top: 16px;
 }
 /* A toolbar inside a page: plain symbols without a desktop button's box; the one that's on is tinted. */
-html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar, .pg-addon-toolbar) {
+html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar) {
   border: none;
   background: transparent;
 }
-html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar, .pg-addon-toolbar) button {
+html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar) button {
   border: none;
   border-radius: 22px;
   background: transparent;
   color: var(--pg-tint);
 }
-html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar, .pg-addon-toolbar) button:disabled {
+html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar) button:disabled {
   color: var(--pg-label-3, var(--pg-label-2));
 }
-html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar, .pg-addon-toolbar) button:is(.pressed, [aria-pressed='true']) {
+html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar) button:is(.pressed, [aria-pressed='true']) {
   background: var(--pg-tint);
   color: var(--pg-on-tint, #fff);
 }
-html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar, .pg-addon-toolbar) .toolbar-sep {
+html.phone-window .toolbar:is(.pane-toolbar, .addon-toolbar) .toolbar-sep {
   display: none;
 }
 /* The task builder's conversation, and its draft as a grouped list. */

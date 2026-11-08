@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sessionGroupKey, type SessionSummary } from '@shared/sessions';
 import { subscribe } from './events';
-import { sendsOnEnter } from './components/composer-text';
-import { isPhone } from './web/page-nav';
+import { sendsOnEnterHere } from './components/MessageBox';
 import { CheckboxField, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
@@ -134,7 +133,7 @@ export function SendToSessionsApp({ group }: { group?: string }) {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           // As in a chat's message box: Enter sends on the desktop (Shift+Enter breaks the line), a phone's Enter breaks it.
-          if (sendsOnEnter(e, isPhone)) {
+          if (sendsOnEnterHere(e)) {
             e.preventDefault();
             send();
           }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatState } from '@shared/chat';
+import type { ChatsContext } from '@shared/commands/context';
 import type { MessageRow } from '@shared/messages';
 import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
 import { ViewSchema, type View } from '@shared/types';
@@ -106,9 +107,6 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     });
     const unsubUi = window.looper.onUi((e) => {
       if (e.type === 'sessions-select') setSelected(e.id);
-      else if (e.type === 'sessions-dashboard') setSelected(null);
-      else if (e.type === 'sessions-nav') setSelected(stepTo(stateRef.current.sessions, selectedRef.current, e.dir, e.waiting));
-      else if (e.type === 'sessions-pane') focusPane(e.dir);
     });
     // Capture phase, so a terminal doesn't get the keys the window takes.
     const onKey = (e: KeyboardEvent) => {
@@ -270,6 +268,33 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   };
   const subagents = activity?.subagents ?? [];
   const stoppable = canStop(summary, chat?.runningCommands);
+  // The harness names its conversation once it has started it.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const started = chat?.status;
+  useEffect(() => {
+    setSessionId(null);
+    if (selected && summary?.kind === 'chat') void window.looper.sessions.harnessSessionId(selected).then(setSessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, summary?.kind, started]);
+  /** What the commands read; a phone's sheet answers for the Activity pane. */
+  const chatsContext = (over: Partial<ChatsContext> = {}): ChatsContext => ({
+    single,
+    tab: !!tab,
+    selected,
+    summary,
+    chat,
+    sessionId,
+    sessions: state.sessions,
+    stoppable,
+    shown,
+    setShown,
+    setSelected,
+    activityOpen: !!summary && (single ? shown.windowActivityPane : shown.activityPane),
+    toggleActivity: () => (single ? setShown({ windowActivityPane: !shown.windowActivityPane }) : setShown({ activityPane: !shown.activityPane })),
+    step: (dir, waiting) => setSelected(stepTo(state.sessions, selected, dir, waiting)),
+    focusPane,
+    ...over,
+  });
 
   return {
     single,
@@ -300,6 +325,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     watchedRows,
     watchedAgent,
     stoppable,
+    chatsContext,
   };
 }
 

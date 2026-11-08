@@ -24,7 +24,6 @@ const AddonEditApp = lazy(() => import('./AddonsApp').then((m) => ({ default: m.
 const AgentSettingsApp = lazy(() => import('./AgentSettingsApp').then((m) => ({ default: m.AgentSettingsApp })));
 const McpServerApp = lazy(() => import('./McpServerApp').then((m) => ({ default: m.McpServerApp })));
 const AddonsApp = lazy(() => import('./AddonsApp').then((m) => ({ default: m.AddonsApp })));
-const AddonPaneWindowApp = lazy(() => import('./components/AddonPane').then((m) => ({ default: m.AddonPaneWindowApp })));
 const AddonWindowApp = lazy(() => import('./components/AddonScreen').then((m) => ({ default: m.AddonWindowApp })));
 const BuilderApp = lazy(() => import('./BuilderApp').then((m) => ({ default: m.BuilderApp })));
 const BuilderSetupApp = lazy(() => import('./BuilderSetupApp').then((m) => ({ default: m.BuilderSetupApp })));
@@ -41,7 +40,8 @@ const ModelUpdateApp = lazy(() => import('./ModelUpdateApp').then((m) => ({ defa
 const FilterApp = lazy(() => import('./FilterApp').then((m) => ({ default: m.FilterApp })));
 const HistoryApp = lazy(() => import('./HistoryApp').then((m) => ({ default: m.HistoryApp })));
 const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));
-const SessionNameApp = lazy(() => import('./SessionNameApp').then((m) => ({ default: m.SessionNameApp })));const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
+const SessionNameApp = lazy(() => import('./SessionNameApp').then((m) => ({ default: m.SessionNameApp })));
+const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
 const ImageApp = lazy(() => import('./ImageApp').then((m) => ({ default: m.ImageApp })));
 const MarkdownExportApp = lazy(() => import('./MarkdownExportApp').then((m) => ({ default: m.MarkdownExportApp })));
@@ -100,7 +100,6 @@ const sessionsMatch = /^sessions(?:\/([^/]+)(\/window)?)?$/.exec(hash);
 const sendToSessionsMatch = /^send-to-sessions(?:\/([^/]+))?$/.exec(hash);
 const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
-const addonPaneWindowMatch = /^addon-pane\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
 
 const viewMatch = /^view\/(.+)$/.exec(hash);
 const itemMatch = /^item\/(task|project)\/(.+)$/.exec(hash);
@@ -113,15 +112,6 @@ function pickRoot() {
   if (hash === 'agent-settings') return <AgentSettingsApp />;
   if (mcpServerMatch) return <McpServerApp requestKey={decodeURIComponent(mcpServerMatch[1])} />;
   if (addonEditMatch) return <AddonEditApp addonId={decodeURIComponent(addonEditMatch[1])} />;
-  if (addonPaneWindowMatch) {
-    return (
-      <AddonPaneWindowApp
-        addonId={decodeURIComponent(addonPaneWindowMatch[1])}
-        pane={decodeURIComponent(addonPaneWindowMatch[2])}
-        title={decodeURIComponent(addonPaneWindowMatch[3])}
-      />
-    );
-  }
   if (addonWindowMatch) {
     return (
       <AddonWindowApp

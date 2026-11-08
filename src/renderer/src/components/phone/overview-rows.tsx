@@ -3,7 +3,7 @@ import { fmtClock, formatDuration, resultLabel } from '../../format';
 import type { MainWindow } from '../../useMainWindow';
 import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners } from '../Dashboard';
 import { Elapsed } from '../Live';
-import { showTaskMenu } from '../TaskList';
+import { showTaskMenu } from '../row-menus';
 import { EmptyRow, Group, Row } from './PhoneList';
 
 /** A long press on a row about a task: its menu, which acts on that task. */

@@ -49,6 +49,21 @@ export interface ListDetailProps {
   sides?: { storageKey: string; left: SideWidth; right: SideWidth; minDetail: number };
   /** The detail covers the list, or stops covering it. */
   onPushed?: (pushed: boolean) => void;
+  /**
+   * What the list adds up to (a run's result). A phone or tablet shows it as a
+   * first tab before the list's own; the desktop's list already shows it in its rows.
+   */
+  summary?: ListSummary;
+}
+
+export interface ListSummary {
+  label: string;
+  /** The list's tab. */
+  listLabel: string;
+  body: ReactNode;
+  /** The summary's tab is the one shown. */
+  shown: boolean;
+  onShown: (shown: boolean) => void;
 }
 
 /** How many pushed details this one is inside: a deeper one's bar goes over the shallower one's. */
@@ -69,7 +84,15 @@ export function ListDetail(props: ListDetailProps) {
   return isPhone ? <Mobile {...props} /> : <Desktop {...props} />;
 }
 
-function Mobile({ list, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed }: ListDetailProps) {
+function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed, summary }: ListDetailProps) {
+  const list = summary ? (
+    <div className="list-summary">
+      <TabBar tabs={[['summary', summary.label], ['list', summary.listLabel]] as const} active={summary.shown ? 'summary' : 'list'} onSelect={(id) => summary.onShown(id === 'summary')} />
+      {summary.shown ? <div className="list-summary-body">{summary.body}</div> : rows}
+    </div>
+  ) : (
+    rows
+  );
   const ref = useRef<HTMLDivElement>(null);
   const measured = useContainerSplit(ref, given === undefined && !preview);
   const split = given !== undefined ? given : measured;

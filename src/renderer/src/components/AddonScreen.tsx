@@ -1,25 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { commandOn } from '@shared/addons';
-import type {
-  AddonButton,
-  AddonEventKind,
-  AddonField,
-  AddonInfo,
-  AddonMenuItem,
-  AddonMobileMore,
-  AddonNode,
-  AddonProp,
-  AddonScreen,
-  AddonToolbarItem,
-} from '@shared/addons';
-import { isPhone } from '../web/page-nav';
-import { NavBar } from './NavBar';
-import type { MoreGroup, MoreRef } from '../web/more-menu';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { AddonButton, AddonEventKind, AddonField, AddonNode, AddonProp, AddonScreen } from '@shared/addons';
+import { ADDON_WINDOW_VIEWS } from '@shared/commands/build';
+import type { AddonContext, CommandContext } from '@shared/commands/context';
+import { CommandBar } from './Toolbar';
+import { useCommandMenu, useCommandState } from './useCommands';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
-import { ToolbarButtons } from './Toolbar';
-import { groupsAtSeparators, type ToolbarGroup } from './toolbar-model';
 import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
 
@@ -66,11 +52,16 @@ const SECRET_MASK = '••••••••';
 /** A new screen slower than this to draw goes to the engine log. */
 const SLOW_DRAW_MS = 500;
 
+/** What a screen tells its window, for the commands placed on it (CommandContext `addon.screen`). */
+export type AddonScreenReport = NonNullable<AddonContext['screen']>;
+
 /**
  * An addon's screen, drawn from the nodes it sent: in the main window's
  * detail area (`main`), as the whole of an addon window (`window`, with its
  * footer as the window's Save | Cancel | Apply), or as its body alone inside
- * another view (`inline`: a tool call's result on the Now tab).
+ * another view (`inline`: a tool call's result on the Now tab). It draws no
+ * toolbar or menus of its own: it reports its state (`onScreen`), and its
+ * window builds them from the addon's commands, as it does Looper's.
  */
 export function AddonScreenView({
   addonId,
@@ -78,21 +69,18 @@ export function AddonScreenView({
   view,
   params,
   mode,
-  toolbarSlot,
-  toolbarSep = true,
-  toolbarHidden = false,
+  onScreen,
+  toolbar,
 }: {
   addonId: string;
   addonName: string;
   view: string;
   params: Record<string, unknown>;
   mode: 'main' | 'window' | 'inline';
-  /** `main`, on the desktop: the end of the window's toolbar, where the screen's toolbar buttons go. */
-  toolbarSlot?: HTMLElement | null;
-  /** The slot follows other buttons: a separator comes first. */
-  toolbarSep?: boolean;
-  /** The addon's toolbar is turned off (View → "<Addon> Toolbar"): a phone's More menu leaves its buttons out. */
-  toolbarHidden?: boolean;
+  /** The screen showing and its commands' state, or null once it's gone. */
+  onScreen?: (screen: AddonScreenReport | null) => void;
+  /** `window`: the window's toolbar, at its top. */
+  toolbar?: ReactNode;
 }) {
   const [screen, setScreen] = useState<AddonScreen | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,14 +143,6 @@ export function AddonScreenView({
     [addonId, load],
   );
 
-  // A window this screen fills takes its menu bar.
-  const menuBarKey = mode === 'window' ? JSON.stringify(screen?.menuBar ?? null) : null;
-  useEffect(() => {
-    if (menuBarKey === null) return;
-    const { view: v, params: p } = source.current;
-    window.looper.addons.setMenuBar(addonId, { view: v, params: p }, JSON.parse(menuBarKey));
-  }, [addonId, menuBarKey]);
-
   useEffect(() => {
     if (!screen?.refreshSec) return;
     const t = setTimeout(load, screen.refreshSec * 1000);
@@ -180,6 +160,19 @@ export function AddonScreenView({
       setBusy(false);
     }
   };
+
+  // The commands placed on the screen reach it through its window, with the fields' values as they are then.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const reportRef = useRef(onScreen);
+  reportRef.current = onScreen;
+  const commandState = screen?.commands;
+  const stateKey = JSON.stringify(commandState ?? null);
+  const shown = !!screen;
+  useEffect(() => {
+    if (shown) reportRef.current?.({ view, state: commandState, run: (id, confirm) => void sendRef.current('command', id, confirm) });
+  }, [view, stateKey, shown]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => reportRef.current?.(null), []);
 
   const fields = screen ? fieldsOf(screen.body) : [];
   const missing = fields.some((f) => f.required && (values[f.id] === undefined || String(values[f.id]).trim() === ''));
@@ -406,17 +399,10 @@ export function AddonScreenView({
     <InfoBar stacked title={`${addonName} couldn't show this screen`} message={error} action={<button className="btn" onClick={load}>Try Again</button>} />
   );
 
-  const groups = addonToolbarGroups(screen?.toolbar ?? [], { busy, onClick: (id, confirm) => void send('click', id, confirm) }, 'screen');
-  // A phone draws no toolbar: the screen's buttons and its designed More menu go to the frame, after the window's own.
-  const bar = mode === 'inline' || toolbarHidden ? null : <NavBar toolbar={groups} more={addonMore(screen?.mobileMore)} order={1} />;
-
   if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || (screen && nodes(screen.body))}</div>;
   if (mode === 'main') {
     return (
       <div className="detail addon-screen">
-        {bar}
-        {/* The buttons join the window's toolbar, after its own. */}
-        {groups.length > 0 && toolbarSlot && createPortal(<ToolbarButtons groups={groups} leadingSep={toolbarSep} />, toolbarSlot)}
         <div className="detail-bar">
           <span className="pane-title">{screen?.title ?? ''}</span>
         </div>
@@ -426,12 +412,7 @@ export function AddonScreenView({
   }
   return (
     <div className="editor addon-screen">
-      {bar}
-      {groups.length > 0 && !isPhone && (
-        <div className="toolbar addon-toolbar">
-          <ToolbarButtons groups={groups} />
-        </div>
-      )}
+      {toolbar}
       {windowTabs && (
         <TabBar
           tabs={windowTabs.items.map((t) => [t.id, t.title] as const)}
@@ -456,78 +437,19 @@ export function AddonScreenView({
   );
 }
 
-interface AddonToolbarOpts {
-  /** In a pane window: the selected item (null for none), which decides its `needsItem` buttons (commandOn). */
-  selected?: { menu?: AddonMenuItem[] } | null;
-  busy?: boolean;
-  onClick: (id: string, confirm?: string) => void;
-}
-
 /**
- * An addon toolbar as Looper's toolbar data: its separators split the groups.
- * Its buttons show their label next to the icon, unless the addon asks for
- * the icon alone (the label is then the tooltip).
+ * An addon window: one of the addon's screens, opened by its openWindow action
+ * or a command's `opens`. Its menu bar and toolbar (a phone's bar and More)
+ * are the addon's commands placed on its screens; with none, it has neither.
  */
-export function addonToolbarGroups(items: AddonToolbarItem[], { selected, busy, onClick }: AddonToolbarOpts, prefix = 'addon'): ToolbarGroup[] {
-  return groupsAtSeparators<Exclude<AddonToolbarItem, { separator: true }>>(
-    items,
-    (t) => ({
-      id: t.id,
-      label: t.label,
-      icon: t.icon,
-      labeled: !t.iconOnly,
-      platforms: t.platforms,
-      ...(t.destructive ? { destructive: true as const } : {}),
-      enabled: !(busy || t.disabled || (selected !== undefined && !commandOn(t, selected ?? undefined))),
-      run: () => onClick(t.id, t.confirm),
-    }),
-    prefix,
-  );
-}
-
-/**
- * The addons' toolbar buttons (manifest `toolbar`) for a window showing `tab`,
- * one group per addon with some. A button with a `view` shows with that view:
- * in its own window, and in the main window while its tab shows. One without
- * shows in the main window only, on every tab.
- */
-export function addonMainGroups(addons: AddonInfo[], hidden: string[], tab: string, viewWindow: boolean): ToolbarGroup[] {
-  return addons
-    .filter((a) => a.enabled && !hidden.includes(a.id))
-    .map((a) => ({ a, buttons: a.toolbar.filter((b) => (b.view ? b.view === tab : !viewWindow)) }))
-    .filter(({ buttons }) => buttons.length > 0)
-    .map(({ a, buttons }) => ({
-      id: `addon:${a.id}`,
-      items: buttons.map((b) => ({
-        id: `${a.id}:${b.id}`,
-        label: b.label,
-        icon: b.icon,
-        labeled: true,
-        platforms: b.platforms,
-        ...(b.destructive ? { destructive: true as const } : {}),
-        enabled: a.status === 'running',
-        run: () => {
-          if (b.tool) void window.looper.addons.openTool(a.id, b.tool);
-          else void window.looper.addons.event(a.id, { source: { toolbar: 'main' }, kind: 'click', id: b.id });
-        },
-      })),
-    }));
-}
-
-/** An addon toolbar's buttons, drawn like Looper's (what doesn't show on this platform left out). */
-export function AddonToolbarButtons({ items, ...opts }: AddonToolbarOpts & { items: AddonToolbarItem[] }) {
-  return <ToolbarButtons groups={addonToolbarGroups(items, opts)} />;
-}
-
-/** An addon's designed phone More menu, as the frame's: its references name the toolbar's ids and the menu bar. */
-export const addonMore = (more: AddonMobileMore | undefined): MoreGroup[] | undefined => more?.map((g) => g.map((r): MoreRef => r));
-
-/** An addon window: one of the addon's screens, opened by its openWindow action. */
 export function AddonWindowApp({ addonId, view, params, title }: { addonId: string; view: string; params: Record<string, unknown>; title: string }) {
-  const [name, setName] = useState(addonId);
+  const commandState = useCommandState();
+  const [screen, setScreen] = useState<AddonScreenReport | null>(null);
+  const name = commandState.addons.find((a) => a.id === addonId)?.name ?? addonId;
   useEffect(() => {
     document.title = title;
-    void window.looper.addons.list().then((list) => setName(list.find((a) => a.id === addonId)?.name ?? addonId));
-  }, [addonId, title]);
-  return <AddonScreenView addonId={addonId} addonName={name} view={view} params={params} mode="window" />;
+  }, [title]);
+  const commands: CommandContext = { ...commandState, addon: { id: addonId, ...(screen ? { screen } : {}) } };
+  useCommandMenu(ADDON_WINDOW_VIEWS, commands);
+  return <AddonScreenView addonId={addonId} addonName={name} view={view} params={params} mode="window" onScreen={setScreen} toolbar={<CommandBar views={ADDON_WINDOW_VIEWS} context={commands} />} />;
 }

@@ -47,7 +47,7 @@ const QUIET_SENDS = new Set([
   'builder:resize',
   'terminalSession:resize',
   'addons:slowDraw',
-  'addons:menuBar',
+  'commands:menuBar',
   'messages:filter-state',
 ]);
 

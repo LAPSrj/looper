@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, ipcMain, shell, type Menu } from 'electron';
-import type { FileDialogSpec, MessageBoxSpec, ServerMessage } from '../../shared/remote-access';
+import type { FileDialogSpec, MessageBoxSpec, ServerMessage, WindowRole } from '../../shared/remote-access';
 import type { RemoteClients } from './clients';
 import { caller } from './context';
 import { IpcTable, type IpcMainLike } from './ipc-table';
@@ -71,17 +71,18 @@ export type WindowOptions = Omit<Electron.BrowserWindowConstructorOptions, 'pare
  * with a remote parent) it opens on that client instead; a desktop parent
  * becomes the calling remote window. `desktop` keeps it on the computer.
  */
-export function newWindow(options: WindowOptions, hash: string, opts?: { desktop?: boolean }): AppWindow {
-  const ctx = opts?.desktop ? undefined : caller();
+export function newWindow(options: WindowOptions, hash: string, opts: { role: WindowRole; desktop?: boolean }): AppWindow {
+  const ctx = opts.desktop ? undefined : caller();
   const asked = options.parent;
   const remoteParent = asked instanceof RemoteWindow ? asked : undefined;
-  const client = opts?.desktop ? undefined : (ctx?.client ?? remoteParent?.client);
+  const client = opts.desktop ? undefined : (ctx?.client ?? remoteParent?.client);
   if (!client || client.disposed) {
     return createPlacedWindow({ ...options, parent: asked as BrowserWindow | undefined } as Electron.BrowserWindowConstructorOptions, hash);
   }
   const alive = (w: RemoteWindow | null | undefined) => (w && !w.isDestroyed() && w.client === client ? w : null);
   const parent = asked ? (alive(remoteParent) ?? alive(ctx?.window) ?? alive(client.main)) : null;
   return client.openWindow({
+    role: opts.role,
     hash,
     title: options.title ?? 'Looper',
     width: options.width ?? 800,

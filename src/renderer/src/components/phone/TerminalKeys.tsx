@@ -1,8 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Terminal as XTerm } from '@xterm/xterm';
-import { CHAT_COMMANDS } from '@shared/commands/chat';
 import { isPhone } from '../../web/page-nav';
-import { commandToolbar } from '../toolbar-model';
 import { NavBar } from '../NavBar';
 import { KEY_ROW, StickyCtrl, stepFontSize, type TermKey } from '../terminal-keys';
 
@@ -94,15 +92,15 @@ export function usePhoneTerminal(send: (data: string) => void): PhoneTerminal {
 
   const row = isPhone ? (
     <>
-      {/* The text size isn't a key: it's in the window's More menu (a toolbar item the menu offers, and a designed menu can name). */}
+      {/* The text size isn't a key: it's in the window's More menu. */}
       <NavBar
         toolbar={[
           {
             id: 'terminal-text',
-            items: commandToolbar(CHAT_COMMANDS, 'terminal-text', {
-              textSmaller: { run: () => changeFont(-1), enabled: fontSize > stepFontSize(fontSize, -1) },
-              textLarger: { run: () => changeFont(1), enabled: fontSize < stepFontSize(fontSize, 1) },
-            }),
+            items: [
+              { id: 'terminal-text-smaller', label: 'Smaller Text', run: () => changeFont(-1), enabled: fontSize > stepFontSize(fontSize, -1) },
+              { id: 'terminal-text-larger', label: 'Larger Text', run: () => changeFont(1), enabled: fontSize < stepFontSize(fontSize, 1) },
+            ],
           },
         ]}
         order={5}

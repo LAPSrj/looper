@@ -22,7 +22,7 @@ function lone() {
     sent.push(JSON.parse(JSON.stringify(m)));
     return true;
   });
-  const win = client.openWindow({ hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
+  const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
   client.main = win;
   return { client, win, menus: () => sent.filter((m) => m.t === 'window-menu') };
 }

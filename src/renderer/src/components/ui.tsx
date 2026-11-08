@@ -219,6 +219,40 @@ export function FieldRow({ children }: { children: ReactNode }) {
 }
 
 /**
+ * A choice and, while it applies, a from-to pair: on one line, or on an iPhone
+ * a row each. `box`: draws one bound, given the name a shared line needs.
+ */
+export function RangeField({ label, mode, on, box, fromLabel, toLabel }: { label: string; mode: ReactNode; on: boolean; box: (bound: 'from' | 'to', label?: string) => ReactNode; fromLabel: string; toLabel: string }) {
+  if (onIos) {
+    return (
+      <>
+        <Field label={label}>{mode}</Field>
+        {on && (
+          <>
+            <Field label="From">{box('from')}</Field>
+            <Field label="To">{box('to')}</Field>
+          </>
+        )}
+      </>
+    );
+  }
+  return (
+    <Field label={label}>
+      <InputRow className="hours-row">
+        {mode}
+        {on && (
+          <>
+            {box('from', fromLabel)}
+            <span className="muted">to</span>
+            {box('to', toLabel)}
+          </>
+        )}
+      </InputRow>
+    </Field>
+  );
+}
+
+/**
  * A checkbox whose text runs into a number box on the same line ("larger than [200 k tokens]").
  * On an iPhone the number is a row of its own, named by the box's `label`, and shows only while it applies.
  */

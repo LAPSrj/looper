@@ -89,7 +89,7 @@ function lone(): { client: RemoteClient; win: RemoteWindow; sent: ServerMessage[
     sent.push(JSON.parse(JSON.stringify(m)));
     return true;
   });
-  const win = client.openWindow({ hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
+  const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
   client.main = win;
   return { client, win, sent };
 }
@@ -337,7 +337,7 @@ describe('remote windows', () => {
 
   it('closing a parent closes its children; ids never collide with Electron ones', () => {
     const { client, win } = lone();
-    const child = client.openWindow({ hash: 'settings', title: 'Settings', width: 720, height: 640, resizable: true, modal: true, parent: win });
+    const child = client.openWindow({ role: 'editor', hash: 'settings', title: 'Settings', width: 720, height: 640, resizable: true, modal: true, parent: win });
     expect(win.id).toBeGreaterThanOrEqual(1_000_000);
     expect(child.spec()).toMatchObject({ parent: win.w, modal: true, hash: 'settings' });
     expect(child.getParentWindow()).toBe(win);
@@ -448,7 +448,7 @@ describe('dispatcher', () => {
     clients.attach(conn);
     expect(conn.sent[0]).toMatchObject({ t: 'welcome', device: { name: 'Phone' }, version: '9.9.9', resumed: false });
     const open = conn.of('window-open');
-    expect(open).toEqual([{ t: 'window-open', w: mains[0].w, modal: false, hash: '', title: 'Looper', width: 1400, height: 900, resizable: true }]);
+    expect(open).toEqual([{ t: 'window-open', w: mains[0].w, role: 'workspace', modal: false, hash: '', title: 'Looper', width: 1400, height: 900, resizable: true }]);
     conn.deliver({ t: 'invoke', id: 1, w: mains[0].w, channel: 'tasks:list', args: [] });
     await vi.waitFor(() => expect(conn.of('result')).toEqual([{ t: 'result', id: 1, ok: true, value: [{ id: 't1', sender: mains[0].id }] }]));
   });
@@ -459,7 +459,7 @@ describe('dispatcher', () => {
     clients.attach(first);
     const client = clients.list()[0];
     const id = (first.sent[0] as Extract<ServerMessage, { t: 'welcome' }>).clientId;
-    const editor = client.openWindow({ hash: 'editor/x', title: 'Edit Task', width: 700, height: 600, resizable: true, modal: false, parent: null });
+    const editor = client.openWindow({ role: 'editor', hash: 'editor/x', title: 'Edit Task', width: 700, height: 600, resizable: true, modal: false, parent: null });
     first.drop();
     editor.close();
     const second = fakeConn(id);
@@ -481,7 +481,7 @@ describe('dispatcher', () => {
     clients.attach(first);
     const client = clients.list()[0];
     const id = (first.sent[0] as Extract<ServerMessage, { t: 'welcome' }>).clientId;
-    const settings = client.openWindow({ hash: 'settings', title: 'Settings', width: 720, height: 640, resizable: true, modal: true, parent: client.main });
+    const settings = client.openWindow({ role: 'editor', hash: 'settings', title: 'Settings', width: 720, height: 640, resizable: true, modal: true, parent: client.main });
     settings.setMenu({ items: [{ label: 'View', type: 'normal', enabled: true, visible: true }] });
     const pending = client.dialog(settings, 'message', { message: 'Sure?', buttons: ['OK'], defaultId: 0, cancelId: 0 });
     first.drop();
@@ -713,7 +713,7 @@ describe('window slots', () => {
     const slots = new WindowSlots();
     const { client, win } = lone();
     const other = lone();
-    const child = client.openWindow({ hash: 'recycle-bin', title: 'Recycle Bin', width: 1, height: 1, resizable: true, modal: false, parent: null });
+    const child = client.openWindow({ role: 'tool', hash: 'recycle-bin', title: 'Recycle Bin', width: 1, height: 1, resizable: true, modal: false, parent: null });
     runAs({ client, window: win }, () => slots.set(child));
     expect(runAs({ client, window: win }, () => slots.get())).toBe(child);
     expect(runAs({ client: other.client, window: other.win }, () => slots.get())).toBeUndefined();

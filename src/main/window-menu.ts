@@ -1,23 +1,10 @@
-import { DESKTOP_ONLY, NOT_MOBILE, showsOn, type UiPlatform } from '../shared/ui-platform';
+import { DESKTOP_ONLY, showsOn } from '../shared/ui-platform';
 import { stripMnemonic } from './platform/menus';
 
 type MenuItem = Electron.MenuItemConstructorOptions;
 
 const SEPARATOR: MenuItem = { type: 'separator' };
 const OPEN_WINDOW_ID = 'open-window-';
-
-/**
- * The Window menu: its groups, split by separators. `platforms`: where it shows; a phone has
- * none, as it moves between screens by itself.
- */
-export function windowMenu(groups: MenuItem[][], platforms: UiPlatform[] = NOT_MOBILE): MenuItem {
-  return {
-    id: 'window',
-    label: '&Window',
-    platforms,
-    submenu: groups.filter((g) => g.length > 0).flatMap((g, i) => (i > 0 ? [SEPARATOR, ...g] : g)),
-  };
-}
 
 /** The computer's open windows, in alphabetical order, with numbers as access keys (Win32: dynamic items). */
 export function openWindowItems<W extends { getTitle(): string }>(windows: W[], show: (w: W) => void): MenuItem[] {
@@ -32,14 +19,6 @@ export function openWindowItems<W extends { getTitle(): string }>(windows: W[], 
         click: () => show(w),
       };
     });
-}
-
-/**
- * Copies of items for a phone's menu, which keeps them where they were: without
- * their keys, which the desktop's own copies have.
- */
-export function phoneOnly(items: MenuItem[]): MenuItem[] {
-  return items.map(({ accelerator: _accelerator, ...item }): MenuItem => ({ ...item, platforms: ['mobile'] }));
 }
 
 /** Without what the desktop doesn't show, what the app menu has and what macOS lists itself; no separator left at an edge or doubled. */

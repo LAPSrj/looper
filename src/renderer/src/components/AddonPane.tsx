@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem } from '@shared/addons';
+import { contextMenu } from '@shared/commands/build';
+import type { CommandContext } from '@shared/commands/context';
 import { isPhone } from '../web/page-nav';
-import { NavBar } from './NavBar';
-import { addonMore, addonToolbarGroups, AddonScreenView } from './AddonScreen';
+import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
-import { useDragResize, useListNav } from './hooks';
+import { useListNav } from './hooks';
 import { listContextMenu } from './list-nav';
-import { Toolbar } from './Toolbar';
+import { selectsOnMenu } from './ListDetail';
 import { InfoBar } from './ui';
 
 export type AddonPaneState = { status: 'ready'; content: AddonPaneContent } | { status: 'error'; error: string };
@@ -70,6 +71,20 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
   return { addons, panes, reload, loaded };
 }
 
+const paneState = (state: AddonPaneState | undefined) => (state?.status === 'ready' ? state.content.commands : undefined);
+
+/** A pane header's right-click, or a long press on its title: the addon's commands placed in its panes. */
+export function showPaneMenu(c: CommandContext, addonId: string, pane: string, state: AddonPaneState | undefined): void {
+  const at: CommandContext = { ...c, addon: { id: addonId, panes: { pane, state: paneState(state) } } };
+  popupCommands(at, contextMenu('addonPanes', at));
+}
+
+/** A pane item's right-click or long press: the commands placed on items, as they are for this one. */
+export function showPaneItemMenu(c: CommandContext, addonId: string, pane: string, state: AddonPaneState | undefined, item: AddonPaneItem): void {
+  const at: CommandContext = { ...c, addon: { id: addonId, panes: { pane, state: paneState(state) }, item: { pane, id: item.id, state: item.commands } } };
+  popupCommands(at, contextMenu('addonItem', at));
+}
+
 /** An addon pane's body in the sidebar: its items, drawn like the task list's. */
 export function AddonPaneList({
   addon,
@@ -79,8 +94,8 @@ export function AddonPaneList({
   compact,
   query,
   onQuery,
-  searchInList = true,
   onSelect,
+  onMenu,
   onRetry,
 }: {
   addon: AddonInfo;
@@ -91,9 +106,9 @@ export function AddonPaneList({
   /** What the pane's search box holds (a pane with `search`). */
   query: string;
   onQuery: (query: string) => void;
-  /** Off: the window draws the Search box elsewhere (its toolbar), and the list only filters. */
-  searchInList?: boolean;
   onSelect: (item: AddonPaneItem) => void;
+  /** A right-click or long press on an item: the commands placed on items, for that one (it's selected first on the desktop). */
+  onMenu: (item: AddonPaneItem) => void;
   onRetry: () => void;
 }) {
   const total = state?.status === 'ready' ? state.content.items.length : 0;
@@ -155,9 +170,7 @@ export function AddonPaneList({
     setActiveGroup(null);
     onSelect(it);
   };
-  const showItemMenu = (it: AddonPaneItem) => {
-    if (it.menu?.length) window.looper.addons.showMenu(addon.id, pane, it.menu, { item: it.id });
-  };
+  const showItemMenu = (it: AddonPaneItem) => onMenu(it);
   const nav = useListNav({
     count: rows.length,
     index,
@@ -230,7 +243,7 @@ export function AddonPaneList({
   }
   if (!total) return <div className="addon-pane-note muted">{state.content.empty ?? 'Nothing here.'}</div>;
 
-  const searchBox = state.content.search && searchInList && (
+  const searchBox = state.content.search && (
     <AddonSearchBox value={query} onChange={onQuery} placeholder={state.content.search.placeholder} />
   );
   if (!all.length) {
@@ -256,7 +269,8 @@ export function AddonPaneList({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            pick(it);
+            // A phone's selection opens the item: its long press shows the menu alone.
+            if (selectsOnMenu) pick(it);
             showItemMenu(it);
           }}
         >
@@ -410,139 +424,6 @@ export function AddonSearchBox({
         >
           Cancel
         </button>
-      )}
-    </div>
-  );
-}
-
-/**
- * A tool window showing an addon pane: its list on the left, the selected
- * item's screen on the right, as the main window shows a task. Right-clicking
- * the list's empty space opens the pane's menu.
- */
-export function AddonPaneWindowApp({ addonId, pane, title }: { addonId: string; pane: string; title: string }) {
-  const { addons, panes, reload } = useAddons();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [listWidth, setListWidth] = useState(280);
-  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
-  const [query, setQuery] = useState('');
-  const appRef = useRef<HTMLDivElement>(null);
-  const onDividerDown = useDragResize({
-    axis: 'x',
-    containerRef: appRef,
-    onDrag: (x, rect) => setListWidth(Math.max(180, Math.min(rect.width * 0.6, x))),
-  });
-
-  useEffect(() => {
-    document.title = title;
-  }, [title]);
-
-  useEffect(
-    () =>
-      window.looper.addons.onEvent((e) => {
-        if (e.type === 'select' && e.addonId === addonId && e.pane === pane) setSelected(e.item);
-      }),
-    [addonId, pane],
-  );
-
-  const addon = addons.find((a) => a.id === addonId);
-  const state = panes[addonPaneKey(addonId, pane)];
-  const content = state?.status === 'ready' ? state.content : undefined;
-  const item = content?.items.find((it) => it.id === selected);
-
-  const menuBarKey = JSON.stringify(content?.menuBar ?? null);
-  // The selected item's own menu decides which of its commands the menu bar and toolbar offer.
-  const itemKey = JSON.stringify(item ? { id: item.id, menu: item.menu } : null);
-  useEffect(() => {
-    window.looper.addons.setMenuBar(addonId, { pane }, JSON.parse(menuBarKey), JSON.parse(itemKey) ?? undefined);
-  }, [addonId, pane, menuBarKey, itemKey]);
-
-  const paneButtons = content?.toolbar ?? [];
-  const paneGroups = addonToolbarGroups(
-    paneButtons,
-    { selected: item ?? null, onClick: (id, confirm) => void window.looper.addons.event(addonId, { source: { pane }, kind: 'click', id, item: item?.id }, confirm) },
-    'pane',
-  );
-
-  // Ctrl+E goes to the Search box, its standard shortcut in Windows.
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'e' && searchRef.current) {
-        e.preventDefault();
-        searchRef.current.focus();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  return (
-    <div className="app-shell">
-      {content?.mobileMore && <NavBar more={addonMore(content.mobileMore)} />}
-      {/* The window's toolbar: the pane's buttons, then the selected item's screen's, and the Search box at its right. A phone's More menu has the buttons. */}
-      {(paneButtons.length > 0 || item || content?.search) && (
-        <Toolbar groups={paneGroups} className="addon-toolbar">
-          <span className="toolbar-slot" ref={setToolbarSlot} />
-          {content?.search && (
-            <AddonSearchBox
-              value={query}
-              onChange={setQuery}
-              placeholder={content.search.placeholder}
-              inputRef={(el) => {
-                searchRef.current = el;
-              }}
-            />
-          )}
-        </Toolbar>
-      )}
-      <div className={addon && item ? 'app' : 'app no-item'} ref={appRef} style={{ gridTemplateColumns: `${listWidth}px 5px 1fr` }}>
-        <aside
-          className="sidebar"
-          onContextMenu={(e) => {
-            e.preventDefault();
-            const menu = state?.status === 'ready' ? state.content.menu : undefined;
-            if (menu?.length) window.looper.addons.showMenu(addonId, pane, menu, {});
-          }}
-        >
-          {addon ? (
-            <AddonPaneList
-              addon={addon}
-              pane={pane}
-              state={state}
-              selected={selected}
-              compact={false}
-              query={query}
-              onQuery={setQuery}
-              searchInList={false}
-              onSelect={(it) => setSelected(it.id)}
-              onRetry={() => reload(addonId)}
-            />
-          ) : (
-            <div className="addon-pane-note muted">This addon isn't installed.</div>
-          )}
-        </aside>
-        <div className="sidebar-divider" onMouseDown={onDividerDown} />
-        <main className="main">
-          {addon && item ? (
-            <AddonScreenView
-              key={`${item.view}/${JSON.stringify(item.params ?? {})}`}
-              addonId={addonId}
-              addonName={addon.name}
-              view={item.view}
-              params={item.params ?? {}}
-              mode="main"
-              toolbarSlot={toolbarSlot}
-              toolbarSep={paneButtons.length > 0}
-            />
-          ) : null}
-        </main>
-      </div>
-      {/* iOS puts a screen's search in a bottom toolbar of its own (HIG: Search fields), which rises with the keyboard. */}
-      {isPhone && content?.search && (
-        <div className="addon-search-bar">
-          <AddonSearchBox value={query} onChange={setQuery} placeholder={content.search.placeholder} />
-        </div>
       )}
     </div>
   );

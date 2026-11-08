@@ -1,5 +1,8 @@
 import { Fragment } from 'react';
+import type { CommandView } from '@shared/commands/command';
+import type { CommandContext } from '@shared/commands/context';
 import { isPhone, uiHere } from '../web/page-nav';
+import { commandToolbar, phoneNav } from './command-surfaces';
 import { ICONS } from './icons';
 import { NavBar } from './NavBar';
 import { SplitToolButton, ToolButton } from './ToolButton';
@@ -19,12 +22,12 @@ export function ToolbarButton({ item }: { item: ToolbarItem }) {
 }
 
 /** A toolbar's groups as buttons, a separator between groups; what doesn't show on this platform is left out. */
-export function ToolbarButtons({ groups, leadingSep }: { groups: ToolbarGroup[]; leadingSep?: boolean }) {
+export function ToolbarButtons({ groups }: { groups: ToolbarGroup[] }) {
   return (
     <>
       {toolbarFor(groups, uiHere).map((g, i) => (
         <Fragment key={g.id}>
-          {(i > 0 || leadingSep) && <span className="toolbar-sep" />}
+          {i > 0 && <span className="toolbar-sep" />}
           {g.items.map((it) => (
             <ToolbarButton key={it.id} item={it} />
           ))}
@@ -60,4 +63,15 @@ export function Toolbar({
       {children}
     </div>
   );
+}
+
+/**
+ * A window's commands of these views from the one list: its toolbar on the
+ * desktop (none when it has no buttons), its bar's buttons and More menu on a
+ * phone. The menu bar is useCommandMenu's.
+ */
+export function CommandBar({ views, context, order = 0 }: { views: readonly CommandView[]; context: CommandContext; order?: number }) {
+  if (isPhone) return <NavBar {...phoneNav(views, context)} order={order} />;
+  const groups = commandToolbar(views, context);
+  return groups.length ? <Toolbar groups={groups} /> : null;
 }

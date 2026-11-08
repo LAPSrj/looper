@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch } from '@shared/addons';
+import { addonCommandId } from '@shared/commands/addon-commands';
+import { commandSpec, moreViewCommands, runCommand } from '@shared/commands/build';
+import { noMnemonic, type Command } from '@shared/commands/command';
+import type { CommandContext } from '@shared/commands/context';
 import { siblingOrder, withSiblingsOrdered } from '@shared/folders';
 import { mainTabs } from '@shared/main-tabs';
-import { ALL_FILTERS, PANES, passesFilter } from '@shared/panes';
+import { ALL_FILTERS, passesFilter } from '@shared/panes';
 import { groupProjects } from '@shared/projects';
 import type { MainTabDef } from '@shared/main-tabs';
 import type { SessionsState } from '@shared/sessions';
-import type { Project } from '@shared/types';
+import type { Project, View } from '@shared/types';
 import { platform } from '../../platform';
 import {
+  PHONE_TABS,
   followSelection,
   initialPhoneNav,
-  phoneTabs,
+  phoneTabForm,
   popScreen,
   pushScreen,
   rootScreen,
@@ -23,46 +28,41 @@ import {
   type PhoneScreen,
   type PhoneTab,
 } from '../../phone-nav';
-import { taskScreenMore } from '../../phone-lists';
 import { taskEntries } from '../../task-tree';
 import type { MainWindow } from '../../useMainWindow';
 import { DEFAULT_SHOWN } from '../../useSessionsWindow';
-import type { MoreGroup } from '../../web/more-menu';
+import type { MoreMenuInput } from '../../web/more-menu';
 import type { PageNavAction } from '../../web/nav-bar-model';
 import { NavBar } from '../NavBar';
-import { AddonPaneList } from '../AddonPane';
-import { AddonScreenView, AddonToolbarButtons } from '../AddonScreen';
-import { Icon } from '../Icon';
-import { ICONS } from '../icons';
+import { AddonPaneList, showPaneItemMenu, showPaneMenu } from '../AddonPane';
+import { AddonScreenView, type AddonScreenReport } from '../AddonScreen';
+import { phoneNav, popupCommands } from '../command-surfaces';
+import { setRowMenuContext, showProjectMenu, showProjectsListMenu, showTaskMenu } from '../row-menus';
+import { useCommandMenu, useCommandState } from '../useCommands';
 import { ListDetail } from '../ListDetail';
 import { ProjectDetail } from '../ProjectDetail';
 import { PhoneOverview } from '../../SessionsApp';
 import { SessionList } from '../SessionList';
 import { TaskDetail } from '../TaskDetail';
-import { showTaskMenu } from '../TaskList';
-import { TaskSubText } from '../Live';
-import { newToolbarGroups, projectToolbarGroups, taskToolbarGroups } from '../TaskToolbar';
 import { PhoneDashboard } from './PhoneDashboard';
 import { OverviewSwitch, type OverviewChoice } from './OverviewSwitch';
+import type { TasksSwitch } from '../TaskCollection';
 import { ReorderSheet } from './ReorderSheet';
 import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
 import { usePageWidth, useSplit } from './PhoneSplit';
 import { TabIcon } from './tab-icons';
+import { TaskCollection } from '../TaskCollection';
 import { TasksOverview } from './TasksOverview';
 import { useSessionsState } from './useSessionsState';
 
-/** What the Tasks tab's Filter shows: everything, or one of the desktop's panes (shared/panes.ts). */
-export type TaskKind = 'all' | (typeof PANES)[number]['id'];
-const TASK_KINDS: { id: TaskKind; label: string }[] = [{ id: 'all', label: 'All' }, ...PANES.map((p) => ({ id: p.id, label: p.title }))];
-const NO_KIND_TEXT: Record<TaskKind, string> = { all: 'No tasks yet.', tasks: 'No tasks yet.', goals: 'No goals yet.', watchers: 'No watchers yet.' };
-
 /**
  * The main window on a phone: a bottom tab bar (Dashboard, Projects, Tasks,
- * Chats, and the addons' tabs), each tab a list that pushes its items' screens.
- * What a screen shows is the window's selection, so the menus and notifications
- * act on it as on the desktop.
+ * Chats and More), each tab a list that pushes its items' screens. What a
+ * screen shows is the window's selection, so its commands act on it. The More
+ * view has the addons, then every menu item no screen has.
  */
 export function PhoneMain({ m }: { m: MainWindow }) {
+  const commandState = useCommandState();
   const [nav, setNav] = useState(() => initialPhoneNav());
   const top = topScreen(nav);
   const topKey = JSON.stringify(top);
@@ -90,7 +90,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.selected, m.projectSel, addonKey]);
 
-  // View → Dashboard.
+  // Window → Dashboard.
   useEffect(() => {
     if (m.dashboardShown) setNav((n) => showTabRoot(n, 'dashboard'));
   }, [m.dashboardShown]);
@@ -101,56 +101,73 @@ export function PhoneMain({ m }: { m: MainWindow }) {
     if (folderGone) setNav(popScreen);
   }, [folderGone]);
 
-  const back = top ? () => setNav(popScreen) : undefined;
+  const back = top ? () => setNav(popScreen) : nav.tab.startsWith('addon/') ? () => setNav((n) => selectTab(n, 'more')) : undefined;
   const openFolder = (id: string) => setNav((n) => pushScreen(n, { kind: 'folder', id }));
   const openTasks = () => setNav((n) => selectTab(n, 'tasks'));
   // The Tasks tab's switch: its list goes away while a task it opened shows, and the choice comes back with it.
   const [tasksShow, setTasksShow] = useState<OverviewChoice>('list');
-  const [taskKind, setTaskKind] = useState<TaskKind>('all');
-  const tasksSwitch = { value: tasksShow, onChange: setTasksShow, kind: taskKind, onKind: setTaskKind };
+  const tasksSwitch = { value: tasksShow, onChange: setTasksShow };
   // The Chats tab's switch, and the bar's Reorder of its Overview's cards.
   const [chatsShow, setChatsShow] = useState<OverviewChoice>('list');
   const [reorderingCards, setReorderingCards] = useState(false);
   const sessions = useSessionsState();
   const chatsTab: ChatsTab = { sessions, show: chatsShow, onShow: setChatsShow, reordering: reorderingCards, onReordered: () => setReorderingCards(false) };
   const addonTabs = mainTabs(m.addons).filter((t) => t.addon);
-  const tabs = phoneTabs(addonTabs.map((t) => [t.id as PhoneTab, t.label] as const), platform === 'android' ? 'android' : 'ios', width, !!split);
+  const tabForm = phoneTabForm(platform === 'android' ? 'android' : 'ios', width, !!split);
   const openTab = (id: PhoneTab) => setNav((n) => selectTab(n, id));
-  // An addon's tab goes when its addon stops, and More when everything fits (an iPad turned to landscape).
-  const tabGone = (nav.tab.startsWith('addon/') && m.addonsLoaded && !addonTabs.some((t) => t.id === nav.tab)) || (nav.tab === 'more' && tabs.more.length === 0);
+  // An addon's tab goes when its addon stops.
+  const tabGone = nav.tab.startsWith('addon/') && m.addonsLoaded && !addonTabs.some((t) => t.id === nav.tab);
   useEffect(() => {
-    if (tabGone) setNav((n) => selectTab(n, 'dashboard'));
+    if (tabGone) setNav((n) => selectTab(n, 'more'));
   }, [tabGone]);
-  const allTabs: AllTabs = { addons: addonTabs, more: tabs.more, open: openTab };
-  const shown = screenFor(m, nav.tab, top, openFolder, openTasks, tasksSwitch, chatsTab, allTabs);
+  const shown_ = m.view?.sessions ?? DEFAULT_SHOWN;
+  const nothing = () => undefined;
+  // The addon screen showing (a tab's, or a pane item's), for the commands its addon placed on it.
+  const [addonScreen, setAddonScreen] = useState<AddonScreenReport | null>(null);
+  const commands: CommandContext = {
+    ...m.commandContext(commandState),
+    addon: m.addonContext(nav.tab, addonScreen),
+    ...(nav.tab === 'sessions'
+      ? {
+          chats: {
+            single: false,
+            tab: true,
+            selected: null,
+            summary: undefined,
+            chat: null,
+            sessionId: null,
+            sessions: sessions?.sessions ?? [],
+            stoppable: false,
+            shown: shown_,
+            setShown: (patch: Partial<View['sessions']>) => m.changeView({ sessions: { ...shown_, ...patch } }),
+            setSelected: nothing,
+            activityOpen: false,
+            toggleActivity: nothing,
+            step: nothing,
+            focusPane: nothing,
+          },
+        }
+      : {}),
+  };
+  useCommandMenu(null, commands);
+  setRowMenuContext(commands);
+  const allTabs: AllTabs = { addons: addonTabs, open: openTab, list: (id) => setNav((n) => pushScreen(n, { kind: 'list', id })) };
+  const shown = screenFor(m, commands, nav.tab, top, openFolder, openTasks, tasksSwitch, chatsTab, allTabs, setAddonScreen);
   // The list shown, in the sheet that moves its rows: a screen of a folder or a tab's own, not an item's.
   const [reordering, setReordering] = useState(false);
   const reorderable = m.task || m.project || m.addonShown ? null : reorderSheet(m, nav.tab, top?.kind === 'folder' ? top.id : '');
   // The Overview's cards, where it shows: beside the list on a tablet, or chosen with the switch.
   const cardsReorderable = nav.tab === 'sessions' && !top && (sessions?.sessions.length ?? 0) > 1 && (!!split || chatsShow === 'overview');
-  // The main toolbar's commands go to the More menu, except on a task's screen (its own menu) and an addon's (its toolbar).
-  const toolbar =
-    m.task || m.addonShown
-      ? undefined
-      : [
-          {
-            id: 'views',
-            items: [
-              { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', pressed: !top && nav.tab === 'dashboard', run: () => m.uiAction('show-dashboard') },
-              { id: 'chats', label: 'Chats', icon: 'chatsTab', run: () => window.looper.sessions.openWindow() },
-              { id: 'history', label: 'History', icon: 'history', run: () => window.looper.history.open() },
-            ],
-          },
-          ...(reorderable ? [{ id: 'list', items: [{ id: 'reorder', label: 'Reorder', run: () => setReordering(true) }] }] : []),
-          ...(cardsReorderable ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReorderingCards(true) }] }] : []),
-          ...newToolbarGroups({ newTaskProject: m.project, sessionProject: m.sessionProject, onAction: m.uiAction }),
-          ...taskToolbarGroups({ task: null, runtime: undefined, onAction: m.uiAction }),
-          ...(m.project ? projectToolbarGroups(m.project, m.uiAction) : []),
-        ];
+  // Reorder is the list's own: its rows move in a sheet.
+  const toolbar = [
+    ...(reorderable ? [{ id: 'list', items: [{ id: 'reorder', label: 'Reorder', run: () => setReordering(true) }] }] : []),
+    ...(cardsReorderable ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReorderingCards(true) }] }] : []),
+  ];
   // A tablet: the list column shows the tab's own list; its rows replace the detail column's screen. The Dashboard, More and an addon's tab fill the width.
   const list = split && (nav.tab === 'projects' || nav.tab === 'tasks' || nav.tab === 'sessions')
     ? rootFor(
         listWindow(m, fromList),
+        commands,
         nav.tab,
         '',
         (id) => setNav((n) => rootScreen(n, { kind: 'folder', id })),
@@ -158,6 +175,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
         tasksSwitch,
         chatsTab,
         allTabs,
+        setAddonScreen,
         { current: stackOf(nav)[0] ?? null },
       )
     : null;
@@ -165,30 +183,28 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   const overview = nav.tab === 'sessions' ? <PhoneSessionsTab m={m} tab={chatsTab} show="overview" /> : nav.tab === 'tasks' ? <div className="pg-scroll phone-sessions"><TasksOverview m={m} /></div> : null;
   const detail: ShownScreen | null = !split || top ? shown : overview ? { title: 'Overview', actions: [], body: overview } : null;
   const select = (id: string) => openTab(id as PhoneTab);
-  const addonIcon = (id: string) => addonTabs.find((t) => t.id === id)?.icon;
-  const currentTab = tabs.more.some(([id]) => id === nav.tab) ? 'more' : nav.tab;
-  const topTabs = tabs.form === 'top' ? { items: tabs.shown, value: currentTab, select } : undefined;
-  const navigation = tabs.menu ? { items: tabs.menu.map(([id, label]) => [id, label, addonIcon(id)] as const), value: nav.tab, select } : undefined;
+  const currentTab: PhoneTab = nav.tab.startsWith('addon/') ? 'more' : nav.tab;
+  const topTabs = tabForm === 'top' ? { items: PHONE_TABS, value: currentTab, select } : undefined;
   const bar = (
     <NavBar
-      navigation={navigation}
       {...(list
       ? {
           title: detail?.title ?? '',
           back,
           // A folder's New Task is the list's own, already in the list column's bar.
           actions: (detail?.actions ?? []).filter((a) => !list.actions.some((l) => l.id === a.id)),
-          more: detail?.more,
+          // With nothing opened beside it, the list's own commands are the screen's.
+          more: detail?.more ?? list.more,
           toolbar,
           largeTitle: false,
           split: { width: split!.lead, title: list.title, actions: list.actions, largeTitle: platform === 'ios' },
           tabs: topTabs,
         }
-      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: tabs.form === 'bar', largeTitle: platform === 'ios' && !top, tabs: topTabs })}
+      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: tabForm === 'bar', largeTitle: platform === 'ios' && !top, tabs: topTabs })}
     />
   );
 
-  const tabButtons = tabs.shown.map(([id, label]) => (
+  const tabButtons = PHONE_TABS.map(([id, label]) => (
     <button
       key={id}
       className={`phone-tab${currentTab === id ? ' active' : ''}`}
@@ -196,7 +212,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
       onClick={() => openTab(id)}
     >
       <span className="phone-tab-icon">
-        <TabIcon id={id} addonIcon={addonIcon(id)} />
+        <TabIcon id={id} />
       </span>
       <span className="phone-tab-label">{label}</span>
     </button>
@@ -204,12 +220,12 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   const sheets = reordering && reorderable && <ReorderSheet {...reorderable} onClose={() => setReordering(false)} />;
   const tabClass = `tab-${nav.tab.startsWith('addon/') ? 'addon' : nav.tab}${top ? ' pushed' : ''}`;
 
-  if (split || tabs.form === 'rail') {
+  if (split || tabForm === 'rail') {
     return (
       <div className={`phone-main phone-page${split ? ' split' : ''} ${tabClass}`}>
         {bar}
         <div className="phone-main-row">
-          {tabs.form === 'rail' && (
+          {tabForm === 'rail' && (
             <nav className="phone-tabbar rail" aria-label="Looper">
               {tabButtons}
             </nav>
@@ -230,7 +246,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
       {bar}
       <div className="phone-screen">{shown.body}</div>
       {sheets}
-      {tabs.form === 'bar' && (
+      {tabForm === 'bar' && (
         <nav className="phone-tabbar" aria-label="Looper">
           {tabButtons}
         </nav>
@@ -276,13 +292,14 @@ function reorderSheet(m: MainWindow, tab: PhoneTab, folderId: string): Omit<Reac
 interface ShownScreen {
   title: string;
   actions: PageNavAction[];
-  more?: MoreGroup[];
+  more?: MoreMenuInput;
   body: React.ReactNode;
 }
 
 /** The current screen: the selected item's, or the tab's list. */
 function screenFor(
   m: MainWindow,
+  c: CommandContext,
   tab: PhoneTab,
   top: PhoneScreen | null,
   openFolder: (id: string) => void,
@@ -290,23 +307,14 @@ function screenFor(
   tasksSwitch: TasksSwitch,
   chatsTab: ChatsTab,
   allTabs: AllTabs,
+  onAddonScreen: (screen: AddonScreenReport | null) => void,
 ): ShownScreen {
   const { task, project, addonShown, runtimes } = m;
   if (task) {
     const rt = runtimes[task.id];
-    const state = rt?.state;
-    const active = state === 'running' || state === 'checking' || state === 'classifying';
-    const canRunNow = !active || (rt?.runs.length ?? 0) < (task.maxConcurrentRuns ?? 1);
     return {
       title: task.name,
-      // Two buttons fit beside a title: Run Now, or Stop once no more runs can start. The rest is in the menus.
-      actions: [
-        active && !canRunNow
-          ? { id: 'stop', label: 'Stop Task', icon: 'stop', run: () => m.uiAction('stop-task') }
-          : { id: 'run', label: 'Run Now', icon: 'run', run: () => m.uiAction('run-now') },
-        { id: 'edit', label: 'Edit Task', icon: 'edit', run: () => m.uiAction('edit-task') },
-      ],
-      more: TASK_SCREEN_MORE,
+      ...phoneNav(['task'], c),
       body: (
         <div className="phone-detail" onContextMenu={(e) => taskMenuAt(e, m)}>
           <TaskDetail
@@ -328,18 +336,14 @@ function screenFor(
   if (project) {
     return {
       title: project.name,
-      actions: [
-        // New Terminal, New Task and the rest: the project's menu (a long press on the screen).
-        { id: 'new-chat', label: 'New Chat', icon: 'newChat', run: () => void window.looper.projects.newChat(project.id) },
-        { id: 'edit-project', label: 'Edit Project', icon: 'edit', run: () => void window.looper.projects.openEditor(project.id) },
-      ],
+      ...phoneNav(['project'], c),
       body: (
         <div
           className="phone-detail"
           onContextMenu={(e) => {
             if ((e.target as HTMLElement).closest('.pg-row, .run-row, .git-file, .git-commit')) return;
             e.preventDefault();
-            window.looper.projects.showContextMenu(project.id);
+            showProjectMenu(project);
           }}
         >
           <ProjectDetail
@@ -358,24 +362,18 @@ function screenFor(
   if (addonShown) {
     return {
       title: addonShown.item.label,
-      actions: [],
-      body: <PhoneAddonScreen m={m} />,
+      ...phoneNav(['addonItem', 'addonScreen'], c),
+      body: <PhoneAddonScreen m={m} onScreen={onAddonScreen} />,
     };
   }
-  return rootFor(m, tab, top?.kind === 'folder' ? top.id : '', openFolder, openTasks, tasksSwitch, chatsTab, allTabs);
+  if (top?.kind === 'list') return { title: top.id === 'advanced' ? 'Advanced' : '', actions: [], body: <MoreMenuList c={c} menu="advanced" /> };
+  return rootFor(m, c, tab, top?.kind === 'folder' ? top.id : '', openFolder, openTasks, tasksSwitch, chatsTab, allTabs, onAddonScreen);
 }
 
 /** What the detail column shows before a row is opened (the Chats and Tasks tabs show their Overview instead). */
 const EMPTY_DETAIL: Partial<Record<PhoneTab, string>> = {
   projects: 'No Project Selected',
 };
-
-interface TasksSwitch {
-  value: OverviewChoice;
-  onChange: (v: OverviewChoice) => void;
-  kind: TaskKind;
-  onKind: (k: TaskKind) => void;
-}
 
 interface ChatsTab {
   sessions: SessionsState | null;
@@ -386,10 +384,11 @@ interface ChatsTab {
 }
 
 interface AllTabs {
+  /** The addons' tabs, which the More view opens. */
   addons: MainTabDef[];
-  /** The addon tabs that don't fit in the bar, listed on the More tab. */
-  more: readonly (readonly [PhoneTab, string])[];
   open: (id: PhoneTab) => void;
+  /** Push a menu's own list (Advanced). */
+  list: (id: string) => void;
 }
 
 /**
@@ -420,6 +419,7 @@ function listWindow(m: MainWindow, fromList: React.RefObject<boolean>): MainWind
  */
 function rootFor(
   m: MainWindow,
+  c: CommandContext,
   tab: PhoneTab,
   folderId: string,
   openFolder: (id: string) => void,
@@ -427,76 +427,43 @@ function rootFor(
   tasksSwitch: TasksSwitch,
   chatsTab: ChatsTab,
   allTabs: AllTabs,
+  onAddonScreen: (screen: AddonScreenReport | null) => void,
   split?: { current: PhoneScreen | null },
 ): ShownScreen {
   const current = split?.current && split.current.kind !== 'addon' ? split.current.id : null;
   switch (tab) {
     case 'dashboard':
-      return { title: 'Dashboard', actions: [], body: <PhoneDashboard m={m} onOpenTasks={openTasks} /> };
+      return { title: 'Dashboard', ...phoneNav(['dashboard'], c), body: <PhoneDashboard m={m} onOpenTasks={openTasks} /> };
     case 'projects':
-      return {
-        title: 'Projects',
-        actions: [{ id: 'new-project', label: 'New Project', icon: 'add', run: () => void window.looper.projects.openEditor() }],
-        body: <PhoneProjects m={m} current={current} />,
-      };
+      return { title: 'Projects', ...phoneNav(['projects'], c), body: <PhoneProjects m={m} current={current} /> };
     case 'tasks': {
       // A folder's screen shows what the folder holds, as the tab shows the top level.
       const folder = folderId ? m.folders.find((f) => f.id === folderId) : undefined;
       const listShows = !!split || !!folder || tasksSwitch.value === 'list';
+      const nav = phoneNav(['tasks'], c, listShows ? 0 : -1);
       return {
         title: folder?.name ?? 'Tasks',
-        actions: [
-          ...(listShows
-            ? [
-                {
-                  id: 'filter',
-                  label: 'Filter',
-                  icon: 'filter',
-                  on: tasksSwitch.kind !== 'all',
-                  run: () => undefined,
-                  menu: TASK_KINDS.map((k) => ({ id: k.id, label: k.label, checked: tasksSwitch.kind === k.id, run: () => tasksSwitch.onKind(k.id) })),
-                },
-              ]
-            : []),
-          { id: 'new-task', label: 'New Task', icon: 'add', run: () => m.uiAction('new-task') },
-        ],
-        body: <PhoneTasks m={m} container={folder?.id ?? ''} onOpenFolder={openFolder} current={current} show={split ? 'list' : undefined} tasksSwitch={tasksSwitch} />,
+        // Filter narrows the list, so it goes while the Overview shows.
+        actions: nav.actions.filter((a) => listShows || a.id !== 'tasksFilter'),
+        more: nav.more,
+        body: <TaskCollection m={m} phone={{ container: folder?.id ?? '', onOpenFolder: openFolder, current, show: split ? 'list' : undefined, tasksSwitch }} />,
       };
     }
     case 'sessions':
-      return {
-        title: 'Chats',
-        actions: [
-          { id: 'new-chat', label: 'New Chat', icon: 'newChat', run: () => window.looper.sessions.showNewMenu('chat', 0, 0) },
-          { id: 'new-terminal', label: 'New Terminal', icon: 'terminal', run: () => window.looper.sessions.showNewMenu('terminal', 0, 0) },
-        ],
-        body: <PhoneSessionsTab m={m} tab={chatsTab} show={split ? 'list' : undefined} />,
-      };
+      return { title: 'Chats', ...phoneNav(['chats'], c), body: <PhoneSessionsTab m={m} tab={chatsTab} show={split ? 'list' : undefined} /> };
     case 'more':
-      return {
-        title: 'More',
-        actions: [],
-        body: (
-          <div className="pg-scroll">
-            <LargeTitle>More</LargeTitle>
-            <Group>
-              {allTabs.more.map(([id, label]) => (
-                <Row key={id} title={label} chevron onOpen={() => allTabs.open(id)} />
-              ))}
-            </Group>
-          </div>
-        ),
-      };
+      return { title: 'More', actions: [], body: <MoreView m={m} c={c} allTabs={allTabs} /> };
     default: {
       const def = allTabs.addons.find((t) => t.id === tab);
       if (!def?.addon) return { title: '', actions: [], body: <div className="pg-scroll" /> };
       const { addon } = def;
+      if (!addon.tab) return { title: def.label, ...phoneNav(['addonPanes'], c), body: <PhoneAddonPanes m={m} c={c} addonId={addon.id} /> };
       return {
         title: def.label,
-        actions: [],
+        ...phoneNav(['addonScreen'], c),
         body: (
           <div className="phone-detail">
-            <AddonScreenView key={def.id} addonId={addon.id} addonName={addon.name} view={addon.tab.view} params={addon.tab.params ?? {}} mode="main" toolbarHidden={!!m.view?.hiddenAddonToolbars.includes(addon.id)} />
+            <AddonScreenView key={def.id} addonId={addon.id} addonName={addon.name} view={addon.tab.view} params={addon.tab.params ?? {}} mode="main" onScreen={onAddonScreen} />
           </div>
         ),
       };
@@ -504,34 +471,17 @@ function rootFor(
   }
 }
 
-/**
- * A task screen's More menu: the Task menu's commands that apply to the task
- * shown (the menu bar follows the selection, which is this task), what can't
- * be done now left out, Delete last in red; and its project's New Chat and New
- * Terminal (phone-lists.ts taskScreenMore, from the command catalogs).
- */
-const TASK_SCREEN_MORE = taskScreenMore();
-
 /** A long press on the task's screen: the task's menu, as a right-click on its row. */
 function taskMenuAt(e: React.MouseEvent, m: MainWindow) {
   if (!m.task) return;
   // The run log and links have menus of their own.
   if ((e.target as HTMLElement).closest('.run-row, .pg-row, a, input, textarea, select')) return;
   e.preventDefault();
-  window.looper.showTaskContextMenu({
-    enabled: m.task.enabled,
-    completed: !!m.task.completedAt,
-    allowComplete: m.task.completion.allowed,
-    state: m.runtimes[m.task.id]?.state,
-    held: !!m.runtimes[m.task.id]?.held,
-    hasNote: !!m.task.note,
-    activeRuns: m.runtimes[m.task.id]?.runs.length ?? 0,
-    maxRuns: m.task.maxConcurrentRuns,
-  });
+  showTaskMenu(m.task, m.runtimes[m.task.id]);
 }
 
 function PhoneProjects({ m, current = null }: { m: MainWindow; current?: string | null }) {
-  const projectsMenu = () => window.looper.projects.showContextMenu('');
+  const projectsMenu = showProjectsListMenu;
   // The user's folders show as groups too, those with projects in them.
   const groups = groupProjects(m.projects, m.view?.projectsPane.groupBy ?? 'none', m.info?.settings.environments ?? [], m.projectFolders).filter(
     (g) => g.projects.length > 0,
@@ -545,10 +495,7 @@ function PhoneProjects({ m, current = null }: { m: MainWindow; current?: string 
         chevron
         selected={p.id === current}
         onOpen={() => m.selectProject(p.id)}
-        onMenu={() => {
-          m.selectProject(p.id);
-          window.looper.projects.showContextMenu(p.id);
-        }}
+        onMenu={() => showProjectMenu(p)}
       />
     ));
   return (
@@ -569,115 +516,110 @@ function PhoneProjects({ m, current = null }: { m: MainWindow; current?: string 
   );
 }
 
-/** A folder row's symbol. */
-const FOLDER_ICON = (
-  <span className="pg-folder-icon">
-    <Icon>{ICONS.folder}</Icon>
-  </span>
-);
-
-/**
- * The Tasks tab: a container's folders (a row with the folder's symbol, the
- * count of tasks inside and a chevron, which opens the folder's own screen) and
- * tasks, as iOS lists a hierarchy: one level a screen, no outline. At the top
- * level the addons' panes and buttons follow, as the sidebar stacks them.
- */
-function PhoneTasks({
-  m,
-  container,
-  onOpenFolder,
-  current = null,
-  show,
-  tasksSwitch,
-}: {
-  m: MainWindow;
-  container: string;
-  onOpenFolder: (id: string) => void;
-  current?: string | null;
-  show?: OverviewChoice;
-  tasksSwitch: TasksSwitch;
-}) {
-  const [queries, setQueries] = useState<Record<string, string>>({});
-  const view = m.view;
-  if (!view) return <div className="pg-scroll" />;
-  const pane = PANES.find((p) => p.id === tasksSwitch.kind);
-  const entries = taskEntries(container, {
-    tasks: m.tasks,
-    folders: m.folders,
-    layout: m.layout,
-    passes: (t) => passesFilter(t, view.single, ALL_FILTERS) && (!pane || pane.member(t)),
-    showFolders: view.single.showFolders,
-    // A filter's folders are the ones with something it shows.
-    hideEmptyFolders: view.single.hideEmptyFolders || !!pane,
-  });
-  const emptyMenu = () => window.looper.showTasksEmptyContextMenu();
-  const entryRows = entries.map((e) => {
-    if (e.kind === 'folder') {
-      return (
-        <Row
-          key={`folder-${e.folder.id}`}
-          lead={FOLDER_ICON}
-          title={e.folder.name}
-          value={e.count}
-          chevron
-          selected={e.folder.id === current}
-          onOpen={() => onOpenFolder(e.folder.id)}
-          onMenu={() => window.looper.showFolderContextMenu({ folderId: e.folder.id })}
-        />
-      );
-    }
-    const t = e.task;
-    const rt = m.runtimes[t.id];
-    return (
-      <Row
-        key={t.id}
-        title={t.name}
-        sub={<TaskSubText task={t} runtime={rt} />}
-        tone={rt?.held || rt?.asking ? 'warning' : t.enabled ? undefined : 'muted'}
-        chevron
-        selected={t.id === current}
-        onOpen={() => m.select(t.id)}
-        // The press must not open the task: its menu acts on this row's task, not the selected one.
-        onMenu={() => {
-          m.setMenuTarget(t.id);
-          showTaskMenu(t, rt);
-        }}
-      />
-    );
-  });
-  const panes = container !== '' ? [] : m.addons
+/** Each started addon in the More view: its tabs, then its commands no phone screen shows (moreViewCommands). */
+function addonRows(m: MainWindow, c: CommandContext, allTabs: AllTabs) {
+  const listed = moreViewCommands(c);
+  return m.addons
     .filter((a) => a.enabled)
-    .flatMap((a) =>
-      a.panes
-        .filter((p) => (view.addonPanes[addonPaneKey(a.id, p.id)] ?? { visible: true }).visible)
-        .map((p) => ({ addon: a, pane: p, key: addonPaneKey(a.id, p.id) })),
-    );
-  const onTasks = (b: { view?: string }) => !b.view || b.view === 'tasks';
-  const toolbars = container !== '' ? [] : m.addons.filter((a) => a.enabled && a.toolbar.some(onTasks) && !view.hiddenAddonToolbars.includes(a.id));
-  const listBody = (
+    .map((a) => ({
+      addon: a,
+      tabs: allTabs.addons.filter((t) => t.addon?.id === a.id),
+      commands: listed.filter((cmd) => cmd.id.startsWith(addonCommandId(a.id, ''))),
+    }))
+    .filter((x) => x.tabs.length > 0 || x.commands.length > 0);
+}
+
+/** One menu's rows from the command list: a choice opens its menu, anything else runs. */
+function CommandRows({ c, list }: { c: CommandContext; list: Command[] }) {
+  return (
     <>
-      <Group>
-        {entryRows.length === 0 ? (
-          <EmptyRow onMenu={container === '' ? emptyMenu : undefined}>{container === '' ? NO_KIND_TEXT[tasksSwitch.kind] : 'This folder is empty.'}</EmptyRow>
-        ) : (
-          entryRows
-        )}
-      </Group>
-      {toolbars.map((a) => (
-        <Group key={`tb-${a.id}`} title={a.name}>
-          <div className="toolbar pg-addon-toolbar">
-            <AddonToolbarButtons
-              items={a.toolbar.filter(onTasks).map((b) => ({ ...b, disabled: a.status !== 'running' }))}
-              onClick={(id) => {
-                const b = a.toolbar.find((x) => x.id === id);
-                if (b?.tool) void window.looper.addons.openTool(a.id, b.tool);
-                else void window.looper.addons.event(a.id, { source: { toolbar: 'main' }, kind: 'click', id });
-              }}
+      {list.flatMap((cmd) =>
+        commandSpec(cmd, c)
+          .filter((it) => it.type !== 'separator')
+          .map((it) => (
+            <Row
+              key={it.id}
+              title={noMnemonic(it.label ?? '')}
+              chevron={it.type === 'submenu'}
+              checked={it.checked}
+              disabled={!it.enabled}
+              onOpen={() => (it.submenu ? popupCommands(c, it.submenu) : runCommand(it.id, c))}
             />
-          </div>
+          )),
+      )}
+    </>
+  );
+}
+
+/** The menu items of `menu` no screen has. */
+const menuCommands = (c: CommandContext, menu: string): Command[] =>
+  moreViewCommands(c).filter((cmd) => !cmd.id.startsWith('addon:') && Object.values(cmd.in).some((w) => w?.menu === menu));
+
+/** A menu's own list screen (Advanced): three levels of submenus are more than a phone should have. */
+function MoreMenuList({ c, menu }: { c: CommandContext; menu: string }) {
+  const list = menuCommands(c, menu);
+  const groups = [...new Set(list.map((cmd) => cmd.group))];
+  return (
+    <div className="pg-scroll">
+      {groups.map((g) => (
+        <Group key={g}>
+          <CommandRows c={c} list={list.filter((cmd) => cmd.group === g)} />
         </Group>
       ))}
-      {panes.map(({ addon, pane, key }) => {
+    </div>
+  );
+}
+
+/**
+ * The More view: the addons first, then every menu item no screen has, Settings
+ * and Help at the end (Material: after all other items). A rule of the list, so
+ * a new command with no screen shows here by itself.
+ */
+function MoreView({ m, c, allTabs }: { m: MainWindow; c: CommandContext; allTabs: AllTabs }) {
+  const tools = menuCommands(c, 'tools');
+  // Every other menu's items no screen has: the list's rule, so a new one shows here by itself.
+  const others = moreViewCommands(c).filter((cmd) => !cmd.id.startsWith('addon:') && !Object.values(cmd.in).some((w) => w?.menu === 'tools' || w?.menu === 'advanced' || w?.menu === 'help'));
+  const addons = addonRows(m, c, allTabs);
+  return (
+    <div className="pg-scroll">
+      <LargeTitle>More</LargeTitle>
+      {addons.map(({ addon, tabs, commands }) => (
+        <Group key={addon.id} title={addon.name}>
+          {tabs.map((t) => (
+            <Row key={t.id} title={t.label} chevron onOpen={() => allTabs.open(t.id as PhoneTab)} />
+          ))}
+          <CommandRows c={c} list={commands} />
+        </Group>
+      ))}
+      {others.length > 0 && (
+        <Group>
+          <CommandRows c={c} list={others} />
+        </Group>
+      )}
+      <Group>
+        <CommandRows c={c} list={tools.filter((cmd) => cmd.id !== 'settings')} />
+        <Row title="Advanced" chevron onOpen={() => allTabs.list('advanced')} />
+      </Group>
+      <Group>
+        <CommandRows c={c} list={tools.filter((cmd) => cmd.id === 'settings')} />
+        <CommandRows c={c} list={menuCommands(c, 'help')} />
+      </Group>
+      <Group>
+        <Row title={platform === 'android' ? 'This device' : 'This Device'} chevron onOpen={() => window.top?.__looperFrame?.openDevice?.()} />
+      </Group>
+    </div>
+  );
+}
+
+/** An addon with only panes: its panes as a list, a tap opens the item's screen. */
+function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; addonId: string }) {
+  const [queries, setQueries] = useState<Record<string, string>>({});
+  const addon = m.addons.find((a) => a.id === addonId);
+  if (!addon) return <div className="pg-scroll" />;
+  return (
+    <div className="pg-scroll">
+      {addon.panes.map((pane) => {
+        const key = addonPaneKey(addon.id, pane.id);
         const state = m.addonPanes[key];
         const items = state?.status === 'ready' ? state.content.items : [];
         const query = queries[key] ?? '';
@@ -685,7 +627,7 @@ function PhoneTasks({
           <Group
             key={key}
             title={`${pane.title}${addon.status === 'running' && state?.status === 'ready' ? ` (${query.trim() ? `${items.filter((it) => matchesSearch(it, query)).length} of ${items.length}` : items.length})` : ''}`}
-            onTitleMenu={() => window.looper.addons.showMenu(addon.id, pane.id, state?.status === 'ready' ? (state.content.menu ?? []) : [], { header: true })}
+            onTitleMenu={() => showPaneMenu(c, addon.id, pane.id, state)}
           >
             <div className="pg-addon-pane">
               <AddonPaneList
@@ -697,36 +639,19 @@ function PhoneTasks({
                 query={query}
                 onQuery={(q) => setQueries((s) => ({ ...s, [key]: q }))}
                 onSelect={(item) => m.selectAddon({ addonId: addon.id, pane: pane.id, item: item.id })}
+                onMenu={(item) => showPaneItemMenu(c, addon.id, pane.id, state, item)}
                 onRetry={() => m.reloadAddon(addon.id)}
               />
             </div>
           </Group>
         );
       })}
-    </>
-  );
-  return (
-    <div
-      className="pg-scroll"
-      // A long press between the rows: the list's menu (New Folder…), at the top level.
-      onContextMenu={(e) => {
-        if (container !== '' || (e.target as HTMLElement).closest('.pg-row, .pg-group-title, .pg-addon-pane, .pg-addon-toolbar, .pg-segmented, .pg-overview')) return;
-        e.preventDefault();
-        emptyMenu();
-      }}
-    >
-      {container === '' && <LargeTitle>Tasks</LargeTitle>}
-      {container === '' ? (
-        <OverviewSwitch listLabel="Tasks" show={show} {...tasksSwitch} list={listBody} overview={<TasksOverview m={m} />} />
-      ) : (
-        listBody
-      )}
     </div>
   );
 }
 
-/** An addon item's screen; its toolbar buttons go in a row above it. */
-function PhoneAddonScreen({ m }: { m: MainWindow }) {
+/** An addon item's screen; the bar and More have the commands placed on items and on the screen. */
+function PhoneAddonScreen({ m, onScreen }: { m: MainWindow; onScreen: (screen: AddonScreenReport | null) => void }) {
   const shown = m.addonShown!;
   return (
     <div className="phone-detail">
@@ -737,7 +662,7 @@ function PhoneAddonScreen({ m }: { m: MainWindow }) {
         view={shown.item.view}
         params={shown.item.params ?? {}}
         mode="main"
-        toolbarHidden={!!m.view?.hiddenAddonToolbars.includes(shown.addon.id)}
+        onScreen={onScreen}
       />
     </div>
   );

@@ -210,19 +210,6 @@
    "err": "Error invoking remote method 'projects:newTerminal': Error: boom projects:newTerminal"
   }
  },
- "projects.showContextMenu": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "context-menu:project",
-    [
-     "a0"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "projects.folders": {
   "arity": 0,
   "calls": [
@@ -1429,22 +1416,6 @@
   ],
   "result": {}
  },
- "chat.showSettingMenu": {
-  "arity": 4,
-  "calls": [
-   [
-    "send",
-    "context-menu:chat-setting",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "chat.pickFiles": {
   "arity": 1,
   "calls": [
@@ -1803,21 +1774,6 @@
   ],
   "result": {}
  },
- "sessions.showNewMenu": {
-  "arity": 3,
-  "calls": [
-   [
-    "send",
-    "context-menu:new-session",
-    [
-     "a0",
-     "a1",
-     "a2"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "sessions.send": {
   "arity": 2,
   "calls": [
@@ -1977,19 +1933,6 @@
    "err": "boom history:run"
   }
  },
- "history.select": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "history:select",
-    [
-     "a0"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "history.showContextMenu": {
   "arity": 1,
   "calls": [
@@ -1999,17 +1942,6 @@
     [
      "a0"
     ]
-   ]
-  ],
-  "result": {}
- },
- "history.toggleActivity": {
-  "arity": 0,
-  "calls": [
-   [
-    "send",
-    "history:toggleActivity",
-    []
    ]
   ],
   "result": {}
@@ -2230,38 +2162,109 @@
  },
  "agentSettings.open": {
   "arity": 0,
-  "calls": [["invoke", "agentSettings:open", []]],
-  "result": { "err": "Error invoking remote method 'agentSettings:open': Error: boom agentSettings:open" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:open",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'agentSettings:open': Error: boom agentSettings:open"
+  }
  },
  "agentSettings.load": {
   "arity": 1,
-  "calls": [["invoke", "agentSettings:load", ["a0"]]],
-  "result": { "err": "boom agentSettings:load" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:load",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom agentSettings:load"
+  }
  },
  "agentSettings.save": {
   "arity": 2,
-  "calls": [["invoke", "agentSettings:save", ["a0", "a1"]]],
-  "result": { "err": "boom agentSettings:save" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:save",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom agentSettings:save"
+  }
  },
  "agentSettings.listTools": {
   "arity": 2,
-  "calls": [["invoke", "agentSettings:listTools", ["a0", "a1"]]],
-  "result": { "err": "boom agentSettings:listTools" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:listTools",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom agentSettings:listTools"
+  }
  },
  "agentSettings.editServer": {
   "arity": 1,
-  "calls": [["invoke", "agentSettings:editServer", ["a0"]]],
-  "result": { "err": "boom agentSettings:editServer" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:editServer",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom agentSettings:editServer"
+  }
  },
  "agentSettings.serverRequest": {
   "arity": 1,
-  "calls": [["invoke", "agentSettings:serverRequest", ["a0"]]],
-  "result": { "err": "Error invoking remote method 'agentSettings:serverRequest': Error: boom agentSettings:serverRequest" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:serverRequest",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'agentSettings:serverRequest': Error: boom agentSettings:serverRequest"
+  }
  },
  "agentSettings.serverDone": {
   "arity": 2,
-  "calls": [["invoke", "agentSettings:serverDone", ["a0", "a1"]]],
-  "result": { "err": "boom agentSettings:serverDone" }
+  "calls": [
+   [
+    "invoke",
+    "agentSettings:serverDone",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom agentSettings:serverDone"
+  }
  },
  "remoteAccess.state": {
   "arity": 0,
@@ -2865,28 +2868,6 @@
    "err": "Error invoking remote method 'dialog:confirm': Error: boom dialog:confirm"
   }
  },
- "reportSelection": {
-  "arity": 10,
-  "calls": [
-   [
-    "send",
-    "ui:selection",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3",
-     "a4",
-     "a5",
-     "a6",
-     "a7",
-     "a8",
-     "a9"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "showTaskInMain": {
   "arity": 2,
   "calls": [
@@ -2896,19 +2877,6 @@
     [
      "a0",
      "a1"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "showTaskContextMenu": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "context-menu:task",
-    [
-     "a0"
     ]
    ]
   ],
@@ -2936,30 +2904,6 @@
     [
      "a0",
      "a1"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "showTasksEmptyContextMenu": {
-  "arity": 0,
-  "calls": [
-   [
-    "send",
-    "context-menu:tasks-empty",
-    []
-   ]
-  ],
-  "result": {}
- },
- "showPaneContextMenu": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "context-menu:pane",
-    [
-     "a0"
     ]
    ]
   ],
@@ -2997,19 +2941,6 @@
    [
     "send",
     "window:fit",
-    [
-     "a0"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "reportMessagesFilter": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "messages:filter-state",
     [
      "a0"
     ]
@@ -3212,12 +3143,12 @@
    "err": "Error invoking remote method 'addons:setEnabled': Error: boom addons:setEnabled"
   }
  },
- "addons.openTool": {
+ "addons.open": {
   "arity": 2,
   "calls": [
    [
     "invoke",
-    "addons:openTool",
+    "addons:open",
     [
      "a0",
      "a1"
@@ -3225,19 +3156,8 @@
    ]
   ],
   "result": {
-   "err": "Error invoking remote method 'addons:openTool': Error: boom addons:openTool"
+   "err": "Error invoking remote method 'addons:open': Error: boom addons:open"
   }
- },
- "addons.showToolbarMenu": {
-  "arity": 0,
-  "calls": [
-   [
-    "send",
-    "addons:toolbarMenu",
-    []
-   ]
-  ],
-  "result": {}
  },
  "addons.remove": {
   "arity": 1,
@@ -3266,38 +3186,6 @@
   "result": {
    "err": "Error invoking remote method 'addons:install': Error: boom addons:install"
   }
- },
- "addons.showMenu": {
-  "arity": 4,
-  "calls": [
-   [
-    "send",
-    "addons:menu",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "addons.setMenuBar": {
-  "arity": 4,
-  "calls": [
-   [
-    "send",
-    "addons:menuBar",
-    [
-     "a0",
-     "a1",
-     "a2",
-     "a3"
-    ]
-   ]
-  ],
-  "result": {}
  },
  "addons.onEvent": {
   "arity": 1,
@@ -3349,5 +3237,110 @@
   "result": {
    "ok": "unsub"
   }
+ },
+ "runs.canContinue": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runs:canContinue",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:canContinue': Error: boom runs:canContinue"
+  }
+ },
+ "chat.configure": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:configure",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom chat:configure"
+  }
+ },
+ "chat.setHarness": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:setHarness",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom chat:setHarness"
+  }
+ },
+ "sessions.harnessSessionId": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:harnessSessionId",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:harnessSessionId': Error: boom sessions:harnessSessionId"
+  }
+ },
+ "commands.setMenuBar": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "commands:menuBar",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.popup": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "commands:popup",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'commands:popup': Error: boom commands:popup"
+  }
+ },
+ "commands.host": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "commands:host",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
  }
 }

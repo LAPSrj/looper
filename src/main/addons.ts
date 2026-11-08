@@ -1,4 +1,4 @@
-import { Menu, nativeImage } from 'electron';
+import { nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { convertWslPath, type HostKind } from '../engine/host';
@@ -6,8 +6,6 @@ import { errMsg } from '../engine/log';
 import {
   ADDON_EXT,
   addonAdditions,
-  addonPaneKey,
-  commandOn,
   AddonLocalRunSchema,
   readAddonManifest,
   runCommand,
@@ -15,39 +13,23 @@ import {
   usesAddonDir,
   withAddonDir,
   type AddonAction,
+  type AddonCommand,
   type AddonEvent,
-  type AddonEventSource,
   type AddonInfo,
-  type AddonMenuBar,
-  type AddonMenuItem,
-  type AddonTool,
   type AddonUiEvent,
 } from '../shared/addons';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
-import type { View } from '../shared/types';
 import type { AddonHost, AddonLaunch } from './addon-host';
-import {
-  allWindows,
-  ipc,
-  isRemote,
-  popupMenu,
-  setWindowMenu,
-  showMessageBox,
-  showOpenDialog,
-  windowOf,
-  WindowSlots,
-  writeClipboard,
-  type AppWindow,
-  type MessageBoxOptions,
-} from './platform';
+import { allWindows, ipc, showMessageBox, showOpenDialog, windowOf, WindowSlots, writeClipboard, type AppWindow, type MessageBoxOptions } from './platform';
+import type { WindowRole } from '../shared/remote-access';
 
 export interface AddonUiDeps {
   host: AddonHost;
   /** Where Looper itself runs, for converting picked paths to the addon's side. */
   hostKind: HostKind;
   mainWindow: () => AppWindow | null;
-  /** Whether the window shows the main window's addon panes (a main window, or a Tasks window): a view window of another tab hasn't them. */
-  hasPanes: (w: AppWindow) => boolean;
+  /** Whether the window can show the addon's panes: a main window, or a window of its panes tab alone. */
+  hasPanes: (w: AppWindow, addonId: string) => boolean;
   /** openChildWindow: a hash route in its own window; a parent makes it modal. */
   openWindow: (
     hash: string,
@@ -55,13 +37,16 @@ export interface AddonUiDeps {
     width: number,
     height: number,
     modalParent: AppWindow | null,
-    opts: { minWidth: number; minHeight: number; contentSize: boolean },
+    opts: { role: WindowRole; minWidth: number; minHeight: number; contentSize: boolean },
   ) => AppWindow;
-  view: () => View;
-  updateView: (patch: Partial<View>) => void;
 }
 
-const menuText = (s: string): string => s.replace(/&/g, '&&');
+/** An addon window's role from the page size its manifest gives. */
+export function addonWindowRole(width: number, height: number): WindowRole {
+  if (width >= 900) return 'workspace';
+  if (width <= 520 && height <= 360) return 'prompt';
+  return width <= 560 && height <= 640 ? 'tool' : 'editor';
+}
 
 /** Every window hears about addons: panes in the main window, screens in addon windows. */
 export function sendAddonEvent(ev: AddonUiEvent, only?: AppWindow | null): void {
@@ -88,8 +73,8 @@ export function addonWindowHash(addonId: string, view: string, params: Record<st
 
 /** The window an addon window was opened from: a `select` from it goes there. */
 const openers = new WeakMap<AppWindow, AppWindow>();
-/** The open tool windows, one per tool and client. */
-const toolWindows = new WindowSlots();
+/** The windows commands opened, one per command and client. */
+const commandWindows = new WindowSlots();
 /** Every open window showing an addon's screens, by addon id: stopping the addon closes them. */
 const addonWindows = new Map<string, Set<AppWindow>>();
 
@@ -100,38 +85,27 @@ function trackWindow(addonId: string, w: AppWindow): void {
   w.on('closed', () => set.delete(w));
 }
 
-/** Tools → <tool>: its window, or the open one brought forward. */
-function openTool(deps: AddonUiDeps, addon: AddonInfo, tool: AddonTool): void {
-  const key = `${addon.id}/${tool.id}`;
-  const open = toolWindows.get(key);
+/** A command's `opens`: the screen in a window of its own, titled as the command, or the open one brought forward. */
+function openCommandWindow(deps: AddonUiDeps, addon: AddonInfo, command: AddonCommand): void {
+  const opens = command.opens;
+  if (!opens || 'tab' in opens) return;
+  const key = `${addon.id}/${command.id}`;
+  const open = commandWindows.get(key);
   if (open) {
     open.focus();
     return;
   }
-  const width = tool.width ?? (tool.pane ? 900 : 520);
-  const height = tool.height ?? (tool.pane ? 600 : 460);
-  const hash = tool.pane
-    ? ['addon-pane', addon.id, tool.pane, tool.label].map(encodeURIComponent).join('/')
-    : addonWindowHash(addon.id, tool.view!, tool.params ?? {}, tool.label);
-  const w = deps.openWindow(hash, tool.label, width, height, null, {
+  const title = command.label.replace(/&(&?)/g, '$1').replace(/…$/, '');
+  const width = opens.width ?? 520;
+  const height = opens.height ?? 460;
+  const w = deps.openWindow(addonWindowHash(addon.id, opens.view, opens.params ?? {}, title), title, width, height, null, {
+    role: addonWindowRole(width, height),
     minWidth: Math.min(width, 520),
     minHeight: Math.min(height, 420),
     contentSize: true,
   });
-  toolWindows.set(w, key);
+  commandWindows.set(w, key);
   trackWindow(addon.id, w);
-}
-
-/** The Tools menu: every addon's tools. Empty when no addon has one. */
-export function addonToolsMenu(deps: AddonUiDeps, addons: AddonInfo[]): Electron.MenuItemConstructorOptions[] {
-  return addons.filter((a) => a.enabled).flatMap((a) =>
-    a.tools.map((t): Electron.MenuItemConstructorOptions => ({
-      label: menuText(t.label),
-      enabled: a.status === 'running',
-      platforms: t.platforms,
-      click: () => openTool(deps, a, t),
-    })),
-  );
 }
 
 async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: string, a: AddonAction): Promise<void> {
@@ -140,6 +114,7 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
       const width = a.width ?? 520;
       const height = a.height ?? 460;
       const child = deps.openWindow(addonWindowHash(addonId, a.view, a.params ?? {}, a.title), a.title, width, height, a.modal ? sender : null, {
+        role: addonWindowRole(width, height),
         minWidth: Math.min(width, 520),
         minHeight: Math.min(height, 420),
         contentSize: true,
@@ -162,8 +137,8 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
       return;
     case 'select': {
       const from = (sender && openers.get(sender)) ?? sender;
-      // A Dashboard, Projects or addon tab's own window has no panes: the main window shows the item.
-      const target = from && deps.hasPanes(from) ? from : deps.mainWindow();
+      // A window of another tab alone has no panes: the main window shows the item.
+      const target = from && deps.hasPanes(from, addonId) ? from : deps.mainWindow();
       if (!target || target.isDestroyed()) return;
       sendAddonEvent({ type: 'select', addonId, pane: a.pane, item: a.item }, target);
       if (target !== from) target.focus();
@@ -266,46 +241,6 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
   }
 }
 
-function paneTitle(addons: AddonInfo[], addon: AddonInfo, pane: { title: string }): string {
-  const clash = addons.some((a) => a !== addon && a.panes.some((p) => p.title === pane.title));
-  return clash ? `${pane.title} (${addon.name})` : pane.title;
-}
-
-/** View > Addon Panes: a Show checkbox per pane. Empty when no addon has a pane. */
-export function addonPanesMenu(addons: AddonInfo[], view: View, update: (patch: Partial<View>) => void): Electron.MenuItemConstructorOptions[] {
-  return addons.filter((a) => a.enabled).flatMap((a) =>
-    a.panes.map((p): Electron.MenuItemConstructorOptions => {
-      const key = addonPaneKey(a.id, p.id);
-      const state = view.addonPanes[key] ?? { visible: true, collapsed: false, weight: 1 };
-      return {
-        label: menuText(paneTitle(addons, a, p)),
-        type: 'checkbox',
-        checked: state.visible,
-        click: (item) => update({ addonPanes: { ...view.addonPanes, [key]: { ...state, visible: item.checked } } }),
-      };
-    }),
-  );
-}
-
-/**
- * "<Addon> Toolbar" in the View menu and the main toolbar's right-click menu:
- * whether each addon's buttons show there. `only`: a view window's, which
- * lists the addons with a button for that view.
- */
-export function addonToolbarsMenu(addons: AddonInfo[], view: View, update: (patch: Partial<View>) => void, only?: string): Electron.MenuItemConstructorOptions[] {
-  return addons.filter((a) => a.enabled && (only === undefined || a.toolbar.some((b) => b.view === only))).map((a) => ({
-    label: `${menuText(a.toolbarName ?? a.name)} Toolbar`,
-    type: 'checkbox',
-    checked: !view.hiddenAddonToolbars.includes(a.id),
-    click: (item) =>
-      update({
-        hiddenAddonToolbars: item.checked
-          ? view.hiddenAddonToolbars.filter((id) => id !== a.id)
-          : [...view.hiddenAddonToolbars, a.id],
-      }),
-  }));
-}
-
 export function registerAddonIpc(deps: AddonUiDeps): void {
   const { host } = deps;
   ipc.handle('addons:list', () => host.list());
@@ -320,6 +255,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     const addon = host.get(id);
     if (!addon) return;
     deps.openWindow(`addon-edit/${encodeURIComponent(id)}`, 'Edit Addon', 560, 440, windowOf(e), {
+      role: 'tool',
       minWidth: 460,
       minHeight: 400,
       contentSize: true,
@@ -347,15 +283,10 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     if (enabled) return;
     for (const w of addonWindows.get(id) ?? []) if (!w.isDestroyed()) w.close();
   });
-  ipc.on('addons:toolbarMenu', (e) => {
-    const sender = windowOf(e);
-    const items = addonToolbarsMenu(host.list(), deps.view(), deps.updateView);
-    if (sender && items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender });
-  });
-  ipc.handle('addons:openTool', (_e, id: string, toolId: string) => {
+  ipc.handle('addons:open', (_e, id: string, commandId: string) => {
     const addon = host.list().find((a) => a.id === id);
-    const tool = addon?.tools.find((t) => t.id === toolId);
-    if (addon && tool) openTool(deps, addon, tool);
+    const command = addon?.commands.find((c) => c.id === commandId);
+    if (addon && command) openCommandWindow(deps, addon, command);
   });
   ipc.handle('addons:remove', async (e, id: string) => {
     const m = host.get(id);
@@ -365,7 +296,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
       type: 'question',
       title: 'Looper',
       message: `Remove the addon "${m.name}"?`,
-      detail: m.panes.length ? 'Its panes leave the sidebar.' : undefined,
+      detail: m.tabs.length || m.panes.length || m.commands.length ? 'What it added to Looper’s tabs, menus and toolbars goes with it.' : undefined,
       buttons: ['Remove', 'Cancel'],
       noLink: true,
       defaultId: 0,
@@ -384,51 +315,13 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     const file = r.canceled ? undefined : r.filePaths[0];
     if (file) await installAddonFile(deps, file, sender);
   });
+}
 
-  /**
-   * A pane item's or a pane header's right-click menu: the addon's items,
-   * then (header) Hide Pane. A pick goes to the addon as a `menu` event.
-   */
-  ipc.on(
-    'addons:menu',
-    (e, id: string, pane: string, menu: AddonMenuItem[], opts: { item?: string; header?: boolean }) => {
-      const sender = windowOf(e);
-      if (!sender) return;
-      const items = menuItems(deps, sender, id, { pane }, menu, opts.item ? { id: opts.item } : undefined);
-      if (opts.header) {
-        const key = addonPaneKey(id, pane);
-        if (items.length) items.push({ type: 'separator' });
-        items.push({
-          label: 'Hide Pane',
-          click: () => {
-            const view = deps.view();
-            const state = view.addonPanes[key] ?? { visible: true, collapsed: false, weight: 1 };
-            deps.updateView({ addonPanes: { ...view.addonPanes, [key]: { ...state, visible: false } } });
-          },
-        });
-      }
-      if (items.length) popupMenu(Menu.buildFromTemplate(items), { window: sender });
-    },
-  );
-
-  /**
-   * An addon window's menu bar, sent again whenever the screen or the
-   * selected item changes; null takes it away. The main window keeps its own.
-   */
-  ipc.on(
-    'addons:menuBar',
-    (e, id: string, source: AddonEventSource, menuBar: AddonMenuBar | null, item?: { id: string; menu?: AddonMenuItem[] }) => {
-      const sender = windowOf(e);
-      // macOS has one global menu bar, but a remote window shows its own.
-      if (!sender || sender === deps.mainWindow() || (process.platform === 'darwin' && !isRemote(sender))) return;
-      setWindowMenu(
-        sender,
-        menuBar?.length
-          ? Menu.buildFromTemplate(menuBar.map((m) => ({ label: m.label, platforms: m.platforms, submenu: menuItems(deps, sender, id, source, m.items, item) })))
-          : null,
-      );
-    },
-  );
+/** A path on Looper's side, in the form the addon's side uses (in its environment's distro). */
+async function forAddonSide(launch: AddonLaunch, hostKind: HostKind, p: string): Promise<string> {
+  if (launch.run.on === 'wsl' && hostKind === 'windows') return (await convertWslPath(p, 'posix', launch.environment?.distro || undefined)) ?? p;
+  if (launch.run.on === 'windows' && hostKind === 'wsl') return (await convertWslPath(p, 'windows')) ?? p;
+  return p;
 }
 
 /**
@@ -437,39 +330,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
  * addon on Windows. Unchanged when both are on the same side, or when wslpath
  * can't convert it.
  */
-/** A path on Looper's side, in the form the addon's side uses (in its environment's distro). */
-async function forAddonSide(launch: AddonLaunch, hostKind: HostKind, p: string): Promise<string> {
-  if (launch.run.on === 'wsl' && hostKind === 'windows') return (await convertWslPath(p, 'posix', launch.environment?.distro || undefined)) ?? p;
-  if (launch.run.on === 'windows' && hostKind === 'wsl') return (await convertWslPath(p, 'windows')) ?? p;
-  return p;
-}
-
 async function addonPath(deps: AddonUiDeps, addonId: string, file: string): Promise<string> {
   const m = deps.host.get(addonId);
   return m ? forAddonSide(deps.host.launchOf(m), deps.hostKind, file) : file;
-}
-
-/** An addon's menu items as Electron's; a pick goes to the addon as a `menu` event. `&` marks an access key. */
-function menuItems(
-  deps: AddonUiDeps,
-  sender: AppWindow,
-  addonId: string,
-  source: AddonEventSource,
-  menu: AddonMenuItem[],
-  item: { id: string; menu?: AddonMenuItem[] } | undefined,
-): Electron.MenuItemConstructorOptions[] {
-  return menu.map((m) =>
-    'separator' in m
-      ? { type: 'separator' }
-      : {
-          // The addon's id names the item in a designed phone More menu (mobileMore).
-          id: m.id,
-          label: m.label,
-          platforms: m.platforms,
-          ...(m.checked !== undefined ? { type: m.radio ? 'radio' : 'checkbox', checked: m.checked } : {}),
-          ...(m.destructive ? { destructive: true as const } : {}),
-          enabled: (m.enabled ?? true) && commandOn(m, item),
-          click: () => void runEvent(deps, sender, addonId, { source, kind: 'menu', id: m.id, item: item?.id }, m.confirm),
-        },
-  );
 }

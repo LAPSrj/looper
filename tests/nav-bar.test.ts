@@ -14,8 +14,7 @@ describe('a bar’s buttons (barModel)', () => {
     expect(barModel({ title: 't', dismiss: back }).lead).toMatchObject({ kind: 'back', label: 'Back' });
     expect(barModel({ title: 't', dismiss: close }).lead).toMatchObject({ kind: 'close', label: 'Close' });
     expect(barModel({ title: 't', dismiss: null }).lead).toBeNull();
-    expect(barModel({ title: 't', dismiss: null, menu: noop }).lead?.kind).toBe('menu');
-    expect(barModel({ title: 't', back: noop, dismiss: null, menu: noop }).lead?.kind).toBe('back');
+    expect(barModel({ title: 't', back: noop, dismiss: null }).lead?.kind).toBe('back');
   });
 
   it('keeps Cancel’s own label and state, and runs its handler', () => {

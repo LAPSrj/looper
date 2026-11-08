@@ -36,7 +36,7 @@
     "src/renderer/src/phone-lists.ts",
     "src/renderer/src/task-tree.ts",
     "src/renderer/src/now-ticker.ts",
-    "src/renderer/src/menu-target.ts",
+    "src/renderer/src/components/command-surfaces.ts",
     "src/renderer/src/components/terminal-keys.ts",
     "src/renderer/src/components/blank-draft.ts",
     "src/renderer/src/components/composer-text.ts",

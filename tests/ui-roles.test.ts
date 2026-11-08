@@ -3,7 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CARD_MIN_WIDTH } from '../src/shared/card-grid';
 import { moveKey, withSiblingsOrdered } from '../src/shared/folders';
-import { presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
+import type { WindowRole } from '../src/shared/remote-access';
+import { presentation, splitLayout, type Presentation } from '../src/renderer/src/web/nav-stack';
 
 const renderer = path.join(__dirname, '..', 'src', 'renderer', 'src');
 const walk = (dir: string): string[] =>
@@ -37,6 +38,16 @@ describe('list and detail', () => {
   });
 });
 
+describe('an edit window', () => {
+  const EDITORS = /(^|\/)(TaskEditor|EditorApp|EnvEditorApp|HarnessEditorApp|ModelEditorApp|McpServerApp|ProjectEditorApp|RemoteEditorApps|NoteEditorApp|FolderNoteApp|FolderNameApp|SessionNameApp|SendToSessionsApp|TemplatePickerApp|TemplatesApp|SettingsApp|AgentSettingsApp|MoveToFolderApp|RunOptionsApp|ContinueRunApp|BuilderSetupApp)\.tsx$/;
+
+  it('doesn\'t check the platform: its fields and buttons adapt by themselves', () => {
+    const editors = files.filter(([file]) => EDITORS.test(file));
+    expect(editors.length).toBeGreaterThanOrEqual(20);
+    for (const [file, text] of editors) expect(text, file).not.toMatch(/\b(isPhone|onIos|uiHere)\b|platform ===/);
+  });
+});
+
 describe('data tables', () => {
   it('writes a table of rows only in DataTable', () => {
     onlyIn(['components/DataTable.tsx'], /className="runlog-table"/);
@@ -59,15 +70,8 @@ describe('every feature on every device', () => {
   const src = path.join(__dirname, '..', 'src');
   /** Why something may stay off a phone: it lays out a desktop's windows, the phone itself provides it, or a phone reaches it another way. */
   const ALLOWED = [
-    /role: '(undo|redo|cut|copy|paste|selectAll|reload)'/, // Edit commands and Reload UI: the phone's own
-    /Close &Window|Next Pan&e|Prev&ious Pane|Always on &Top/, // desktop windows
-    /&Toolbar|Status &?B|S&ingle Pane|M&ultiple Panes|&Standard|&Compact/, // desktop layout; the last four wait for a decision on Multiple Panes and Compact
-    /A&ctivity Pane|activity-pane|activityPane|id: 'panes'/, // a phone has a bar button for Activity
     /Open in (&N|N)ew Window|openInNewWindow/, // waits for a decision on tablets
-    /settingsItem|templatesItem/, // More has them from the File menu
-    /groupByMenu|Group Projects By/, // a phone has them on a long press of the list
-    /showPaneItem|paneMenuItems|p\.menuLabel/, // desktop panes
-    /windowMenu|OPEN_WINDOW_ID|openWindowItems/, // the computer's own windows
+    /OPEN_WINDOW_ID|openWindowItems/, // the computer's own windows
   ];
 
   it('keeps a platforms mark only on what a short list allows', () => {
@@ -102,13 +106,36 @@ describe('reordering on a phone', () => {
   });
 });
 
-describe('an editor on an iPad', () => {
-  const editor = { modal: false, width: 780, height: 800 };
+describe('how a window shows on a phone or tablet', () => {
+  const roles: WindowRole[] = ['prompt', 'tool', 'editor', 'workspace', 'detail'];
+  const phones = [{ width: 393, height: 852 }, { width: 852, height: 393 }, { width: 360, height: 800 }];
+  const tablets = [{ width: 1376, height: 1032 }, { width: 1032, height: 1376 }, { width: 1180, height: 820 }, { width: 820, height: 1180 }, { width: 800, height: 1280 }];
 
-  it('is a sheet at every size and in both orientations, and only a window made for a desktop is pushed', () => {
-    for (const screen of [{ width: 1376, height: 1032 }, { width: 1032, height: 1376 }, { width: 1180, height: 820 }, { width: 820, height: 1180 }]) {
-      expect(presentation('ios', editor, false, screen)).toBe('page-sheet');
-      expect(presentation('ios', { modal: false, width: 1388, height: 895 }, false, screen)).toBe('push');
+  /** The table: what each role and modal flag gives, by OS and kind of device. */
+  const expected = (os: 'ios' | 'android', tablet: boolean, role: WindowRole, modal: boolean): Presentation => {
+    if (role === 'detail') return os === 'ios' ? 'page-sheet' : 'bottom-sheet';
+    if (tablet) {
+      if (role === 'workspace') return 'push';
+      if (os === 'ios') return role === 'editor' ? 'page-sheet' : 'form-sheet';
+      return modal ? 'dialog' : 'push';
+    }
+    if (!modal) return 'push';
+    if (os === 'ios') return 'page-sheet';
+    return role === 'prompt' ? 'bottom-sheet' : 'full-dialog';
+  };
+
+  it('depends on the role, modal flag, OS and device kind, never on the window size', () => {
+    for (const os of ['ios', 'android'] as const) {
+      for (const [tablet, screens] of [[false, phones], [true, tablets]] as const) {
+        for (const screen of screens) {
+          for (const role of roles) {
+            for (const modal of [false, true]) {
+              expect(presentation(os, { role, modal }, false, screen), `${os} ${screen.width}x${screen.height} ${role} modal=${modal}`).toBe(expected(os, tablet, role, modal));
+              expect(presentation(os, { role, modal }, true, screen)).toBe('root');
+            }
+          }
+        }
+      }
     }
   });
 });

@@ -9,6 +9,7 @@ import type {
   MessageBoxSpec,
   RemoteWindowSpec,
   ServerMessage,
+  WindowRole,
 } from '../../shared/remote-access';
 import { uiPlatformOf, type UiPlatform } from '../../shared/ui-platform';
 import { encodeBytes } from './bytes';
@@ -99,6 +100,7 @@ export class RemoteWebContents extends EventEmitter {
 }
 
 export interface RemoteWindowInit {
+  role: WindowRole;
   hash: string;
   title: string;
   width: number;
@@ -122,6 +124,7 @@ export class RemoteWindow extends EventEmitter implements AppWindow {
   private height: number;
   private resizable: boolean;
   readonly modal: boolean;
+  private role: WindowRole;
   readonly parent: RemoteWindow | null;
   private destroyed = false;
   private visible = true;
@@ -143,11 +146,13 @@ export class RemoteWindow extends EventEmitter implements AppWindow {
     this.resizable = init.resizable;
     this.modal = init.modal && !!init.parent;
     this.parent = init.parent;
+    this.role = init.role;
   }
 
   spec(): RemoteWindowSpec {
     return {
       w: this.w,
+      role: this.role,
       ...(this.parent ? { parent: this.parent.w } : {}),
       modal: this.modal,
       hash: this.hash,
@@ -273,6 +278,11 @@ export class RemoteWindow extends EventEmitter implements AppWindow {
   }
 
   center(): void {}
+
+  /** The window became another kind (the setup window turning into its builder); load() sends it. */
+  setRole(role: WindowRole): void {
+    this.role = role;
+  }
 
   /** Move the page to another route: a fresh load on the client, followed by its window-ready. */
   load(hash: string): void {

@@ -2,6 +2,7 @@ import type { Engine } from '../engine/engine';
 import { agentLocations, hostPathOf, probeAgentHome, readAgentSettings, writeAgentSettings, type AgentHome, type AgentLocations } from '../engine/agent-files';
 import { listMcpTools } from '../engine/mcp-tools';
 import type { AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest } from '../shared/agent-config';
+import type { WindowRole } from '../shared/remote-access';
 import type { Environment, Harness } from '../shared/types';
 import { ipc, showMessageBox, windowOf, type AppWindow } from './platform';
 
@@ -19,8 +20,8 @@ export interface AgentSettingsDeps {
     title: string,
     width: number,
     height: number,
-    modalParent?: AppWindow | null,
-    opts?: { minWidth?: number; minHeight?: number; resizable?: boolean; contentSize?: boolean },
+    modalParent: AppWindow | null | undefined,
+    opts: { role: WindowRole; minWidth?: number; minHeight?: number; resizable?: boolean; contentSize?: boolean },
   ) => AppWindow;
   /** The caller's main window: the Agent Settings window is modal over it. */
   mainWindow: () => AppWindow | null;
@@ -66,7 +67,7 @@ async function locate(scope: AgentSettingsScope): Promise<{ env: Environment; ha
 /** Open Agent Settings, modal over the caller's main window. */
 export function openAgentSettingsWindow(): void {
   if (!deps) return;
-  deps.openWindow('agent-settings', 'Agent Settings', 760, 620, deps.mainWindow(), { minWidth: 640, minHeight: 480 });
+  deps.openWindow('agent-settings', 'Agent Settings', 760, 620, deps.mainWindow(), { role: 'editor', minWidth: 640, minHeight: 480 });
 }
 
 /** The server windows open now, by key: what each edits, and how its answer reaches the Agent Settings window. */
@@ -103,7 +104,7 @@ export function registerAgentSettingsIpc(d: AgentSettingsDeps): void {
     (e, request: McpServerRequest) =>
       new Promise<McpServer | null>((resolve) => {
         const key = String(++serverKeys);
-        const child = d.openWindow(`mcp-server/${key}`, request.isNew ? 'New MCP Server' : 'Edit MCP Server', 560, 560, windowOf(e), { minWidth: 480, minHeight: 440 });
+        const child = d.openWindow(`mcp-server/${key}`, request.isNew ? 'New MCP Server' : 'Edit MCP Server', 560, 560, windowOf(e), { role: 'tool', minWidth: 480, minHeight: 440 });
         serverEdits.set(key, { request, done: resolve, window: child });
         child.on('closed', () => {
           if (!serverEdits.has(key)) return;

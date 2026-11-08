@@ -3,7 +3,6 @@ import type { Task } from '@shared/types';
 import { SelectList } from './components/SelectList';
 import { Field } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { isPhone } from './web/page-nav';
 
 export function TemplatePickerApp() {
   const [templates, setTemplates] = useState<Task[]>([]);
@@ -38,7 +37,7 @@ export function TemplatePickerApp() {
         <div className="picker-body">
           <Field label="Template">
             {templates.length === 0 ? (
-              <div className="empty">No templates. Create one in {isPhone ? 'File' : 'Tools'} → Templates.</div>
+              <div className="empty">No templates yet.</div>
             ) : (
               <SelectList
                 items={templates}

@@ -211,7 +211,7 @@ describe('dialog results', () => {
       sent.push(m);
       return true;
     });
-    const win = client.openWindow({ hash: '', title: 'Looper', width: 100, height: 100, resizable: true, modal: false, parent: null });
+    const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 100, height: 100, resizable: true, modal: false, parent: null });
     const last = () => (sent.filter((m) => m.t === 'dialog').at(-1) as Extract<ServerMessage, { t: 'dialog' }>).dialogId;
     const m = client.dialog(win, 'message', { message: 'Delete?', buttons: ['Yes', 'No'], defaultId: 1, cancelId: 1 });
     client.answer(last(), messageResult(0, false));
@@ -346,7 +346,7 @@ describe('file dialog choice flow', () => {
 
 describe('shell window stack', () => {
   const open = (w: string, extra: Partial<Extract<ServerMessage, { t: 'window-open' }>> = {}): ShellMessage =>
-    ({ t: 'window-open', w, modal: false, hash: w === 'main' ? '' : w, title: w, width: 400, height: 300, resizable: true, ...extra }) as ShellMessage;
+    ({ t: 'window-open', w, role: 'tool', modal: false, hash: w === 'main' ? '' : w, title: w, width: 400, height: 300, resizable: true, ...extra }) as ShellMessage;
   const run = (...msgs: ShellMessage[]): ShellState => msgs.reduce(reduceShell, initialShellState);
 
   it('keeps the windows back to front, a focused one coming forward', () => {

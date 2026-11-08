@@ -28,10 +28,8 @@ import {
 } from './phone-shell';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
 import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
-import { ARROW_BACK, CLOSE, MENU_OPEN, MdBarRow, NavIcon } from './NavBarRow';
-import type { PageNavTabs } from './page-nav';
+import { ARROW_BACK, CLOSE, MdBarRow, NavIcon } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
-import { TabIcon } from '../components/phone/tab-icons';
 import './android.css';
 
 const ARROW_RIGHT = (
@@ -49,21 +47,24 @@ const NEW_FOLDER = (
 export function AndroidFrame({ controller }: { controller: ShellController }) {
   const [more, setMore] = useState<OpenMore | null>(null);
   const [device, setDevice] = useState(false);
-  const [railOpen, setRailOpen] = useState(false);
   const local: BackLayer[] = [];
   if (device) local.push(() => setDevice(false));
   if (more) local.push(() => setMore(null));
-  if (railOpen) local.push(() => setRailOpen(false));
   const shell = usePhoneShell(controller, 'android', local);
   const { s } = shell;
-  const overlay = !!more || device || railOpen;
+  const overlay = !!more || device;
   useEffect(() => {
     if (!overlay) return;
     controller.setOverlay(true);
     return () => controller.setOverlay(false);
   }, [overlay, controller]);
 
-  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc, DEVICE_LABEL), w: sc.win.w, anchor: button.getBoundingClientRect() });
+  // The More view's This Device row asks for the sheet.
+  useEffect(() => {
+    if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
+  }, []);
+
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, anchor: button.getBoundingClientRect() });
   const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: button.getBoundingClientRect() });
 
   return (
@@ -72,10 +73,9 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
       <PhoneWindows
         shell={shell}
         controller={controller}
-        renderBar={(sc) => <TopBar shell={shell} controller={controller} sc={sc} onMore={openMore} onActionMenu={openActionMenu} onMenu={() => setRailOpen(true)} />}
+        renderBar={(sc) => <TopBar shell={shell} controller={controller} sc={sc} onMore={openMore} onActionMenu={openActionMenu} />}
         dragToDismiss={(p) => p === 'bottom-sheet'}
       />
-      {railOpen && shell.top?.nav?.navigation && <ModalRail tabs={shell.top.nav.navigation} onClose={() => setRailOpen(false)} />}
       {!s.connected && !s.everConnected && (
         <div className="ph-connection" role="status">
           Connecting…
@@ -99,7 +99,7 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
           onClose={() => setMore(null)}
           onPick={(item) => {
             setMore(null);
-            pickMore(controller, more, item, () => setDevice(true));
+            pickMore(controller, more, item);
           }}
         />
       )}
@@ -113,28 +113,22 @@ export function AndroidFrame({ controller }: { controller: ShellController }) {
 
 // ---------- the top app bar ----------
 
-/** The label of This device in the main window's overflow menu. */
-const DEVICE_LABEL = 'This device';
-
 function TopBar({
   shell,
   controller,
   sc,
   onMore,
   onActionMenu,
-  onMenu,
 }: {
   shell: PhoneShell;
   controller: ShellController;
   sc: Screen;
   onMore: (sc: Screen, button: HTMLElement) => void;
   onActionMenu: (sc: Screen, action: PageNavAction, button: HTMLElement) => void;
-  onMenu: () => void;
 }) {
   const nav = sc.nav;
   const goBack = () => shell.goBack();
   const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
-  const menu = nav?.navigation ? onMenu : undefined;
   const model = barModel({
     title: nav?.title ?? sc.win.title,
     back: nav?.back ? goBack : undefined,
@@ -142,14 +136,13 @@ function TopBar({
     confirm: nav?.confirm,
     actions: nav?.actions,
     dismiss: dismissFor(sc.pres, { back: goBack, close: () => controller.close(sc.win.w) }),
-    menu,
   });
-  const more = moreFor(sc, DEVICE_LABEL).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
+  const more = moreFor(sc).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
   const connection = useConnection(controller);
   const split = shell.tablet ? nav?.split : undefined;
   if (split) {
     // Two panes (Material: List-detail): a bar over each. The list's has the window's own Back, the detail's the page's.
-    const list = barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: goBack } : null, menu });
+    const list = barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: goBack } : null });
     const detail = barModel({ title: nav?.title ?? '', back: nav?.back ? goBack : undefined, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
     return (
       <header className="md-bar">
@@ -176,34 +169,6 @@ function TopBar({
       <MdBarRow model={model} onMore={more} onActionMenu={actionMenuHere} dialogLike={sc.pres === 'full-dialog' || sc.pres === 'dialog'} />
       <OfflineBanner connection={connection} />
     </header>
-  );
-}
-
-/** Material's modal expanded navigation rail: the views over the content, opened from the top app bar's menu icon. */
-function ModalRail({ tabs, onClose }: { tabs: PageNavTabs; onClose: () => void }) {
-  return (
-    <div className="md-sheet-layer">
-      <Scrim className="md-scrim" onTap={onClose} />
-      <nav className="md-modal-rail ph-scroll" aria-label="Looper">
-        <button className="md-icon-btn" aria-label="Close navigation menu" onClick={onClose}>
-          {MENU_OPEN}
-        </button>
-        {tabs.items.map(([id, label, icon]) => (
-          <button
-            key={id}
-            className={`md-rail-item${id === tabs.value ? ' on' : ''}`}
-            aria-current={id === tabs.value ? 'page' : undefined}
-            onClick={() => {
-              tabs.select(id);
-              onClose();
-            }}
-          >
-            <TabIcon id={id} addonIcon={icon} />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
   );
 }
 

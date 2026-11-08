@@ -7,7 +7,7 @@ import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@sha
 import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
-import { CheckboxField, Field, FieldRow, FormGroup, InputRow, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons, onIos } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons } from './ui';
 import { WindowActions } from './WindowActions';
 import { useDialogKeys } from './hooks';
 import { blankDraft, type Draft } from './blank-draft';
@@ -184,34 +184,7 @@ function ActiveHours({ value, onChange }: { value: Hours | undefined; onChange: 
       onBlur={() => hours.from > hours.to && onChange({ from: hours[bound], to: hours[bound] })}
     />
   );
-  // An iPhone gives each its own row; elsewhere they share one line.
-  if (onIos) {
-    return (
-      <>
-        <Field label="Active hours">{mode}</Field>
-        {value && (
-          <>
-            <Field label="From">{box('from', value)}</Field>
-            <Field label="To">{box('to', value)}</Field>
-          </>
-        )}
-      </>
-    );
-  }
-  return (
-    <Field label="Active hours">
-      <InputRow className="hours-row">
-        {mode}
-        {value && (
-          <>
-            {box('from', value, 'From hour')}
-            <span className="muted">to</span>
-            {box('to', value, 'To hour')}
-          </>
-        )}
-      </InputRow>
-    </Field>
-  );
+  return <RangeField label="Active hours" mode={mode} on={!!value} box={(bound, label) => value && box(bound, value, label)} fromLabel="From hour" toLabel="To hour" />;
 }
 
 export function TaskEditor({ task, initial, environments, projects, projectId, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {

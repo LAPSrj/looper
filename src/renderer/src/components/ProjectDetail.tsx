@@ -33,6 +33,7 @@ export function ProjectDetail({
   environments,
   remote,
   onSelectTask,
+  untitled = false,
 }: {
   project: Project;
   tasks: Task[];
@@ -40,6 +41,8 @@ export function ProjectDetail({
   environments: Environment[];
   remote: RemoteState | null;
   onSelectTask: (id: string) => void;
+  /** The project's own window, whose title bar already names it. */
+  untitled?: boolean;
 }) {
   const [shownTab, setTab] = useState<ProjectTab>('status');
   const gitRepo = useGitRepo(project.id);
@@ -95,9 +98,11 @@ export function ProjectDetail({
 
   return (
     <div className="detail">
-      <div className="detail-bar">
-        <span className="pane-title">{project.name}</span>
-      </div>
+      {!untitled && (
+        <div className="detail-bar">
+          <span className="pane-title">{project.name}</span>
+        </div>
+      )}
       <TabBar
         tabs={gitRepo ? [...TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] : TABS}
         active={tab}

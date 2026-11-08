@@ -1,19 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { macMenuBar, openWindowItems, phoneOnly, windowMenu } from '../src/main/window-menu';
+import { macMenuBar, openWindowItems } from '../src/main/window-menu';
 
 type MenuItem = Electron.MenuItemConstructorOptions;
 
 const names = (items: MenuItem[]) => items.map((i) => (i.type === 'separator' ? '—' : (i.label ?? i.role)));
 const sub = (item: MenuItem | undefined) => item?.submenu as MenuItem[];
 const app = { about: vi.fn(), settings: vi.fn() };
-
-describe('windowMenu', () => {
-  it('separates its groups, leaving out the empty ones, and stays off a phone by default', () => {
-    const menu = windowMenu([[{ label: 'A' }], [], [{ label: 'B' }]]);
-    expect(names(sub(menu))).toEqual(['A', '—', 'B']);
-    expect(menu.platforms).toEqual(['desktop', 'web']);
-  });
-});
 
 describe('openWindowItems', () => {
   const win = (title: string) => ({ getTitle: () => title });
@@ -35,18 +27,12 @@ describe('openWindowItems', () => {
   });
 });
 
-describe('phoneOnly', () => {
-  it('marks copies for a phone without their keys', () => {
-    expect(phoneOnly([{ label: 'Next', accelerator: 'F9' }])).toEqual([{ label: 'Next', platforms: ['mobile'] }]);
-  });
-});
-
 describe('macMenuBar', () => {
   const template: MenuItem[] = [
-    { id: 'file', label: '&File', submenu: [{ label: '&New' }, { type: 'separator' }, ...phoneOnly([{ id: 'settings', label: 'S&ettings' }, { id: 'templates', label: 'Temp&lates' }])] },
+    { id: 'file', label: '&File', submenu: [{ label: '&New' }, { type: 'separator' }, { id: 'settings', label: 'S&ettings', platforms: ['mobile'] }, { id: 'templates', label: 'Temp&lates', platforms: ['mobile'] }] },
     { id: 'view', label: '&View', submenu: [{ label: 'R&&D &Tools' }] },
     { id: 'tools', label: 'T&ools', submenu: [{ id: 'settings', label: 'S&ettings' }, { label: 'Temp&lates' }] },
-    windowMenu([[{ label: '&History' }], openWindowItems([{ getTitle: () => 'Looper' }], () => {})]),
+    { id: 'window', label: '&Window', submenu: [{ label: '&History' }, { type: 'separator' }, ...openWindowItems([{ getTitle: () => 'Looper' }], () => {})] },
     { id: 'help', label: '&Help', submenu: [{ label: '&Instructions' }, { type: 'separator' }, { id: 'about', label: '&About Looper' }] },
   ];
 

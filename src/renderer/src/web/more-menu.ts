@@ -1,48 +1,20 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import type { Catalog, Command } from '../../../shared/commands/types';
 import type { MenuItemSpec } from '../../../shared/remote-access';
-import { menuForPlatform, showsOn } from '../../../shared/ui-platform';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from '../components/toolbar-model';
 
 /**
- * The phone's More (…) menu. By default: the screen's toolbar (PageNav
- * `toolbar`), then the window's menu bar as one submenu row per menu, then
- * This Device on the main window. A page can design it instead (PageNav
- * `more`): groups of its own commands and of references to its toolbar and
- * menu bar, flattened, so the menu shows only what applies to the screen.
+ * The phone's More (…) menu: the toolbar a page reports (an addon's buttons, a
+ * terminal's text size), then the screen's commands from the one list.
  */
 
-/** One entry of a designed More menu. */
-export type MoreRef =
-  /** A command of the page's own. */
-  | { action: MoreAction }
-  /** A toolbar item, by id (a split button shows as a submenu). */
-  | { toolbar: string }
-  /** A menu-bar menu, by its key (the template's id) or label: its items show in its place, its separators as group breaks. */
-  | { menu: string }
-  /** A menu-bar item anywhere in the menu bar, by its key; when the menu bar has none, the toolbar item `toolbar` (a terminal has no Chat menu). */
-  | { item: string; toolbar?: string };
-
-/** A group of entries, set off from the next by a gap. */
-export type MoreGroup = MoreRef[];
-
-export interface MoreAction {
-  id: string;
-  label: string;
-  /** An ICONS key. */
-  icon?: string;
-  /** Hidden while true: a phone's menus show only what can be done now. */
-  disabled?: boolean;
-  run: () => void;
+/** A screen's commands for its More menu: the items as data, and what picking one does. */
+export interface MoreMenuInput {
+  items: MenuItemSpec[];
+  run: (id: string) => void;
 }
 
-/** The synthetic item the root screen's More menu ends with. */
-export const THIS_DEVICE_ITEM = '__looper-this-device';
-/** Items the page carries out itself start with this; the rest go to the computer's menu. */
+/** Items the page carries out itself start with this. */
 const PAGE = '__page:';
-
-const plain = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
-const sameLabel = (a: string | undefined, b: string): boolean => plain(a).trim().toLowerCase() === plain(b).trim().toLowerCase();
 
 let sepSeq = 0;
 const separator = (): MenuItemSpec => ({ id: `__sep${sepSeq++}`, type: 'separator', enabled: true });
@@ -86,30 +58,21 @@ export function phoneMenu(items: MenuItemSpec[]): MenuItemSpec[] {
 }
 
 export interface MoreInput {
-  /** The screen's toolbar (all platforms; filtered here). */
+  /** A toolbar the page reports (all platforms; filtered here). */
   toolbar?: ToolbarGroup[];
-  /** The ids of the bar's buttons: toolbar items with these ids are already on screen. */
-  barIds?: string[];
-  /** The window's menu bar, as the computer sent it. */
-  menu: MenuItemSpec[] | null;
-  /** A designed menu, in place of the default. */
-  more?: MoreGroup[];
-  /** The label of This Device, on the main window's screen. */
-  device?: string;
+  /** The screen's commands. */
+  more?: MoreMenuInput;
 }
 
 export interface MoreMenu {
   items: MenuItemSpec[];
-  /** What the page's own items do, by item id; any other item is the computer's to carry out. */
+  /** What each item does, by its id. */
   run: Map<string, () => void>;
 }
 
-/** The More menu of a screen: the designed one when the page gives one, else the default. */
+/** The More menu of a screen. */
 export function composeMore(input: MoreInput): MoreMenu {
   const run = new Map<string, () => void>();
-  const toolbar = toolbarFor(input.toolbar ?? [], 'mobile');
-  const menu = menuForPlatform(input.menu ?? [], 'mobile');
-  const bar = new Set(input.barIds ?? []);
 
   const page = (id: string, label: string, icon: string | undefined, fn: () => void): MenuItemSpec => {
     const item: MenuItemSpec = { id: PAGE + id, type: 'normal', label, enabled: true };
@@ -118,7 +81,7 @@ export function composeMore(input: MoreInput): MoreMenu {
     return item;
   };
 
-  /** A toolbar item's rows: a submenu for a split button's entries, else the command and the row that opens the computer's list. */
+  /** A toolbar item's rows: a submenu for a split button's entries, else the command and the row that opens its list. */
   const toolbarRows = (it: ToolbarItem): MenuItemSpec[] => {
     if (!isEnabled(it)) return [];
     const primary = it.run ? page(`tb:${it.id}`, it.label, it.icon, it.run) : null;
@@ -140,63 +103,16 @@ export function composeMore(input: MoreInput): MoreMenu {
     return primary ? [primary] : [];
   };
 
-  const findMenu = (name: string): MenuItemSpec | undefined => menu.find((m) => m.type === 'submenu' && (m.key === name || sameLabel(m.label, name)));
-  const findItem = (items: MenuItemSpec[], key: string): MenuItemSpec | undefined => {
-    for (const it of items) {
-      if (it.key === key) return it;
-      const deeper = it.submenu ? findItem(it.submenu, key) : undefined;
-      if (deeper) return deeper;
-    }
-    return undefined;
-  };
+  /** A command's rows carry its id with the page mark, so a pick runs in the page. */
+  const commandRows = (items: MenuItemSpec[]): MenuItemSpec[] =>
+    items.map((it) => {
+      if (it.type === 'separator') return it;
+      if (it.submenu) return { ...it, id: PAGE + `cmd:${it.id}`, submenu: commandRows(it.submenu) };
+      const id = PAGE + `cmd:${it.id}`;
+      run.set(id, () => input.more?.run(it.id));
+      return { ...it, id };
+    });
 
-  let body: MenuItemSpec[];
-  if (input.more) {
-    body = joinGroups(
-      input.more.map((group) =>
-        group.flatMap((ref): MenuItemSpec[] => {
-          if ('action' in ref) return ref.action.disabled ? [] : [page(`act:${ref.action.id}`, ref.action.label, ref.action.icon, ref.action.run)];
-          if ('menu' in ref) return findMenu(ref.menu)?.submenu ?? [];
-          const it = 'item' in ref ? findItem(menu, ref.item) : undefined;
-          if (it) return [it];
-          const tb = ref.toolbar !== undefined ? toolbar.flatMap((g) => g.items).find((x) => x.id === ref.toolbar) : undefined;
-          return tb ? toolbarRows(tb) : [];
-        }),
-      ),
-    );
-  } else {
-    const groups = toolbar.map((g) => g.items.filter((it) => !bar.has(it.id)).flatMap(toolbarRows));
-    body = joinGroups([...groups, menu]);
-  }
-  const items = phoneMenu(body);
-  if (input.device) {
-    if (items.length) items.push(separator());
-    items.push({ id: THIS_DEVICE_ITEM, type: 'normal', label: input.device, enabled: true });
-  }
-  return { items, run };
-}
-
-/**
- * A screen's More menu from its command catalogs (shared/commands): every
- * command that shows on a phone, in `groups`' order and catalog order within a
- * group, for the session `kind` shown. A command refers to its menu-bar item,
- * and to its toolbar item where the menu bar doesn't have it.
- */
-export function catalogMore(catalogs: readonly Catalog[], groups: readonly string[], kind?: string): MoreGroup[] {
-  const commands = catalogs.flatMap((c) => Object.values(c));
-  const shows = (c: Command, group: string): boolean =>
-    showsOn(c.platforms, 'mobile') && 'group' in c.mobile && c.mobile.group === group && (kind === undefined || !c.mobile.kinds || c.mobile.kinds.includes(kind));
-  return groups.map((g) => commands.filter((c) => shows(c, g)).flatMap(commandRef)).filter((g) => g.length);
-}
-
-/** A command's entry in a More menu. */
-export function commandRef(c: Command): MoreRef[] {
-  if (c.menu) return [c.toolbar ? { item: c.menu.id, toolbar: c.toolbar.id } : { item: c.menu.id }];
-  return c.toolbar ? [{ toolbar: c.toolbar.id }] : [];
-}
-
-/** A designed menu's own command, by id. */
-export function findMoreAction(more: MoreGroup[] | undefined, id: string): MoreAction | undefined {
-  for (const g of more ?? []) for (const r of g) if ('action' in r && r.action.id === id) return r.action;
-  return undefined;
+  const groups = toolbarFor(input.toolbar ?? [], 'mobile').map((g) => g.items.flatMap(toolbarRows));
+  return { items: phoneMenu(joinGroups([...groups, commandRows(input.more?.items ?? [])])), run };
 }

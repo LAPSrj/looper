@@ -10,6 +10,7 @@ import { ChatRow, ToolGroup, UserMessage, type RowCtx } from './ChatRows';
 import { groupRows, type ChatItem } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
+import { onUi } from '../events';
 import { useChatsSettings } from './hooks';
 import { ToolInputView } from './ToolContent';
 
@@ -268,7 +269,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   };
 
   useEffect(() => {
-    return window.looper.onUi((e) => {
+    return onUi((e) => {
       if (e.type !== 'chat-find') return;
       setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
       setFindFocus((n) => n + 1);

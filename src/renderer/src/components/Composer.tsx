@@ -11,7 +11,7 @@ import { ICONS } from './icons';
 import { useAutoGrow } from './phone/auto-grow';
 import { ToolButton } from './ToolButton';
 import { isPhone } from '../web/page-nav';
-import { subscribe } from '../events';
+import { onUi, subscribe } from '../events';
 import { withShortcut } from '../shortcut';
 
 const reportError = (e: Error) => void window.looper.showError(e.message);
@@ -275,7 +275,7 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
   quoteRef.current = quoteIntoBox;
 
   useEffect(() => {
-    const unsubUi = window.looper.onUi((e) => {
+    const unsubUi = onUi((e) => {
       // File → Attach Files…: the files wait under the message box like dropped ones.
       if (e.type === 'chat-attached') setPending((p) => [...p, ...e.attachments]);
       else if (e.type === 'chat-quote') {

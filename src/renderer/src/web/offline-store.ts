@@ -1,5 +1,5 @@
 // No DOM here (the unit tests load this file under the node tsconfig): the IndexedDB side is in offline-idb.ts.
-import type { MenuItemSpec } from '../../../shared/remote-access';
+import type { MenuItemSpec, WindowRole } from '../../../shared/remote-access';
 import type { EngineEvent } from '../../../shared/types';
 import { encodeBytes } from './session';
 
@@ -52,6 +52,7 @@ const LOAD_TIMEOUT_MS = 4000;
 /** A window of the shell, as it is kept for the next launch (the iframe's `nonce` isn't). */
 export interface StoredWindow {
   w: string;
+  role: WindowRole;
   parent?: string;
   modal: boolean;
   hash: string;

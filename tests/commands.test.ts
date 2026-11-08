@@ -1,327 +1,510 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { commandMenu, commandMenuItem } from '../src/main/command-menu';
-import { serializeMenu } from '../src/main/platform/menus';
-import { projectMenuItems } from '../src/main/project-menu';
-import { taskContextMenuItems } from '../src/main/task-menu';
-import { CHAT_COMMANDS, CHAT_MORE_GROUPS } from '../src/shared/commands/chat';
-import { PROJECT_COMMANDS } from '../src/shared/commands/project';
-import { TASK_COMMANDS, TASK_MORE_GROUPS } from '../src/shared/commands/task';
-import { plainLabel, type Catalog, type Command } from '../src/shared/commands/types';
-import { showsOn } from '../src/shared/ui-platform';
-import { commandToolbar, type ToolbarItem } from '../src/renderer/src/components/toolbar-model';
+import { describe, expect, it, vi } from 'vitest';
+import { specTemplate } from '../src/main/command-menu';
+import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS, contextMenu, hiddenReasons, mainToolbarViews, mainWindowViews, menuBar, moreViewCommands, runCommand } from '../src/shared/commands/build';
+import { addonCommandId } from '../src/shared/commands/addon-commands';
+import { COMMAND_VIEWS, DESKTOP_VIEWS, MENU_BAR, noMnemonic, type CommandView } from '../src/shared/commands/command';
+import { EMPTY_CONTEXT, HOST_COMMANDS, type CommandContext } from '../src/shared/commands/context';
+import { COMMANDS } from '../src/shared/commands/list';
+import { readAddonManifest, type AddonCommand, type AddonInfo } from '../src/shared/addons';
+import type { MenuItemSpec } from '../src/shared/remote-access';
+import { SettingsSchema, type Task, type TaskRuntime } from '../src/shared/types';
+import { commandToolbar, phoneActions, phoneMore } from '../src/renderer/src/components/command-surfaces';
 import { composeMore } from '../src/renderer/src/web/more-menu';
 
-type Item = Electron.MenuItemConstructorOptions;
+const task = (o: Partial<Task> = {}) => ({ id: 't1', name: 'Nightly', enabled: true, maxConcurrentRuns: 1, completion: { allowed: true }, ...o }) as Task;
+const runtime = (state: string, runs = 0) => ({ taskId: 't1', state, runs: Array.from({ length: runs }, () => ({})) }) as unknown as TaskRuntime;
 
+/** A context whose API calls are spies, by "namespace.method". */
+function context(over: Partial<CommandContext> = {}, here: CommandContext['here'] = 'desktop'): CommandContext & { calls: string[] } {
+  const calls: string[] = [];
+  const spy = (name: string): unknown =>
+    new Proxy(() => undefined, {
+      get: (_t, key: string) => (key === 'then' ? undefined : spy(`${name}.${key}`)),
+      apply: () => {
+        calls.push(name);
+        return Promise.resolve(true);
+      },
+    });
+  return { ...EMPTY_CONTEXT, looper: spy('looper') as never, here, host: (n) => void calls.push(`host.${n}`), calls, ...over };
+}
+
+const labels = (items: MenuItemSpec[]) => items.map((i) => (i.type === 'separator' ? '-' : noMnemonic(i.label ?? '')));
+const menu = (views: readonly CommandView[], name: string, c: CommandContext) => menuBar(views, c).find((m) => m.key === name)?.submenu ?? [];
 const src = (...p: string[]) => fs.readFileSync(path.join(__dirname, '..', 'src', ...p), 'utf8');
-/** The source from `start` to the end of its block (the first line that is `end`). */
-const block = (text: string, start: string, end = '\n}\n'): string => {
-  const at = text.indexOf(start);
-  expect(at, start).toBeGreaterThanOrEqual(0);
-  return text.slice(at, text.indexOf(end, at));
-};
+const addonWith = (id: string, commands: Partial<AddonCommand>[], over: Partial<AddonInfo> = {}) =>
+  ({ id, name: id, enabled: true, status: 'running', commands, tabs: [], panes: [{ id: 'list', title: 'List' }], toolCalls: [], ...over }) as unknown as AddonInfo;
 
-/** The catalogs, with the More menu groups of the screens that list them. */
-const CATALOGS: [string, Catalog, readonly string[]][] = [
-  ['chat', CHAT_COMMANDS, CHAT_MORE_GROUPS],
-  ['task', TASK_COMMANDS, TASK_MORE_GROUPS],
-  ['project', PROJECT_COMMANDS, TASK_MORE_GROUPS],
-];
+describe('the one list', () => {
+  it('has one id for each command', () => {
+    const ids = COMMANDS.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 
-const shape = (items: Item[]) =>
-  items.map((i) => (i.type === 'separator' ? '-' : [i.id, i.label, i.accelerator, i.glyph, i.platforms, i.registerAccelerator]));
+  it('fails the typecheck for a command with no view, no placement or a hide with no reason', () => {
+    // @ts-expect-error A command has to say which views it's in.
+    const noView: (typeof COMMANDS)[number] = { id: 'x', label: 'x', group: 'x' };
+    // @ts-expect-error A placement has to say where.
+    const noPlace: (typeof COMMANDS)[number] = { id: 'x', label: 'x', group: 'x', in: { task: {} } };
+    // @ts-expect-error A hide has to say why.
+    const noReason: (typeof COMMANDS)[number] = { id: 'x', label: 'x', group: 'x', hide: [{ on: ['mobile'] }], in: { task: { menu: 'task' } } };
+    expect([noView, noPlace, noReason]).toHaveLength(3);
+  });
 
-describe('the command catalogs', () => {
-  it('place every command on a phone, or hide it with a reason', () => {
-    for (const [name, catalog, groups] of CATALOGS) {
-      for (const [key, c] of Object.entries(catalog)) {
-        const where = `${name}.${key}`;
-        expect(c.menu || c.toolbar, `${where} has a menu item or a toolbar button`).toBeTruthy();
-        if ('hidden' in c.mobile) expect(c.mobile.hidden.trim().length, `${where}'s reason`).toBeGreaterThan(10);
-        else {
-          expect(groups, where).toContain(c.mobile.group);
-          // A command the platform marks keep off a phone says so with a reason, not a group.
-          expect(showsOn(c.platforms, 'mobile'), `${where} is placed on a phone but marked off it`).toBe(true);
-        }
+  it('says why every time it leaves a command out', () => {
+    const reasons = hiddenReasons();
+    expect(reasons.length).toBeGreaterThan(20);
+    for (const r of reasons) expect(r.why.trim().length, r.id).toBeGreaterThan(10);
+  });
+
+  it('puts every view and menu it names in the known lists', () => {
+    const menus = new Set<string>(MENU_BAR.map((m) => m.name));
+    for (const cmd of COMMANDS) {
+      for (const [view, where] of Object.entries(cmd.in)) {
+        expect(COMMAND_VIEWS as readonly string[], cmd.id).toContain(view);
+        if (where?.menu) expect(menus.has(where.menu), cmd.id).toBe(true);
       }
     }
   });
 
-  it('give each menu item and toolbar button one id', () => {
-    for (const [name, catalog] of CATALOGS) {
-      const menus = Object.values(catalog).flatMap((c) => (c.menu ? [c.menu.id] : []));
-      const buttons = Object.values(catalog).flatMap((c) => (c.toolbar ? [c.toolbar.id] : []));
-      expect(new Set(menus).size, name).toBe(menus.length);
-      expect(new Set(buttons).size, name).toBe(buttons.length);
+  it('has a place on a phone for every command, or a written reason', () => {
+    const phone = context({}, 'mobile');
+    for (const cmd of COMMANDS) {
+      const placedOnScreen = (Object.keys(cmd.in) as CommandView[]).some((v) => !DESKTOP_VIEWS.includes(v));
+      const hiddenFromPhone = cmd.hide?.some((h) => h.on?.includes('mobile'));
+      const inMoreView = moreViewCommands(phone).includes(cmd);
+      // A desktop-only view's command needs a phone reason, or it falls to the More view.
+      expect(placedOnScreen || hiddenFromPhone || inMoreView || !!cmd.hide?.length, cmd.id).toBe(true);
     }
   });
 
-  it('mark what destroys or cuts something off', () => {
-    const marked = CATALOGS.flatMap(([name, catalog]) => Object.entries(catalog).flatMap(([key, c]) => (c.destructive ? [`${name}.${key}`] : [])));
-    expect(marked).toEqual(['chat.close', 'chat.stop', 'chat.closeAll', 'task.stop', 'task.noteClear', 'task.clearRuns', 'task.delete', 'project.delete']);
+  it('sends every host command it names to a name the main process knows', () => {
+    const named = [...src('shared', 'commands', 'list.ts').matchAll(/(?:c\.host\(|host\s*:\s*)'([a-z-]+)'/g)].map((m) => m[1]);
+    for (const name of named) expect(HOST_COMMANDS as readonly string[]).toContain(name);
+    const table = src('main', 'index.ts');
+    for (const name of HOST_COMMANDS) expect(table, name).toMatch(new RegExp(`(^|\\s)'?${name}'?: (async )?\\(`, 'm'));
   });
 });
 
-describe('menus built from the catalogs', () => {
-  it('build the Task menu as it was: labels, keys, glyphs, separators and the second states', () => {
-    const b = { click: () => {} };
-    const menu = (alt: boolean) =>
-      commandMenu(TASK_COMMANDS, 'task', {
-        runNow: b,
-        stop: b,
-        pauseResume: { ...b, alt },
-        enableDisable: { ...b, alt },
-        complete: { ...b, alt },
-        edit: b,
-        editAgent: b,
-        versions: b,
-        delete: b,
-        note: { ...b, alt },
-        noteClear: b,
-        moveFolder: b,
-        clearRuns: b,
-        workFolder: b,
-      });
-    expect(shape(menu(false))).toEqual([
-      ['task-run-now', '&Run Now', 'F5', 'run', undefined, undefined],
-      ['task-stop', '&Stop Task', 'Shift+F5', 'stop', undefined, undefined],
-      ['task-pause-resume', '&Pause', 'F7', 'pause', undefined, undefined],
-      ['task-enable-disable', '&Disable', undefined, 'power', undefined, undefined],
-      ['task-complete', 'C&omplete', undefined, 'complete', undefined, undefined],
-      ['task-edit', '&Edit Task…', 'CmdOrCtrl+E', 'edit', undefined, undefined],
-      ['task-edit-agent', 'Edit with &Agent…', undefined, undefined, undefined, undefined],
-      ['task-versions', '&Version History', undefined, undefined, undefined, undefined],
-      ['task-delete', 'De&lete Task', undefined, 'delete', undefined, undefined],
-      '-',
-      ['task-note', 'Add &Guidance for Next Run…', undefined, 'guidance', undefined, undefined],
-      ['task-note-clear', 'Clear Guidance', undefined, undefined, undefined, undefined],
-      '-',
-      ['task-move-folder', 'Move to &Folder…', undefined, 'folder', undefined, undefined],
-      ['task-clear-runs', 'Clear Run &History…', undefined, undefined, undefined, undefined],
-      '-',
-      ['task-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
-    ]);
-    const other = menu(true);
-    expect(other.filter((i) => i.type !== 'separator').map((i) => [i.label, i.glyph]).filter((_x, n) => [2, 3, 4, 9].includes(n))).toEqual([
-      ['&Resume', 'resume'],
-      ['E&nable', 'power'],
-      ['Re&open', 'complete'],
-      ['Edit &Guidance for Next Run…', 'guidance'],
-    ]);
-    expect(menu(false).find((i) => i.id === 'task-delete')!.destructive).toBe(true);
-  });
+describe('a task on every surface', () => {
+  const views = mainWindowViews('tasks');
 
-  it('build the Chat menu, the Chats window’s File items and Find as they were', () => {
-    const b = { click: () => {} };
-    const chat = commandMenu(CHAT_COMMANDS, 'chat', {
-      stop: b,
-      sendNow: b,
-      restart: b,
-      harness: { submenu: [] },
-      model: { submenu: [] },
-      effort: { submenu: [] },
-      permissionMode: { submenu: [] },
-      compact: b,
-      rename: b,
-      autoContinue: { ...b, checked: true },
-      copySessionId: b,
-    });
-    expect(chat.find((i) => i.id === 'chat-auto-continue')).toMatchObject({ type: 'checkbox', checked: true });
-    expect(shape(chat)).toEqual([
-      ['chat-stop', '&Stop', 'Esc', 'stopChat', undefined, false],
-      ['chat-send-now', 'Send &Now', 'CmdOrCtrl+Enter', 'sendNow', undefined, undefined],
-      ['chat-restart', '&Restart Agent', undefined, 'restartAgent', undefined, undefined],
-      '-',
-      ['chat-harness', '&Harness', undefined, undefined, undefined, undefined],
-      ['chat-model', '&Model', undefined, undefined, undefined, undefined],
-      ['chat-effort', '&Effort', undefined, undefined, undefined, undefined],
-      ['chat-permission-mode', '&Permission Mode', undefined, undefined, undefined, undefined],
-      '-',
-      ['chat-compact', '&Compact into New Chat', undefined, 'compact', undefined, undefined],
-      ['chat-rename', 'Ren&ame…', 'F2', undefined, undefined, false],
-      ['chat-auto-continue', 'Continue &When Limit Resets', undefined, undefined, undefined, undefined],
-      ['chat-copy-session-id', 'Copy Session &ID', undefined, 'copy', undefined, undefined],
-    ]);
-    const file = (single: boolean) =>
-      commandMenu(CHAT_COMMANDS, 'file', {
-        attach: b,
-        saveMarkdown: b,
-        openInNewWindow: single ? null : b,
-        openWorkFolder: b,
-        sendToChats: single ? null : b,
-        close: b,
-        closeAll: single ? null : b,
-      });
-    expect(shape(file(false))).toEqual([
-      ['chat-attach', '&Attach Files…', 'CmdOrCtrl+O', 'attach', undefined, undefined],
-      ['chat-save-markdown', '&Save as Markdown…', 'CmdOrCtrl+S', undefined, undefined, undefined],
-      '-',
-      ['chat-open-window', 'Open in &New Window', undefined, undefined, ['desktop', 'web'], undefined],
-      ['chat-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
-      ['chat-send-to-chats', 'Send to C&hats…', undefined, 'bullhorn', undefined, undefined],
-      '-',
-      ['chat-close', 'Close C&onversation', 'CmdOrCtrl+W', 'closeChat', undefined, false],
-      ['chat-close-all', 'Close A&ll Conversations', undefined, undefined, undefined, undefined],
-    ]);
-    // A single chat's window: only what is about its chat.
-    expect(file(true).map((i) => i.id ?? '-')).toEqual(['chat-attach', 'chat-save-markdown', '-', 'chat-work-folder', '-', 'chat-close']);
-    expect(shape(commandMenu(CHAT_COMMANDS, 'edit', { find: b }))).toEqual([['chat-find', '&Find…', 'CmdOrCtrl+F', 'search', undefined, undefined]]);
-  });
-
-  it('build the task’s context menu from the catalog, in its own order, with the Task menu’s items', () => {
-    const info = { enabled: true, completed: false, allowComplete: true, state: 'idle', held: false, hasNote: false };
-    const sent: string[] = [];
-    const items = taskContextMenuItems(info, (type) => sent.push(type));
-    expect(shape(items)).toEqual([
-      ['task-run-now', '&Run Now', 'F5', 'run', undefined, undefined],
-      ['task-stop', '&Stop Task', 'Shift+F5', 'stop', undefined, undefined],
-      ['task-pause-resume', '&Pause', 'F7', 'pause', undefined, undefined],
-      ['task-enable-disable', '&Disable', undefined, 'power', undefined, undefined],
-      ['task-complete', 'C&omplete', undefined, 'complete', undefined, undefined],
-      ['task-edit', '&Edit Task…', 'CmdOrCtrl+E', 'edit', undefined, undefined],
-      ['task-edit-agent', 'Edit with &Agent…', undefined, undefined, undefined, undefined],
-      ['task-versions', '&Version History', undefined, undefined, undefined, undefined],
-      ['task-delete', 'De&lete Task', undefined, 'delete', undefined, undefined],
-      '-',
-      ['task-note', 'Add &Guidance for Next Run…', undefined, 'guidance', undefined, undefined],
-      ['task-note-clear', 'Clear Guidance', undefined, undefined, undefined, undefined],
-      '-',
-      ['task-move-folder', 'Move to &Folder…', undefined, 'folder', undefined, undefined],
-      ['task-clear-runs', 'Clear Run &History…', undefined, undefined, undefined, undefined],
-      '-',
-      [undefined, 'Open Project in Terminal', undefined, undefined, undefined, undefined],
-      [undefined, 'Open Project in Chat', undefined, undefined, undefined, undefined],
-      ['task-work-folder', 'Open &Working Directory', undefined, undefined, undefined, undefined],
-    ]);
-    // Each catalog command's item is the Task menu's, its destructive mark included; only the project's two are the menu's own.
-    const byId = new Map<string, Command>(Object.values(TASK_COMMANDS).map((c) => [c.menu.id, c]));
-    for (const it of items.filter((i) => i.id)) expect(it.destructive, it.id).toBe(byId.get(it.id!)!.destructive);
-    expect(items.filter((i) => i.destructive).map((i) => i.id)).toEqual(['task-stop', 'task-delete', 'task-note-clear', 'task-clear-runs']);
-    expect(items.filter((i) => i.type !== 'separator' && !i.id).map((i) => i.label)).toEqual(['Open Project in Terminal', 'Open Project in Chat']);
-    // The enabled rules: idle, with nothing to clear.
-    expect(items.filter((i) => i.enabled === false).map((i) => i.id)).toEqual(['task-stop', 'task-note-clear']);
-    for (const it of items) (it.click as (() => void) | undefined)?.();
-    expect(sent).toEqual([
-      'run-now', 'stop-task', 'pause-resume', 'enable-disable', 'complete-reopen', 'edit-task', 'edit-with-agent', 'version-history', 'delete-task',
-      'edit-note', 'clear-note', 'move-to-folder', 'clear-runs', 'open-terminal', 'open-chat', 'open-work-folder',
-    ]);
-    // The second states, and a running task at its cap of runs.
-    const other = taskContextMenuItems({ ...info, enabled: false, completed: true, state: 'paused', hasNote: true }, () => {});
-    expect(other.filter((i) => ['task-pause-resume', 'task-enable-disable', 'task-complete', 'task-note'].includes(i.id ?? '')).map((i) => [i.label, i.glyph])).toEqual([
-      ['&Resume', 'resume'],
-      ['E&nable', 'power'],
-      ['Re&open', 'complete'],
-      ['Edit &Guidance for Next Run…', 'guidance'],
-    ]);
-    const running = taskContextMenuItems({ ...info, state: 'running', activeRuns: 1, maxRuns: 1 }, () => {});
-    expect(running.filter((i) => i.enabled === false).map((i) => i.id)).toEqual(['task-run-now', 'task-note-clear', 'task-clear-runs']);
-  });
-
-  it('names the shown project in a label the binding gives', () => {
-    expect(commandMenuItem(CHAT_COMMANDS.newChatInProject, { label: 'Chat in Web app' }).label).toBe('Chat in Web app');
-    expect(commandMenuItem(CHAT_COMMANDS.newChatInProject, {}).label).toBe('Chat in Project');
-  });
-
-  it('builds the Project menu as it was, with a separator after New Terminal', () => {
-    expect(shape(projectMenuItems(() => {}))).toEqual([
-      ['project-new-task', 'New &Task…', undefined, 'newTask', undefined, undefined],
-      ['project-new-chat', 'New &Chat', undefined, 'newChat', undefined, undefined],
-      ['project-new-terminal', 'New Ter&minal', undefined, 'terminal', undefined, undefined],
-      '-',
-      ['project-edit', '&Edit Project…', undefined, 'edit', undefined, undefined],
-      ['project-folder', 'Open &Folder', undefined, undefined, undefined, undefined],
-      ['project-delete', '&Delete Project…', undefined, 'delete', undefined, undefined],
-    ]);
-  });
-
-  it('sends the destructive mark to the phone with the menu', () => {
-    const item = commandMenuItem(TASK_COMMANDS.delete, {});
-    const { items } = serializeMenu({ items: [{ ...item, submenu: null }] as never });
-    expect(items[0]).toMatchObject({ key: 'task-delete', label: 'Delete Task', icon: 'delete', destructive: true });
-  });
-
-  it('fails the typecheck when a menu or toolbar command has no binding', () => {
-    // @ts-expect-error: the Edit menu's Find has no binding.
-    expect(() => commandMenu(CHAT_COMMANDS, 'edit', {})).not.toThrow();
-    // @ts-expect-error: the edit group's Open Working Directory has no binding.
-    expect(() => commandToolbar(TASK_COMMANDS, 'edit', { edit: { run: null } })).not.toThrow();
-  });
-});
-
-describe('toolbars built from the catalogs', () => {
-  const run = () => {};
-  const view = (items: ToolbarItem[]) => items.map((i) => [i.id, i.label, i.shortcut, i.icon, i.platforms]);
-
-  it('take the menu label without its & and "…", the key as a hint, and the icon', () => {
-    expect(view(commandToolbar(TASK_COMMANDS, 'edit', { edit: { run }, workFolder: { run } }))).toEqual([
-      ['edit-task', 'Edit Task', 'Ctrl+E', 'edit', undefined],
-      ['open-work-folder', 'Open Working Directory', undefined, 'openFolder', undefined],
-    ]);
-    expect(view(commandToolbar(TASK_COMMANDS, 'task', { runNow: { run }, stop: { run }, pauseResume: { run, alt: true }, enableDisable: { run }, complete: { run }, note: { run } }))).toEqual([
-      ['run-now', 'Run Now', 'F5', 'run', undefined],
-      ['stop-task', 'Stop Task', 'Shift+F5', 'stop', undefined],
-      ['pause-resume', 'Resume', 'F7', 'resume', undefined],
-      ['enable-disable', 'Disable', undefined, 'power', undefined],
-      ['complete-reopen', 'Complete', undefined, 'complete', undefined],
-      ['edit-note', 'Add Guidance for Next Run', undefined, 'guidance', undefined],
-    ]);
-    expect(view(commandToolbar(CHAT_COMMANDS, 'views', { dashboard: { run }, history: { run }, sendToChats: { run } }))).toEqual([
-      ['dashboard', 'Dashboard', undefined, 'dashboard', undefined],
-      ['history', 'History', undefined, 'history', undefined],
-      ['send-to-chats', 'Send to Chats', undefined, 'bullhorn', undefined],
-    ]);
-    // A chat's Esc; a terminal's goes to the agent, so its tooltip names none.
-    expect(commandToolbar(CHAT_COMMANDS, 'session', { stop: { run, shortcut: false }, sendNow: { run }, restart: { run }, compact: { run }, close: { run }, openWorkFolder: { run } }).map((i) => i.shortcut)).toEqual([
-      undefined,
-      'Ctrl+Enter',
-      undefined,
-      undefined,
-      'Ctrl+W',
-      undefined,
-    ]);
-    expect(plainLabel('Fish && Chips…')).toBe('Fish & Chips');
-  });
-
-  it('carry the destructive mark into the phone’s More menu', () => {
-    const items = commandToolbar(CHAT_COMMANDS, 'session', { stop: { run }, sendNow: { run }, restart: { run }, compact: { run }, close: { run }, openWorkFolder: { run } });
-    expect(items.filter((i) => i.destructive).map((i) => i.id)).toEqual(['stop', 'close-conversation']);
-    const more = composeMore({ toolbar: [{ id: 'session', items }], menu: [], more: [[{ toolbar: 'close-conversation' }]] });
-    expect(more.items).toMatchObject([{ label: 'Close Conversation', destructive: true }]);
-  });
-});
-
-describe('no command outside the catalogs', () => {
-  // Menu item ids of the Chats window's, the Task menu's and the Project menu's commands are the catalogs'.
-  // Listed here with why, any that aren't catalog commands: none.
-  const NOT_CATALOG: Record<string, string> = {};
-
-  it('writes no chat-, task- or project- menu item id in the menu code', () => {
-    for (const file of [['main', 'index.ts'], ['main', 'file-menu.ts'], ['main', 'project-menu.ts'], ['main', 'task-menu.ts']]) {
-      const ids = [...src(...file).matchAll(/id: '((?:chat|task|project)-[\w-]+)'/g)].map((m) => m[1]).filter((id) => !(id in NOT_CATALOG));
-      expect(ids, file.join('/')).toEqual([]);
-    }
-  });
-
-  it('writes no item of its own into the Chat and Task menus or the Chats window’s File items', () => {
-    const index = src('main', 'index.ts');
-    expect([...block(index, 'function chatMenu(').matchAll(/label: /g)].length).toBe(1); // the menu's own, &Chat
-    expect([...block(index, "id: 'task',", 'as Electron.MenuItemConstructorOptions').matchAll(/label: /g)].length).toBe(1); // &Task
-    expect(block(index, 'const fileItems = ', '});\n')).not.toMatch(/label: /);
-  });
-
-  it('builds the Chats and Tasks toolbars’ buttons only through commandToolbar', () => {
-    const groups = [
-      block(src('renderer', 'src', 'SessionsApp.tsx'), 'export function sessionsToolbarGroups('),
-      block(src('renderer', 'src', 'components', 'TaskToolbar.tsx'), 'export function taskToolbarGroups('),
-      block(src('renderer', 'src', 'components', 'phone', 'TerminalKeys.tsx'), 'toolbar={[', ']}'),
+  it('builds the Task menu in the one order, with the project’s New Chat and New Terminal, Delete in its own last group', () => {
+    const c = context({ task: task(), tab: 'tasks' });
+    const order = [
+      'Run Now', 'Stop Task', 'Pause', 'Disable', 'Complete', '-',
+      'Edit Task…', 'Edit with Agent…', 'Add Guidance for Next Run…', 'Clear Guidance', '-',
+      'Move to Folder…', 'Version History', 'Clear Run History…', 'Open Working Directory', '-',
+      'New Chat', 'New Terminal', '-',
+      'Delete Task',
     ];
-    const buttonIds = CATALOGS.flatMap(([, c]) => Object.values(c).flatMap((x) => (x.toolbar ? [x.toolbar.id] : [])));
-    for (const body of groups) {
-      expect(body).not.toMatch(/\bicon: /);
-      expect([...body.matchAll(/items: /g)].length).toBe([...body.matchAll(/items: commandToolbar\(/g)].length);
-      for (const id of buttonIds) expect(body).not.toContain(`id: '${id}'`);
+    expect(labels(menu(views, 'task', c))).toEqual(order);
+    // A task's own window, and a view window of tasks, which have no Project menu.
+    expect(labels(menu(mainWindowViews('tasks', true, true), 'task', context({ task: task(), tab: 'tasks', fixed: true, item: true })))).toEqual(order);
+    expect(labels(menu(mainWindowViews('tasks', true), 'task', context({ task: task(), tab: 'tasks', fixed: true })))).toEqual(order);
+    // The Project menu keeps them too.
+    expect(labels(menu(views, 'project', context({ task: task(), tab: 'tasks', project: { id: 'p', name: 'Site' } as never })))).toEqual(expect.arrayContaining(['New Chat', 'New Terminal']));
+  });
+
+  it('builds the toolbar in that order, on the Tasks tab only', () => {
+    const c = context({ task: task(), tab: 'tasks' });
+    const groups = commandToolbar(['task'], c).map((g) => g.items.map((i) => i.label));
+    expect(groups).toEqual([
+      ['Run Now', 'Stop Task', 'Pause', 'Disable', 'Complete'],
+      ['Edit Task', 'Add Guidance for Next Run', 'Open Working Directory'],
+    ]);
+    expect(mainToolbarViews('dashboard')).not.toContain('task');
+    expect(mainToolbarViews('tasks')).toContain('task');
+  });
+
+  it('builds the right-click menu with the project’s two and without Export', () => {
+    const c = context({ task: task(), project: { id: 'p', name: 'Site' } as never });
+    const items = labels(contextMenu('task', c));
+    expect(items).toContain('New Chat');
+    expect(items).toContain('New Terminal');
+    expect(items).not.toContain('Export Task…');
+    expect(items).not.toContain('Edit Project…');
+  });
+
+  it('follows the state: the same rules on every surface', () => {
+    const idle = context({ task: task(), runtime: runtime('idle') });
+    const atCap = context({ task: task(), runtime: runtime('running', 1) });
+    const enabled = (c: CommandContext, label: string) => menu(views, 'task', c).find((i) => noMnemonic(i.label ?? '') === label)?.enabled;
+    expect(enabled(idle, 'Run Now')).toBe(true);
+    expect(enabled(idle, 'Stop Task')).toBe(false);
+    expect(enabled(atCap, 'Run Now')).toBe(false);
+    expect(enabled(atCap, 'Stop Task')).toBe(true);
+    expect(enabled(atCap, 'Clear Run History…')).toBe(false);
+    const buttons = (c: CommandContext) => commandToolbar(['task'], c).flatMap((g) => g.items);
+    expect(buttons(idle).find((i) => i.id === 'runNow')?.enabled).toBe(true);
+    expect(buttons(atCap).find((i) => i.id === 'runNow')?.enabled).toBe(false);
+  });
+
+  it('shows the alternate label and icon', () => {
+    const paused = context({ task: task({ enabled: false, completedAt: 'x', note: 'n' } as never), runtime: runtime('paused') });
+    const items = menu(views, 'task', paused);
+    const byId = (id: string) => items.find((i) => i.id === id);
+    expect(byId('pauseResume')).toMatchObject({ label: '&Resume', icon: 'resume' });
+    expect(byId('enableDisable')?.label).toBe('E&nable');
+    expect(byId('completeReopen')?.label).toBe('Re&open');
+    expect(byId('note')?.label).toBe('Edit &Guidance for Next Run…');
+  });
+
+  it('puts what fits on a phone’s bar, and the rest in More without repeating it', () => {
+    const bar = (c: CommandContext) => phoneActions(['task'], c).map((a) => a.label);
+    const phone = (state: string, runs: number, max = 1) => context({ task: task({ maxConcurrentRuns: max }), runtime: runtime(state, runs) }, 'mobile');
+    expect(bar(phone('idle', 0))).toEqual(['Run Now', 'Edit Task']);
+    expect(bar(phone('running', 1))).toEqual(['Stop Task', 'Edit Task']);
+    expect(bar(phone('running', 1, 3))).toEqual(['Run Now', 'Stop Task']);
+    const more = labels(phoneMore(['task'], phone('idle', 0)));
+    expect(more).not.toContain('Run Now');
+    expect(more).not.toContain('Edit Task…');
+    expect(more).toContain('Pause');
+    expect(more).toContain('Delete Task');
+    expect(more).not.toContain('Edit Project…');
+  });
+
+  it('shows a phone’s More in the one order, what can’t run hidden and the red ones last', () => {
+    const items = composeMore({ more: { items: phoneMore(['task'], context({ task: task({ note: 'n' } as never), runtime: runtime('idle'), project: { id: 'p', name: 'Site' } as never, settings: { view: { runFilter: { hideSkipped: false, hideNoAction: false } } } as never }, 'mobile')), run: () => undefined } }).items;
+    expect(labels(items)).toEqual([
+      'Pause', 'Disable', 'Complete', '-',
+      'Edit with Agent…', 'Edit Guidance for Next Run…', '-',
+      'Move to Folder…', 'Version History', 'Open Working Directory', '-',
+      'Export Task…', '-',
+      'New Chat', 'New Terminal', '-',
+      'Task Runs', '-',
+      'Clear Guidance', 'Clear Run History…', 'Delete Task',
+    ]);
+  });
+
+  it('runs the same code from every surface, on the task it was asked for', () => {
+    const c = context({ task: task(), runtime: runtime('running', 1) });
+    runCommand('stopTask', c);
+    expect(c.calls).toEqual(['looper.runtime.stopTask']);
+    const idle = context({ task: task(), runtime: runtime('idle') });
+    runCommand('stopTask', idle);
+    expect(idle.calls).toEqual([]);
+  });
+});
+
+describe('the menu bar', () => {
+  it('keeps its order, and shows a Chat menu only with a chat', () => {
+    const none = context({ tab: 'chats', chats: undefined });
+    expect(menuBar(mainWindowViews('chats'), none).map((m) => m.key)).toEqual(['file', 'edit', 'view', 'tools', 'advanced', 'window', 'help']);
+    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code' };
+    const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
+    const withChat = context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never });
+    expect(menuBar(mainWindowViews('chats'), withChat).map((m) => m.key)).toEqual(['file', 'edit', 'view', 'chat', 'tools', 'advanced', 'window', 'help']);
+  });
+
+  it('has only what a view window’s view is about', () => {
+    const c = context({ tab: 'tasks', fixed: true });
+    const keys = menuBar(mainWindowViews('tasks', true), c).map((m) => m.key);
+    expect(keys).toEqual(['file', 'view', 'task', 'window']);
+    expect(labels(menu(mainWindowViews('tasks', true), 'file', c))).toContain('Close Window');
+    expect(labels(menu(mainWindowViews('tasks', true), 'file', c))).not.toContain('New Project…');
+  });
+
+  it('has only a chat’s own items in a single chat’s window, Close Conversation and Close Window together', () => {
+    const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
+    const c = context({ chats: { single: true, tab: false, selected: 'c', summary, chat: null, sessions: [summary], shown: { windowToolbar: true } } as never });
+    const file = labels(menu(CHAT_WINDOW_VIEWS, 'file', c));
+    expect(file).toContain('Save as Markdown…');
+    expect(file).not.toContain('Send to Chats…');
+    expect(file).not.toContain('Open in New Window');
+    expect(file).not.toContain('New Chat');
+    expect(file.slice(-3)).toEqual(['-', 'Close Conversation', 'Close Window']);
+    expect(labels(menu(CHAT_WINDOW_VIEWS, 'view', c))).toContain('Toolbar');
+    const toolbar = commandToolbar(['conversation'], c).flatMap((g) => g.items.map((i) => i.id));
+    expect(toolbar).toEqual(expect.arrayContaining(['stop', 'activity', 'closeConversation']));
+    expect(toolbar).not.toContain('sendToChats');
+  });
+
+  it('puts History first in Tools, then Recycle Bin and Templates, the addons’ tools, and the settings last', () => {
+    const c = context({ addons: [addonWith('a', [{ id: 't', label: 'Servers', in: { app: { menu: 'tools' } } }])] });
+    expect(labels(menu(mainWindowViews('tasks'), 'tools', c))).toEqual(['History', 'Recycle Bin', 'Templates', '-', 'Servers', '-', 'Agent Settings…', 'Settings']);
+    expect(labels(menu(mainWindowViews('tasks'), 'window', c))).not.toContain('History');
+    expect(labels(menu(CHATS_WINDOW_VIEWS, 'tools', context({ chats: { single: false, tab: false, selected: null, summary: undefined, chat: null, sessions: [], shown: {} } as never })))).toEqual(['History']);
+  });
+
+  it('puts an addon’s New items beside Looper’s, and only its own in a view window of its tab', () => {
+    const addon = (id: string) => addonWith(id, [{ id: 'new', label: `New ${id}…`, icon: 'add', in: { new: { toolbar: true } } }]);
+    const c = context({ tab: 'tasks', addons: [addon('servers'), addon('keys')] });
+    const newGroup = commandToolbar(mainToolbarViews('tasks'), c)[0].items.map((i) => i.label);
+    expect(newGroup).toEqual(['New Project', 'New Task', 'New Chat', 'New servers', 'New keys']);
+    expect(labels(menu(mainWindowViews('tasks'), 'file', c))).toEqual(expect.arrayContaining(['New servers…', 'New keys…']));
+    const own = context({ tab: 'addon/servers/overview', fixed: true, addons: [addon('servers'), addon('keys')] });
+    expect(commandToolbar(mainToolbarViews('addon/servers/overview', true), own).flatMap((g) => g.items.map((i) => i.label))).toEqual(['New servers']);
+    runCommand(addonCommandId('servers', 'new'), c);
+    expect(c.calls).toEqual(['looper.addons.event']);
+  });
+
+  it('draws the Chats window’s toolbar without File’s other New items', () => {
+    const c = context({ chats: { single: false, tab: false, selected: null, summary: undefined, chat: null, sessions: [], shown: {} } as never });
+    const ids = commandToolbar(['new', 'chats', 'conversation'], c).flatMap((g) => g.items.map((i) => i.id));
+    expect(ids).not.toContain('newProject');
+    expect(ids).not.toContain('newTask');
+    expect(ids).toContain('newChat');
+    expect(ids).toContain('newTerminal');
+    // Off with nothing shown, not gone, so the buttons don't move.
+    const buttons = commandToolbar(['new', 'chats', 'conversation'], c).flatMap((g) => g.items);
+    expect(buttons.filter((i) => ['stop', 'sendNow', 'restartAgent', 'compact', 'closeConversation', 'conversationWorkFolder'].includes(i.id)).map((i) => [i.id, i.enabled])).toEqual([
+      ['stop', false],
+      ['sendNow', false],
+      ['restartAgent', false],
+      ['compact', false],
+      ['conversationWorkFolder', false],
+      ['closeConversation', false],
+    ]);
+    expect(labels(menu(CHATS_WINDOW_VIEWS, 'file', c))).toContain('New Project…');
+  });
+});
+
+describe('a menu sent as data', () => {
+  it('becomes Electron’s, with a click that comes back as the item’s id', () => {
+    const pick = vi.fn();
+    const template = specTemplate(
+      [
+        { id: 'a', key: 'a', type: 'normal', label: '&A', enabled: true, accelerator: 'F5', icon: 'run', destructive: true },
+        { id: '-1', type: 'separator', enabled: true },
+        { id: 'b', key: 'b', type: 'checkbox', label: 'B', enabled: false, checked: true },
+        { id: 'c', key: 'c', type: 'normal', label: 'C', enabled: true, role: 'copy', registerAccelerator: false },
+      ],
+      pick,
+    );
+    expect(template[0]).toMatchObject({ id: 'a', label: '&A', accelerator: 'F5', glyph: 'run', destructive: true });
+    expect(template[1]).toEqual({ type: 'separator' });
+    expect(template[2]).toMatchObject({ type: 'checkbox', checked: true, enabled: false });
+    expect(template[3]).toMatchObject({ role: 'copy', registerAccelerator: false });
+    expect(template[3].click).toBeUndefined();
+    (template[0].click as () => void)();
+    expect(pick).toHaveBeenCalledWith('a');
+  });
+
+  it('fills in what only the main process knows, and leaves no stray separator', () => {
+    const template = specTemplate(
+      [
+        { id: 'x', key: 'x', type: 'normal', label: 'X', enabled: true },
+        { id: '-1', type: 'separator', enabled: true },
+        { id: 'w', key: 'open-windows', type: 'normal', label: 'Open Windows', enabled: true },
+      ],
+      () => undefined,
+      (key) => (key === 'open-windows' ? [] : undefined),
+    );
+    expect(template.map((t) => t.label)).toEqual(['X']);
+  });
+
+  it('runs a choice through its command', () => {
+    const run = vi.fn();
+    const c = context({ settings: { view: { tabs: { position: 'top', labels: true, icons: true } } } as never, setView: run });
+    runCommand('tabs/left', c);
+    expect(run).toHaveBeenCalledWith({ tabs: { position: 'left', labels: true, icons: true } });
+  });
+});
+
+describe('a phone', () => {
+  const settings = { view: { runFilter: { hideSkipped: false, hideNoAction: false }, single: {}, panes: {}, phoneTaskKind: 'all', projectsPane: { groupBy: 'none' } } } as never;
+
+  it('offers Task Runs only on a task’s screen', () => {
+    const c = context({ task: task(), settings }, 'mobile');
+    expect(labels(phoneMore(['task'], c))).toContain('Task Runs');
+    expect(labels(phoneMore(['tasks'], c))).not.toContain('Task Runs');
+    expect(labels(phoneMore(['dashboard'], c))).not.toContain('Task Runs');
+  });
+
+  it('keeps a run’s Raw Messages, Raw Agent Output, Auto Scroll and Filter on its Details tab, and has no Show Run Log', () => {
+    const run = (tab: 'result' | 'details') =>
+      context({ run: { taskId: 't1', runId: 'r', title: 'x', workFolder: true, canContinue: { chat: true, terminal: true, guidance: true, compact: true }, raw: false, rawOutput: false, autoScroll: false, filter: '', tab, set: () => undefined } }, 'mobile');
+    const details = labels(phoneMore(['run'], run('details')));
+    expect(details).toEqual(expect.arrayContaining(['Raw Messages', 'Raw Agent Output', 'Auto Scroll', 'Filter…']));
+    const result = labels(phoneMore(['run'], run('result')));
+    for (const label of ['Raw Messages', 'Raw Agent Output', 'Auto Scroll', 'Filter…']) expect(result).not.toContain(label);
+    expect(result).toContain('Save as Markdown…');
+    expect(COMMANDS.some((cmd) => cmd.id === 'runShowLog')).toBe(false);
+  });
+
+  it('names New Chat in Project in a conversation, and keeps Send to Chats on the Chats list', () => {
+    const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle', projectId: 'p' };
+    const c = context({ chats: { single: false, tab: true, selected: 'c', summary, chat: null, sessions: [summary], shown: {} } as never }, 'mobile');
+    const more = labels(phoneMore(['conversation'], c));
+    expect(more).toContain('New Chat in Project');
+    expect(more).not.toContain('Send to Chats…');
+    expect([...phoneActions(['chats'], c).map((a) => a.label), ...labels(phoneMore(['chats'], c))]).toContain('Send to Chats');
+  });
+});
+
+describe('an addon’s commands', () => {
+  const id = (name: string) => addonCommandId('srv', name);
+  const NEW = { id: 'new', label: '&New Server…', icon: 'add', in: { new: { toolbar: true }, panes: { menu: 'file' } } } as const;
+  const LIST = { id: 'list', label: '&Servers', icon: 'terminal', opens: { tab: 'panes' }, in: { app: { menu: 'tools', toolbar: true } } } as const;
+  const EDIT = { id: 'edit', label: '&Edit Server…', icon: 'edit', in: { item: { menu: 'edit', toolbar: true, main: true } } } as const;
+  const COPY = { id: 'copy', label: 'Copy &Host', group: 'copy', in: { item: { menu: 'edit' } } } as const;
+  const SHOW = { id: 'show', label: '&Linux', group: 'filter', check: 'radio', in: { panes: { menu: 'view' } } } as const;
+  const addons = [addonWith('srv', [NEW, LIST, EDIT, COPY, SHOW])];
+  const ids = (groups: { items: { id: string }[] }[]) => groups.flatMap((g) => g.items.map((i) => i.id));
+  const onPanes = (over: Partial<CommandContext> = {}, here: CommandContext['here'] = 'desktop') =>
+    context({ tab: 'addon/srv/panes', addons, addon: { id: 'srv', panes: { pane: 'list' }, item: null }, ...over }, here);
+  const picked = (state?: Record<string, object>) => ({ id: 'srv', panes: { pane: 'list' }, item: { pane: 'list', id: 'web-1', ...(state ? { state } : {}) } });
+
+  it('writes each once, and every surface draws it', () => {
+    const c = onPanes({ addon: picked() });
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'file', c))).toContain('New Server…');
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'edit', c))).toEqual(expect.arrayContaining(['Edit Server…', 'Copy Host']));
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'view', c))).toContain('Linux');
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'tools', c))).toContain('Servers');
+    expect(ids(commandToolbar(mainToolbarViews('addon/srv/panes'), c))).toEqual(expect.arrayContaining([id('new'), id('edit'), id('list')]));
+    expect(labels(contextMenu('addonItem', c))).toEqual(['Edit Server…', '-', 'Copy Host']);
+    const phone = onPanes({ addon: picked() }, 'mobile');
+    expect(phoneActions(['addonItem', 'addonScreen'], phone).map((a) => a.label)).toEqual(['Edit Server']);
+    expect(labels(phoneMore(['addonItem', 'addonScreen'], phone))).toEqual(['Copy Host']);
+  });
+
+  it('stays on its own panes and tabs, and joins the list’s order at its three places', () => {
+    const tasks = context({ tab: 'tasks', addons });
+    expect(labels(menu(mainWindowViews('tasks'), 'edit', tasks))).not.toContain('Edit Server…');
+    expect(labels(menu(mainWindowViews('tasks'), 'view', tasks))).not.toContain('Linux');
+    expect(ids(commandToolbar(mainToolbarViews('tasks'), tasks))).toEqual(expect.arrayContaining([id('new'), id('list')]));
+    expect(labels(menu(mainWindowViews('tasks'), 'tools', tasks))).toEqual(['History', 'Recycle Bin', 'Templates', '-', 'Servers', '-', 'Agent Settings…', 'Settings']);
+    expect(labels(menu(mainWindowViews('tasks'), 'file', tasks)).indexOf('New Server…')).toBeLessThan(labels(menu(mainWindowViews('tasks'), 'file', tasks)).indexOf('Exit'));
+  });
+
+  it('turns off what needs an item while none is picked: grayed out on the desktop, gone on a phone', () => {
+    const none = onPanes();
+    expect(menu(mainWindowViews('addon/srv/panes'), 'edit', none).filter((i) => i.type !== 'separator').map((i) => i.enabled)).toEqual([false, false]);
+    expect(commandToolbar(mainToolbarViews('addon/srv/panes'), none).flatMap((g) => g.items).find((i) => i.id === id('edit'))?.enabled).toBe(false);
+    expect(phoneActions(['addonPanes', 'addonItem'], onPanes({}, 'mobile')).map((a) => a.id)).not.toContain(id('edit'));
+    expect(labels(contextMenu('addonItem', context({ tab: 'tasks', addons })))).toEqual([]);
+  });
+
+  it('reads how it is from the pane, the item and the screen, the most specific winning', () => {
+    const c = onPanes({
+      addon: {
+        id: 'srv',
+        panes: { pane: 'list', state: { show: { checked: true }, edit: { label: 'From Pane', enabled: false } } },
+        item: { pane: 'list', id: 'web-1', state: { edit: { label: 'From Item' }, copy: { hidden: true } } },
+      },
+    });
+    expect(menu(mainWindowViews('addon/srv/panes'), 'view', c).find((i) => i.label === '&Linux')).toMatchObject({ type: 'radio', checked: true });
+    const edit = menu(mainWindowViews('addon/srv/panes'), 'edit', c).find((i) => i.label === 'From Item');
+    expect(edit?.enabled).toBe(false);
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'edit', c))).not.toContain('Copy Host');
+    const screen = onPanes({ addon: { ...picked({ edit: { label: 'From Item' } }), screen: { view: 'server', state: { edit: { label: 'From Screen' } }, run: () => undefined } } });
+    expect(labels(menu(mainWindowViews('addon/srv/panes'), 'edit', screen))).toContain('From Screen');
+  });
+
+  it('sends each its event from where it acts', () => {
+    const sent: unknown[] = [];
+    const looper = { addons: { event: (...a: unknown[]) => void sent.push(a) } } as never;
+    runCommand(id('edit'), onPanes({ looper, addon: picked() }));
+    expect(sent.pop()).toEqual(['srv', { source: { pane: 'list' }, kind: 'command', id: 'edit', item: 'web-1' }, undefined]);
+    runCommand(id('show'), onPanes({ looper }));
+    expect(sent.pop()).toEqual(['srv', { source: { pane: 'list' }, kind: 'command', id: 'show' }, undefined]);
+    runCommand(id('new'), context({ looper, addons, tab: 'tasks' }));
+    expect(sent.pop()).toEqual(['srv', { source: { app: true }, kind: 'command', id: 'new' }, undefined]);
+  });
+
+  it('runs one placed on a screen through the screen, with its fields', () => {
+    const screen = vi.fn();
+    const list = [addonWith('srv', [{ id: 'go', label: 'Go', confirm: 'Sure?', in: { screen: { menu: 'edit', views: ['server'] } } }])];
+    const at = (view: string) => context({ addons: list, addon: { id: 'srv', screen: { view, run: screen } } });
+    expect(labels(menu(['addonScreen'], 'edit', at('other')))).toEqual([]);
+    expect(labels(menu(['addonScreen'], 'edit', at('server')))).toEqual(['Go']);
+    runCommand(id('go'), at('server'));
+    expect(screen).toHaveBeenCalledWith('go', 'Sure?');
+  });
+
+  it('opens a screen’s window through the main process, and a tab in the window, or its own window from elsewhere', () => {
+    const opensWindow = [addonWith('srv', [{ id: 's', label: 'Settings', opens: { view: 'settings' }, in: { app: { menu: 'tools' } } }, { ...LIST }])];
+    const c = context({ addons: opensWindow });
+    runCommand(id('s'), c);
+    expect(c.calls).toEqual(['looper.addons.open']);
+
+    const openTab = vi.fn();
+    runCommand(id('list'), context({ addons: opensWindow, openTab }));
+    expect(openTab).toHaveBeenCalledWith('addon/srv/panes');
+    const fromAnother = context({ addons: opensWindow });
+    runCommand(id('list'), fromAnother);
+    expect(fromAnother.calls).toEqual(['host.open-view']);
+  });
+
+  it('asks first when it has a confirm, for a window too', async () => {
+    const confirm = vi.fn(() => Promise.resolve(false));
+    const open = vi.fn();
+    const looper = { confirm, addons: { open } } as never;
+    const list = [addonWith('srv', [{ id: 's', label: 'Reset', confirm: 'Reset?', opens: { view: 'reset' }, in: { app: { menu: 'tools' } } }])];
+    runCommand(id('s'), context({ looper, addons: list }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(confirm).toHaveBeenCalledWith('Reset?');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('lists an addon’s commands no phone screen has once in the More view, and not one that opens a tab', () => {
+    const phone = context({ addons }, 'mobile');
+    const list = moreViewCommands(phone).map((c) => c.id);
+    expect(list).not.toContain(id('list'));
+    expect(list).not.toContain(id('edit'));
+    // On its panes tab, that tab has it; only in New, the More view does.
+    expect(list).not.toContain(id('new'));
+    expect(moreViewCommands(context({ addons: [addonWith('srv', [{ ...NEW, in: { new: {} } }])] }, 'mobile')).map((c) => c.id)).toContain(id('new'));
+  });
+
+  it('leaves out one its addon keeps to some devices, one whose toolbar is hidden, and all of a stopped addon’s', () => {
+    const only = [addonWith('srv', [{ ...NEW, in: { new: {} }, platforms: ['desktop'] }])];
+    expect(moreViewCommands(context({ addons: only }, 'mobile')).map((c) => c.id)).not.toContain(id('new'));
+    const hidden = context({ addons, tab: 'tasks', settings: SettingsSchema.parse({ view: { hiddenAddonToolbars: ['srv'] } }) });
+    expect(ids(commandToolbar(mainToolbarViews('tasks'), hidden))).not.toContain(id('new'));
+    expect(labels(menu(mainWindowViews('tasks'), 'file', hidden))).toContain('New Server…');
+    const stopped = context({ addons: [addonWith('srv', [NEW], { enabled: false })], tab: 'tasks' });
+    expect(labels(menu(mainWindowViews('tasks'), 'file', stopped))).not.toContain('New Server…');
+    const notRunning = context({ addons: [addonWith('srv', [NEW], { status: 'starting' })], tab: 'tasks' });
+    expect(menu(mainWindowViews('tasks'), 'file', notRunning).find((i) => i.label === '&New Server…')?.enabled).toBe(false);
+  });
+
+  it('accepts the demo addon’s manifest and draws it', () => {
+    const file = path.join(__dirname, '..', 'scripts', 'screenshots', 'demo', 'home', 'addons', 'servers.looperaddon');
+    const r = readAddonManifest(JSON.parse(fs.readFileSync(file, 'utf8')));
+    expect(r.ok, !r.ok ? r.error : '').toBe(true);
+    if (!r.ok) return;
+    const demo = addonWith('servers', r.manifest.commands, { tabs: r.manifest.tabs, panes: r.manifest.panes });
+    const c = context({ tab: 'addon/servers/panes', addons: [demo], addon: { id: 'servers', panes: { pane: 'servers' }, item: { pane: 'servers', id: 'web-1' } } });
+    expect(labels(contextMenu('addonItem', c))).toEqual(['Edit Server…', '-', 'Copy Host', 'Copy Password']);
+    expect(labels(contextMenu('addonPanes', c))).toEqual(['New Server…', '-', 'All', 'Linux', 'Windows']);
+  });
+});
+
+describe('the More view', () => {
+  it('lists every menu item no phone screen has, Tools, Advanced and Help', () => {
+    const list = moreViewCommands(context({}, 'mobile')).map((c) => c.id);
+    for (const id of ['settings', 'agentSettings', 'recycleBin', 'remoteAccess', 'remoteControl', 'addons', 'preventSleep', 'updateModels', 'engineLog', 'openDataDirectory', 'instructions', 'about']) {
+      expect(list, id).toContain(id);
+    }
+    for (const id of ['exit', 'tabs', 'toolbar', 'statusBar', 'reloadUi', 'viewWindows', 'runNow', 'templates']) expect(list, id).not.toContain(id);
+  });
+});
+
+describe('no command outside the list', () => {
+  const renderer = path.join(__dirname, '..', 'src', 'renderer', 'src');
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]));
+
+  it('leaves the main process with only the tray’s, the row menus’ and an addon’s menus', () => {
+    const index = src('main', 'index.ts');
+    expect(index).not.toMatch(/function mainMenuTemplate|function sessionsTemplate|function historyTemplate/);
+    for (const label of ['&Run Now', 'S&ettings', 'Recycle &Bin', '&About Looper', 'Show Task &Runs']) expect(index, label).not.toContain(`label: '${label}'`);
+  });
+
+  it('builds a screen’s bar buttons from the list', () => {
+    const phoneMain = src('renderer', 'src', 'components', 'phone', 'PhoneMain.tsx');
+    expect(phoneMain).not.toMatch(/label: 'Run Now'|label: 'Edit Task'|label: 'New Chat'|label: 'Edit Project'/);
+    const sessions = src('renderer', 'src', 'SessionsApp.tsx');
+    expect(sessions).not.toMatch(/label: 'Activity'|label: 'New Chat'|label: 'Stop'/);
+  });
+
+  it('keeps every screen on the shared hook, with no menu commands sent by hand', () => {
+    for (const file of walk(renderer).filter((f) => /\.tsx?$/.test(f))) {
+      const text = fs.readFileSync(file, 'utf8');
+      expect(text, file).not.toMatch(/\bshowTaskContextMenu|\breportSelection|\bshowNewMenu|\bshowSettingMenu\(state\.id/);
     }
   });
 });

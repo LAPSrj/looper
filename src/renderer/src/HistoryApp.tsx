@@ -4,7 +4,6 @@ import {
   groupHistory,
   HISTORY_PAGE,
   NO_HISTORY_COMMANDS,
-  type HistoryCommand,
   type HistoryCommands,
   type HistoryConversation,
   type HistoryFolderFilter,
@@ -13,10 +12,13 @@ import {
 } from '@shared/history';
 import type { MessageRow } from '@shared/messages';
 import { ViewSchema, type Project, type View } from '@shared/types';
-import { NOT_MOBILE } from '@shared/ui-platform';
+import { HISTORY_VIEWS } from '@shared/commands/build';
+import type { CommandContext } from '@shared/commands/context';
 import { ActivityPanel } from './components/ActivityPanel';
 import { AddonSearchBox } from './components/AddonPane';
 import { ChatRow, ToolGroup } from './components/ChatRows';
+import { commandToolbar, phoneNav } from './components/command-surfaces';
+import { useCommandMenu, useCommandState } from './components/useCommands';
 import { groupRows } from './components/chat-groups';
 import { HistoryList } from './components/HistoryList';
 import { SubagentIcon } from './components/SubagentIcon';
@@ -28,8 +30,8 @@ import { TreeListSection } from './components/phone/PhoneList';
 import { useSplit } from './components/phone/PhoneSplit';
 import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
-import type { ToolbarGroup } from './components/toolbar-model';
 import { subscribe } from './events';
+import { isPhone } from './web/page-nav';
 
 const WIDTHS_KEY = 'history.widths';
 const DEFAULT_VIEW: View['history'] = ViewSchema.parse({}).history;
@@ -136,11 +138,7 @@ export function HistoryApp() {
       else if (e.type === 'sessions') loadCommands();
     });
     const unsubUi = window.looper.onUi((e) => {
-      if (e.type === 'history-activity') setActivity(e.checked);
-      else if (e.type === 'history-refresh') setRefreshes((n) => n + 1);
-      else if (e.type === 'history-folder') setFolder(e.folder);
-      else if (e.type === 'history-find') openFind();
-      else if (e.type === 'history-progress') progress.current.get(e.request)?.(e.list);
+      if (e.type === 'history-progress') progress.current.get(e.request)?.(e.list);
     });
     return () => {
       unsub();
@@ -202,7 +200,6 @@ export function HistoryApp() {
   }, [viewKnown, view.showRuns, folder, limit, refreshes]);
 
   useEffect(() => {
-    window.looper.history.select(selected);
     setConv(null);
     setFollow(null);
     setNowPos(null);
@@ -255,31 +252,27 @@ export function HistoryApp() {
   if (listed) opened.current = listed;
   const item = listed ?? (opened.current?.id === selected ? opened.current : undefined);
 
-  const run = (command: HistoryCommand) => () => {
-    if (selected) void window.looper.history.run(selected, command).catch(fail);
+  const commandState = useCommandState();
+  const commandContext: CommandContext = {
+    ...commandState,
+    history: {
+      selected,
+      commands: item ? commands : NO_HISTORY_COMMANDS,
+      shown: view,
+      setShown: (patch) => {
+        if (commandState.settings) commandState.setView({ history: { ...commandState.settings.view.history, ...patch } });
+      },
+      folder,
+      setFolder,
+      activity: !!item && (activity || panel.open),
+      setActivity: (on) => (isPhone ? panel.toggle() : setActivity(on)),
+      refresh: () => setRefreshes((n) => n + 1),
+      find: openFind,
+    },
   };
-  const toolbar: ToolbarGroup[] = [
-    {
-      id: 'continue',
-      items: [
-        { id: 'chat', label: 'Continue in Chat', icon: 'chat', enabled: commands.chat, run: run('chat') },
-        { id: 'compact', label: 'Continue Compacted', icon: 'compact', enabled: commands.compact, run: run('compact') },
-        { id: 'terminal', label: 'Continue in Terminal', icon: 'terminal', enabled: commands.terminal, run: run('terminal') },
-      ],
-    },
-    {
-      id: 'session',
-      items: [
-        { id: 'copy-id', label: 'Copy Session ID', icon: 'copy', enabled: !!commands.sessionId, run: run('copy-id') },
-        { id: 'open-folder', label: 'Open Working Directory', icon: 'openFolder', enabled: commands.folder, run: run('open-folder') },
-      ],
-    },
-    {
-      id: 'panes',
-      platforms: NOT_MOBILE,
-      items: [{ id: 'activity-pane', label: 'Activity Pane', icon: 'activity', enabled: !!item, pressed: !!item && activity, run: () => window.looper.history.toggleActivity() }],
-    },
-  ];
+  useCommandMenu(HISTORY_VIEWS, commandContext);
+  const toolbar = commandToolbar(HISTORY_VIEWS, commandContext);
+  const nav = phoneNav(['historyItem', 'history'], commandContext);
 
   const pane = (activity || panel.open) && !!item && !!conv;
   const subagents = conv?.subagents ?? [];
@@ -329,7 +322,8 @@ export function HistoryApp() {
       )}
       <NavBar
         title={split ? (item?.title ?? '') : 'History'}
-        actions={item ? [{ id: 'activity', label: 'Activity', icon: 'activity', run: panel.toggle }] : []}
+        actions={item ? nav.actions : []}
+        more={nav.more}
         largeTitle={false}
         modal={panel.sheetOpen}
         split={split ? { width: split.lead, title: 'History' } : undefined}
@@ -384,7 +378,7 @@ export function HistoryApp() {
                 )}
                 {commands.chat && (
                   <div className="history-continue">
-                    <button className="btn primary" onClick={run('chat')}>
+                    <button className="btn primary" onClick={() => void window.looper.history.run(item.id, 'chat').catch(fail)}>
                       Continue in Chat
                     </button>
                   </div>

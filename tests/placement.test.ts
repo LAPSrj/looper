@@ -30,7 +30,7 @@ describe('placeKey', () => {
 
   it('keys addon windows by addon and screen', () => {
     expect(placeKey('addon/servers/list/%7B%7D/Servers')).toBe('addon/servers/list');
-    expect(placeKey('addon-pane/servers/main/Servers')).toBe('addon-pane/servers/main');
+    expect(placeKey('addon/servers/settings/%7B%7D/Settings')).toBe('addon/servers/settings');
   });
 });
 
