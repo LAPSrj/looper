@@ -1143,6 +1143,10 @@ html:not(.phone-window) .session-group ~ .session-row {
 .runlog-table tr.result-skipped td {
   color: var(--fg-muted);
 }
+/* An agent a run's agent started (looper-delegate): under its parent run, its Details indented one level. */
+.runlog-table tr.delegated td:last-child {
+  padding-left: 26px;
+}
 
 .runlog-table tr.level-error td {
   color: var(--red);

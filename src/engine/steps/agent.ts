@@ -3,7 +3,17 @@ import path from 'node:path';
 import { resolveEffort, resolveEnvironment, resolveHarness } from '../../shared/environments';
 import type { Task } from '../../shared/types';
 import { agentArgs } from '../../shared/projects';
-import { AGENT_ASK, AGENT_COMPLETE, AGENT_DONE, AGENT_RESTART, buildPrompt, expandFileTags, noteSection, type RunContext } from './common';
+import {
+  AGENT_ASK,
+  AGENT_COMPLETE,
+  AGENT_DELEGATE,
+  AGENT_DONE,
+  AGENT_RESTART,
+  buildPrompt,
+  expandFileTags,
+  noteSection,
+  type RunContext,
+} from './common';
 import { NOTICE_FILE } from '../guidance';
 import { restartPrefix } from '../messages';
 import {
@@ -14,6 +24,7 @@ import {
   type SessionEnd,
   type SessionEndReason,
   type SessionHandle,
+  type SessionOpts,
 } from './session';
 
 // The generic session machinery lives in session.ts; this module is the agent
@@ -53,7 +64,10 @@ export interface AgentEnd extends SessionEnd {
 
 export type AgentHandle = Omit<SessionHandle, 'finished'> & { finished: Promise<AgentEnd> };
 
-export type AgentCallbacks = SessionCallbacks;
+export type AgentCallbacks = SessionCallbacks & {
+  /** How Looper answers looper-delegate, for a task whose agent may start agents in other folders. */
+  delegate?: Omit<NonNullable<SessionOpts['delegate']>, 'command'>;
+};
 
 /**
  * The reason the agent gave `looper-complete`, or null when it never called it.
@@ -79,9 +93,17 @@ function minutes(n: number): string {
 /** What the agent is told to do when nobody answers its question. */
 const NO_ANSWER_INSTRUCTION = `continue the run without an answer: make the most reasonable decision yourself, and pick the status you give ${AGENT_DONE.command} from what is left open, as for any run. Say in your final report which question went unanswered and what you decided`;
 
+/** Who answers an agent's `looper-ask`: the user, or the agent that started it (looper-delegate). */
+type AskWho = 'user' | 'parent';
+
 /** What `looper-ask` prints when the wait runs out. */
-export function noAnswerText(ask: AskSettings): string {
-  return `No answer from the user within ${minutes(ask.waitMin)}. Don't ask again; ${NO_ANSWER_INSTRUCTION}.`;
+export function noAnswerText(ask: AskSettings, who: AskWho = 'user'): string {
+  return `No answer from ${who === 'user' ? 'the user' : 'the agent that started you'} within ${minutes(ask.waitMin)}. Don't ask again; ${NO_ANSWER_INSTRUCTION}.`;
+}
+
+/** The part on running looper-ask so the shell tool doesn't give up on it first. */
+function askWait(ask: AskSettings, nobody: string): string {
+  return `The command waits up to ${minutes(ask.waitMin)} for the answer and prints it. Run it so your shell tool doesn't time out first (in Claude Code, in the background with run_in_background, then wait for it to finish). If ${nobody} answers in time, it says so, and you ${NO_ANSWER_INSTRUCTION}.`;
 }
 
 /** The footer's part about asking the user: a last resort, with what makes a good question. */
@@ -91,26 +113,66 @@ function askSection(ask: AskSettings): string {
     `    ${AGENT_ASK} "<question>"`,
     'Every question interrupts the user, so needing to ask means you failed to work it out yourself. Before asking, try every other way to settle it: read the code, docs, config and history, try another approach, and make the call yourself when it is a reasonable choice. That is also how you avoid ending the run with a warning or an error: settle the things that would otherwise be left for a person to decide.',
     "Ask only when the work can't go on correctly without the user: a decision only they can make, a credential, or access you don't have. Make the question one paragraph that stands on its own: what you need, why, what you tried, and the answer you suggest.",
-    `The command waits up to ${minutes(ask.waitMin)} for the answer and prints it. Run it so your shell tool doesn't time out first (in Claude Code, in the background with run_in_background, then wait for it to finish). If nobody answers in time, it says so, and you ${NO_ANSWER_INSTRUCTION}.`,
+    askWait(ask, 'nobody'),
   ].join('\n');
 }
 
-export function systemFooter(taskName: string, runId: string, headless: boolean, canComplete = false, ask?: AskSettings): string {
+/** A delegated agent's part about asking: the question goes to the agent that started it. */
+function askParentSection(ask: AskSettings): string {
+  return [
+    `When you can't go on correctly without a decision or information that the agent that started you has, ask it one question with the shell command:`,
+    `    ${AGENT_ASK} "<question>"`,
+    'Before asking, try every other way to settle it: read the code, docs, config and history, and make the call yourself when it is a reasonable choice. Make the question one paragraph that stands on its own: what you need, why, what you tried, and the answer you suggest.',
+    askWait(ask, 'no answer'),
+  ].join('\n');
+}
+
+/** The footer's part about looper-delegate, for an agent whose task lets it start agents in other folders. */
+export function delegateSection(): string {
+  return [
+    'You can hand work in another folder to an agent of its own, which runs in that folder with its own settings, instructions and tools. Write a brief to a file first: it is the whole prompt that agent gets, so it must stand on its own. Then run the shell command:',
+    `    ${AGENT_DELEGATE} start <folder> --title "<short title>" --brief-file <file> [--model <model>] [--effort <effort>]`,
+    "It prints the agent's id and returns at once, so you can start several. An agent whose folder has another session working in it waits to start until that session is done.",
+    `When an agent ends, however it ends, its status, headline, final report, transcript and run folder reach you in a message that starts with "Looper messages from the agents you started". A question an agent asks reaches you the same way: answer it with ${AGENT_DELEGATE} tell. The other commands:`,
+    `    ${AGENT_DELEGATE} list                 the agents you started and their state`,
+    `    ${AGENT_DELEGATE} tell <id> "<text>"   send an agent new instructions (a change to what you asked), or the answer to its question`,
+    `    ${AGENT_DELEGATE} stop <id>            stop an agent`,
+    `While an agent you started is running or waiting to start, ${AGENT_DONE.command} refuses. When you have nothing else to do until a result arrives, end your turn: Looper keeps the session open and starts your next turn with the result. Check each result yourself before you rely on it.`,
+  ].join('\n');
+}
+
+/** Who started a delegated agent's run: its parent's task, run and the title it gave the agent. */
+export type DelegatedBy = NonNullable<RunContext['delegatedBy']>;
+
+export function systemFooter(
+  taskName: string,
+  runId: string,
+  headless: boolean,
+  canComplete = false,
+  ask?: AskSettings,
+  more: { delegate?: boolean; delegatedBy?: DelegatedBy } = {},
+): string {
+  const by = more.delegatedBy;
   const lines = [
-    `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
+    by
+      ? `You were started by Looper as "${by.title}" (run ${runId}) by the agent of the task "${by.taskName}" (run ${by.runId}), which is waiting for your result. This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`
+      : `You were started by Looper for the task "${taskName}" (run ${runId}). This is a one-shot, unattended session: nobody is typing at the other end unless they choose to intervene.`,
     'Do the work described in the prompt without asking for confirmation. Make reasonable decisions yourself.',
     'When you are finished, or if there is nothing to do, run the shell command:',
     '    looper-done <status> "<headline>"',
     'The status is success, warning or error. success: everything was done and verified. warning: everything was done and verified, but a person must decide or act on something in your report (a decision, a credential, access you don\'t have). A check you didn\'t run or couldn\'t get working is unfinished work, not a warning: keep going. error: you could not finish (blocked, failed, gave up). List each method you tried and what it showed.',
     'The headline is one short phrase stating the outcome, e.g. "Fixed 3 flaky tests" or "Nothing to do". State the outcome, not that you are done (no "Done:", "Completed:", etc.).',
-    "Then write your final message: a detailed report of what you did, what you found and what is left open and who needs to act on it, in Markdown. Looper records it as the run's summary.",
+    by
+      ? "Then write your final message: a detailed report of what you did, what you found and what is left open and who needs to act on it, in Markdown. Looper records it as the run's summary and hands it to the agent that started you, which checks your work from it, so include what it needs for that: the commits, how you verified the work, the exact error of anything blocked, and the paths of files it should look at."
+      : "Then write your final message: a detailed report of what you did, what you found and what is left open and who needs to act on it, in Markdown. Looper records it as the run's summary.",
   ];
   if (canComplete) {
     lines.push(
       `If this task is finished for good — future runs would have nothing left to do — run \`${AGENT_COMPLETE} "<why>"\` before ${AGENT_DONE.command}. Looper then stops scheduling the task. Leave it alone if the job is merely done for now.`,
     );
   }
-  if (ask?.allowed) lines.push(askSection(ask));
+  if (ask?.allowed) lines.push(by ? askParentSection(ask) : askSection(ask));
+  if (more.delegate) lines.push(delegateSection());
   if (!headless) {
     lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
   }
@@ -147,6 +209,7 @@ function handoffSection(restart: NonNullable<RunContext['restart']>, maxRestarts
  * that continues the run after a context restart gets the task's prompt again,
  * the continuation's guidance if any, and the earlier session's handoff. */
 export function agentPrompt(ctx: RunContext): string {
+  if (ctx.resume) return ctx.resume.prompt;
   if (ctx.restart) {
     const task = expandFileTags(buildPrompt(ctx.task.agent.prompt, ctx.vars) + noteSection(ctx.note), ctx);
     const guidance =
@@ -210,6 +273,7 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       : undefined;
   // An earlier session of the run may have left the helper on the PATH.
   if (!limit) fs.rmSync(path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(AGENT_RESTART)), { force: true });
+  const delegate = a.delegate.allowed && cb.delegate ? { command: AGENT_DELEGATE, ...cb.delegate } : undefined;
   return startSession(
     ctx,
     {
@@ -223,20 +287,23 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       permissionMode: a.permissionMode,
       session: ctx.agentSession,
       extraArgs: agentArgs(task),
-      footer: systemFooter(task.name, ctx.runId, headless, canComplete, a.ask),
+      footer: systemFooter(task.name, ctx.runId, headless, canComplete, a.ask, { delegate: !!delegate, delegatedBy: ctx.delegatedBy }),
       prompt: agentPrompt(ctx),
       doneCommand: AGENT_DONE.command,
       doneStatuses: AGENT_DONE.statuses,
       completeCommand: canComplete ? AGENT_COMPLETE : undefined,
       restartCommand: limit ? AGENT_RESTART : undefined,
-      ask: a.ask.allowed ? { command: AGENT_ASK, waitMs: a.ask.waitMin * 60_000, noAnswer: noAnswerText(a.ask) } : undefined,
+      ask: a.ask.allowed
+        ? { command: AGENT_ASK, waitMs: a.ask.waitMin * 60_000, noAnswer: noAnswerText(a.ask, ctx.delegatedBy ? 'parent' : 'user') }
+        : undefined,
+      delegate,
       context: limit ? { limit, notice: (tokens, again) => contextNotice(tokens, limit, again) } : undefined,
-      continued: ctx.restart !== undefined,
+      continued: ctx.restart !== undefined || ctx.resume !== undefined,
       implicitDoneStatus: 'success',
       stopGate: true,
       guidance: true,
-      // The max runtime covers the whole run, the sessions before a restart included.
-      maxRuntimeMs: Math.max(1000, a.maxRuntimeMin * 60_000 - (ctx.restart?.elapsedMs ?? 0)),
+      // The max runtime covers the whole run, the sessions before a restart (or a wait on delegated agents) included.
+      maxRuntimeMs: Math.max(1000, a.maxRuntimeMin * 60_000 - (ctx.resume?.usedMs ?? ctx.restart?.elapsedMs ?? 0)),
       maxRuntimeText: `exceeded ${a.maxRuntimeMin} min`,
       idleGraceMs: a.idleGraceMin * 60_000,
       idleText: `idle for ${a.idleGraceMin} min without looper-done`,

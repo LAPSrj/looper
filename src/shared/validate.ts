@@ -86,6 +86,7 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.ask': 'Allow the agent to ask questions',
   'agent.ask.allowed': 'Allow the agent to ask questions',
   'agent.ask.waitMin': 'Wait for an answer',
+  'agent.delegate.allowed': 'Allow the agent to start agents in other folders',
   backoff: 'Auto-pause after',
   'backoff.maxConsecutiveErrors': 'Auto-pause after',
   maxConcurrentRuns: 'Simultaneous runs',

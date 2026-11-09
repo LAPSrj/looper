@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import path from 'node:path';
 import { Cron } from 'croner';
 import type {
@@ -30,12 +31,38 @@ import {
   endAgentSession,
   readCompleteSignal,
   startAgent as defaultStartAgent,
+  type AgentCallbacks,
   type AgentEnd,
   type DoneStatus,
 } from './steps/agent';
 import { headlineOf, RESTART_STATUS, type SessionHandle } from './steps/session';
-import type { RunContext } from './steps/common';
-import { EVENTS_FILE, relatedIdOfLine, GUIDANCE_FILE, queueEvents, queueGuidance, takeEvents, takePendingGuidance } from './guidance';
+import { AGENT_DELEGATE, DELEGATE_BUSY_FILE, DELEGATE_DIR, type RunContext } from './steps/common';
+import {
+  DELEGATE_FILE,
+  EVENTS_FILE,
+  relatedIdOfLine,
+  GUIDANCE_FILE,
+  queueDelegateMessage,
+  queueEvents,
+  queueGuidance,
+  takeDelegateMessages,
+  takeEvents,
+  takePendingGuidance,
+} from './guidance';
+import {
+  absolutePath,
+  claudeBusyIn,
+  DELEGATE_USAGE,
+  delegateTask,
+  parseDelegateArgs,
+  questionEntry,
+  resultEntry,
+  type StartArgs,
+} from './delegates';
+import { delegateMessage, eventsMessage, guidanceMessage } from '../shared/messages';
+import { sameFolder } from '../shared/projects';
+import type { Project } from '../shared/types';
+import type { Target } from './target';
 import { newRunId, type RunStore } from './store/runs';
 import { fileExists, writeText } from './store/fsutil';
 import type { StateStore } from './store/state';
@@ -60,6 +87,34 @@ export interface SchedulerDeps {
   now?: () => number;
   /** The task's current version (Version History), stamped on its run records. */
   taskVersion?: (taskId: string) => number | undefined;
+  /** The projects: a delegated agent in a project's folder runs with the project's settings. */
+  projects?: () => readonly Project[];
+  /** Why a delegated agent must wait for its folder (another session is working there), or null. Default: ask `claude agents`. */
+  folderBusy?: (task: Task) => Promise<string | null>;
+}
+
+/** How often a delegated agent waiting for its folder asks again whether a session outside Looper is working there. */
+const FOLDER_PROBE_MS = 15_000;
+
+/** An agent a run's agent started in another folder (looper-delegate). */
+interface Child {
+  /** Its entry in the parent task's runtime (`children`). */
+  run: ActiveRun;
+  /** The parent's task: the child's run is that task's too. */
+  taskId: string;
+  parentRunId: string;
+  parentTaskName: string;
+  /** The parent's target: paths in the parent's messages are in its form. */
+  parentTarget: Target;
+  /** What it runs as (see delegateTask). */
+  task: Task;
+  runDir: string;
+  brief: string;
+  stopper: { controller: AbortController; reason: string };
+  started: boolean;
+  /** When `claude agents` was last asked about its folder, and whether it's being asked now. */
+  probedAt: number;
+  probing: boolean;
 }
 
 const ACTIVE: ReadonlySet<TaskRuntime['state']> = new Set(['checking', 'classifying', 'running']);
@@ -164,6 +219,16 @@ export class Scheduler extends EventEmitter {
   private readonly guidanceWatches = new Map<string, NodeJS.Timeout>();
   /** Per run with related events waiting for its agent: the poll that records the delivery. */
   private readonly eventWatches = new Map<string, NodeJS.Timeout>();
+  /** Per run with its delegated agents' messages waiting for its agent: the poll that records the delivery. */
+  private readonly delegateWatches = new Map<string, NodeJS.Timeout>();
+  /** The delegated agents in flight or waiting to start, by their run id. */
+  private readonly children = new Map<string, Child>();
+  /**
+   * Headless runs whose agent ended its turn to wait for the agents it
+   * started: no session is live, but guidance and events still wait for it,
+   * and the next session takes them.
+   */
+  private readonly waitingRuns = new Set<string>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
   /** Per task: the retry a machine-failed scheduled run is owed (see MachineRetry). */
@@ -236,6 +301,11 @@ export class Scheduler extends EventEmitter {
           summary: `looper restarted while ${run.state}`,
         });
       }
+      for (const run of prev?.children ?? []) {
+        this.record(task.id, run.runId, 'system', 'interrupted', {
+          summary: `looper restarted while ${run.waiting ? 'it waited to start' : 'running'}`,
+        });
+      }
       const rt = this.initRuntime(task, delays.get(task.id) ?? 0, prev);
       if (task.enabled && !overdue.has(task.id)) {
         rt.nextRunAt = this.computeNext(task, now);
@@ -296,7 +366,10 @@ export class Scheduler extends EventEmitter {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
-    if (rt.runs.some((r) => r.runId === fromRunId)) throw new Error('This run is still active.');
+    if (rt.runs.some((r) => r.runId === fromRunId) || rt.children.some((r) => r.runId === fromRunId)) throw new Error('This run is still active.');
+    if (this.d.runs.summaries(taskId).some((s) => s.runId === fromRunId && s.parentRunId)) {
+      throw new Error('A delegated agent ran in a folder of its own, so its conversation is not continued as a run of this task.');
+    }
     const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
     if (kind !== 'claude-code' && kind !== 'codex') {
       throw new Error('Only Claude Code and Codex conversations can be continued.');
@@ -329,9 +402,13 @@ export class Scheduler extends EventEmitter {
   /** Whether the run takes guidance now: its agent is running on Claude Code or Codex, or waits on an answer to its question. */
   canGuideRun(taskId: string, runId: string): boolean {
     const task = this.d.tasks.get(taskId);
-    const run = this.runtimes.get(taskId)?.runs.find((r) => r.runId === runId);
+    const rt = this.runtimes.get(taskId);
+    const run = rt?.runs.find((r) => r.runId === runId) ?? rt?.children.find((r) => r.runId === runId);
     const handle = this.agents.get(runId);
-    return !!task && run?.state === 'running' && !!handle && (handle.question !== null || this.takesGuidance(task));
+    const runTask = this.children.get(runId)?.task ?? task;
+    if (!runTask || run?.state !== 'running') return false;
+    if (this.waitingRuns.has(runId)) return true;
+    return !!handle && (handle.question !== null || this.takesGuidance(runTask));
   }
 
   /**
@@ -347,21 +424,21 @@ export class Scheduler extends EventEmitter {
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
     const trimmed = text.trim();
     if (!trimmed) throw new Error('The guidance is empty.');
-    const run = runId ? rt.runs.find((r) => r.runId === runId) : newestRun(rt);
+    const run = runId ? (rt.runs.find((r) => r.runId === runId) ?? rt.children.find((r) => r.runId === runId)) : newestRun(rt);
     if (!run) throw new Error('This run has already ended. Use Continue with Guidance… to continue its conversation.');
     const handle = this.agents.get(run.runId);
-    if (run.state !== 'running' || !handle) throw new Error('The agent of this run has not started yet.');
-    if (handle.answer(trimmed)) {
+    if (run.state !== 'running' || (!handle && !this.waitingRuns.has(run.runId))) throw new Error('The agent of this run has not started yet.');
+    if (handle?.answer(trimmed)) {
       this.setQuestion(rt, run.runId, null);
       this.record(taskId, run.runId, 'question', 'delivered', { summary: headlineOf(trimmed), body: trimmed });
       return;
     }
-    if (!this.takesGuidance(task)) throw new Error('Only Claude Code and Codex runs take guidance.');
+    if (!this.takesGuidance(this.children.get(run.runId)?.task ?? task)) throw new Error('Only Claude Code and Codex runs take guidance.');
     const runDir = this.d.runs.runDir(taskId, run.runId);
     queueGuidance(runDir, trimmed);
     this.record(taskId, run.runId, 'guidance', 'sent', { summary: headlineOf(trimmed), body: trimmed });
     this.watchGuidance(taskId, run.runId, runDir);
-    handle.deliverGuidance();
+    handle?.deliverGuidance();
   }
 
   private takesGuidance(task: Task): boolean {
@@ -403,7 +480,7 @@ export class Scheduler extends EventEmitter {
    */
   private sendEvents(task: Task, run: ActiveRun, lines: string[]): boolean {
     const handle = this.agents.get(run.runId);
-    if (run.state !== 'running' || !handle || !this.takesGuidance(task)) return false;
+    if (run.state !== 'running' || (!handle && !this.waitingRuns.has(run.runId)) || !this.takesGuidance(task)) return false;
     const runDir = this.d.runs.runDir(task.id, run.runId);
     try {
       queueEvents(runDir, lines);
@@ -416,7 +493,7 @@ export class Scheduler extends EventEmitter {
       body: '```\n' + lines.join('\n') + '\n```',
     });
     this.watchDelivery(this.eventWatches, path.join(runDir, EVENTS_FILE), task.id, run.runId, 'events', 'the agent got the events');
-    handle.deliverGuidance();
+    handle?.deliverGuidance();
     return true;
   }
 
@@ -471,6 +548,447 @@ export class Scheduler extends EventEmitter {
       body: text,
     });
     return text;
+  }
+
+  // ---------- delegated agents (looper-delegate) ----------
+
+  /** The delegated agents a run's agent started that are in flight or waiting to start, oldest first. */
+  private childrenOf(taskId: string, parentRunId: string): ActiveRun[] {
+    return this.runtimes.get(taskId)?.children.filter((r) => r.parentRunId === parentRunId) ?? [];
+  }
+
+  /** A looper-delegate call from the agent of run `ctx`: the text the command prints and its exit code. */
+  private async delegateRequest(task: Task, ctx: RunContext, args: string[], cwd: string): Promise<{ text: string; code: number }> {
+    const req = parseDelegateArgs(args);
+    if ('error' in req) return { text: `${AGENT_DELEGATE}: ${req.error}\n${DELEGATE_USAGE}`, code: 2 };
+    try {
+      switch (req.op) {
+        case 'start':
+          return { text: this.startDelegate(task, ctx, cwd, req.start), code: 0 };
+        case 'list':
+          return { text: this.listDelegates(task.id, ctx.runId), code: 0 };
+        case 'tell':
+          return { text: this.tellDelegate(task.id, ctx.runId, req.id, req.text), code: 0 };
+        case 'stop':
+          return { text: await this.stopDelegate(task.id, ctx.runId, req.id), code: 0 };
+      }
+    } catch (e) {
+      return { text: `${AGENT_DELEGATE}: ${errMsg(e)}`, code: 1 };
+    }
+  }
+
+  /** Start: the agent's run, waiting for its folder until pumpChildren starts it. Throws with the reason it can't. */
+  private startDelegate(task: Task, ctx: RunContext, cwd: string, start: StartArgs): string {
+    const rt = this.must(task.id);
+    if (!rt.runs.some((r) => r.runId === ctx.runId)) throw new Error('this run is ending');
+    const windows = ctx.target.kind === 'windows';
+    const hostOf = (p: string): string => {
+      try {
+        return ctx.target.toHostPath(p);
+      } catch {
+        throw new Error(`Looper can't reach ${p}`);
+      }
+    };
+    const folder = absolutePath(windows, cwd, start.folder);
+    if (sameFolder(folder, task.cwd)) throw new Error(`${folder} is your own folder, so do that work yourself`);
+    let isDir = false;
+    try {
+      isDir = fs.statSync(hostOf(folder)).isDirectory();
+    } catch (e) {
+      if (errMsg(e).startsWith("Looper can't")) throw e;
+    }
+    if (!isDir) throw new Error(`there is no folder ${folder}`);
+    const briefFile = absolutePath(windows, cwd, start.briefFile);
+    let brief: string;
+    try {
+      brief = fs.readFileSync(hostOf(briefFile), 'utf8');
+    } catch (e) {
+      if (errMsg(e).startsWith("Looper can't")) throw e;
+      throw new Error(`can't read the brief ${briefFile}`);
+    }
+    if (!brief.trim()) throw new Error(`the brief ${briefFile} is empty`);
+    const childTask = delegateTask(task, this.d.settings, this.d.projects?.() ?? [], folder, start);
+    const runId = newRunId(new Date(this.now()));
+    const runDir = this.d.runs.createRunDir(task.id, runId);
+    writeText(path.join(runDir, 'brief.md'), brief);
+    const run: ActiveRun = {
+      runId,
+      state: 'checking',
+      held: false,
+      question: null,
+      startedAt: this.now(),
+      trigger: 'manual',
+      parentRunId: ctx.runId,
+      title: start.title,
+      folder,
+      waiting: 'waiting to start',
+    };
+    const stopper = { controller: new AbortController(), reason: 'stopped by user' };
+    this.children.set(runId, {
+      run,
+      taskId: task.id,
+      parentRunId: ctx.runId,
+      parentTaskName: task.name,
+      parentTarget: ctx.target,
+      task: childTask,
+      runDir,
+      brief,
+      stopper,
+      started: false,
+      probedAt: 0,
+      probing: false,
+    });
+    // Stop Task on the agent's run reaches it before it starts too.
+    this.cycleStops.set(runId, stopper);
+    rt.children.push(run);
+    const detail = { title: start.title, folder };
+    this.record(task.id, runId, 'delegate', 'started', { summary: `started by run ${ctx.runId}`, body: brief, detail: { ...detail, parentRunId: ctx.runId } });
+    this.record(task.id, ctx.runId, 'delegate', 'started', { summary: `${start.title} in ${folder}`, body: brief, detail: { ...detail, childRunId: runId } });
+    this.syncDelegateBusy(task.id, ctx.runId);
+    this.emitRuntime(rt);
+    this.persist();
+    this.pumpChildren(rt);
+    return `${runId}\nStarted "${start.title}" in ${folder} as ${runId}. It begins once no other session is working in that folder, and its result reaches you when it ends.`;
+  }
+
+  private listDelegates(taskId: string, parentRunId: string): string {
+    const runs = this.childrenOf(taskId, parentRunId);
+    if (!runs.length) return 'No agent you started is running or waiting to start.';
+    const state = (r: ActiveRun) => (r.waiting ? `waiting: ${r.waiting}` : r.question !== null ? 'asking you a question' : 'running');
+    return runs.map((r) => `${r.runId}  ${state(r)}  "${r.title}"  ${r.folder}`).join('\n');
+  }
+
+  /** One of the run's own delegated agents in flight; throws for any other id. */
+  private ownChild(taskId: string, parentRunId: string, id: string): Child {
+    const child = this.children.get(id);
+    if (!child || child.taskId !== taskId || child.parentRunId !== parentRunId) {
+      throw new Error(`no agent ${id} you started is running or waiting to start (${AGENT_DELEGATE} list shows them)`);
+    }
+    return child;
+  }
+
+  /** Tell: guidance for the agent, or the answer to its question. */
+  private tellDelegate(taskId: string, parentRunId: string, id: string, text: string): string {
+    const child = this.ownChild(taskId, parentRunId, id);
+    if (!this.agents.has(id)) {
+      // Not started, or its session still starting: its hooks hand it over with the first step it takes.
+      queueGuidance(child.runDir, text);
+      this.record(taskId, id, 'guidance', 'sent', { summary: headlineOf(text), body: text });
+      if (!child.started) return `${id} hasn't started yet, and gets this once it does.`;
+      this.watchGuidance(taskId, id, child.runDir);
+      return `${id} is starting, and gets this with its first step.`;
+    }
+    const answers = child.run.question !== null;
+    this.sendGuidance(taskId, id, text);
+    return answers ? `${id} got your answer.` : `${id} gets this with its next step.`;
+  }
+
+  private async stopDelegate(taskId: string, parentRunId: string, id: string): Promise<string> {
+    const child = this.ownChild(taskId, parentRunId, id);
+    child.stopper.reason = 'stopped by the agent that started it';
+    await this.stopTask(taskId, child.stopper.reason, id);
+    if (!child.started) this.endChild(child, 'stopped', child.stopper.reason);
+    return `Stopping ${id}. Its result reaches you when it has ended, like any other.`;
+  }
+
+  /** The busy file that makes looper-done refuse (and lets the turn end) while the run's agents are going. */
+  private syncDelegateBusy(taskId: string, parentRunId: string): void {
+    // A run that ended has nobody to refuse: settleDelegate removed its file.
+    if (!this.runtimes.get(taskId)?.runs.some((r) => r.runId === parentRunId)) return;
+    const file = path.join(this.d.runs.runDir(taskId, parentRunId), DELEGATE_DIR, DELEGATE_BUSY_FILE);
+    const runs = this.childrenOf(taskId, parentRunId);
+    try {
+      if (!runs.length) fs.rmSync(file, { force: true });
+      else {
+        writeText(
+          file,
+          `looper-done refused: these agents you started are still going: ${runs.map((r) => `${r.runId} ("${r.title}")`).join(', ')}. ` +
+            `End your turn to wait for their results (Looper brings each one in), or stop one with ${AGENT_DELEGATE} stop <id>.\n`,
+        );
+      }
+    } catch (e) {
+      this.d.log.error(`[${taskId}] cannot write the delegated agents' busy file: ${errMsg(e)}`);
+    }
+  }
+
+  /**
+   * Start the task's delegated agents whose folders are free: no Looper run
+   * there, none of the environment's or harness's caps reached, and no
+   * session `claude agents` reports working there (asked again every
+   * FOLDER_PROBE_MS while it waits). Agents waiting for one folder start in
+   * the order they were asked for.
+   */
+  private pumpChildren(rt: TaskRuntime): void {
+    if (this.stopping) return;
+    for (const run of [...rt.children]) {
+      const child = this.children.get(run.runId);
+      if (!child || child.started || child.probing) continue;
+      if (child.stopper.controller.signal.aborted) {
+        this.endChild(child, 'stopped', child.stopper.reason);
+        continue;
+      }
+      const block = this.childBlock(child);
+      if (block) {
+        this.setWaiting(rt, child, block);
+        continue;
+      }
+      if (child.probedAt && this.now() - child.probedAt < FOLDER_PROBE_MS) continue;
+      child.probing = true;
+      child.probedAt = this.now();
+      void this.folderBusy(child.task)
+        .catch((e: Error) => {
+          this.d.log.warn(`[${child.taskId}] cannot ask whether a session is working in ${child.task.cwd}: ${e.message}`);
+          return null;
+        })
+        .then((busy) => {
+          child.probing = false;
+          if (this.stopping || child.started || !this.children.has(run.runId) || child.stopper.controller.signal.aborted) return;
+          const why = busy ?? this.childBlock(child);
+          if (why) this.setWaiting(rt, child, why);
+          else void this.runChild(child, rt);
+        });
+    }
+  }
+
+  private folderBusy(task: Task): Promise<string | null> {
+    if (this.d.folderBusy) return this.d.folderBusy(task);
+    const env = resolveEnvironment(task, this.d.settings);
+    return claudeBusyIn(env, resolveHarness(task, env), this.d.host, task.cwd);
+  }
+
+  /** Why a delegated agent can't start yet by what Looper itself runs, or null. */
+  private childBlock(child: Child): string | null {
+    const folder = child.task.cwd;
+    for (const rt of this.runtimes.values()) {
+      const t = this.d.tasks.get(rt.taskId);
+      if (!t || !sameFolder(t.cwd, folder)) continue;
+      // A run whose agent waits for agents of its own isn't working there now: two runs that started agents in each other's folders would wait forever.
+      if (rt.runs.some((r) => !this.childrenOf(rt.taskId, r.runId).length)) return `a run of "${t.name}" is working in that folder`;
+    }
+    let first = true;
+    for (const c of this.children.values()) {
+      if (c === child) {
+        first = false;
+        continue;
+      }
+      if (!sameFolder(c.task.cwd, folder)) continue;
+      if (c.started) return `"${c.run.title}" (${c.run.runId}) is working in that folder`;
+      if (first) return `"${c.run.title}" (${c.run.runId}) waits for that folder too, and goes first`;
+    }
+    return this.concurrencyBlock(child.task, child);
+  }
+
+  private setWaiting(rt: TaskRuntime, child: Child, reason: string): void {
+    if (child.run.waiting === reason) return;
+    child.run.waiting = reason;
+    this.d.log.info(`[${child.taskId}] delegated agent ${child.run.runId} waits: ${reason}`);
+    this.emitRuntime(rt);
+  }
+
+  /** The delegated agent's own run: its agent step, whose end goes to the parent. */
+  private async runChild(child: Child, rt: TaskRuntime): Promise<void> {
+    const { run } = child;
+    child.started = true;
+    run.state = 'running';
+    delete run.waiting;
+    this.emitRuntime(rt);
+    this.persist();
+    const ctx: RunContext = {
+      task: child.task,
+      runId: run.runId,
+      runDir: child.runDir,
+      target: createTarget(child.task, { host: this.d.host, settings: this.d.settings }),
+      settings: this.d.settings,
+      host: this.d.host,
+      log: this.d.log,
+      dataDir: this.d.dataDir,
+      signal: child.stopper.controller.signal,
+      promptOverride: child.brief,
+      vars: { task: child.task.name, taskId: child.taskId, runId: run.runId, trigger: 'manual' },
+      delegatedBy: { taskName: child.parentTaskName, runId: child.parentRunId, title: run.title ?? child.task.name },
+    };
+    this.record(child.taskId, run.runId, 'agent', 'started', { summary: run.title, body: agentPrompt(ctx) });
+    let end: AgentEnd & { doneStatus?: DoneStatus };
+    try {
+      end = await this.runAgent(child.task, rt, ctx, {
+        // Its questions go to the agent that started it, not to the user.
+        onQuestion: (question) => {
+          this.setQuestion(rt, run.runId, question);
+          this.record(child.taskId, run.runId, 'question', 'sent', { summary: headlineOf(question), body: question });
+          this.toParent(child, questionEntry(run.runId, run.title ?? child.task.name, question, child.task.agent.ask.waitMin));
+        },
+        onNoAnswer: () => {
+          this.setQuestion(rt, run.runId, null);
+          this.record(child.taskId, run.runId, 'question', 'undelivered', {
+            summary: `no answer within ${Number(child.task.agent.ask.waitMin.toFixed(2))} min`,
+          });
+        },
+      });
+    } catch (e) {
+      this.d.log.error(`[${child.taskId}] delegated agent ${run.runId} failed: ${errMsg(e)}`);
+      end = { reason: 'error', exitCode: null, headline: errMsg(e), durationMs: 0, wasHeld: false };
+    } finally {
+      this.agents.delete(run.runId);
+    }
+    const outcome: RunResult = end.doneStatus ?? end.reason;
+    this.record(child.taskId, run.runId, 'agent', outcome, {
+      durationMs: end.durationMs,
+      exitCode: end.exitCode,
+      network: end.network,
+      environment: end.environment,
+    });
+    if (end.headline || end.body) this.record(child.taskId, run.runId, 'result', outcome, { summary: end.headline, body: end.body });
+    const watch = this.guidanceWatches.get(run.runId);
+    if (watch) {
+      clearInterval(watch);
+      this.guidanceWatches.delete(run.runId);
+    }
+    const left = takePendingGuidance(child.runDir);
+    if (left !== null) this.record(child.taskId, run.runId, 'guidance', 'undelivered', { summary: 'not delivered: the agent ended first', body: left });
+    this.endChild(child, outcome, end.headline, end.body);
+  }
+
+  /** Leave a delegated agent's result or question for its parent's agent; false when the parent's run has ended. */
+  private toParent(child: Child, entry: string): boolean {
+    const rt = this.runtimes.get(child.taskId);
+    if (!rt?.runs.some((r) => r.runId === child.parentRunId)) return false;
+    const dir = this.d.runs.runDir(child.taskId, child.parentRunId);
+    try {
+      queueDelegateMessage(dir, entry);
+    } catch (e) {
+      this.d.log.error(`[${child.taskId}] cannot leave a message for run ${child.parentRunId}: ${errMsg(e)}`);
+      return false;
+    }
+    this.watchDelivery(
+      this.delegateWatches,
+      path.join(dir, DELEGATE_FILE),
+      child.taskId,
+      child.parentRunId,
+      'delegate',
+      'the agent got the messages from the agents it started',
+    );
+    this.agents.get(child.parentRunId)?.deliverGuidance();
+    return true;
+  }
+
+  /** The delegated agent is over (or was stopped before it started): its result goes to its parent. */
+  private endChild(child: Child, outcome: RunResult, headline?: string, body?: string): void {
+    const { run } = child;
+    if (!this.children.delete(run.runId)) return;
+    this.cycleStops.delete(run.runId);
+    const rt = this.runtimes.get(child.taskId);
+    if (rt) {
+      const at = rt.children.indexOf(run);
+      if (at >= 0) rt.children.splice(at, 1);
+    }
+    if (!child.started) {
+      this.record(child.taskId, run.runId, 'system', outcome, { summary: `ended before it started: ${headline ?? resultLabel(outcome)}` });
+      const left = takePendingGuidance(child.runDir);
+      if (left !== null) this.record(child.taskId, run.runId, 'guidance', 'undelivered', { summary: 'not delivered: the agent never started', body: left });
+    }
+    this.syncDelegateBusy(child.taskId, child.parentRunId);
+    const title = run.title ?? child.task.name;
+    let runFolder = child.runDir;
+    try {
+      runFolder = child.parentTarget.toTargetPath(child.runDir);
+    } catch {
+      /* the host path is all there is */
+    }
+    const entry = resultEntry({
+      id: run.runId,
+      title,
+      folder: run.folder ?? child.task.cwd,
+      outcome,
+      headline,
+      body,
+      transcript: this.transcriptOf(child),
+      runFolder,
+      others: this.childrenOf(child.taskId, child.parentRunId).map((r) => r.runId),
+    });
+    this.record(child.taskId, child.parentRunId, 'delegate', outcome, {
+      summary: `${title}: ${headline ?? resultLabel(outcome)}`,
+      body,
+      detail: { childRunId: run.runId, title, folder: run.folder },
+    });
+    if (!this.toParent(child, entry)) {
+      this.record(child.taskId, child.parentRunId, 'delegate', 'undelivered', {
+        summary: `${title}: not delivered, because the run had ended`,
+        detail: { childRunId: run.runId },
+      });
+    }
+    if (rt) {
+      this.emitRuntime(rt);
+      this.persist();
+      this.pumpChildren(rt);
+    }
+  }
+
+  /** The transcript the delegated agent's session recorded, in its parent's path form when there is one. */
+  private transcriptOf(child: Child): string | undefined {
+    let own: string;
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(child.runDir, 'session.json'), 'utf8')) as { transcript_path?: unknown };
+      if (typeof s.transcript_path !== 'string') return undefined;
+      own = s.transcript_path;
+    } catch {
+      return undefined;
+    }
+    try {
+      const host = createTarget(child.task, { host: this.d.host, settings: this.d.settings }).toHostPath(own);
+      return child.parentTarget.toTargetPath(host);
+    } catch {
+      return own;
+    }
+  }
+
+  /** The run is over: the agents it started are stopped (or taken off the queue). */
+  private stopChildrenOf(taskId: string, runId: string, reason: string): void {
+    for (const c of [...this.children.values()]) {
+      if (c.taskId !== taskId || c.parentRunId !== runId) continue;
+      c.stopper.reason = reason;
+      if (c.started) void this.stopTask(taskId, reason, c.run.runId);
+      else this.endChild(c, 'stopped', reason);
+    }
+  }
+
+  /** The run is over: its delegated agents' messages its agent never read are recorded as such. */
+  private settleDelegate(taskId: string, runId: string, runDir: string): void {
+    const watch = this.delegateWatches.get(runId);
+    if (watch) {
+      clearInterval(watch);
+      this.delegateWatches.delete(runId);
+    }
+    const text = takeDelegateMessages(runDir);
+    if (text === null) {
+      if (watch) this.record(taskId, runId, 'delegate', 'delivered', { summary: 'the agent got the messages from the agents it started' });
+    } else {
+      this.record(taskId, runId, 'delegate', 'undelivered', { summary: 'not delivered: the run ended before its agent read them', body: text });
+    }
+    fs.rmSync(path.join(runDir, DELEGATE_DIR, DELEGATE_BUSY_FILE), { force: true });
+  }
+
+  /**
+   * Resolves once the run's agent has something to read (a delegated agent's
+   * result or question, the user's guidance, a related event), its delegated
+   * agents are all over, the time is up, or the run is stopped.
+   */
+  private waitForChildren(taskId: string, runId: string, runDir: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const until = Date.now() + Math.max(0, timeoutMs);
+    const waiting = [DELEGATE_FILE, GUIDANCE_FILE, EVENTS_FILE].map((f) => path.join(runDir, f));
+    return new Promise((resolve) => {
+      const timer = setInterval(() => {
+        if (
+          signal?.aborted ||
+          this.stopping ||
+          waiting.some(fileExists) ||
+          !this.childrenOf(taskId, runId).length ||
+          Date.now() >= until
+        ) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, this.d.settings.signalPollMs);
+    });
   }
 
   /** The shared manual start: lift a pause, honor the caps, run the cycle. */
@@ -684,9 +1202,9 @@ export class Scheduler extends EventEmitter {
     this.emitRuntime(rt);
   }
 
-  /** A run's agent asked the user a question (or it was settled: null); the task is asking while any run is. */
+  /** A run's agent asked the user (or a delegated agent its parent) a question, or it was settled: null; the task is asking while any run is. */
   private setQuestion(rt: TaskRuntime, runId: string, question: string | null): void {
-    const run = rt.runs.find((r) => r.runId === runId);
+    const run = rt.runs.find((r) => r.runId === runId) ?? rt.children.find((r) => r.runId === runId);
     if (!run || run.question === question) return;
     run.question = question;
     this.recompute(rt);
@@ -728,6 +1246,7 @@ export class Scheduler extends EventEmitter {
       held: false,
       asking: false,
       runs: [],
+      children: [],
       // Only a cron schedule has a next slot; manual and watcher tasks never do.
       nextRunAt: task.enabled && scheduleOf(task) ? this.now() + delayMs : null,
       lastRunAt: prev?.lastRunAt ?? null,
@@ -972,6 +1491,7 @@ export class Scheduler extends EventEmitter {
     for (const task of this.d.tasks.list()) {
       const rt = this.runtimes.get(task.id);
       if (!rt) continue;
+      if (rt.children.length) this.pumpChildren(rt);
       // The schedule's end date, checked before the due-slot guard so it also
       // reaches a task that is paused or disabled but still scheduled.
       if (this.scheduleEnded(task, now)) {
@@ -1051,9 +1571,12 @@ export class Scheduler extends EventEmitter {
    * Environment/harness concurrency limits: the reason a start must wait, or
    * null when free to start. Every run counts against its environment's limit
    * (and its agent harness's) for its whole cycle — checking, classifying,
-   * running — including the other runs of the task that wants to start.
+   * running — including the other runs of the task that wants to start. A
+   * delegated agent counts once it has started, except that a run's first
+   * one on the run's own environment and harness takes the run's slot: the
+   * run waits on it. `candidate`: the delegated agent that wants to start.
    */
-  private concurrencyBlock(task: Task): string | null {
+  private concurrencyBlock(task: Task, candidate?: Child): string | null {
     const env = this.d.settings.environments.find((e) => e.id === task.environmentId);
     if (!env) return null;
     const harnessId = task.agent.harnessId ?? env.harnesses[0]?.id;
@@ -1061,14 +1584,31 @@ export class Scheduler extends EventEmitter {
     const envLimit = env.maxConcurrentTasks;
     const harnessLimit = harness?.maxConcurrentTasks;
     if (envLimit === undefined && harnessLimit === undefined) return null;
+    const harnessOf = (t: Task) => t.agent.harnessId ?? this.d.settings.environments.find((e) => e.id === t.environmentId)?.harnesses[0]?.id;
+    /** Whether a delegated agent runs where its parent's run counts, so it can take that run's slot. */
+    const sameSlot = (c: Child) => {
+      const parent = this.d.tasks.get(c.taskId);
+      return !!parent && parent.environmentId === c.task.environmentId && harnessOf(parent) === harnessOf(c.task);
+    };
+    const slotTaken = new Set<string>();
+    for (const c of this.children.values()) {
+      if (c.started && !slotTaken.has(c.parentRunId) && sameSlot(c)) slotTaken.add(c.parentRunId);
+    }
+    if (candidate && !slotTaken.has(candidate.parentRunId) && sameSlot(candidate)) return null;
     let envActive = 0;
     let harnessActive = 0;
-    for (const t of this.d.tasks.list()) {
-      if (t.environmentId !== env.id) continue;
-      const active = this.runtimes.get(t.id)?.runs.length ?? 0;
-      if (!active) continue;
+    const count = (t: Task, active: number) => {
+      if (t.environmentId !== env.id || !active) return;
       envActive += active;
-      if ((t.agent.harnessId ?? env.harnesses[0]?.id) === harnessId) harnessActive += active;
+      if (harnessOf(t) === harnessId) harnessActive += active;
+    };
+    for (const t of this.d.tasks.list()) count(t, this.runtimes.get(t.id)?.runs.length ?? 0);
+    // A delegated agent counts where it runs, once it has started, unless it took its parent's slot.
+    const freeRide = new Set<string>();
+    for (const c of this.children.values()) {
+      if (!c.started) continue;
+      if (slotTaken.has(c.parentRunId) && !freeRide.has(c.parentRunId) && sameSlot(c)) freeRide.add(c.parentRunId);
+      else count(c.task, 1);
     }
     if (envLimit !== undefined && envActive >= envLimit) {
       return `environment "${env.name}" is at its limit of ${envLimit} concurrent task${envLimit === 1 ? '' : 's'}`;
@@ -1533,6 +2073,9 @@ export class Scheduler extends EventEmitter {
       this.cycleStops.delete(runId);
       guidanceLeft = this.settleGuidance(task.id, runId, runDir, agentEnd);
       this.settleEvents(task, runId, runDir);
+      // The agents it started have nobody left to report to.
+      this.stopChildrenOf(task.id, runId, 'the run that started it ended');
+      this.settleDelegate(task.id, runId, runDir);
       relatedIdLeft = rt.runs.find((r) => r.runId === runId)?.relatedId;
       // Cut short by the system suspending, or a step that provably spanned a
       // sleep: either way the machine went down mid-run and the task is owed
@@ -1859,12 +2402,27 @@ export class Scheduler extends EventEmitter {
    * the handoff; the end that comes back is the last session's, with the
    * whole step's duration.
    */
-  private async runAgent(task: Task, rt: TaskRuntime, ctx: RunContext): Promise<AgentEnd & { doneStatus?: DoneStatus }> {
+  private async runAgent(
+    task: Task,
+    rt: TaskRuntime,
+    ctx: RunContext,
+    /** A delegated agent's own answers to some of the callbacks (its questions go to its parent). */
+    own: Partial<AgentCallbacks> = {},
+  ): Promise<AgentEnd & { doneStatus?: DoneStatus }> {
     const stopReason = (): string => this.cycleStops.get(ctx.runId)?.reason ?? 'stopped by user';
     let elapsedMs = 0;
     let wasHeld = false;
+    // Results come back through the guidance hooks, so only a harness that takes guidance may start agents.
+    const delegate: AgentCallbacks['delegate'] =
+      task.agent.delegate.allowed && this.takesGuidance(task)
+        ? {
+            handle: (args, cwd) => this.delegateRequest(task, ctx, args, cwd),
+            busy: () => this.childrenOf(task.id, ctx.runId).length > 0,
+          }
+        : undefined;
     for (;;) {
       const handle = await this.steps.startAgent(ctx, {
+        delegate,
         onData: this.outputSink(task.id, ctx.runId),
         onHold: () => {
           this.setHeld(rt, ctx.runId, true);
@@ -1889,7 +2447,10 @@ export class Scheduler extends EventEmitter {
           this.record(task.id, ctx.runId, 'agent', 'sent', {
             summary: `context at ${Math.round(tokens / 1000)}k tokens, past the limit of ${Math.round(limit / 1000)}k: asked the agent to restart`,
           }),
+        ...own,
       });
+      // The resumed session has its prompt; a later session of the run gets its own.
+      ctx.resume = undefined;
       this.agents.set(ctx.runId, handle);
       // A stopTask that landed while the agent was still starting has no handle
       // to end and aborts the cycle signal instead: honor it now.
@@ -1899,6 +2460,56 @@ export class Scheduler extends EventEmitter {
       this.setQuestion(rt, ctx.runId, null);
       elapsedMs += end.durationMs;
       wasHeld ||= end.wasHeld;
+      // A headless agent ends its turn to wait for the agents it started: once
+      // one of them leaves it a message (a result, or a question), the next
+      // session resumes its conversation with their messages. (An interactive
+      // one waits in its own session.)
+      if (
+        delegate &&
+        task.agent.mode === 'headless' &&
+        end.reason === 'done' &&
+        end.doneStatus === undefined &&
+        (this.childrenOf(task.id, ctx.runId).length > 0 || fileExists(path.join(ctx.runDir, DELEGATE_FILE)))
+      ) {
+        const limitMs = task.agent.maxRuntimeMin * 60_000;
+        this.record(task.id, ctx.runId, 'agent', 'sent', { summary: 'the agent ended its turn to wait for the agents it started' });
+        const waitStart = Date.now();
+        // Its session is over: Stop Task now reaches the cycle's stop signal, which ends the wait.
+        this.agents.delete(ctx.runId);
+        this.waitingRuns.add(ctx.runId);
+        try {
+          await this.waitForChildren(task.id, ctx.runId, ctx.runDir, limitMs - elapsedMs, ctx.signal);
+        } finally {
+          this.waitingRuns.delete(ctx.runId);
+        }
+        elapsedMs += Date.now() - waitStart;
+        const whole = { durationMs: elapsedMs, wasHeld, doneStatus: undefined };
+        if (ctx.signal?.aborted) return { ...end, ...whole, reason: 'stopped', headline: stopReason() };
+        if (elapsedMs >= limitMs) return { ...end, ...whole, reason: 'max-runtime', headline: `exceeded ${task.agent.maxRuntimeMin} min` };
+        const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+        const sessionId = end.sessionId ?? readRunSessionId(ctx.runDir, kind);
+        if (sessionId) {
+          // Whatever waits for the agent, in the order its hooks would hand it over.
+          const guidance = takePendingGuidance(ctx.runDir);
+          const events = takeEvents(ctx.runDir);
+          const messages = takeDelegateMessages(ctx.runDir);
+          const parts = [
+            ...(guidance !== null ? [guidanceMessage(guidance)] : []),
+            ...(events !== null ? [eventsMessage(events)] : []),
+            ...(messages !== null ? [delegateMessage([messages])] : []),
+          ];
+          if (parts.length) {
+            ctx.agentSession = { id: sessionId, resume: true };
+            ctx.resume = { prompt: parts.join('\n\n'), usedMs: elapsedMs };
+            continue;
+          }
+        } else if (fileExists(path.join(ctx.runDir, DELEGATE_FILE))) {
+          this.record(task.id, ctx.runId, 'delegate', 'undelivered', {
+            summary: 'not delivered: no conversation was recorded to resume',
+            body: takeDelegateMessages(ctx.runDir) ?? undefined,
+          });
+        }
+      }
       const whole = { durationMs: elapsedMs, wasHeld };
       const status = end.doneStatus;
       if (status !== RESTART_STATUS) return { ...end, ...whole, doneStatus: status };
@@ -1965,7 +2576,7 @@ export class Scheduler extends EventEmitter {
 
   /** A copy listeners and the state file can keep: `runs` is mutated in place. */
   private snapshot(rt: TaskRuntime): TaskRuntime {
-    return { ...rt, runs: rt.runs.map((r) => ({ ...r })) };
+    return { ...rt, runs: rt.runs.map((r) => ({ ...r })), children: rt.children.map((r) => ({ ...r })) };
   }
 
   private emitEvent(e: EngineEvent): void {

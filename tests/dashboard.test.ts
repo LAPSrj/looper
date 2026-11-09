@@ -11,6 +11,7 @@ const runtime = (taskId: string, over: Partial<TaskRuntime> = {}): TaskRuntime =
   held: false,
   asking: false,
   runs: [],
+  children: [],
   nextRunAt: null,
   lastRunAt: null,
   lastRunId: null,

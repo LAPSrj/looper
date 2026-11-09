@@ -310,6 +310,17 @@ export const AgentSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * The agent may start agents in other folders with `looper-delegate`.
+     * Each one is a run of its own, and its result comes back to this run's
+     * agent, which can't finish while one is still going.
+     */
+    delegate: z
+      .object({
+        allowed: z.boolean().default(false),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 
@@ -875,6 +886,14 @@ export interface ActiveRun {
   trigger: 'timer' | 'manual' | 'watcher';
   /** The related events this run handles (trigger.sendRelatedEvents): later ones with this id go to its agent. */
   relatedId?: string;
+  /** A delegated agent (TaskRuntime.children): the run whose agent started it. */
+  parentRunId?: string;
+  /** A delegated agent: the title its parent gave it. */
+  title?: string;
+  /** A delegated agent: its folder, in its environment's path form. */
+  folder?: string;
+  /** A delegated agent that hasn't started yet: why it waits. */
+  waiting?: string;
 }
 
 /**
@@ -895,6 +914,12 @@ export interface TaskRuntime {
   asking: boolean;
   /** Cycles in flight, oldest first. Empty when the task is idle/paused/disabled/completed. */
   runs: ActiveRun[];
+  /**
+   * Agents the runs' agents started in other folders (looper-delegate), in
+   * flight or waiting to start, oldest first. They're runs of this task too,
+   * but don't count toward its state or its Simultaneous runs.
+   */
+  children: ActiveRun[];
   nextRunAt: number | null;
   lastRunAt: number | null;
   /** The run that set lastResult. */
@@ -945,7 +970,10 @@ export interface PreventSleepState {
  * something (sent), the user answered (delivered), or nobody answered in
  * time (undelivered). `chat` and `terminal`: a chat or
  * terminal window opened or closed on the run (result the same as the phase,
- * detail.event 'opened' or 'closed').
+ * detail.event 'opened' or 'closed'). `delegate`: on a delegated agent's own
+ * run, who started it (detail.parentRunId); on the run that started it
+ * (detail.childRunId), the agent started, how it ended, and its result
+ * delivered or undelivered.
  */
 export type RunPhase =
   | 'watcher'
@@ -955,6 +983,7 @@ export type RunPhase =
   | 'guidance'
   | 'events'
   | 'question'
+  | 'delegate'
   | 'result'
   | 'skip'
   | 'system'

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { eventsMessage, eventsText, guidanceMessage, guidanceText } from '../shared/messages';
+import { delegateMessage, delegateText, eventsMessage, eventsText, guidanceMessage, guidanceText } from '../shared/messages';
 import { relatedIdIn } from '../shared/types';
 
 /**
@@ -121,6 +121,43 @@ export function queueEvents(runDir: string, lines: readonly string[]): void {
   } catch {
     /* only a copy: the agent gets the events from the file above */
   }
+}
+
+/**
+ * The results and questions of the agents a run's agent started in other
+ * folders wait in their own file, handed over the same way as guidance, after
+ * the events.
+ */
+export const DELEGATE_FILE = 'delegate-waiting.json';
+
+function readDelegateFile(file: string): string | null {
+  try {
+    const v: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return typeof v === 'string' ? delegateText(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Add one agent's result or question for the run's agent, after whatever is still waiting. */
+export function queueDelegateMessage(runDir: string, entry: string): void {
+  const merging = path.join(runDir, `delegate-merging-${process.pid}.json`);
+  const entries = [entry];
+  if (claim(runDir, DELEGATE_FILE, merging)) {
+    const earlier = readDelegateFile(merging);
+    if (earlier) entries.unshift(earlier);
+    fs.rmSync(merging, { force: true });
+  }
+  const file = path.join(runDir, DELEGATE_FILE);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, asciiJson(delegateMessage(entries)), 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+/** Take the waiting results and questions for delivery: their text without the header; null when there are none. */
+export function takeDelegateMessages(runDir: string): string | null {
+  const dest = path.join(runDir, `delegate-waiting-${Date.now()}.json`);
+  return claim(runDir, DELEGATE_FILE, dest) ? readDelegateFile(dest) : null;
 }
 
 /** Add guidance for the agent, after whatever is still waiting from earlier. */

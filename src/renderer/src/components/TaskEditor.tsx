@@ -1015,6 +1015,13 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                   />
                 </FieldRow>
               </StepFields>
+              {(isClaude || isCodex) && (
+                <CheckboxField
+                  label="Allow the agent to start agents in other folders"
+                  checked={draft.agent.delegate?.allowed ?? false}
+                  onChange={(on) => setAgent('delegate', { allowed: on })}
+                />
+              )}
             </FormGroup>
           </div>
         </div>

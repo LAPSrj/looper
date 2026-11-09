@@ -9,10 +9,11 @@ export interface MessageRow {
   /**
    * guidance: text the user sent the agent mid-run (see GUIDANCE_PREFIX).
    * events: related trigger events sent to the agent mid-run (see EVENTS_PREFIX).
+   * delegate: results and questions of the agents this one started in other folders (see DELEGATE_PREFIX).
    * task: the task a workflow script computed for one of its agents (not the user's own message).
    * error: an API error Claude Code recorded as the assistant's reply (usage limit, overloaded…).
    */
-  kind: 'prompt' | 'guidance' | 'events' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
+  kind: 'prompt' | 'guidance' | 'events' | 'delegate' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
   /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
   source?: 'classifier';
   /** An agent row that is Looper's own line in a chat ("Stopped.", why a turn failed), not the agent's. */
@@ -150,7 +151,8 @@ export function guidanceMessage(text: string): string {
 /**
  * The user's text when `text` is a guidance message, else null. The harness
  * may wrap it in a tag or put its own label in front: claude records a
- * Stop-hook block as "Stop hook feedback:\n<reason>".
+ * Stop-hook block as "Stop hook feedback:\n<reason>", and a message typed
+ * into an idle session as `<pasted_content id="…">…</pasted_content id="…">`.
  */
 export function guidanceText(text: string): string | null {
   return bodyAfterHeader(text, GUIDANCE_PREFIX);
@@ -159,7 +161,7 @@ export function guidanceText(text: string): string | null {
 function bodyAfterHeader(text: string, prefix: string): string | null {
   const t = text
     .trim()
-    .replace(/^<([\w-]+)>\s*([\s\S]*?)\s*<\/\1>$/, '$2')
+    .replace(/^<([\w-]+)(?:\s[^>]*)?>\s*([\s\S]*?)\s*<\/\1(?:\s[^>]*)?>$/, '$2')
     .replace(/^(?:Stop hook feedback:|\w+(?::\w+)? hook additional context:)\s*/, '');
   if (!t.startsWith(prefix)) return null;
   const nl = t.indexOf('\n');
@@ -180,4 +182,17 @@ export function eventsMessage(lines: readonly string[]): string {
 /** The event lines when `text` is an events message, else null. */
 export function eventsText(text: string): string | null {
   return bodyAfterHeader(text, EVENTS_PREFIX);
+}
+
+/** Opens every message about the agents a run's agent started in other folders (looper-delegate); the Messages view keys its rows on it. */
+export const DELEGATE_PREFIX = 'Looper messages from the agents you started';
+
+/** The message the agent gets: each entry is one agent's result or question. Their reports are the agents' own account. */
+export function delegateMessage(entries: readonly string[]): string {
+  return `${DELEGATE_PREFIX} (results and questions that arrived while you were working; a report is that agent's own account, so check it before you rely on it):\n${entries.join('\n\n')}`;
+}
+
+/** The entries' text when `text` is a delegated agents' message, else null. */
+export function delegateText(text: string): string | null {
+  return bodyAfterHeader(text, DELEGATE_PREFIX);
 }

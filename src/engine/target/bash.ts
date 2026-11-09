@@ -1,9 +1,17 @@
 import { execFile } from 'node:child_process';
 import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
-import { guideHookJson, STOP_GUIDANCE_JSON, SUBAGENT_START_JSON, type GuideHookFormat, type StopHookSpec } from './stop-hook';
+import {
+  DELEGATE_BUSY_VAR,
+  guideHookJson,
+  STOP_GUIDANCE_JSON,
+  SUBAGENT_START_JSON,
+  type GuideFiles,
+  type GuideHookFormat,
+  type StopHookSpec,
+} from './stop-hook';
 import { HANDBACK_TOOL } from '../../shared/messages';
 import { translatePath, translateToHost } from './paths';
-import { EVENTS_FILE, GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
+import { DELEGATE_FILE, EVENTS_FILE, GUIDANCE_FILE, NOTICE_FILE } from '../guidance';
 import { detectedDefaultWslDistro, wslDistroName } from '../host';
 import { DEFAULT_SHELL } from '../../shared/environments';
 
@@ -13,6 +21,10 @@ import { DEFAULT_SHELL } from '../../shared/environments';
  * before tool_input, so the command or a tool's output can't supply it.
  */
 const SUBAGENT_PATTERN = `*'"agent_id":'* | *'"agent_id": '*`;
+
+/** The done command's first line: while an agent the session started is still going, it prints why and fails. */
+const DELEGATE_REFUSAL = (leave: 'exit' | 'return'): string =>
+  `if [ -n "$${DELEGATE_BUSY_VAR}" ] && [ -e "$${DELEGATE_BUSY_VAR}" ]; then cat "$${DELEGATE_BUSY_VAR}" >&2; ${leave} 1; fi;`;
 
 /** Kill script: scan /proc for processes whose environment carries the run marker. */
 function killScript(runId: string, signal: string): string {
@@ -97,7 +109,7 @@ export class BashTarget implements Target {
     lines.push(`export PATH=${this.quote(spec.binDir)}":$PATH"`);
     const statuses = spec.doneStatuses.join('|');
     lines.push(
-      `${spec.doneCommand}() { local s=; case "$1" in ${statuses}) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
+      `${spec.doneCommand}() { ${DELEGATE_REFUSAL('return')} local s=; case "$1" in ${statuses}) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
     );
     lines.push(`export -f ${spec.doneCommand} 2>/dev/null`);
     lines.push(
@@ -111,6 +123,7 @@ export class BashTarget implements Target {
   renderDoneHelper(statuses: readonly string[]): string {
     return [
       '#!/usr/bin/env bash',
+      DELEGATE_REFUSAL('exit'),
       's=',
       `case "$1" in ${statuses.join('|')}) s="$1"; shift;; esac`,
       `printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"`,
@@ -166,6 +179,7 @@ export class BashTarget implements Target {
       // Guidance that arrived after the agent's last tool call: the turn goes on with it.
       ...(spec.guidanceFile ? this.takeGuidance(q(spec.guidanceFile), STOP_GUIDANCE_JSON) : []),
       ...(spec.eventsFile ? this.takeGuidance(q(spec.eventsFile), STOP_GUIDANCE_JSON) : []),
+      ...(spec.delegateFile ? this.takeGuidance(q(spec.delegateFile), STOP_GUIDANCE_JSON) : []),
       ...(spec.noticeFile ? this.takeGuidance(q(spec.noticeFile), STOP_GUIDANCE_JSON) : []),
       '# Emit the background_tasks array up to its real closing ], tracking',
       '# string/escape state and bracket depth, with whitespace outside strings',
@@ -213,6 +227,8 @@ export class BashTarget implements Target {
       '    ;;',
       '  esac',
       'fi',
+      // Waiting on an agent it started: the turn ends with no reminder, and Looper brings the result in.
+      ...(spec.delegateBusyFile ? [`if [ -e ${q(spec.delegateBusyFile)} ]; then printf '%s' "$payload" > ${q(spec.stopJson)}; exit 0; fi`] : []),
       `if [ ! -e ${q(spec.reminderFile)} ]; then`,
       `  : > ${q(spec.reminderFile)}`,
       `  printf '%s\\n' ${q(spec.blockNoDone)}`,
@@ -274,7 +290,7 @@ export class BashTarget implements Target {
 
   readonly guideHookFile = 'looper-guide-hook';
 
-  renderGuideHook(format: GuideHookFormat, files?: { guidance: string; events: string; notice: string }): string {
+  renderGuideHook(format: GuideHookFormat, files?: GuideFiles): string {
     const json = guideHookJson(format);
     return [
       '#!/usr/bin/env bash',
@@ -284,6 +300,7 @@ export class BashTarget implements Target {
       `case "\${payload%%'"tool_input"'*}" in ${SUBAGENT_PATTERN}) exit 0 ;; esac`,
       ...this.takeGuidance(files ? this.quote(files.guidance) : `"$LOOPER_RUN_DIR/${GUIDANCE_FILE}"`, json),
       ...this.takeGuidance(files ? this.quote(files.events) : `"$LOOPER_RUN_DIR/${EVENTS_FILE}"`, json),
+      ...this.takeGuidance(files ? this.quote(files.delegate) : `"$LOOPER_RUN_DIR/${DELEGATE_FILE}"`, json),
       ...this.takeGuidance(files ? this.quote(files.notice) : `"$LOOPER_RUN_DIR/${NOTICE_FILE}"`, json),
       'exit 0',
       '',

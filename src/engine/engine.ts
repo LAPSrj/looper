@@ -553,6 +553,7 @@ export function createEngine(opts: EngineOptions): Engine {
     log,
     steps: opts.steps,
     taskVersion: (id) => versions.current(id),
+    projects: () => projects.list(),
   });
 
   // ---------- version history ----------
@@ -1981,7 +1982,10 @@ export function createEngine(opts: EngineOptions): Engine {
       const none = { chat: false, terminal: false, guidance: false, compact: false };
       const task = taskOrProject(id);
       if (!task) return none;
-      if (scheduler.get(id)?.runs.some((r) => r.runId === runId)) return none;
+      const rt = scheduler.get(id);
+      if (rt?.runs.some((r) => r.runId === runId) || rt?.children.some((r) => r.runId === runId)) return none;
+      // A delegated agent ran in a folder of its own, which the task's sessions and runs don't open in.
+      if (runs.summaries(id).some((s) => s.runId === runId && s.parentRunId)) return none;
       try {
         const harness = runHarness(task, runId);
         if (harness.kind === 'custom') return none;
@@ -2034,7 +2038,7 @@ export function createEngine(opts: EngineOptions): Engine {
     readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
     clearRuns(id: string): void {
       const rt = scheduler.get(id);
-      if (rt && rt.runs.length > 0) {
+      if (rt && (rt.runs.length > 0 || rt.children.length > 0)) {
         throw new Error(`The task is ${rt.state}; wait for the run to end or stop the task first.`);
       }
       if (chats.hasOpen(id) || terminalRuns.hasOpen(id)) {

@@ -3,6 +3,10 @@ import type { RunRecord } from './types';
 /** One run: its records, gathered from the task's run log. */
 export interface RunGroup {
   runId: string;
+  /** A delegated agent's run (looper-delegate): the run whose agent started it. */
+  parentRunId?: string;
+  /** A delegated agent's run: the title its parent gave it. */
+  title?: string;
   startTs: string;
   endTs: string;
   result: string;
@@ -64,11 +68,15 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
   const result: RunGroup[] = [];
   for (const [runId, recs] of map) {
     const sorted = [...recs].sort((a, b) => a.ts.localeCompare(b.ts));
+    // A delegated agent's run says who started it in its first delegate record.
+    const by = sorted.find((r) => r.phase === 'delegate' && typeof r.detail?.parentRunId === 'string');
     // Guidance, events and question records say nothing about how the run went; guidance may even land after its result.
-    const steps = sorted.filter((r) => r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question');
+    // Nor do the records of the agents a run's agent started: those are the agents' own runs.
+    const steps = sorted.filter((r) => r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question' && (r.phase !== 'delegate' || r === by));
     const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
     result.push({
       runId,
+      ...(by ? { parentRunId: by.detail!.parentRunId as string, ...(typeof by.detail!.title === 'string' ? { title: by.detail!.title } : {}) } : {}),
       startTs: sorted[0].ts,
       endTs: sorted[sorted.length - 1].ts,
       result: bestResult(steps),

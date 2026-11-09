@@ -5,10 +5,20 @@ import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
-import { eventsMessage, guidanceMessage } from '../../shared/messages';
+import { delegateMessage, eventsMessage, guidanceMessage } from '../../shared/messages';
 import { resolveEnvironment } from '../../shared/environments';
 import { readContextTokens } from '../context';
-import { EVENTS_FILE, GUIDANCE_FILE, NOTICE_FILE, queueNotice, takeEvents, takeNotice, takePendingGuidance } from '../guidance';
+import {
+  DELEGATE_FILE,
+  EVENTS_FILE,
+  GUIDANCE_FILE,
+  NOTICE_FILE,
+  queueNotice,
+  takeDelegateMessages,
+  takeEvents,
+  takeNotice,
+  takePendingGuidance,
+} from '../guidance';
 import { findStepTranscript, transcriptHostPath } from '../messages';
 import { claudeModelWindows, modelWindows } from '../model-windows';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
@@ -17,7 +27,17 @@ import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
 import { stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
-import { ASK_DIR, childEnv, runDirTarget, stripShellNoise, targetFile, writeLauncher, type RunContext } from './common';
+import {
+  ASK_DIR,
+  childEnv,
+  DELEGATE_BUSY_FILE,
+  DELEGATE_DIR,
+  runDirTarget,
+  stripShellNoise,
+  targetFile,
+  writeLauncher,
+  type RunContext,
+} from './common';
 
 /**
  * A harness session: one spawned CLI conversation, interactive (pty + terminal
@@ -144,6 +164,19 @@ export interface SessionOpts {
    * waits. Unset = the session cannot ask.
    */
   ask?: { command: string; waitMs: number; noAnswer: string };
+  /**
+   * The delegate command on the session's PATH (looper-delegate). Its
+   * requests come in through the run dir's delegate folder, and `handle`
+   * answers each with the text the command prints and its exit code. The
+   * idle clock stops while `busy()`: an agent the session started is still
+   * going, and its result will start the next turn. Unset = the session
+   * cannot start agents.
+   */
+  delegate?: {
+    command: string;
+    handle: (args: string[], cwd: string) => Promise<{ text: string; code: number }>;
+    busy: () => boolean;
+  };
   /** The session continues a run an earlier session started (a context restart): the logs keep the earlier output. */
   continued?: boolean;
   /** Status assumed when the done file has no recognized status line (agent: success; classify: none). */
@@ -546,8 +579,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const codex = harness.kind === 'codex';
   const f = (name: string): string => opts.prefix + name;
   const signalCommands = [doneCommand, opts.completeCommand, opts.restartCommand].filter((c): c is string => !!c);
-  // The ask command must pass permissions and the sandbox too, but it doesn't end the session: a subagent may run it.
-  const helperCommands = opts.ask ? [...signalCommands, opts.ask.command] : signalCommands;
+  // The ask and delegate commands must pass permissions and the sandbox too, but they don't end the session: a subagent may run them.
+  const helperCommands = [...signalCommands, ...(opts.ask ? [opts.ask.command] : []), ...(opts.delegate ? [opts.delegate.command] : [])];
   // The restart helper ends the session through the done file, under its own status.
   const parseStatuses = opts.restartCommand ? [...doneStatuses, RESTART_STATUS] : doneStatuses;
   if (opts.restartCommand) {
@@ -577,6 +610,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         target.renderGuideHook('claude', {
           guidance: targetFile(ctx, GUIDANCE_FILE),
           events: targetFile(ctx, EVENTS_FILE),
+          delegate: targetFile(ctx, DELEGATE_FILE),
           notice: targetFile(ctx, NOTICE_FILE),
         }),
         0o755,
@@ -600,6 +634,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           reminderFile: targetFile(ctx, f('stop-reminded')),
           guidanceFile: opts.guidance ? targetFile(ctx, GUIDANCE_FILE) : undefined,
           eventsFile: opts.guidance ? targetFile(ctx, EVENTS_FILE) : undefined,
+          delegateFile: opts.guidance ? targetFile(ctx, DELEGATE_FILE) : undefined,
+          delegateBusyFile: opts.delegate ? targetFile(ctx, DELEGATE_DIR, DELEGATE_BUSY_FILE) : undefined,
           noticeFile: opts.guidance ? targetFile(ctx, NOTICE_FILE) : undefined,
           ...stopHookMessages(opts.step),
         }),
@@ -716,10 +752,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     completeCommand: opts.completeCommand,
     // The helper outwaits Looper's own deadline, so the no-answer text is what it prints.
     ask: opts.ask ? { command: opts.ask.command, waitS: Math.ceil(opts.ask.waitMs / 1000) + 120 } : undefined,
+    delegateCommand: opts.delegate?.command,
   });
   const askDir = path.join(ctx.runDir, f(ASK_DIR));
   // A question an earlier session of the run left behind has nobody waiting on it.
   fs.rmSync(askDir, { recursive: true, force: true });
+  // Nor has a delegate request; the busy file stays, since the agents an earlier session started may still be going.
+  const delegateDir = path.join(ctx.runDir, DELEGATE_DIR);
+  for (const sub of ['requests', 'responses']) fs.rmSync(path.join(delegateDir, sub), { recursive: true, force: true });
 
   if (opts.continued) {
     // A restarted session writes after the earlier one; a line in the logs marks where.
@@ -896,6 +936,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     clearTimeout(maxTimer);
     if (contextTimer) clearInterval(contextTimer);
     if (askTimer) clearInterval(askTimer);
+    if (delegateTimer) clearInterval(delegateTimer);
     if (doneTimer) clearTimeout(doneTimer);
     if (!exited) await killTree();
     out.end();
@@ -978,6 +1019,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let askTimer: NodeJS.Timeout | null = null;
   /** The question waiting on an answer: its request id, its text, and when Looper took it. */
   let pendingAsk: { rid: string; question: string; at: number } | null = null;
+  /** The delegate poll (see below); unset when the session cannot start agents. */
+  let delegateTimer: NodeJS.Timeout | null = null;
   const maxTimer = setTimeout(
     () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
     opts.maxRuntimeMs,
@@ -1162,7 +1205,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             ctx.log.info(`[${task.id}] prompt resolved; ${opts.step} continues`);
           }
         }
-        if (held || pendingAsk) return;
+        if (held || pendingAsk || opts.delegate?.busy()) return;
         const since = idleSince ?? promptSince;
         if (since === null) return;
         if (now - since < opts.idleGraceMs) return;
@@ -1205,11 +1248,20 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (!opts.guidance || headless || ended || doneMtime !== null) return;
     if (idleSince === null && !held) return;
     const text = takePendingGuidance(ctx.runDir);
-    // Related events wait behind the user's guidance, and Looper's own notice behind both.
+    // Related events wait behind the user's guidance, the delegated agents' messages behind them, and Looper's own notice last.
     const events = text === null ? takeEvents(ctx.runDir) : null;
-    const message = text !== null ? guidanceMessage(text) : events !== null ? eventsMessage(events) : takeNotice(ctx.runDir);
+    const delegated = text === null && events === null ? takeDelegateMessages(ctx.runDir) : null;
+    const message =
+      text !== null
+        ? guidanceMessage(text)
+        : events !== null
+          ? eventsMessage(events)
+          : delegated !== null
+            ? delegateMessage([delegated])
+            : takeNotice(ctx.runDir);
     if (message === null) return;
-    ctx.log.info(`[${task.id}] typing ${text !== null ? "the user's guidance" : events !== null ? 'related events' : "Looper's notice"} into the idle session`);
+    const what = text !== null ? "the user's guidance" : events !== null ? 'related events' : delegated !== null ? "the delegated agents' messages" : "Looper's notice";
+    ctx.log.info(`[${task.id}] typing ${what} into the idle session`);
     input('\x1b[200~' + message.replace(/\r?\n/g, '\r') + '\x1b[201~');
     setTimeout(() => input('\r'), 300);
   }
@@ -1308,8 +1360,54 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         return;
       }
       pendingAsk = { rid, question, at: Date.now() };
-      ctx.log.info(`[${task.id}] the agent asks the user: ${question}`);
+      ctx.log.info(`[${task.id}] the agent asks ${ctx.delegatedBy ? 'the agent that started it' : 'the user'}: ${question}`);
       cb.onQuestion?.(question);
+    }, ctx.settings.signalPollMs);
+  }
+
+  /** The delegate poll: answers each request in order, one at a time. */
+  if (opts.delegate) {
+    const { command, handle } = opts.delegate;
+    const reqDir = path.join(delegateDir, 'requests');
+    const resDir = path.join(delegateDir, 'responses');
+    const reply = (rid: string, text: string, code: number): void => {
+      try {
+        fs.mkdirSync(resDir, { recursive: true });
+        fs.writeFileSync(path.join(resDir, `${rid}.out`), text.endsWith('\n') ? text : text + '\n');
+        fs.writeFileSync(path.join(resDir, `${rid}.code.tmp`), String(code));
+        fs.renameSync(path.join(resDir, `${rid}.code.tmp`), path.join(resDir, `${rid}.code`));
+      } catch (e) {
+        ctx.log.warn(`[${task.id}] cannot answer ${command}: ${(e as Error).message}`);
+      }
+    };
+    let handling = false;
+    delegateTimer = setInterval(() => {
+      if (ended || handling) return;
+      let name: string | undefined;
+      try {
+        name = fs.readdirSync(reqDir).filter((n) => n.endsWith('.req')).sort()[0];
+      } catch {
+        return; // no request yet
+      }
+      if (!name) return;
+      let lines: string[];
+      try {
+        lines = fs.readFileSync(path.join(reqDir, name), 'utf8').replace(/^﻿/, '').split(/\r?\n/);
+        fs.rmSync(path.join(reqDir, name), { force: true });
+      } catch {
+        return;
+      }
+      const rid = name.slice(0, -'.req'.length);
+      // The op, the caller's folder, then one line per argument (the last line ends the file).
+      const args = lines.slice(2);
+      if (args.length && args[args.length - 1] === '') args.pop();
+      handling = true;
+      void handle(args, lines[1] ?? '')
+        .then(
+          (r) => reply(rid, r.text, r.code),
+          (e: Error) => reply(rid, `looper: ${e.message}`, 1),
+        )
+        .finally(() => (handling = false));
     }, ctx.settings.signalPollMs);
   }
 

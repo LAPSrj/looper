@@ -21,6 +21,24 @@ interface Props {
 
 const SHOW_ALL: RunFilter = { hideSkipped: false, hideNoAction: false };
 
+/** Runs newest first, each delegated agent's run right under the run that started it, in the order they started. */
+function underParents(groups: RunGroup[]): RunGroup[] {
+  const ids = new Set(groups.map((g) => g.runId));
+  const children = new Map<string, RunGroup[]>();
+  const top: RunGroup[] = [];
+  for (const g of groups) {
+    if (g.parentRunId && ids.has(g.parentRunId)) {
+      const list = children.get(g.parentRunId) ?? [];
+      list.unshift(g);
+      children.set(g.parentRunId, list);
+    } else top.push(g);
+  }
+  return children.size ? top.flatMap((g) => [g, ...(children.get(g.runId) ?? [])]) : groups;
+}
+
+/** A delegated agent's run names itself by the title its parent gave it. */
+const detailsOf = (g: RunGroup): string => (g.title ? (g.details ? `${g.title}: ${g.details}` : g.title) : g.details);
+
 export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, focusRun }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -29,7 +47,7 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
   }, [focusRun]);
 
   const groups = useMemo(
-    () => groupRuns(records).filter((g) => sessions || runShown(g, filter)),
+    () => underParents(groupRuns(records).filter((g) => sessions || runShown(g, filter))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [records, filter.hideSkipped, filter.hideNoAction, sessions],
   );
@@ -45,7 +63,10 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
   }, [groups, selected]);
 
   const selectedGroup = groups.find((g) => g.runId === selected) ?? null;
-  const isRunning = (runId: string) => runtime?.runs.some((r) => r.runId === runId) ?? false;
+  // A delegated agent's run is in flight from the moment it's asked for, and waits until its folder is free.
+  const live = (runId: string) => runtime?.runs.find((r) => r.runId === runId) ?? runtime?.children.find((r) => r.runId === runId);
+  const isRunning = (runId: string) => !!live(runId);
+  const liveLabel = (g: RunGroup) => (live(g.runId)?.waiting ? 'Waiting' : isRunning(g.runId) ? 'Running' : resultLabel(g.result));
   const duration = (g: RunGroup) => (g.totalDurationMs > 0 ? formatDuration(g.totalDurationMs) : '');
 
   // A project's chats and terminal sessions all share one result, so they have no Result column.
@@ -53,9 +74,9 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
     { label: 'Date', width: 92, cell: (g) => fmtDate(g.startTs) },
     { label: 'Start', width: 76, cell: (g) => fmtTime(g.startTs) },
     { label: 'End', width: 76, cell: (g) => fmtTime(g.endTs) },
-    ...(sessions ? [] : [{ label: 'Result', width: 96, cell: (g: RunGroup) => (isRunning(g.runId) ? 'Running' : resultLabel(g.result)) }]),
+    ...(sessions ? [] : [{ label: 'Result', width: 96, cell: liveLabel }]),
     { label: 'Duration', width: 72, cell: duration },
-    { label: 'Details', cell: (g) => g.details, title: (g) => g.details },
+    { label: 'Details', cell: detailsOf, title: (g) => live(g.runId)?.waiting ?? detailsOf(g) },
   ];
 
   return (
@@ -70,18 +91,18 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
             rowKey={(g) => g.runId}
             idPrefix="run"
             storageKey={sessions ? 'runlog-sessions' : 'runlog'}
-            rowClass={(g) => `result-${g.result}`}
+            rowClass={(g) => `result-${g.result}${g.parentRunId ? ' delegated' : ''}`}
             selected={selected}
             onSelect={(g) => setSelected(g.runId)}
             onOpen={(g) => void window.looper.openMessages(taskOf(g), g.runId)}
             onMenu={(g) => window.looper.showRunContextMenu({ taskId: taskOf(g), runId: g.runId, details: g.details })}
-            copyText={(g) => g.resultText || g.details}
+            copyText={(g) => g.resultText || detailsOf(g)}
             empty={sessions ? 'No chats or terminal sessions yet.' : 'No runs yet.'}
             dayOf={(g) => Date.parse(g.startTs)}
             phoneRow={(g) => ({
-              title: g.details || (sessions ? 'Session' : resultLabel(g.result)),
+              title: detailsOf(g) || (sessions ? 'Session' : resultLabel(g.result)),
               sub: timeAndDuration(g.startTs, duration(g)),
-              value: sessions ? undefined : isRunning(g.runId) ? 'Running' : resultLabel(g.result),
+              value: sessions ? undefined : liveLabel(g),
               valueTone: resultTone(g.result),
             })}
           />

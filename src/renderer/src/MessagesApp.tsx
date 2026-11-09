@@ -43,7 +43,7 @@ export function MessagesApp({
   // The window's title is "<task> – <run id>"; a phone's bar names the task only (the run is the screen's content).
   const phoneTitle = agentId ? title : taskNameOf(title, runId);
 
-  const run = runtime?.runs.find((r) => r.runId === runId);
+  const run = runtime?.runs.find((r) => r.runId === runId) ?? runtime?.children.find((r) => r.runId === runId);
   const running = run?.state === 'running' || run?.state === 'classifying';
   const agentRunning = run?.state === 'running';
 

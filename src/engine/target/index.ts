@@ -1,6 +1,6 @@
 import type { HostKind } from '../host';
 import type { Settings, Task } from '../../shared/types';
-import type { GuideHookFormat, StopHookSpec } from './stop-hook';
+import type { GuideFiles, GuideHookFormat, StopHookSpec } from './stop-hook';
 import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
 import { WindowsTarget } from './windows';
@@ -61,6 +61,7 @@ export interface Target {
   /** Shell expression referencing an environment variable. */
   envRef(name: string): string;
   renderLauncher(spec: LauncherSpec): string;
+  /** The done helper; like the launcher's done function, it refuses while $LOOPER_DELEGATE_BUSY names a file that exists. */
   renderDoneHelper(statuses: readonly string[]): string;
   /** Helper that writes its arguments (or `fallback`) into the file named by the `envVar` variable. */
   renderTextHelper(envVar: string, fallback: string): string;
@@ -101,12 +102,12 @@ export interface Target {
   readonly guideHookFile: string;
   /**
    * Script for the PostToolUse guidance hook: take the waiting guidance file,
-   * or else the waiting events, or else the waiting notice, and print it as
-   * additional context. `files` unset = find them in $LOOPER_RUN_DIR, so one
-   * script serves every run (codex trusts a hook only while its command stays
-   * the same).
+   * or else the waiting events, or else the delegated agents' messages, or
+   * else the waiting notice, and print it as additional context. `files`
+   * unset = find them in $LOOPER_RUN_DIR, so one script serves every run
+   * (codex trusts a hook only while its command stays the same).
    */
-  renderGuideHook(format: GuideHookFormat, files?: { guidance: string; events: string; notice: string }): string;
+  renderGuideHook(format: GuideHookFormat, files?: GuideFiles): string;
   /** File name of the subagent guard script in the run's bin/ dir. */
   readonly guardHookFile: string;
   /**

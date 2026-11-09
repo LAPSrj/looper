@@ -371,6 +371,21 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <pre className="chat-tool-pre">{row.text}</pre>
         </Disclosure>
       );
+    case 'delegate':
+      // The results and questions of the agents this one started: their own words, not the user's.
+      return (
+        <Disclosure
+          className="chat-aside"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              From the agents it started <span className="chat-tool-preview">{row.preview}</span>
+            </summary>
+          }
+        >
+          <MessageBody text={row.text} />
+        </Disclosure>
+      );
     case 'error':
       return (
         <div className="chat-msg chat-agent error-text" onContextMenu={onContextMenu}>

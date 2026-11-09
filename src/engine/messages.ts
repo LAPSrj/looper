@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   SENT_IMAGE_RE,
+  delegateText,
   eventsText,
   guidanceText,
   toolImageId,
@@ -612,6 +613,7 @@ export class TranscriptAccumulator {
       last.skill === undefined &&
       guidanceText(text) === null &&
       eventsText(text) === null &&
+      delegateText(text) === null &&
       !text.trimStart().startsWith('<task-notification>')
         ? last
         : undefined);
@@ -670,7 +672,7 @@ export class TranscriptAccumulator {
     }
   }
 
-  /** A row of its own when `text` is a guidance or events message (see GUIDANCE_PREFIX, EVENTS_PREFIX); false when it is neither. */
+  /** A row of its own when `text` is a guidance, events or delegated agents' message (see GUIDANCE_PREFIX, EVENTS_PREFIX, DELEGATE_PREFIX); false when it is none. */
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
     if (g !== null) {
@@ -678,8 +680,13 @@ export class TranscriptAccumulator {
       return true;
     }
     const events = eventsText(text);
-    if (events === null) return false;
-    this.push({ kind: 'events', ts, text: events });
+    if (events !== null) {
+      this.push({ kind: 'events', ts, text: events });
+      return true;
+    }
+    const delegated = delegateText(text);
+    if (delegated === null) return false;
+    this.push({ kind: 'delegate', ts, text: delegated });
     return true;
   }
 

@@ -8,6 +8,7 @@ import type { HostKind } from '../host';
 import type { Logger } from '../log';
 import type { SpawnSpec, Target } from '../target';
 import { joinTarget } from '../target/paths';
+import { DELEGATE_BUSY_VAR } from '../target/stop-hook';
 import { killHostTree } from '../target/kill';
 import { writeText } from '../store/fsutil';
 
@@ -42,6 +43,15 @@ export interface RunContext {
    * time the earlier sessions used (the run's max runtime covers them all).
    */
   restart?: { count: number; handoff: string; elapsedMs: number };
+  /**
+   * A headless agent ended its turn while agents it started were still going:
+   * the next session resumes its conversation (agentSession) with their
+   * messages as the whole prompt, and the run's max runtime has `usedMs` left
+   * less.
+   */
+  resume?: { prompt: string; usedMs: number };
+  /** A delegated agent's run (looper-delegate): who started it and the title it gave it. */
+  delegatedBy?: { taskName: string; runId: string; title: string };
 }
 
 /** Markers a parent claude session leaves behind; a looper agent is never a "child session". */
@@ -109,6 +119,15 @@ export const AGENT_ASK = 'looper-ask';
 /** The run-dir folder a session's `looper-ask` requests and Looper's responses go through. */
 export const ASK_DIR = 'ask';
 
+/** The command an agent allowed to start agents in other folders calls. */
+export const AGENT_DELEGATE = 'looper-delegate';
+
+/** The run-dir folder a session's `looper-delegate` requests and Looper's responses go through. */
+export const DELEGATE_DIR = 'delegate';
+
+/** The file in DELEGATE_DIR that exists while an agent the session started is still going (DELEGATE_BUSY_VAR). */
+export const DELEGATE_BUSY_FILE = 'busy';
+
 export interface LauncherOpts {
   /** Step file prefix ('' = agent, 'classify-' = classifier). */
   prefix?: string;
@@ -119,6 +138,8 @@ export interface LauncherOpts {
   completeCommand?: string;
   /** Ask command written to bin/, and how long it waits for Looper's response. Unset = the agent cannot ask. */
   ask?: { command: string; waitS: number };
+  /** Delegate command written to bin/. Unset = the agent cannot start agents in other folders. */
+  delegateCommand?: string;
 }
 
 /**
@@ -126,7 +147,15 @@ export interface LauncherOpts {
  * something (no note, not a watcher run), so a task or harness env var of the
  * same name is dropped instead of standing in for them.
  */
-const RUN_ONLY_VARS = ['LOOPER_TRIGGER', 'LOOPER_EVENTS_FILE', 'LOOPER_NOTE_FILE', 'LOOPER_COMPLETE_FILE', 'LOOPER_ASK_DIR'];
+const RUN_ONLY_VARS = [
+  'LOOPER_TRIGGER',
+  'LOOPER_EVENTS_FILE',
+  'LOOPER_NOTE_FILE',
+  'LOOPER_COMPLETE_FILE',
+  'LOOPER_ASK_DIR',
+  'LOOPER_DELEGATE_DIR',
+  DELEGATE_BUSY_VAR,
+];
 
 /**
  * Write the done helper + a launcher script into the run dir and return how to
@@ -159,6 +188,15 @@ export function writeLauncher(
     const helpers = ctx.target.renderRequestHelpers(
       { [opts.ask.command]: 'ask' },
       { dirVar: 'LOOPER_ASK_DIR', script: `${opts.ask.command}-request`, hint: 'is Looper still running?', waitS: opts.ask.waitS },
+    );
+    for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
+  }
+  if (opts.delegateCommand) {
+    locked.LOOPER_DELEGATE_DIR = targetFile(ctx, DELEGATE_DIR);
+    locked[DELEGATE_BUSY_VAR] = targetFile(ctx, DELEGATE_DIR, DELEGATE_BUSY_FILE);
+    const helpers = ctx.target.renderRequestHelpers(
+      { [opts.delegateCommand]: 'delegate' },
+      { dirVar: 'LOOPER_DELEGATE_DIR', script: `${opts.delegateCommand}-request`, hint: 'is Looper still running?', waitS: 120 },
     );
     for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
   }

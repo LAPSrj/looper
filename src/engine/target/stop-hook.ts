@@ -19,6 +19,13 @@ export interface StopHookSpec {
   guidanceFile?: string;
   /** Related trigger events waiting for the agent, taken the same way after any guidance. */
   eventsFile?: string;
+  /** Results and questions of the agents it started (looper-delegate), taken the same way after any events. */
+  delegateFile?: string;
+  /**
+   * Exists while an agent the session started is still going: the turn may
+   * end without the done command, since Looper brings the result in.
+   */
+  delegateBusyFile?: string;
   /** Looper's own notice waiting for the agent, taken the same way after any guidance. */
   noticeFile?: string;
   /** JSON decision blocking a stop while background tasks run. */
@@ -29,6 +36,21 @@ export interface StopHookSpec {
 
 /** How the guidance hook hands its message over: claude's PostToolUse output, or codex's. */
 export type GuideHookFormat = 'claude' | 'codex';
+
+/** The files the guidance hook takes from, in this order: the first one waiting is handed over. */
+export interface GuideFiles {
+  guidance: string;
+  events: string;
+  delegate: string;
+  notice: string;
+}
+
+/**
+ * The environment variable naming the file that exists while an agent the
+ * session started (looper-delegate) is still going: the done command refuses
+ * then and prints the file.
+ */
+export const DELEGATE_BUSY_VAR = 'LOOPER_DELEGATE_BUSY';
 
 /**
  * The JSON a guidance hook prints around the message literal (see

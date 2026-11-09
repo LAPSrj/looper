@@ -64,6 +64,13 @@ function stepText(r: RunRecord): string {
       if (r.result === 'sent') return `The agent asked: ${note ?? ''}`;
       if (r.result === 'delivered') return `You answered: ${note ?? ''}`;
       return `Question not answered: ${note ?? ''}`;
+    case 'delegate':
+      // On a delegated agent's own run: who started it. On its parent's: the agents it started, and their results.
+      if (typeof r.detail?.parentRunId === 'string') return `Started by the agent of run ${r.detail.parentRunId}`;
+      if (r.result === 'started') return `Started an agent: ${note ?? ''}`;
+      if (r.result === 'delivered') return 'The agent got the messages from the agents it started';
+      if (r.result === 'undelivered') return `Not delivered: ${(note ?? '').replace(/^not delivered: /, '')}`;
+      return `Agent ended (${resultLabel(r.result).toLowerCase()}): ${note ?? ''}`;
     case 'chat':
     case 'terminal': {
       const what = r.phase === 'chat' ? 'Chat' : 'Terminal';
