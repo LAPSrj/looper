@@ -6,7 +6,6 @@ import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
 import { AgentFields } from './components/RemoteFields';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { useFitWindow } from './fit-window';
 import { subscribe } from './events';
 
 type Draft = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'mode' | 'remote'>;
@@ -22,7 +21,6 @@ export function ProjectEditorApp({ id }: { id?: string }) {
   const [envText, setEnvText] = useState('');
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
-  useFitWindow();
 
   useEffect(() => {
     void Promise.all([window.looper.info(), window.looper.projects.list()]).then(([info, list]) => {

@@ -8,7 +8,6 @@ import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, SelectInput, Ta
 import { WindowActions } from './components/WindowActions';
 import { ConcurrencyLimit } from './components/form-blocks';
 import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
-import { useFitWindow } from './fit-window';
 import { SelectList, ListActions, ListButton } from './components/SelectList';
 
 const DEFAULT_COMMANDS: Record<Harness['kind'], string> = {
@@ -33,7 +32,6 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   const [tab, setTab] = useState<HarnessTab>('general');
   const [selectedModel, setSelectedModel] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  useFitWindow();
 
   const savedRef = useDiscardUnsaved(isNew, () => window.looper.discardHarness(envId, harnessId));
 

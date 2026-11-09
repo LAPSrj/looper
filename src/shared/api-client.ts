@@ -261,7 +261,6 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     getStartWithSystem: () => t.invoke('loginItem:get'),
     setStartWithSystem: (enabled) => t.invoke('loginItem:set', enabled),
     showError: (message, detail) => t.invoke('dialog:error', message, detail),
-    fitWindow: (contentHeight) => t.send('window:fit', contentHeight),
     confirm: (message) => t.invoke('dialog:confirm', message),
     commands: {
       setMenuBar: (items) => t.send('commands:menuBar', items),

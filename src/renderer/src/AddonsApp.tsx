@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonSide } from '@shared/addons';
 import type { Environment } from '@shared/types';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { useFitWindow } from './fit-window';
 import { Group, Row } from './components/phone/PhoneList';
 import { isPhone } from './web/page-nav';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
@@ -152,7 +151,6 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
   const [draft, setDraft] = useState<RunDraft | null>(null);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [saving, setSaving] = useState(false);
-  useFitWindow();
 
   useEffect(() => {
     void Promise.all([window.looper.addons.list(), window.looper.info()]).then(([list, info]) => {

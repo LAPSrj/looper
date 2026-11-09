@@ -32,8 +32,10 @@
   --disabled-opacity: 0.45;
   /* How far a group's rows sit in from its header. */
   --group-indent: 14px;
-  /* Elevation: a flyout or toast, a dialog or window, the skill list opening upward. */
+  /* Elevation: a flyout or toast, a dialog or window, the skill list opening upward, a menu. */
   --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.2);
+  /* Within the 8 px a menu's level window leaves around it (MENU_PAD in menu-popups.ts), or the window's edge cuts it off. */
+  --shadow-menu: 0 2px 6px rgba(0, 0, 0, 0.18);
   --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.35);
   --shadow-flyout-up: 0 -2px 8px rgba(0, 0, 0, 0.14);
   /* Layers, from the page up: a pop-up list, menus, dialogs, toasts, the top of the window frame. */
@@ -5037,6 +5039,8 @@ html.phone-window .workflow-text {
   margin: 2px 0;
   background: transparent;
   color: var(--fg);
+  /* The system's menu font (Segoe UI 9 pt on Windows), as its own menu bars use. */
+  font: menu;
 }
 .ws-menubar-item.open {
   background: var(--bg-3);
@@ -5110,8 +5114,8 @@ html.phone-window .workflow-text {
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-overlay);
-  box-shadow: var(--shadow-flyout);
-  font-size: var(--font-body);
+  box-shadow: var(--shadow-menu);
+  font: menu;
   white-space: nowrap;
   z-index: 1;
 }

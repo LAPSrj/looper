@@ -198,15 +198,35 @@ export function WindowContextMenu() {
   openRef.current = open;
   /** What had the focus before the first of the menus: a menu replacing an open one gives it back there too. */
   const back = useRef<HTMLElement | null>(null);
-  useEffect(
-    () =>
-      window.looper.onUi((e) => {
-        if (e.type !== 'context-menu') return;
-        if (!openRef.current) back.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        setOpen({ menuId: e.menuId, items: e.items, x: e.x, y: e.y });
-      }),
-    [],
-  );
+  useEffect(() => {
+    // Where the last right-click was, until another press: a menu that took a moment to build opens there, not where the pointer went since.
+    let rightClick: { x: number; y: number } | null = null;
+    const onMenu = (e: MouseEvent) => {
+      rightClick = e.button === 2 ? { x: e.clientX, y: e.clientY } : null;
+    };
+    const onPress = (e: PointerEvent) => {
+      if (e.button !== 2) rightClick = null;
+    };
+    const onKey = () => {
+      rightClick = null;
+    };
+    window.addEventListener('contextmenu', onMenu, true);
+    window.addEventListener('pointerdown', onPress, true);
+    window.addEventListener('keydown', onKey, true);
+    const off = window.looper.onUi((e) => {
+      if (e.type !== 'context-menu') return;
+      if (!openRef.current) back.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const at = e.atPointer && rightClick ? rightClick : { x: e.x, y: e.y };
+      rightClick = null;
+      setOpen({ menuId: e.menuId, items: e.items, ...at });
+    });
+    return () => {
+      off();
+      window.removeEventListener('contextmenu', onMenu, true);
+      window.removeEventListener('pointerdown', onPress, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
   // A new menu replaces the open one; the main process has closed that one already.
   return open ? <ContextMenu key={open.menuId} menu={open} back={back} onDone={() => setOpen(null)} /> : null;
 }

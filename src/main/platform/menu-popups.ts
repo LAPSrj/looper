@@ -45,6 +45,11 @@ let state: MenuPopupState | null = null;
 let idle: ReturnType<typeof setTimeout> | null = null;
 let page: { preload: string; load: (w: BrowserWindow, hash: string) => void } | null = null;
 
+/** A menu's level window: shown all the time (see park), so lists of open windows leave it out. */
+export function isMenuLevelWindow(w: BrowserWindow): boolean {
+  return levels.some((l) => l?.win === w);
+}
+
 /** The level windows' page: the windows' own preload, and how a window loads a route. */
 export function useMenuPopupPage(p: { preload: string; load: (w: BrowserWindow, hash: string) => void }): void {
   page = p;
@@ -117,18 +122,30 @@ function release(): void {
 }
 
 function send(level: Level, content: { items: MenuItemSpec[]; active: number; cues: boolean } | null): void {
-  if (level.ready && !level.win.isDestroyed()) level.win.webContents.send('ui:event', { type: 'menu-level', level: content });
+  if (level.ready && !level.win.isDestroyed() && !level.win.webContents.isDestroyed()) level.win.webContents.send('ui:event', { type: 'menu-level', level: content });
 }
 
 function hideFrom(depth: number): void {
   for (let d = depth; d < levels.length; d++) {
     const level = levels[d];
     if (!level || level.win.isDestroyed()) continue;
-    if (level.shown) level.win.hide();
+    if (level.shown) park(level);
     level.shown = false;
     level.layout = null;
     send(level, null);
   }
+}
+
+/**
+ * Without a menu, a level window stays shown, empty, see-through, letting the pointer through, and as small as Windows
+ * allows (it keeps 32 × 39 px). Chromium doesn't draw a hidden window, so a menu shown in one was drawn only once
+ * Windows had begun fading it in, and with the page process busy the fade stopped partway and then jumped. A shown
+ * window has its menu drawn as it moves into place.
+ */
+function park(level: Level): void {
+  const { x, y } = level.win.getBounds();
+  level.win.setIgnoreMouseEvents(true);
+  level.win.setBounds({ x, y, width: 1, height: 1 });
 }
 
 function closeAll(): void {
@@ -143,6 +160,10 @@ export function menuLevelLayout(from: unknown, depth: number, layout: MenuLevelL
   if (!level || level.win.webContents !== from) return;
   if (!layout) {
     level.ready = true;
+    // `transparent` alone leaves it opaque white while its page shares the windows' process (process-per-site).
+    level.win.setBackgroundColor('#00000000');
+    park(level);
+    level.win.showInactive();
     // A submenu opened while its window loaded.
     const lv = state?.levels[depth];
     if (lv) send(level, { ...lv, cues: state!.cues });
@@ -185,7 +206,7 @@ function place(depth: number): void {
   level.win.setBounds({ x: x - MENU_PAD, y: y - MENU_PAD, width: width + 2 * MENU_PAD, height: height + 2 * MENU_PAD });
   if (!level.shown) {
     if (level.win.getParentWindow() !== owner) level.win.setParentWindow(owner);
-    level.win.showInactive();
+    level.win.setIgnoreMouseEvents(false);
     level.shown = true;
   }
   if (levels[depth + 1]?.layout) place(depth + 1);

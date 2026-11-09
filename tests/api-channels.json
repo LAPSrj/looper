@@ -2950,19 +2950,6 @@
   ],
   "result": {}
  },
- "fitWindow": {
-  "arity": 1,
-  "calls": [
-   [
-    "send",
-    "window:fit",
-    [
-     "a0"
-    ]
-   ]
-  ],
-  "result": {}
- },
  "applyMessagesFilter": {
   "arity": 1,
   "calls": [

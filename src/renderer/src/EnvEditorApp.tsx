@@ -7,7 +7,6 @@ import { EmptyWindow, Field, FormGroup, SelectInput, TabBar, TextInput } from '.
 import { WindowActions } from './components/WindowActions';
 import { ConcurrencyLimit } from './components/form-blocks';
 import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
-import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 import { rid } from './rid';
 
@@ -31,7 +30,6 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
   const [saving, setSaving] = useState(false);
   /** "Custom" chosen in the Shell dropdown; the free-text field shows regardless of its value. */
   const [customShell, setCustomShell] = useState(false);
-  useFitWindow();
 
   const savedRef = useDiscardUnsaved(isNew, () => window.looper.discardEnvironment(envId));
 

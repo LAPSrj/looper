@@ -17,7 +17,6 @@ import { WindowActions } from './components/WindowActions';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
-import { useFitWindow } from './fit-window';
 import { subscribe } from './events';
 
 const showError = (e: unknown) => void window.looper.showError((e as Error).message);
@@ -69,7 +68,6 @@ export function RemoteAccessSettingsApp() {
   const [draft, setDraft] = useState<RemoteAccessSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const state = useRemoteAccessState();
-  useFitWindow();
 
   useEffect(() => {
     document.title = 'Remote Access';
@@ -411,7 +409,6 @@ export function RemoteAccessSetupApp() {
   const [busy, setBusy] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const state = useRemoteAccessState();
-  useFitWindow();
 
   useEffect(() => {
     document.title = 'Set Up Remote Access';

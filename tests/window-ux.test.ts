@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { windowTitle } from '../src/shared/window-title';
-import { fitContentHeight } from '../src/main/platform/placement';
 import { ZOOM_STEPS, parseZooms, zoomKey, zoomStep } from '../src/main/platform/zoom-steps';
 
 describe('windowTitle', () => {
@@ -58,32 +57,5 @@ describe('parseZooms', () => {
     expect(parseZooms({ zooms: { main: 1.25, sessions: 0.9, bad: 'x', huge: 50, same: 1, nan: null } })).toEqual({ main: 1.25, sessions: 0.9 });
     expect(parseZooms(null)).toEqual({});
     expect(parseZooms({ places: {} })).toEqual({});
-  });
-});
-
-describe('fitContentHeight', () => {
-  const room = 800;
-
-  it('sets the first fit exactly, shrinking a dialog with an empty band', () => {
-    expect(fitContentHeight({ current: 545, wanted: 477.2, first: true, max: room })).toBe(478);
-  });
-
-  it('leaves a first fit that already matches', () => {
-    expect(fitContentHeight({ current: 478, wanted: 477.5, first: true, max: room })).toBeNull();
-  });
-
-  it('only grows after the first fit, so a revealed field never brings a scroll bar back', () => {
-    expect(fitContentHeight({ current: 478, wanted: 540, first: false, max: room })).toBe(540);
-    expect(fitContentHeight({ current: 540, wanted: 478, first: false, max: room })).toBeNull();
-  });
-
-  it('never asks for more than the display has room for', () => {
-    expect(fitContentHeight({ current: 500, wanted: 2000, first: true, max: room })).toBe(800);
-    expect(fitContentHeight({ current: 800, wanted: 2000, first: false, max: room })).toBeNull();
-  });
-
-  it('ignores a measure that is not a height', () => {
-    expect(fitContentHeight({ current: 500, wanted: 0, first: true, max: room })).toBeNull();
-    expect(fitContentHeight({ current: 500, wanted: NaN, first: true, max: room })).toBeNull();
   });
 });

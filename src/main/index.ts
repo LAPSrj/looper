@@ -25,6 +25,7 @@ import { broadcastEvent, registerIpc } from './ipc';
 import {
   callerMainWindow,
   caller,
+  isMenuLevelWindow,
   ipc,
   isRemote,
   newWindow,
@@ -847,7 +848,8 @@ function macTemplate(template: Electron.MenuItemConstructorOptions[]): Electron.
 }
 
 /** The computer's windows a Window menu lists: not the hidden ones, or a modal one, which can't be switched away from anyway. */
-const listedWindows = (): BrowserWindow[] => BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isVisible() && !w.isModal());
+const listedWindows = (): BrowserWindow[] =>
+  BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isVisible() && !w.isModal() && !isMenuLevelWindow(w));
 
 const openWindowList = (): Electron.MenuItemConstructorOptions[] => openWindowItems(listedWindows(), bringForward);
 
@@ -1263,8 +1265,8 @@ function openRenameFolderWindow(folderId: string): void {
 }
 
 function openSettingsWindow(): void {
-  // Sized by its page: the General tab, the tallest, fits without a scroll bar.
-  openChildWindow('settings', 'Settings', 720, 660, win, { role: 'editor', contentSize: true });
+  // Its tallest tab, Advanced, fits without a scroll bar (npm run perf fails a dialog that opens scrolling).
+  openChildWindow('settings', 'Settings', 720, 642, win, { role: 'editor', contentSize: true });
 }
 
 const templatesWindows = new WindowSlots();
@@ -1357,10 +1359,10 @@ function openEnvEditorWindow(envId: string, isNew?: boolean, parent?: AppWindow 
   openChildWindow(
     `env-editor/${encodeURIComponent(envId)}${isNew ? '/new' : ''}`,
     isNew ? 'New Environment' : 'Edit Environment',
-    700,
-    560,
+    684,
+    427,
     parent,
-    { role: 'editor' },
+    { role: 'editor', contentSize: true },
   );
 }
 
@@ -1373,10 +1375,10 @@ function openHarnessEditorWindow(
   openChildWindow(
     `harness-editor/${encodeURIComponent(envId)}/${encodeURIComponent(harnessId)}${isNew ? '/new' : ''}`,
     isNew ? 'New Harness' : 'Edit Harness',
-    640,
-    620,
+    624,
+    637,
     parent,
-    { role: 'editor' },
+    { role: 'editor', contentSize: true },
   );
 }
 
@@ -1540,7 +1542,7 @@ function openRemoteHelpersWindow(): void {
 
 // Page sizes: every field shows without a scroll bar.
 function openRemoteHelperEditor(id: string, isNew: boolean, parent: AppWindow | null): void {
-  openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 700, parent, {
+  openChildWindow(`remote-helper/${encodeURIComponent(id)}${isNew ? '/new' : ''}`, isNew ? 'New Helper' : 'Edit Helper', 560, 564, parent, {
     role: 'editor',
     contentSize: true,
   });
@@ -1605,7 +1607,7 @@ function remoteAccessChanged(state: RemoteAccessState): void {
 }
 
 function openRemoteAccessSettingsWindow(): void {
-  openChildWindow('remote-access-settings', 'Remote Access', 560, 400, win, { role: 'tool', contentSize: true, minHeight: 400 });
+  openChildWindow('remote-access-settings', 'Remote Access', 560, 374, win, { role: 'tool', contentSize: true, minHeight: 374 });
 }
 
 const remoteAccessSetupWindows = new WindowSlots();
@@ -1776,7 +1778,7 @@ function openProjectEditor(id?: string): void {
     open.focus();
     return;
   }
-  const child = openChildWindow(id ? `project/${encodeURIComponent(id)}` : 'project-new', id ? 'Edit Project' : 'New Project', 560, 545, undefined, {
+  const child = openChildWindow(id ? `project/${encodeURIComponent(id)}` : 'project-new', id ? 'Edit Project' : 'New Project', 560, 528, undefined, {
     role: 'tool',
     contentSize: true,
   });

@@ -121,13 +121,26 @@ async function startBuilder(app, ids) {
 }
 
 /** A window like the app's own (its preload, no menu) at `hash`; null: a blank page, to load the route into later. */
-function openByHash(app, hash, size) {
-  return app.evaluate(({ BrowserWindow }, { hash: h, size: s, preload, html }) => {
-    const w = new BrowserWindow({ width: s[0], height: s[1], title: 'Perf', webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false } });
+function openByHash(app, hash, size, contentSize = false) {
+  return app.evaluate(({ BrowserWindow }, { hash: h, size: s, contentSize: c, preload, html }) => {
+    const w = new BrowserWindow({ width: s[0], height: s[1], useContentSize: c, title: 'Perf', webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     w.removeMenu();
     if (h === null) void w.loadURL('about:blank');
     else void w.loadFile(html, { hash: h });
-  }, { hash, size, preload: path.join(APP_DIR, 'out', 'preload', 'index.js'), html: path.join(APP_DIR, 'out', 'renderer', 'index.html') });
+  }, { hash, size, contentSize, preload: path.join(APP_DIR, 'out', 'preload', 'index.js'), html: path.join(APP_DIR, 'out', 'renderer', 'index.html') });
+}
+
+/** What scrolls in a page: each element (the page itself too) whose content is larger than its box. */
+function scrolling(page) {
+  return page.evaluate(() =>
+    [document.documentElement, ...document.querySelectorAll('*')]
+      .filter((el) => {
+        const cs = getComputedStyle(el);
+        if (el !== document.documentElement && !/auto|scroll/.test(cs.overflowX + cs.overflowY)) return false;
+        return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+      })
+      .map((el) => `${el.tagName.toLowerCase()}${typeof el.className === 'string' && el.className ? `.${el.className.split(' ')[0]}` : ''} holds ${el.scrollWidth}×${el.scrollHeight} in ${el.clientWidth}×${el.clientHeight}`),
+  );
 }
 
 /** BENCH_PROFILE or BENCH_TRACE set to a window's name: its load profiled or traced from a blank page (lib.mjs prints what it found). */
@@ -177,7 +190,7 @@ async function measureWindow(app, main, screen, ids) {
   const t0 = Date.now();
   const opened = app.waitForEvent('window', { timeout: 20_000 });
   if (screen.via) await VIA[screen.via](app, main);
-  else await openByHash(app, hash, screen.size ?? [900, 700]);
+  else await openByHash(app, hash, screen.size ?? [900, 700], !!screen.contentSize);
   const page = await opened.catch(() => null);
   if (!page) return broken.push(`${screen.name}: no window opened`);
   page.on('pageerror', (e) => errors.push(e.message));
@@ -201,6 +214,9 @@ async function measureWindow(app, main, screen, ids) {
       }),
   );
   const nodes = await page.evaluate(() => document.getElementsByTagName('*').length);
+  // A dialog opens at a size that fits its content, as Win32 dialogs do: a scroll bar means its size needs updating.
+  const scrolls = screen.fits ? await scrolling(page) : [];
+  if (scrolls.length) broken.push(`${screen.name}: opens scrolling at ${screen.size.join('×')} (${scrolls.join('; ')})`);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('HeapProfiler.collectGarbage').catch(() => undefined);
   const heapMb = Math.round(((await cdp.send('Runtime.getHeapUsage')).usedSize / 2 ** 20) * 10) / 10;

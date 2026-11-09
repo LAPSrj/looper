@@ -49,7 +49,6 @@ import {
   type AppWindow,
   type MessageBoxOptions,
 } from './platform';
-import { fitWindowHeight } from './platform/fit-window';
 import { withAccessKeys } from './platform/menus';
 import { specTemplate } from './command-menu';
 import type { HostCommand } from '../shared/commands/context';
@@ -1221,9 +1220,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (typeof taskId !== 'string' || !engine.getTask(taskId)) return;
     host.showTaskInMain(taskId, view === 'runs' ? view : 'status');
   });
-
-  // A dialog's page measures its content and asks for a window that fits it.
-  ipc.on('window:fit', (e, contentHeight: number) => fitWindowHeight(windowOf(e), contentHeight));
 
   ipc.handle('dialog:error', async (e, message: string, detail?: string) => {
     const sender = windowOf(e);

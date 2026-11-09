@@ -6,7 +6,6 @@ import { WindowActions } from './components/WindowActions';
 import { FolderOptions } from './components/form-blocks';
 import { rid } from './rid';
 import { useDialogKeys } from './components/hooks';
-import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
 import { subscribe } from './events';
 
@@ -60,7 +59,6 @@ export function SettingsApp() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  useFitWindow();
   const initTasksFile = useRef<string | undefined>(undefined);
   const initTemplatesFile = useRef<string | undefined>(undefined);
   const initStartWithSystem = useRef<boolean | undefined>(undefined);

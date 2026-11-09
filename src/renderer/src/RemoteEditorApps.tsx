@@ -5,7 +5,6 @@ import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { EmptyWindow, Field, FormGroup, NumberField, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useDiscardUnsaved, useLiveSettings } from './components/hooks';
-import { useFitWindow } from './fit-window';
 import { AgentFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
 
 /**
@@ -33,7 +32,6 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
   const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);
   const [saving, setSaving] = useState(false);
   const savedRef = useDiscardUnsaved(isNew, () => window.looper.remote.discard(id));
-  useFitWindow();
 
   useEffect(() => {
     if (!live || draft) return;

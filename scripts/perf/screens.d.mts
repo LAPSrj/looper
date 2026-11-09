@@ -2,6 +2,8 @@ export interface WindowScreen {
   name: string;
   hash: string;
   size?: [number, number];
+  contentSize?: boolean;
+  fits?: boolean;
   via?: 'mcp' | 'import-task' | 'import-template';
 }
 export interface MainScreen {

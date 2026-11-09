@@ -194,6 +194,11 @@ This is a Windows-first Electron app. Follow native Windows UX patterns:
   the screen reader's copy.
 - **Settings windows are modal** (block their parent). **Task and template
   editors are modeless** (main window stays usable).
+- **A dialog opens at a fixed size that fits its tallest tab**, as Win32
+  dialogs and property sheets do; nothing resizes it after it shows. Its size
+  is in its opener in `main/index.ts` and its entry in
+  `scripts/perf/screens.mjs` (`fits`), and `npm run perf` fails a dialog that
+  opens with anything scrolling, so a form that grows gets a new size.
 
 ## Editor patterns
 

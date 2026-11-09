@@ -467,8 +467,6 @@ export interface LooperApi {
   setStartWithSystem(enabled: boolean): Promise<void>;
   /** Show a native error dialog (OK button only): the message, and under it an optional detail (one line per problem). */
   showError(message: string, detail?: string): Promise<void>;
-  /** Ask the desktop for a window whose page is this tall (CSS px): a dialog sized to its content. */
-  fitWindow(contentHeight: number): void;
   /** Show a native confirmation dialog; resolves true when the user clicks Yes/OK. */
   confirm(message: string): Promise<boolean>;
   /** What commands (shared/commands) ask of the main process. */
@@ -557,7 +555,8 @@ export type UiEvent =
   /** The desktop app's window has a new menu bar to draw (null: none). */
   | { type: 'menu-bar'; items: MenuItemSpec[] | null }
   /** The desktop app's window has a context menu to draw at a point of its page (CSS px). */
-  | { type: 'context-menu'; menuId: string; items: MenuItemSpec[]; x: number; y: number }
+  /** `atPointer`: no point was asked for, so (x, y) is where the pointer is now; the page puts it where the right-click was. */
+  | { type: 'context-menu'; menuId: string; items: MenuItemSpec[]; x: number; y: number; atPointer: boolean }
   /** A menu level window: the level it draws (null: none). */
   | { type: 'menu-level'; level: { items: MenuItemSpec[]; active: number; cues: boolean } | null }
   /** The page whose menu the level windows draw: the pointer on one of its items. */

@@ -22,7 +22,7 @@ export { RemoteClients } from './clients';
 export { RemoteWindow, type AppWindow, type AppWebContents } from './remote-window';
 export { WindowSlots, clientKey, clientKeyOf, ofCaller, DESKTOP } from './slots';
 export { useWindowPlaces, placeAs } from './window-places';
-export { menuLevelInput, menuLevelLayout, showMenuPopups, useMenuPopupPage, type MenuLevelLayout, type MenuPopupState } from './menu-popups';
+export { isMenuLevelWindow, menuLevelInput, menuLevelLayout, showMenuPopups, useMenuPopupPage, type MenuLevelLayout, type MenuPopupState } from './menu-popups';
 
 /** Every IPC handler and listener goes through this, so remote clients reach them too. */
 export const ipc = new IpcTable(ipcMain as unknown as IpcMainLike);
@@ -115,7 +115,8 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
   closePageMenu(w);
   const zoom = w.webContents.getZoomFactor() || 1;
   let { x, y } = options;
-  if (typeof x !== 'number' || typeof y !== 'number') {
+  const atPointer = typeof x !== 'number' || typeof y !== 'number';
+  if (atPointer) {
     const at = screen.getCursorScreenPoint();
     const content = w.getContentBounds();
     x = (at.x - content.x) / zoom;
@@ -123,7 +124,7 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
   }
   const menuId = `m${++pageMenuSeq}`;
   pageMenus.set(w, { menuId, byId, closed: options.callback });
-  w.webContents.send('ui:event', { type: 'context-menu', menuId, items, x, y });
+  w.webContents.send('ui:event', { type: 'context-menu', menuId, items, x: x!, y: y!, atPointer });
 }
 
 /** The context menu each desktop window's page shows: its items by the ids the page picks them by, and what runs once it closes. */
@@ -177,7 +178,8 @@ export function setWindowMenu(w: AppWindow, menu: Menu | null): void {
 const desktopBars = new WeakMap<BrowserWindow, { menu: Menu; items: MenuItemSpec[]; byId: Map<string, MenuItemLike> }>();
 
 const sendDesktopBar = (w: BrowserWindow, items: MenuItemSpec[] | null) => {
-  if (!w.isDestroyed()) w.webContents.send('ui:event', { type: 'menu-bar', items });
+  // A page can be gone while its window still closes, and another window's event rebuilds every menu then.
+  if (!w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send('ui:event', { type: 'menu-bar', items });
 };
 
 /** Send the window's page its menu bar again, when its items changed (a checkmark a pick flipped). */

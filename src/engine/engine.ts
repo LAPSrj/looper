@@ -33,7 +33,7 @@ import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType, kindMismatchText } from './chat';
 import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
-import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
+import { NO_HISTORY_COMMANDS, RECENT_CHATS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
 import type { CommandOutput } from '../shared/bash-mode';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
 import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
@@ -1481,6 +1481,8 @@ export function createEngine(opts: EngineOptions): Engine {
         deferredTimer = null;
         sweepRunLogs();
         git.checkAll();
+        // The history index, so the first Recent menu (a project's Open Recent Chat, History's drop-down) doesn't wait on reading it.
+        void history.list({ fresh: false, limit: RECENT_CHATS, showRuns: settings.view.history.showRuns, folder: '' }).catch(() => undefined);
       }, STARTUP_DEFER_MS);
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
       sessionHub.start();
