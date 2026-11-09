@@ -1,6 +1,7 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from '../components/toolbar-model';
+import type { PageNavAction } from './nav-bar-model';
 
 /**
  * The phone's More (…) menu: the toolbar a page reports (an addon's buttons, a
@@ -68,6 +69,20 @@ export interface MoreMenu {
   items: MenuItemSpec[];
   /** What each item does, by its id. */
   run: Map<string, () => void>;
+}
+
+/** A bar button's menu of choices, as the More menu is drawn. */
+export function actionMenu(action: PageNavAction): MoreMenu {
+  const run = new Map<string, () => void>();
+  const items = (action.menu ?? []).map((e): MenuItemSpec => {
+    const id = `${PAGE}${action.id}:${e.id}`;
+    if (e.separator) return { id, type: 'separator', enabled: true };
+    run.set(id, e.run);
+    const shared = { id, label: e.label, enabled: e.enabled ?? true, ...(e.icon ? { icon: e.icon } : {}), ...(e.destructive ? { destructive: true as const } : {}) };
+    if (e.checked === undefined) return { ...shared, type: 'normal' };
+    return { ...shared, type: e.type ?? 'radio', checked: e.checked };
+  });
+  return { items: phoneMenu(items), run };
 }
 
 /** The More menu of a screen. */

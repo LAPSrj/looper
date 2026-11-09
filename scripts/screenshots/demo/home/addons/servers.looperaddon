@@ -10,15 +10,16 @@
     "command": ["node", "/home/leandro/repos/looper/scripts/screenshots/demo/addon/servers.mjs"]
   },
   "panes": [{ "id": "servers", "title": "Servers" }],
+  "panesIcon": "terminal",
   "tabs": [{ "id": "overview", "title": "Servers", "view": "overview", "icon": "terminal" }],
   "commands": [
-    { "id": "new", "label": "New &Server…", "icon": "add", "in": { "new": { "toolbar": true }, "panes": { "menu": "file", "main": true } } },
-    { "id": "servers", "label": "&Servers", "icon": "terminal", "opens": { "tab": "panes" }, "in": { "app": { "menu": "tools", "toolbar": true } } },
-    { "id": "edit", "label": "&Edit Server…", "icon": "edit", "group": "server", "in": { "item": { "menu": "edit", "toolbar": true, "main": true } } },
-    { "id": "copy-host", "label": "Copy &Host", "group": "copy", "in": { "item": { "menu": "edit" } } },
-    { "id": "copy-password", "label": "Copy &Password", "group": "copy", "in": { "item": { "menu": "edit" } } },
-    { "id": "show:All", "label": "&All", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } },
-    { "id": "show:Linux", "label": "&Linux", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } },
-    { "id": "show:Windows", "label": "&Windows", "group": "filter", "check": "radio", "in": { "panes": { "menu": "view" } } }
+    { "id": "new", "label": "New &Server…", "icon": "add", "labeled": true, "in": { "new": { "toolbar": true }, "panes": { "main": true } } },
+    { "id": "servers", "label": "&Servers", "icon": "terminal", "labeled": true, "opens": { "tab": "panes" }, "menu": "tools", "in": { "app": { "toolbar": true } } },
+    { "id": "edit", "label": "&Edit Server…", "icon": "edit", "labeled": true, "group": "server", "menu": "edit", "in": { "item": { "toolbar": true, "main": true } } },
+    { "id": "copy-host", "label": "Copy &Host", "group": "copy", "menu": "edit", "in": { "item": {} } },
+    { "id": "copy-password", "label": "Copy &Password", "group": "copy", "menu": "edit", "in": { "item": {} } },
+    { "id": "show:All", "label": "&All", "group": "filter", "check": "radio", "menu": "view", "in": { "panes": {} } },
+    { "id": "show:Linux", "label": "&Linux", "group": "filter", "check": "radio", "menu": "view", "in": { "panes": {} } },
+    { "id": "show:Windows", "label": "&Windows", "group": "filter", "check": "radio", "menu": "view", "in": { "panes": {} } }
   ]
 }

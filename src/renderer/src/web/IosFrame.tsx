@@ -13,11 +13,10 @@ import { HOST_COMPUTER, messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
 import { CHECK, CHEVRON_RIGHT, FileRows, FileViewBody } from './phone-files';
-import { phoneMenu } from './more-menu';
+import { actionMenu, phoneMenu } from './more-menu';
 import {
   deviceNoun,
   menuGroups,
-  actionMenu,
   moreFor,
   PhoneWindows,
   pickMore,

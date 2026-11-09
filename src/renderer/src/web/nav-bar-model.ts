@@ -5,7 +5,7 @@ import type { Presentation } from './nav-stack';
 export interface PageNavAction {
   id: string;
   label: string;
-  /** An ICONS key (components/icons.tsx); the label is its accessible name. */
+  /** What iconNode draws (components/icons.tsx); the label is its accessible name. */
   icon?: string;
   /** A usage ring instead of an icon (components/ContextRing.tsx): the context used, and the 5-hour limit used, as fractions. */
   ring?: { context: number | null; used: number | null };
@@ -13,7 +13,7 @@ export interface PageNavAction {
   /** What it controls isn't at its default (a filter that's on): tinted. */
   on?: boolean;
   /** The button opens this menu of choices (a filter); `run` isn't called. */
-  menu?: { id: string; label: string; checked?: boolean; type?: 'radio' | 'checkbox'; separator?: true; run: () => void }[];
+  menu?: { id: string; label: string; icon?: string; enabled?: boolean; destructive?: true; checked?: boolean; type?: 'radio' | 'checkbox'; separator?: true; run: () => void }[];
   run: () => void;
 }
 

@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { parseSvgIcon } from './addon-icons';
 import { REPORT_INPUT, issueLines } from './issues';
+import { LOOPER_KEYS, hint, keyId } from './shortcuts';
 import { UI_PLATFORMS } from './ui-platform';
 
 /**
@@ -66,14 +68,21 @@ export const AddonPaneDefSchema = z.object({ id, title: z.string().min(1) }).str
 
 const ParamsSchema = z.record(z.string(), z.unknown());
 
-/** A tab of the main window's own: one of the addon's screens fills it, and View → its title opens it in a window of its own. */
+/** What an icon field names in Looper's library: its name after this. */
+export const ICON_LIBRARY = 'library:';
+const OWN_ICON_NAME = /^[a-z0-9][a-z0-9._-]*$/i;
+
+/** One of ADDON_ICONS, one of the manifest's `icons`, or "library:<name>" (readAddonManifest checks it's one). */
+const iconName = z.string().regex(/^(library:)?[a-z0-9][a-z0-9._-]*$/i, 'give an icon name');
+
+/** A tab of the main window's own: one of the addon's screens fills it, and Window → its title opens it in a window of its own. */
 export const AddonTabSchema = z
   .object({
     id,
     title: z.string().min(1),
     view: id,
     params: ParamsSchema.optional(),
-    icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
+    icon: iconName.optional(),
   })
   .strict();
 export type AddonTab = z.infer<typeof AddonTabSchema>;
@@ -88,8 +97,6 @@ export type AddonMenuName = (typeof ADDON_MENUS)[number];
 export const PANES_TAB = 'panes';
 
 const placement = {
-  /** Every command is a menu item, its toolbar button only a shortcut to it (Win32: the menu bar lists every command). */
-  menu: z.enum(ADDON_MENUS),
   toolbar: z.boolean().optional(),
   /** On a phone's bar while it can run and fits there; otherwise in the screen's More menu. */
   main: z.boolean().optional(),
@@ -99,47 +106,79 @@ const placement = {
 const PlacementSchema = z.object(placement).strict();
 export type AddonPlacement = z.infer<typeof PlacementSchema>;
 
+const FUNCTION_KEY = /^F([1-9]|1[0-9]|2[0-4])$/;
+const OTHER_KEY = /^([A-Z0-9]|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Enter|Tab|Space|Backspace)$/;
+
+/** A key an addon's command can take: with Ctrl, so typing in a field never reaches it, or a function key. */
+function isCommandKey(key: string): boolean {
+  const parts = key.split('+');
+  const main = parts.pop()!;
+  if (new Set(parts).size !== parts.length || !parts.every((m) => m === 'CmdOrCtrl' || m === 'Alt' || m === 'Shift')) return false;
+  return FUNCTION_KEY.test(main) || (OTHER_KEY.test(main) && parts.includes('CmdOrCtrl'));
+}
+
+/** A key that reaches the command while its menu is in the window's menu bar. */
+const accelerator = z.string().refine(isCommandKey, 'use a key with CmdOrCtrl, such as "CmdOrCtrl+Shift+K", or a function key');
+
 /**
- * One thing the addon can do, written once: where it goes in Looper's menus,
- * toolbars and a phone's bar and More (`in`), and Looper draws it on each from
- * this entry. A screen, a pane or a pane item says how it is now (its `commands`
+ * Instead of a `command` event: one of the addon's screens in a window of its
+ * own (picked again, it comes forward), or one of its main window's tabs
+ * ("panes" is its panes' tab). A phone's More view lists the tab, so what opens
+ * one stays off phones.
+ */
+const OpensSchema = z.union([
+  z
+    .object({
+      view: id,
+      params: ParamsSchema.optional(),
+      width: z.number().int().min(320).max(2000).optional(),
+      height: z.number().int().min(200).max(1400).optional(),
+    })
+    .strict(),
+  z.object({ tab: id }).strict(),
+]);
+
+/** What a command and one of its submenu's items both have. */
+const actionFields = {
+  id,
+  /** "&New Server…": a menu shows it with its access key, a toolbar and a phone without the "&" and the "…". */
+  label: z.string().min(1),
+  icon: iconName.optional(),
+  accelerator: accelerator.optional(),
+  /** It destroys or cuts something off: a phone draws it red, last in its menu. */
+  destructive: z.boolean().optional(),
+  /** Asked in a Yes/No dialog first; No sends nothing. */
+  confirm: z.string().min(1).optional(),
+  /** A check mark (`checked` in its state), or a radio bullet, one of its group's. */
+  check: z.enum(['check', 'radio']).optional(),
+  opens: OpensSchema.optional(),
+};
+
+/** One item of a command's submenu; `id` is unique among all the addon's commands and items, and its event and state use it. */
+const AddonEntrySchema = z.object(actionFields).strict();
+export type AddonEntry = z.infer<typeof AddonEntrySchema>;
+const AddonEntryOrLineSchema = z.union([AddonEntrySchema, z.object({ separator: z.literal(true) }).strict()]);
+export type AddonEntryOrLine = z.infer<typeof AddonEntryOrLineSchema>;
+
+/**
+ * One thing the addon can do, written once: the menu it's in, where else it goes
+ * (`in`: toolbars, a phone's bar and More), and Looper draws it on each from this
+ * entry. A screen, a pane or a pane item says how it is now (its `commands`
  * state). Picking it sends a `command` event, or opens one of the addon's screens.
  */
 export const AddonCommandSchema = z
   .object({
-    id,
-    /** "&New Server…": a menu shows it with its access key, a toolbar and a phone without the "&" and the "…". */
-    label: z.string().min(1),
-    icon: z.lazy(() => z.enum(ADDON_ICONS)).optional(),
-    /** On a toolbar, the icon alone, its label the tooltip: for commands people know by their icon (Refresh, Settings). */
-    iconOnly: z.boolean().optional(),
+    ...actionFields,
+    /** Every command is a menu item, its toolbar button only a shortcut to it (Win32: the menu bar lists every command). A `new` one is in File. */
+    menu: z.enum(ADDON_MENUS).optional(),
+    /** On a toolbar, its label beside its icon; unset: the icon alone, its label the tooltip. A command with no icon shows its label. */
+    labeled: z.boolean().optional(),
     /** A separator falls between groups, in a menu and on a toolbar; unset: the group of the addon's ungrouped commands. */
     group: id.optional(),
-    /** It destroys or cuts something off: a phone draws it red, last in its menu. */
-    destructive: z.boolean().optional(),
-    /** Asked in a Yes/No dialog first; No sends nothing. */
-    confirm: z.string().min(1).optional(),
-    /** A check mark (`checked` in its state), or a radio bullet, one of its group's. */
-    check: z.enum(['check', 'radio']).optional(),
-    /**
-     * Instead of a `command` event: one of the addon's screens in a window of its
-     * own (picked again, it comes forward), or one of its main window's tabs
-     * ("panes" is its panes' tab). A phone's More view lists the tab, so a command
-     * that opens one stays off phones.
-     */
-    opens: z
-      .union([
-        z
-          .object({
-            view: id,
-            params: ParamsSchema.optional(),
-            width: z.number().int().min(320).max(2000).optional(),
-            height: z.number().int().min(200).max(1400).optional(),
-          })
-          .strict(),
-        z.object({ tab: id }).strict(),
-      ])
-      .optional(),
+    /** A submenu in a menu, and a drop-down on a toolbar and a phone's bar. */
+    entries: z.array(AddonEntryOrLineSchema).min(1).optional(),
+    /** With `entries`: a toolbar's split button, whose icon sends the command's own event and whose arrow opens the list. With `opens` it's split anyway. */
+    primary: z.boolean().optional(),
     platforms,
     in: z
       .object({
@@ -166,9 +205,28 @@ export const AddonCommandSchema = z
       .refine((p) => Object.keys(p).length > 0, 'give at least one place'),
   })
   .strict()
-  .refine((c) => !c.iconOnly || c.icon, { error: '"iconOnly" needs an "icon"', path: ['iconOnly'] });
+  .refine((c) => c.in.new || c.menu, { error: 'give the menu it goes in', path: ['menu'] })
+  .refine((c) => !c.in.new || !c.menu || c.menu === 'file', { error: 'a command in "new" goes in the file menu', path: ['menu'] })
+  .refine((c) => !c.entries || !c.check, { error: 'a command with "entries" can\'t have a check mark', path: ['check'] })
+  .refine((c) => !c.primary || c.entries, { error: '"primary" needs "entries"', path: ['primary'] });
 export type AddonCommand = z.infer<typeof AddonCommandSchema>;
 export type AddonPlace = keyof AddonCommand['in'];
+
+/** The menu it's in. */
+export const commandMenu = (c: Pick<AddonCommand, 'menu'>): AddonMenuName => c.menu ?? 'file';
+
+/** A command's submenu items, without the lines between them. */
+export const commandEntries = (c: Pick<AddonCommand, 'entries'>): AddonEntry[] => (c.entries ?? []).filter((e): e is AddonEntry => 'id' in e);
+
+/** A command or a submenu's item, by its id. */
+export function findAddonAction(commands: AddonCommand[], actionId: string): AddonCommand | AddonEntry | undefined {
+  for (const c of commands) {
+    if (c.id === actionId) return c;
+    const entry = commandEntries(c).find((e) => e.id === actionId);
+    if (entry) return entry;
+  }
+  return undefined;
+}
 
 /** How one of the addon's commands is now. A screen, a pane and a pane item each send theirs, and the most specific one wins. */
 export const AddonCommandStateSchema = z
@@ -179,6 +237,8 @@ export const AddonCommandStateSchema = z
     hidden: z.boolean().optional(),
     /** The label it has now, for a command whose words change with the state ("&Lock Vault", "&Unlock Vault"). */
     label: z.string().min(1).optional(),
+    /** The icon it has now: one of Looper's, or one the manifest names (a name it doesn't know leaves the command's own). */
+    icon: iconName.optional(),
   })
   .strict();
 export type AddonCommandState = z.infer<typeof AddonCommandStateSchema>;
@@ -215,8 +275,12 @@ export const AddonManifestSchema = z
     description: z.string().optional(),
     run: AddonRunSchema,
     panes: z.array(AddonPaneDefSchema).default([]),
+    /** The icon of the tab its panes fill; unset: a window. */
+    panesIcon: iconName.optional(),
     /** Tabs in the main window, after Looper's own (not on a phone, whose tab bar has room for Looper's only). */
     tabs: z.array(AddonTabSchema).default([]),
+    /** The addon's own icons by name: SVG text, or "library:<name>" for a library icon only a state names. */
+    icons: z.record(z.string().regex(OWN_ICON_NAME, 'use letters, digits, ".", "_" or "-"'), z.string()).default({}),
     /** Everything it can do, each once, in the order its menus and toolbars list them. */
     commands: z.array(AddonCommandSchema).default([]),
     /** Names its toolbar buttons in "<toolbarName> Toolbar" (View menu), which hides them; the addon's name otherwise. */
@@ -231,6 +295,33 @@ export type ReadManifestResult =
   | { ok: true; manifest: AddonManifest }
   /** newer: a format this Looper doesn't know yet. */
   | { ok: false; reason: 'not-addon' | 'newer' | 'invalid'; error?: string };
+
+/** Every icon name the manifest's fields use, with the field for an error. */
+export function manifestIconNames(m: Pick<AddonManifest, 'panesIcon' | 'tabs' | 'commands'>): { name: string; where: string }[] {
+  const out: { name: string; where: string }[] = [];
+  if (m.panesIcon) out.push({ name: m.panesIcon, where: 'panesIcon' });
+  for (const t of m.tabs) if (t.icon) out.push({ name: t.icon, where: `tabs: "${t.id}"` });
+  for (const c of m.commands) {
+    for (const action of [c, ...commandEntries(c)]) if (action.icon) out.push({ name: action.icon, where: `commands: "${action.id}"` });
+  }
+  return out;
+}
+
+const isLooperIcon = (name: string): boolean => (ADDON_ICONS as readonly string[]).includes(name);
+
+/** What's wrong with the manifest's icons: its own that can't be drawn, or a field naming one that doesn't exist. Library names are the main process's to check. */
+function manifestIconError(m: AddonManifest): string | undefined {
+  for (const [name, value] of Object.entries(m.icons)) {
+    if (isLooperIcon(name)) return `icons: "${name}" is the name of one of Looper's icons`;
+    if (value.startsWith(ICON_LIBRARY)) continue;
+    const svg = parseSvgIcon(value);
+    if (!svg.ok) return `icons: "${name}": ${svg.error}`;
+  }
+  for (const { name, where } of manifestIconNames(m)) {
+    if (!isLooperIcon(name) && !name.startsWith(ICON_LIBRARY) && !Object.hasOwn(m.icons, name)) return `${where} names an icon that doesn't exist: "${name}"`;
+  }
+  return undefined;
+}
 
 /** Check parsed `.looperaddon` content: the envelope first, so a newer format reads as such. */
 export function readAddonManifest(input: unknown): ReadManifestResult {
@@ -252,16 +343,25 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
     tabIds.add(t.id);
   }
   const commandIds = new Set<string>();
+  const keys = new Set<string>();
+  const reserved = new Set(LOOPER_KEYS.map(keyId));
   for (const c of parsed.data.commands) {
-    if (commandIds.has(c.id)) return { ok: false, reason: 'invalid', error: `commands: duplicate id "${c.id}"` };
-    commandIds.add(c.id);
-    // A command has one position in the list, which keeps one menu's order, not two.
-    const menus = new Set(Object.entries(c.in).map(([place, p]) => (place === 'new' ? 'file' : (p as AddonPlacement).menu)));
-    if (menus.size > 1) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" is in the ${[...menus].join(' and ')} menus; use one menu in every place` };
     if ((c.in.panes || c.in.item) && !parsed.data.panes.length) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" is placed in panes the addon doesn't have` };
-    const tab = c.opens && 'tab' in c.opens ? c.opens.tab : undefined;
-    if (tab && !(tab === PANES_TAB ? parsed.data.panes.length : tabIds.has(tab))) return { ok: false, reason: 'invalid', error: `commands: "${c.id}" opens a tab the addon doesn't have: "${tab}"` };
+    for (const action of [c, ...commandEntries(c)]) {
+      if (commandIds.has(action.id)) return { ok: false, reason: 'invalid', error: `commands: duplicate id "${action.id}"` };
+      commandIds.add(action.id);
+      const tab = action.opens && 'tab' in action.opens ? action.opens.tab : undefined;
+      if (tab && !(tab === PANES_TAB ? parsed.data.panes.length : tabIds.has(tab))) return { ok: false, reason: 'invalid', error: `commands: "${action.id}" opens a tab the addon doesn't have: "${tab}"` };
+      if (action.accelerator) {
+        const key = keyId(action.accelerator);
+        if (reserved.has(key)) return { ok: false, reason: 'invalid', error: `commands: "${action.id}" uses ${hint(action.accelerator)}, which Looper uses` };
+        if (keys.has(key)) return { ok: false, reason: 'invalid', error: `commands: "${action.id}" uses ${hint(action.accelerator)}, which another command uses` };
+        keys.add(key);
+      }
+    }
   }
+  const iconError = manifestIconError(parsed.data);
+  if (iconError) return { ok: false, reason: 'invalid', error: iconError };
   const callTools = new Set<string>();
   for (const c of parsed.data.toolCalls) {
     if (callTools.has(c.tool)) return { ok: false, reason: 'invalid', error: `toolCalls: "${c.tool}" is there twice` };
@@ -348,7 +448,8 @@ export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { 
     const places = LOOPER_PLACES.filter((p) => c.in[p]);
     if (!places.length) continue;
     const label = plainLabel(c.label);
-    for (const menu of new Set(places.map((p) => (p === 'new' ? 'file' : c.in[p]!.menu)))) inMenu.set(menu, [...(inMenu.get(menu) ?? []), label]);
+    const menu = commandMenu(c);
+    inMenu.set(menu, [...(inMenu.get(menu) ?? []), label]);
     if (places.some((p) => c.in[p]!.toolbar)) buttons.push(label.replace(/…$/, ''));
   }
   for (const menu of ADDON_MENUS) {
@@ -456,7 +557,7 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
   ]),
 ) as z.ZodType<AddonNode>;
 
-/** The icons a toolbar button can show: Looper's own, so they match its toolbar. */
+/** The icons of Looper's own that any addon can name. `docs/addon-icon-list.md` lists them. */
 export const ADDON_ICONS = [
   'add',
   'edit',
@@ -476,6 +577,13 @@ export const ADDON_ICONS = [
   'settings',
 ] as const;
 export type AddonIconName = (typeof ADDON_ICONS)[number];
+
+/** What a surface draws for one of the addon's icon names (components/icons.tsx iconNode); undefined when it isn't one. */
+export function addonIconKey(a: Pick<AddonInfo, 'icons'>, name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  if (isLooperIcon(name)) return name;
+  return Object.hasOwn(a.icons, name) ? a.icons[name] : undefined;
+}
 
 export const AddonScreenSchema = z
   .object({
@@ -617,8 +725,11 @@ export interface AddonInfo {
   /** describeRun of its manifest. */
   run: string;
   panes: { id: string; title: string }[];
+  panesIcon?: string;
   tabs: AddonTab[];
   commands: AddonCommand[];
+  /** Each own or library icon name the manifest uses, as a surface draws it (addonIconKey). */
+  icons: Record<string, string>;
   toolbarName?: string;
   /** How tool calls show on the Now tab (findToolCall). */
   toolCalls: AddonToolCall[];

@@ -96,11 +96,11 @@ export interface Command {
   group: string;
   /** On a toolbar, the group next to it instead: a toolbar keeps few separators. */
   toolbarGroup?: string;
-  /** An ICONS key. */
-  icon?: string;
+  /** What iconNode draws (renderer components/icons.tsx): an ICONS key, or an addon's drawing. */
+  icon?: string | ((c: CommandContext) => string | undefined);
   /** No glyph in a menu: only the toolbar shows the icon. */
   menuGlyph?: false;
-  /** On a toolbar, its label beside the icon: an addon's buttons, whose icons are a short common set. */
+  /** On a toolbar, its label beside the icon: for a command people don't know by its icon. */
   labeled?: true;
   accelerator?: string | ((c: CommandContext) => string | undefined);
   /** The page handles the key itself (a terminal keeps it), so the menu only shows it. */
@@ -145,7 +145,7 @@ export function labelOf(cmd: Command, c: CommandContext): string {
 }
 
 /** The icon for this state. */
-export const iconOf = (cmd: Command, c: CommandContext): string | undefined => (cmd.alt?.when(c) && cmd.alt.icon) || cmd.icon;
+export const iconOf = (cmd: Command, c: CommandContext): string | undefined => (cmd.alt?.when(c) && cmd.alt.icon) || (typeof cmd.icon === 'function' ? cmd.icon(c) : cmd.icon);
 
 /** A menu label without its mnemonic. */
 export const noMnemonic = (label: string): string => label.replace(/&(&?)/g, '$1');

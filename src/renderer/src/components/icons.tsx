@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { createElement, type ReactNode } from 'react';
+import { DRAWN_ICON, type IconDrawing, type IconShape } from '@shared/addon-icons';
 import type { AddonIconName } from '@shared/addons';
 
 /** The stroke of every line icon, and of the glyphs drawn beside text (chevrons, status marks). */
@@ -352,3 +353,30 @@ export const ICONS: Record<
     </>
   ),
 };
+
+const ATTRIBUTE_PROPS: Record<string, string> = { 'fill-rule': 'fillRule', 'clip-rule': 'clipRule' };
+
+function shapeNode([tag, attrs, children]: IconShape, key: number): ReactNode {
+  const props: Record<string, unknown> = { key };
+  for (const [name, value] of Object.entries(attrs)) props[ATTRIBUTE_PROPS[name] ?? name] = value;
+  return createElement(tag, props, children?.map(shapeNode));
+}
+
+const drawnNodes = new Map<string, ReactNode>();
+
+/** An addon's drawing, in the 16 x 16 box the surfaces draw in, its strokes as heavy as Looper's whatever its box. */
+function drawnNode(icon: string): ReactNode {
+  const known = drawnNodes.get(icon);
+  if (known) return known;
+  const d = JSON.parse(icon.slice(DRAWN_ICON.length)) as IconDrawing;
+  const node = (
+    <g transform={`scale(${16 / d.box})`} fill={d.fill} stroke={d.stroke} strokeWidth={(ICON_STROKE * d.box) / 16}>
+      {d.shapes.map(shapeNode)}
+    </g>
+  );
+  drawnNodes.set(icon, node);
+  return node;
+}
+
+/** What a surface's `icon` draws: an ICONS key, or an addon's drawing, which travels with the name so a phone's frame can draw what a page reports to it. */
+export const iconNode = (icon: string): ReactNode => (icon.startsWith(DRAWN_ICON) ? drawnNode(icon) : (ICONS as Record<string, ReactNode>)[icon]);

@@ -85,11 +85,19 @@ or button shown at the same time looks like it.
 
 - The phone's tab bar and rail draw their own 24 px icons (`TabIcon` in
   `phone/tab-icons.tsx`), not these.
-- The phone's Projects and Tasks screens use the plain `add` plus for their
-  bar button, as iPhone apps do for a list's add button.
-- Addons can use only the icons in `ADDON_ICONS` (`src/shared/addons.ts`).
-  Adding one there also adds it to the list in `docs/addons.md` (The toolbar).
-  An addon tab that names no icon gets `window`.
+- A New button shows its New icon on a phone's bar too (`newProject`,
+  `newTask`). The plain `add` plus is for an addon that chooses it.
+- Addons can name the icons in `ADDON_ICONS` (`src/shared/addons.ts`), the ones
+  in their manifest's `icons`, and the library's (`library:<name>`,
+  `scripts/build-icon-library.mjs`). Adding one to `ADDON_ICONS` also adds its
+  description to that script, which writes `docs/addon-icon-list.md`. An addon
+  tab that names no icon gets `window`.
+- `docs/addon-icons.md` is what addon authors read. It repeats the sizes and the
+  corner plus above, so a change to them changes it too. Looper never adds a mark
+  to an addon's icon: a New icon has its plus drawn in.
+- `iconNode` draws every icon a surface gets by name. An addon's drawing travels
+  with the name (`svg:…`), because a phone's frame draws what a page reports to
+  it and has no list of addons.
 
 ## Docs
 

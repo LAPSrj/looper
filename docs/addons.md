@@ -1,19 +1,19 @@
 # Addons
 
-An addon is another program that adds screens to Looper: a pane on the main
-window's Tasks tab, a screen in the main window when you select one of the
-pane's items, a tab of its own, and windows of its own. The program only describes what each screen holds
-(fields, values, buttons). Looper draws it with its own controls, so addon
-screens look and behave like the rest of Looper, and they follow along when
-Looper's interface changes.
+An addon is another program that adds to Looper: tabs in the main window, a
+list of items with a screen for the selected one, windows of its own, and
+commands in Looper's menus and toolbars. The program only describes what each
+screen holds (fields, values, buttons). Looper draws it with its own controls, so
+addon screens look and behave like the rest of Looper, and they follow along
+when Looper's interface changes.
 
 ## Installing an addon
 
 An addon comes with a `.looperaddon` file. Double-click it, drop it on the
 Looper window, or use **Advanced → Addons… → Install…**. Looper asks first,
-showing the addon's description, the tabs, panes, toolbar buttons and Tools
-menu items it adds, how many tools' calls it changes the look of on the Chats
-window's Now tab, and the command it runs, and installs it when you click
+showing the addon's description, the tabs, panes, menu items and toolbar buttons
+it adds, how many tools' calls it changes the look of on the Chats window's Now
+tab, and the command it runs, and installs it when you click
 **Install**. For an addon that's already installed, the button says
 **Replace** (another version) or **Reinstall** (the same version).
 
@@ -27,64 +27,45 @@ quits.
 
 ![An addon's Servers pane, with a search box, and a server's screen](img/addons-pane.png)
 
-Each pane an addon adds shows on the Tasks tab, in the sidebar below the task
-list, in both the single-list and the multiple-pane layout. Like the task panes, it has a header
-you click to collapse it and a splitter above it you drag to resize it.
-An addon can group a pane's items under headings, like task folders, that you
-click to collapse; collapsed groups stay collapsed the next time.
-Selecting an item shows its screen on the right of the Tasks tab, and
-selecting a task goes back to the task's detail. Right-clicking an item opens its menu, and
-right-clicking the pane's header opens the pane's menu, which ends with
-**Hide Pane**. Its check box in the **View** menu, while the Tasks tab shows,
-shows a hidden pane again.
+An addon's panes have a tab of their own in the main window, named after its
+one pane, or after the addon when it has several. The panes are the list on the
+left, and selecting an item shows its screen on the right. An addon can group a
+pane's items under headings, like task folders, that you click to collapse;
+collapsed groups stay collapsed the next time. Right-clicking an item opens its
+menu, and right-clicking a pane's header opens the pane's menu.
 
 ## Addon tabs
 
-An addon can add tabs to the main window, after Looper's own. Each one is
+An addon can add other tabs to the main window, after Looper's own. Each one is
 filled by one of the addon's screens, across the whole window, such as a
-**Servers** tab that shows every server at once. A tab has a name and an
-icon. Without an icon of its own it shows a window icon. While the tab shows,
-its screen's toolbar buttons join the main toolbar, after the addon's own
-buttons. The screen's menu bar isn't used in the main window.
+**Servers** tab that shows every server at once. A tab has a name and an icon.
+Without an icon of its own it shows a window icon.
 
-The **View** menu has an item named after each tab, which opens the tab's
-screen in a window of its own. The tab goes away while the addon is stopped in the Addons window, and a window left
-on it goes back to the Dashboard. Phones don't show addon tabs.
+The **Window** menu has an item named after each tab, which opens that tab in a
+window of its own. The tabs go away while the addon is stopped in the Addons
+window, and a window left on one goes back to the Dashboard.
+
+On a phone or tablet, the tab bar has only Looper's own tabs, and the **More** tab
+lists each addon with its tabs.
 
 When an addon stops on its own, its panes say so and show the end of what it
 printed as it stopped, with a **Restart** button.
 
-## The toolbar
+## Menus and toolbars
 
-An addon can add buttons to the main toolbar, after Looper's own, such as a
-**Servers** button that opens the addon's Servers window. While one of an
-addon's screens shows in the main window, on the Tasks tab or in one of its
-tabs, that screen's buttons follow them, such as **Edit Server…** for the
-selected server.
+An addon's commands join Looper's own menus and toolbars. A command can show on
+every tab, while one of Looper's tabs shows, or while the addon's own panes or
+screens show, such as **Edit Server…** for the selected server. Its New commands
+are in **File** with Looper's New items, and its other tools are in **Tools**,
+before Agent Settings.
 
-A button can belong to one view instead: Dashboard, Projects, Tasks or Chats.
-It then shows in that view's window, and in the main window only while that tab
-shows. A button that doesn't name a view shows only in the main window, on every
-tab, because a view's window has only what that view is about.
+The View menu has a check box for each started addon with toolbar buttons, after
+**Toolbar**, such as **Servers Toolbar** (the addon can give it another name), and
+right-clicking the toolbar lists the same check boxes. Clearing one leaves all of
+that addon's buttons out of the toolbar. Its commands stay in its menus.
 
-The View menu has a check box for each installed addon after **Toolbar**,
-such as **Servers Toolbar** (the addon can give it another name), and
-right-clicking the toolbar lists the same check boxes. Clearing one leaves all of that addon's buttons out of the main
-toolbar. Its commands stay in its menus and its own windows.
-
-## The Tools menu
-
-![Tools → Servers…: the pane's list and the selected server in their own window](img/addons-tool-window.png)
-
-An addon can also add items to the **Tools** menu, below Recycle Bin…. Each
-item opens a window: either one of the addon's
-screens, or one of its panes with the list on the left and the selected
-item's screen on the right, the way the main window shows a task. A pane
-window can have its own menu bar and toolbar, whose commands for an item act
-on the selected one and are unavailable while nothing is selected. In a pane
-window, right-clicking an item opens its menu and right-clicking the list's
-empty space opens the pane's menu. Choosing the item again brings the open
-window forward.
+On a phone or tablet, a command shows on the screen's bar or in its More menu.
+One that no screen has is listed under the addon on the **More** tab.
 
 ## The Addons window
 
@@ -116,8 +97,8 @@ environment. The install dialog shows your settings when you have changed
 them.
 
 Looper remembers a stopped addon: it doesn't start the next time Looper
-starts, and its tabs, panes, toolbar buttons and Tools menu items stay hidden,
-and its windows close, until you start it again. The status bar counts the
+starts, its tabs, panes and commands stay hidden, and its windows close, until
+you start it again. The status bar counts the
 running addons.
 
 ## Writing an addon
@@ -143,13 +124,16 @@ noted in the engine log.
   "description": "The servers you log in to",
   "run": {
     "on": "wsl",
-    "command": ["node", "/home/me/servers-addon/addon.mjs"],
+    "command": ["node", "${addonDir}/addon.mjs"],
     "env": { "SERVERS_FILE": "/home/me/servers.json" }
   },
   "panes": [{ "id": "servers", "title": "Servers" }],
-  "tabs": [{ "id": "overview", "title": "Servers", "view": "overview", "icon": "terminal" }],
-  "tools": [{ "id": "servers", "label": "Servers", "pane": "servers" }],
-  "toolbar": [{ "id": "servers", "label": "Servers", "icon": "terminal", "tool": "servers" }]
+  "panesIcon": "library:server",
+  "tabs": [{ "id": "overview", "title": "Overview", "view": "overview", "icon": "library:layout-grid" }],
+  "commands": [
+    { "id": "new", "label": "New &Server…", "icon": "add", "in": { "new": { "toolbar": true }, "panes": { "main": true } } },
+    { "id": "edit", "label": "&Edit Server…", "icon": "edit", "menu": "edit", "in": { "item": { "toolbar": true, "main": true } } }
+  ]
 }
 ```
 
@@ -162,12 +146,116 @@ noted in the engine log.
 | `run.command` | The program and its arguments. A WSL command runs through the environment's shell, `bash -lic` unless the user changed it, as tasks do, so the PATH includes what `~/.bashrc` adds (nvm, bun). A Windows command must be an `.exe`. |
 | `run.cwd`, `run.env` | Working directory and extra environment variables. |
 | `${addonDir}` | In `run.command`, `run.cwd` and `run.env` values: the folder the `.looperaddon` file is installed from, as the side the addon runs on sees it (`/home/…` or `/mnt/c/…` in WSL). Ship the file next to your program and write `"command": ["node", "${addonDir}/addon.mjs"]`, and the addon runs wherever the user keeps your program. |
-| `panes` | The panes on the Tasks tab, by id and title. |
-| `tabs` | Tabs in the main window, after Looper's own: `{ id, title, view, params?, icon? }`. Each one is filled by the addon's screen `view`, drawn with `params` like any screen. Its `toolbar` buttons join the main toolbar while the tab shows, and its `menuBar` is ignored there, as in the main window. `icon` is one of the toolbar icon names listed under [Menus and toolbars](#menus-and-toolbars), and without one the tab shows a window icon. A tab `id` can't repeat: a manifest that repeats one is invalid, with `tabs: duplicate id "<id>"`. View → the tab's title opens it in a window of its own. |
-| `tools` | Tools menu items: `{ id, label, pane }` opens a window with that pane and the selected item's screen, `{ id, label, view, params? }` a window with that screen. `width` and `height` size the window. Looper adds the "…" to the label. |
-| `toolbar` | Toolbar buttons, after Looper's own: `{ id, label, icon?, tool?, view?, destructive? }` (`destructive` as for a menu item, under [Menus and toolbars](#menus-and-toolbars)). Without `view`, a button is on the main window's toolbar at all times. With `view` (`dashboard`, `projects`, `tasks` or `chats`), it shows in that view's window, and in the main window only while that tab shows. With `tool`, the button opens that tool's window; without it, it sends a `click` event whose `source` is `{ toolbar: "main" }`. The buttons are unavailable while the addon isn't running. |
-| `toolbarName` | The name in the View menu's "*name* Toolbar" check box for these buttons. Unset means the addon's `name`. |
+| `panes` | The panes on the addon's panes tab, by id and title. |
+| `panesIcon` | The icon of the panes tab. Without one it shows a window icon. |
+| `tabs` | Tabs in the main window, after Looper's own: `{ id, title, view, params?, icon? }`. Each one is filled by the addon's screen `view`, drawn with `params` like any screen. Without an `icon` the tab shows a window icon. A tab `id` can't repeat, and can't be `panes`, which is the panes tab's. |
+| `commands` | Everything the addon can do, each once (below). |
+| `icons` | The addon's own icons, by name. See [Addon icons](addon-icons.md). |
+| `toolbarName` | The name in the View menu's "*name* Toolbar" check box for the addon's buttons. Unset means the addon's `name`. |
 | `toolCalls` | How calls to some tools show on the Now tab of the Chats window's activity pane (below). |
+
+### Commands
+
+Each thing the addon can do is one entry in `commands`, which says where it goes,
+and Looper draws it on every menu, toolbar and phone bar from that entry. The
+list's order is the order in its menus and toolbars.
+
+| Field | Meaning |
+|---|---|
+| `id` | Sent in its event. An id can't repeat among the commands and their submenus' items. |
+| `label` | What it's called, such as `&New Server…`. `&` marks a menu's access key, and `&&` is a literal `&`. A toolbar and a phone leave out the `&` and a trailing `…`. |
+| `menu` | `file`, `edit`, `view`, `tools` or `help`: the menu it's in. Every command is in a menu, and a toolbar button is a shortcut to it. A command in `new` is in `file`, and can leave this out. |
+| `in` | Where it shows (below). |
+| `icon` | Its icon. See [Addon icons](addon-icons.md). |
+| `labeled` | `true`: on a toolbar, its label beside its icon. Without it, the icon shows alone with the label as its tooltip, and a command with no icon shows its label. |
+| `accelerator` | Its keyboard shortcut (below). |
+| `group` | A separator falls between groups, in a menu and on a toolbar. Commands with no group are one group. |
+| `check` | `check`: a check mark in a menu and a pressed button on a toolbar, while its state says `checked`. `radio`: a bullet, for one choice among its group. |
+| `destructive` | `true` on a command that deletes or stops something, such as Delete Server: a phone shows it in red, last in its menu. Looper doesn't guess it from the label. |
+| `confirm` | Asks that question first, and No sends nothing. |
+| `opens` | Instead of sending an event, opens a screen in a window of its own, `{ view, params?, width?, height? }`, or one of the addon's tabs, `{ tab }`, where `panes` is the panes tab. Picked again, the window comes forward. Width is 320 to 2000 and height 200 to 1400. A phone's More tab lists the tabs, so a command that opens one stays off phones. |
+| `entries` | A submenu (below). |
+| `primary` | With `entries`: see below. |
+| `platforms` | `desktop`, `web` or `mobile`: the devices it shows on. Unset means all of them. |
+
+`in` lists the places a command shows, each with options:
+
+| Place | The command shows and acts |
+|---|---|
+| `new` | With Looper's New items, in the File menu of the main window. `toolbar` also puts it in the toolbar's New group. |
+| `app` | In the main window, on every tab. |
+| `dashboard`, `projects`, `tasks`, `chats` | While that tab shows, in the main window and in that tab's own window. |
+| `panes` | On the addon's panes tab, and in a pane header's right-click menu. The event's `source` is the pane. |
+| `item` | On the panes tab while an item is selected, and it's unavailable while none is. Also in an item's right-click menu. The event's `item` is that item. |
+| `screen` | While one of the addon's screens shows, wherever it shows. `views` keeps it to those screens. The event has the screen's field values. |
+
+A place's options are `toolbar: true` for a toolbar button, `main: true` for a
+phone's bar while it can run and fits there (otherwise it's in that screen's More
+menu), and `context: false` to leave it out of the right-click menu.
+
+The buttons and menu items are unavailable while the addon isn't running.
+
+#### How a command is now
+
+A pane, a pane item and a screen can each send `commands`, how the commands are
+at the moment, by id. The most specific one wins:
+
+```json
+"commands": {
+  "lock": { "label": "&Unlock Vault", "icon": "unlocked" },
+  "edit": { "enabled": false },
+  "show:all": { "checked": true },
+  "copy-totp": { "hidden": true }
+}
+```
+
+`enabled: false` turns it off, and a phone's menus leave it out while it's off.
+`checked` sets its check mark or bullet, `hidden:
+true` leaves it out, and `label` and `icon` change what it shows. Picking a
+command sends the usual `command` event, and the addon answers with a `refresh` so
+the marks follow.
+
+#### Keyboard shortcuts
+
+`accelerator` is a key with `CmdOrCtrl`, such as `CmdOrCtrl+Shift+K`, or a function
+key, such as `F12` or `Shift+F11`. `CmdOrCtrl` is Ctrl on Windows. The key works
+while the command is in the window's menu bar, and a toolbar button's tooltip
+shows it.
+
+The manifest is invalid if it gives a key to two commands, or uses one Looper
+uses in any window, such as `CmdOrCtrl+S` or `F5`, so a key means the same thing
+everywhere. When two addons choose the same key, the one listed first in the
+Addons window keeps it.
+
+#### Submenus
+
+`entries` makes a command a submenu in its menu and a drop-down on a toolbar and a
+phone's bar:
+
+```json
+{
+  "id": "source",
+  "label": "&Source",
+  "icon": "library:filter",
+  "menu": "view",
+  "entries": [
+    { "id": "source:all", "label": "&All Accounts", "check": "radio" },
+    { "id": "source:local", "label": "&Local Only", "check": "radio" },
+    { "separator": true },
+    { "id": "import", "label": "&Import…", "opens": { "view": "import" } }
+  ],
+  "in": { "panes": { "toolbar": true } }
+}
+```
+
+An item has `id`, `label`, `icon`, `accelerator`, `check`, `destructive`, `confirm`
+and `opens`, as a command does, and `{ "separator": true }` is a line between
+items. A submenu has one level, and its items act where the command is placed.
+Picking an item sends a `command` event with the item's `id`, and `commands` sets
+how an item is now by that same `id`. A command with `entries` can't have `check`.
+
+A toolbar's button opens the list. With `"primary": true` or `opens`, it's a split
+button instead: the icon does the command itself, and the arrow opens the list.
 
 ### Requests from Looper
 
@@ -199,29 +287,12 @@ screens it shows again.
       "keywords": "Linux",
       "view": "server",
       "params": { "id": "db-1" },
-      "menu": [
-        { "id": "copy-host", "label": "Copy &Host" },
-        { "separator": true },
-        { "id": "edit", "label": "&Edit Server…", "enabled": true }
-      ]
+      "commands": { "copy-password": { "hidden": true } }
     }
   ],
   "search": { "placeholder": "Search servers" },
-  "menu": [
-    { "id": "show:all", "label": "&All", "checked": true, "radio": true },
-    { "id": "show:linux", "label": "&Linux", "checked": false, "radio": true },
-    { "separator": true },
-    { "id": "new", "label": "&New Server…" }
-  ],
-  "empty": "No servers yet.",
-  "toolbar": [
-    { "id": "new", "label": "New Server…", "icon": "add" },
-    { "id": "edit", "label": "Edit Server…", "icon": "edit", "needsItem": true }
-  ],
-  "menuBar": [
-    { "label": "&File", "items": [{ "id": "new", "label": "&New Server…" }] },
-    { "label": "&Edit", "items": [{ "id": "edit", "label": "&Edit Server…", "needsItem": true }] }
-  ]
+  "commands": { "show:all": { "checked": true } },
+  "empty": "No servers yet."
 }
 ```
 
@@ -229,64 +300,27 @@ Each item is a row like a task's: `label`, and `description` as the line
 under it. `dimmed: true` fades the row the way a disabled task's is. Items
 with the same `group` show under a heading with that name, in the order the
 groups first appear, and items without one come first. Selecting the item
-renders its `view` with its `params` in the main window. Double-clicking it or
-pressing Enter sends an `open` event. `menu` is the item's right-click menu,
-and the pane's own `menu` is its header's. `toolbar` and `menuBar` show only
-in a pane window opened from the Tools menu.
+renders its `view` with its `params` beside the list. Double-clicking it or
+pressing Enter sends an `open` event. An item's and a pane's `commands` say how
+the addon's commands are now, as above.
 
-`search` adds a Search box, drawn and matched the way the Windows guidelines
-describe an instant search, with no request to the addon:
+`search` adds a Search box at the top of the pane, drawn and matched the way the
+Windows guidelines describe an instant search, with no request to the addon:
 
-- In the sidebar it sits at the top of the pane. In a pane window it's at the
-  right of the toolbar, and Ctrl+E goes to it.
 - `placeholder` is its prompt, such as "Search servers", and it defaults to
   "Type to search".
 - The list filters as the user types. An item matches when any word typed
   starts a word of its `label`, `description`, `group` or `keywords`, in any
   case.
-- While a search is on, the sidebar pane header shows "3 of 7", and every
-  group with a match is open. The "x" in the box or Esc clears it, and
-  focusing the box selects what was typed before.
-
-### Menus and toolbars
-
-A menu item is `{ id, label, enabled?, confirm?, needsItem?, checked?,
-radio?, destructive? }` or `{ separator: true }`. `&` in a label marks its
-access key, and `&&` is a literal `&`. With `confirm`, Looper asks that
-question first. `checked` draws a check mark next to the item while it's true,
-and with `radio: true` a bullet instead, for one choice among the items around
-it. Picking one sends the usual `menu` event, and the addon answers with a
-`refresh` so the marks follow. Set `destructive: true` on an item that
-deletes or stops something, such as Delete Server: a phone shows it in red,
-last in its menu. Looper doesn't guess it from the label. A menu bar is a
-list of `{ label, items }`.
-
-In a pane window, a menu-bar item or toolbar button with `needsItem` acts on
-the selected item, and the event's `item` is that item. It's unavailable while
-nothing is selected. When the selected item has a `menu`, the command follows
-it: the entry with the same `id` gives its `enabled`, and with no such entry
-the command is unavailable. So an item that leaves Copy 2FA Code out of its
-menu also leaves it off in the menu bar. An item without a `menu` leaves every
-`needsItem` command available.
-
-A toolbar is a list of buttons `{ id, label, icon?, iconOnly?, disabled?,
-confirm?, needsItem?, destructive? }` and `{ separator: true }`. `destructive`
-is as for a menu item: in a phone's More menu, the button's row is red and
-last. Each button shows its
-`label`, after its `icon` when it has one. With `iconOnly`, it shows only its
-icon, and the `label` is its tooltip. Keep it for commands people know by
-their icon, such as Refresh. The icons are Looper's own: `add`, `edit`, `delete`, `copy`,
-`refresh`, `open`, `folder`, `openFolder`, `terminal`, `run`, `stop`, `pause`,
-`key`, `lock`, `search` and `settings`. Use `openFolder` for a button that
-opens a folder in Explorer, and `folder` for one about the folder itself. A
-click sends a `click` event with the button's `id`.
+- While a search is on, every group with a match is open. The "x" in the box or
+  Esc clears it, and focusing the box selects what was typed before.
 
 ### Screens
 
 ```json
 {
   "title": "db-1",
-  "toolbar": [{ "id": "edit", "label": "Edit Server…", "icon": "edit" }],
+  "commands": { "edit": { "enabled": true } },
   "body": [
     { "type": "props", "items": [
       { "label": "Host", "value": "db-1.example.com", "copy": true },
@@ -299,12 +333,9 @@ click sends a `click` event with the button's `id`.
 }
 ```
 
-`toolbar` adds its buttons to the window's toolbar while the screen shows: in
-the main window, on the Tasks tab or in an addon tab, after Looper's own
-buttons, in a pane window after the pane's,
-and in a window the screen fills, in a toolbar of its own. `menuBar` becomes
-the menu bar of a window the screen fills (one opened with `openWindow`, or a
-Tools item with a `view`).
+`commands` says how the addon's commands are while the screen shows, as above.
+The commands themselves are in the manifest, so a screen's window has the ones
+placed in `screen` in its menu bar and toolbar.
 
 `body` is a list of nodes:
 
@@ -322,7 +353,8 @@ Tools item with a `view`).
 | `footer` | `primary`, `apply?` | In a window, its bottom bar: the primary button, Cancel (which closes the window), and the apply button. Enter clicks the primary button and Esc cancels. The primary button stays off while a `required` field is empty. A window without a footer has a Close button there, which Esc also clicks. |
 
 A button is `{ id, label, primary?, danger?, disabled?, confirm? }`. With
-`confirm`, Looper asks that question first, and No sends nothing.
+`confirm`, Looper asks that question first, and No sends nothing. A button shows
+its label and has no icon, like the buttons in Looper's own windows.
 
 Looper keeps what the user types in the fields while the screen is drawn
 again, so an addon can send the same screen with new values in other nodes.
@@ -341,13 +373,12 @@ countdown or a value that changes.
 ```
 
 `source` is where the event came from: a screen (`{ view, params }`), a pane
-(`{ pane }`), or a main-toolbar button (`{ toolbar: "main" }`). `kind` is one
-of:
+(`{ pane }`), or one of Looper's own windows for a command placed there
+(`{ app: true }`). `kind` is one of:
 
-- `click`: a button or toolbar button, `id` is the button. From a pane
-  window's toolbar, `item` is the selected item.
-- `menu`: a menu item, `id` is the item. `item` is the pane item the menu was
-  opened on, or in a pane window's menu bar, the selected one.
+- `click`: a screen's button, and `id` is the button.
+- `command`: one of the manifest's commands or a submenu's item, and `id` is that
+  one. For a command placed in `item`, `item` is the selected pane item.
 - `open`: a pane item was double-clicked or had Enter pressed, and `id` and
   `item` are that item.
 - `reveal` or `copy`: a secret's Show check box or Copy button, `id` is the
@@ -368,7 +399,7 @@ The answer can have:
 | `refresh` | | Draws the addon's panes and screens again. |
 | `message` | `kind` (`info`, `warning`, `error`), `message`, `detail?` | Shows a dialog. |
 | `copy` | `text` | Copies the text to the clipboard. |
-| `select` | `pane`, `item` | Selects a pane item, such as one just created, in the window the event came from, or in the window that opened it. In the main window, it shows the Tasks tab. |
+| `select` | `pane`, `item` | Selects a pane item, such as one just created, in the window the event came from, or in the window that opened it. |
 
 ### How tool calls show
 
@@ -396,14 +427,14 @@ manifest:
 For a `view`, Looper asks for the screen with `render` and these params:
 `{ tool, input, result, error }`, the tool's name, the call's parameters, the
 result's text and whether the call failed. The screen shows under the
-parameters without its title, toolbar or menu bar, and its buttons send events
+parameters without its title, and its buttons send events
 as on any screen. While the addon isn't running, the result shows the way
 Looper shows any tool's. An addon stopped in the Addons window changes no
 tool's look.
 
 ### Ids and limits
 
-Pane, item, view, button, menu item, field and secret ids use letters,
+Pane, item, view, command, button, field and secret ids use letters,
 digits, `.`, `_`, `:` and `-`, and start with a letter or digit. The addon's
 own `id` can't have `:`, because it names the manifest file. Windows are 320
 to 2000 px wide and 200 to 1400 px tall, and `refreshSec` is at least 1.

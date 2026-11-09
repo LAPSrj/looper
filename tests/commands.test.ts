@@ -34,7 +34,7 @@ const labels = (items: MenuItemSpec[]) => items.map((i) => (i.type === 'separato
 const menu = (views: readonly CommandView[], name: string, c: CommandContext) => menuBar(views, c).find((m) => m.key === name)?.submenu ?? [];
 const src = (...p: string[]) => fs.readFileSync(path.join(__dirname, '..', 'src', ...p), 'utf8');
 const addonWith = (id: string, commands: Partial<AddonCommand>[], over: Partial<AddonInfo> = {}) =>
-  ({ id, name: id, enabled: true, status: 'running', commands, tabs: [], panes: [{ id: 'list', title: 'List' }], toolCalls: [], ...over }) as unknown as AddonInfo;
+  ({ id, name: id, enabled: true, status: 'running', commands, tabs: [], panes: [{ id: 'list', title: 'List' }], icons: {}, toolCalls: [], ...over }) as unknown as AddonInfo;
 
 describe('the one list', () => {
   it('has one id for each command', () => {
@@ -222,7 +222,7 @@ describe('the menu bar', () => {
   });
 
   it('puts History first in Tools, then Recycle Bin and Templates, the addons’ tools, and the settings last', () => {
-    const c = context({ addons: [addonWith('a', [{ id: 't', label: 'Servers', in: { app: { menu: 'tools' } } }])] });
+    const c = context({ addons: [addonWith('a', [{ id: 't', label: 'Servers', menu: 'tools', in: { app: {} } }])] });
     expect(labels(menu(mainWindowViews('tasks'), 'tools', c))).toEqual(['History', 'Recycle Bin', 'Templates', '-', 'Servers', '-', 'Agent Settings…', 'Settings']);
     expect(labels(menu(mainWindowViews('tasks'), 'window', c))).not.toContain('History');
     expect(labels(menu(CHATS_WINDOW_VIEWS, 'tools', context({ chats: { single: false, tab: false, selected: null, summary: undefined, chat: null, sessions: [], shown: {} } as never })))).toEqual(['History']);
@@ -373,11 +373,11 @@ describe('a phone', () => {
 
 describe('an addon’s commands', () => {
   const id = (name: string) => addonCommandId('srv', name);
-  const NEW = { id: 'new', label: '&New Server…', icon: 'add', in: { new: { toolbar: true }, panes: { menu: 'file' } } } as const;
-  const LIST = { id: 'list', label: '&Servers', icon: 'terminal', opens: { tab: 'panes' }, in: { app: { menu: 'tools', toolbar: true } } } as const;
-  const EDIT = { id: 'edit', label: '&Edit Server…', icon: 'edit', in: { item: { menu: 'edit', toolbar: true, main: true } } } as const;
-  const COPY = { id: 'copy', label: 'Copy &Host', group: 'copy', in: { item: { menu: 'edit' } } } as const;
-  const SHOW = { id: 'show', label: '&Linux', group: 'filter', check: 'radio', in: { panes: { menu: 'view' } } } as const;
+  const NEW = { id: 'new', label: '&New Server…', icon: 'add', in: { new: { toolbar: true }, panes: {} } } as const;
+  const LIST = { id: 'list', label: '&Servers', icon: 'terminal', opens: { tab: 'panes' }, menu: 'tools', in: { app: { toolbar: true } } } as const;
+  const EDIT = { id: 'edit', label: '&Edit Server…', icon: 'edit', menu: 'edit', in: { item: { toolbar: true, main: true } } } as const;
+  const COPY = { id: 'copy', label: 'Copy &Host', group: 'copy', menu: 'edit', in: { item: {} } } as const;
+  const SHOW = { id: 'show', label: '&Linux', group: 'filter', check: 'radio', menu: 'view', in: { panes: {} } } as const;
   const addons = [addonWith('srv', [NEW, LIST, EDIT, COPY, SHOW])];
   const ids = (groups: { items: { id: string }[] }[]) => groups.flatMap((g) => g.items.map((i) => i.id));
   const onPanes = (over: Partial<CommandContext> = {}, here: CommandContext['here'] = 'desktop') =>
@@ -443,7 +443,7 @@ describe('an addon’s commands', () => {
 
   it('runs one placed on a screen through the screen, with its fields', () => {
     const screen = vi.fn();
-    const list = [addonWith('srv', [{ id: 'go', label: 'Go', confirm: 'Sure?', in: { screen: { menu: 'edit', views: ['server'] } } }])];
+    const list = [addonWith('srv', [{ id: 'go', label: 'Go', confirm: 'Sure?', menu: 'edit', in: { screen: { views: ['server'] } } }])];
     const at = (view: string) => context({ addons: list, addon: { id: 'srv', screen: { view, run: screen } } });
     expect(labels(menu(['addonScreen'], 'edit', at('other')))).toEqual([]);
     expect(labels(menu(['addonScreen'], 'edit', at('server')))).toEqual(['Go']);
@@ -452,7 +452,7 @@ describe('an addon’s commands', () => {
   });
 
   it('opens a screen’s window through the main process, and a tab in the window, or its own window from elsewhere', () => {
-    const opensWindow = [addonWith('srv', [{ id: 's', label: 'Settings', opens: { view: 'settings' }, in: { app: { menu: 'tools' } } }, { ...LIST }])];
+    const opensWindow = [addonWith('srv', [{ id: 's', label: 'Settings', opens: { view: 'settings' }, menu: 'tools', in: { app: {} } }, { ...LIST }])];
     const c = context({ addons: opensWindow });
     runCommand(id('s'), c);
     expect(c.calls).toEqual(['looper.addons.open']);
@@ -469,7 +469,7 @@ describe('an addon’s commands', () => {
     const confirm = vi.fn(() => Promise.resolve(false));
     const open = vi.fn();
     const looper = { confirm, addons: { open } } as never;
-    const list = [addonWith('srv', [{ id: 's', label: 'Reset', confirm: 'Reset?', opens: { view: 'reset' }, in: { app: { menu: 'tools' } } }])];
+    const list = [addonWith('srv', [{ id: 's', label: 'Reset', confirm: 'Reset?', opens: { view: 'reset' }, menu: 'tools', in: { app: {} } }])];
     runCommand(id('s'), context({ looper, addons: list }));
     await Promise.resolve();
     await Promise.resolve();
@@ -497,6 +497,123 @@ describe('an addon’s commands', () => {
     expect(labels(menu(mainWindowViews('tasks'), 'file', stopped))).not.toContain('New Server…');
     const notRunning = context({ addons: [addonWith('srv', [NEW], { status: 'starting' })], tab: 'tasks' });
     expect(menu(mainWindowViews('tasks'), 'file', notRunning).find((i) => i.label === '&New Server…')?.enabled).toBe(false);
+  });
+
+  it('shows its icon alone on a toolbar unless it asks for its label, and always its label when it has no icon', () => {
+    const list = [
+      addonWith('srv', [
+        { id: 'icon', label: 'Icon', icon: 'key', menu: 'tools', in: { app: { toolbar: true } } },
+        { id: 'both', label: 'Both', icon: 'key', labeled: true, menu: 'tools', in: { app: { toolbar: true } } },
+        { id: 'text', label: 'Text', menu: 'tools', in: { app: { toolbar: true } } },
+      ]),
+    ];
+    const items = commandToolbar(mainToolbarViews('tasks'), context({ tab: 'tasks', addons: list })).flatMap((g) => g.items);
+    const labeled = (name: string) => items.find((i) => i.id === id(name))?.labeled;
+    expect([labeled('icon'), labeled('both'), labeled('text')]).toEqual([undefined, true, true]);
+  });
+
+  it('draws the addon’s own icon by its name, and changes it with its state', () => {
+    const list = [addonWith('srv', [{ id: 'lock', label: 'Lock', icon: 'vault', menu: 'edit', in: { item: { toolbar: true } } }], { icons: { vault: 'svg:{"a":1}', unlocked: 'svg:{"b":2}' } })];
+    const at = (state?: Record<string, object>) => context({ tab: 'addon/srv/panes', addons: list, addon: picked(state) });
+    const iconAt = (c: CommandContext) => commandToolbar(mainToolbarViews('addon/srv/panes'), c).flatMap((g) => g.items).find((i) => i.id === id('lock'))?.icon;
+    expect(iconAt(at())).toBe('svg:{"a":1}');
+    expect(iconAt(at({ lock: { icon: 'unlocked' } }))).toBe('svg:{"b":2}');
+    expect(iconAt(at({ lock: { icon: 'key' } }))).toBe('key');
+    expect(iconAt(at({ lock: { icon: 'unknown' } }))).toBe('svg:{"a":1}');
+  });
+
+  it('keeps the icon a New command chooses on every surface, with no plus added', () => {
+    const list = [addonWith('srv', [{ id: 'new', label: '&New Key…', icon: 'key', in: { new: { toolbar: true }, panes: { main: true } } }])];
+    const toolbarIcon = commandToolbar(mainToolbarViews('tasks'), context({ tab: 'tasks', addons: list })).flatMap((g) => g.items).find((i) => i.id === id('new'))?.icon;
+    expect(toolbarIcon).toBe('key');
+    const phone = context({ addons: list, tab: 'addon/srv/panes', addon: { id: 'srv', panes: { pane: 'list' }, item: null } }, 'mobile');
+    expect(phoneActions(['addonPanes'], phone).map((a) => a.icon)).toEqual(['key']);
+  });
+
+  it('shows Looper’s own New icons on a phone’s bar', () => {
+    const phone = context({ addons: [] }, 'mobile');
+    expect(phoneActions(['projects'], phone).find((a) => a.id === 'newProject')?.icon).toBe('newProject');
+    expect(phoneActions(['tasks'], phone).find((a) => a.id === 'newTask')?.icon).toBe('newTask');
+  });
+
+  it('gives a command its key, and of two addons with one key the first listed keeps it', () => {
+    const keyed = (addon: string) => addonWith(addon, [{ id: 'k', label: 'K', accelerator: 'CmdOrCtrl+Shift+K', menu: 'tools', in: { app: {} } }]);
+    const c = context({ addons: [keyed('a'), keyed('b')] });
+    const items = menu(mainWindowViews('tasks'), 'tools', c);
+    expect(items.find((i) => i.id === addonCommandId('a', 'k'))?.accelerator).toBe('CmdOrCtrl+Shift+K');
+    expect(items.find((i) => i.id === addonCommandId('b', 'k'))?.accelerator).toBeUndefined();
+    const stopped = context({ addons: [{ ...keyed('a'), enabled: false }, keyed('b')] });
+    expect(menu(mainWindowViews('tasks'), 'tools', stopped).find((i) => i.id === addonCommandId('b', 'k'))?.accelerator).toBe('CmdOrCtrl+Shift+K');
+  });
+
+  describe('with a submenu', () => {
+    const SOURCE = {
+      id: 'source',
+      label: '&Source',
+      icon: 'folder',
+      menu: 'view',
+      entries: [
+        { id: 'all', label: '&All', check: 'radio', icon: 'key' },
+        { id: 'local', label: '&Local', check: 'radio', accelerator: 'CmdOrCtrl+Shift+L' },
+        { separator: true },
+        { id: 'manage', label: '&Manage…', opens: { view: 'manage' } },
+        { id: 'reset', label: '&Reset', confirm: 'Reset?', destructive: true },
+      ],
+      in: { panes: { toolbar: true, main: true } },
+    } as const;
+    const list = [addonWith('srv', [SOURCE as unknown as Partial<AddonCommand>])];
+    const at = (over: Partial<CommandContext> = {}, here: CommandContext['here'] = 'desktop') => context({ tab: 'addon/srv/panes', addons: list, addon: { id: 'srv', panes: { pane: 'list' }, item: null }, ...over }, here);
+    const panesState = (state: Record<string, object>) => ({ addon: { id: 'srv', panes: { pane: 'list', state }, item: null } });
+    const sub = (c: CommandContext) => menu(mainWindowViews('addon/srv/panes'), 'view', c).find((i) => i.id === id('source'))?.submenu ?? [];
+
+    it('draws its items in the menu, with their icons, keys and state', () => {
+      const items = sub(at(panesState({ all: { checked: true }, local: { enabled: false, label: 'Here', icon: 'lock' } })));
+      expect(items.map((i) => i.label)).toEqual(['&All', 'Here', undefined, '&Manage…', '&Reset']);
+      expect(items[0]).toMatchObject({ id: `${id('source')}/all`, type: 'radio', checked: true, icon: 'key' });
+      expect(items[1]).toMatchObject({ type: 'radio', checked: false, enabled: false, icon: 'lock', accelerator: 'CmdOrCtrl+Shift+L' });
+      expect(items[4]).toMatchObject({ destructive: true });
+    });
+
+    it('leaves out a hidden item and the line it would leave at the end', () => {
+      const items = sub(at(panesState({ manage: { hidden: true }, reset: { hidden: true } })));
+      expect(items.map((i) => i.label)).toEqual(['&All', '&Local']);
+    });
+
+    it('sends an item’s own event, asks its question, and opens its screen', () => {
+      const sent: unknown[] = [];
+      const open = vi.fn();
+      const looper = { addons: { event: (...a: unknown[]) => void sent.push(a), open } } as never;
+      runCommand(`${id('source')}/all`, at({ looper }));
+      expect(sent.pop()).toEqual(['srv', { source: { pane: 'list' }, kind: 'command', id: 'all' }, undefined]);
+      runCommand(`${id('source')}/reset`, at({ looper }));
+      expect(sent.pop()).toEqual(['srv', { source: { pane: 'list' }, kind: 'command', id: 'reset' }, 'Reset?']);
+      runCommand(`${id('source')}/manage`, at({ looper }));
+      expect(open).toHaveBeenCalledWith('srv', 'manage');
+    });
+
+    it('is a drop-down on a toolbar with nothing of its own to do, and a split button with `primary`', () => {
+      const button = (over: object) => {
+        const c = context({ tab: 'addon/srv/panes', addons: [addonWith('srv', [{ ...(SOURCE as unknown as Partial<AddonCommand>), ...over }])], addon: { id: 'srv', panes: { pane: 'list' }, item: null } });
+        return commandToolbar(mainToolbarViews('addon/srv/panes'), c).flatMap((g) => g.items).find((i) => i.id === id('source'));
+      };
+      expect(button({})).toMatchObject({ run: null, menu: { label: 'Source' } });
+      expect(button({ primary: true })?.run).toEqual(expect.any(Function));
+      expect(button({ opens: { view: 'v' } })?.run).toEqual(expect.any(Function));
+    });
+
+    it('opens its list from a phone’s bar, with the items’ icons and state', () => {
+      const [action] = phoneActions(['addonPanes'], at(panesState({ local: { enabled: false } }), 'mobile'));
+      expect(action.menu?.map((e) => e.label)).toEqual(['All', 'Local', '', 'Manage…', 'Reset']);
+      expect(action.menu?.[0]).toMatchObject({ icon: 'key', checked: false, type: 'radio' });
+      expect(action.menu?.[1]).toMatchObject({ enabled: false });
+      expect(action.menu?.[4]).toMatchObject({ destructive: true });
+    });
+
+    it('keeps an item that opens a tab off phones, as a command that opens one is', () => {
+      const withTab = [addonWith('srv', [{ ...(SOURCE as unknown as Partial<AddonCommand>), entries: [{ id: 'tab', label: 'Tab', opens: { tab: 'panes' } }, { id: 'all', label: 'All' }] }])];
+      const [action] = phoneActions(['addonPanes'], at({ addons: withTab }, 'mobile'));
+      expect(action.menu?.map((e) => e.id)).toEqual(['all']);
+    });
   });
 
   it('accepts the demo addon’s manifest and draws it', () => {

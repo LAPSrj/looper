@@ -7,6 +7,7 @@ import {
   ADDON_EXT,
   addonAdditions,
   AddonLocalRunSchema,
+  findAddonAction,
   readAddonManifest,
   runCommand,
   sideName,
@@ -14,12 +15,14 @@ import {
   withAddonDir,
   type AddonAction,
   type AddonCommand,
+  type AddonEntry,
   type AddonEvent,
   type AddonInfo,
   type AddonUiEvent,
 } from '../shared/addons';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
 import type { AddonHost, AddonLaunch } from './addon-host';
+import { addonIconError } from './addon-icons';
 import { allWindows, ipc, showMessageBox, showOpenDialog, windowOf, WindowSlots, writeClipboard, type AppWindow, type MessageBoxOptions } from './platform';
 import type { WindowRole } from '../shared/remote-access';
 
@@ -86,7 +89,7 @@ function trackWindow(addonId: string, w: AppWindow): void {
 }
 
 /** A command's `opens`: the screen in a window of its own, titled as the command, or the open one brought forward. */
-function openCommandWindow(deps: AddonUiDeps, addon: AddonInfo, command: AddonCommand): void {
+function openCommandWindow(deps: AddonUiDeps, addon: AddonInfo, command: AddonCommand | AddonEntry): void {
   const opens = command.opens;
   if (!opens || 'tab' in opens) return;
   const key = `${addon.id}/${command.id}`;
@@ -191,6 +194,11 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
     else await errorBox(parent, 'Could not install the file.', 'The file does not contain a Looper addon.');
     return;
   }
+  const iconError = addonIconError(r.manifest);
+  if (iconError) {
+    await errorBox(parent, 'The addon file has errors.', iconError);
+    return;
+  }
   // ${addonDir} becomes the folder the file is installed from, so the addon runs wherever its program is.
   const m = usesAddonDir(r.manifest.run)
     ? {
@@ -285,7 +293,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
   });
   ipc.handle('addons:open', (_e, id: string, commandId: string) => {
     const addon = host.list().find((a) => a.id === id);
-    const command = addon?.commands.find((c) => c.id === commandId);
+    const command = addon && findAddonAction(addon.commands, commandId);
     if (addon && command) openCommandWindow(deps, addon, command);
   });
   ipc.handle('addons:remove', async (e, id: string) => {

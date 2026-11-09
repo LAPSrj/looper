@@ -9,12 +9,11 @@ import { messageResult } from './dialog-flows';
 import { useFileDialog, usePathRequest, type HostBrowser, type LocalMessage } from './file-flows';
 import { AxisDrag } from './gestures';
 import { CHECK, FileRows, FileViewBody } from './phone-files';
-import { phoneMenu } from './more-menu';
+import { actionMenu, phoneMenu } from './more-menu';
 import {
   deviceNoun,
   isLongMenu,
   menuGroups,
-  actionMenu,
   moreFor,
   PhoneWindows,
   pickMore,

@@ -4,11 +4,42 @@ import { readAddonManifest } from '../src/shared/addons';
 import type { MenuItemSpec } from '../src/shared/remote-access';
 import { menuForPlatform, showsOn, uiPlatformOf } from '../src/shared/ui-platform';
 import { findToolbarItem, groupsAtSeparators, toolbarFor, type ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
-import { composeMore, phoneMenu } from '../src/renderer/src/web/more-menu';
+import { actionMenu, composeMore, phoneMenu } from '../src/renderer/src/web/more-menu';
 
 const labels = (items: MenuItemSpec[]): string[] => items.map((i) => (i.type === 'separator' ? '—' : (i.label ?? '')));
 const item = (id: string, label: string, extra: Partial<MenuItemSpec> = {}): MenuItemSpec => ({ id, type: 'normal', label, enabled: true, ...extra });
 const sep = (id: string): MenuItemSpec => ({ id, type: 'separator', enabled: true });
+
+describe('a bar button’s menu', () => {
+  const run = () => undefined;
+  const action = (menu: NonNullable<Parameters<typeof actionMenu>[0]['menu']>) => actionMenu({ id: 'a', label: 'A', menu, run });
+
+  it('hides what can’t be done now, with the line it leaves, as the More menu does', () => {
+    const { items } = action([
+      { id: 'x', label: 'X', run },
+      { id: '-1', label: '', separator: true, run },
+      { id: 'y', label: 'Y', enabled: false, run },
+    ]);
+    expect(labels(items)).toEqual(['X']);
+  });
+
+  it('puts destructive items last, in a group of their own', () => {
+    const { items } = action([
+      { id: 'd', label: 'Delete', destructive: true, run },
+      { id: 'x', label: 'X', run },
+    ]);
+    expect(labels(items)).toEqual(['X', '—', 'Delete']);
+    expect(items[2].destructive).toBe(true);
+  });
+
+  it('keeps each item’s icon and check mark, and what picking it does', () => {
+    const pick = vi.fn();
+    const { items, run: picks } = action([{ id: 'x', label: 'X', icon: 'key', checked: true, type: 'radio', run: pick }]);
+    expect(items[0]).toMatchObject({ icon: 'key', type: 'radio', checked: true, enabled: true });
+    picks.get(items[0].id)?.();
+    expect(pick).toHaveBeenCalled();
+  });
+});
 
 describe('platform marks', () => {
   it('shows unmarked items everywhere and marked ones only where listed', () => {
@@ -214,7 +245,7 @@ describe('an addon command’s marks', () => {
     run: { on: 'wsl', command: ['node', 'addon.mjs'] },
     panes: [{ id: 'things', title: 'Things' }],
   };
-  const withCommand = (over: object) => readAddonManifest({ ...MANIFEST, commands: [{ id: 'c', label: 'C', in: { app: { menu: 'tools' } }, ...over }] });
+  const withCommand = (over: object) => readAddonManifest({ ...MANIFEST, commands: [{ id: 'c', label: 'C', menu: 'tools', in: { app: {} }, ...over }] });
 
   it('accepts platforms, and rejects unknown, empty or repeated lists', () => {
     const r = withCommand({ platforms: ['desktop', 'web'] });

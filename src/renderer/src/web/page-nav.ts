@@ -66,8 +66,8 @@ export interface PageNavSplit {
 }
 
 export interface PageNavTabs {
-  /** Each tab's id, its label, and an addon tab's icon (an ICONS key). */
-  items: readonly (readonly [string, string, string?])[];
+  /** Each tab's id and its label. */
+  items: readonly (readonly [string, string])[];
   value: string;
   select: (id: string) => void;
 }

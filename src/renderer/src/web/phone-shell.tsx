@@ -4,7 +4,7 @@ import type { ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
 import { composeMore, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
-import { plainLabel, type PageNavAction } from './nav-bar-model';
+import { plainLabel } from './nav-bar-model';
 import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
@@ -755,19 +755,6 @@ export interface OpenMore extends MoreMenu {
 export function moreFor(sc: Screen): MoreMenu {
   const nav = sc.nav;
   return composeMore({ toolbar: nav?.toolbar, more: nav?.more });
-}
-
-/** A bar button's menu of choices, as the More menu is drawn. */
-export function actionMenu(action: PageNavAction): MoreMenu {
-  const run = new Map<string, () => void>();
-  const items = (action.menu ?? []).map((e): MenuItemSpec => {
-    const id = `__page:${action.id}:${e.id}`;
-    if (e.separator) return { id, type: 'separator', enabled: true };
-    run.set(id, e.run);
-    if (e.checked === undefined) return { id, type: 'normal', label: e.label, enabled: true };
-    return { id, type: e.type ?? 'radio', label: e.label, enabled: true, checked: e.checked };
-  });
-  return { items, run };
 }
 
 /** A pick in the More menu: a command of the page's, or the computer's menu item. */

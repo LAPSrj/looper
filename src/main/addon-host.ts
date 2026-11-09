@@ -25,6 +25,7 @@ import {
   type AddonScreen,
   type AddonStatus,
 } from '../shared/addons';
+import { addonIconError, addonIcons } from './addon-icons';
 import { tokenize } from '../shared/cmdline';
 import { DEFAULT_SHELL } from '../shared/environments';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
@@ -414,6 +415,8 @@ export class AddonHost {
       try {
         const r = readAddonManifest(JSON.parse(fs.readFileSync(file, 'utf8')));
         if (!r.ok) throw new Error(r.error ?? r.reason);
+        const iconError = addonIconError(r.manifest);
+        if (iconError) throw new Error(iconError);
         this.launch(r.manifest);
       } catch (e) {
         this.d.log.error(`addon ${path.basename(name, `.${ADDON_EXT}`)}: not loaded: ${errMsg(e)}`);
@@ -440,8 +443,10 @@ export class AddonHost {
         environmentId: l.environment?.id,
         defaultEnvironmentId: l.defaultEnvironment?.id,
         panes: p.manifest.panes,
+        panesIcon: p.manifest.panesIcon,
         tabs: p.manifest.tabs,
         commands: p.manifest.commands,
+        icons: addonIcons(p.manifest),
         toolbarName: p.manifest.toolbarName,
         toolCalls: p.manifest.toolCalls,
         enabled: this.enabled(p.manifest.id),

@@ -1,8 +1,9 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
-import type { AddonCommand, AddonCommandState, AddonEventSource, AddonInfo, AddonPlace, AddonPlacement } from '../addons';
+import { addonIconKey, commandEntries, commandMenu, type AddonCommand, type AddonCommandState, type AddonEntry, type AddonEventSource, type AddonInfo, type AddonPlace, type AddonPlacement } from '../addons';
 import { addonTabId } from '../main-tabs';
+import { keyId } from '../shortcuts';
 import { UI_PLATFORMS } from '../ui-platform';
-import type { Command, CommandView, Hide, Where } from './command';
+import type { Command, CommandView, Entry, Hide, Where } from './command';
 import type { CommandContext } from './context';
 
 /**
@@ -59,32 +60,65 @@ function openTabOf(c: CommandContext, tab: string): void {
   else c.host('open-view', tab);
 }
 
-function run(c: CommandContext, a: AddonInfo, cmd: AddonCommand): void {
-  if (cmd.opens) {
-    const opens = cmd.opens;
-    const open = () => ('tab' in opens ? openTabOf(c, addonTabId(a.id, opens.tab)) : void c.looper.addons.open(a.id, cmd.id));
-    if (cmd.confirm) void c.looper.confirm(cmd.confirm).then((ok) => ok && open());
+/** Do what the command, or one of its submenu's items, does: it acts where the command is placed. */
+function run(c: CommandContext, a: AddonInfo, cmd: AddonCommand, action: AddonCommand | AddonEntry): void {
+  if (action.opens) {
+    const opens = action.opens;
+    const open = () => ('tab' in opens ? openTabOf(c, addonTabId(a.id, opens.tab)) : void c.looper.addons.open(a.id, action.id));
+    if (action.confirm) void c.looper.confirm(action.confirm).then((ok) => ok && open());
     else open();
     return;
   }
   const target = targetOf(c, a.id, cmd);
   if (!target) return;
   if (target.screen) {
-    c.addon!.screen!.run(cmd.id, cmd.confirm);
+    c.addon!.screen!.run(action.id, action.confirm);
     return;
   }
   const source = target.item ? { pane: target.item.pane } : target.source!;
-  void c.looper.addons.event(a.id, { source, kind: 'command', id: cmd.id, ...(target.item ? { item: target.item.id } : {}) }, cmd.confirm);
+  void c.looper.addons.event(a.id, { source, kind: 'command', id: action.id, ...(target.item ? { item: target.item.id } : {}) }, action.confirm);
 }
 
-const where = (p: AddonPlacement): Where => ({
-  menu: p.menu,
-  ...(p.toolbar ? { toolbar: true as const } : {}),
-  ...(p.main ? { main: true as const } : {}),
-  ...(p.context === false ? { context: false as const } : {}),
-});
+const where = (menu: Where['menu'], p: AddonPlacement): Where =>
+  ({
+    menu,
+    ...(p.toolbar ? { toolbar: true as const } : {}),
+    ...(p.main ? { main: true as const } : {}),
+    ...(p.context === false ? { context: false as const } : {}),
+  }) as Where;
 
-function toCommand(a: AddonInfo, cmd: AddonCommand): Command {
+/** The command's submenu as it is now: what's left out takes its line with it. */
+function entriesOf(c: CommandContext, a: AddonInfo, cmd: AddonCommand, keyOf: KeyOf): Entry[] {
+  const out: Entry[] = [];
+  for (const e of cmd.entries ?? []) {
+    if (!('id' in e)) {
+      if (out.length && !('separator' in out[out.length - 1])) out.push({ separator: true });
+      continue;
+    }
+    const state = stateOf(c, a.id, e.id);
+    if (state.hidden || (e.opens && 'tab' in e.opens && c.here === 'mobile')) continue;
+    const icon = addonIconKey(a, state.icon) ?? addonIconKey(a, e.icon);
+    const key = keyOf(e);
+    out.push({
+      id: e.id,
+      label: state.label ?? e.label,
+      ...(icon ? { icon } : {}),
+      enabled: a.status === 'running' && state.enabled !== false && !!targetOf(c, a.id, cmd),
+      ...(e.check ? { checked: !!state.checked, ...(e.check === 'radio' ? { radio: true as const } : {}) } : {}),
+      ...(key ? { accelerator: key } : {}),
+      ...(e.destructive ? { destructive: true as const } : {}),
+      run: () => run(c, a, cmd, e),
+    });
+  }
+  const last = out[out.length - 1];
+  if (last && 'separator' in last) out.pop();
+  return out;
+}
+
+/** The key an action has: none when an addon listed earlier took it. */
+type KeyOf = (action: AddonCommand | AddonEntry) => string | undefined;
+
+function toCommand(a: AddonInfo, cmd: AddonCommand, keyOf: KeyOf): Command {
   const views = cmd.in.screen?.views;
   const own = (c: CommandContext) => (c.addon?.id === a.id ? c.addon : undefined);
   const hide: Hide[] = [
@@ -99,24 +133,28 @@ function toCommand(a: AddonInfo, cmd: AddonCommand): Command {
   const elsewhere = cmd.platforms ? UI_PLATFORMS.filter((p) => !cmd.platforms!.includes(p)) : [];
   if (elsewhere.length) hide.push({ on: elsewhere, why: 'Its addon offers it only on some devices.' });
   if (cmd.opens && 'tab' in cmd.opens) hide.push({ on: ['mobile'], why: 'The More view lists the tab it opens.' });
+  const menu = commandMenu(cmd);
   const placed: Partial<Record<CommandView, Where>> = {};
   for (const [place, p] of Object.entries(cmd.in) as [AddonPlace, AddonCommand['in'][AddonPlace]][]) {
     if (!p) continue;
-    if (place === 'new') placed.new = { menu: 'file', ...('toolbar' in p && p.toolbar ? { toolbar: true as const } : {}) };
-    else placed[VIEW_OF[place]] = where(p as AddonPlacement);
+    if (place === 'new') placed.new = where('file', p as AddonPlacement);
+    else placed[VIEW_OF[place]] = where(menu, p as AddonPlacement);
   }
+  const key = keyOf(cmd);
   return {
     id: addonCommandId(a.id, cmd.id),
     label: (c) => stateOf(c, a.id, cmd.id).label ?? cmd.label,
     // With Looper's New items, a New item is one of them; the others are the addon's own groups.
     group: cmd.in.new ? 'new' : `addon:${a.id}${cmd.group ? `:${cmd.group}` : ''}`,
-    ...(cmd.icon ? { icon: cmd.icon } : {}),
-    ...(cmd.iconOnly ? {} : { labeled: true as const }),
+    icon: (c) => addonIconKey(a, stateOf(c, a.id, cmd.id).icon) ?? addonIconKey(a, cmd.icon),
+    ...(cmd.labeled ? { labeled: true as const } : {}),
+    ...(key ? { accelerator: key } : {}),
     ...(cmd.destructive ? { destructive: true as const } : {}),
     enabled: (c) => a.status === 'running' && stateOf(c, a.id, cmd.id).enabled !== false && !!targetOf(c, a.id, cmd),
     ...(cmd.check ? { checked: (c: CommandContext) => !!stateOf(c, a.id, cmd.id).checked, ...(cmd.check === 'radio' ? { radio: true as const } : {}) } : {}),
+    ...(cmd.entries ? { entries: (c: CommandContext) => entriesOf(c, a, cmd, keyOf) } : {}),
     hide,
-    run: (c) => run(c, a, cmd),
+    ...(!cmd.entries || cmd.primary || cmd.opens ? { run: (c: CommandContext) => run(c, a, cmd, cmd) } : {}),
     in: placed,
   };
 }
@@ -128,12 +166,26 @@ export function addonCommandSlots(addons: readonly AddonInfo[]): AddonCommandSlo
   const cached = slotsCache.get(addons);
   if (cached !== undefined) return cached;
   const slots: AddonCommandSlots = { new: [], tools: [], rest: [] };
+  // A key has one meaning: of two addons that chose the same one, the first listed keeps it.
+  const taken = new Set<string>();
+  const kept = new Set<AddonCommand | AddonEntry>();
   for (const a of addons) {
     if (!a.enabled) continue;
     for (const cmd of a.commands) {
-      const command = toCommand(a, cmd);
+      for (const action of [cmd, ...commandEntries(cmd)]) {
+        if (!action.accelerator || taken.has(keyId(action.accelerator))) continue;
+        taken.add(keyId(action.accelerator));
+        kept.add(action);
+      }
+    }
+  }
+  const keyOf: KeyOf = (action) => (kept.has(action) ? action.accelerator : undefined);
+  for (const a of addons) {
+    if (!a.enabled) continue;
+    for (const cmd of a.commands) {
+      const command = toCommand(a, cmd, keyOf);
       if (cmd.in.new) slots.new.push(command);
-      else if ((Object.values(cmd.in) as (AddonPlacement | undefined)[]).some((p) => p?.menu === 'tools')) slots.tools.push(command);
+      else if (commandMenu(cmd) === 'tools') slots.tools.push(command);
       else slots.rest.push(command);
     }
   }

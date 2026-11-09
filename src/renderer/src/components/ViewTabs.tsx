@@ -1,13 +1,13 @@
 import type { MainTabDef } from '@shared/main-tabs';
 import type { View } from '@shared/types';
 import { Icon } from './Icon';
-import { ICONS } from './icons';
+import { ICONS, iconNode } from './icons';
 import { Tabs } from './Tabs';
 import { tabStop } from './tabs-model';
 
 type TabsView = View['tabs'];
 
-const iconOf = (t: MainTabDef) => <Icon>{(ICONS as Record<string, React.ReactNode>)[t.icon] ?? ICONS.window}</Icon>;
+const iconOf = (t: MainTabDef) => <Icon>{iconNode(t.icon) ?? ICONS.window}</Icon>;
 
 /**
  * The main window's tabs: one per view (Dashboard, Projects, Tasks, Chats,

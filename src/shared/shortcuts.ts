@@ -18,3 +18,45 @@ export const hint = (accelerator: string): string => accelerator.replace('CmdOrC
 
 /** Keys with a meaning in every Windows program: no command of Looper's takes one for something else. */
 export const WELL_KNOWN_KEYS = ['CmdOrCtrl+P', 'CmdOrCtrl+C', 'CmdOrCtrl+V', 'CmdOrCtrl+X', 'CmdOrCtrl+Z', 'CmdOrCtrl+Y', 'CmdOrCtrl+A'] as const;
+
+/**
+ * Every key Looper uses in some window or state, its pages' own included: an
+ * addon's command can't take one, so a key keeps one meaning in every window.
+ * A test checks that the command list's keys are all here.
+ */
+export const LOOPER_KEYS: readonly string[] = [
+  ...WELL_KNOWN_KEYS,
+  ...Object.values(SHORTCUTS),
+  'F1',
+  'F2',
+  'F3',
+  'F5',
+  'Shift+F5',
+  'F6',
+  'Shift+F6',
+  'F8',
+  'Shift+F8',
+  'F9',
+  'Shift+F9',
+  'F10',
+  'Alt+F4',
+  'CmdOrCtrl+F4',
+  'CmdOrCtrl+,',
+  'CmdOrCtrl+E',
+  'CmdOrCtrl+F',
+  'CmdOrCtrl+N',
+  'CmdOrCtrl+Shift+N',
+  'CmdOrCtrl+O',
+  'CmdOrCtrl+S',
+  'CmdOrCtrl+W',
+  'CmdOrCtrl+Enter',
+  'CmdOrCtrl+Tab',
+  'CmdOrCtrl+Shift+Tab',
+  'CmdOrCtrl+PageUp',
+  'CmdOrCtrl+PageDown',
+  'CmdOrCtrl+Shift+Q',
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `CmdOrCtrl+${n}`),
+];
+
+/** The same key however its modifiers are ordered. */
+export const keyId = (accelerator: string): string => accelerator.split('+').sort().join('+');

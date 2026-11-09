@@ -249,7 +249,7 @@ guide in its own window, and Help → About Looper shows the version.
 The New buttons come first, in the order of the tabs, and each one shows its
 tab's icon with a plus.
 After them come the shown tab's buttons, then the buttons that addons add
-(see [Addons](addons.md#the-toolbar)), then the buttons of the addon screen
+(see [Addons](addons.md#menus-and-toolbars)), then the buttons of the addon screen
 that shows, if one does. Buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |

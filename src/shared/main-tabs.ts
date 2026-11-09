@@ -1,4 +1,4 @@
-import type { AddonInfo, AddonTab } from './addons';
+import { addonIconKey, type AddonInfo, type AddonTab } from './addons';
 
 /** Looper's own tabs of the main window, in their order. */
 export const LOOPER_TABS = [
@@ -14,7 +14,7 @@ export type LooperTab = (typeof LOOPER_TABS)[number]['id'];
 export interface MainTabDef {
   id: string;
   label: string;
-  /** An ICONS key (renderer components/icons.tsx). */
+  /** What iconNode draws (renderer components/icons.tsx). */
   icon: string;
   /** With no `tab`: the addon's panes fill it. */
   addon?: { id: string; name: string; tab?: AddonTab };
@@ -33,14 +33,14 @@ function panesTabLabel(a: Pick<AddonInfo, 'name' | 'tabs' | 'panes'>): string {
 }
 
 /** The main window's tabs: Looper's, then each started addon's in the order the addons are listed. */
-export function mainTabs(addons: Pick<AddonInfo, 'id' | 'name' | 'enabled' | 'tabs' | 'panes'>[]): MainTabDef[] {
+export function mainTabs(addons: Pick<AddonInfo, 'id' | 'name' | 'enabled' | 'tabs' | 'panes' | 'panesIcon' | 'icons'>[]): MainTabDef[] {
   return [
     ...LOOPER_TABS.map((t) => ({ ...t })),
     ...addons
       .filter((a) => a.enabled)
       .flatMap((a): MainTabDef[] => [
-        ...a.tabs.map((tab) => ({ id: addonTabId(a.id, tab.id), label: tab.title, icon: tab.icon ?? ADDON_TAB_ICON, addon: { id: a.id, name: a.name, tab } })),
-        ...(a.panes.length > 0 ? [{ id: addonTabId(a.id, 'panes'), label: panesTabLabel(a), icon: ADDON_TAB_ICON, addon: { id: a.id, name: a.name } }] : []),
+        ...a.tabs.map((tab) => ({ id: addonTabId(a.id, tab.id), label: tab.title, icon: addonIconKey(a, tab.icon) ?? ADDON_TAB_ICON, addon: { id: a.id, name: a.name, tab } })),
+        ...(a.panes.length > 0 ? [{ id: addonTabId(a.id, 'panes'), label: panesTabLabel(a), icon: addonIconKey(a, a.panesIcon) ?? ADDON_TAB_ICON, addon: { id: a.id, name: a.name } }] : []),
       ]),
   ];
 }

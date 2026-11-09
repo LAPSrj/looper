@@ -3,12 +3,12 @@ import type { CommandView } from '@shared/commands/command';
 import type { CommandContext } from '@shared/commands/context';
 import { isPhone, uiHere } from '../web/page-nav';
 import { commandToolbar, phoneNav } from './command-surfaces';
-import { ICONS } from './icons';
+import { iconNode } from './icons';
 import { NavBar } from './NavBar';
 import { SplitToolButton, ToolButton } from './ToolButton';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from './toolbar-model';
 
-const iconOf = (it: { icon?: string }): React.ReactNode => (it.icon ? (ICONS as Record<string, React.ReactNode>)[it.icon] : undefined);
+const iconOf = (it: { icon?: string }): React.ReactNode => (it.icon ? iconNode(it.icon) : undefined);
 
 /** A desktop toolbar button for an item: a split button when it has a list of places. */
 export function ToolbarButton({ item }: { item: ToolbarItem }) {

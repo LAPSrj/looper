@@ -61,6 +61,9 @@ const actionEntry = (e: Entry, at: number): NonNullable<PageNavAction['menu']>[n
   return {
     id: e.id,
     label: noMnemonic(e.label),
+    ...(e.icon ? { icon: e.icon } : {}),
+    ...(e.enabled === false ? { enabled: false } : {}),
+    ...(e.destructive ? { destructive: true as const } : {}),
     ...(e.checked !== undefined ? { checked: e.checked, type: e.radio ? ('radio' as const) : ('checkbox' as const) } : {}),
     run: () => e.run?.(),
   };

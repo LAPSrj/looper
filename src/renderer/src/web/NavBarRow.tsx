@@ -1,6 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties } from 'react';
 import { UsageGlyph } from '../components/ContextRing';
-import { ICONS } from '../components/icons';
+import { iconNode } from '../components/icons';
 import type { BarModel, PageNavAction } from './nav-bar-model';
 
 /*
@@ -52,9 +52,9 @@ export const MORE_VERT = (
   </svg>
 );
 
-/** An ICONS entry as a 22 px glyph for a bar button. */
+/** An icon as a 22 px glyph for a bar button. */
 export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
-  const icon = (ICONS as Record<string, ReactNode>)[name];
+  const icon = iconNode(name);
   if (!icon) return null;
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

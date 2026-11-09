@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { ICONS } from '../icons';
 
 /** The tab bar's icons, drawn on a 24-point grid as the platforms' own are. */
 const TAB_ICONS: Record<string, ReactNode> = {
@@ -33,12 +32,11 @@ const TAB_ICONS: Record<string, ReactNode> = {
   ),
 };
 
-/** A view's 24 px icon; an addon's tab draws its ICONS entry, whose box is 16. */
-export function TabIcon({ id, addonIcon }: { id: string; addonIcon?: string }) {
-  const own = TAB_ICONS[id];
+/** A view's 24 px icon. */
+export function TabIcon({ id }: { id: string }) {
   return (
-    <svg width="24" height="24" viewBox={own ? '0 0 24 24' : '0 0 16 16'} fill="none" stroke="currentColor" strokeWidth={own ? 1.6 : 1.1} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {own ?? (ICONS as Record<string, ReactNode>)[addonIcon ?? '']}
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {TAB_ICONS[id]}
     </svg>
   );
 }
