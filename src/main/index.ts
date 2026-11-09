@@ -39,6 +39,7 @@ import {
   showSaveDialog,
   placeAs,
   popupMenu,
+  useMenuPopupPage,
   useRemoteClients,
   useWindowPlaces,
   windowOf,
@@ -61,8 +62,18 @@ import type { CommandView } from '../shared/commands/command';
 import { EMPTY_CONTEXT, type CommandContext, type HostCommand } from '../shared/commands/context';
 import type { MenuItemSpec } from '../shared/remote-access';
 import { hideOffPlatform } from './platform/menus';
+import { startMemoryTrim } from './memory-trim';
+import { isWebLink } from '../shared/links';
 import { NO_HISTORY_COMMANDS, RECENT_CHATS, recentChatLabel, type HistoryCommand } from '../shared/history';
 
+/** When this bundle had loaded, from the process's start: what's before it is Electron's own start. */
+const codeLoadedAt = performance.now();
+
+// The network service runs in this process instead of a process of its own, which took 7-11 MB.
+app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess2');
+// Every window's page in one renderer process: a window opens 150-340 ms sooner and costs about 5 MB instead of 35,
+// at the price of the windows sharing one main thread.
+app.commandLine.appendSwitch('process-per-site');
 let win: BrowserWindow | null = null;
 let engine: Engine | null = null;
 let addons: AddonHost | null = null;
@@ -107,6 +118,11 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    // When each step of starting ended, from the process's start, for perf.log once the main window has loaded.
+    const startup: string[] = [];
+    const mark = (step: string) => startup.push(`${step} ${Math.round(performance.now())} ms`);
+    startup.push(`code loaded ${Math.round(codeLoadedAt)} ms`);
+    mark('ready');
     // Windows routes toasts by AppUserModelID; without it dev runs show nothing.
     // Dev runs get their own id so the dev Start Menu shortcut (see
     // scripts/register-notifications.js) can never hijack the packaged app's
@@ -127,7 +143,9 @@ if (!app.requestSingleInstanceLock()) {
       keepAwake: createKeepAwake(),
     });
     engine.start();
+    mark('engine');
     useWindowPlaces(path.join(dataDir, 'windows.json'));
+    useMenuPopupPage({ preload: webPreferences().preload!, load: (w, hash) => loadRenderer(w, hash) });
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
       else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
@@ -248,6 +266,7 @@ if (!app.requestSingleInstanceLock()) {
       reopenRescuedBuilders(w);
     });
     applyRemoteAccess();
+    mark('remote access');
     addons = new AddonHost({
       dir: path.join(engine.dataDir, 'addons'),
       host: engine.host,
@@ -269,11 +288,21 @@ if (!app.requestSingleInstanceLock()) {
     registerAddonIpc(addonDeps());
     registerAgentSettingsIpc({ engine, openWindow: openChildWindow, mainWindow: mainWin });
     addons.start();
+    mark('addons');
     // macOS keeps one global menu bar; elsewhere each window carries its own.
     if (process.platform === 'darwin') rebuildMenu();
     else Menu.setApplicationMenu(null);
     createTray();
-    if (!startHidden) createWindow();
+    mark('tray');
+    if (!startHidden) {
+      createWindow();
+      mark('window');
+      win?.webContents.once('did-finish-load', () => {
+        mark('page loaded');
+        engine?.logPerf(`desktop | startup: ${startup.join(', ')}`);
+      });
+    }
+    startMemoryTrim((ms) => engine?.logPerf(`desktop | memory handed back while no window had the focus, ${ms} ms`));
     // Launched by double-clicking a Looper document (file association).
     const fileArg = looperFileFromArgv(process.argv);
     if (fileArg) {
@@ -784,7 +813,8 @@ function webPreferences(): Electron.WebPreferences {
   return {
     preload: path.join(__dirname, '../preload/index.js'),
     contextIsolation: true,
-    sandbox: false,
+    // The preload needs only Electron's contextBridge, ipcRenderer and webUtils; without the sandbox every window started Node for it.
+    sandbox: true,
     nodeIntegration: false,
   };
 }
@@ -920,7 +950,7 @@ function createWindow(): void {
     win = null;
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   // A renderer crash must never take the engine down: just reload the UI.
@@ -928,10 +958,11 @@ function createWindow(): void {
     engine?.log.error(`renderer gone (${details.reason}); reloading`);
     if (win && !win.isDestroyed()) win.webContents.reload();
   });
+  // The page starts loading first: building the menu takes a while on a slow computer.
+  loadRenderer(win);
   // The window may be the first ever (tray start): give it a menu right away;
   // its page sends the full one once it knows the state.
   drawTemplate(main, firstTemplate(main, mainWindowViews()));
-  loadRenderer(win);
 }
 
 function openChildWindow(
@@ -966,7 +997,7 @@ function openChildWindow(
   child.removeMenu();
   // Links (e.g. in rendered markdown) open in the system browser, never a new app window.
   child.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   loadRenderer(child, hash);
@@ -1091,7 +1122,7 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
   );
   attachWindowMenu(child, firstTemplate(child, RUN_VIEWS));
   child.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   loadRenderer(child, hash);
@@ -1120,7 +1151,7 @@ function openImageWindow(taskId: string, runId: string, rowId: string, agentId?:
   );
   child.removeMenu();
   child.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   loadRenderer(child, hash);
@@ -1312,7 +1343,7 @@ function openEngineLogWindow(): void {
   );
   attachWindowMenu(child, firstTemplate(child, ENGINE_LOG_VIEWS));
   child.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   loadRenderer(child, 'engine-log');

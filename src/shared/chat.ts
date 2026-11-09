@@ -65,6 +65,9 @@ export interface ChatContext {
 export interface ChatState {
   /** The chat's run id. */
   id: string;
+  /** Which of the chat's events this state is as of, and from which encoder (chat-delta.ts): the next event applies to it. */
+  seq?: number;
+  epoch?: number;
   taskId: string;
   taskName: string;
   environmentId: string;

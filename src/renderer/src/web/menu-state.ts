@@ -5,6 +5,8 @@ import { menuHover, menuKey, openNav, type MenuNav } from './menu-model';
 export interface MenuHandlers {
   pick: (item: MenuItemSpec) => void;
   close: () => void;
+  /** Esc on the outermost list; without it, the menu closes. */
+  escape?: () => void;
   /** A menu bar's neighbouring menus (Left/Right past the edge). */
   prev?: () => void;
   next?: () => void;
@@ -45,6 +47,7 @@ export function useMenuState(handlers: MenuHandlers): MenuState {
         const e = r.effect;
         if (e?.kind === 'pick') h.current.pick(e.item);
         else if (e?.kind === 'close') h.current.close();
+        else if (e?.kind === 'escape') (h.current.escape ?? h.current.close)();
         else if (e?.kind === 'prev') h.current.prev?.();
         else if (e?.kind === 'next') h.current.next?.();
         return true;

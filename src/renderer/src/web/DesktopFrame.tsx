@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import type { HostDirEntry, MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
 import { Icon } from '../components/Icon';
 import { Chevron, ICONS } from '../components/icons';
+import { MenuBar, MenuList } from '../components/MenuBar';
 import { fmtDateTime } from '../format';
 import type { ShellController } from './controller';
 import { useThisDevice } from './device-flows';
@@ -24,7 +25,6 @@ import { Tabs } from '../components/Tabs';
 import { CheckboxField, Field } from '../components/ui';
 import { WindowActions } from '../components/WindowActions';
 import { PLACE_ICONS } from './places';
-import { shortcutText, type MenuNav } from './menu-model';
 import { useMenuState } from './menu-state';
 import { childStack, frontWindow, isBlocked, mainWindow, topModal, useShellState, windowSrc, type OpenDialog, type OpenMenu, type PathRequest, type WebWindow } from './store';
 
@@ -213,7 +213,7 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
       <div className="ws-desktop" ref={areaRef}>
         {main && (
           <div className={`ws-main${front?.w === main.w ? ' active' : ''}`} inert={isBlocked(s, main.w) || shellModal}>
-            {main.menu && <MenuBar controller={controller} win={main} />}
+            {main.menu && <MenuBar items={main.menu} isMac={controller.isMac} onPick={(item) => controller.pick(main.w, main.w, item)} onOpenChange={(open) => controller.setOverlay(open)} />}
             <WindowFrame controller={controller} win={main} />
           </div>
         )}
@@ -395,7 +395,7 @@ function ChildWindow({ controller, win, rect, area, z, active, blocked, minimize
           )}
           <CloseButton onClick={() => controller.close(win.w)} />
         </div>
-        {win.menu && <MenuBar controller={controller} win={win} />}
+        {win.menu && <MenuBar items={win.menu} isMac={controller.isMac} onPick={(item) => controller.pick(win.w, win.w, item)} onOpenChange={(open) => controller.setOverlay(open)} />}
         <WindowFrame controller={controller} win={win} />
         {/* Maximized, it fills the page: its edges don't resize it, as on Windows. */}
         {win.resizable && !rect.restore && EDGES.map((edge) => <div key={edge} className={`ws-resize ws-resize-${edge}`} onPointerDown={(e) => drag(e, edge)} />)}
@@ -405,209 +405,6 @@ function ChildWindow({ controller, win, rect, area, z, active, blocked, minimize
 }
 
 // ---------- menus ----------
-
-const CHECK = (
-  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-    <path d="M2 6.5l2.5 2.5L10 3.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-  </svg>
-);
-const DOT = (
-  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-    <circle cx="6" cy="6" r="2.5" fill="currentColor" />
-  </svg>
-);
-const CHEVRON = <Chevron />;
-
-interface MenuListProps {
-  nav: MenuNav;
-  depth: number;
-  isMac: boolean;
-  onHover: (depth: number, index: number) => void;
-  onChoose: (depth: number, index: number) => void;
-  /** The outermost list's page position; submenus sit next to their item. */
-  at?: { x: number; y: number };
-}
-
-function MenuList({ nav, depth, isMac, onHover, onChoose, at }: MenuListProps) {
-  const level = nav[depth];
-  const ref = useRef<HTMLDivElement>(null);
-  const [fit, setFit] = useState({ dx: 0, dy: 0, flip: false });
-  const fitRef = useRef(fit);
-  fitRef.current = fit;
-  // Kept on screen: measured where it would be without the last shift.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const left = r.left - fitRef.current.dx;
-    const right = r.right - fitRef.current.dx;
-    const top = r.top - fitRef.current.dy;
-    const bottom = r.bottom - fitRef.current.dy;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const flip = depth > 0 && (fitRef.current.flip || right > vw - 4);
-    const dx = depth === 0 && right > vw - 4 ? Math.max(vw - 4 - right, 4 - left) : 0;
-    const dy = bottom > vh - 4 ? Math.max(vh - 4 - bottom, 4 - top) : 0;
-    setFit({ dx, dy, flip });
-  }, [level?.items, depth]);
-  if (!level) return null;
-  const style: React.CSSProperties = at
-    ? { position: 'fixed', left: at.x + fit.dx, top: at.y + fit.dy }
-    : { position: 'absolute', top: -5 + fit.dy, ...(fit.flip ? { right: '100%' } : { left: '100%' }) };
-  return (
-    <div ref={ref} className="ws-menu" role="menu" style={style} onPointerDown={(e) => e.stopPropagation()}>
-      {level.items.map((it, i) =>
-        it.type === 'separator' ? (
-          <div key={it.id} className="ws-menu-sep" role="separator" />
-        ) : (
-          <div
-            key={it.id}
-            role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
-            aria-checked={it.type === 'checkbox' || it.type === 'radio' ? !!it.checked : undefined}
-            aria-disabled={!it.enabled || undefined}
-            aria-haspopup={it.type === 'submenu' || undefined}
-            className={`ws-menu-item${i === level.active ? ' active' : ''}${it.enabled ? '' : ' disabled'}`}
-            onPointerEnter={() => onHover(depth, i)}
-            onClick={(e) => {
-              e.stopPropagation();
-              onChoose(depth, i);
-            }}
-          >
-            <span className="ws-menu-check">{it.checked ? (it.type === 'radio' ? DOT : it.type === 'checkbox' ? CHECK : null) : null}</span>
-            <span className="ws-menu-label">{it.label}</span>
-            <span className="ws-menu-key">{shortcutText(it, isMac)}</span>
-            <span className="ws-menu-arrow">{it.type === 'submenu' ? CHEVRON : null}</span>
-            {it.type === 'submenu' && level.active === i && nav[depth + 1] && (
-              <MenuList nav={nav} depth={depth + 1} isMac={isMac} onHover={onHover} onChoose={onChoose} />
-            )}
-          </div>
-        ),
-      )}
-    </div>
-  );
-}
-
-/** A window's menu bar: File, Task, View… */
-function MenuBar({ controller, win }: { controller: ShellController; win: WebWindow }) {
-  const items = win.menu ?? [];
-  const [open, setOpen] = useState<number | null>(null);
-  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
-  const close = () => {
-    setOpen(null);
-    menu.reset();
-  };
-  const neighbour = (from: number, dir: 1 | -1): number => {
-    for (let k = 1; k <= items.length; k++) {
-      const i = (from + dir * k + items.length) % items.length;
-      if (items[i]?.enabled && items[i].submenu?.length) return i;
-    }
-    return from;
-  };
-  const openAt = (i: number, byKeyboard: boolean) => {
-    const top = items[i];
-    if (!top?.enabled || !top.submenu?.length) return;
-    setOpen(i);
-    menu.open(top.submenu, byKeyboard);
-  };
-  // Focus once `open` is on the button, so its focus ring (hidden while open) never paints.
-  useLayoutEffect(() => {
-    if (open !== null) buttons.current[open]?.focus();
-  }, [open]);
-  const menu = useMenuState({
-    pick: (item) => {
-      close();
-      controller.pick(win.w, win.w, item);
-    },
-    close,
-    prev: () => open !== null && openAt(neighbour(open, -1), true),
-    next: () => open !== null && openAt(neighbour(open, 1), true),
-  });
-  const isOpen = open !== null;
-  useEffect(() => {
-    if (!isOpen) return;
-    controller.setOverlay(true);
-    return () => controller.setOverlay(false);
-  }, [isOpen, controller]);
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (menu.key(e.key)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [isOpen, menu]);
-  // The menu went away under it (a new menu bar from the server): close.
-  useEffect(() => {
-    if (open !== null && !items[open]?.submenu) close();
-  });
-
-  /** The top-level item under the pointer while a menu is open (the catcher covers the bar). */
-  const hit = (x: number, y: number): number =>
-    buttons.current.findIndex((b) => {
-      const r = b?.getBoundingClientRect();
-      return !!r && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-    });
-  const anchor = open !== null ? buttons.current[open]?.getBoundingClientRect() : undefined;
-
-  return (
-    <div className="ws-menubar" role="menubar">
-      {items.map((top, i) => (
-        <button
-          key={top.id}
-          ref={(el) => {
-            buttons.current[i] = el;
-          }}
-          className={`ws-menubar-item${open === i ? ' open' : ''}`}
-          role="menuitem"
-          aria-haspopup={!!top.submenu || undefined}
-          aria-expanded={open === i}
-          disabled={!top.enabled}
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            if (open === i) close();
-            else openAt(i, false);
-          }}
-          onClick={() => {
-            // A top-level item without a menu of its own is picked like any other.
-            if (!top.submenu) controller.pick(win.w, win.w, top);
-          }}
-          onKeyDown={(e) => {
-            if ((e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') && open === null) {
-              e.preventDefault();
-              openAt(i, true);
-            }
-          }}
-        >
-          {top.label}
-        </button>
-      ))}
-      {open !== null &&
-        anchor &&
-        createPortal(
-          <div
-            className="ws-catcher"
-            onPointerDown={(e) => {
-              const i = hit(e.clientX, e.clientY);
-              if (i >= 0 && i !== open) openAt(i, false);
-              else close();
-            }}
-            onPointerMove={(e) => {
-              const i = hit(e.clientX, e.clientY);
-              if (i >= 0 && i !== open && items[i]?.submenu) openAt(i, false);
-            }}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            <MenuList nav={menu.nav} depth={0} isMac={controller.isMac} onHover={menu.hover} onChoose={menu.choose} at={{ x: anchor.left, y: anchor.bottom }} />
-          </div>,
-          document.body,
-        )}
-    </div>
-  );
-}
 
 /** A context menu the computer popped up over a window. */
 function PopupMenu({ controller, menu: m }: { controller: ShellController; menu: OpenMenu }) {
@@ -798,7 +595,11 @@ function HostBrowserView({
         <nav className="ws-crumbs" aria-label="Path">
           {browser.crumbs.map((c, i) => (
             <span key={c.path ?? ''} className="ws-crumb-part">
-              {i > 0 && <span className="ws-crumb-sep">{CHEVRON}</span>}
+              {i > 0 && (
+                <span className="ws-crumb-sep">
+                  <Chevron />
+                </span>
+              )}
               <button className="ws-crumb" onClick={() => browser.go(c.path)}>
                 {c.label}
               </button>

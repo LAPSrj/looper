@@ -91,6 +91,24 @@ export function stripMnemonic(label: string): string {
   return label.replace(/&(&?)/g, (_m, amp: string) => amp);
 }
 
+/** Where the access key `&` marks is in the label without its `&`s ("Save &As…" → 5); undefined when it has none. */
+export function accessIndex(label: string): number | undefined {
+  let out = 0;
+  for (let i = 0; i < label.length; i++) {
+    if (label[i] !== '&') {
+      out++;
+      continue;
+    }
+    if (label[i + 1] === '&') {
+      out++;
+      i++;
+      continue;
+    }
+    return i + 1 < label.length ? out : undefined;
+  }
+  return undefined;
+}
+
 /** Electron's own ids for items without one ("123" and the like) aren't keys a page can name. */
 const ownKey = (id: string | undefined): string | undefined => (id && !/^\d+$/.test(id) ? id : undefined);
 
@@ -116,7 +134,11 @@ export function serializeMenu(menu: MenuLike, platform?: UiPlatform): { items: M
       }
       byId.set(id, item);
       const spec: MenuItemSpec = { id, type, enabled: item.enabled !== false };
-      if (item.label) spec.label = stripMnemonic(item.label);
+      if (item.label) {
+        spec.label = stripMnemonic(item.label);
+        const access = accessIndex(item.label);
+        if (access !== undefined) spec.access = access;
+      }
       if (type === 'checkbox' || type === 'radio') spec.checked = !!item.checked;
       if (item.accelerator) spec.accelerator = item.accelerator;
       if (item.accelerator && item.registerAccelerator === false) spec.registerAccelerator = false;

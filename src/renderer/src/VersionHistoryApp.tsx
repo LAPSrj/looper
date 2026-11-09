@@ -4,6 +4,7 @@ import { changeLabels, sourceLabel, type VersionSummary } from '@shared/versions
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
+import { subscribe } from './events';
 
 /** Version History window (Task → Version History…): a task's saved versions, newest first. */
 export function VersionHistoryApp({ taskId }: { taskId: string }) {
@@ -26,7 +27,7 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
       });
     loadTask();
     loadVersions();
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'versions' && e.taskId === taskId) loadVersions();
       else if (e.type === 'tasks') loadTask();
     });

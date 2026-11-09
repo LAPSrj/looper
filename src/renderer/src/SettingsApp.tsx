@@ -8,6 +8,7 @@ import { rid } from './rid';
 import { useDialogKeys } from './components/hooks';
 import { useFitWindow } from './fit-window';
 import { SelectList, ListActions } from './components/SelectList';
+import { subscribe } from './events';
 
 type SettingsTab = 'general' | 'chats' | 'rest' | 'environments' | 'advanced';
 
@@ -104,7 +105,7 @@ export function SettingsApp() {
       setStartWithSystem((s) => s ?? v);
       initStartWithSystem.current ??= v;
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'settings') {
         setLive(e.settings);
         setDefaultEnvId((v) => (v && e.settings.environments.some((x) => x.id === v) ? v : e.settings.defaultEnvironmentId));

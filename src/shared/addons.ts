@@ -12,7 +12,6 @@ import { UI_PLATFORMS } from './ui-platform';
  * follows Looper's. See docs/addons.md.
  */
 
-export const ADDON_EXT = 'looperaddon';
 export const ADDON_TYPE = 'looper/addon';
 /** The addon format: the manifest and the protocol together. */
 export const ADDON_FORMAT = 1;

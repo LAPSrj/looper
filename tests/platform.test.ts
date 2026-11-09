@@ -243,16 +243,17 @@ describe('menus', () => {
         id: '0',
         type: 'submenu',
         label: 'File',
+        access: 0,
         enabled: true,
         submenu: [
-          { id: '0.0', type: 'normal', label: 'New Task…', enabled: true, accelerator: 'CmdOrCtrl+N' },
+          { id: '0.0', type: 'normal', label: 'New Task…', access: 0, enabled: true, accelerator: 'CmdOrCtrl+N' },
           { id: '0.1', type: 'separator', enabled: true },
-          { id: '0.4', type: 'normal', label: 'Fish & Chips', enabled: false },
-          { id: '0.5', type: 'normal', label: 'Close Window', enabled: true, accelerator: 'Alt+F4', registerAccelerator: false },
+          { id: '0.4', type: 'normal', label: 'Fish & Chips', access: 7, enabled: false },
+          { id: '0.5', type: 'normal', label: 'Close Window', access: 6, enabled: true, accelerator: 'Alt+F4', registerAccelerator: false },
         ],
       },
-      { id: '1', type: 'checkbox', label: 'Toolbar', enabled: true, checked: true },
-      { id: '2', type: 'normal', label: 'Copy', enabled: true, role: 'copy' },
+      { id: '1', type: 'checkbox', label: 'Toolbar', access: 0, enabled: true, checked: true },
+      { id: '2', type: 'normal', label: 'Copy', access: 0, enabled: true, role: 'copy' },
     ]);
     expect(byId.get('0.0')?.label).toBe('&New Task…');
     expect(stripMnemonic('Save && E&xit')).toBe('Save & Exit');

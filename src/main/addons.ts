@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { convertWslPath, type HostKind } from '../engine/host';
 import { errMsg } from '../engine/log';
+import { ADDON_EXT } from '../shared/files';
 import {
-  ADDON_EXT,
   addonAdditions,
   AddonLocalRunSchema,
   findAddonAction,

@@ -6,6 +6,7 @@ import { ListDetail, selectsFirstRow } from './components/ListDetail';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { settingGroup, settingLabel, settingValue } from './taskSettings';
+import { subscribe } from './events';
 
 /** One line on one side of the side-by-side view; null = no line there (the other side has one). */
 type Side = { n: number; text: string; kind: 'same' | 'del' | 'add' } | null;
@@ -327,7 +328,7 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
         .catch((e: Error) => setError(e.message));
     load();
     // Compare follows the current task as it changes.
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if ((e.type === 'versions' && e.taskId === taskId) || e.type === 'tasks') load();
     });
   }, [taskId, n, compare]);

@@ -184,8 +184,8 @@ export interface LooperApi {
   openPath(p: string): Promise<void>;
   /** Open a dropped Looper document (.loopertask/.loopertpl) as if it were double-clicked. */
   openLooperFile(file: File): Promise<void>;
-  /** Tail of the engine log file (whole lines only). */
-  readEngineLog(): Promise<string>;
+  /** Tail of the engine log file (whole lines only), and its size; with `known` the same as the size, no text (it hasn't changed). */
+  readEngineLog(known?: number): Promise<{ size: number; text?: string }>;
   /** A freeze or dropped frames this window measured, for perf.log. */
   reportPerf(entry: PerfEntry): void;
   /**
@@ -475,6 +475,23 @@ export interface LooperApi {
   commands: {
     /** This window's menu bar, sent again whenever it changes; a click comes back as a `command` ui event. */
     setMenuBar(items: MenuItemSpec[]): void;
+    /** The menu bar the desktop app's window draws in its page (null: none); later ones come as `menu-bar` ui events. */
+    menuBarItems(): Promise<MenuItemSpec[] | null>;
+    /** An item picked in that menu bar; a checkbox sends the state it turns to. */
+    pickMenuBar(id: string, checked?: boolean): void;
+    /** An item picked in a context menu the desktop app's page draws (a `context-menu` ui event), by the menu's id. */
+    pickContextMenu(menuId: string, id: string, checked?: boolean): void;
+    /** That context menu closed without a pick. */
+    dismissContextMenu(menuId: string): void;
+    /**
+     * The desktop app's open menu (null: closed), drawn in windows of its own so it can reach past the window's
+     * edges; true when they draw it, false when the page draws it itself. Pointer input comes back as `menu-popup-input`.
+     */
+    menuPopups(state: { levels: { items: MenuItemSpec[]; active: number }[]; at: { x: number; y: number }; cues: boolean } | null): Promise<boolean>;
+    /** A menu level window's page: ready (null), or its menu's size and each item's top. */
+    menuLevelLayout(depth: number, layout: { width: number; height: number; tops: Record<number, number> } | null): void;
+    /** A menu level window's page: the pointer on an item. */
+    menuLevelInput(depth: number, index: number, kind: 'hover' | 'choose'): void;
     /** A menu at a point in the window, or at the finger: the id picked, or null once it closes. */
     popup(items: MenuItemSpec[], at?: { x: number; y: number }): Promise<string | null>;
     /** Something only the main process can do. */
@@ -537,6 +554,14 @@ export interface LooperApi {
 export type UiEvent =
   /** A click on the menu bar a page sent: the item's id, for the page to run. */
   | { type: 'command'; id: string }
+  /** The desktop app's window has a new menu bar to draw (null: none). */
+  | { type: 'menu-bar'; items: MenuItemSpec[] | null }
+  /** The desktop app's window has a context menu to draw at a point of its page (CSS px). */
+  | { type: 'context-menu'; menuId: string; items: MenuItemSpec[]; x: number; y: number }
+  /** A menu level window: the level it draws (null: none). */
+  | { type: 'menu-level'; level: { items: MenuItemSpec[]; active: number; cues: boolean } | null }
+  /** The page whose menu the level windows draw: the pointer on one of its items. */
+  | { type: 'menu-popup-input'; depth: number; index: number; kind: 'hover' | 'choose' }
   /** Chat window: Edit → Find…. */
   | { type: 'chat-find' }
   /** A list window's row menu (showListContextMenu): the item picked. */

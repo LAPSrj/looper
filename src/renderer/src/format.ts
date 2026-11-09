@@ -11,9 +11,13 @@ export function fmtDate(iso: string): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// Made once: toLocaleTimeString with options builds a formatter for each call.
+const SECONDS = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const MINUTES = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
 export function fmtTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return Number.isNaN(d.getTime()) ? '' : SECONDS.format(d);
 }
 
 export function fmtCountdown(ts: number | null, now: number): string {
@@ -68,7 +72,7 @@ export function fmtDateTime(value: string | number | Date): string {
 export function fmtClock(ts: number, now: number): string {
   const d = new Date(ts);
   return d.toDateString() === new Date(now).toDateString()
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    ? MINUTES.format(d)
     : fmtDateTime(ts);
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
 import { EmptyWindow } from './components/ui';
 import { GuidanceForm, guidanceNote } from './components/form-blocks';
+import { subscribe } from './events';
 
 /**
  * Standalone next-run guidance window (Task → Add/Edit Guidance for Next Run).
@@ -28,7 +29,7 @@ export function NoteEditorApp({ taskId }: { taskId: string }) {
       document.title = `${t.name} – Guidance`;
     });
     // Keep the draft; only track the task itself (rename, deletion).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type !== 'tasks') return;
       const t = e.tasks.find((x) => x.id === taskId);
       if (t) setTask(t);

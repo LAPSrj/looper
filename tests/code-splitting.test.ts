@@ -28,8 +28,13 @@ describe('window code splitting (PF-02)', () => {
     }
   });
 
-  it('keeps only the main window static', () => {
-    expect(main).toMatch(/^import \{ App \} from '\.\/App';/m);
+  it('loads the main window lazily too, so the other windows never load its code', () => {
+    expect(main).toContain("import('./App')");
+    expect(main).not.toMatch(/^import .* from '\.\/App';/m);
+  });
+
+  it('keeps zod out of the chunk every window loads', () => {
+    expect(read('../../shared/files.ts')).not.toMatch(/^import (?!type).* from '\.\/(addons|types|validate)';/m);
   });
 
   it('reports a window ready from inside the Suspense boundary, beside the lazy app', () => {

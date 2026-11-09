@@ -7,6 +7,7 @@ import { AgentFields } from './components/RemoteFields';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useFitWindow } from './fit-window';
+import { subscribe } from './events';
 
 type Draft = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'mode' | 'remote'>;
 
@@ -44,7 +45,7 @@ export function ProjectEditorApp({ id }: { id?: string }) {
       setArgsText(joinTokens(p.extraArgs));
       setEnvText(envToLine(p.env));
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'settings') setEnvironments(e.settings.environments);
       else if (e.type === 'projects' && id && !e.projects.some((p) => p.id === id)) setMissing(true);
     });

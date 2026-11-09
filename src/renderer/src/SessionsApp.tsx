@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   autoRowHeight,
   columnTracks,
@@ -47,16 +47,18 @@ import { SessionIcon, SessionList, statusText } from './components/SessionList';
 import { runningText, subagentTabs } from './components/subagents';
 import { SubagentIcon } from './components/SubagentIcon';
 import { contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
-import { TerminalView } from './components/TerminalView';
 import { Tabs, type TabItem } from './components/Tabs';
 import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components/WorkflowView';
 import { platform } from './platform';
 import { terminalTitle } from './phone-lists';
-import { subscribe } from './events';
+import { getChat, subscribe } from './events';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 import type { PageNavAction } from './web/nav-bar-model';
 import { NavBar } from './components/NavBar';
+
+// The terminal emulator was a quarter of the main chunk, and only a terminal session needs it.
+const TerminalView = lazy(() => import('./components/TerminalView').then((m) => ({ default: m.TerminalView })));
 
 /** Where the panes' widths are saved: the Chats window's, and a single chat's window's apart. */
 const WIDTHS_KEY = 'sessions.widths';
@@ -431,7 +433,7 @@ function useCardFeed<T>(id: string, live: boolean, read: (id: string) => Promise
   return live ? value : null;
 }
 
-const readChat = (id: string) => window.looper.chat.get(id);
+const readChat = getChat;
 const chatEvent = (e: EngineEvent, id: string) => (e.type === 'chat' && e.state.id === id ? e.state : undefined);
 /** A task run's conversation comes with its activity, as for the run the Chats tab shows. */
 const readActivity = (id: string) => window.looper.sessions.activity(id);
@@ -480,6 +482,7 @@ function LiveCard({
           pendingGuidance={activity.pendingGuidance}
           waitingText="Waiting for the agent's first message…"
           footer={<RunGuidance taskId={s.taskId} runId={s.id} question={question} recheck={recheck} stop={stopOf(s)} />}
+          embedded
         />
       ),
     // stopOf(s) reads only the id and `stoppable`.
@@ -813,7 +816,13 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
     }
     return <TranscriptView taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
   }
-  if (summary.kind === 'terminal') return <TerminalView key={summary.id} id={summary.id} />;
+  if (summary.kind === 'terminal') {
+    return (
+      <Suspense fallback={null}>
+        <TerminalView key={summary.id} id={summary.id} />
+      </Suspense>
+    );
+  }
   if (summary.kind === 'run') {
     return (
       <TranscriptView

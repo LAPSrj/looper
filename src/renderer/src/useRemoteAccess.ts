@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { RemoteAccessState } from '@shared/remote-access';
+import { subscribe } from './events';
 
 /**
  * Remote Access's state, live: what it is now and on every change. Null until
@@ -14,7 +15,7 @@ export function useRemoteAccessState(): RemoteAccessState | null {
       (s) => live && setState((was) => was ?? s),
       () => undefined,
     );
-    const off = window.looper.onEvent((e) => {
+    const off = subscribe((e) => {
       if (e.type === 'remote-access') setState(e.state);
     });
     return () => {

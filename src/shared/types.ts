@@ -1,4 +1,8 @@
 import { z } from 'zod';
+
+// Without generating a parser per schema: making them cost 38 ms of the main process's start, for parses that
+// take microseconds either way. The windows' CSP rules the generated ones out already.
+z.config({ jitless: true });
 import { AddonLocalRunSchema } from './addons';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';

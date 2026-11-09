@@ -4,6 +4,12 @@ import { Terminal } from '@xterm/headless';
 const DEBOUNCE_MS = 500;
 
 /**
+ * A line as a string of its own: xterm's translateToString builds one from many small pieces, which V8 keeps as
+ * a chain at about 14 times the size (1,774 bytes a line against 128). Through UTF-16, so every code unit survives.
+ */
+const flat = (s: string): string => (s.length < 2 ? s : Buffer.from(s, 'utf16le').toString('utf16le'));
+
+/**
  * Maintains a virtual terminal and writes a human-readable `output.txt`
  * alongside the raw PTY `output.log`.
  *
@@ -78,7 +84,7 @@ export class CleanLog {
     // First drain — write everything.
     if (this.flushed.length === 0) {
       this.writeStr(current.join('\n') + '\n');
-      this.flushed = [...current];
+      this.flushed = current.map(flat);
       return;
     }
 
@@ -98,7 +104,7 @@ export class CleanLog {
     if (current.length < this.flushed.length) {
       this.writeStr('[clear]\n');
       this.writeStr(current.join('\n') + '\n');
-      this.flushed = [...current];
+      this.flushed = current.map(flat);
       return;
     }
 
@@ -121,16 +127,14 @@ export class CleanLog {
       parts.push(`[rewrite ↑${linesBack}]\n`);
       for (let i = rewriteFrom; i <= rewriteTo; i++) {
         parts.push(current[i] + '\n');
-        this.flushed[i] = current[i];
+        this.flushed[i] = flat(current[i]);
       }
     }
 
     // Append lines beyond what we've flushed.
-    if (current.length > this.flushed.length) {
-      for (let i = this.flushed.length; i < current.length; i++) {
-        parts.push(current[i] + '\n');
-      }
-      this.flushed = [...current];
+    for (let i = this.flushed.length; i < current.length; i++) {
+      parts.push(current[i] + '\n');
+      this.flushed.push(flat(current[i]));
     }
 
     if (parts.length > 0) this.writeStr(parts.join(''));

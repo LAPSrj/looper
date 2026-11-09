@@ -90,13 +90,32 @@ describe('menu keyboard navigation', () => {
     expect(press(opened.nav, 'Escape').nav).toHaveLength(1);
   });
 
-  it('picks with Enter or Space, not a disabled item; Esc at the top closes', () => {
+  it('picks with Enter or Space, not a disabled item; Esc at the top escapes, Tab closes', () => {
     const nav = openNav(items, true);
     expect(press(nav, 'Enter').effect).toEqual({ kind: 'pick', item: items[0] });
     expect(press(nav, ' ').effect).toEqual({ kind: 'pick', item: items[0] });
     expect(press(nav, 'ArrowDown', 'Enter').effect).toBeNull();
-    expect(press(nav, 'Escape').effect).toEqual({ kind: 'close' });
+    expect(press(nav, 'Escape').effect).toEqual({ kind: 'escape' });
     expect(press(nav, 'Tab').effect).toEqual({ kind: 'close' });
+  });
+
+  it('picks the one item with a typed access key, opens its submenu, and cycles through items that share one', () => {
+    const keyed: MenuItemSpec[] = [
+      item('0', 'New Task', { access: 0 }),
+      item('1', 'Save', { access: 0 }),
+      item('2', 'Save As', { access: 5 }),
+      item('3', 'Panes', { type: 'submenu', submenu: sub, access: 0 }),
+      item('4', 'Settings', { access: 2, enabled: false }),
+      item('5', 'Status', { access: 0 }),
+    ];
+    const nav = openNav(keyed, true);
+    expect(press(nav, 'n').effect).toEqual({ kind: 'pick', item: keyed[0] });
+    expect(press(nav, 'A').effect).toEqual({ kind: 'pick', item: keyed[2] });
+    expect(press(nav, 'p').nav).toHaveLength(2);
+    // Two items have S: the first, then the next; the disabled Settings has T and isn't picked.
+    expect(press(nav, 's')).toMatchObject({ effect: null, active: 1 });
+    expect(press(nav, 's', 's')).toMatchObject({ effect: null, active: 5 });
+    expect(press(nav, 't')).toMatchObject({ effect: null, active: 0 });
   });
 
   it('Left and Right past the edge ask for the neighbouring menu bar menu', () => {

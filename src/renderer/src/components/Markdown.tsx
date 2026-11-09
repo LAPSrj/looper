@@ -1,25 +1,24 @@
-import { Fragment, useMemo } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
-import { Measured } from '../perf';
-
-const withBreaks = [remarkGfm, remarkBreaks];
-const noBreaks = [remarkGfm];
+import { Fragment, useMemo, type ReactNode } from 'react';
+import { perfSpan } from '../perf';
+import { renderMarkdown, type MarkdownHandlers } from './markdown-render';
 
 // Links open in the system browser: every window's open handler hands the URL
 // to shell.openExternal and denies the in-app popup.
-const external: Components = {
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
-};
+const externalLink: MarkdownHandlers['link'] = (href, title, children, key) => (
+  <a key={key} href={href} title={title} target="_blank" rel="noreferrer">
+    {children}
+  </a>
+);
+const plainImage: MarkdownHandlers['image'] = (src, alt, title, key) => <img key={key} src={src} alt={alt} title={title} />;
+const plainHandlers: MarkdownHandlers = { link: externalLink, image: plainImage };
 
-// A table wider than the text scrolls sideways instead of squeezing its columns.
-const table: Components = {
-  table: ({ node: _node, ...props }) => (
-    <div className="md-table">
-      <table {...props} />
-    </div>
-  ),
+/** markdown-it percent-encodes a link's address; a page link is matched as it was written. */
+const decoded = (href: string) => {
+  try {
+    return decodeURI(href);
+  } catch {
+    return href;
+  }
 };
 
 /**
@@ -96,40 +95,64 @@ export function Markdown({
   onNavigate?: (href: string) => void;
   resolveImage?: (src: string) => string | undefined;
 }) {
-  const components: Components = useMemo(() => {
-    const img: Components = resolveImage
-      ? {
-          img: ({ node: _node, src, ...props }) => (
-            <img {...props} src={resolveImage(String(src ?? '')) ?? src} />
-          ),
-        }
-      : {};
-    if (!onNavigate) return { ...external, ...table, ...img };
+  const handlers: MarkdownHandlers = useMemo(() => {
+    const image: MarkdownHandlers['image'] = resolveImage
+      ? (src, alt, title, key) => <img key={key} src={resolveImage(src) ?? src} alt={alt} title={title} />
+      : plainImage;
+    if (!onNavigate) return { link: externalLink, image };
     return {
-      ...table,
-      ...img,
-      a: ({ node: _node, href, ...props }) =>
+      image,
+      link: (href, title, children, key) =>
         href && !/^[a-z][a-z+.-]*:/i.test(href) ? (
           <a
-            {...props}
+            key={key}
             href={href}
+            title={title}
             onClick={(e) => {
               e.preventDefault();
-              onNavigate(href);
+              onNavigate(decoded(href));
             }}
-          />
+          >
+            {children}
+          </a>
         ) : (
-          <a {...props} href={href} target="_blank" rel="noreferrer" />
+          externalLink(href, title, children, key)
         ),
     };
   }, [onNavigate, resolveImage]);
-  return (
-    <div className="markdown">
-      <Measured id="Markdown">
-        <ReactMarkdown remarkPlugins={breaks ? withBreaks : noBreaks} components={components}>
-          {text}
-        </ReactMarkdown>
-      </Measured>
-    </div>
-  );
+  const plain = !onNavigate && !resolveImage;
+  const body = useMemo(() => (plain ? cachedMarkdown(text, breaks) : parse(text, breaks, handlers)), [plain, text, breaks, handlers]);
+  return <div className="markdown">{body}</div>;
+}
+
+function parse(text: string, breaks: boolean, handlers: MarkdownHandlers): ReactNode[] {
+  return perfSpan('Markdown', () => renderMarkdown(text, breaks, handlers));
+}
+
+/**
+ * Parsed messages, the most recently used last: opening a chat again doesn't parse the messages it showed before.
+ * Kept to about a chat screen's worth of text, so the memory it holds stays small.
+ */
+const parsed = new Map<string, ReactNode[]>();
+const PARSED_MAX_CHARS = 100_000;
+let parsedChars = 0;
+
+function cachedMarkdown(text: string, breaks: boolean): ReactNode[] {
+  const key = (breaks ? 'b' : 'p') + text;
+  const hit = parsed.get(key);
+  if (hit) {
+    parsed.delete(key);
+    parsed.set(key, hit);
+    return hit;
+  }
+  const el = parse(text, breaks, plainHandlers);
+  if (key.length > PARSED_MAX_CHARS) return el;
+  parsed.set(key, el);
+  parsedChars += key.length;
+  for (const old of parsed.keys()) {
+    if (parsedChars <= PARSED_MAX_CHARS) break;
+    parsed.delete(old);
+    parsedChars -= old.length;
+  }
+  return el;
 }

@@ -1088,12 +1088,14 @@
   }
  },
  "readEngineLog": {
-  "arity": 0,
+  "arity": 1,
   "calls": [
    [
     "invoke",
     "engineLog:read",
-    []
+    [
+     "a0"
+    ]
    ]
   ],
   "result": {
@@ -3322,6 +3324,105 @@
     "commands:menuBar",
     [
      "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.menuBarItems": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "commands:menuBarItems",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'commands:menuBarItems': Error: boom commands:menuBarItems"
+  }
+ },
+ "commands.pickMenuBar": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "commands:menuBarPick",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.pickContextMenu": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "commands:contextMenuPick",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.dismissContextMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "commands:contextMenuDismiss",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.menuPopups": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "commands:menuPopups",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'commands:menuPopups': Error: boom commands:menuPopups"
+  }
+ },
+ "commands.menuLevelLayout": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "commands:menuLevelLayout",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "commands.menuLevelInput": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "commands:menuLevelInput",
+    [
+     "a0",
+     "a1",
+     "a2"
     ]
    ]
   ],

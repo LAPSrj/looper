@@ -2,7 +2,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { TerminalIn, TerminalOut } from './terminal-worker';
 
-/** How long close() waits for the worker to flush before terminating it. */
+/** How long close() waits for the worker to flush before giving up on it. */
 const CLOSE_TIMEOUT_MS = 10_000;
 
 export interface TerminalHostOpts {
@@ -31,13 +31,42 @@ function defaultWorkerFile(): string {
 }
 
 /**
+ * One worker for every terminal: each Worker is a V8 of its own, about 8.5 MB and 100 ms to start, and a
+ * terminal's emulation is light enough to share one. It starts with the first terminal and ends with the last.
+ */
+interface SharedWorker {
+  worker: Worker;
+  hosts: Map<number, TerminalHost>;
+}
+const workers = new Map<string, SharedWorker>();
+let nextId = 0;
+
+function sharedWorker(file: string): SharedWorker {
+  const open = workers.get(file);
+  if (open) return open;
+  const s: SharedWorker = { worker: new Worker(file), hosts: new Map() };
+  workers.set(file, s);
+  const gone = (err: Error) => {
+    if (workers.get(file) === s) workers.delete(file);
+    for (const h of [...s.hosts.values()]) h.workerGone(err);
+    s.hosts.clear();
+  };
+  s.worker.on('message', (msg: TerminalOut) => s.hosts.get(msg.id)?.receive(msg));
+  s.worker.on('error', (e) => gone(e));
+  s.worker.on('exit', (code) => gone(new Error(`terminal worker exited with code ${code}`)));
+  return s;
+}
+
+/**
  * Host-side proxy for the terminal worker: the xterm parsing behind CleanLog
  * and ScreenModel runs off the main thread, so a busy agent never freezes the
  * UI. Every failure mode is soft — a dead worker costs the clean log and
  * prompt detection, never the run.
  */
 export class TerminalHost {
-  private worker: Worker | null = null;
+  private readonly id = ++nextId;
+  private shared: SharedWorker | null = null;
+  private readonly file: string;
   private readonly onError?: (err: Error) => void;
   private dead = false;
   private closing = false;
@@ -47,32 +76,34 @@ export class TerminalHost {
 
   constructor(opts: TerminalHostOpts) {
     this.onError = opts.onError;
-    let worker: Worker;
+    this.file = opts.workerFile ?? defaultWorkerFile();
     try {
-      worker = new Worker(opts.workerFile ?? defaultWorkerFile());
+      this.shared = sharedWorker(this.file);
     } catch (e) {
       this.fail(e);
       return;
     }
-    this.worker = worker;
-    worker.on('message', (msg: TerminalOut) => {
-      if (msg.type === 'screen') this.screenText = msg.text;
-      else if (msg.type === 'closed') this.resolveClosed();
-    });
-    worker.on('error', (e) => this.fail(e));
-    worker.on('exit', (code) => {
-      if (this.closing) {
-        this.resolveClosed();
-      } else {
-        this.fail(new Error(`terminal worker exited with code ${code}`));
-      }
-    });
-    this.post({ type: 'init', file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen, append: opts.append });
+    this.shared.hosts.set(this.id, this);
+    this.post({ type: 'init', id: this.id, file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen, append: opts.append });
+  }
+
+  /** A message from the worker for this terminal. */
+  receive(msg: TerminalOut): void {
+    if (msg.type === 'screen') this.screenText = msg.text;
+    else if (msg.type === 'closed') this.resolveClosed();
+    else if (msg.type === 'failed') this.fail(new Error(msg.message));
+  }
+
+  /** The worker died or exited: a terminal being closed is done, any other has failed. */
+  workerGone(err: Error): void {
+    this.shared = null;
+    if (this.closing) this.resolveClosed();
+    else this.fail(err);
   }
 
   private fail(e: unknown): void {
     const err = e instanceof Error ? e : new Error(String(e));
-    this.worker = null;
+    this.detach();
     this.resolveClosed();
     if (this.dead) return;
     this.dead = true;
@@ -83,6 +114,16 @@ export class TerminalHost {
     }
   }
 
+  /** Off the shared worker; the last terminal to leave ends it. */
+  private detach(): void {
+    const s = this.shared;
+    this.shared = null;
+    if (!s || !s.hosts.delete(this.id) || s.hosts.size > 0) return;
+    if (workers.get(this.file) === s) workers.delete(this.file);
+    s.worker.removeAllListeners('exit');
+    void s.worker.terminate().catch(() => undefined);
+  }
+
   private resolveClosed(): void {
     const r = this.closedResolve;
     this.closedResolve = null;
@@ -90,20 +131,20 @@ export class TerminalHost {
   }
 
   private post(msg: TerminalIn): void {
-    if (!this.worker || this.dead || this.closing) return;
+    if (!this.shared || this.dead || this.closing) return;
     try {
-      this.worker.postMessage(msg);
+      this.shared.worker.postMessage(msg);
     } catch (e) {
       this.fail(e);
     }
   }
 
   write(data: string): void {
-    this.post({ type: 'write', data });
+    this.post({ type: 'write', id: this.id, data });
   }
 
   resize(cols: number, rows: number): void {
-    this.post({ type: 'resize', cols: Math.max(2, cols), rows: Math.max(2, rows) });
+    this.post({ type: 'resize', id: this.id, cols: Math.max(2, cols), rows: Math.max(2, rows) });
   }
 
   /** Tests the last screen snapshot; false until the first one arrives. */
@@ -122,13 +163,12 @@ export class TerminalHost {
   }
 
   private async doClose(): Promise<void> {
-    const worker = this.worker;
+    const s = this.shared;
     const closed = new Promise<void>((r) => (this.closedResolve = r));
-    const alive = !this.dead;
     this.closing = true;
-    if (worker && alive) {
+    if (s && !this.dead) {
       try {
-        worker.postMessage({ type: 'close' } satisfies TerminalIn);
+        s.worker.postMessage({ type: 'close', id: this.id } satisfies TerminalIn);
       } catch {
         this.resolveClosed();
       }
@@ -139,11 +179,6 @@ export class TerminalHost {
     } else {
       this.resolveClosed();
     }
-    this.worker = null;
-    try {
-      await worker?.terminate();
-    } catch {
-      /* already gone */
-    }
+    this.detach();
   }
 }

@@ -3,6 +3,7 @@ import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
 import { EmptyWindow, Field, FormGroup, SelectInput, TextInput, ToggleButtons } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 function findHarness(settings: Settings, envId: string, harnessId: string): Harness | undefined {
   return settings.environments.find((e) => e.id === envId)?.harnesses.find((h) => h.id === harnessId);
@@ -55,7 +56,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
         setDefaultEffort(kindLevels.some(([v]) => v === 'medium') ? 'medium' : '');
       }
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type !== 'settings') return;
       setSettings(e.settings);
       const harness = findHarness(e.settings, envId, harnessId);

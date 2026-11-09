@@ -2,7 +2,7 @@
 
 /* ---------- Waiting ---------- */
 
-html:has(.offline-waiting.ios) {
+html.offline-waiting-ios {
   background: #f2f2f7;
 }
 
@@ -99,7 +99,7 @@ html:has(.offline-waiting.ios) {
 }
 
 @media (prefers-color-scheme: dark) {
-  html:has(.offline-waiting.ios) {
+  html.offline-waiting-ios {
     background: #000;
   }
   .offline-waiting.ios {

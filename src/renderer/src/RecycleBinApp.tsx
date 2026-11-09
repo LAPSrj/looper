@@ -3,6 +3,7 @@ import type { RecycleBinEntry } from '@shared/types';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
+import { subscribe } from './events';
 
 /** Recycle Bin window (File → Recycle Bin…): deleted tasks to restore or delete for good. */
 export function RecycleBinApp() {
@@ -16,7 +17,7 @@ export function RecycleBinApp() {
       setSelected((s) => (s && list.some((e) => e.task.id === s) ? s : list[0]?.task.id ?? null));
     };
     void window.looper.recycleBin.list().then(apply);
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'recycleBin') apply(e.entries);
     });
   }, []);

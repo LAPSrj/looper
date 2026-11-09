@@ -76,7 +76,7 @@ export function useLiveSettings(found: (s: Settings) => boolean): { live: Settin
       setHost(info.host);
       if (!foundRef.current(info.settings)) setMissing(true);
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type !== 'settings') return;
       setLive(e.settings);
       if (!foundRef.current(e.settings)) setMissing(true);

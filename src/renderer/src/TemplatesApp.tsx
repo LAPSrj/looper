@@ -3,6 +3,7 @@ import type { Task } from '@shared/types';
 import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
+import { subscribe } from './events';
 
 /** Standalone template manager window (Tools → Templates). All actions apply immediately. */
 export function TemplatesApp() {
@@ -15,7 +16,7 @@ export function TemplatesApp() {
       setTemplates(t);
       setSelected((s) => s ?? t[0]?.id ?? null);
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'templates') {
         setTemplates(e.templates);
         setSelected((s) => (s && e.templates.some((t) => t.id === s) ? s : e.templates[0]?.id ?? null));

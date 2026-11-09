@@ -54,6 +54,7 @@ export function EngineLogApp() {
   // The selection is the tail's until a row is picked: on a phone or tablet only a pick opens a line.
   const [followsTail, setFollowsTail] = useState(true);
   const lastTextRef = useRef<string | null>(null);
+  const lastSizeRef = useRef<number | undefined>(undefined);
   const stateRef = useRef({ count: 0, selected: null as number | null, hidden, opened: false });
   stateRef.current = { count: entries.length, selected, hidden, opened: !selectsFirstRow && !followsTail };
 
@@ -61,8 +62,10 @@ export function EngineLogApp() {
     document.title = 'Engine Log';
     let cancelled = false;
     const load = async () => {
-      const text = await window.looper.readEngineLog();
-      if (cancelled || text === lastTextRef.current) return;
+      // An unchanged log answers with its size only, so a poll costs nothing while nothing is logged.
+      const { size, text } = await window.looper.readEngineLog(lastSizeRef.current);
+      lastSizeRef.current = size;
+      if (cancelled || text === undefined || text === lastTextRef.current) return;
       lastTextRef.current = text;
       const next = parseLog(text);
       const { count, selected: sel, hidden: h, opened } = stateRef.current;

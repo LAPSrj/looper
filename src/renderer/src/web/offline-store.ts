@@ -1,5 +1,7 @@
 // No DOM here (the unit tests load this file under the node tsconfig): the IndexedDB side is in offline-idb.ts.
 import type { MenuItemSpec, WindowRole } from '../../../shared/remote-access';
+import type { ChatState } from '../../../shared/chat';
+import { applyChatWire, type ChatWire } from '../../../shared/chat-delta';
 import type { EngineEvent } from '../../../shared/types';
 import { encodeBytes } from './session';
 
@@ -284,7 +286,8 @@ export class OfflineStore {
       case 'templates':
         return this.update('templates:list', [], () => ev.templates);
       case 'chat':
-        return this.update('chat:get', [ev.state.id], () => ev.state);
+        // The event holds what changed (chat-delta.ts); one that can't be applied leaves the kept answer for the next read to renew.
+        return this.update('chat:get', [ev.state.id], (old) => applyChatWire(old as ChatState | null, ev.state as unknown as ChatWire) ?? old);
       case 'sessions':
         return this.update('sessions:state', [], () => ev.state);
       case 'session:activity':

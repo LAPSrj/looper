@@ -14,10 +14,12 @@
  * up on read (shared/migrate.ts), so a newer Looper opens every older file.
  */
 
-import { ADDON_EXT } from './addons';
 import { DEFINITION_VERSION, migrateDefinition } from './migrate';
 
 export type LooperFileKind = 'task' | 'template';
+
+/** An addon manifest's extension. Here and not in addons.ts, whose schemas every window would load with it. */
+export const ADDON_EXT = 'looperaddon';
 
 export const FILE_KINDS: Record<LooperFileKind, { ext: string; type: string; filterName: string }> = {
   task: { ext: 'loopertask', type: 'looper/task', filterName: 'Looper Task' },

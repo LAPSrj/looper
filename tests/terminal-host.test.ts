@@ -59,6 +59,27 @@ describe('TerminalHost', () => {
     expect(text).toContain('world');
   });
 
+  it('runs several terminals in one worker, each with its own log, and one closing leaves the others going', async () => {
+    const a = new TerminalHost({ file: path.join(dir, 'a.txt'), cols: 80, rows: 24, screen: true, workerFile });
+    const b = new TerminalHost({ file: path.join(dir, 'b.txt'), cols: 80, rows: 24, screen: true, workerFile });
+    a.write('alpha\r\n');
+    b.write('beta\r\n');
+    await a.close();
+    b.write('gamma\r\n');
+    expect(await until(() => b.screenContains(/gamma/))).toBe(true);
+    await b.close();
+    expect(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8')).toContain('alpha');
+    expect(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8')).not.toContain('beta');
+    const bText = fs.readFileSync(path.join(dir, 'b.txt'), 'utf8');
+    expect(bText).toContain('beta');
+    expect(bText).toContain('gamma');
+    // The last one closed ended the worker; a new terminal starts another.
+    const c = new TerminalHost({ file: path.join(dir, 'c.txt'), cols: 80, rows: 24, screen: false, workerFile });
+    c.write('delta\r\n');
+    await c.close();
+    expect(fs.readFileSync(path.join(dir, 'c.txt'), 'utf8')).toContain('delta');
+  });
+
   it('reports what is on screen when the screen model is enabled', async () => {
     const file = path.join(dir, 'screen.txt');
     const host = new TerminalHost({ file, cols: 120, rows: 32, screen: true, workerFile });

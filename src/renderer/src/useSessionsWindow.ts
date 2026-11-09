@@ -6,7 +6,7 @@ import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, ty
 import { ViewSchema, type View } from '@shared/types';
 import { openWorkflow } from '@shared/workflows';
 import { useGitRepo } from './components/hooks';
-import { subscribe } from './events';
+import { getChat, subscribe } from './events';
 
 /**
  * F6 and Shift+F6, as in Windows apps: the focus moves to the next or
@@ -198,7 +198,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   useEffect(() => {
     window.looper.sessions.show(active ? selected : null);
     if (!selected || !active) return;
-    void window.looper.chat.get(selected).then((c) => {
+    void getChat(selected).then((c) => {
       if (c && c.id === selectedRef.current) setChat(c);
     });
     void window.looper.sessions.activity(selected).then((a) => {

@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
 import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
@@ -344,22 +344,32 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
     case 'task':
       // The task a workflow script computed for its agent: not the user's message, so a muted block.
       return (
-        <details className="chat-aside" onContextMenu={onContextMenu}>
-          <summary>
-            Task <span className="chat-tool-preview">{row.preview}</span>
-          </summary>
+        <Disclosure
+          className="chat-aside"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              Task <span className="chat-tool-preview">{row.preview}</span>
+            </summary>
+          }
+        >
           <MessageBody text={row.text} />
-        </details>
+        </Disclosure>
       );
     case 'events':
       // Related events a trigger sent the running agent: from outside, not the user's message.
       return (
-        <details className="chat-aside" onContextMenu={onContextMenu}>
-          <summary>
-            Trigger events <span className="chat-tool-preview">{row.preview}</span>
-          </summary>
+        <Disclosure
+          className="chat-aside"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              Trigger events <span className="chat-tool-preview">{row.preview}</span>
+            </summary>
+          }
+        >
           <pre className="chat-tool-pre">{row.text}</pre>
-        </details>
+        </Disclosure>
       );
     case 'error':
       return (
@@ -382,11 +392,16 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
         );
       }
       return (
-        <details className="chat-aside chat-tool" onContextMenu={onContextMenu}>
-          <summary>
-            <span className="chat-tool-name">{row.tool}</span> <span className="chat-tool-preview">{row.preview}</span>
-            {row.resultError ? <span className="error-text"> failed</span> : null}
-          </summary>
+        <Disclosure
+          className="chat-aside chat-tool"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              <span className="chat-tool-name">{row.tool}</span> <span className="chat-tool-preview">{row.preview}</span>
+              {row.resultError ? <span className="error-text"> failed</span> : null}
+            </summary>
+          }
+        >
           <div className="chat-tool-body">
             <ToolInputView row={row} />
             {row.result !== undefined && (
@@ -395,7 +410,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
               </div>
             )}
           </div>
-        </details>
+        </Disclosure>
       );
     }
     default:
@@ -409,16 +424,40 @@ export const ChatRow = memo(ChatRowView, (prev, next) => sameRow(prev.row, next.
 function ToolGroupView({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
   const { text, failed } = toolGroupLabel(rows);
   return (
-    <details className="chat-aside chat-tools">
-      <summary>
-        {text}
-        {failed ? <span className="error-text">, {failed} failed</span> : null}
-      </summary>
+    <Disclosure
+      className="chat-aside chat-tools"
+      summary={
+        <summary>
+          {text}
+          {failed ? <span className="error-text">, {failed} failed</span> : null}
+        </summary>
+      }
+    >
       <div className="chat-tools-list">
         {rows.map((r) => (
           <ChatRow key={r.id} row={r} ctx={ctx} />
         ))}
       </div>
+    </Disclosure>
+  );
+}
+
+/**
+ * A <details> whose body is drawn the first time it opens, then kept. Closed, a chat's tool calls built every
+ * input, result and highlighted file anyway: 38,000 elements for a dashboard of chats, none of them on screen.
+ */
+function Disclosure({ className, summary, onContextMenu, children }: { className: string; summary: ReactNode; onContextMenu?: React.MouseEventHandler; children: ReactNode }) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details
+      className={className}
+      onContextMenu={onContextMenu}
+      onToggle={(e) => {
+        if (e.currentTarget.open) setOpened(true);
+      }}
+    >
+      {summary}
+      {opened ? children : null}
     </details>
   );
 }

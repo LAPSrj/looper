@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, type Ref, type UIEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
 import { Measured } from '../perf';
 import { dayGroups } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
@@ -198,19 +198,91 @@ function TableBody<T>(props: DataTableProps<T>) {
   );
 }
 
+/** From this many rows a desktop table draws only the rows in view, plus OVERSCAN on each side. */
+const WINDOW_FROM = 200;
+const OVERSCAN = 30;
+
+/**
+ * Which rows of a long table to draw: the ones the scroll position shows. The rows' height is measured
+ * from the drawn ones (cells are one line), and a selected row out of view is scrolled to, since the
+ * list keys find a row by its element.
+ */
+function useRowWindow(wrap: RefObject<HTMLDivElement | null>, spacer: RefObject<HTMLTableRowElement | null>, count: number, on: boolean, index: number) {
+  const [view, setView] = useState({ top: 0, height: 1000 });
+  const rowH = useRef(28);
+  const base = useRef(0);
+  const first = on ? Math.max(0, Math.floor((view.top - base.current) / rowH.current) - OVERSCAN) : 0;
+  const last = on ? Math.min(count, Math.ceil((view.top - base.current + view.height) / rowH.current) + OVERSCAN) : count;
+  // In steps of 10 rows, which OVERSCAN covers, so scrolling redraws the table only when the drawn rows change.
+  const read = () => {
+    const el = wrap.current;
+    if (!el) return;
+    const step = rowH.current * 10;
+    const top = Math.floor(el.scrollTop / step) * step;
+    setView((v) => (v.top === top && v.height === el.clientHeight ? v : { top, height: el.clientHeight }));
+  };
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    const sp = spacer.current;
+    if (!on || !el || !sp) return;
+    const body = sp.parentElement!;
+    const firstRow = sp.nextElementSibling as HTMLElement | null;
+    const drawn = body.querySelectorAll<HTMLElement>(':scope > tr[data-row]');
+    const lastRow = drawn[drawn.length - 1];
+    const top = el.scrollTop - el.getBoundingClientRect().top;
+    base.current = sp.getBoundingClientRect().top + top;
+    if (firstRow && lastRow && last > first) rowH.current = (lastRow.getBoundingClientRect().bottom - firstRow.getBoundingClientRect().top) / (last - first) || rowH.current;
+  });
+  useEffect(() => {
+    const el = wrap.current;
+    if (!on || !el) return;
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on]);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!on || !el || index < 0 || (index >= first && index < last)) return;
+    const head = el.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+    const y = base.current + index * rowH.current;
+    el.scrollTop = y < el.scrollTop + head ? y - head : y + rowH.current - el.clientHeight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, on]);
+  return { first, last, rowH: rowH.current, onScroll: read };
+}
+
 function DesktopTable<T>(props: DataTableProps<T>) {
   const { cols, rows, rowKey, idPrefix, selected, onSelect, onOpen, onMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll } = props;
   const { index, onKeyDown } = useRowKeys(props);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  const spacer = useRef<HTMLTableRowElement | null>(null);
+  const windowed = !groupOf && rows.length > WINDOW_FROM;
+  const win = useRowWindow(wrap, spacer, rows.length, windowed, index);
+  const setWrap = (el: HTMLDivElement | null) => {
+    wrap.current = el;
+    if (typeof tableRef === 'function') tableRef(el);
+    else if (tableRef) (tableRef as { current: HTMLDivElement | null }).current = el;
+  };
+  const gap = (n: number, ref?: Ref<HTMLTableRowElement>) => (
+    <tr ref={ref} aria-hidden style={{ height: n * win.rowH }}>
+      <td colSpan={cols.length} style={{ padding: 0, border: 0, background: 'none' }} />
+    </tr>
+  );
   return (
     <div
       className={wrapClass ?? 'runlog-table-wrap'}
-      ref={tableRef}
+      ref={setWrap}
       tabIndex={0}
       role="grid"
       aria-label={label}
       aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined}
       onKeyDown={onKeyDown}
-      onScroll={onTableScroll}
+      onScroll={(e) => {
+        if (windowed) win.onScroll();
+        onTableScroll?.(e);
+      }}
     >
       <table className="runlog-table">
         <ResizableColumns cols={cols} storageKey={storageKey} />
@@ -222,7 +294,9 @@ function DesktopTable<T>(props: DataTableProps<T>) {
               </td>
             </tr>
           )}
-          {rows.map((row, i) => {
+          {windowed && gap(win.first, spacer)}
+          {(windowed ? rows.slice(win.first, win.last) : rows).map((row, j) => {
+            const i = windowed ? win.first + j : j;
             const key = rowKey(row, i);
             const group = groupOf?.(row);
             return (
@@ -233,6 +307,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
                   </tr>
                 )}
                 <tr
+                  data-row
                   id={`${idPrefix}-${key}`}
                   aria-selected={key === selected}
                   className={`run-row${rowClass ? ` ${rowClass(row)}` : ''}${key === selected ? ' selected' : ''}`}
@@ -256,6 +331,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
               </Fragment>
             );
           })}
+          {windowed && gap(rows.length - win.last)}
           {rows.length === 0 && empty && (
             <tr>
               <td colSpan={cols.length} className="muted">

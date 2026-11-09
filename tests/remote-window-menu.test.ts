@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { ServerMessage } from '../src/shared/remote-access';
-import type { MenuItemLike } from '../src/main/platform/menus';
+import { accessIndex, serializeMenu, type MenuItemLike } from '../src/main/platform/menus';
 import { RemoteClient } from '../src/main/platform/remote-window';
 
 const dirs: string[] = [];
@@ -51,4 +51,14 @@ it('a skipped setMenu still points picks at the new menu items', () => {
   expect(menus()).toHaveLength(1);
   client.pick(win.w, '0.0', undefined);
   expect(clicks).toEqual(['new']);
+});
+
+it('serializes where each label\'s access key is, after its && pairs are made single', () => {
+  expect(accessIndex('&File')).toBe(0);
+  expect(accessIndex('Save &As…')).toBe(5);
+  expect(accessIndex('Fish && &Chips')).toBe(7);
+  expect(accessIndex('Fish && Chips')).toBeUndefined();
+  expect(accessIndex('Settings')).toBeUndefined();
+  const { items } = serializeMenu({ items: [{ label: 'Save &As…' }, { label: 'Plain' }] });
+  expect(items.map((i) => [i.label, i.access])).toEqual([['Save As…', 5], ['Plain', undefined]]);
 });

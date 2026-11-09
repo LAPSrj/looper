@@ -40,10 +40,22 @@ export function capFirst(s: string): string {
 export function formatDateTime(value: string | number | Date, locale?: string): string {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return typeof value === 'string' ? value : '';
-  try {
-    return d.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
-  } catch {
-    // An unusable locale name must never break a screen.
-    return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  return dateTimeFormat(locale).format(d);
+}
+
+/** One formatter per locale: toLocaleString made a new one for each date, 30 ms for a screen of runs. */
+const formats = new Map<string, Intl.DateTimeFormat>();
+function dateTimeFormat(locale: string | undefined): Intl.DateTimeFormat {
+  const key = locale ?? '';
+  let f = formats.get(key);
+  if (!f) {
+    try {
+      f = new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' });
+    } catch {
+      // An unusable locale name must never break a screen.
+      f = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
+    }
+    formats.set(key, f);
   }
+  return f;
 }

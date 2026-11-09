@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FindBar, useFindHighlights, type FindState } from './FindBar';
-import { useNewestFirst } from './newest-first';
+import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst } from './newest-first';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
@@ -268,7 +268,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
 
   // Find draws every item, so it searches the whole chat.
-  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, id, allHistory.length + allItems.length, find !== null);
+  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, id, allHistory.length + allItems.length, find !== null, embedded ? CARD_ITEMS : FIRST_ITEMS);
   const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length)), [allHistory, hidden]);
   const items = useMemo(() => allItems.slice(Math.max(0, hidden - allHistory.length)), [allItems, allHistory.length, hidden]);
 

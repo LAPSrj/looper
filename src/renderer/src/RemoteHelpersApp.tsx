@@ -5,6 +5,7 @@ import { claudeHarnesses } from './components/RemoteFields';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
+import { subscribe } from './events';
 
 /**
  * Advanced → Remote Control → Helpers. The list is managed live through the
@@ -23,7 +24,7 @@ export function RemoteHelpersApp() {
       setHelper((s) => s ?? info.settings.remote.helpers[0]?.id ?? null);
     });
     void window.looper.remote.state().then((s) => setProblems(s.problems));
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'settings') setLive(e.settings);
       else if (e.type === 'remote') setProblems(e.state.problems);
     });

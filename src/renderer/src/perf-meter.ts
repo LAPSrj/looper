@@ -68,11 +68,21 @@ export class FrameMeter {
     },
   ) {}
 
-  /** The display's frame interval: the median of recent ones. */
+  /** The display's frame interval: the median of recent ones, worked out again every 30 frames rather than on each. */
   frameMs(): number {
-    if (this.intervals.length < MIN_SAMPLES) return 1000 / 60;
+    return this.median;
+  }
+
+  private median = 1000 / 60;
+  private sinceMedian = 0;
+
+  private addInterval(gap: number): void {
+    this.intervals.push(gap);
+    if (this.intervals.length > MAX_SAMPLES) this.intervals.shift();
+    if (this.intervals.length < MIN_SAMPLES || (++this.sinceMedian < 30 && this.intervals.length > MIN_SAMPLES)) return;
+    this.sinceMedian = 0;
     const sorted = [...this.intervals].sort((a, b) => a - b);
-    return Math.min(40, Math.max(4, sorted[sorted.length >> 1]));
+    this.median = Math.min(40, Math.max(4, sorted[sorted.length >> 1]));
   }
 
   /** Something happened: frames are counted until it's quiet for IDLE_MS. */
@@ -125,10 +135,7 @@ export class FrameMeter {
     const fresh = this.fresh;
     this.fresh = false;
     const interval = this.frameMs();
-    if (!fresh && gap < FREEZE_MS) {
-      this.intervals.push(gap);
-      if (this.intervals.length > MAX_SAMPLES) this.intervals.shift();
-    }
+    if (!fresh && gap < FREEZE_MS) this.addInterval(gap);
     const a = this.activity;
     if (a) {
       const expected = Math.max(1, Math.round(gap / interval));

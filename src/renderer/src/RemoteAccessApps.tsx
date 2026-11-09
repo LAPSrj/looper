@@ -18,6 +18,7 @@ import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { useFitWindow } from './fit-window';
+import { subscribe } from './events';
 
 const showError = (e: unknown) => void window.looper.showError((e as Error).message);
 
@@ -148,7 +149,7 @@ export function RemoteAccessDevicesApp() {
   useEffect(() => {
     document.title = 'Paired Devices';
     void window.looper.remoteAccess.state().then(setState, showError);
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'remote-access') setState(e.state);
     });
   }, []);
@@ -247,7 +248,7 @@ export function RemoteAccessPairApp() {
     document.title = 'Pair Device';
     void newCode();
     void window.looper.remoteAccess.state().then(setState, showError);
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'remote-access') setState(e.state);
     });
   }, []);
@@ -352,7 +353,7 @@ export function RemoteAccessRenameApp({ id }: { id: string }) {
       } else setMissing(true);
     }, showError);
     // Keep the draft; only track the device itself (removal).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'remote-access' && !e.state.devices.some((d) => d.id === id)) setMissing(true);
     });
   }, [id]);

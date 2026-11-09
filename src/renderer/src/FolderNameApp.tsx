@@ -3,6 +3,7 @@ import type { EngineEvent, TaskFolder } from '@shared/types';
 import { EmptyWindow, Field, FormGroup, SelectInput, TextInput } from './components/ui';
 import { FolderOptions } from './components/form-blocks';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 /** The task list's folders or the Projects tab's: the calls and event each one's folders come with. */
 const SCOPES = {
@@ -50,7 +51,7 @@ export function FolderNameApp({
     document.title = folderId ? 'Rename Folder' : 'New Folder';
     if (!folderId) {
       void api.list().then(setFolders);
-      return window.looper.onEvent((e) => {
+      return subscribe((e) => {
         const list = api.foldersIn(e);
         if (!list) return;
         setFolders(list);
@@ -68,7 +69,7 @@ export function FolderNameApp({
       setLoaded(true);
     });
     // Keep the draft; only track the folder itself (deletion).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       const list = api.foldersIn(e);
       if (list && !list.some((x) => x.id === folderId)) setMissing(true);
     });

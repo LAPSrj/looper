@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
 import { CheckboxField, EmptyWindow, Field, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 /**
  * Standalone "Run Now" options window: lets the user skip any step of the
@@ -31,7 +32,7 @@ export function RunOptionsApp({ taskId }: { taskId: string }) {
       setGuidance(t.note?.text ?? '');
     });
     // Keep the guidance draft; only track the task itself (rename, deletion).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type !== 'tasks') return;
       const t = e.tasks.find((x) => x.id === taskId);
       if (t) setTask(t);

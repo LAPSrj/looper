@@ -14,10 +14,12 @@ export interface MessagesMarkdownOpts {
   plain?: boolean;
 }
 
+let seconds: Intl.DateTimeFormat | undefined;
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  seconds ??= new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return seconds.format(d);
 }
 
 /**

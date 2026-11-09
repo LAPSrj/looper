@@ -14,8 +14,10 @@ export type MenuNav = MenuLevel[];
 
 export type MenuEffect =
   | { kind: 'pick'; item: MenuItemSpec }
-  /** Esc on the outermost list, or Tab: the menu closes. */
+  /** Tab: the menu closes. */
   | { kind: 'close' }
+  /** Esc on the outermost list: the menu closes, and a menu bar keeps its item focused. */
+  | { kind: 'escape' }
   /** Left/Right past the edge of a menu bar's menu: open the neighbouring one. */
   | { kind: 'prev' }
   | { kind: 'next' }
@@ -44,6 +46,24 @@ export function openNav(items: MenuItemSpec[], byKeyboard: boolean): MenuNav {
 function subLevel(item: MenuItemSpec | undefined, byKeyboard: boolean): MenuLevel | null {
   if (!item || item.type !== 'submenu' || !item.enabled || !item.submenu?.length) return null;
   return { items: item.submenu, active: byKeyboard ? firstItem(item.submenu) : -1 };
+}
+
+/** The item's access key, lower case (the letter its label's `&` marked); undefined when it has none. */
+export const accessChar = (it: MenuItemSpec): string | undefined => (it.access === undefined ? undefined : it.label?.[it.access]?.toLocaleLowerCase());
+
+/**
+ * Typing a letter that is access keys in the list: the one item with it is picked (its submenu opens);
+ * with more than one, the next of them is highlighted. Null when no item has it.
+ */
+function accessKey(nav: MenuNav, level: MenuLevel, ch: string): { nav: MenuNav; effect: MenuEffect } | null {
+  const c = ch.toLocaleLowerCase();
+  const hits = level.items.flatMap((it, i) => (selectable(it) && it.enabled && accessChar(it) === c ? [i] : []));
+  if (!hits.length) return null;
+  if (hits.length > 1) return { nav: replaceLast(nav, { ...level, active: hits.find((i) => i > level.active) ?? hits[0] }), effect: null };
+  const item = level.items[hits[0]];
+  const at = replaceLast(nav, { ...level, active: hits[0] });
+  const sub = subLevel(item, true);
+  return sub ? { nav: [...at, sub], effect: null } : { nav: at, effect: { kind: 'pick', item } };
 }
 
 /** Typing a letter: the next item whose label starts with it. */
@@ -88,12 +108,12 @@ export function menuKey(nav: MenuNav, key: string): { nav: MenuNav; effect: Menu
       return { nav, effect: null };
     }
     case 'Escape':
-      return nav.length > 1 ? { nav: nav.slice(0, -1), effect: null } : { nav, effect: { kind: 'close' } };
+      return nav.length > 1 ? { nav: nav.slice(0, -1), effect: null } : { nav, effect: { kind: 'escape' } };
     case 'Tab':
       return { nav, effect: { kind: 'close' } };
     default:
-      if (key.length === 1 && key !== ' ') return { nav: replaceLast(nav, { ...level, active: typeahead(level, key) }), effect: null };
-      return { nav, effect: null };
+      if (key.length !== 1 || key === ' ') return { nav, effect: null };
+      return accessKey(nav, level, key) ?? { nav: replaceLast(nav, { ...level, active: typeahead(level, key) }), effect: null };
   }
 }
 

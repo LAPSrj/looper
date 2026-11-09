@@ -3,6 +3,7 @@ import type { Task, TaskFolder } from '@shared/types';
 import { folderSubtree } from '@shared/folders';
 import { EmptyWindow } from './components/ui';
 import { GuidanceForm, guidanceNote } from './components/form-blocks';
+import { subscribe } from './events';
 
 /**
  * Next-run guidance for every task in a folder — nested folders included
@@ -32,7 +33,7 @@ export function FolderNoteApp({ folderId }: { folderId: string }) {
     });
     void window.looper.tasks.list().then(setAllTasks);
     // Keep the draft; only track membership and the folder itself (rename, deletion).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'tasks') setAllTasks(e.tasks);
       else if (e.type === 'folders') {
         setAllFolders(e.folders);

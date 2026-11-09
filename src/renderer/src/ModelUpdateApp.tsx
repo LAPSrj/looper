@@ -5,6 +5,7 @@ import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, ty
 import { Chevron } from './components/icons';
 import { EmptyWindow, SelectInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 interface Group {
   envId: string;
@@ -106,7 +107,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
           });
       }
     });
-    const offSettings = window.looper.onEvent((e) => {
+    const offSettings = subscribe((e) => {
       if (e.type === 'settings') setSettings(e.settings);
     });
     return () => {

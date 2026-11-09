@@ -6,6 +6,7 @@ import { Markdown } from './components/Markdown';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { REMOTE_STATUS_LABELS, fmtDate, fmtTime } from './format';
+import { subscribe } from './events';
 
 const lastLine = (c: RemoteConversation) => c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '');
 
@@ -35,7 +36,7 @@ export function RemoteConversationsApp() {
       setSelected((id) => (id && s.conversations.some((c) => c.id === id) ? id : (s.conversations[0]?.id ?? null)));
     };
     void window.looper.remote.state().then(apply);
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'remote') apply(e.state);
     });
   }, []);

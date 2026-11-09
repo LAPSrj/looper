@@ -245,6 +245,8 @@ export interface MenuItemSpec {
   id: string;
   type: 'normal' | 'separator' | 'checkbox' | 'radio' | 'submenu';
   label?: string;
+  /** Where in `label` its access key is (the letter `&` marked): the desktop app's menu bar underlines it and takes Alt+it. */
+  access?: number;
   enabled: boolean;
   checked?: boolean;
   /** Electron accelerator ("CmdOrCtrl+N"); the desktop browser shows it and handles it. */

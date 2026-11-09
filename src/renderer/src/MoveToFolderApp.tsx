@@ -4,6 +4,7 @@ import { SelectList } from './components/SelectList';
 import { EmptyWindow, Field, FormGroup, InputRow, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { folderChoices } from './components/form-blocks';
+import { subscribe } from './events';
 
 /** Root pseudo-folder: moving here clears the task's folderId. */
 const TOP_LEVEL = '';
@@ -30,7 +31,7 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
       document.title = `Move "${t.name}" to Folder`;
     });
     void window.looper.folders.list().then(setFolders);
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'tasks') {
         const t = e.tasks.find((x) => x.id === taskId);
         if (t) setTask(t);

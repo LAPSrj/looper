@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { isLooperFileName } from '@shared/files';
 import { setAppLocale } from './format';
 import './styles.css';
-import { App } from './App';
+import { WindowContextMenu, WindowMenuBar } from './components/MenuBar';
 import { phoneStyles } from './components/phone/keyboard';
 import { attachWebFramePerf, Measured, startDesktopPerf, startWebTopPerf, windowRouteName } from './perf';
 import { WindowBoundary, WindowReady } from './WindowReady';
@@ -18,8 +18,9 @@ import { preloadFrame, Shell } from './web/Shell';
 import { attachFrame, startSession } from './web/start';
 import { Waiting } from './web/Waiting';
 
-// Every window except the main one is a chunk of its own: a window loads only the code its route needs.
+// Every window is a chunk of its own, the main one too: a window loads only the code its route needs.
 // A new window app is added here as a lazy import, never as a static one (tests/code-splitting.test.ts).
+const App = lazy(() => import('./App').then((m) => ({ default: m.App })));
 const AboutApp = lazy(() => import('./AboutApp').then((m) => ({ default: m.AboutApp })));
 const AddonEditApp = lazy(() => import('./AddonsApp').then((m) => ({ default: m.AddonEditApp })));
 const AgentSettingsApp = lazy(() => import('./AgentSettingsApp').then((m) => ({ default: m.AgentSettingsApp })));
@@ -66,6 +67,7 @@ const TemplatePickerApp = lazy(() => import('./TemplatePickerApp').then((m) => (
 const TemplatesApp = lazy(() => import('./TemplatesApp').then((m) => ({ default: m.TemplatesApp })));
 const TerminalSessionApp = lazy(() => import('./TerminalSessionApp').then((m) => ({ default: m.TerminalSessionApp })));
 const PairPage = lazy(() => import('./web/PairPage').then((m) => ({ default: m.PairPage })));
+const MenuLevelApp = lazy(() => import('./MenuLevelApp').then((m) => ({ default: m.MenuLevelApp })));
 
 const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
@@ -107,8 +109,10 @@ const itemMatch = /^item\/(task|project)\/(.+)$/.exec(hash);
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
 const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
 const mcpServerMatch = /^mcp-server\/([^/]+)$/.exec(hash);
+const menuLevelMatch = /^menu-level\/(\d+)$/.exec(hash);
 
 function pickRoot() {
+  if (menuLevelMatch) return <MenuLevelApp depth={Number(menuLevelMatch[1])} />;
   if (hash === 'addons') return <AddonsApp />;
   if (hash === 'agent-settings') return <AgentSettingsApp />;
   if (mcpServerMatch) return <McpServerApp requestKey={decodeURIComponent(mcpServerMatch[1])} />;
@@ -369,17 +373,30 @@ function bootWindow(onRendered?: () => void) {
     .info()
     .then((i) => setAppLocale(i.locale))
     .catch(() => undefined);
-  void Promise.all([info, phoneStyles.catch(() => undefined)]).then(() => {
+  // The desktop app draws its windows' menu bars in the page: known before the first paint, so nothing moves under it.
+  const menuBar = platform === 'electron' ? window.looper.commands.menuBarItems().catch(() => null) : Promise.resolve(null);
+  void Promise.all([menuBar, info, phoneStyles.catch(() => undefined)]).then(([bar]) => {
     const root = createRoot(document.getElementById('root')!);
+    const app = (
+      <WindowBoundary onFailed={report}>
+        <Suspense fallback={null}>
+          <Measured id={rootId}>{pickRoot()}</Measured>
+          {onRendered && <WindowReady onReady={report} />}
+        </Suspense>
+      </WindowBoundary>
+    );
     const render = () =>
       root.render(
         <React.StrictMode>
-          <WindowBoundary onFailed={report}>
-            <Suspense fallback={null}>
-              <Measured id={rootId}>{pickRoot()}</Measured>
-              {onRendered && <WindowReady onReady={report} />}
-            </Suspense>
-          </WindowBoundary>
+          {platform === 'electron' ? (
+            <div className="window-frame">
+              <WindowMenuBar initial={bar} />
+              <div className="window-body">{app}</div>
+              <WindowContextMenu />
+            </div>
+          ) : (
+            app
+          )}
         </React.StrictMode>,
       );
     if (!onRendered) return render();

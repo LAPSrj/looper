@@ -3,6 +3,7 @@ import type { Task } from '@shared/types';
 import { SelectList } from './components/SelectList';
 import { Field } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 export function TemplatePickerApp() {
   const [templates, setTemplates] = useState<Task[]>([]);
@@ -16,7 +17,7 @@ export function TemplatePickerApp() {
       setTemplates(t);
       if (t.length > 0) setSelected(t[0].id);
     });
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'templates') {
         setTemplates(e.templates);
         setSelected((s) => (s && e.templates.some((t) => t.id === s) ? s : e.templates[0]?.id ?? null));

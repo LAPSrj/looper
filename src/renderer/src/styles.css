@@ -1179,7 +1179,7 @@ html:not(.phone-window) .session-group ~ .session-row {
 .run-detail-app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 .run-detail-app .runlog-table tr {
@@ -1318,7 +1318,7 @@ html:not(.phone-window) .session-group ~ .session-row {
 /* The agent console stays dark in both themes (matches the xterm theme in Terminal.tsx). */
 /* ---------- task chat window ---------- */
 .chat-app {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1950,7 +1950,7 @@ details[open] > summary::before {
   padding-bottom: 16px;
 }
 .builder-app {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1979,6 +1979,32 @@ details[open] > summary::before {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/*
+ * Each key typed in the message box laid out every drawn message and the whole chat list again (25 ms a key in a
+ * long chat). These scrollers take their size from their container, so with size containment their contents are
+ * laid out only when they change. Not on phones, where a page can grow with what it holds.
+ */
+html:not(.phone-window) :is(.chat-scroll, .session-list) {
+  contain: strict;
+}
+/*
+ * A dashboard card's size is its grid area's (the dashboard sets its rows and columns in pixels), never its
+ * content's, so each card is laid out on its own. Not content-visibility: the dashboard scrolls, and skipping
+ * the cards out of view made going back to it drop more frames (10 against 2).
+ */
+html:not(.phone-window) .sessions-dashboard > .overview-card {
+  contain: strict;
+}
+/* A menu level window (MenuLevelApp) shows only its menu: around it, the window is see-through. */
+html.menu-level-window,
+html.menu-level-window :is(body, #root, .window-frame, .window-body) {
+  background: transparent !important;
+}
+/* The page's copy of a menu the level windows draw: it keeps the focus for the keyboard and screen readers, unseen. */
+.ws-menu-mirror {
+  opacity: 0;
+  pointer-events: none;
 }
 .chat-msg .markdown {
   height: auto;
@@ -2522,7 +2548,7 @@ button:focus-visible,
 }
 
 .messages-app {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2933,7 +2959,7 @@ button:focus-visible,
 /* ---------- Image window ---------- */
 
 .image-app {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3167,7 +3193,7 @@ button:focus-visible,
 
 /* ---------- Sessions window ---------- */
 .sessions-app {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5026,6 +5052,49 @@ html.phone-window .workflow-text {
 }
 .ws-menubar-item:disabled {
   color: var(--fg-muted);
+}
+/* A menu's highlight shows where the keyboard is, as on Windows: no focus ring on top of it. */
+.ws-menu-item:focus {
+  outline: none;
+}
+/* The item the keyboard is on (Alt, F10), with no menu open. */
+.ws-menubar-item.current {
+  background: var(--bg-3);
+  outline: none;
+}
+.menu-access {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* The desktop app's window: its menu bar over the page. */
+.window-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.window-frame > .ws-menubar {
+  border-bottom: 1px solid var(--border);
+}
+.window-body {
+  flex: 1;
+  min-height: 0;
+}
+@media (forced-colors: active) {
+  .ws-menubar-item.open,
+  .ws-menubar-item.current,
+  .ws-menu-item.active {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .ws-menu-item.disabled,
+  .ws-menubar-item:disabled {
+    color: GrayText;
+    opacity: 1;
+  }
+  .ws-menu {
+    border: 1px solid CanvasText;
+  }
 }
 .ws-catcher {
   position: fixed;

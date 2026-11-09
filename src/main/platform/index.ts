@@ -6,12 +6,13 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, clipboard, dialog, ipcMain, shell, type Menu } from 'electron';
-import type { FileDialogSpec, MessageBoxSpec, ServerMessage, WindowRole } from '../../shared/remote-access';
+import { BrowserWindow, clipboard, dialog, ipcMain, screen, shell, type Menu } from 'electron';
+import type { FileDialogSpec, MenuItemSpec, MessageBoxSpec, ServerMessage, WindowRole } from '../../shared/remote-access';
+import { isWebLink } from '../../shared/links';
 import type { RemoteClients } from './clients';
 import { caller } from './context';
 import { IpcTable, type IpcMainLike } from './ipc-table';
-import { hideOffPlatform } from './menus';
+import { hideOffPlatform, serializeMenu, type MenuItemLike } from './menus';
 import { RemoteWindow, RemoteWebContents, type AppWindow, type RemoteClient } from './remote-window';
 import { createPlacedWindow } from './window-places';
 
@@ -21,6 +22,7 @@ export { RemoteClients } from './clients';
 export { RemoteWindow, type AppWindow, type AppWebContents } from './remote-window';
 export { WindowSlots, clientKey, clientKeyOf, ofCaller, DESKTOP } from './slots';
 export { useWindowPlaces, placeAs } from './window-places';
+export { menuLevelInput, menuLevelLayout, showMenuPopups, useMenuPopupPage, type MenuLevelLayout, type MenuPopupState } from './menu-popups';
 
 /** Every IPC handler and listener goes through this, so remote clients reach them too. */
 export const ipc = new IpcTable(ipcMain as unknown as IpcMainLike);
@@ -103,7 +105,53 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
     return;
   }
   hideOffPlatform(menu, 'desktop');
-  menu.popup(options as unknown as Electron.PopupOptions);
+  if (!(w instanceof BrowserWindow) || process.platform === 'darwin' || w.isDestroyed()) {
+    menu.popup(options as unknown as Electron.PopupOptions);
+    return;
+  }
+  // The page draws it, in the menu bar's style (MenuBar.tsx's ContextMenu), at the point asked or the pointer.
+  const { items, byId } = serializeMenu(menu, 'desktop');
+  if (!items.length) return;
+  closePageMenu(w);
+  const zoom = w.webContents.getZoomFactor() || 1;
+  let { x, y } = options;
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    const at = screen.getCursorScreenPoint();
+    const content = w.getContentBounds();
+    x = (at.x - content.x) / zoom;
+    y = (at.y - content.y) / zoom;
+  }
+  const menuId = `m${++pageMenuSeq}`;
+  pageMenus.set(w, { menuId, byId, closed: options.callback });
+  w.webContents.send('ui:event', { type: 'context-menu', menuId, items, x, y });
+}
+
+/** The context menu each desktop window's page shows: its items by the ids the page picks them by, and what runs once it closes. */
+const pageMenus = new WeakMap<BrowserWindow, { menuId: string; byId: Map<string, MenuItemLike>; closed?: () => void }>();
+let pageMenuSeq = 0;
+
+/** The window's menu is done with (a pick, Esc, a click elsewhere, or a new menu over it): its close callback runs, as Electron's would. */
+function closePageMenu(w: BrowserWindow, menuId?: string): { byId: Map<string, MenuItemLike> } | undefined {
+  const open = pageMenus.get(w);
+  if (!open || (menuId !== undefined && open.menuId !== menuId)) return undefined;
+  pageMenus.delete(w);
+  open.closed?.();
+  return open;
+}
+
+/** An item picked in a desktop window's context menu, carried out as a click on Electron's menu would be (roles included). */
+export function pickPageMenu(win: AppWindow | null, menuId: string, id: string, checked?: boolean): void {
+  if (!(win instanceof BrowserWindow)) return;
+  // Electron closes its menu before the click runs, so a caller's close callback comes first here too.
+  const item = closePageMenu(win, menuId)?.byId.get(id);
+  if (!item || item.enabled === false || typeof item.click !== 'function') return;
+  if (item.type === 'checkbox' && typeof checked === 'boolean') item.checked = !checked;
+  item.click({ triggeredByAccelerator: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, win, win.webContents);
+}
+
+/** A desktop window's context menu closed without a pick. */
+export function dismissPageMenu(win: AppWindow | null, menuId: string): void {
+  if (win instanceof BrowserWindow) closePageMenu(win, menuId);
 }
 
 /**
@@ -111,9 +159,51 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
  * the items its platform doesn't show are hidden in it.
  */
 export function setWindowMenu(w: AppWindow, menu: Menu | null): void {
-  if (!menu) return w.removeMenu();
+  if (!menu) {
+    if (w instanceof BrowserWindow && desktopBars.delete(w)) sendDesktopBar(w, null);
+    return w.removeMenu();
+  }
   hideOffPlatform(menu, w instanceof RemoteWindow ? w.client.uiPlatform : 'desktop');
   w.setMenu(menu);
+  if (w instanceof BrowserWindow && process.platform !== 'darwin') {
+    // Its page draws the menu bar from this menu, which stays set, hidden, so a pick runs its items.
+    w.setMenuBarVisibility(false);
+    desktopBars.set(w, { menu, items: [], byId: new Map() });
+    refreshDesktopBar(w);
+  }
+}
+
+/** Each desktop window's menu as its page draws it, and the menu's items by the ids the page picks them by. */
+const desktopBars = new WeakMap<BrowserWindow, { menu: Menu; items: MenuItemSpec[]; byId: Map<string, MenuItemLike> }>();
+
+const sendDesktopBar = (w: BrowserWindow, items: MenuItemSpec[] | null) => {
+  if (!w.isDestroyed()) w.webContents.send('ui:event', { type: 'menu-bar', items });
+};
+
+/** Send the window's page its menu bar again, when its items changed (a checkmark a pick flipped). */
+function refreshDesktopBar(w: BrowserWindow): void {
+  const bar = desktopBars.get(w);
+  if (!bar) return;
+  const next = serializeMenu(bar.menu, 'desktop');
+  bar.byId = next.byId;
+  if (JSON.stringify(next.items) === JSON.stringify(bar.items)) return;
+  bar.items = next.items;
+  sendDesktopBar(w, next.items);
+}
+
+/** The menu bar a desktop window's page draws; null when it has none (and on macOS, whose menu bar is the system's). */
+export function desktopMenuBar(w: AppWindow | null): MenuItemSpec[] | null {
+  return w instanceof BrowserWindow ? (desktopBars.get(w)?.items ?? null) : null;
+}
+
+/** An item picked in a desktop window's page-drawn menu bar, carried out as a click on the menu would be (roles included). */
+export function pickDesktopMenu(w: AppWindow | null, id: string, checked?: boolean): void {
+  if (!(w instanceof BrowserWindow)) return;
+  const item = desktopBars.get(w)?.byId.get(id);
+  if (!item || item.enabled === false || typeof item.click !== 'function') return;
+  if (item.type === 'checkbox' && typeof checked === 'boolean') item.checked = !checked;
+  item.click({ triggeredByAccelerator: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, w, w.webContents);
+  refreshDesktopBar(w);
 }
 
 // ---------- dialogs ----------
@@ -222,8 +312,9 @@ export function writeClipboard(text: string): void {
   else clipboard.writeText(text);
 }
 
-/** shell.openExternal; a remote caller's opens on the device. */
+/** shell.openExternal for a web or mail link (isWebLink); a remote caller's opens on the device. */
 export async function openExternal(url: string): Promise<void> {
+  if (!isWebLink(url)) return;
   const ctx = caller();
   if (ctx) ctx.client.send({ t: 'open-url', url });
   else await shell.openExternal(url);

@@ -54,6 +54,7 @@
     "src/renderer/src/components/phone/sheet-detents.ts",
     "src/renderer/src/components/editor-lines.ts",
     "src/renderer/src/components/highlight.ts",
+    "src/renderer/src/components/markdown-render.ts",
     "src/renderer/src/web/nav-stack.ts",
     "src/renderer/src/web/nav-bar-model.ts",
     "src/renderer/src/web/gestures.ts",

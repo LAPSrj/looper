@@ -10,7 +10,7 @@ import { sendsOnEnter } from './composer-text';
 import { useChatsSettings } from './hooks';
 import { PromptBody } from './Markdown';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
-import { useNewestFirst } from './newest-first';
+import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst } from './newest-first';
 import { InfoBar } from './ui';
 
 /** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
@@ -41,6 +41,7 @@ export function TranscriptView({
   pendingStatus = 'Waiting for the agent',
   footer,
   drawAll = false,
+  embedded = false,
 }: {
   taskId: string;
   runId: string;
@@ -51,6 +52,8 @@ export function TranscriptView({
   footer?: React.ReactNode;
   /** Every message drawn, not only the newest ones (a Find over it). */
   drawAll?: boolean;
+  /** One of several on the dashboard: only its newest messages are drawn at first. */
+  embedded?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -78,7 +81,7 @@ export function TranscriptView({
     [taskId, runId],
   );
   const allItems = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
-  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll);
+  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll, embedded ? CARD_ITEMS : FIRST_ITEMS);
   const items = useMemo(() => allItems.slice(hidden), [allItems, hidden]);
   return (
     <div className="chat-app">

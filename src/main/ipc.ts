@@ -17,15 +17,25 @@ import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentF
 import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { commandAttachment, commandFrom } from '../shared/bash-mode';
-import { attachmentName, type Attachment, type AttachmentInput, type ChatSettings } from '../shared/chat';
+import { attachmentName, type Attachment, type AttachmentInput, type ChatSettings, type ChatState } from '../shared/chat';
+import { ChatEncoder } from '../shared/chat-delta';
 import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions } from '../shared/history';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task } from '../shared/types';
 import {
   allWindows,
   caller,
+  desktopMenuBar,
+  dismissPageMenu,
   ipc,
+  menuLevelInput,
+  menuLevelLayout,
+  pickPageMenu,
+  showMenuPopups,
+  type MenuLevelLayout,
+  type MenuPopupState,
   openOnHost,
+  pickDesktopMenu,
   openExternal,
   openPath,
   popupMenu,
@@ -339,7 +349,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     host.openMessages(taskId, runId, agentId, label),
   );
 
-  ipc.handle('engineLog:read', () => engine.readEngineLog());
+  // `known`: the size the window last read; an unchanged log sends only its size.
+  ipc.handle('engineLog:read', (_e, known?: unknown) => {
+    const size = engine.engineLogSize();
+    return size === known ? { size } : { size, text: engine.readEngineLog() };
+  });
   ipc.on('perf:report', (_e, entry: unknown) => {
     const line = perfLine(entry);
     if (!line) return;
@@ -381,7 +395,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
 
   ipc.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
-  ipc.handle('chat:get', (_e, id: string) => engine.getChat(id) ?? null);
+  ipc.handle('chat:get', (_e, id: string) => {
+    const state = engine.getChat(id);
+    const enc = chatEncoders.get(id);
+    return state ? { ...state, seq: enc?.seq ?? 0, epoch: enc?.epoch ?? 0 } : null;
+  });
   ipc.handle('chat:confirmSend', (e, id: string) => host.confirmChatSend(String(id), windowOf(e)));
   /**
    * A message's attachments from a window: only Looper's own copies of files
@@ -1169,6 +1187,22 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     },
   );
   ipc.on('commands:menuBar', (e, items: MenuItemSpec[]) => host.setCommandMenu(windowOf(e), Array.isArray(items) ? items : []));
+  ipc.handle('commands:menuBarItems', (e) => desktopMenuBar(windowOf(e)));
+  ipc.on('commands:contextMenuPick', (e, menuId: unknown, id: unknown, checked: unknown) => {
+    if (typeof menuId === 'string' && typeof id === 'string') pickPageMenu(windowOf(e), menuId, id, typeof checked === 'boolean' ? checked : undefined);
+  });
+  ipc.on('commands:contextMenuDismiss', (e, menuId: unknown) => {
+    if (typeof menuId === 'string') dismissPageMenu(windowOf(e), menuId);
+  });
+  // A desktop page's open menu, drawn in level windows past its edges (platform/menu-popups.ts).
+  ipc.handle('commands:menuPopups', (e, next: MenuPopupState | null) => showMenuPopups(windowOf(e), next && Array.isArray(next.levels) && next.at ? next : null));
+  ipc.on('commands:menuLevelLayout', (e, depth: unknown, layout: MenuLevelLayout | null) => menuLevelLayout(e.sender, Number(depth), layout ?? null));
+  ipc.on('commands:menuLevelInput', (e, depth: unknown, index: unknown, kind: unknown) => {
+    if (kind === 'hover' || kind === 'choose') menuLevelInput(e.sender, Number(depth), Number(index), kind);
+  });
+  ipc.on('commands:menuBarPick', (e, id: unknown, checked: unknown) => {
+    if (typeof id === 'string') pickDesktopMenu(windowOf(e), id, typeof checked === 'boolean' ? checked : undefined);
+  });
   ipc.on('commands:host', (e, name: HostCommand, ...args: unknown[]) => host.runHostCommand(windowOf(e), name, args.map(String)));
   // A page's own menu at a point (or at the finger); the id picked comes back, or null once it closes without a pick.
   ipc.handle('commands:popup', (e, items: MenuItemSpec[], at?: { x: number; y: number }) => {
@@ -1491,9 +1525,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (event.type === 'builder' || event.type === 'builder:data') {
       return sendTo(host.builderWindow(event.type === 'builder' ? event.state.id : event.id), event);
     }
-    // A chat's whole conversation, and a session's activity, go only to the Sessions windows showing them.
-    if (event.type === 'chat' || event.type === 'session:activity') {
-      return sendTo(host.sessionWindow(event.type === 'chat' ? event.state.id : event.activity.id), event);
+    // A chat's conversation, as what changed since its last event, and a session's activity go only to the Sessions windows showing them.
+    if (event.type === 'chat') {
+      const id = event.state.id;
+      let enc = chatEncoders.get(id);
+      if (!enc) chatEncoders.set(id, (enc = new ChatEncoder()));
+      return sendTo(host.sessionWindow(id), { type: 'chat', state: enc.encode(event.state) as unknown as ChatState });
+    }
+    if (event.type === 'session:activity') return sendTo(host.sessionWindow(event.activity.id), event);
+    if (event.type === 'sessions') {
+      const open = new Set(event.state.sessions.map((s) => s.id));
+      for (const id of chatEncoders.keys()) if (!open.has(id)) chatEncoders.delete(id);
     }
     // Likewise a running "!" command's output: the windows showing its chat.
     if (event.type === 'chat:command') return sendTo(host.sessionWindow(event.chatId), event);
@@ -1507,6 +1549,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 }
 
 let broadcast: (event: EngineEvent) => void = () => undefined;
+/** Each open chat's events as what changed since the one before (shared/chat-delta.ts). */
+const chatEncoders = new Map<string, ChatEncoder>();
 
 /** Send an event to the windows the way engine events go; for events from outside the engine (Remote Access). */
 export function broadcastEvent(event: EngineEvent): void {

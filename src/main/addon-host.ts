@@ -6,8 +6,8 @@ import type { HostKind } from '../engine/host';
 import { errMsg, type Logger } from '../engine/log';
 import { childEnv, stripShellNoise } from '../engine/steps/common';
 import { killHostTree } from '../engine/target/kill';
+import { ADDON_EXT } from '../shared/files';
 import {
-  ADDON_EXT,
   AddonEventResultSchema,
   AddonPaneContentSchema,
   AddonScreenSchema,

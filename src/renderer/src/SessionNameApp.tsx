@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { EmptyWindow, Field, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { subscribe } from './events';
 
 /**
  * Rename… on a chat or terminal session: its name, shown in the Chats list,
@@ -25,7 +26,7 @@ export function SessionNameApp({ sessionId }: { sessionId: string }) {
       setLoaded(true);
     });
     // Keep the draft; only track the session itself (closed).
-    return window.looper.onEvent((e) => {
+    return subscribe((e) => {
       if (e.type === 'sessions' && !e.state.sessions.some((x) => x.id === sessionId)) setMissing(true);
     });
   }, [sessionId]);

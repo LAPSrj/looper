@@ -404,6 +404,8 @@ export interface Engine {
   inboxDir(): string;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(maxBytes?: number): string;
+  /** The engine log file's size in bytes (0 when there's none), to read it again only when it grew. */
+  engineLogSize(): number;
   /** A line for perf.log: a freeze or dropped frames a window measured. */
   logPerf(line: string): void;
 }
@@ -1338,6 +1340,9 @@ export function createEngine(opts: EngineOptions): Engine {
   // sparing whatever runs are currently in progress.
   const RETENTION_SWEEP_MS = 60 * 60 * 1000;
   const PERF_LOG_MAX_BYTES = 5 * 1024 * 1024;
+  /** The start's work that can wait until the first window is up. */
+  const STARTUP_DEFER_MS = 2000;
+  let deferredTimer: NodeJS.Timeout | null = null;
   /** How often idle sessions are checked for an expired prompt cache (Settings → Chats). */
   const CACHE_CHECK_MS = 15_000;
   let retentionTimer: NodeJS.Timeout | null = null;
@@ -1431,11 +1436,20 @@ export function createEngine(opts: EngineOptions): Engine {
       if (started) return;
       started = true;
       log.info(`looper engine starting (host=${host}, dataDir=${dataDir})`);
+      // How long each step took, for perf.log: starting holds up the first window.
+      const steps: string[] = [];
+      let stepAt = performance.now();
+      const step = (name: string) => {
+        const now = performance.now();
+        steps.push(`${name} ${Math.round(now - stepAt)} ms`);
+        stepAt = now;
+      };
       warmMountPrefixes();
       builders.sweep();
       projects.load();
       tasks.load();
       templates.load();
+      step('load');
       const emitProjects = () => emit({ type: 'projects', projects: projects.list() });
       // A changed project's tasks take its values; Remote Control opens or ends its conversation.
       projects.on('change', (project: Project, kind: 'create' | 'update' | 'remove') => {
@@ -1458,13 +1472,21 @@ export function createEngine(opts: EngineOptions): Engine {
       rest?.init();
       // Remote Control first: a chat that opens again starts with it, as a new one would.
       applyRemote();
+      step('scheduler');
       // Before the sweep: an open conversation's run is never pruned.
       restoreConversations();
-      sweepRunLogs();
+      step('conversations');
+      // Neither is needed to show the first window, and checking the projects for git starts a process for each.
+      deferredTimer = setTimeout(() => {
+        deferredTimer = null;
+        sweepRunLogs();
+        git.checkAll();
+      }, STARTUP_DEFER_MS);
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
       sessionHub.start();
       cacheTimer = setInterval(stopExpiredAgents, CACHE_CHECK_MS);
-      git.checkAll();
+      step('sessions');
+      perfLog.info(`engine | start: ${steps.join(', ')}`);
     },
     async stop() {
       if (!started) return;
@@ -1474,6 +1496,8 @@ export function createEngine(opts: EngineOptions): Engine {
       cacheTimer = null;
       if (retentionTimer) clearInterval(retentionTimer);
       retentionTimer = null;
+      if (deferredTimer) clearTimeout(deferredTimer);
+      deferredTimer = null;
       inbox.stop();
       rest?.dispose();
       preventSleep?.dispose();
@@ -2037,6 +2061,13 @@ export function createEngine(opts: EngineOptions): Engine {
         }
       } catch {
         return '';
+      }
+    },
+    engineLogSize() {
+      try {
+        return fs.statSync(path.join(dataDir, 'engine.log')).size;
+      } catch {
+        return 0;
       }
     },
     logPerf: (line) => perfLog.info(line),

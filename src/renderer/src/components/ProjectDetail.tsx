@@ -14,6 +14,7 @@ import { useGitRepo } from './hooks';
 import { useSessionsState } from './phone/useSessionsState';
 import { RunLog } from './RunLog';
 import { TabBar } from './ui';
+import { subscribe } from '../events';
 
 type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
 
@@ -63,7 +64,7 @@ export function ProjectDetail({
     void Promise.all([standIn, ...taskIds].map((id) => window.looper.runs.list(id, MAX_RECORDS))).then((lists) => {
       if (live) setRecords(lists.flat().filter(mineRecord));
     });
-    const off = window.looper.onEvent((e) => {
+    const off = subscribe((e) => {
       if (e.type === 'record' && mineRecord(e.record)) setRecords((list) => [...list, e.record].slice(-MAX_RECORDS));
     });
     return () => {
