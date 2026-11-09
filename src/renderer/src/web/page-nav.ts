@@ -13,6 +13,8 @@ import type { NavCommand, PageNavAction } from './nav-bar-model';
 export interface PageNav {
   /** The bar's title; unset = the window's title. */
   title?: string;
+  /** A short status line under the title ("2 subagents running"), as iOS 26's navigation bar subtitle. */
+  subtitle?: string;
   /**
    * The page shows a deeper screen of its own (a task under the task list):
    * Back, the back gesture and Android's back button call this instead of
@@ -112,6 +114,7 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
   for (const { nav, latest } of sorted) {
     const n = nav!;
     if (n.title !== undefined) out.title = n.title;
+    if (n.subtitle !== undefined) out.subtitle = n.subtitle;
     if (n.back) out.back = () => latest.current?.back?.();
     if (n.actions) out.actions = n.actions.map((a) => wrapAction(a, () => latest.current?.actions));
     if (n.split) {

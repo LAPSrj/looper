@@ -12,7 +12,6 @@ import {
   resultTone,
   splitAttention,
   taskNameOf,
-  taskSummary,
   terminalOverlay,
   terminalTitle,
   timeAndDuration,
@@ -129,24 +128,6 @@ describe('Waiting for You', () => {
     const [chat, run] = waitingForYou([session({ waiting: { reason: 'permission', text: 'Allow?', since: NOW - 5 * 60_000 } })], [attention({ runId: 'r', at: null })]);
     expect(waitedFor(chat, NOW)).toBe('5 min');
     expect(waitedFor(run, NOW)).toBe('');
-  });
-});
-
-describe('the Dashboard summary row', () => {
-  const counts = { running: 0, paused: 0, enabled: 7, disabled: 1, completed: 0 };
-
-  it('joins the counts, leaving out zeros', () => {
-    expect(taskSummary({ counts, loaded: true, addonsRunning: 1, remoteSessions: null })).toBe('7 enabled · 1 disabled · 1 addon running');
-    expect(taskSummary({ counts: { ...counts, running: 2 }, loaded: true, addonsRunning: 3, remoteSessions: 2 })).toBe(
-      '2 running · 7 enabled · 1 disabled · 3 addons running · 2 Remote Control sessions',
-    );
-  });
-
-  it('shows no counts until the tasks have loaded, and leaves out the addons and sessions that have not answered', () => {
-    expect(taskSummary({ counts: { running: 0, paused: 0, enabled: 0, disabled: 0, completed: 0 }, loaded: false, addonsRunning: 0, remoteSessions: 0 })).toBe('');
-    expect(taskSummary({ counts, loaded: true, addonsRunning: null, remoteSessions: null })).toBe('7 enabled · 1 disabled');
-    // Loaded and none running is a fact, not a placeholder: nothing to say about them either way.
-    expect(taskSummary({ counts, loaded: true, addonsRunning: 0, remoteSessions: 0 })).toBe('7 enabled · 1 disabled');
   });
 });
 

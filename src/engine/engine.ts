@@ -404,6 +404,8 @@ export interface Engine {
   inboxDir(): string;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(maxBytes?: number): string;
+  /** A line for perf.log: a freeze or dropped frames a window measured. */
+  logPerf(line: string): void;
 }
 
 /**
@@ -433,6 +435,7 @@ export function createEngine(opts: EngineOptions): Engine {
   const host = detectHost();
   const settings = loadSettings(dataDir, host);
   const log = new Logger(path.join(dataDir, 'engine.log'), opts.echoLog ?? false);
+  const perfLog = new Logger(path.join(dataDir, 'perf.log'));
   const storeFile = (store: 'tasks' | 'templates'): string => {
     const custom = store === 'tasks' ? settings.tasksFile : settings.templatesFile;
     return custom ?? path.join(dataDir, `${store}.json`);
@@ -1334,6 +1337,7 @@ export function createEngine(opts: EngineOptions): Engine {
   // Run-log retention: delete records and run folders past their age limit,
   // sparing whatever runs are currently in progress.
   const RETENTION_SWEEP_MS = 60 * 60 * 1000;
+  const PERF_LOG_MAX_BYTES = 5 * 1024 * 1024;
   /** How often idle sessions are checked for an expired prompt cache (Settings → Chats). */
   const CACHE_CHECK_MS = 15_000;
   let retentionTimer: NodeJS.Timeout | null = null;
@@ -1366,6 +1370,10 @@ export function createEngine(opts: EngineOptions): Engine {
         if (dropped) log.info(`engine log: pruned ${dropped} lines older than ${settings.engineLogRetentionDays} days`);
       })
       .catch((err) => log.error(`engine-log prune failed: ${errMsg(err)}`));
+    perfLog
+      .pruneOlderThan(logCutoffMs)
+      .then(() => perfLog.rotateOver(PERF_LOG_MAX_BYTES))
+      .catch((err) => log.error(`perf-log prune failed: ${errMsg(err)}`));
   };
 
   const inbox = new Inbox(
@@ -1476,6 +1484,7 @@ export function createEngine(opts: EngineOptions): Engine {
       await versionQueue;
       log.info('looper engine stopped');
       log.close();
+      perfLog.close();
     },
     on(fn) {
       listeners.add(fn);
@@ -2030,5 +2039,6 @@ export function createEngine(opts: EngineOptions): Engine {
         return '';
       }
     },
+    logPerf: (line) => perfLog.info(line),
   };
 }

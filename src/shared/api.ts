@@ -16,6 +16,7 @@ import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
+import type { PerfEntry } from './perf';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { AgentSettingsData, AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest, McpTool } from './agent-config';
@@ -185,6 +186,8 @@ export interface LooperApi {
   openLooperFile(file: File): Promise<void>;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(): Promise<string>;
+  /** A freeze or dropped frames this window measured, for perf.log. */
+  reportPerf(entry: PerfEntry): void;
   /**
    * Open the task's harness in a terminal (same env/cwd/model/args, no prompt):
    * a Looper terminal window or the system's terminal, as the setting says. A

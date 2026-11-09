@@ -107,6 +107,10 @@ export interface RunContext {
   filter: string;
   /** A phone's run sheet: the tab it shows. */
   tab?: 'result' | 'details';
+  /** A phone's run sheet shows one message's screen over the list. */
+  message?: boolean;
+  /** Find in the open message; absent while no message is open. */
+  findInMessage?(): void;
   set(patch: Partial<Pick<RunContext, 'raw' | 'rawOutput' | 'autoScroll'>>): void;
 }
 

@@ -88,6 +88,33 @@ export class Logger {
     }
   }
 
+  /** Over maxBytes, the file becomes `<file>.1` (replacing the last one) and logging starts a new file. */
+  async rotateOver(maxBytes: number): Promise<boolean> {
+    if (!this.file || this.held) return false;
+    try {
+      if (fs.statSync(this.file).size <= maxBytes) return false;
+    } catch {
+      return false;
+    }
+    this.held = [];
+    if (this.stream) {
+      const s = this.stream;
+      this.stream = null;
+      await new Promise<void>((resolve) => s.end(resolve));
+    }
+    try {
+      fs.renameSync(this.file, `${this.file}.1`);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      const stream = this.open();
+      const held = this.held ?? [];
+      this.held = null;
+      for (const text of held) stream?.write(text + '\n');
+    }
+  }
+
   close(): void {
     this.stream?.end();
     this.stream = null;

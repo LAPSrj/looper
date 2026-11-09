@@ -42,6 +42,7 @@ function ReportedBar({ order = 0, ...nav }: NavBarProps) {
 function HostedBar({ host, nav }: { host: BarHost; nav: PageNav }) {
   const model = barModel({
     title: nav.title ?? '',
+    subtitle: nav.subtitle,
     back: nav.back,
     cancel: nav.cancel,
     confirm: nav.confirm,

@@ -1,6 +1,8 @@
 import { Fragment, type ReactNode, type Ref, type UIEvent } from 'react';
+import { Measured } from '../perf';
 import { dayGroups } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
+import { AddonSearchBox } from './AddonPane';
 import { useListNav } from './hooks';
 import { EmptyRow, Group, Row } from './phone/PhoneList';
 import { ResizableColumns, type TableCol } from './ui';
@@ -156,6 +158,8 @@ export interface DataTableProps<T> extends Omit<Rows<T>, 'phoneRow'> {
   phoneRow?: (row: T) => PhoneRowModel;
   tableRef?: Ref<HTMLDivElement>;
   onTableScroll?: (e: UIEvent<HTMLDivElement>) => void;
+  /** Text that narrows the rows. A phone or tablet types it in a search field under the rows; the desktop sets it through its own Filter command. */
+  search?: { value: string; onChange: (value: string) => void };
 }
 
 /**
@@ -164,6 +168,14 @@ export interface DataTableProps<T> extends Omit<Rows<T>, 'phoneRow'> {
  * (scratch/platforms.md, Data table). No screen writes `.runlog-table` itself.
  */
 export function DataTable<T>(props: DataTableProps<T>) {
+  return (
+    <Measured id="Table">
+      <TableBody {...props} />
+    </Measured>
+  );
+}
+
+function TableBody<T>(props: DataTableProps<T>) {
   const { cols, phoneRow } = props;
   const firstLine = (row: T): PhoneRowModel => ({
     title: cols[0].cell(row),
@@ -173,7 +185,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
       .filter((v) => typeof v === 'string' && v)
       .join(' · '),
   });
-  return isPhone ? <PhoneRows {...props} phoneRow={phoneRow ?? firstLine} rowsRef={props.tableRef} onRowsScroll={props.onTableScroll} /> : <DesktopTable {...props} />;
+  if (!isPhone) return <DesktopTable {...props} />;
+  const list = <PhoneRows {...props} phoneRow={phoneRow ?? firstLine} rowsRef={props.tableRef} onRowsScroll={props.onTableScroll} />;
+  if (!props.search) return list;
+  return (
+    <div className="pg-rows-search">
+      {list}
+      <div className="addon-search-bar">
+        <AddonSearchBox value={props.search.value} onChange={props.search.onChange} />
+      </div>
+    </div>
+  );
 }
 
 function DesktopTable<T>(props: DataTableProps<T>) {

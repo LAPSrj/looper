@@ -67,6 +67,28 @@
 .md-bar-title.no-lead {
   margin-left: 12px;
 }
+/* A title with a status line under it (PageNav subtitle). */
+.md-bar-titles {
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 4px;
+}
+.md-bar-titles.no-lead {
+  margin-left: 12px;
+}
+.md-bar-titles > .md-bar-title {
+  margin: 0;
+}
+.md-bar-subtitle {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+}
 
 .md-icon-btn.on {
   color: var(--md-primary);

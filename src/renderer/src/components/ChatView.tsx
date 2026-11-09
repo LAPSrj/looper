@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AddonSearchBox } from './AddonPane';
+import { FindBar, useFindHighlights, type FindState } from './FindBar';
+import { useNewestFirst } from './newest-first';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
@@ -11,6 +12,7 @@ import { groupRows, type ChatItem } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
 import { onUi } from '../events';
+import { Measured } from '../perf';
 import { useChatsSettings } from './hooks';
 import { ToolInputView } from './ToolContent';
 
@@ -133,27 +135,6 @@ function LimitNotice({ state }: { state: ChatState }) {
   return notice(at === undefined ? 'Looper will try to continue this chat every hour.' : `Looper will continue this chat at ${fmtClock(at, now)}.`, dontContinue);
 }
 
-/** The visible matches of `query` in `root`, in document order (case-insensitive, within one text node). */
-function findRanges(root: HTMLElement, query: string): Range[] {
-  const needle = query.toLowerCase();
-  const ranges: Range[] = [];
-  if (!needle) return ranges;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    // Text in a closed <details> isn't on screen.
-    acceptNode: (n) => (n.parentElement?.checkVisibility() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
-  });
-  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
-    const hay = node.data.toLowerCase();
-    for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) {
-      const r = document.createRange();
-      r.setStart(node, i);
-      r.setEnd(node, i + needle.length);
-      ranges.push(r);
-    }
-  }
-  return ranges;
-}
-
 /** Right-click on a message or tool call: the chat's menu for that row. */
 function showRowMenu(state: ChatState, row: MessageRow): void {
   const ended = state.status === 'ended';
@@ -219,8 +200,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
       window.removeEventListener('dragleave', leaveWindow);
     };
   }, []);
-  const [find, setFind] = useState<{ query: string; index: number } | null>(null);
-  const [matches, setMatches] = useState(0);
+  const [find, setFind] = useState<FindState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerHandle>(null);
   const findRef = useRef<HTMLInputElement | null>(null);
@@ -231,36 +211,9 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [state.rows.length, state.history.length, state.permissions.length, state.status, state.queued.length]);
 
-  // Find: every match highlighted, the current one brought into view when it changes
-  // (new output only updates the highlights, so reading elsewhere isn't interrupted).
-  const scrolledTo = useRef('');
-  useEffect(() => {
-    const root = scrollRef.current;
-    if (!root || !find) {
-      CSS.highlights.delete('chat-find');
-      CSS.highlights.delete('chat-find-current');
-      setMatches(0);
-      return;
-    }
-    const ranges = findRanges(root, find.query);
-    setMatches(ranges.length);
-    CSS.highlights.set('chat-find', new Highlight(...ranges));
-    const current = ranges.length ? ranges[((find.index % ranges.length) + ranges.length) % ranges.length] : null;
-    if (!current) {
-      CSS.highlights.delete('chat-find-current');
-      return;
-    }
-    CSS.highlights.set('chat-find-current', new Highlight(current));
-    const key = `${find.query}\n${find.index}`;
-    if (scrolledTo.current === key) return;
-    scrolledTo.current = key;
-    const box = current.getBoundingClientRect();
-    const view = root.getBoundingClientRect();
-    if (box.top < view.top || box.bottom > view.bottom) {
-      root.scrollTop += box.top - view.top - view.height / 2;
-      atBottom.current = false;
-    }
-  }, [find, state]);
+  const matches = useFindHighlights(scrollRef, find, setFind, () => {
+    atBottom.current = false;
+  });
 
   const stepFind = (dir: 1 | -1) => setFind((f) => (f ? { ...f, index: f.index + dir } : f));
   const closeFind = () => {
@@ -311,8 +264,13 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   latest.current = state;
   const ctx = useMemo<RowCtx>(() => ({ taskId: state.taskId, runId: state.id, onContextMenu: (_e, row) => showRowMenu(latest.current, row) }), [state.taskId, state.id]);
   const { expandThinking } = useChatsSettings();
-  const history = useMemo(() => groupRows(state.history, expandThinking), [state.history, expandThinking]);
-  const items = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
+  const allHistory = useMemo(() => groupRows(state.history, expandThinking), [state.history, expandThinking]);
+  const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
+
+  // Find draws every item, so it searches the whole chat.
+  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, id, allHistory.length + allItems.length, find !== null);
+  const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length)), [allHistory, hidden]);
+  const items = useMemo(() => allItems.slice(Math.max(0, hidden - allHistory.length)), [allItems, allHistory.length, hidden]);
 
   const editQueued = (messageId: string) =>
     void window.looper.chat.unqueue(id, messageId).then((m) => {
@@ -355,38 +313,15 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
         </div>
       )}
       {find && (
-        <div className="chat-find">
-          <div
-            style={{ display: 'contents' }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                stepFind(e.shiftKey ? -1 : 1);
-              }
-            }}
-          >
-            <AddonSearchBox
-              value={find.query}
-              placeholder="Find"
-              inputRef={(el) => {
-                findRef.current = el;
-              }}
-              onChange={(query) => setFind({ query, index: 0 })}
-            />
-          </div>
-          <span className="muted">
-            {!find.query ? '' : matches ? `${(((find.index % matches) + matches) % matches) + 1} of ${matches}` : 'No matches'}
-          </span>
-          <button className="btn small" disabled={!matches} onClick={() => stepFind(-1)}>
-            Previous
-          </button>
-          <button className="btn small" disabled={!matches} onClick={() => stepFind(1)}>
-            Next
-          </button>
-          <button className="btn small" onClick={closeFind}>
-            Close
-          </button>
-        </div>
+        <FindBar
+          find={find}
+          matches={matches}
+          onChange={setFind}
+          onClose={closeFind}
+          inputRef={(el) => {
+            findRef.current = el;
+          }}
+        />
       )}
       <section className="builder-chat">
         <div
@@ -395,6 +330,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           onScroll={(e) => {
             const el = e.currentTarget;
             atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            showOlder(el);
           }}
           onContextMenu={(e) => {
             const selection = window.getSelection()?.toString();
@@ -403,10 +339,12 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
             window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection, quote: !ended });
           }}
         >
-          {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
-          <Items items={history} ctx={ctx} prefix="h" />
-          {state.history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
-          <Items items={items} ctx={ctx} prefix="r" />
+          {history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
+          <Measured id="Chat rows">
+            <Items items={history} ctx={ctx} prefix="h" />
+            {state.history.length > 0 && hidden <= allHistory.length && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
+            <Items items={items} ctx={ctx} prefix="r" />
+          </Measured>
           {state.limit && state.status === 'ready' && <LimitNotice state={state} />}
           {state.permissions.map((p) => (
             <PermissionCard key={p.id} state={state} p={p} />

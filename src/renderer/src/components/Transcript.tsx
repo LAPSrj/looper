@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SubagentInfo } from '@shared/sessions';
+import { Measured } from '../perf';
 import { isPhone } from '../web/page-nav';
 import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
@@ -9,6 +10,7 @@ import { sendsOnEnter } from './composer-text';
 import { useChatsSettings } from './hooks';
 import { PromptBody } from './Markdown';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
+import { useNewestFirst } from './newest-first';
 import { InfoBar } from './ui';
 
 /** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
@@ -38,6 +40,7 @@ export function TranscriptView({
   pendingGuidance,
   pendingStatus = 'Waiting for the agent',
   footer,
+  drawAll = false,
 }: {
   taskId: string;
   runId: string;
@@ -46,6 +49,8 @@ export function TranscriptView({
   pendingGuidance?: string;
   pendingStatus?: React.ReactNode;
   footer?: React.ReactNode;
+  /** Every message drawn, not only the newest ones (a Find over it). */
+  drawAll?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -72,7 +77,9 @@ export function TranscriptView({
     }),
     [taskId, runId],
   );
-  const items = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
+  const allItems = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
+  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll);
+  const items = useMemo(() => allItems.slice(hidden), [allItems, hidden]);
   return (
     <div className="chat-app">
       <div
@@ -81,11 +88,14 @@ export function TranscriptView({
         onScroll={(e) => {
           const el = e.currentTarget;
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          showOlder(el);
         }}
       >
-        {items.map((item) =>
-          item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
-        )}
+        <Measured id="Transcript rows">
+          {items.map((item) =>
+            item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
+          )}
+        </Measured>
         {rows.length === 0 && !pendingGuidance && <div className="muted">{waitingText}</div>}
         {pendingGuidance && (
           <div className="chat-queued">

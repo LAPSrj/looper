@@ -7,15 +7,16 @@ import { groupRuns } from '@shared/runs';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
 import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
-import { clockTime, resultTone, timeAndDuration } from '../phone-lists';
+import { clockTime, resultTone } from '../phone-lists';
 import { initialRow, rowMatches, runTableRows, type ConversationRow, type RunTableRow, type StepRow } from '../run-rows';
 import { phoneNav } from './command-surfaces';
 import { DataTable, type DataCol } from './DataTable';
+import { FindBar, useFindHighlights, type FindState } from './FindBar';
 import { useCommandMenu, useCommandState } from './useCommands';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
 import { Markdown } from './Markdown';
-import { Group, Row as ListRow } from './phone/PhoneList';
+import { Group } from './phone/PhoneList';
 import { TranscriptView } from './Transcript';
 
 const POLL_MS = 2000;
@@ -172,7 +173,10 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const [showResult, setShowResult] = useState(true);
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(false);
+  const [find, setFind] = useState<FindState | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const findInput = useRef<HTMLInputElement | null>(null);
   const atBottomRef = useRef(true);
 
   // The filter window sends its value.
@@ -197,6 +201,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     void window.looper.tasks.list().then((tasks) => setWorkFolder(!!tasks.find((x) => x.id === taskId)?.cwd));
   }, [taskId]);
   const run = useMemo(() => (agentId ? undefined : groupRuns(records)[0]), [records, agentId]);
+  // A phone's Result tab shows the run's result; with none, the list is all there is.
+  const hasResult = !!run?.resultText;
   const commands: CommandContext = {
     ...commandState,
     run: {
@@ -210,7 +216,9 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       rawOutput,
       autoScroll,
       filter,
-      tab: run && showResult ? 'result' : 'details',
+      tab: hasResult && showResult ? 'result' : 'details',
+      message: !selectsFirstRow && selected !== null,
+      findInMessage: selected === null ? undefined : () => setFind((f) => f ?? { query: '', index: 0 }),
       set: (patch) => {
         if (patch.raw !== undefined) setRaw(patch.raw);
         if (patch.rawOutput !== undefined) setRawOutput(patch.rawOutput);
@@ -322,6 +330,14 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const idx = selected === null ? -1 : visible.findIndex((r) => r.id === selected);
   const current = idx >= 0 ? visible[idx] : null;
 
+  // Find in Message searches the open row; another row closes it.
+  useEffect(() => setFind(null), [selected]);
+  const findOpen = find !== null;
+  useEffect(() => {
+    if (findOpen) findInput.current?.focus();
+  }, [findOpen]);
+  const matches = useFindHighlights(detailRef, find, setFind);
+
   // A run record's content; the agent's end record reads the captured terminal output.
   // Records are only ever appended, so the selected record's identity is stable.
   const currentRecord = current?.kind === 'step' ? current.record : null;
@@ -376,6 +392,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       rows={c.rows}
       waitingText={emptyText()}
       pendingGuidance={c.source === 'classifier' ? undefined : result?.pendingGuidance}
+      drawAll={find !== null}
     />
   );
 
@@ -413,31 +430,21 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
         detailTitle={current ? (current.kind === 'conversation' ? 'Conversation' : typeLabel(current)) : undefined}
         empty="Select a row"
         summary={
-          run && {
-            label: 'Result',
-            listLabel: 'Details',
-            shown: showResult,
-            onShown: setShowResult,
-            body: (
-              <>
-                {run.resultText && (
+          hasResult
+            ? {
+                label: 'Result',
+                listLabel: 'Details',
+                shown: showResult,
+                onShown: setShowResult,
+                body: (
                   <Group>
                     <div className="pg-result">
-                      <Markdown text={run.resultText} />
+                      <Markdown text={run.resultText!} />
                     </div>
                   </Group>
-                )}
-                <Group>
-                  <ListRow
-                    title="Outcome"
-                    sub={<span className="pg-oneline">{timeAndDuration(run.startTs, run.totalDurationMs > 0 ? formatDuration(run.totalDurationMs) : '')}</span>}
-                    value={running ? 'Running' : resultLabel(run.result)}
-                    valueTone={resultTone(run.result)}
-                  />
-                </Group>
-              </>
-            ),
-          }
+                ),
+              }
+            : undefined
         }
         list={
           <DataTable
@@ -457,6 +464,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
             }}
             note={raw && dropped > 0 ? `${dropped} earlier messages not shown` : undefined}
             empty={rows.length > 0 ? 'No rows match the filter.' : emptyText()}
+            search={{ value: filter, onChange: setFilter }}
             dayOf={(r) => (r.ts ? Date.parse(r.ts) : NaN)}
             sectionTitle={(day, days) => (days > 1 ? `Run, ${day}` : 'Run')}
             phoneRow={(r) => ({
@@ -468,7 +476,20 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
         }
         detail={
           <div className={`messages-detail${current?.kind === 'conversation' ? ' messages-detail-chat' : ''}`}>
-            {current === null ? <div className="messages-detail-empty muted">Select a row</div> : detail(current)}
+            {find && current !== null && (
+              <FindBar
+                find={find}
+                matches={matches}
+                onChange={setFind}
+                onClose={() => setFind(null)}
+                inputRef={(el) => {
+                  findInput.current = el;
+                }}
+              />
+            )}
+            <div className="messages-detail-body" ref={detailRef}>
+              {current === null ? <div className="messages-detail-empty muted">Select a row</div> : detail(current)}
+            </div>
           </div>
         }
       />

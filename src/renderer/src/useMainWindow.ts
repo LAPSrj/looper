@@ -365,8 +365,6 @@ export function useMainWindow(menuTab?: string) {
     preventSleep,
     remote,
     remoteOpen,
-    // False until Remote Control's state answers: before that its sessions can't be told from none.
-    remoteLoaded: remote !== null,
     counts,
     addons,
     addonsLoaded,

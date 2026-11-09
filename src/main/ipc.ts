@@ -9,6 +9,7 @@ import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
 import { folderSubtree } from '../shared/folders';
 import { NOT_MOBILE } from '../shared/ui-platform';
+import { perfLine } from '../shared/perf';
 import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
@@ -339,6 +340,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   );
 
   ipc.handle('engineLog:read', () => engine.readEngineLog());
+  ipc.on('perf:report', (_e, entry: unknown) => {
+    const line = perfLine(entry);
+    if (!line) return;
+    const client = caller()?.client;
+    engine.logPerf(`${client ? `${client.device.name.replace(/\s+/g, ' ').slice(0, 60)} (${client.platform})` : 'desktop'} | ${line}`);
+  });
 
   ipc.handle('task:openTerminal', (_e, id: string, runId?: string) => host.openTerminal(id, runId));
   ipc.handle('terminalSession:output', (_e, id: string) => engine.terminalSessionOutput(id));

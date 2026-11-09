@@ -32,6 +32,14 @@ describe('a bar’s buttons (barModel)', () => {
   });
 });
 
+describe('a bar’s subtitle (barModel)', () => {
+  it('keeps a status line under the title, and has none when it’s empty', () => {
+    expect(barModel({ title: 'Fix the build', subtitle: '2 subagents running', dismiss: null }).subtitle).toBe('2 subagents running');
+    expect(barModel({ title: 'Fix the build', subtitle: '', dismiss: null }).subtitle).toBeNull();
+    expect(barModel({ title: 'Fix the build', dismiss: null }).subtitle).toBeNull();
+  });
+});
+
 describe('what closes a container (dismissFor)', () => {
   const run = { back: () => 'back', close: () => 'close' };
   it('goes back from a pushed screen, closes a sheet or dialog, and has no button on the root or a bottom sheet', () => {

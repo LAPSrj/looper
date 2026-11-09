@@ -121,6 +121,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     openPath: (p) => t.invoke('openPath', p),
     openLooperFile: async (file) => t.invoke('file:openLooper', await t.filePath(file)),
     readEngineLog: () => t.invoke('engineLog:read'),
+    reportPerf: (entry) => t.send('perf:report', entry),
     openTaskTerminal: (taskId, runId) => t.invoke('task:openTerminal', taskId, runId),
     openTaskChat: (taskId, runId) => t.invoke('task:openChat', taskId, runId).catch(plainError),
     openItemWindow: (kind, id) => t.send('window:openItem', kind, id),

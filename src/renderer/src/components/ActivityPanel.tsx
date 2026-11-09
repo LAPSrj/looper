@@ -167,7 +167,8 @@ function CallList({
   const listRef = useRef<HTMLDivElement>(null);
   const rowId = (n: number) => `now-call-${tools[n]?.id}`;
   const onKeyDown = useListNav({ count: tools.length, index, onIndex, onActivate: onShow, scrollToId: tools[index] ? rowId(index) : null });
-  useEffect(() => listRef.current?.focus(), []);
+  // On a phone this mounts in a sheet still rising from below the screen, which WebKit would scroll the page to show.
+  useEffect(() => listRef.current?.focus({ preventScroll: true }), []);
   return (
     <div ref={listRef} className="now-calls" role="listbox" aria-label="Tool calls" tabIndex={0} aria-activedescendant={tools[index] ? rowId(index) : undefined} onKeyDown={onKeyDown}>
       {tools.map((t, n) => {

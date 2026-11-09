@@ -31,7 +31,7 @@ import {
 import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
 import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
-import { IosBarRow, NavIcon } from './NavBarRow';
+import { IosBarRow, IosBrowserBarRow, NavIcon } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import './ios.css';
 
@@ -77,8 +77,10 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
   }, []);
 
-  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, anchor: button.getBoundingClientRect() });
-  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: button.getBoundingClientRect() });
+  // A bar button's menu hangs from its group's trailing edge, whichever button of the group opened it.
+  const anchorOf = (button: HTMLElement) => (button.closest('.ios-bar-group') ?? button).getBoundingClientRect();
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, anchor: anchorOf(button) });
+  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: anchorOf(button) });
 
   return (
     <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
@@ -153,7 +155,7 @@ function IosBar({
     // iPad's split view: the tab bar near the top, then a bar over each column. The list's bar has the
     // window's own Back; the detail's has the page's (a deeper screen in that column).
     const list = barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: () => controller.close(sc.win.w) } : null });
-    const detail = barModel({ title: nav?.title ?? '', back, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
+    const detail = barModel({ title: nav?.title ?? '', subtitle: nav?.subtitle, back, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
     return (
       <header className="ios-bar split" style={{ background: !edge ? undefined : edge.scrolled ? 'var(--ios-bar)' : edge.color }}>
         {nav?.tabs && <IosTabBar tabs={nav.tabs} />}
@@ -183,6 +185,7 @@ function IosBar({
   }
   const model = barModel({
     title: nav?.title ?? sc.win.title,
+    subtitle: nav?.subtitle,
     back,
     cancel: nav?.cancel,
     confirm: nav?.confirm,
@@ -223,11 +226,14 @@ const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'ra
 
 /**
  * One level of a menu as iOS draws it: groups split by a thick gap, a check
- * before chosen items, the item's symbol at its end (a chevron on submenus),
- * destructive items in red.
+ * before chosen items, the item's symbol before its label (a chevron at the
+ * end of a submenu), destructive items in red. A group shows symbols only when
+ * every item in it has one (HIG: Menus, "icons for all menu items in a group,
+ * or none of them").
  */
 function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
   const checks = items.some(isChoice);
+  const iconOf = (it: MenuItemSpec) => (it.type !== 'submenu' ? it.icon : undefined);
   return (
     <div className="ios-menu-scroll ph-scroll" role="menu">
       {title !== null && (
@@ -236,7 +242,9 @@ function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
           <span className="ios-menu-label">{title}</span>
         </button>
       )}
-      {menuGroups(items).map((group, gi) => (
+      {menuGroups(items).map((group, gi) => {
+        const icons = group.every((it) => iconOf(it));
+        return (
         <div key={gi} className="ios-menu-group">
           {group.map((it) => (
             <button
@@ -249,20 +257,18 @@ function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
               onClick={() => onItem(it)}
             >
               {checks && <span className="ios-menu-check">{it.checked ? CHECK : null}</span>}
-              <span className="ios-menu-label">{plainLabel(it.label)}</span>
-              {it.type === 'submenu' ? (
-                <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>
-              ) : (
-                it.icon && (
-                  <span className="ios-menu-icon">
-                    <NavIcon name={it.icon} size={20} />
-                  </span>
-                )
+              {icons && (
+                <span className="ios-menu-icon">
+                  <NavIcon name={iconOf(it)!} size={20} />
+                </span>
               )}
+              <span className="ios-menu-label">{plainLabel(it.label)}</span>
+              {it.type === 'submenu' && <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>}
             </button>
           ))}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -276,13 +282,38 @@ function placeMenu(x: number, y: number, width: number, height: number, vw: numb
   return below ? { left, top, width, maxHeight: vh - top - 8 } : { left, bottom, width, maxHeight: vh - bottom - 8 };
 }
 
-/** The More button's pull-down menu, under the button. */
-function PullDown({ items, anchor, onPick, onClose }: { items: MenuItemSpec[]; anchor: DOMRect; onPick: (it: MenuItemSpec) => void; onClose: () => void }) {
+/**
+ * A bar button's pull-down menu, under its group and as wide as its longest
+ * item. A tap outside only closes it: the layer takes the whole tap, so a tap
+ * on the button that opened it doesn't open it again.
+ */
+function PullDown({
+  items,
+  anchor,
+  align = 'end',
+  onPick,
+  onClose,
+}: {
+  items: MenuItemSpec[];
+  anchor: DOMRect;
+  /** Where the menu lines up: a bar button's trailing edge, or centered under a title (kept on the screen). */
+  align?: 'center' | 'end';
+  onPick: (it: MenuItemSpec) => void;
+  onClose: () => void;
+}) {
   const sub = useSubmenus(items);
-  const width = 250;
+  const box = useRef<HTMLDivElement>(null);
+  // Centered once its width is known, which depends on its longest item.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || align !== 'center') return;
+    const width = el.offsetWidth;
+    el.style.left = `${Math.min(Math.max(8, anchor.left + anchor.width / 2 - width / 2), window.innerWidth - width - 8)}px`;
+  }, [align, anchor, sub.level]);
+  const side = align === 'center' ? { left: 8 } : { right: Math.max(8, window.innerWidth - anchor.right) };
   return (
-    <div className="ios-menu-layer" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="ios-menu" style={{ right: Math.max(8, window.innerWidth - anchor.right), top: anchor.bottom + 6, width }}>
+    <div className="ios-menu-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={box} className="ios-menu ios-pull-down" style={{ ...side, top: anchor.bottom + 6 }}>
         <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={(it) => (it.type === 'submenu' ? sub.open(it) : onPick(it))} />
       </div>
     </div>
@@ -388,6 +419,7 @@ function Sheet({
   shell,
   label,
   bar,
+  header,
   onClose,
   small,
   children,
@@ -396,6 +428,8 @@ function Sheet({
   label: string;
   /** The bar's Back, Cancel, Confirm and actions; without a Back or a Cancel, its xmark closes the sheet. */
   bar?: Pick<NavBarProps, 'back' | 'cancel' | 'confirm' | 'actions'>;
+  /** A bar of its own in place of the NavBar one (the file browser's). */
+  header?: ReactNode;
   onClose: () => void;
   small?: boolean;
   children: ReactNode;
@@ -435,14 +469,86 @@ function Sheet({
           }}
         >
           {!shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
-          <BarHostContext.Provider value={host}>
-            <NavBar title={label} {...bar} />
-          </BarHostContext.Provider>
+          {header ?? (
+            <BarHostContext.Provider value={host}>
+              <NavBar title={label} {...bar} />
+            </BarHostContext.Provider>
+          )}
         </header>
         <div className="ios-sheet-body">{children}</div>
       </div>
     </div>
   );
+}
+
+/** The file browser's bar (IosBrowserBarRow) on a HostBrowser, and its title's menu of the folders above, nearest first. */
+function FilesBar({
+  shell,
+  browser,
+  actions,
+  confirm,
+  onClose,
+}: {
+  shell: PhoneShell;
+  browser: HostBrowser;
+  actions: { id: string; label: string; icon: string; run: () => void }[];
+  confirm?: { label: string; disabled: boolean; run: () => void };
+  onClose: () => void;
+}) {
+  const [menu, setMenu] = useState<DOMRect | null>(null);
+  const crumbs = browser.crumbs;
+  const above = crumbs.slice(0, -1).reverse();
+  const root = shell.rootRef.current;
+  return (
+    <>
+      <IosBrowserBarRow
+        title={crumbs[crumbs.length - 1].label}
+        canBack={browser.canBack}
+        canForward={browser.canForward}
+        onBack={browser.back}
+        onForward={browser.forward}
+        onTitleMenu={above.length > 0 ? (button) => setMenu(button.getBoundingClientRect()) : undefined}
+        actions={actions}
+        confirm={confirm}
+        onClose={onClose}
+      />
+      {menu &&
+        root &&
+        createPortal(
+          <PullDown
+            items={above.map((c, i) => ({ id: String(i), type: 'normal', label: c.label, enabled: true, icon: 'openFolder' }))}
+            anchor={menu}
+            align="center"
+            onClose={() => setMenu(null)}
+            onPick={(it) => {
+              setMenu(null);
+              browser.go(above[Number(it.id)].path);
+            }}
+          />,
+          root,
+        )}
+    </>
+  );
+}
+
+/** The search field under the file browser's bar: it narrows the folder's list as you type. */
+function FilesSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="ios-files-search">
+      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="m10.3 10.3 3.2 3.2" />
+      </svg>
+      <input type="search" enterKeyHint="search" placeholder="Search" aria-label="Search" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={value} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+/** A file browser's search text, emptied when it moves to another folder. */
+function useFolderSearch(path: string | null): [string, (value: string) => void] {
+  const [query, setQuery] = useState('');
+  useEffect(() => setQuery(''), [path]);
+  return [query, setQuery];
 }
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
@@ -483,22 +589,26 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
   const onDevice = f.source === 'device';
   const noun = deviceNoun('ios', shell.tablet);
   const showConfirm = !(onDevice && f.kind === 'open');
-  // One bar: inside a folder its name and Back take the title's and Cancel's places, and Cancel moves to the end, as the system's file picker has it.
-  const parent = !onDevice && f.browser.crumbs.length > 1;
+  const confirm = showConfirm ? { label: f.confirmLabel, disabled: !f.canConfirm, run: f.confirm } : undefined;
+  const [query, setQuery] = useFolderSearch(f.browser.path);
   return (
     <Sheet
       shell={shell}
-      label={parent ? f.browser.crumbs[f.browser.crumbs.length - 1].label : f.title}
+      label={f.title}
       onClose={f.cancel}
-      bar={{
-        back: parent ? f.browser.up : undefined,
-        cancel: { run: f.cancel },
-        confirm: showConfirm ? { label: f.confirmLabel, disabled: !f.canConfirm, run: f.confirm } : undefined,
-        actions: [
-          ...(parent ? [{ id: 'cancel', label: 'Cancel', icon: 'close', run: f.cancel }] : []),
-          ...(!onDevice && f.browser.path !== null ? [{ id: 'new-folder', label: 'New Folder', icon: 'newProject', run: () => setNaming(true) }] : []),
-        ],
-      }}
+      // This device's files are the system's own picker: only Cancel and Confirm here.
+      bar={{ cancel: { run: f.cancel }, confirm }}
+      header={
+        onDevice ? undefined : (
+          <FilesBar
+            shell={shell}
+            browser={f.browser}
+            actions={f.browser.path !== null ? [{ id: 'new-folder', label: 'New Folder', icon: 'newProject', run: () => setNaming(true) }] : []}
+            confirm={confirm}
+            onClose={f.cancel}
+          />
+        )
+      }
     >
       {f.sources.length > 1 && (
         <Segmented
@@ -538,15 +648,19 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
           </div>
         )
       ) : (
-        <FileRows
-          os="ios"
-          browser={f.browser}
-          onFile={(entry) => {
-            if (f.kind === 'save') f.setName(entry.name);
-            else if (f.multi) f.browser.select(entry, { toggle: true });
-            else f.activate(entry);
-          }}
-        />
+        <>
+          <FilesSearch value={query} onChange={setQuery} />
+          <FileRows
+            os="ios"
+            browser={f.browser}
+            query={query}
+            onFile={(entry) => {
+              if (f.kind === 'save') f.setName(entry.name);
+              else if (f.multi) f.browser.select(entry, { toggle: true });
+              else f.activate(entry);
+            }}
+          />
+        </>
       )}
       {naming && <NewFolderAlert browser={f.browser} onDone={() => setNaming(false)} />}
       <LocalAlert msg={f.message} />
@@ -557,6 +671,7 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
 /** A folder or file on the host computer the user asked to see: a folder to browse, an image or text file to look at. */
 function PathSheet({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  const [query, setQuery] = useFolderSearch(p.browser?.path ?? null);
   if (p.view) {
     const view = p.view;
     const steps = p.steps;
@@ -584,21 +699,15 @@ function PathSheet({ controller, shell, req }: { controller: ShellController; sh
   }
   if (!p.browser) return <LocalAlert msg={p.message} />;
   const browser = p.browser;
-  const parent = browser.crumbs.length > 1;
   return (
     <Sheet
       shell={shell}
       label={browser.crumbs[browser.crumbs.length - 1].label}
       onClose={p.close}
-      bar={{
-        back: parent ? browser.up : undefined,
-        actions: [
-          { id: 'open-on-host', label: `Open on ${HOST_COMPUTER}`, icon: 'openFolder', run: p.openOnComputer },
-          ...(parent ? [{ id: 'close', label: 'Close', icon: 'close', run: p.close }] : []),
-        ],
-      }}
+      header={<FilesBar shell={shell} browser={browser} actions={[{ id: 'open-on-host', label: `Open on ${HOST_COMPUTER}`, icon: 'openFolder', run: p.openOnComputer }]} onClose={p.close} />}
     >
-      <FileRows os="ios" browser={browser} onFile={p.openFile} />
+      <FilesSearch value={query} onChange={setQuery} />
+      <FileRows os="ios" browser={browser} query={query} onFile={p.openFile} />
       <LocalAlert msg={p.message} />
     </Sheet>
   );

@@ -49,14 +49,17 @@ export type RowTap = (entry: HostDirEntry) => void;
  * chevron, files with their size and date. A folder slides in from the side
  * it was entered from.
  */
-export function FileRows({ os, browser, onFile, emptyText }: { os: PhoneOs; browser: HostBrowser; onFile: RowTap; emptyText?: string }) {
+export function FileRows({ os, browser, onFile, emptyText, query }: { os: PhoneOs; browser: HostBrowser; onFile: RowTap; emptyText?: string; query?: string }) {
+  // The search field's text narrows the folder's entries by name.
+  const needle = query?.trim().toLowerCase() ?? '';
+  const entries = needle ? browser.entries.filter((e) => e.name.toLowerCase().includes(needle)) : browser.entries;
   const depth = browser.crumbs.length;
   const prev = useRef<{ depth: number; dir: 'fwd' | 'back' | 'none' }>({ depth, dir: 'none' });
   if (depth !== prev.current.depth) prev.current = { depth, dir: depth > prev.current.depth ? 'fwd' : 'back' };
   const dir = prev.current.dir;
   return (
     <div key={browser.path ?? ''} className={`ph-files ph-scroll slide-${dir}`} role="list">
-      {(browser.path === null ? groupPlaces(browser.entries) : browser.entries.map((entry) => ({ heading: null, entry }))).map(({ heading, entry }) => {
+      {(browser.path === null ? groupPlaces(entries) : entries.map((entry) => ({ heading: null, entry }))).map(({ heading, entry }) => {
         const selected = browser.selected.includes(entry.path);
         return (
           <Fragment key={entry.path}>
@@ -83,6 +86,7 @@ export function FileRows({ os, browser, onFile, emptyText }: { os: PhoneOs; brow
         );
       })}
       {!browser.loading && browser.entries.length === 0 && <div className="ph-files-empty">{emptyText ?? 'This folder is empty.'}</div>}
+      {browser.entries.length > 0 && entries.length === 0 && <div className="ph-files-empty">No Results</div>}
       {browser.loading && browser.entries.length === 0 && <div className="ph-files-empty">Loading…</div>}
     </div>
   );

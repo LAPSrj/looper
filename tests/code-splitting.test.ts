@@ -33,7 +33,9 @@ describe('window code splitting (PF-02)', () => {
   });
 
   it('reports a window ready from inside the Suspense boundary, beside the lazy app', () => {
-    expect(main).toMatch(/<Suspense fallback=\{null\}>\s*\{pickRoot\(\)\}\s*\{onRendered && <WindowReady onReady=\{report\} \/>\}\s*<\/Suspense>/);
+    expect(main).toMatch(
+      /<Suspense fallback=\{null\}>\s*<Measured id=\{rootId\}>\{pickRoot\(\)\}<\/Measured>\s*\{onRendered && <WindowReady onReady=\{report\} \/>\}\s*<\/Suspense>/,
+    );
     expect(read('WindowReady.tsx')).toContain('useLayoutEffect');
   });
 

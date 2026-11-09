@@ -20,7 +20,7 @@ function AccountLimits({ limits }: { limits: UsageLimits }) {
 }
 
 /**
- * The Usage sheet's content: the session's facts, the account's limits, then
+ * The Usage sheet's content: the session's facts (none yet in a new chat), the account's limits, then
  * the chat's harness, model, effort and permission mode as rows that open the
  * same menus the desktop's command bar has.
  */
@@ -40,11 +40,13 @@ export function UsagePanel({ summary, chat, limits }: { summary: SessionSummary;
   );
   return (
     <div className="usage-panel">
-      <Group title="Session">
-        {facts.map((f) => (
-          <Row key={f.label} title={f.label} value={f.value} />
-        ))}
-      </Group>
+      {facts.length > 0 && (
+        <Group title="Session">
+          {facts.map((f) => (
+            <Row key={f.label} title={f.label} value={f.value} />
+          ))}
+        </Group>
+      )}
       <AccountLimits limits={limits} />
       {chat && labels && (
         <Group title="Chat Settings">

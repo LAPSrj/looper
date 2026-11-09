@@ -254,9 +254,96 @@ html[data-platform='ios'] {
   background: var(--ios-sheet);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
+/* The file browser's bar (FilesBar): the folder's name is a button that opens the folders above it. */
+.ios-files-bar .ios-title-menu {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+}
+.ios-files-bar .ios-title-menu:disabled {
+  color: var(--ios-label);
+}
+.ios-title-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-title-menu-chevron {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--ios-fill);
+  color: var(--ios-label2);
+}
+/* Its search field, under the bar. */
+.ios-files-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin: 4px 16px 0;
+  padding: 0 14px;
+  border-radius: 22px;
+  background: var(--ios-fill);
+  color: var(--ios-label2);
+}
+.ios-files-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 17px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ios-files-search input::placeholder {
+  color: var(--ios-label2);
+}
 .ph-root .ios-own-sheet .ph-files {
   background: transparent;
   border-top: none;
+  padding: 16px 0;
+}
+/* In a sheet the folder's rows are an inset grouped card, as the Name field above them is: rounded
+   at each run's ends, no hairline under its last row. */
+.ph-root .ios-own-sheet .ph-file-item {
+  margin: 0 16px;
+  overflow: hidden;
+  background: var(--ios-sheet-cell);
+}
+.ph-root .ios-own-sheet .ph-file-item:not(.ph-file-item + .ph-file-item) {
+  border-top-left-radius: 26px;
+  border-top-right-radius: 26px;
+}
+.ph-root .ios-own-sheet .ph-file-item:not(:has(+ .ph-file-item)) {
+  border-bottom-left-radius: 26px;
+  border-bottom-right-radius: 26px;
+}
+.ph-root .ios-own-sheet .ph-file-item:not(:has(+ .ph-file-item)) .ph-file-row::after {
+  display: none;
+}
+.ph-root .ios-own-sheet .ph-files-group {
+  background: transparent;
+  padding-inline: 32px;
 }
 .ph-root .ios-own-sheet .ios-group {
   background: var(--ios-sheet-cell);
@@ -570,6 +657,12 @@ html[data-platform='ios'] {
   box-shadow: var(--ios-glass-edge), 0 12px 40px rgba(0, 0, 0, 0.2);
   animation: ph-pop-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+/* A bar button's menu takes its longest item's width, up to the screen's, instead of cutting it short. */
+.ios-menu.ios-pull-down {
+  width: max-content;
+  min-width: 250px;
+  max-width: calc(100% - 16px);
+}
 .ios-menu-scroll {
   flex: 1;
   min-width: 0;
@@ -625,7 +718,7 @@ html[data-platform='ios'] {
   display: flex;
   color: var(--ios-label2);
 }
-/* The item's symbol, at its end as UIMenu draws it. */
+/* The item's symbol, before its label. */
 .ios-menu-icon {
   display: flex;
   flex: none;

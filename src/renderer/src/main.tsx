@@ -8,6 +8,7 @@ import { setAppLocale } from './format';
 import './styles.css';
 import { App } from './App';
 import { phoneStyles } from './components/phone/keyboard';
+import { attachWebFramePerf, Measured, startDesktopPerf, startWebTopPerf, windowRouteName } from './perf';
 import { WindowBoundary, WindowReady } from './WindowReady';
 import { wakeableSleep, waitForPairing } from './web/boot';
 import { flushWhenHidden, idbBackend } from './web/offline-idb';
@@ -307,7 +308,11 @@ async function bootWebTop() {
     if (started.session) return true;
     if (!offline.shell()?.windows.length) return false;
     started.session = startSession(offline, true);
-    root.render(<Shell session={started.session} />);
+    root.render(
+      <Measured id="Phone shell">
+        <Shell session={started.session} />
+      </Measured>,
+    );
     return true;
   };
   // A computer that's asleep or out of reach often leaves the request hanging instead of refusing it.
@@ -337,7 +342,13 @@ async function bootWebTop() {
     );
     return;
   }
-  if (!started.session) root.render(<Shell session={startSession(offline)} />);
+  if (!started.session) {
+    root.render(
+      <Measured id="Phone shell">
+        <Shell session={startSession(offline)} />
+      </Measured>,
+    );
+  }
 }
 
 /**
@@ -353,6 +364,7 @@ function bootWindow(onRendered?: () => void) {
     reported = true;
     onRendered?.();
   };
+  const rootId = `Window ${windowRouteName()}`;
   const info = window.looper
     .info()
     .then((i) => setAppLocale(i.locale))
@@ -364,7 +376,7 @@ function bootWindow(onRendered?: () => void) {
         <React.StrictMode>
           <WindowBoundary onFailed={report}>
             <Suspense fallback={null}>
-              {pickRoot()}
+              <Measured id={rootId}>{pickRoot()}</Measured>
               {onRendered && <WindowReady onReady={report} />}
             </Suspense>
           </WindowBoundary>
@@ -376,10 +388,13 @@ function bootWindow(onRendered?: () => void) {
 }
 
 if (platform !== 'electron' && window === window.top) {
+  startWebTopPerf();
   void bootWebTop();
 } else if (platform !== 'electron') {
   const frame = attachFrame();
+  attachWebFramePerf();
   bootWindow(frame.ready);
 } else {
+  startDesktopPerf();
   bootWindow();
 }

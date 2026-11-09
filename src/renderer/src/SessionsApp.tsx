@@ -37,14 +37,14 @@ import { MessageBox, type MessageBoxStop } from './components/MessageBox';
 import { RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
 import { useAutoGrow } from './components/phone/auto-grow';
 import { OverviewSwitch, type OverviewChoice } from './components/phone/OverviewSwitch';
-import { Group, LargeTitle, Row } from './components/phone/PhoneList';
+import { LargeTitle } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
 import { ReorderSheet } from './components/phone/ReorderSheet';
 import { useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { SessionIcon, SessionList, statusText } from './components/SessionList';
-import { groupStatusText, subagentTabs } from './components/subagents';
+import { runningText, subagentTabs } from './components/subagents';
 import { SubagentIcon } from './components/SubagentIcon';
 import { contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
 import { TerminalView } from './components/TerminalView';
@@ -310,6 +310,9 @@ export function PhoneOverview({
   reordering: boolean;
   onReordered: () => void;
 }) {
+  // Only the cards near the screen show their conversation, as on the desktop's dashboard.
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  const [inView, track] = useCardsInView(root);
   if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
   const big = shown.bigCards;
   const toggleBig = (id: string) => {
@@ -318,10 +321,15 @@ export function PhoneOverview({
   };
   return (
     <>
-      <div className="sessions-overview">
-        {dashboardOrder(sessions, shown.cardOrder, shown.waitingFirst).map((x) => (
-          <DashboardCard key={x.id} s={x} onOpen={onOpen} size={{ big: big.includes(x.id), onToggle: () => toggleBig(x.id), area: {} }} />
-        ))}
+      <div className="sessions-overview" ref={(el) => setRoot(el?.closest<HTMLElement>('.pg-scroll') ?? null)}>
+        {dashboardOrder(sessions, shown.cardOrder, shown.waitingFirst).map((x) => {
+          const size = { big: big.includes(x.id), onToggle: () => toggleBig(x.id), area: {} };
+          return showsConversation(x) ? (
+            <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} track={track} onOpen={onOpen} />
+          ) : (
+            <DashboardCard key={x.id} s={x} onOpen={onOpen} size={size} />
+          );
+        })}
       </div>
       {reordering && (
         <ReorderSheet
@@ -430,10 +438,15 @@ const readActivity = (id: string) => window.looper.sessions.activity(id);
 const activityEvent = (e: EngineEvent, id: string) => (e.type === 'session:activity' && e.activity.id === id ? e.activity : undefined);
 
 /**
- * A chat or task run on the desktop dashboard: its title bar (a click opens it, a
+ * A chat or task run on the dashboard: its title bar (a click opens it, a
  * right-click its menu), then the conversation itself, as in the window's middle
  * without the activity pane: a chat with its message box, a task run with its
  * guidance box. Out of view, the card shows the agent's latest messages instead.
+ * On a phone the conversation is cut to the card's height at its newest end, so
+ * the card doesn't scroll inside the scrolling Overview (HIG: Scroll views, "Avoid
+ * putting a scroll view inside another scroll view with the same orientation";
+ * Material: Cards); the title opens the chat.
+ * `drag` only on the desktop, where cards are dragged to another place.
  */
 function LiveCard({
   s,
@@ -446,7 +459,7 @@ function LiveCard({
   s: SessionSummary;
   live: boolean;
   size: CardSize;
-  drag: CardDrag;
+  drag?: CardDrag;
   track: TrackCard;
   onOpen: (id: string) => void;
 }) {
@@ -498,7 +511,7 @@ function LiveCard({
     <div
       ref={ref}
       data-id={s.id}
-      className={cardClass(s, ' overview-chat') + drag.mark}
+      className={cardClass(s, ' overview-chat') + (drag?.mark ?? '') + (size.big ? ' big' : '')}
       style={size.area}
       onFocus={seen}
     >
@@ -924,9 +937,11 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   const listed = useRef(false);
   useEffect(() => {
     if (summary) listed.current = true;
-    // With the list beside it (iPad), the window stays and shows the list (useSessionsWindow drops the selection).
-    else if (opened && listed.current && !split) window.close();
-  }, [summary, opened, split]);
+    // The shown conversation closed. Not one on its way (Compact or Fork shows the new chat before it's
+    // listed), which shows "Starting…" until it is. With the list beside it (iPad), the window stays and
+    // shows the list (useSessionsWindow drops the selection).
+    else if (opened && listed.current && !split && !starting) window.close();
+  }, [summary, opened, split, starting]);
 
   // The bar and More, from the one list: the Activity sheet and the Usage sheet answer for what the desktop's status bar and pane do.
   const commandState = useCommandState();
@@ -965,12 +980,15 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           ? terminalTitle(summary)
           : summary.title
         : undefined;
+  // What runs beside the conversation, under its title (the bar's Activity button lists them).
+  const subtitle = summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status))) ?? undefined) : undefined;
   const bar = (
     <NavBar
       {...(split
       ? {
           // iPad: the bar over the list has its title and buttons; the rest is the conversation's.
           title: title ?? '',
+          subtitle,
           back: summary && (sheet || workflow || s.follow) ? back : undefined,
           actions,
           largeTitle: false,
@@ -987,6 +1005,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
         }
       : {
           title: title ?? (single ? undefined : 'Chats'),
+          subtitle,
           back: summary && (!closesWindow || sheet || workflow || s.follow) ? back : undefined,
           actions: single && !summary ? [] : actions,
           // The list's large title; a conversation on its way has none to scroll past.
@@ -1053,7 +1072,7 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
     </Inspector>
   );
   const usageSheet = summary && usage && (
-    <PhoneSheet title="Usage" detent="medium" onClose={() => setUsage(false)}>
+    <PhoneSheet title="Usage" onClose={() => setUsage(false)}>
       <UsagePanel summary={summary} chat={chat} limits={limits} />
     </PhoneSheet>
   );
@@ -1069,7 +1088,6 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
           detail={
             summary ? (
               <div className={`pg-split-pane phone-conversation kind-${summary.kind}`}>
-                {!workflow && !s.follow && <ConversationAgents s={s} onOpen={panel.show} />}
                 <main className="sessions-center">
                   <SessionCenter s={s} />
                 </main>
@@ -1116,7 +1134,6 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   return (
     <div className={`phone-sessions phone-page phone-conversation kind-${summary.kind}`}>
       {bar}
-      {!workflow && !s.follow && <ConversationAgents s={s} onOpen={panel.show} />}
       <main className="sessions-center">
         <SessionCenter s={s} />
       </main>
@@ -1126,20 +1143,4 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
   );
 }
 
-/**
- * On a phone the conversation has no tab strip: a row for its subagents and one
- * for its workflow runs, each with a count and plain-text status, open the
- * Activity sheet on the list (a subagent or workflow opens as a page of its own).
- */
-function ConversationAgents({ s, onOpen }: { s: SessionsWindow; onOpen: (tab: ActivityTab) => void }) {
-  if (s.subagents.length + s.workflows.length === 0) return null;
-  return (
-    <div className="conversation-agents">
-      <Group>
-        {s.subagents.length > 0 && <Row title="Subagents" value={groupStatusText(s.subagents.map((a) => a.status))} chevron onOpen={() => onOpen('subagents')} />}
-        {s.workflows.length > 0 && <Row title="Workflows" value={groupStatusText(s.workflows.map((r) => tabStatus(r.status)))} chevron onOpen={() => onOpen('background')} />}
-      </Group>
-    </div>
-  );
-}
 

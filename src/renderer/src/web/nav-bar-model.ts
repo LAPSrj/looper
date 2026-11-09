@@ -39,6 +39,8 @@ export type Dismiss = { kind: 'back' | 'close'; run: () => void } | null;
 
 export interface BarInput {
   title: string;
+  /** A short status line under the title. */
+  subtitle?: string;
   /** The page shows a deeper screen of its own: Back returns from it. */
   back?: () => void;
   /** An editor's Cancel. */
@@ -52,6 +54,7 @@ export interface BarInput {
 export interface BarModel {
   lead: BarLead | null;
   title: string;
+  subtitle: string | null;
   actions: PageNavAction[];
   confirm: { label: string; disabled?: boolean; run: () => void } | null;
 }
@@ -86,5 +89,5 @@ export function barModel(i: BarInput): BarModel {
           : { kind: 'close', label: 'Close', run: i.dismiss.run }
         : null;
   const confirm = i.confirm ? { label: plainLabel(i.confirm.label ?? 'Save'), disabled: i.confirm.disabled, run: i.confirm.run } : null;
-  return { lead, title: plainLabel(i.title), actions: i.actions ?? [], confirm };
+  return { lead, title: plainLabel(i.title), subtitle: i.subtitle || null, actions: i.actions ?? [], confirm };
 }

@@ -1100,6 +1100,19 @@
    "err": "Error invoking remote method 'engineLog:read': Error: boom engineLog:read"
   }
  },
+ "reportPerf": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "perf:report",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "openTaskTerminal": {
   "arity": 2,
   "calls": [

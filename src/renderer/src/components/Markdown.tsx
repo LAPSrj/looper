@@ -2,6 +2,7 @@ import { Fragment, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { Measured } from '../perf';
 
 const withBreaks = [remarkGfm, remarkBreaks];
 const noBreaks = [remarkGfm];
@@ -10,6 +11,15 @@ const noBreaks = [remarkGfm];
 // to shell.openExternal and denies the in-app popup.
 const external: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+};
+
+// A table wider than the text scrolls sideways instead of squeezing its columns.
+const table: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div className="md-table">
+      <table {...props} />
+    </div>
+  ),
 };
 
 /**
@@ -94,8 +104,9 @@ export function Markdown({
           ),
         }
       : {};
-    if (!onNavigate) return { ...external, ...img };
+    if (!onNavigate) return { ...external, ...table, ...img };
     return {
+      ...table,
       ...img,
       a: ({ node: _node, href, ...props }) =>
         href && !/^[a-z][a-z+.-]*:/i.test(href) ? (
@@ -114,9 +125,11 @@ export function Markdown({
   }, [onNavigate, resolveImage]);
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={breaks ? withBreaks : noBreaks} components={components}>
-        {text}
-      </ReactMarkdown>
+      <Measured id="Markdown">
+        <ReactMarkdown remarkPlugins={breaks ? withBreaks : noBreaks} components={components}>
+          {text}
+        </ReactMarkdown>
+      </Measured>
     </div>
   );
 }

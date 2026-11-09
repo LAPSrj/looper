@@ -44,6 +44,10 @@ const NOT_IN_CHAT_MENU: Hide = { surface: 'menu', if: (c) => !isChat(c), why: 'A
 const NOT_ON_CHATS_TOOLBAR: Hide = { surface: 'toolbar', if: (c) => !!c.chats && !c.chats.tab, why: 'The Chats window’s toolbar makes conversations; its File menu has this.' };
 /** A phone's run sheet: these change the Details tab's rows, so its Result tab leaves them out. */
 const ON_RUN_RESULT: Hide = { on: ON_PHONE, if: (c) => c.run?.tab === 'result', why: 'They change the run’s Details tab, not its Result.' };
+/** A phone's run sheet with one message open: these change the list that message covers. */
+const ON_RUN_MESSAGE: Hide = { on: ON_PHONE, if: (c) => !!c.run?.message, why: 'They change the list, which the open message covers.' };
+/** A phone's run menu keeps the folder commands in one submenu, so the menu stays short. */
+const IN_RUN_FOLDERS: Hide = { on: ON_PHONE, why: 'The Folders submenu has it.' };
 
 // ---------- submenus built from state ----------
 
@@ -1338,6 +1342,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'runFolder',
     label: 'Open &Run Folder',
     group: 'run-folders',
+    hide: [IN_RUN_FOLDERS],
     run: (c) => c.run && c.host('run-folder', c.run.taskId, c.run.runId),
     in: { run: { menu: 'file' } },
   },
@@ -1345,6 +1350,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'runCopyFolder',
     label: 'Copy Run Folder &Path',
     group: 'run-folders',
+    hide: [IN_RUN_FOLDERS],
     run: (c) => c.run && c.host('run-copy-folder', c.run.taskId, c.run.runId),
     in: { run: { menu: 'file' } },
   },
@@ -1352,8 +1358,26 @@ export const COMMANDS: readonly Command[] = [
     id: 'runWorkFolder',
     label: 'Open &Working Directory',
     group: 'run-folders',
+    hide: [IN_RUN_FOLDERS],
     enabled: (c) => !!c.run?.workFolder,
     run: (c) => c.run && c.host('run-work-folder', c.run.taskId),
+    in: { run: { menu: 'file' } },
+  },
+  {
+    id: 'runFolders',
+    label: '&Folders',
+    group: 'run-folders',
+    icon: 'openFolder',
+    hide: [{ on: OFF_PHONE, why: 'The File menu lists the folder commands as a group of their own.' }],
+    entries: (c) => {
+      const run = c.run;
+      if (!run) return [];
+      return [
+        { id: 'run', label: 'Open &Run Folder', run: () => c.host('run-folder', run.taskId, run.runId) },
+        { id: 'copy', label: 'Copy Run Folder &Path', run: () => c.host('run-copy-folder', run.taskId, run.runId) },
+        { id: 'work', label: 'Open &Working Directory', enabled: run.workFolder, run: () => c.host('run-work-folder', run.taskId) },
+      ];
+    },
     in: { run: { menu: 'file' } },
   },
   {
@@ -1361,7 +1385,7 @@ export const COMMANDS: readonly Command[] = [
     label: '&Raw Messages',
     group: 'run-view',
     checked: (c) => !!c.run?.raw,
-    hide: [ON_RUN_RESULT],
+    hide: [ON_RUN_RESULT, ON_RUN_MESSAGE],
     run: (c) => c.run?.set({ raw: !c.run.raw }),
     in: { run: { menu: 'view' } },
   },
@@ -1379,7 +1403,7 @@ export const COMMANDS: readonly Command[] = [
     label: '&Auto Scroll',
     group: 'run-view',
     checked: (c) => !!c.run?.autoScroll,
-    hide: [ON_RUN_RESULT],
+    hide: [ON_RUN_RESULT, ON_RUN_MESSAGE],
     run: (c) => c.run?.set({ autoScroll: !c.run.autoScroll }),
     in: { run: { menu: 'view' } },
   },
@@ -1389,8 +1413,18 @@ export const COMMANDS: readonly Command[] = [
     group: 'run-filter',
     accelerator: 'CmdOrCtrl+F',
     checked: (c) => !!c.run?.filter.trim(),
-    hide: [ON_RUN_RESULT],
+    hide: [{ on: ON_PHONE, why: 'The list has a search field under its rows.' }],
     run: (c) => c.run && c.host('messages-filter', c.run.filter),
+    in: { run: { menu: 'view' } },
+  },
+  {
+    id: 'runFindInMessage',
+    label: 'Find in &Message…',
+    group: 'run-filter',
+    icon: 'search',
+    enabled: (c) => !!c.run?.findInMessage,
+    hide: [{ on: ON_PHONE, if: (c) => !c.run?.message, why: 'It searches the open message; the list has its own search field.' }],
+    run: (c) => c.run?.findInMessage?.(),
     in: { run: { menu: 'view' } },
   },
 

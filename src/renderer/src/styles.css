@@ -1275,6 +1275,20 @@ html:not(.phone-window) .session-group ~ .session-row {
 .markdown table {
   border-collapse: collapse;
 }
+.markdown .md-table {
+  max-width: 100%;
+  margin: 0 0 10px;
+  overflow-x: auto;
+}
+.markdown .md-table > table {
+  margin: 0;
+}
+/* Words stay whole in a cell: breaking anywhere would let a column shrink to one letter. */
+.markdown .md-table > table :is(th, td),
+.markdown .md-table > table :is(th, td) code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
 .markdown th,
 .markdown td {
   padding: 3px 8px;
@@ -2551,17 +2565,29 @@ button:focus-visible,
   }
 }
 
+/* The find bar, when it's open, over what the selected row shows. */
 .messages-detail {
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg-2);
+}
+.messages-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 /* The conversation row's chat fills the panel, scrolling inside itself; a subagent's window is the chat alone. */
 .messages-detail.messages-detail-chat {
-  overflow: hidden;
   background: var(--bg);
 }
-.messages-detail-chat > .chat-app,
+.messages-detail-chat > .messages-detail-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.messages-detail-chat > .messages-detail-body > .chat-app,
 .messages-chat > .chat-app {
   height: 100%;
   flex: 1;
@@ -2571,7 +2597,7 @@ button:focus-visible,
   background: var(--bg);
 }
 
-.messages-detail > .output {
+.messages-detail-body > .output {
   height: 100%;
   box-sizing: border-box;
 }

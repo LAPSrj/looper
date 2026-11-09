@@ -1,3 +1,4 @@
+import { perfMessage } from '../perf';
 import { platform } from '../platform';
 import { routeFrameClipboard } from './clipboard';
 import type { OfflineStore } from './offline-store';
@@ -67,6 +68,7 @@ export function startSession(offline?: OfflineStore, restored = false): Session 
     setBadge: setAppBadge,
     ...(offline ? { offline } : {}),
     restored,
+    onMessage: perfMessage,
   };
   const session = new Session(env);
   window.__looperSession = session;

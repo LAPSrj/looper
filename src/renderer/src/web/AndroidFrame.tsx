@@ -131,6 +131,7 @@ function TopBar({
   const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
   const model = barModel({
     title: nav?.title ?? sc.win.title,
+    subtitle: nav?.subtitle,
     back: nav?.back ? goBack : undefined,
     cancel: nav?.cancel,
     confirm: nav?.confirm,
@@ -143,7 +144,7 @@ function TopBar({
   if (split) {
     // Two panes (Material: List-detail): a bar over each. The list's has the window's own Back, the detail's the page's.
     const list = barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: goBack } : null });
-    const detail = barModel({ title: nav?.title ?? '', back: nav?.back ? goBack : undefined, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
+    const detail = barModel({ title: nav?.title ?? '', subtitle: nav?.subtitle, back: nav?.back ? goBack : undefined, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null });
     return (
       <header className="md-bar">
         <div className="md-bar-split">

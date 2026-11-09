@@ -313,15 +313,52 @@ describe('a phone', () => {
     expect(labels(phoneMore(['dashboard'], c))).not.toContain('Task Runs');
   });
 
-  it('keeps a run’s Raw Messages, Raw Agent Output, Auto Scroll and Filter on its Details tab, and has no Show Run Log', () => {
-    const run = (tab: 'result' | 'details') =>
-      context({ run: { taskId: 't1', runId: 'r', title: 'x', workFolder: true, canContinue: { chat: true, terminal: true, guidance: true, compact: true }, raw: false, rawOutput: false, autoScroll: false, filter: '', tab, set: () => undefined } }, 'mobile');
-    const details = labels(phoneMore(['run'], run('details')));
-    expect(details).toEqual(expect.arrayContaining(['Raw Messages', 'Raw Agent Output', 'Auto Scroll', 'Filter…']));
-    const result = labels(phoneMore(['run'], run('result')));
-    for (const label of ['Raw Messages', 'Raw Agent Output', 'Auto Scroll', 'Filter…']) expect(result).not.toContain(label);
+  const runContext = (tab: 'result' | 'details', message = false, platform: 'mobile' | 'desktop' = 'mobile') =>
+    context(
+      {
+        run: {
+          taskId: 't1',
+          runId: 'r',
+          title: 'x',
+          workFolder: true,
+          canContinue: { chat: true, terminal: true, guidance: true, compact: true },
+          raw: false,
+          rawOutput: false,
+          autoScroll: false,
+          filter: '',
+          tab,
+          message,
+          findInMessage: message ? () => undefined : undefined,
+          set: () => undefined,
+        },
+      },
+      platform,
+    );
+
+  it('keeps a run’s Raw Messages, Raw Agent Output and Auto Scroll on its Details tab, filters with the list’s search field, and has no Show Run Log', () => {
+    const details = labels(phoneMore(['run'], runContext('details')));
+    expect(details).toEqual(expect.arrayContaining(['Raw Messages', 'Raw Agent Output', 'Auto Scroll']));
+    expect(details).not.toContain('Filter…');
+    const result = labels(phoneMore(['run'], runContext('result')));
+    for (const label of ['Raw Messages', 'Raw Agent Output', 'Auto Scroll']) expect(result).not.toContain(label);
     expect(result).toContain('Save as Markdown…');
     expect(COMMANDS.some((cmd) => cmd.id === 'runShowLog')).toBe(false);
+  });
+
+  it('leaves out what changes a run’s list on one message’s screen, and offers Find in Message there only', () => {
+    const message = labels(phoneMore(['run'], runContext('details', true)));
+    for (const label of ['Raw Messages', 'Auto Scroll']) expect(message).not.toContain(label);
+    expect(message).toContain('Find in Message…');
+    expect(labels(phoneMore(['run'], runContext('details')))).not.toContain('Find in Message…');
+  });
+
+  it('keeps a run’s folder commands in one Folders submenu, which the desktop’s File menu lists flat', () => {
+    const phone = labels(phoneMore(['run'], runContext('details')));
+    expect(phone).toContain('Folders');
+    for (const label of ['Open Run Folder', 'Copy Run Folder Path', 'Open Working Directory']) expect(phone).not.toContain(label);
+    const file = labels(menu(['run'], 'file', runContext('details', false, 'desktop')));
+    expect(file).toEqual(expect.arrayContaining(['Open Run Folder', 'Copy Run Folder Path', 'Open Working Directory']));
+    expect(file).not.toContain('Folders');
   });
 
   it('names New Chat in Project in a conversation, and keeps Send to Chats on the Chats list', () => {

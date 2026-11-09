@@ -433,7 +433,7 @@ function rootFor(
   const current = split?.current && split.current.kind !== 'addon' ? split.current.id : null;
   switch (tab) {
     case 'dashboard':
-      return { title: 'Dashboard', ...phoneNav(['dashboard'], c), body: <PhoneDashboard m={m} onOpenTasks={openTasks} /> };
+      return { title: 'Dashboard', ...phoneNav(['dashboard'], c), body: <PhoneDashboard m={m} /> };
     case 'projects':
       return { title: 'Projects', ...phoneNav(['projects'], c), body: <PhoneProjects m={m} current={current} /> };
     case 'tasks': {

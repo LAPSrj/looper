@@ -109,20 +109,98 @@ export function IosBarRow({ model, onMore, onActionMenu, titleFaded, className, 
             </button>
           ))}
       </div>
-      <Title className={`ios-bar-title${titleFaded ? ' faded' : ''}`}>{model.title}</Title>
+      {model.subtitle ? (
+        <div className={`ios-bar-titles${titleFaded ? ' faded' : ''}`}>
+          <Title className="ios-bar-title">{model.title}</Title>
+          <p className="ios-bar-subtitle">{model.subtitle}</p>
+        </div>
+      ) : (
+        <Title className={`ios-bar-title${titleFaded ? ' faded' : ''}`}>{model.title}</Title>
+      )}
       <div className="ios-bar-trail">
-        {model.actions.map((a) => (
-          <button key={a.id} className={`${a.icon || a.ring ? 'ios-icon-btn' : 'ios-text-btn'}${a.on ? ' on' : ''}`} aria-label={a.label} aria-haspopup={a.menu ? 'menu' : undefined} disabled={a.disabled} onClick={(e) => (a.menu ? onActionMenu?.(a, e.currentTarget) : a.run())}>
-            {a.icon || a.ring ? <ActionGlyph action={a} /> : a.label}
-          </button>
-        ))}
-        {onMore && (
-          <button className="ios-icon-btn" aria-label="More" aria-haspopup="menu" onClick={(e) => onMore(e.currentTarget)}>
-            {ELLIPSIS}
-          </button>
+        {(model.actions.length > 0 || onMore) && (
+          <div className="ios-bar-group">
+            {model.actions.map((a) => (
+              <button key={a.id} className={`${a.icon || a.ring ? 'ios-icon-btn' : 'ios-text-btn'}${a.on ? ' on' : ''}`} aria-label={a.label} aria-haspopup={a.menu ? 'menu' : undefined} disabled={a.disabled} onClick={(e) => (a.menu ? onActionMenu?.(a, e.currentTarget) : a.run())}>
+                {a.icon || a.ring ? <ActionGlyph action={a} /> : a.label}
+              </button>
+            ))}
+            {onMore && (
+              <button className="ios-icon-btn" aria-label="More" aria-haspopup="menu" onClick={(e) => onMore(e.currentTarget)}>
+                {ELLIPSIS}
+              </button>
+            )}
+          </div>
         )}
         {confirm && (
           <button className="ios-icon-btn prominent" aria-label={confirm.label} disabled={confirm.disabled} onClick={() => confirm.run()}>
+            {CHECKMARK}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const FORWARD = (
+  <svg width="11" height="19" viewBox="0 0 11 19" aria-hidden="true">
+    <path d="M2 1.5L9.5 9.5 2 17.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const CHEVRON_DOWN = (
+  <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
+    <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export interface IosBrowserBarRowProps {
+  /** The folder's name. */
+  title: string;
+  canBack: boolean;
+  canForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  /** The title opens a menu of the folders above (unset: there are none). */
+  onTitleMenu?: (button: HTMLElement) => void;
+  actions: { id: string; label: string; icon: string; run: () => void }[];
+  confirm?: { label: string; disabled: boolean; run: () => void };
+  onClose: () => void;
+}
+
+/**
+ * A file browser's bar, as the system's document picker draws it: Back and
+ * Forward in one capsule, the folder's name with a chevron that opens the
+ * folders above it, then the browser's buttons and the xmark each in a circle
+ * of its own, and Confirm, tinted, last.
+ */
+export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward, onTitleMenu, actions, confirm, onClose }: IosBrowserBarRowProps) {
+  return (
+    <div className="ios-bar-row ios-files-bar">
+      <div className="ios-bar-lead">
+        <div className="ios-bar-group">
+          <button className="ios-icon-btn" aria-label="Back" disabled={!canBack} onClick={onBack}>
+            {BACK}
+          </button>
+          <button className="ios-icon-btn" aria-label="Forward" disabled={!canForward} onClick={onForward}>
+            {FORWARD}
+          </button>
+        </div>
+      </div>
+      <button className="ios-bar-title ios-title-menu" aria-haspopup={onTitleMenu ? 'menu' : undefined} disabled={!onTitleMenu} onClick={(e) => onTitleMenu?.(e.currentTarget)}>
+        <span className="ios-title-menu-label">{title}</span>
+        {onTitleMenu && <span className="ios-title-menu-chevron">{CHEVRON_DOWN}</span>}
+      </button>
+      <div className="ios-bar-trail">
+        {actions.map((a) => (
+          <button key={a.id} className="ios-icon-btn" aria-label={a.label} onClick={a.run}>
+            <NavIcon name={a.icon} />
+          </button>
+        ))}
+        <button className="ios-icon-btn" aria-label="Close" onClick={onClose}>
+          {XMARK}
+        </button>
+        {confirm && (
+          <button className="ios-icon-btn prominent" aria-label={confirm.label} disabled={confirm.disabled} onClick={confirm.run}>
             {CHECKMARK}
           </button>
         )}
@@ -153,7 +231,14 @@ export function MdBarRow({ model, onMore, onActionMenu, dialogLike }: MdBarRowPr
           {lead.kind === 'back' ? ARROW_BACK : CLOSE}
         </button>
       )}
-      <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{model.title}</h1>
+      {model.subtitle ? (
+        <div className={`md-bar-titles${lead ? '' : ' no-lead'}`}>
+          <h1 className="md-bar-title">{model.title}</h1>
+          <p className="md-bar-subtitle">{model.subtitle}</p>
+        </div>
+      ) : (
+        <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{model.title}</h1>
+      )}
       {model.actions.map((a) =>
         (a.icon || a.ring) && !dialogLike ? (
           <button key={a.id} className={`md-icon-btn${a.on ? ' on' : ''}`} aria-label={a.label} title={a.label} aria-haspopup={a.menu ? 'menu' : undefined} disabled={a.disabled} onClick={(e) => (a.menu ? onActionMenu?.(a, e.currentTarget) : a.run())}>

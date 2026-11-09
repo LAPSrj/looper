@@ -31,7 +31,11 @@ export default defineConfig({
   renderer: {
     plugins: [react()],
     resolve: {
-      alias: { '@shared': resolve(__dirname, 'src/shared') },
+      alias: [
+        { find: '@shared', replacement: resolve(__dirname, 'src/shared') },
+        // React's production build never calls a Profiler's onRender; the frame watchdog needs it (perf.tsx).
+        { find: /^react-dom\/client$/, replacement: 'react-dom/profiling' },
+      ],
     },
     // A phone page compares this with the server's version to tell it is out of date.
     define: { __LOOPER_VERSION__: JSON.stringify(pkg.version) },

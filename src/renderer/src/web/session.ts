@@ -47,6 +47,7 @@ const QUIET_SENDS = new Set([
   'builder:resize',
   'terminalSession:resize',
   'addons:slowDraw',
+  'perf:report',
   'commands:menuBar',
   'messages:filter-state',
 ]);
@@ -127,6 +128,8 @@ export interface SessionEnv {
   sessionStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void };
   /** Started from the windows of the last launch, not from a welcome: the first welcome counts as a reconnect. */
   restored?: boolean;
+  /** Called as a message from the computer arrives; what it returns is called with the message's name once it's handled. */
+  onMessage?: () => ((name: string) => void) | undefined;
 }
 
 interface Pending {
@@ -518,12 +521,19 @@ export class Session {
   }
 
   private handle(data: unknown): void {
+    const done = this.env.onMessage?.();
     let msg: ServerMessage;
     try {
       msg = JSON.parse(String(data)) as ServerMessage;
     } catch {
       return;
     }
+    const name = msg.t === 'event' ? `receive ${msg.channel}` : msg.t === 'result' ? `result ${this.pending.get(msg.id)?.channel ?? ''}` : msg.t;
+    this.dispatch(msg);
+    done?.(name);
+  }
+
+  private dispatch(msg: ServerMessage): void {
     if (this.connected) this.stampLive();
     switch (msg.t) {
       case 'result': {

@@ -25,10 +25,17 @@ export function subagentTabs(subagents: SubagentInfo[], follow: string | null): 
   return [...shown.filter((a) => a.status === 'running'), ...shown.filter((a) => a.status !== 'running')];
 }
 
-/** A count and the state of a group of subagents or workflow runs, as plain text: "3 · 1 running". */
-export function groupStatusText(statuses: ('running' | 'done' | 'failed')[]): string {
-  const running = statuses.filter((s) => s === 'running').length;
-  if (running) return `${statuses.length} · ${running} running`;
-  const failed = statuses.filter((s) => s === 'failed').length;
-  return failed ? `${statuses.length} · ${failed} failed` : `${statuses.length} · done`;
+type RunState = 'running' | 'done' | 'failed';
+
+/**
+ * What a conversation has running beside it, as its bar's subtitle: "2 subagents
+ * running", "1 subagent and 1 workflow running"; null when nothing is.
+ */
+export function runningText(subagents: RunState[], workflows: RunState[]): string | null {
+  const count = (statuses: RunState[], noun: string) => {
+    const n = statuses.filter((s) => s === 'running').length;
+    return n ? `${n} ${noun}${n === 1 ? '' : 's'}` : null;
+  };
+  const parts = [count(subagents, 'subagent'), count(workflows, 'workflow')].filter(Boolean);
+  return parts.length ? `${parts.join(' and ')} running` : null;
 }

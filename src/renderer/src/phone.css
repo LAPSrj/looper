@@ -18,6 +18,7 @@ html.phone-window[data-platform='ios'] {
   --ios-tint: var(--pg-tint);
   --ios-red: var(--pg-red);
   --ios-label: var(--pg-label);
+  --ios-label2: var(--pg-label-2);
   --ios-label3: var(--pg-label-3);
   --ios-glass: var(--pg-glass);
   --ios-glass-filter: var(--pg-glass-filter);
@@ -256,6 +257,10 @@ html.phone-window .pg-large-title {
 html.phone-window[data-platform='android'] .pg-scroll {
   padding-top: 8px;
 }
+/* A list with no large title keeps the forms' 16 pt from the bar, and the bar then takes the page's color, not a card's. */
+html.phone-window[data-platform='ios'] .pg-scroll > .pg-group:first-child {
+  margin-top: 16px;
+}
 
 /* ---------- lists ---------- */
 html.phone-window .pg-group {
@@ -383,10 +388,11 @@ html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .
   padding: 0 32px 8px;
   border-bottom: none;
   color: var(--pg-label-2);
-  font-size: calc(13 * var(--u));
-  line-height: calc(18 * var(--u));
+  /* 15 pt semibold, measured on iOS 26 Settings (Notifications › Notification Style) against its 17 pt rows. */
+  font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
   font-weight: 600;
-  letter-spacing: -0.08px;
+  letter-spacing: -0.23px;
   text-transform: none;
 }
 /* Inside a form's own margin, a section's title and footer keep the same distance from its text. */
@@ -957,6 +963,13 @@ html.phone-window .pg-rows {
   padding: 8px 0 16px;
   background: var(--pg-bg);
 }
+/* The rows, then their search field at the bottom of the screen (DataTable search). */
+html.phone-window .pg-rows-search {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 /* A row's metadata line stays on one line, cut with an ellipsis. */
 html.phone-window .pg-oneline {
   display: block;
@@ -1193,6 +1206,25 @@ html.phone-window .phone-sessions .overview-card {
 html.phone-window .phone-sessions .overview-card.waiting {
   box-shadow: inset 3px 0 0 var(--pg-orange);
 }
+/* A chat's or task run's card (LiveCard): the desktop's conversation and message box at a set height,
+   cut at its newest end instead of scrolling inside the card. Double Size shows more of it. */
+html.phone-window .phone-sessions .overview-chat {
+  height: 440px;
+  padding-bottom: 0;
+}
+html.phone-window .phone-sessions .overview-chat.big {
+  height: 680px;
+}
+html.phone-window .phone-sessions .overview-chat > :is(.chat-app, .transcript) {
+  margin: 2px -18px 0;
+  border-top: 0.5px solid var(--pg-sep);
+}
+html.phone-window .phone-sessions .overview-chat :is(.chat-scroll, .transcript-scroll) {
+  overflow: hidden;
+}
+html.phone-window .phone-sessions .overview-chat .phone-composer {
+  padding-bottom: 10px;
+}
 /* The agent's last message as whole lines (four at most, then an ellipsis), not a box scrolled to its end. */
 html.phone-window .phone-sessions .overview-card > .overview-messages {
   display: flex;
@@ -1324,7 +1356,8 @@ html.phone-window .chat-composer.phone-composer {
   display: block;
   padding: 6px 10px calc(6px + var(--looper-safe-bottom, 0px));
   border-top: none;
-  background: var(--pg-bg);
+  /* No bar of its own (HIG: Toolbars, reduce toolbar backgrounds): the field sits on the conversation. */
+  background: transparent;
 }
 html.phone-window.keyboard-up .chat-composer.phone-composer {
   padding-bottom: 6px;
@@ -1481,15 +1514,6 @@ html.phone-window .overview-actions textarea {
 html.phone-window .session-sub.error-text {
   color: var(--pg-red);
 }
-/* The conversation's subagent and workflow rows sit tight above the transcript. */
-html.phone-window .conversation-agents .pg-group {
-  margin: 8px 0 4px;
-}
-html.phone-window .conversation-agents .pg-row {
-  min-height: 44px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
 html.phone-window .chat-status.chat-working {
   padding: 2px 14px 6px;
 }
@@ -1519,7 +1543,6 @@ html.phone-window .pg-sheet {
   height: calc(var(--detent, 0.92) * 100%);
   display: flex;
   flex-direction: column;
-  padding-bottom: var(--looper-safe-bottom, 0px);
   background: var(--bg-2);
   overflow: hidden;
   outline: none;
@@ -1566,6 +1589,12 @@ html.phone-window .pg-sheet-body {
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* The content scrolls to the sheet's bottom edge, under the home indicator, and can still scroll clear of it. */
+html.phone-window .pg-sheet-body::after {
+  content: '';
+  flex: none;
+  height: var(--looper-safe-bottom, 0px);
 }
 html.phone-window .pg-sheet-body:has(.usage-panel) {
   background: var(--pg-bg);

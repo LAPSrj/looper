@@ -35,7 +35,8 @@ export function PhoneSheet({
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
-    card.current?.focus();
+    // The card is still below the screen as it rises: WebKit would scroll the page to show it.
+    card.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeRef.current();
     };

@@ -40,8 +40,35 @@
 .ios-bar-row.on-dark .ios-bar-title {
   color: #fff;
 }
-.ios-bar-title.faded {
+.ios-bar-title.faded,
+.ios-bar-titles.faded {
   opacity: 0;
+}
+/* A title with a status line under it (UINavigationItem.subtitle, iOS 26). */
+.ios-bar-titles {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  transition: opacity 0.2s;
+}
+.ios-bar-titles > .ios-bar-title {
+  max-width: 100%;
+  line-height: 20px;
+}
+.ios-bar-subtitle {
+  max-width: 100%;
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ios-label2);
+  font-size: 13px;
+  line-height: 16px;
+}
+.on-dark .ios-bar-subtitle {
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* Bar and toolbar buttons: a glass circle around a symbol, a glass capsule around text, and the
@@ -106,17 +133,21 @@
   background: var(--ios-glass);
   color: var(--ios-label3);
 }
-/* Several buttons on one side share one capsule. */
-.ios-bar-trail:has(> :nth-child(2)) {
-  gap: 0;
+.ios-bar-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* Several buttons share one capsule. The confirming action stays outside it, as its own tinted circle
+   (HIG: Toolbars, the prominent style "separates and tints the action"). */
+.ios-bar-group:has(> :nth-child(2)) {
   border-radius: 22px;
   background: var(--ios-glass);
   -webkit-backdrop-filter: var(--ios-glass-filter);
   backdrop-filter: var(--ios-glass-filter);
   box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
 }
-/* The confirming action keeps its tint inside the capsule (HIG: Toolbars, "separates and tints the action"). */
-.ios-bar-trail:has(> :nth-child(2)) > :is(.ios-icon-btn, .ios-text-btn):not(.bold, .prominent) {
+.ios-bar-group:has(> :nth-child(2)) > :is(.ios-icon-btn, .ios-text-btn) {
   background: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;

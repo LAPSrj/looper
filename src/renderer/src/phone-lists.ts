@@ -117,35 +117,6 @@ export function waitedFor(item: WaitingItem, now: number): string {
   return item.since > 0 ? waitedText(Math.max(0, now - item.since)) : '';
 }
 
-export interface TaskCounts {
-  running: number;
-  paused: number;
-  enabled: number;
-  disabled: number;
-  completed: number;
-}
-
-/**
- * The Dashboard's one summary row in place of six count rows: "1 running · 7
- * enabled · 1 addon running". A count of zero is left out, and a part whose data
- * hasn't loaded yet isn't counted (`null`), so the row doesn't change shape as
- * it fills in. Empty until the tasks have loaded.
- */
-export function taskSummary(input: { counts: TaskCounts; loaded: boolean; addonsRunning: number | null; remoteSessions: number | null }): string {
-  if (!input.loaded) return '';
-  const { counts } = input;
-  const parts: string[] = [];
-  const add = (n: number, text: string) => n > 0 && parts.push(`${n} ${text}`);
-  add(counts.running, 'running');
-  add(counts.paused, 'paused');
-  add(counts.enabled, 'enabled');
-  add(counts.disabled, 'disabled');
-  add(counts.completed, 'completed');
-  if (input.addonsRunning !== null) add(input.addonsRunning, input.addonsRunning === 1 ? 'addon running' : 'addons running');
-  if (input.remoteSessions !== null) add(input.remoteSessions, input.remoteSessions === 1 ? 'Remote Control session' : 'Remote Control sessions');
-  return parts.join(' · ');
-}
-
 // ---------- terminals ----------
 
 /** A terminal session's title on a phone: its name, with its project when the name is the plain "Terminal". */

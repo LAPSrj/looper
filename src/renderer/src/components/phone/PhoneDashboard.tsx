@@ -1,8 +1,8 @@
 import { REMOTE_STATUS_LABELS, fmtClock } from '../../format';
-import { splitAttention, taskSummary, waitingForYou } from '../../phone-lists';
-import { preventSleepStatus, type MainWindow } from '../../useMainWindow';
+import { splitAttention, waitingForYou } from '../../phone-lists';
+import type { MainWindow } from '../../useMainWindow';
 import { StatusIcon, dashboardOpeners } from '../Dashboard';
-import { RestStatusText, WaitedFor } from '../Live';
+import { WaitedFor } from '../Live';
 import { statusText } from '../SessionList';
 import { AttentionGroup, RecentGroup, RunningGroup, taskRowMenu } from './overview-rows';
 import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
@@ -11,12 +11,12 @@ import { useSessionsState } from './useSessionsState';
 /**
  * The main window's dashboard on a phone, in the order of what needs a
  * decision: what waits for you (chats and runs), what needs attention, what is
- * running, the other chats, the latest runs, then one summary row of the task counts that opens
- * Tasks. A tap opens a row as a double-click does; a long press shows its menu,
- * which acts on that row's task.
+ * running, the other chats, the latest runs, then the Remote Control sessions,
+ * as the desktop's dashboard has them. A tap opens a row as a double-click does;
+ * a long press shows its menu, which acts on that row's task.
  */
-export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks: () => void }) {
-  const { counts, loaded, rest, remoteOpen, addons } = m;
+export function PhoneDashboard({ m }: { m: MainWindow }) {
+  const { remoteOpen } = m;
   // Only names the day of a time: the waited and running times tick in their own components.
   const now = Date.now();
   const opens = dashboardOpeners(m.openFromDashboard);
@@ -28,13 +28,6 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
   const running = m.running.filter((r) => !waitingRunIds.has(r.runId));
   const waitingChats = new Set(waiting.flatMap((w) => (w.kind === 'chat' ? [w.session.id] : [])));
   const chats = (sessions?.sessions ?? []).filter((s) => !waitingChats.has(s.id));
-  // Zero before the data arrives is wrong, not empty: each part joins the summary only once it has answered.
-  const summary = taskSummary({
-    counts,
-    loaded,
-    addonsRunning: m.addonsLoaded && addons.length > 0 ? m.runningAddons : null,
-    remoteSessions: m.remoteLoaded && remoteOpen ? remoteOpen.length : null,
-  });
 
   return (
     <div className="pg-scroll">
@@ -79,19 +72,6 @@ export function PhoneDashboard({ m, onOpenTasks }: { m: MainWindow; onOpenTasks:
         </Group>
       )}
       <RecentGroup m={m} />
-
-      <Group title="Tasks" footer={
-        rest?.armed || m.preventSleep ? (
-          <>
-            {rest?.armed && <RestStatusText rest={rest} />}
-            {rest?.armed && m.preventSleep && preventSleepStatus(m.preventSleep) ? ' · ' : null}
-            {m.preventSleep ? preventSleepStatus(m.preventSleep) : null}
-          </>
-        ) : undefined
-      }
-    >
-        <Row title="All Tasks" sub={summary || undefined} chevron onOpen={onOpenTasks} />
-      </Group>
 
       {remoteOpen && (
         <Group title="Remote Control">

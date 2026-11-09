@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sendsOnEnter } from '../src/renderer/src/components/composer-text';
 import { draggedHeight, settleSheet } from '../src/renderer/src/components/phone/sheet-detents';
-import { groupStatusText, newestFirst, subagentContext, subagentTabs } from '../src/renderer/src/components/subagents';
+import { newestFirst, runningText, subagentContext, subagentTabs } from '../src/renderer/src/components/subagents';
 import { cacheText, contextValue, limitFacts, sessionFacts, sessionLimits, usageLabel, usageTone } from '../src/renderer/src/components/usage';
 import type { SessionSummary, SubagentInfo } from '../src/shared/sessions';
 
@@ -132,11 +132,16 @@ describe('subagentTabs', () => {
   });
 });
 
-describe('groupStatusText', () => {
-  it('counts and says the state in words', () => {
-    expect(groupStatusText(['done', 'running', 'running'])).toBe('3 · 2 running');
-    expect(groupStatusText(['done', 'failed'])).toBe('2 · 1 failed');
-    expect(groupStatusText(['done'])).toBe('1 · done');
+describe('runningText', () => {
+  it('counts only the running ones', () => {
+    expect(runningText(['done', 'running', 'running'], [])).toBe('2 subagents running');
+    expect(runningText([], ['running', 'failed'])).toBe('1 workflow running');
+    expect(runningText(['running'], ['running'])).toBe('1 subagent and 1 workflow running');
+  });
+
+  it('is null when none is running, so the bar has no subtitle', () => {
+    expect(runningText(['done', 'failed'], ['done'])).toBeNull();
+    expect(runningText([], [])).toBeNull();
   });
 });
 
