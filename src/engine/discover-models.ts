@@ -46,7 +46,7 @@ export function runProbe(env: Environment, host: HostKind, script: string): Prom
   } else {
     const shellParts = (env.shell?.trim() || DEFAULT_SHELL).split(/\s+/);
     const prefix =
-      env.kind === 'wsl' ? (env.distro ? ['wsl.exe', '-d', env.distro, '--'] : ['wsl.exe', '--']) : [];
+      env.kind === 'wsl' ? (env.distro ? ['wsl.exe', '-d', env.distro, '-e'] : ['wsl.exe', '-e']) : [];
     argv = [...prefix, ...shellParts, script];
   }
   return new Promise((resolve, reject) => {

@@ -117,7 +117,8 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
   if (side === 'windows') argv = ['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script];
   else {
     const shellParts = (env.shell?.trim() || DEFAULT_SHELL).split(/\s+/);
-    const prefix = env.kind === 'wsl' ? (env.distro ? ['wsl.exe', '-d', env.distro, '--'] : ['wsl.exe', '--']) : [];
+    // -e, not --: through the distro's shell the script's own variables would expand before it sets them.
+    const prefix = env.kind === 'wsl' ? (env.distro ? ['wsl.exe', '-d', env.distro, '-e'] : ['wsl.exe', '-e']) : [];
     argv = [...prefix, ...shellParts, script];
   }
   return new Promise((resolve, reject) => {

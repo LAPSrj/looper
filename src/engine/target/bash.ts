@@ -26,24 +26,26 @@ const SUBAGENT_PATTERN = `*'"agent_id":'* | *'"agent_id": '*`;
 const DELEGATE_REFUSAL = (leave: 'exit' | 'return'): string =>
   `if [ -n "$${DELEGATE_BUSY_VAR}" ] && [ -e "$${DELEGATE_BUSY_VAR}" ]; then cat "$${DELEGATE_BUSY_VAR}" >&2; ${leave} 1; fi;`;
 
-/** Kill script: scan /proc for processes whose environment carries the run marker. */
-function killScript(runId: string, signal: string): string {
-  return (
-    `for p in /proc/[0-9]*; do ` +
-    `if tr '\\0' '\\n' < "$p/environ" 2>/dev/null | grep -qx 'LOOPER_RUN=${runId}'; then ` +
-    `kill -${signal} "\${p#/proc/}" 2>/dev/null; fi; done; exit 0`
-  );
+/**
+ * Prints the pid of each process whose environment holds `marker` exactly.
+ * One grep reads all of /proc: a tr and a grep per process took about 1 s.
+ * macOS has no /proc, and BSD ps's `e` flag appends each (same-user)
+ * process's environment to its command line, so the marker is an exact field.
+ */
+function listScript(marker: string, mac: boolean): string {
+  return mac
+    ? `ps axeww -o pid= -o command= | awk -v m=${marker} '{ for (i = 2; i <= NF; i++) if ($i == m) { print $1; break } }'`
+    : `grep -lsxzF -- ${marker} /proc/[0-9]*/environ | sed 's#^/proc/##; s#/environ$##'`;
 }
 
-/**
- * macOS has no /proc: BSD ps's `e` flag appends each (same-user) process's
- * environment to its command line, so match the run marker as an exact field.
- */
-function killScriptMac(runId: string, signal: string): string {
+/** TERM the marked processes, wait up to 1.5 s for them to exit, then KILL any process still marked. */
+function killScript(marker: string, mac: boolean): string {
+  const list = listScript(marker, mac);
   return (
-    `ps axeww -o pid= -o command= | ` +
-    `awk -v m='LOOPER_RUN=${runId}' '{ for (i = 2; i <= NF; i++) if ($i == m) { print $1; break } }' | ` +
-    `while read -r p; do kill -${signal} "$p" 2>/dev/null; done; exit 0`
+    `pids=$(${list}); [ -z "$pids" ] && exit 0; kill -TERM $pids 2>/dev/null; ` +
+    `n=0; while [ $n -lt 15 ]; do alive=; for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done; ` +
+    `[ -z "$alive" ] && break; sleep 0.1; n=$((n + 1)); done; ` +
+    `pids=$(${list}); [ -n "$pids" ] && kill -KILL $pids 2>/dev/null; exit 0`
   );
 }
 
@@ -395,9 +397,9 @@ export class BashTarget implements Target {
     return out;
   }
 
-  private wslPrefix(): string[] {
+  private wslPrefix(sep: '--' | '-e' = '--'): string[] {
     if (this.ctx.host !== 'windows') return [];
-    return this.distro ? ['wsl.exe', '-d', this.distro, '--'] : ['wsl.exe', '--'];
+    return this.distro ? ['wsl.exe', '-d', this.distro, sep] : ['wsl.exe', sep];
   }
 
   spawnSpec(launcherHostPath: string): SpawnSpec {
@@ -409,7 +411,8 @@ export class BashTarget implements Target {
   }
 
   private runShell(script: string, timeoutMs: number): Promise<void> {
-    const full = [...this.wslPrefix(), 'bash', '-c', script];
+    // `--` hands the line to the distro's shell, which would expand the script's `$` before bash -c sees it.
+    const full = [...this.wslPrefix('-e'), 'bash', '-c', script];
     return new Promise((resolve) => {
       try {
         execFile(full[0], full.slice(1), { timeout: timeoutMs, windowsHide: true }, () => resolve());
@@ -420,9 +423,6 @@ export class BashTarget implements Target {
   }
 
   async killLeftovers(runId: string): Promise<void> {
-    const script = this.ctx.host === 'mac' ? killScriptMac : killScript;
-    await this.runShell(script(runId, 'TERM'), 10_000);
-    await new Promise((r) => setTimeout(r, 1500));
-    await this.runShell(script(runId, 'KILL'), 10_000);
+    await this.runShell(killScript(this.quote(`LOOPER_RUN=${runId}`), this.ctx.host === 'mac'), 20_000);
   }
 }

@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { translatePath, translateToHost } from '../src/engine/target/paths';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
@@ -108,6 +109,25 @@ describe('BashTarget', () => {
     expect(t.quote("a'b")).toBe("'a'\\''b'");
     expect(t.catFile('/p/x')).toBe(`"$(cat '/p/x')"`);
   });
+  it.skipIf(process.platform !== 'linux')(
+    'killLeftovers kills only the run marker, and KILLs what ignores TERM',
+    async () => {
+      const runId = `kill-test-${process.pid}`;
+      const start = (marker: string, script: string): ChildProcess =>
+        spawn('bash', ['-c', script], { env: { ...process.env, LOOPER_RUN: marker }, stdio: 'ignore' });
+      const exited = (c: ChildProcess) => new Promise<void>((r) => (c.exitCode !== null || c.signalCode ? r() : c.once('exit', () => r())));
+      const plain = start(runId, 'sleep 30');
+      const stubborn = start(runId, 'trap "" TERM; sleep 30');
+      const other = start(`${runId}-other`, 'sleep 30');
+      await new Promise((r) => setTimeout(r, 200));
+      await new BashTarget({ host: 'wsl' }, undefined).killLeftovers(runId);
+      await Promise.all([exited(plain), exited(stubborn)]);
+      expect(plain.signalCode).toBe('SIGTERM');
+      expect(stubborn.signalCode).toBe('SIGKILL');
+      expect(other.exitCode === null && other.signalCode === null).toBe(true);
+      other.kill('SIGKILL');
+    },
+  );
 });
 
 describe('WindowsTarget', () => {
