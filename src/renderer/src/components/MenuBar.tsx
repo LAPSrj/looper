@@ -83,8 +83,9 @@ export function MenuList({ nav, depth, isMac, cues = false, focusActive = false,
   const style: React.CSSProperties = at
     ? { position: 'fixed', left: at.x + fit.dx, top: at.y + fit.dy }
     : { position: 'absolute', top: -5 + fit.dy, ...(fit.flip ? { right: '100%' } : { left: '100%' }) };
+  const checks = level.items.some((it) => it.type === 'checkbox' || it.type === 'radio');
   return (
-    <div ref={ref} className="ws-menu" role="menu" style={style} onPointerDown={(e) => e.stopPropagation()}>
+    <div ref={ref} className={checks ? 'ws-menu has-checks' : 'ws-menu'} role="menu" style={style} onPointerDown={(e) => e.stopPropagation()}>
       {level.items.map((it, i) => {
         if (it.type === 'separator') return <div key={it.id} className="ws-menu-sep" role="separator" />;
         const keys = shortcutText(it, isMac);

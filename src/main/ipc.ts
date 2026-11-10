@@ -1,4 +1,6 @@
-import { app, Menu as ElectronMenu, nativeImage } from 'electron';
+import { app, Menu as ElectronMenu } from 'electron';
+import { mainSpan } from './main-stalls';
+import { thumbnail } from './thumbnails';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
@@ -182,9 +184,6 @@ export interface IpcHost {
   /** Something a command asks for that only the main process can do. */
   runHostCommand: (w: AppWindow | null, name: HostCommand, args: string[]) => void;
 }
-
-/** Height of an attachment's thumbnail in a chat message. */
-const THUMBNAIL_HEIGHT = 160;
 
 /** Files from a renderer, checked: pasted bytes, or the path of an existing file. */
 function attachmentInputs(files: unknown): AttachmentInput[] {
@@ -671,11 +670,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
     const file = String(p);
     if (!/\.(png|jpe?g|gif|webp)$/i.test(file)) return null;
-    const hostPath = await targetToHost(String(taskId), file);
-    const img = nativeImage.createFromPath(hostPath);
-    if (img.isEmpty()) return null;
-    const { height } = img.getSize();
-    return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
+    return thumbnail(await targetToHost(String(taskId), file));
   });
   /** A file the agent sent (SendUserFile): its size, and a thumbnail when it's an image; null when it's gone. */
   ipc.handle('sessions:sentFile', async (_e, taskId: string, p: string): Promise<SentFileInfo | null> => {
@@ -726,13 +721,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const err = await openPath(String(p));
     if (err) throw new Error(err);
   });
-  ipc.handle('attachment:thumbnail', (_e, p: string) => {
-    if (!engine.isAttachment(String(p))) return null;
-    const img = nativeImage.createFromPath(String(p));
-    if (img.isEmpty()) return null;
-    const { height } = img.getSize();
-    return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
-  });
+  ipc.handle('attachment:thumbnail', (_e, p: string) => (engine.isAttachment(String(p)) ? thumbnail(String(p)) : null));
   ipc.handle('run:continue', (_e, id: string, runId: string, guidance: string) =>
     engine.continueRun(id, runId, guidance),
   );
@@ -776,11 +765,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const type = SENT_IMAGE_TYPES[path.extname(hostPath).slice(1).toLowerCase()];
     if (!type) return null;
     if (type === 'image/png' || type === 'image/jpeg') {
-      const img = nativeImage.createFromPath(hostPath);
-      if (!img.isEmpty()) {
-        const { height } = img.getSize();
-        return (height > THUMBNAIL_HEIGHT ? img.resize({ height: THUMBNAIL_HEIGHT }) : img).toDataURL();
-      }
+      const url = await thumbnail(hostPath);
+      if (url) return url;
     }
     if (size > SENT_THUMB_RAW_MAX) return null;
     return `data:${type};base64,${(await fs.promises.readFile(hostPath)).toString('base64')}`;
@@ -1541,7 +1527,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (event.type === 'agent:data') return;
     sendTo(allWindows(), event);
   };
-  engine.on((event) => broadcast(event));
+  engine.on((event) => mainSpan(`event ${event.type}`, () => broadcast(event)));
 }
 
 let broadcast: (event: EngineEvent) => void = () => undefined;

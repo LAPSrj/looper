@@ -1,3 +1,4 @@
+import { mainSpan } from '../main-stalls';
 import { decodeBytes, encodeBytes } from './bytes';
 import { runAs, type CallContext } from './context';
 
@@ -23,13 +24,17 @@ export type InvokeOutcome = { ok: true; value: unknown } | { ok: false; error: s
 export class IpcTable {
   private readonly handlers = new Map<string, InvokeHandler>();
   private readonly listeners = new Map<string, SendListener[]>();
+  /** Each listener as registered: the timed wrapper of the one a caller passed (removeListener takes the caller's). */
+  private readonly timed = new Map<string, WeakMap<SendListener, SendListener>>();
 
   constructor(private readonly electron?: IpcMainLike) {}
 
   handle(channel: string, handler: InvokeHandler): void {
     if (this.handlers.has(channel)) throw new Error(`Attempted to register a second handler for '${channel}'`);
-    this.electron?.handle(channel, handler);
-    this.handlers.set(channel, handler);
+    const name = `ipc ${channel}`;
+    const timed: InvokeHandler = (event, ...args) => mainSpan(name, () => handler(event, ...args));
+    this.electron?.handle(channel, timed);
+    this.handlers.set(channel, timed);
   }
 
   removeHandler(channel: string): void {
@@ -38,16 +43,21 @@ export class IpcTable {
   }
 
   on(channel: string, listener: SendListener): void {
-    this.electron?.on(channel, listener);
+    const name = `ipc ${channel}`;
+    const timed: SendListener = (event, ...args) => mainSpan(name, () => listener(event, ...args));
+    if (!this.timed.has(channel)) this.timed.set(channel, new WeakMap());
+    this.timed.get(channel)!.set(listener, timed);
+    this.electron?.on(channel, timed);
     const list = this.listeners.get(channel) ?? [];
-    list.push(listener);
+    list.push(timed);
     this.listeners.set(channel, list);
   }
 
   removeListener(channel: string, listener: SendListener): void {
-    this.electron?.removeListener(channel, listener);
+    const timed = this.timed.get(channel)?.get(listener) ?? listener;
+    this.electron?.removeListener(channel, timed);
     const list = this.listeners.get(channel);
-    const i = list?.indexOf(listener) ?? -1;
+    const i = list?.indexOf(timed) ?? -1;
     if (list && i >= 0) list.splice(i, 1);
     if (list?.length === 0) this.listeners.delete(channel);
   }

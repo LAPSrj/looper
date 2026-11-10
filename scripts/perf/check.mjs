@@ -273,7 +273,7 @@ async function measureMain(app, page, chats, terminal) {
     if (!step) continue;
     if (errors.length) broken.push(`${s.name}: ${errors[0].slice(0, 200)}`);
     const nodes = await page.evaluate(() => document.getElementsByTagName('*').length);
-    measured[`main: ${s.name}`] = { worstFrameMs: step.worstFrame, longestMs: step.longest, nodes };
+    measured[`main: ${s.name}`] = { worstFrameMs: step.worstFrame, longestMs: step.longest, mainFreezeMs: step.mainFreeze, nodes };
     console.log(`main: ${s.name}`, JSON.stringify(measured[`main: ${s.name}`]));
   }
 }
@@ -284,7 +284,7 @@ if (!only || wanted('journey:')) {
   const steps = {};
   await journey(chats, (name, value) => (steps[name] = value));
   for (const [name, v] of Object.entries(steps)) {
-    const keep = Object.fromEntries(Object.entries(v).filter(([k, x]) => typeof x === 'number' && ['worstFrame', 'longest', 'taskManagerMb', 'privateMb', 'toEnd', 'worstMs'].includes(k)));
+    const keep = Object.fromEntries(Object.entries(v).filter(([k, x]) => typeof x === 'number' && ['worstFrame', 'longest', 'mainFreeze', 'taskManagerMb', 'privateMb', 'toEnd', 'worstMs'].includes(k)));
     measured[`journey: ${name}`] = keep;
     console.log(`journey: ${name}`, JSON.stringify(keep));
   }
@@ -321,7 +321,7 @@ const budgetOf = (metric, v) => {
   if (metric === 'heapMb') return Math.round(v * 1.25 + 1);
   return Math.round(v * 1.15) + 2;
 };
-const metricKey = (k) => (k === 'worstFrame' ? 'worstFrameMs' : k === 'longest' ? 'longestMs' : k === 'worstMs' ? 'worstKeyMs' : k);
+const metricKey = (k) => (k === 'worstFrame' ? 'worstFrameMs' : k === 'longest' ? 'longestMs' : k === 'worstMs' ? 'worstKeyMs' : k === 'mainFreeze' ? 'mainFreezeMs' : k);
 
 const budgets = fs.existsSync(BUDGETS) ? JSON.parse(fs.readFileSync(BUDGETS, 'utf8')) : {};
 const over = [];

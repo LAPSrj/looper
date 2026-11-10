@@ -58,6 +58,26 @@ export async function journey(chats, record) {
     // BENCH_SHOT: a screenshot after each step, to see that it did what its label says.
     if (process.env.BENCH_SHOT) await page.screenshot({ path: path.join(ROOT, `${label.replace(/\W+/g, '-')}.png`) });
   }
+  // The Activity pane's Files tab, whose screenshots the agents read show as thumbnails, open while switching chats.
+  await select(chats[1]);
+  await page.waitForSelector('.chat-scroll');
+  await sleep(1500);
+  // Enabled once the chat's conversation has loaded.
+  const activity = page.locator('button[title^="Activity Pane"]:not([disabled])').first();
+  // The pane's state is saved: a run that stopped partway can leave it open.
+  if (!(await page.$('.activity-tabs'))) await activity.click();
+  await page.waitForSelector('.activity-tabs');
+  record('open the Files tab', await profiled(page, 'open the Files tab', () => watch(page, () => page.click('.activity-tabs [role="tab"]:has-text("Files")'))));
+  if (process.env.BENCH_SHOT) await page.screenshot({ path: path.join(ROOT, 'files-tab.png') });
+  for (const [label, id] of [
+    ['switch chats with the Files tab open', chats[2]],
+    ['switch back with the Files tab open', chats[1]],
+  ]) {
+    record(label, await profiled(page, label, () => watch(page, () => select(id))));
+  }
+  await activity.click();
+  await select('');
+  await sleep(1000);
   // Down the chats dashboard: the cards out of view are drawn as they scroll in.
   const dash = await page.$('.sessions-dashboard');
   const box = await dash?.boundingBox();

@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FindBar, useFindHighlights, type FindState } from './FindBar';
-import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst } from './newest-first';
+import { CARD_ITEMS, FIRST_ITEMS, readPlace, useKeepPlace, useNewestFirst, useStayAtEnd } from './newest-first';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
@@ -204,12 +204,20 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const scrollRef = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerHandle>(null);
   const findRef = useRef<HTMLInputElement | null>(null);
-  const atBottom = useRef(true);
+  // A page coming back (a phone back from another app) puts the reader where they were; one opened anew starts at its end.
+  const [place] = useState(() => (embedded ? null : readPlace(id)));
+  const atBottom = useRef(!place || place.atEnd);
 
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && place && !place.atEnd) el.scrollTop = place.top;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [state.rows.length, state.history.length, state.permissions.length, state.status, state.queued.length]);
+  useStayAtEnd(scrollRef, atBottom);
 
   const matches = useFindHighlights(scrollRef, find, setFind, () => {
     atBottom.current = false;
@@ -268,7 +276,15 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
 
   // Find draws every item, so it searches the whole chat.
-  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, id, allHistory.length + allItems.length, find !== null, embedded ? CARD_ITEMS : FIRST_ITEMS);
+  const { hidden, onScroll: showOlder } = useNewestFirst(
+    scrollRef,
+    id,
+    allHistory.length + allItems.length,
+    find !== null,
+    embedded ? CARD_ITEMS : FIRST_ITEMS,
+    place && !place.atEnd ? place.start : undefined,
+  );
+  const keepPlace = useKeepPlace(scrollRef, id, hidden, atBottom, embedded);
   const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length)), [allHistory, hidden]);
   const items = useMemo(() => allItems.slice(Math.max(0, hidden - allHistory.length)), [allItems, allHistory.length, hidden]);
 
@@ -331,6 +347,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
             const el = e.currentTarget;
             atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
             showOlder(el);
+            keepPlace(el);
           }}
           onContextMenu={(e) => {
             const selection = window.getSelection()?.toString();

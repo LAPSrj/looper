@@ -94,7 +94,16 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   the GPU driver's, V8's and Blink's for what the windows show.
 - **Watch `perf.log`.** The frame watchdog writes each freeze and burst of
   dropped frames there, on the desktop and on phones, with what rendered
-  during it.
+  during it. The main process's freezes go there too (`main/main-stalls.ts`),
+  with the IPC handlers, events and menu rebuilds that ran in them.
+- **Nothing slow runs on the main process's thread.** On Windows it takes
+  every window's input, so while it's held all of Looper stops responding,
+  and the pages' watchdogs see nothing because they keep drawing. Decoding
+  images there froze the app for seconds on each chat switch (20-50 ms a
+  screenshot, for every image in the Files tab); thumbnails now come from a
+  worker (`main/thumbnails.ts`). Read files with `fs.promises`, and put
+  anything that takes more than a few ms in a worker. `npm run perf` fails a
+  step that holds the main process past its budget (`mainFreezeMs`).
 - **Measure on data shaped like real use.** Real chats keep 1,000 rows, about
   60% of them tool calls holding 1-2 MB; the benchmark's chats (`longChat` in
   `scripts/perf/lib.mjs`) are generated with that mix. A text-only chat hid a

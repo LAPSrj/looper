@@ -177,7 +177,8 @@ function TopBar({
 const isChoice =(it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'radio';
 
 function MenuItems({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
-  const checks = items.some(isChoice);
+  // One column before the labels for every item, so they line up: a chosen item's check, or else its icon.
+  const lead = items.some((it) => isChoice(it) || it.icon);
   const groups = menuGroups(items);
   // The up row heads the first group, even when the level has no items of its own.
   if (title !== null && !groups.length) groups.push([]);
@@ -201,15 +202,7 @@ function MenuItems({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
               disabled={!it.enabled}
               onClick={() => onItem(it)}
             >
-              {checks ? (
-                <span className="md-menu-lead">{it.checked ? CHECK : null}</span>
-              ) : (
-                it.icon && (
-                  <span className="md-menu-lead">
-                    <NavIcon name={it.icon} size={24} />
-                  </span>
-                )
-              )}
+              {lead && <span className="md-menu-lead">{isChoice(it) && it.checked ? CHECK : it.icon ? <NavIcon name={it.icon} size={24} /> : null}</span>}
               <span className="md-menu-label">{plainLabel(it.label)}</span>
               {it.type === 'submenu' && <span className="md-menu-trail">{ARROW_RIGHT}</span>}
             </button>

@@ -63,6 +63,7 @@ import type { CommandView } from '../shared/commands/command';
 import { EMPTY_CONTEXT, type CommandContext, type HostCommand } from '../shared/commands/context';
 import type { MenuItemSpec } from '../shared/remote-access';
 import { hideOffPlatform } from './platform/menus';
+import { mainSpan, startStallWatch } from './main-stalls';
 import { startMemoryTrim } from './memory-trim';
 import { isWebLink } from '../shared/links';
 import { NO_HISTORY_COMMANDS, RECENT_CHATS, recentChatLabel, type HistoryCommand } from '../shared/history';
@@ -304,6 +305,7 @@ if (!app.requestSingleInstanceLock()) {
       });
     }
     startMemoryTrim((ms) => engine?.logPerf(`desktop | memory handed back while no window had the focus, ${ms} ms`));
+    startStallWatch((line) => engine?.logPerf(`desktop | ${line}`));
     // Launched by double-clicking a Looper document (file association).
     const fileArg = looperFileFromArgv(process.argv);
     if (fileArg) {
@@ -2861,8 +2863,10 @@ const menuless = (w: AppWindow, items: MenuItemSpec[]): boolean => !items.length
 
 function drawCommandMenu(w: AppWindow, items: MenuItemSpec[]): void {
   if (w.isDestroyed()) return;
-  if (menuless(w, items)) setWindowMenu(w, null);
-  else drawTemplate(w, commandTemplate(w, items));
+  mainSpan('menu bar', () => {
+    if (menuless(w, items)) setWindowMenu(w, null);
+    else drawTemplate(w, commandTemplate(w, items));
+  });
 }
 
 /** Every window's menu bar again, for what the main process fills in; on macOS with no main window, the global one. */

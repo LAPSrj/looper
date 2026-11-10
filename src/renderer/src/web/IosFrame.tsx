@@ -224,25 +224,28 @@ function IosTabBar({ tabs }: { tabs: PageNavTabs }) {
 const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'radio';
 
 /**
- * One level of a menu as iOS draws it: groups split by a thick gap, a check
- * before chosen items, the item's symbol before its label (a chevron at the
- * end of a submenu), destructive items in red. A group shows symbols only when
- * every item in it has one (HIG: Menus, "icons for all menu items in a group,
- * or none of them").
+ * One level of a menu as iOS draws it: groups split by a thick gap, a column
+ * before the labels holding a chosen item's check or else the item's symbol
+ * (a chevron at the end of a submenu), destructive items in red. A group shows
+ * symbols only when every item in it has one (HIG: Menus, "icons for all menu
+ * items in a group, or none of them"); the column stays for every item, so the
+ * labels line up.
  */
 function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
-  const checks = items.some(isChoice);
   const iconOf = (it: MenuItemSpec) => (it.type !== 'submenu' ? it.icon : undefined);
+  const groups = menuGroups(items);
+  const iconGroups = groups.map((group) => group.every((it) => iconOf(it)));
+  const lead = title !== null || items.some(isChoice) || iconGroups.some(Boolean);
   return (
     <div className="ios-menu-scroll ph-scroll" role="menu">
       {title !== null && (
         <button className="ios-menu-item ios-menu-up" onClick={onUp}>
-          <span className="ios-menu-check">{CHEVRON_LEFT}</span>
+          <span className="ios-menu-lead">{CHEVRON_LEFT}</span>
           <span className="ios-menu-label">{title}</span>
         </button>
       )}
-      {menuGroups(items).map((group, gi) => {
-        const icons = group.every((it) => iconOf(it));
+      {groups.map((group, gi) => {
+        const icons = iconGroups[gi];
         return (
         <div key={gi} className="ios-menu-group">
           {group.map((it) => (
@@ -255,12 +258,7 @@ function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; titl
               disabled={!it.enabled}
               onClick={() => onItem(it)}
             >
-              {checks && <span className="ios-menu-check">{it.checked ? CHECK : null}</span>}
-              {icons && (
-                <span className="ios-menu-icon">
-                  <NavIcon name={iconOf(it)!} size={20} />
-                </span>
-              )}
+              {lead && <span className="ios-menu-lead">{isChoice(it) && it.checked ? CHECK : icons ? <NavIcon name={iconOf(it)!} size={20} /> : null}</span>}
               <span className="ios-menu-label">{plainLabel(it.label)}</span>
               {it.type === 'submenu' && <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>}
             </button>
@@ -310,9 +308,10 @@ function PullDown({
     el.style.left = `${Math.min(Math.max(8, anchor.left + anchor.width / 2 - width / 2), window.innerWidth - width - 8)}px`;
   }, [align, anchor, sub.level]);
   const side = align === 'center' ? { left: 8 } : { right: Math.max(8, window.innerWidth - anchor.right) };
+  const top = anchor.bottom + 6;
   return (
     <div className="ios-menu-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={box} className="ios-menu ios-pull-down" style={{ ...side, top: anchor.bottom + 6 }}>
+      <div ref={box} className="ios-menu ios-pull-down" style={{ ...side, top, maxHeight: `calc(100% - ${top + 8}px - env(safe-area-inset-bottom, 0px))` }}>
         <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={(it) => (it.type === 'submenu' ? sub.open(it) : onPick(it))} />
       </div>
     </div>

@@ -1,14 +1,25 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import pkg from './package.json';
 
+/** `import url from 'x.wasm?inline'`: the file as a data URL, which Vite's assets don't do in the main process's build. */
+const inlineFiles = (): Plugin => ({
+  name: 'looper-inline-files',
+  enforce: 'pre',
+  resolveId: (id) => (id.endsWith('?inline') ? `\0inline:${createRequire(__filename).resolve(id.slice(0, -'?inline'.length))}` : null),
+  load: (id) => (id.startsWith('\0inline:') ? `export default ${JSON.stringify(`data:application/wasm;base64,${readFileSync(id.slice('\0inline:'.length)).toString('base64')}`)}` : null),
+});
+
 export default defineConfig({
   main: {
-    // Bundled: @xterm/headless because the terminal worker runs from app.asar.unpacked, where app.asar's
-    // node_modules can't be resolved; zod because its own build loads all 95 files and 64 languages (100 ms,
-    // 10 MB) where the bundle keeps the parts Looper uses.
-    plugins: [externalizeDepsPlugin({ exclude: ['@xterm/headless', 'zod'] })],
+    // Bundled: @xterm/headless and pngjs because the terminal and thumbnail workers run from app.asar.unpacked,
+    // where app.asar's node_modules can't be resolved; zod because its own build loads all 95 files and 64
+    // languages (100 ms, 10 MB) where the bundle keeps the parts Looper uses.
+    plugins: [inlineFiles(), externalizeDepsPlugin({ exclude: ['@xterm/headless', 'pngjs', 'zod'] })],
     resolve: {
       alias: { '@shared': resolve(__dirname, 'src/shared'), '@engine': resolve(__dirname, 'src/engine') },
     },
@@ -22,6 +33,8 @@ export default defineConfig({
           app: resolve(__dirname, 'src/main/index.ts'),
           // Runs the terminal emulation off the main thread (see terminal-host.ts).
           'terminal-worker': resolve(__dirname, 'src/engine/terminal-worker.ts'),
+          // Makes image thumbnails off the main thread (see thumbnails.ts).
+          'thumbnail-worker': resolve(__dirname, 'src/main/thumbnail-worker.ts'),
         },
       },
     },

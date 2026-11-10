@@ -257,6 +257,9 @@ describe('menus', () => {
     ]);
     expect(byId.get('0.0')?.label).toBe('&New Task…');
     expect(stripMnemonic('Save && E&xit')).toBe('Save & Exit');
+    // The computer's own window draws its menu bar from the same data, and keeps Exit.
+    const own = serializeMenu(menu, 'desktop', true).items[0].submenu!;
+    expect(own[own.length - 1]).toEqual({ id: '0.7', type: 'normal', label: 'Exit', access: 1, enabled: true, role: 'quit' });
   });
 
   it('a pick runs the click as the caller, with the checkbox state the client reports', () => {

@@ -49,6 +49,30 @@ export const initialPhoneNav = (tab: PhoneTab = 'dashboard'): PhoneNav => ({
   stacks: { dashboard: [], projects: [], tasks: [], sessions: [], more: [] },
 });
 
+const SCREEN_KINDS = new Set(['task', 'project', 'folder', 'list', 'addon']);
+
+/** A kept PhoneNav read back (the page loading again, the app relaunched); null unless it has the shape this build writes. */
+export function keptNav(v: unknown): PhoneNav | null {
+  if (!v || typeof v !== 'object') return null;
+  const n = v as { tab?: unknown; stacks?: unknown };
+  const tabOk = typeof n.tab === 'string' && (PHONE_TABS.some(([id]) => id === n.tab) || n.tab.startsWith('addon/'));
+  if (!tabOk || !n.stacks || typeof n.stacks !== 'object') return null;
+  for (const stack of Object.values(n.stacks)) {
+    if (!Array.isArray(stack) || stack.some((s) => !s || typeof s !== 'object' || !SCREEN_KINDS.has((s as { kind?: string }).kind ?? ''))) return null;
+  }
+  return n as PhoneNav;
+}
+
+/** `nav` without the screens whose item is gone, nor any screen above one. */
+export function pruneNav(nav: PhoneNav, exists: (s: PhoneScreen) => boolean): PhoneNav {
+  const stacks: PhoneNav['stacks'] = {};
+  for (const [tab, stack = []] of Object.entries(nav.stacks)) {
+    const gone = stack.findIndex((s) => !exists(s));
+    stacks[tab as PhoneTab] = gone < 0 ? stack : stack.slice(0, gone);
+  }
+  return { ...nav, stacks };
+}
+
 /** The screens over a tab's list; a tab that hasn't been opened has none. */
 export const stackOf = (nav: PhoneNav, tab: PhoneTab = nav.tab): PhoneScreen[] => nav.stacks[tab] ?? [];
 

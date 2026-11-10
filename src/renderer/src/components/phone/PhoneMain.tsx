@@ -16,8 +16,10 @@ import {
   PHONE_TABS,
   followSelection,
   initialPhoneNav,
+  keptNav,
   phoneTabForm,
   popScreen,
+  pruneNav,
   pushScreen,
   rootScreen,
   selectTab,
@@ -25,6 +27,7 @@ import {
   showTabRoot,
   stackOf,
   topScreen,
+  type PhoneNav,
   type PhoneScreen,
   type PhoneTab,
 } from '../../phone-nav';
@@ -55,6 +58,16 @@ import { TaskCollection } from '../TaskCollection';
 import { TasksOverview } from './TasksOverview';
 import { useSessionsState } from './useSessionsState';
 
+const KEPT_NAV_KEY = 'looper.phone-nav';
+
+function readKeptNav(): PhoneNav | null {
+  try {
+    return keptNav(JSON.parse(localStorage.getItem(KEPT_NAV_KEY) ?? 'null'));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The main window on a phone: a bottom tab bar (Dashboard, Projects, Tasks,
  * Chats and More), each tab a list that pushes its items' screens. What a
@@ -63,7 +76,33 @@ import { useSessionsState } from './useSessionsState';
  */
 export function PhoneMain({ m }: { m: MainWindow }) {
   const commandState = useCommandState();
-  const [nav, setNav] = useState(() => initialPhoneNav());
+  // The tab and its screens come back where they were when the page loads again (a phone back from another app, the
+  // app relaunched): the tab at once, so Back from a conversation shows the list it came from, and the screens once
+  // the window has loaded, without any whose item is gone.
+  const [kept] = useState(readKeptNav);
+  const [nav, setNav] = useState(() => initialPhoneNav(kept?.tab));
+  const restored = useRef(!kept);
+  useEffect(() => {
+    if (restored.current || !m.loaded || !m.addonsLoaded) return;
+    restored.current = true;
+    const exists = (s: PhoneScreen) =>
+      s.kind === 'task' ? m.tasks.some((t) => t.id === s.id)
+      : s.kind === 'project' ? m.projects.some((p) => p.id === s.id)
+      : s.kind === 'folder' ? m.folders.some((f) => f.id === s.id)
+      : s.kind === 'addon' ? m.addons.some((a) => a.id === s.addonId)
+      : true;
+    // Not over what the reader already opened since the page loaded.
+    setNav((n) => (n.tab === kept!.tab && !Object.values(n.stacks).some((s) => s?.length) ? pruneNav(kept!, exists) : n));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m.loaded, m.addonsLoaded]);
+  useEffect(() => {
+    if (!restored.current) return;
+    try {
+      localStorage.setItem(KEPT_NAV_KEY, JSON.stringify(nav));
+    } catch {
+      // Storage full or off: the next load starts on the Dashboard.
+    }
+  }, [nav]);
   const top = topScreen(nav);
   const topKey = JSON.stringify(top);
   // iPad: the tab's list stays in a leading column and what it opens shows beside it.

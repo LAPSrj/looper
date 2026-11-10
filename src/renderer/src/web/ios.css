@@ -701,11 +701,12 @@ html[data-platform='ios'] {
 .ios-menu-up {
   font-weight: 600;
 }
-.ios-menu-check {
+/* Before the label: a chosen item's check, or else the item's symbol. */
+.ios-menu-lead {
   display: flex;
-  justify-content: center;
-  width: 20px;
   flex: none;
+  justify-content: center;
+  width: 24px;
 }
 .ios-menu-label {
   flex: 1;
@@ -717,13 +718,6 @@ html[data-platform='ios'] {
 .ios-menu-sub {
   display: flex;
   color: var(--ios-label2);
-}
-/* The item's symbol, before its label. */
-.ios-menu-icon {
-  display: flex;
-  flex: none;
-  justify-content: center;
-  width: 24px;
 }
 .ios-menu-item.destructive {
   color: var(--ios-red);

@@ -8,24 +8,24 @@
     "nodes": 280
   },
   "android: Chat": {
-    "worstFrameMs": 300,
-    "nodes": 876
+    "worstFrameMs": 117,
+    "nodes": 576
   },
   "android: Chats": {
-    "worstFrameMs": 117,
-    "nodes": 466
+    "worstFrameMs": 133,
+    "nodes": 477
   },
   "android: Dashboard": {
     "worstFrameMs": 117,
-    "nodes": 454
+    "nodes": 445
   },
   "android: Folder": {
     "worstFrameMs": 117,
-    "nodes": 318
+    "nodes": 328
   },
   "android: More": {
     "worstFrameMs": 117,
-    "nodes": 284
+    "nodes": 295
   },
   "android: Project": {
     "worstFrameMs": 117,
@@ -36,128 +36,155 @@
     "nodes": 276
   },
   "android: start": {
-    "readyMs": 2012
+    "readyMs": 1742
   },
   "android: Task": {
-    "worstFrameMs": 133,
-    "nodes": 318
+    "worstFrameMs": 117,
+    "nodes": 328
   },
   "android: Tasks": {
     "worstFrameMs": 117,
     "nodes": 291
   },
   "ios: Addon pane": {
-    "worstFrameMs": 418,
+    "worstFrameMs": 147,
     "nodes": 300
   },
   "ios: Advanced": {
-    "worstFrameMs": 450,
-    "nodes": 300
+    "worstFrameMs": 146,
+    "nodes": 292
   },
   "ios: Chat": {
-    "worstFrameMs": 870,
-    "nodes": 886
+    "worstFrameMs": 246,
+    "nodes": 931
   },
   "ios: Chats": {
-    "worstFrameMs": 300,
+    "worstFrameMs": 151,
     "nodes": 474
   },
   "ios: Dashboard": {
-    "worstFrameMs": 133,
+    "worstFrameMs": 132,
     "nodes": 530
   },
   "ios: Folder": {
-    "worstFrameMs": 316,
+    "worstFrameMs": 148,
     "nodes": 348
   },
   "ios: More": {
-    "worstFrameMs": 248,
+    "worstFrameMs": 149,
     "nodes": 300
   },
   "ios: Project": {
-    "worstFrameMs": 508,
+    "worstFrameMs": 160,
     "nodes": 320
   },
   "ios: Projects": {
-    "worstFrameMs": 260,
+    "worstFrameMs": 150,
     "nodes": 290
   },
   "ios: start": {
-    "readyMs": 3080
+    "readyMs": 2260
   },
   "ios: Task": {
-    "worstFrameMs": 536,
+    "worstFrameMs": 173,
     "nodes": 324
   },
   "ios: Tasks": {
-    "worstFrameMs": 244,
+    "worstFrameMs": 146,
     "nodes": 306
   },
   "journey: back to the chats dashboard": {
-    "worstFrameMs": 183,
-    "longestMs": 173
+    "worstFrameMs": 133,
+    "longestMs": 100,
+    "mainFreezeMs": 116
   },
   "journey: chats tab": {
     "worstFrameMs": 117,
-    "longestMs": 100
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: Chats tab": {
-    "worstFrameMs": 183,
-    "longestMs": 175
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: Dashboard tab": {
-    "worstFrameMs": 150,
-    "longestMs": 172
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 116
   },
   "journey: engine log window": {
-    "longestMs": 191
+    "longestMs": 100
   },
   "journey: memory after startup": {
-    "taskManagerMb": 311,
-    "privateMb": 410
+    "taskManagerMb": 256,
+    "privateMb": 361
   },
   "journey: memory after use": {
-    "taskManagerMb": 288,
-    "privateMb": 392
+    "taskManagerMb": 299,
+    "privateMb": 403
   },
   "journey: memory when away": {
-    "taskManagerMb": 261,
-    "privateMb": 363
+    "taskManagerMb": 270,
+    "privateMb": 375
   },
   "journey: open long chat": {
-    "worstFrameMs": 133,
+    "worstFrameMs": 117,
     "longestMs": 100,
-    "toEnd": 0
+    "toEnd": 0,
+    "mainFreezeMs": 115
+  },
+  "journey: open the Files tab": {
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: Projects tab": {
     "worstFrameMs": 117,
-    "longestMs": 100
+    "longestMs": 100,
+    "mainFreezeMs": 116
   },
   "journey: scroll the chats dashboard": {
-    "worstFrameMs": 167,
-    "longestMs": 190
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 116
   },
   "journey: scroll up the long chat": {
     "worstFrameMs": 117,
-    "longestMs": 100
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: startup": {
-    "worstFrameMs": 234,
-    "longestMs": 218
+    "worstFrameMs": 150,
+    "longestMs": 151,
+    "mainFreezeMs": 152
   },
   "journey: switch back to the long chat": {
-    "worstFrameMs": 133,
-    "longestMs": 153,
-    "toEnd": 0
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "toEnd": 0,
+    "mainFreezeMs": 122
+  },
+  "journey: switch back with the Files tab open": {
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 116
+  },
+  "journey: switch chats with the Files tab open": {
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: switch to another chat": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "toEnd": 0
+    "toEnd": 0,
+    "mainFreezeMs": 116
   },
   "journey: Tasks tab": {
     "worstFrameMs": 117,
-    "longestMs": 100
+    "longestMs": 100,
+    "mainFreezeMs": 115
   },
   "journey: typing in the message box": {
     "worstKeyMs": 132
@@ -165,611 +192,621 @@
   "main: Addon tab": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 238
+    "nodes": 238,
+    "mainFreezeMs": 115
   },
   "main: Chat": {
-    "worstFrameMs": 133,
-    "longestMs": 158,
-    "nodes": 878
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "nodes": 824,
+    "mainFreezeMs": 116
   },
   "main: Chats tab": {
-    "worstFrameMs": 150,
-    "longestMs": 157,
-    "nodes": 661
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "nodes": 630,
+    "mainFreezeMs": 116
   },
   "main: Dashboard tab": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 516
+    "nodes": 516,
+    "mainFreezeMs": 114
   },
   "main: Project": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 277
+    "nodes": 277,
+    "mainFreezeMs": 115
   },
   "main: Projects tab": {
-    "worstFrameMs": 133,
+    "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 226
+    "nodes": 226,
+    "mainFreezeMs": 115
   },
   "main: Task runs": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 650
+    "nodes": 650,
+    "mainFreezeMs": 115
   },
   "main: Task status": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 410
+    "nodes": 410,
+    "mainFreezeMs": 115
   },
   "main: Tasks tab": {
     "worstFrameMs": 117,
     "longestMs": 100,
-    "nodes": 496
+    "nodes": 496,
+    "mainFreezeMs": 114
   },
   "main: Terminal": {
-    "worstFrameMs": 134,
-    "longestMs": 152,
-    "nodes": 661
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "nodes": 630,
+    "mainFreezeMs": 116
   },
   "window: About": {
-    "readyMs": 876,
-    "longestMs": 294,
-    "blockingMs": 101,
+    "readyMs": 258,
+    "longestMs": 100,
+    "blockingMs": 100,
     "nodes": 49,
     "heapMb": 26,
     "rendererMb": 102
   },
   "window: Addon screen window": {
-    "readyMs": 804,
-    "longestMs": 179,
-    "blockingMs": 103,
+    "readyMs": 280,
+    "longestMs": 100,
+    "blockingMs": 100,
     "nodes": 73,
     "heapMb": 27,
-    "rendererMb": 105
+    "rendererMb": 114
   },
   "window: Addon settings": {
-    "readyMs": 748,
-    "longestMs": 252,
+    "readyMs": 322,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 79,
+    "nodes": 78,
     "heapMb": 26,
-    "rendererMb": 107
+    "rendererMb": 112
   },
   "window: Addons": {
-    "readyMs": 752,
-    "longestMs": 182,
+    "readyMs": 286,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 76,
+    "nodes": 75,
     "heapMb": 26,
-    "rendererMb": 114
+    "rendererMb": 112
   },
   "window: Agent Settings": {
-    "readyMs": 804,
-    "longestMs": 198,
+    "readyMs": 306,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 102,
-    "heapMb": 27,
-    "rendererMb": 114
+    "heapMb": 26,
+    "rendererMb": 112
   },
   "window: Chat window": {
-    "readyMs": 932,
-    "longestMs": 208,
-    "blockingMs": 101,
-    "nodes": 451,
-    "heapMb": 31,
-    "rendererMb": 119
+    "readyMs": 328,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 495,
+    "heapMb": 30,
+    "rendererMb": 120
   },
   "window: Chats window": {
-    "readyMs": 1000,
-    "longestMs": 196,
-    "blockingMs": 111,
-    "nodes": 1966,
-    "heapMb": 37,
-    "rendererMb": 124
+    "readyMs": 356,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 2208,
+    "heapMb": 35,
+    "rendererMb": 126
   },
   "window: Continue Run": {
-    "readyMs": 812,
-    "longestMs": 188,
+    "readyMs": 318,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 56,
     "heapMb": 26,
-    "rendererMb": 103
+    "rendererMb": 102
   },
   "window: Copy Model": {
-    "readyMs": 824,
-    "longestMs": 199,
+    "readyMs": 320,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 84,
+    "heapMb": 26,
+    "rendererMb": 101
+  },
+  "window: Edit Project": {
+    "readyMs": 292,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 140,
+    "heapMb": 26,
+    "rendererMb": 100
+  },
+  "window: Edit Task": {
+    "readyMs": 314,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 1017,
     "heapMb": 27,
     "rendererMb": 102
   },
-  "window: Edit Project": {
-    "readyMs": 848,
-    "longestMs": 204,
-    "blockingMs": 100,
-    "nodes": 141,
-    "heapMb": 27,
-    "rendererMb": 104
-  },
-  "window: Edit Task": {
-    "readyMs": 856,
-    "longestMs": 195,
-    "blockingMs": 118,
-    "nodes": 1015,
-    "heapMb": 27,
-    "rendererMb": 107
-  },
   "window: Edit Template": {
-    "readyMs": 852,
-    "longestMs": 248,
-    "blockingMs": 109,
-    "nodes": 962,
-    "heapMb": 27,
-    "rendererMb": 104
-  },
-  "window: Engine Log": {
-    "readyMs": 930,
-    "longestMs": 191,
+    "readyMs": 310,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 380,
+    "nodes": 964,
     "heapMb": 27,
     "rendererMb": 105
   },
-  "window: Environment": {
-    "readyMs": 812,
-    "longestMs": 220,
+  "window: Engine Log": {
+    "readyMs": 346,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 102,
+    "nodes": 356,
     "heapMb": 27,
-    "rendererMb": 103
+    "rendererMb": 114
+  },
+  "window: Environment": {
+    "readyMs": 290,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 100,
+    "heapMb": 26,
+    "rendererMb": 102
   },
   "window: Folder note": {
-    "readyMs": 852,
-    "longestMs": 191,
+    "readyMs": 312,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 64,
     "heapMb": 26,
-    "rendererMb": 104
-  },
-  "window: Harness": {
-    "readyMs": 816,
-    "longestMs": 182,
-    "blockingMs": 100,
-    "nodes": 128,
-    "heapMb": 27,
-    "rendererMb": 102
-  },
-  "window: History": {
-    "readyMs": 892,
-    "longestMs": 179,
-    "blockingMs": 101,
-    "nodes": 196,
-    "heapMb": 28,
     "rendererMb": 103
   },
+  "window: Harness": {
+    "readyMs": 338,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 127,
+    "heapMb": 26,
+    "rendererMb": 103
+  },
+  "window: History": {
+    "readyMs": 354,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 196,
+    "heapMb": 27,
+    "rendererMb": 114
+  },
   "window: Image": {
-    "readyMs": 830,
-    "longestMs": 196,
+    "readyMs": 344,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 78,
     "heapMb": 32,
-    "rendererMb": 112
+    "rendererMb": 109
   },
   "window: Import Task": {
-    "readyMs": 998,
-    "longestMs": 173,
-    "blockingMs": 112,
-    "nodes": 1015,
+    "readyMs": 388,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 1017,
     "heapMb": 27,
-    "rendererMb": 107
+    "rendererMb": 103
   },
   "window: Import Template": {
-    "readyMs": 1002,
-    "longestMs": 181,
-    "blockingMs": 114,
-    "nodes": 1009,
+    "readyMs": 368,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 1011,
     "heapMb": 27,
-    "rendererMb": 107
+    "rendererMb": 105
   },
   "window: Instructions": {
-    "readyMs": 806,
-    "longestMs": 234,
+    "readyMs": 286,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 112,
     "heapMb": 26,
-    "rendererMb": 102
+    "rendererMb": 101
   },
   "window: MCP Server": {
-    "readyMs": 882,
-    "longestMs": 173,
+    "readyMs": 252,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 85,
     "heapMb": 26,
-    "rendererMb": 115
+    "rendererMb": 110
   },
   "window: Menu level": {
-    "readyMs": 752,
-    "longestMs": 195,
+    "readyMs": 316,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 33,
-    "heapMb": 25,
-    "rendererMb": 114
+    "heapMb": 24,
+    "rendererMb": 111
   },
   "window: Message filter": {
-    "readyMs": 852,
-    "longestMs": 192,
+    "readyMs": 318,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 58,
     "heapMb": 26,
     "rendererMb": 102
   },
   "window: Model": {
-    "readyMs": 770,
-    "longestMs": 186,
+    "readyMs": 280,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 84,
-    "heapMb": 27,
-    "rendererMb": 104
+    "heapMb": 26,
+    "rendererMb": 103
   },
   "window: Move to Folder": {
-    "readyMs": 904,
-    "longestMs": 230,
+    "readyMs": 316,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 78,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 101
   },
   "window: New Environment": {
-    "readyMs": 858,
-    "longestMs": 189,
+    "readyMs": 326,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 102,
-    "heapMb": 27,
-    "rendererMb": 104
+    "nodes": 100,
+    "heapMb": 26,
+    "rendererMb": 100
   },
   "window: New Folder": {
-    "readyMs": 914,
-    "longestMs": 224,
+    "readyMs": 318,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 67,
     "heapMb": 26,
-    "rendererMb": 102
+    "rendererMb": 100
   },
   "window: New Harness": {
-    "readyMs": 824,
-    "longestMs": 193,
+    "readyMs": 310,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 128,
-    "heapMb": 27,
-    "rendererMb": 104
+    "nodes": 127,
+    "heapMb": 26,
+    "rendererMb": 100
   },
   "window: New Model": {
-    "readyMs": 856,
-    "longestMs": 220,
+    "readyMs": 282,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 84,
-    "heapMb": 27,
-    "rendererMb": 102
+    "heapMb": 26,
+    "rendererMb": 101
   },
   "window: New Project": {
-    "readyMs": 820,
-    "longestMs": 185,
+    "readyMs": 312,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 140,
-    "heapMb": 27,
-    "rendererMb": 103
+    "nodes": 139,
+    "heapMb": 26,
+    "rendererMb": 101
   },
   "window: New Project Folder": {
-    "readyMs": 878,
-    "longestMs": 183,
+    "readyMs": 308,
+    "longestMs": 156,
     "blockingMs": 100,
     "nodes": 64,
     "heapMb": 26,
     "rendererMb": 102
   },
   "window: New Remote Control helper": {
-    "readyMs": 878,
-    "longestMs": 197,
+    "readyMs": 284,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 114,
-    "heapMb": 27,
-    "rendererMb": 102
+    "nodes": 112,
+    "heapMb": 26,
+    "rendererMb": 100
   },
   "window: New Task": {
-    "readyMs": 910,
-    "longestMs": 226,
-    "blockingMs": 122,
-    "nodes": 1010,
+    "readyMs": 308,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 1012,
+    "heapMb": 27,
+    "rendererMb": 101
+  },
+  "window: New Task from template": {
+    "readyMs": 348,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 964,
+    "heapMb": 27,
+    "rendererMb": 103
+  },
+  "window: New Task in project": {
+    "readyMs": 300,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 1018,
     "heapMb": 27,
     "rendererMb": 105
   },
-  "window: New Task from template": {
-    "readyMs": 864,
-    "longestMs": 220,
-    "blockingMs": 110,
-    "nodes": 962,
-    "heapMb": 27,
-    "rendererMb": 104
-  },
-  "window: New Task in project": {
-    "readyMs": 874,
-    "longestMs": 216,
-    "blockingMs": 118,
-    "nodes": 1016,
-    "heapMb": 27,
-    "rendererMb": 104
-  },
   "window: New Task with Agent": {
-    "readyMs": 790,
-    "longestMs": 174,
+    "readyMs": 308,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 96,
     "heapMb": 26,
     "rendererMb": 103
   },
   "window: New Template": {
-    "readyMs": 872,
-    "longestMs": 212,
-    "blockingMs": 113,
-    "nodes": 1010,
-    "heapMb": 27,
-    "rendererMb": 103
-  },
-  "window: Pair a device": {
-    "readyMs": 1026,
-    "longestMs": 177,
+    "readyMs": 348,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 70,
+    "nodes": 1012,
     "heapMb": 27,
     "rendererMb": 105
   },
+  "window: Pair a device": {
+    "readyMs": 366,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 69,
+    "heapMb": 26,
+    "rendererMb": 104
+  },
   "window: Project window": {
-    "readyMs": 884,
-    "longestMs": 182,
-    "blockingMs": 101,
+    "readyMs": 388,
+    "longestMs": 100,
+    "blockingMs": 100,
     "nodes": 158,
     "heapMb": 28,
     "rendererMb": 107
   },
   "window: Recycle Bin": {
-    "readyMs": 836,
-    "longestMs": 197,
+    "readyMs": 308,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 66,
     "heapMb": 26,
-    "rendererMb": 103
+    "rendererMb": 111
   },
   "window: Remote Access devices": {
-    "readyMs": 852,
-    "longestMs": 188,
+    "readyMs": 350,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 67,
-    "heapMb": 27,
+    "nodes": 66,
+    "heapMb": 26,
     "rendererMb": 102
   },
   "window: Remote Access settings": {
-    "readyMs": 832,
-    "longestMs": 179,
+    "readyMs": 308,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 87,
-    "heapMb": 27,
-    "rendererMb": 104
+    "nodes": 86,
+    "heapMb": 26,
+    "rendererMb": 101
   },
   "window: Remote Access setup": {
-    "readyMs": 812,
-    "longestMs": 186,
+    "readyMs": 348,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 73,
-    "heapMb": 27,
+    "nodes": 72,
+    "heapMb": 26,
     "rendererMb": 102
   },
   "window: Remote Control conversations": {
-    "readyMs": 860,
-    "longestMs": 250,
-    "blockingMs": 102,
+    "readyMs": 338,
+    "longestMs": 100,
+    "blockingMs": 100,
     "nodes": 92,
-    "heapMb": 27,
-    "rendererMb": 105
-  },
-  "window: Remote Control helper": {
-    "readyMs": 784,
-    "longestMs": 182,
-    "blockingMs": 100,
-    "nodes": 115,
-    "heapMb": 27,
-    "rendererMb": 104
-  },
-  "window: Remote Control helpers": {
-    "readyMs": 800,
-    "longestMs": 186,
-    "blockingMs": 100,
-    "nodes": 68,
     "heapMb": 27,
     "rendererMb": 103
   },
+  "window: Remote Control helper": {
+    "readyMs": 322,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 114,
+    "heapMb": 26,
+    "rendererMb": 102
+  },
+  "window: Remote Control helpers": {
+    "readyMs": 320,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 68,
+    "heapMb": 26,
+    "rendererMb": 102
+  },
   "window: Rename Chat": {
-    "readyMs": 752,
-    "longestMs": 185,
+    "readyMs": 262,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 56,
     "heapMb": 26,
     "rendererMb": 112
   },
   "window: Rename device": {
-    "readyMs": 832,
-    "longestMs": 196,
+    "readyMs": 306,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 64,
-    "heapMb": 27,
-    "rendererMb": 105
+    "nodes": 63,
+    "heapMb": 26,
+    "rendererMb": 103
   },
   "window: Rename Folder": {
-    "readyMs": 898,
-    "longestMs": 246,
+    "readyMs": 288,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 58,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 102
   },
   "window: Rename Project Folder": {
-    "readyMs": 856,
-    "longestMs": 204,
+    "readyMs": 318,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 58,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 103
   },
   "window: Run conversation": {
-    "readyMs": 990,
-    "longestMs": 222,
-    "blockingMs": 101,
+    "readyMs": 358,
+    "longestMs": 100,
+    "blockingMs": 100,
     "nodes": 99,
-    "heapMb": 28,
-    "rendererMb": 104
+    "heapMb": 27,
+    "rendererMb": 101
   },
   "window: Run Options": {
-    "readyMs": 800,
-    "longestMs": 185,
+    "readyMs": 314,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 66,
     "heapMb": 26,
     "rendererMb": 102
   },
   "window: Run report": {
-    "readyMs": 982,
-    "longestMs": 272,
+    "readyMs": 354,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 100,
     "heapMb": 28,
-    "rendererMb": 107
+    "rendererMb": 102
   },
   "window: Save as Markdown": {
-    "readyMs": 838,
-    "longestMs": 191,
+    "readyMs": 310,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 60,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 102
   },
   "window: Send Guidance": {
-    "readyMs": 830,
-    "longestMs": 197,
+    "readyMs": 290,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 56,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 102
   },
   "window: Send to Chats": {
-    "readyMs": 770,
-    "longestMs": 197,
+    "readyMs": 252,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 199,
     "heapMb": 26,
-    "rendererMb": 115
+    "rendererMb": 111
   },
   "window: Settings": {
-    "readyMs": 906,
-    "longestMs": 190,
+    "readyMs": 280,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 153,
-    "heapMb": 27,
+    "nodes": 152,
+    "heapMb": 26,
     "rendererMb": 114
   },
   "window: Task builder": {
-    "readyMs": 984,
-    "longestMs": 185,
-    "blockingMs": 105,
+    "readyMs": 382,
+    "longestMs": 153,
+    "blockingMs": 100,
     "nodes": 166,
     "heapMb": 28,
-    "rendererMb": 107
+    "rendererMb": 104
   },
   "window: Task note": {
-    "readyMs": 944,
-    "longestMs": 193,
+    "readyMs": 314,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 64,
     "heapMb": 26,
-    "rendererMb": 102
+    "rendererMb": 100
   },
   "window: Task window": {
-    "readyMs": 870,
-    "longestMs": 185,
+    "readyMs": 418,
+    "longestMs": 156,
     "blockingMs": 100,
     "nodes": 193,
     "heapMb": 28,
-    "rendererMb": 107
+    "rendererMb": 105
   },
   "window: Tasks view window": {
-    "readyMs": 960,
-    "longestMs": 280,
+    "readyMs": 352,
+    "longestMs": 156,
     "blockingMs": 100,
     "nodes": 416,
     "heapMb": 26,
     "rendererMb": 104
   },
   "window: Template picker": {
-    "readyMs": 858,
-    "longestMs": 234,
+    "readyMs": 312,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 63,
     "heapMb": 26,
     "rendererMb": 103
   },
   "window: Templates": {
-    "readyMs": 860,
-    "longestMs": 220,
+    "readyMs": 356,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 69,
     "heapMb": 26,
-    "rendererMb": 103
+    "rendererMb": 104
   },
   "window: Terminal window": {
-    "readyMs": 960,
-    "longestMs": 212,
+    "readyMs": 282,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 151,
+    "nodes": 187,
     "heapMb": 26,
     "rendererMb": 115
   },
   "window: Update harness models": {
-    "readyMs": 946,
-    "longestMs": 192,
+    "readyMs": 324,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 57,
-    "heapMb": 27,
-    "rendererMb": 104
+    "heapMb": 26,
+    "rendererMb": 101
   },
   "window: Update Models": {
-    "readyMs": 858,
-    "longestMs": 195,
+    "readyMs": 348,
+    "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 66,
-    "heapMb": 27,
-    "rendererMb": 103
+    "nodes": 67,
+    "heapMb": 26,
+    "rendererMb": 102
   },
   "window: Version": {
-    "readyMs": 912,
-    "longestMs": 182,
+    "readyMs": 350,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 64,
-    "heapMb": 27,
-    "rendererMb": 103
+    "heapMb": 26,
+    "rendererMb": 101
   },
   "window: Version compare": {
-    "readyMs": 918,
-    "longestMs": 198,
+    "readyMs": 378,
+    "longestMs": 155,
     "blockingMs": 100,
     "nodes": 64,
-    "heapMb": 27,
+    "heapMb": 26,
     "rendererMb": 103
   },
   "window: Version History": {
-    "readyMs": 864,
-    "longestMs": 192,
+    "readyMs": 282,
+    "longestMs": 100,
     "blockingMs": 100,
     "nodes": 66,
     "heapMb": 26,
-    "rendererMb": 104
+    "rendererMb": 102
   }
 }

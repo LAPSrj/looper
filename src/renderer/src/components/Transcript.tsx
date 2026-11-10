@@ -10,7 +10,7 @@ import { sendsOnEnter } from './composer-text';
 import { useChatsSettings } from './hooks';
 import { PromptBody } from './Markdown';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
-import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst } from './newest-first';
+import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst, useStayAtEnd } from './newest-first';
 import { InfoBar } from './ui';
 
 /** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
@@ -62,16 +62,8 @@ export function TranscriptView({
     const el = scrollRef.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [rows.length, pendingGuidance]);
-  // The guidance box (or the question) showing under it makes the view shorter: one at the newest message stays there.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (atBottom.current) el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  // Also when the guidance box (or the question) showing under it makes the view shorter.
+  useStayAtEnd(scrollRef, atBottom);
   const ctx = useMemo<RowCtx>(
     () => ({
       taskId,

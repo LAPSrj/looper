@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   followSelection,
   initialPhoneNav,
+  keptNav,
   phoneTabForm,
   PHONE_TABS,
   EXPANDED_WIDTH,
   popScreen,
+  pruneNav,
   pushScreen,
   rootScreen,
   sameScreen,
@@ -220,5 +222,29 @@ describe('how the views show', () => {
     const nav = selectTab(initialPhoneNav(), 'addon/a/servers');
     expect(topScreen(nav)).toBeNull();
     expect(pushScreen(nav, { kind: 'task', id: 't' }).stacks['addon/a/servers']).toEqual([{ kind: 'task', id: 't' }]);
+  });
+});
+
+describe('the tab and screens kept for the page loading again', () => {
+  it('reads back what it wrote, and nothing of another shape', () => {
+    const nav = pushScreen(selectTab(initialPhoneNav(), 'tasks'), { kind: 'folder', id: 'f' });
+    expect(keptNav(JSON.parse(JSON.stringify(nav)))).toEqual(nav);
+    expect(keptNav(null)).toBeNull();
+    expect(keptNav({ tab: 'nowhere', stacks: {} })).toBeNull();
+    expect(keptNav({ tab: 'sessions', stacks: { sessions: 'x' } })).toBeNull();
+    expect(keptNav({ tab: 'tasks', stacks: { tasks: [{ kind: 'mystery', id: 'x' }] } })).toBeNull();
+  });
+
+  it('drops a screen whose item is gone, with the screens above it', () => {
+    let nav = selectTab(initialPhoneNav(), 'tasks');
+    nav = pushScreen(nav, { kind: 'folder', id: 'f' });
+    nav = pushScreen(nav, { kind: 'task', id: 'gone' });
+    nav = pushScreen(nav, { kind: 'project', id: 'p' });
+    nav = selectTab(nav, 'projects');
+    nav = pushScreen(nav, { kind: 'project', id: 'p' });
+    const pruned = pruneNav(nav, (s) => !(s.kind === 'task' && s.id === 'gone'));
+    expect(pruned.tab).toBe('projects');
+    expect(pruned.stacks.tasks).toEqual([{ kind: 'folder', id: 'f' }]);
+    expect(pruned.stacks.projects).toEqual([{ kind: 'project', id: 'p' }]);
   });
 });

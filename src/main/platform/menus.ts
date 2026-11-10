@@ -117,14 +117,15 @@ const ownKey = (id: string | undefined): string | undefined => (id && !/^\d+$/.t
  * path of indexes, "2.0.1"). Invisible items, host-only roles, items that
  * don't show on `platform` (when given) and the separators they leave
  * doubled or at an edge are left out. Without a platform the items keep
- * their marks, for the client to filter.
+ * their marks, for the client to filter. `host`: the menu is for one of the
+ * computer's own windows, whose page keeps the host-only roles (Exit).
  */
-export function serializeMenu(menu: MenuLike, platform?: UiPlatform): { items: MenuItemSpec[]; byId: Map<string, MenuItemLike> } {
+export function serializeMenu(menu: MenuLike, platform?: UiPlatform, host = false): { items: MenuItemSpec[]; byId: Map<string, MenuItemLike> } {
   const byId = new Map<string, MenuItemLike>();
   const walk = (m: MenuLike, prefix: string): MenuItemSpec[] => {
     const out: MenuItemSpec[] = [];
     m.items.forEach((item, i) => {
-      if (item.visible === false || (item.role && HOST_ONLY_ROLES.has(item.role.toLowerCase()))) return;
+      if (item.visible === false || (!host && item.role && HOST_ONLY_ROLES.has(item.role.toLowerCase()))) return;
       if (platform && !showsOn(item.platforms, platform)) return;
       const id = prefix ? `${prefix}.${i}` : String(i);
       const type = item.submenu ? 'submenu' : SPEC_TYPES.has(item.type ?? 'normal') ? ((item.type ?? 'normal') as MenuItemSpec['type']) : 'normal';

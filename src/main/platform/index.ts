@@ -110,7 +110,7 @@ export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'wind
     return;
   }
   // The page draws it, in the menu bar's style (MenuBar.tsx's ContextMenu), at the point asked or the pointer.
-  const { items, byId } = serializeMenu(menu, 'desktop');
+  const { items, byId } = serializeMenu(menu, 'desktop', true);
   if (!items.length) return;
   closePageMenu(w);
   const zoom = w.webContents.getZoomFactor() || 1;
@@ -186,7 +186,7 @@ const sendDesktopBar = (w: BrowserWindow, items: MenuItemSpec[] | null) => {
 function refreshDesktopBar(w: BrowserWindow): void {
   const bar = desktopBars.get(w);
   if (!bar) return;
-  const next = serializeMenu(bar.menu, 'desktop');
+  const next = serializeMenu(bar.menu, 'desktop', true);
   bar.byId = next.byId;
   if (JSON.stringify(next.items) === JSON.stringify(bar.items)) return;
   bar.items = next.items;

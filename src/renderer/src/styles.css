@@ -5143,6 +5143,12 @@ html.phone-window .workflow-text {
   width: 24px;
   flex: none;
 }
+.ws-menu:not(.has-checks) > .ws-menu-item {
+  padding-left: 12px;
+}
+.ws-menu:not(.has-checks) > .ws-menu-item > .ws-menu-check {
+  display: none;
+}
 .ws-menu-label {
   flex: 1;
   padding-right: 24px;

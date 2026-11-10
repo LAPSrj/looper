@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PNG } from 'pngjs';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const APP_DIR = path.resolve(HERE, '..', '..');
@@ -31,10 +32,25 @@ export async function launch() {
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
+  // How late the main process's timer comes: on Windows that thread takes every window's input, so a step that holds
+  // it freezes the app while the page's frames look fine (watch's mainFreeze).
+  await app.evaluate(() => {
+    const s = (globalThis.__benchMain = { worst: 0 });
+    let last = performance.now();
+    setInterval(() => {
+      const now = performance.now();
+      s.worst = Math.max(s.worst, now - last - 20);
+      last = now;
+    }, 20);
+  });
+  mainOf.set(page, app);
   // BENCH_CSS: a stylesheet added to the main window, to try a CSS change before making it.
   if (process.env.BENCH_CSS) await page.addStyleTag({ content: process.env.BENCH_CSS });
   return { app, page };
 }
+
+/** The app of each main window's page, for its main process's freezes. */
+const mainOf = new WeakMap();
 
 export async function quit(app) {
   const proc = app.process();
@@ -42,8 +58,18 @@ export async function quit(app) {
   if (proc.exitCode === null) await new Promise((done) => proc.once('exit', done));
 }
 
-/** Long tasks seen in `page` from now until it has been quiet for `quietMs`, as Chromium reports them. */
-export async function watch(page, action, { quietMs = 1500, maxMs = 15_000 } = {}) {
+/**
+ * Long tasks seen in `page` from now until it has been quiet for `quietMs`, as Chromium reports them, and for a
+ * main window's page the longest the main process was held (mainFreeze).
+ */
+export async function watch(page, action, opts) {
+  const app = mainOf.get(page);
+  if (app) await app.evaluate(() => (globalThis.__benchMain.worst = 0));
+  const out = await watchPage(page, action, opts);
+  return app ? { ...out, mainFreeze: Math.round(await app.evaluate(() => globalThis.__benchMain.worst)) } : out;
+}
+
+async function watchPage(page, action, { quietMs = 1500, maxMs = 15_000 } = {}) {
   await page.evaluate(() => {
     window.__bench = { frames: [], start: performance.now(), gaps: [] };
     // Frame gaps too, since a long animation frame is only reported from 50 ms.
@@ -258,6 +284,12 @@ export async function seed() {
   console.log(execFileSync('wsl.exe', ['-e', 'bash', '-c', 'bash "$(wslpath -a "$1")"', '_', path.join(DEMO, 'setup-wsl.sh')], { encoding: 'utf8' }).trim());
   // An image a run's message can show (check.mjs's Image window), in the demo projects' folder.
   execFileSync('wsl.exe', ['-e', 'bash', '-c', 'cp "$(wslpath -a "$1")" ~/looper-demo/perf-image.png', '_', path.join(APP_DIR, 'assets', 'icon.png')]);
+  // Screenshots the chats' agents read, as real agents read theirs (the Files tab shows them as thumbnails).
+  const shots = path.join(ROOT, 'shots');
+  writeScreenshots(shots, SCREENSHOTS);
+  execFileSync('wsl.exe', ['-e', 'bash', '-c', 'mkdir -p ~/looper-demo/shots && cp "$(wslpath -a "$1")"/*.png ~/looper-demo/shots/', '_', shots]);
+  const home = execFileSync('wsl.exe', ['-e', 'bash', '-c', 'echo "$HOME"'], { encoding: 'utf8' }).trim();
+  const images = Array.from({ length: SCREENSHOTS }, (_, k) => `${home}/looper-demo/shots/shot-${k}.png`);
   const { app, page } = await launch();
   await sleep(3000);
   await page.evaluate(async (n) => {
@@ -273,8 +305,51 @@ export async function seed() {
     for (const run of fs.readdirSync(runs)) if (fs.existsSync(path.join(runs, run, 'opening.json'))) openings.push(path.join(runs, run, 'opening.json'));
   }
   if (openings.length < CHAT_SIZES.length) throw new Error(`only ${openings.length} chats were saved`);
-  openings.forEach((file, i) => fs.writeFileSync(file, JSON.stringify(longChat(i, CHAT_SIZES[i]))));
+  openings.forEach((file, i) => fs.writeFileSync(file, JSON.stringify(longChat(i, CHAT_SIZES[i], images))));
   return openings.map((f) => path.basename(path.dirname(f)));
+}
+
+const SCREENSHOTS = 24;
+
+/**
+ * `count` PNG screenshots in `dir`, half a desktop's size (1920 × 1080) and half a phone's (1290 × 2796): flat
+ * panels and bars with lines of text-like marks, which compress and decode like real screenshots.
+ */
+function writeScreenshots(dir, count) {
+  fs.mkdirSync(dir, { recursive: true });
+  for (let k = 0; k < count; k++) {
+    const [width, height] = k % 2 ? [1290, 2796] : [1920, 1080];
+    const png = new PNG({ width, height });
+    let seed = 99 + k * 31;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const fill = (x0, y0, w, h, [r, g, b]) => {
+      for (let y = y0; y < Math.min(height, y0 + h); y++) {
+        for (let x = x0; x < Math.min(width, x0 + w); x++) {
+          const i = (y * width + x) * 4;
+          png.data[i] = r;
+          png.data[i + 1] = g;
+          png.data[i + 2] = b;
+          png.data[i + 3] = 255;
+        }
+      }
+    };
+    fill(0, 0, width, height, [243, 243, 243]);
+    fill(0, 0, width, 64, [251, 251, 251]);
+    for (let y = 100; y < height - 60; y += 160 + Math.floor(rand() * 120)) {
+      const x = 40 + Math.floor(rand() * 200);
+      const w = width - x - 40 - Math.floor(rand() * 300);
+      fill(x, y, w, 120, [255, 255, 255]);
+      // Lines of "text": runs of dark marks of word-like lengths.
+      for (let line = y + 20; line < y + 100; line += 26) {
+        for (let cx = x + 16; cx < x + w - 60; ) {
+          const word = 20 + Math.floor(rand() * 70);
+          for (let c = 0; c < word; c += 7) fill(cx + c, line, 5, 12, rand() < 0.15 ? [0, 95, 184] : [36, 36, 36]);
+          cx += word + 12;
+        }
+      }
+    }
+    fs.writeFileSync(path.join(dir, `shot-${k}.png`), PNG.sync.write(png));
+  }
 }
 
 /** A Claude Code harness whose command is `cat` in WSL: a task builder (which takes only Claude Code or Codex) starts on it without running an agent. */
@@ -308,7 +383,7 @@ export function addTasks(total) {
  * and sizes are the averages of large real transcripts: about 60% tool rows holding 1-2 MB, 30% replies of ~550
  * characters, and the rest prompts and thinking. Generated, so no one's conversation is in it.
  */
-export function longChat(n, count) {
+export function longChat(n, count, images = []) {
   let seed = 7 + n * 7919;
   const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
   const pick = (list) => list[Math.floor(rand() * list.length)];
@@ -338,6 +413,11 @@ export function longChat(n, count) {
       return { tool: name, input, text: `command: ${command}\ndescription: ${input.description}`, preview: command, result: code(between(2, rand() < 0.1 ? 160 : 40)).join('\n') };
     }
     if (name === 'Read') {
+      // One read in five is a screenshot the agent took to look at its work.
+      if (images.length && rand() < 0.2) {
+        const f = pick(images);
+        return { tool: name, input: { file_path: f }, file: f, text: `file_path: ${f}`, preview: f, result: 'Read image' };
+      }
       const f = file();
       return { tool: name, input: { file_path: f }, file: f, text: `file_path: ${f}`, preview: f, result: numbered(between(20, rand() < 0.1 ? 600 : 150)) };
     }
