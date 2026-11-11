@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch } from '@shared/addons';
 import { addonCommandId } from '@shared/commands/addon-commands';
 import { commandSpec, moreViewCommands, runCommand } from '@shared/commands/build';
-import { noMnemonic, type Command } from '@shared/commands/command';
+import { plainLabel, type Command } from '@shared/commands/command';
 import type { CommandContext } from '@shared/commands/context';
 import { siblingOrder, withSiblingsOrdered } from '@shared/folders';
 import { mainTabs } from '@shared/main-tabs';
@@ -578,7 +578,7 @@ function CommandRows({ c, list }: { c: CommandContext; list: Command[] }) {
           .map((it) => (
             <Row
               key={it.id}
-              title={noMnemonic(it.label ?? '')}
+              title={plainLabel(it.label ?? '')}
               chevron={it.type === 'submenu'}
               checked={it.checked}
               disabled={!it.enabled}

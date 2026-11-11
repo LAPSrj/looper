@@ -35,7 +35,7 @@ export function AttentionGroup({ m, rows }: { m: MainWindow; rows: AttentionRow[
           />
         ))
       )}
-      {rows.length > 0 && <Row title="Clear" onOpen={() => m.clearAttention(rows)} />}
+      {rows.length > 0 && <Row title="Clear" tone="action" onOpen={() => m.clearAttention(rows)} />}
     </Group>
   );
 }

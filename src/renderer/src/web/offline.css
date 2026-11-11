@@ -164,7 +164,7 @@ html.offline-waiting-ios {
 
 .offline-banner.ios {
   background: var(--ios-bar, #f9f9f9);
-  border-bottom: 0.5px solid var(--ios-sep, rgba(60, 60, 67, 0.29));
+  border-bottom: 0.5px solid var(--ios-sep, rgba(0, 0, 0, 0.12));
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   font-size: 13px;
   color: var(--ios-label2, rgba(60, 60, 67, 0.6));
@@ -197,7 +197,7 @@ html.offline-waiting-ios {
   .offline-banner.ios {
     --offline-mark: #000;
     background: var(--ios-bar, #161617);
-    border-bottom-color: var(--ios-sep, rgba(84, 84, 88, 0.65));
+    border-bottom-color: var(--ios-sep, rgba(255, 255, 255, 0.12));
     color: var(--ios-label2, rgba(235, 235, 245, 0.6));
   }
   .offline-banner.ios .offline-banner-retry {

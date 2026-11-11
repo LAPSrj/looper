@@ -175,6 +175,8 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   seconds, "min" for minutes.
 - **Icons follow `src/renderer/src/components/icons.md`.** Read it before
   adding or changing an icon.
+- **iOS screens follow `src/renderer/src/web/ios.md`** (iOS 27, measured from
+  Apple's UI kit). Read it before changing anything an iPhone or iPad shows.
 - **Section headers only when they group 3+ related fields.** Don't add
   headers for one or two fields. Don't add tab descriptions (text between the
   tab bar and the first field).

@@ -12,9 +12,12 @@ html[data-platform='ios'] {
   --ios-label: #000000;
   --ios-label2: rgba(60, 60, 67, 0.6); /* secondaryLabel */
   --ios-label3: rgba(60, 60, 67, 0.3);
-  --ios-sep: rgba(60, 60, 67, 0.29);
-  /* The hard scroll edge (iOS 27's default under a bar): opaque, with a hairline. */
-  --ios-bar: #f9f9f9;
+  --ios-sep: rgba(0, 0, 0, 0.12);
+  /* The hard scroll edge (iOS 27's uniform bar): the kit's white at 85% over the page, which nothing scrolls
+     behind here, so it's drawn opaque; and its faint edge line. */
+  --ios-bar: #fdfdfd;
+  --ios-bar-line: rgba(0, 0, 0, 0.05);
+  --ios-grabber: #cccccc;
   --ios-fill: rgba(118, 118, 128, 0.12);
   --ios-fill2: rgba(120, 120, 128, 0.16);
   /* Liquid Glass as near as CSS gets (WebKit has no refraction for a backdrop): the small controls (bar
@@ -26,9 +29,14 @@ html[data-platform='ios'] {
   --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   --ios-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  /* The larger glass surfaces' shadow (alerts, menus, a medium sheet). */
+  --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.25);
+  /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
+  --ios-glass-label2: #727272;
+  --ios-glass-placeholder: #bfbfbf;
   --ios-folder: #1a9cf0;
   --ios-seg-on: #ffffff;
-  --ios-switch-off: rgba(120, 120, 128, 0.16);
+  --ios-switch-off: rgba(60, 60, 67, 0.3);
   /* A sheet's own background and its groups' (dark mode raises both, so a sheet stands off what's under it). */
   --ios-sheet: #f2f2f7;
   --ios-sheet-cell: #ffffff;
@@ -53,19 +61,24 @@ html[data-platform='ios'] {
     --ios-label: #ffffff;
     --ios-label2: rgba(235, 235, 245, 0.6);
     --ios-label3: rgba(235, 235, 245, 0.3);
-    --ios-sep: rgba(84, 84, 88, 0.65);
-    --ios-bar: #161617;
+    --ios-sep: rgba(255, 255, 255, 0.12);
+    --ios-bar: #050505;
+    --ios-bar-line: rgba(0, 0, 0, 0.1);
+    --ios-grabber: #333333;
     --ios-fill: rgba(118, 118, 128, 0.24);
     --ios-fill2: rgba(120, 120, 128, 0.32);
-    /* iOS 27 draws dark glass lighter than 26 did. */
+    /* iOS 27 draws dark glass lighter than 26 did. The dense glass (menus, alerts) is the kit's #1A1A1A. */
     --ios-glass: rgba(64, 64, 68, 0.6);
-    --ios-glass-dense: rgba(44, 44, 46, 0.9);
+    --ios-glass-dense: rgba(26, 26, 26, 0.9);
     --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
       inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
     --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.45);
+    --ios-glass-label2: #8a8a8a;
+    --ios-glass-placeholder: #404040;
     --ios-folder: #39a8f0;
-    --ios-seg-on: #636366;
-    --ios-switch-off: rgba(120, 120, 128, 0.36);
+    --ios-seg-on: rgba(255, 255, 255, 0.27);
+    --ios-switch-off: rgba(235, 235, 245, 0.3);
     --ios-sheet: #1c1c1e;
     --ios-sheet-cell: #2c2c2e;
   }
@@ -107,13 +120,25 @@ html[data-platform='ios'] {
 }
 .ios-bar.edge {
   background: var(--ios-bar);
-  box-shadow: 0 0.5px 0 var(--ios-sep);
+  box-shadow: 0 1px 0 var(--ios-bar-line);
 }
+/* In a sheet the bar starts 16 below the sheet's top, under its grabber (the kit's sheet). */
 .ios .pres-page-sheet .ios-bar,
 .ios .pres-form-sheet .ios-bar,
 .ios-own-sheet .ios-bar {
   padding-top: 0;
 }
+.ios .pres-page-sheet .ios-bar-row,
+.ios .pres-form-sheet .ios-bar-row,
+.ios-own-sheet .ios-bar-row {
+  padding-top: 16px;
+}
+/* An iPad sheet's buttons sit 10 in from its edges (kit log 27.0.3). */
+.ios.tablet :is(.pres-page-sheet, .pres-form-sheet) .ios-bar-row,
+.ios-own-sheet.tablet-sheet .ios-bar-row {
+  padding: 10px;
+}
+
 /* ---------- iPad: the tab bar near the top, and a bar over each column of a split view ---------- */
 .ios-tabbar-row {
   display: flex;
@@ -129,22 +154,24 @@ html[data-platform='ios'] {
   backdrop-filter: var(--ios-glass-filter);
   box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
 }
+/* The kit's iPad tab: 36 high, 15 pt medium, the selected one bold. */
 .ios-tab {
-  height: 40px;
-  padding: 0 20px;
+  height: 36px;
+  padding: 0 18px;
   border: 0;
   border-radius: 999px;
   background: none;
   color: var(--ios-label);
   font: inherit;
   font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
+  font-weight: 500;
+  letter-spacing: -0.23px;
   white-space: nowrap;
   cursor: pointer;
 }
 /* The selected tab on a pill of its own, its name in the tint (4.8:1 on the pill, as the phone's tab bar). */
 .ios-tab.active {
+  font-weight: 700;
   background: var(--ios-fill2);
   color: var(--ios-tab-label, #0062cc);
 }
@@ -175,10 +202,10 @@ html[data-platform='ios'] {
 /* Each column's bar gets the hard scroll edge when its own column has scrolled. */
 .ios-bar-split > .ios-bar-row.edge {
   background: var(--ios-bar);
-  box-shadow: 0 0.5px 0 var(--ios-sep);
+  box-shadow: 0 1px 0 var(--ios-bar-line);
 }
 .ios-bar-split > .ios-bar-list.edge {
-  box-shadow: 0 0.5px 0 var(--ios-sep), inset -0.5px 0 0 var(--ios-sep);
+  box-shadow: 0 1px 0 var(--ios-bar-line), inset -0.5px 0 0 var(--ios-sep);
 }
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
@@ -191,12 +218,16 @@ html[data-platform='ios'] {
   }
 }
 
+/* Over the sheet's top edge, 6 down, above the bar's buttons (16 down). */
 .ios-grabber {
-  width: 36px;
-  height: 5px;
-  margin: 5px auto 0;
-  border-radius: 3px;
-  background: var(--ios-label3);
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  left: calc(50% - 30px);
+  width: 60px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ios-grabber);
 }
 
 /* ---------- how windows present ---------- */
@@ -214,32 +245,40 @@ html[data-platform='ios'] {
 .ios .ph-win[data-under] > .ph-card {
   transform: translateX(-30%);
 }
+/* A page sheet starts under the status bar; the screen under it only dims (the kit's Large detent). */
 .ios .pres-page-sheet > .ph-card {
-  top: calc(env(safe-area-inset-top) + 10px);
+  top: env(safe-area-inset-top);
   border-radius: 38px 38px 0 0;
+  box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.ios .ph-scrim {
+  background: rgba(0, 0, 0, 0.2);
 }
 .ios .pres-page-sheet.leaving > .ph-card,
 .ios .pres-form-sheet.leaving > .ph-card {
   animation: ph-up-out 0.3s ease-in forwards;
 }
-/* The screen under an iPhone's page sheet shrinks back. */
+/* A page sheet over another narrows the one under it and starts 10 lower (the kit's Large (Stacked) detent). */
 .ios .ph-win.behind > .ph-card {
-  transform: translateY(calc(env(safe-area-inset-top) - 4px)) scale(0.92);
+  transform: scale(0.92);
   transform-origin: 50% 0;
-  border-radius: 38px;
+}
+.ios .ph-win.behind ~ .ph-win.pres-page-sheet > .ph-card {
+  top: calc(env(safe-area-inset-top) + 10px);
 }
 .ios.tablet .pres-page-sheet > .ph-card {
   top: calc(env(safe-area-inset-top) + 32px);
   margin: 0 auto;
   width: min(704px, calc(100% - 48px));
-  border-radius: 28px 28px 0 0;
+  border-radius: 32px 32px 0 0;
 }
 .ios .pres-form-sheet > .ph-card {
   margin: auto;
   width: min(var(--win-w, 540px), 540px, calc(100% - 40px));
   height: min(calc(var(--win-h, 620px) + 56px), 620px, calc(100% - 80px));
-  border-radius: 28px;
+  border-radius: 32px;
+  box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 .ios .pres-form-sheet .ph-body {
@@ -253,8 +292,9 @@ html[data-platform='ios'] {
   z-index: 500;
 }
 .ios-own-sheet .ph-card {
-  top: calc(env(safe-area-inset-top) + 10px);
+  top: env(safe-area-inset-top);
   border-radius: 38px 38px 0 0;
+  box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
   background: var(--ios-sheet);
   animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
 }
@@ -292,18 +332,21 @@ html[data-platform='ios'] {
   background: var(--ios-fill);
   color: var(--ios-label2);
 }
-/* Its search field, under the bar. */
+/* Its search field, under the bar: the kit's 44 pt glass search field, the magnifier in the label color. */
 .ios-files-search {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   height: 44px;
   margin: 4px 16px 0;
-  padding: 0 14px;
+  padding: 0 10px 0 11px;
   border-radius: 22px;
-  background: var(--ios-fill);
-  color: var(--ios-label2);
+  background: var(--ios-glass);
+  -webkit-backdrop-filter: var(--ios-glass-filter);
+  backdrop-filter: var(--ios-glass-filter);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-shadow);
+  color: var(--ios-label);
 }
 .ios-files-search input {
   flex: 1;
@@ -316,11 +359,12 @@ html[data-platform='ios'] {
   color: var(--ios-label);
   font: inherit;
   font-size: 17px;
+  font-weight: 500;
   -webkit-appearance: none;
   appearance: none;
 }
 .ios-files-search input::placeholder {
-  color: var(--ios-label2);
+  color: var(--ios-glass-placeholder);
 }
 .ph-root .ios-own-sheet .ph-files {
   background: transparent;
@@ -352,22 +396,26 @@ html[data-platform='ios'] {
 .ph-root .ios-own-sheet .ios-group {
   background: var(--ios-sheet-cell);
 }
-/* A sheet that doesn't need the full height floats inset from the screen's edges (a medium detent). */
+/* A sheet that doesn't need the full height floats inset from the screen's edges (the kit's Medium detent:
+   6 in, its bottom corners following the screen's). */
 .ios-own-sheet.small .ph-card {
   top: auto;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  height: min(440px, 75%);
-  border-radius: 36px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  height: min(459px, 75%);
+  border-radius: 38px 38px 58px 58px;
+  background: var(--ios-glass-dense);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-lift);
 }
 .ios-own-sheet.tablet-sheet .ph-card {
   inset: 0;
   margin: auto;
   width: min(540px, calc(100% - 40px));
   height: min(620px, calc(100% - 80px));
-  border-radius: 28px;
+  border-radius: 32px;
 }
 .ios-own-sheet.tablet-sheet.small .ph-card {
   height: min(440px, calc(100% - 80px));
@@ -380,7 +428,7 @@ html[data-platform='ios'] {
   padding-bottom: env(safe-area-inset-bottom);
 }
 .ios-own-sheet.small .ios-sheet-body {
-  padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 8px));
+  padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 6px));
 }
 .ios-own-sheet.tablet-sheet .ios-sheet-body {
   padding-bottom: 0;
@@ -467,7 +515,11 @@ html[data-platform='ios'] {
   background: none;
   font: inherit;
   font-size: calc(17 * var(--u));
+  font-weight: 500;
   color: var(--ios-label);
+}
+.ios-field input::placeholder {
+  color: var(--ios-label3);
 }
 .ios-field input.mono {
   font-family: ui-monospace, Menlo, monospace;
@@ -481,7 +533,7 @@ html[data-platform='ios'] {
 .ios-group-footer.error {
   color: var(--ios-red);
 }
-/* The switch: a 64 × 28 track and a pill-shaped knob. */
+/* The switch: a 64 × 28 track and a 38 × 24 knob. */
 .ios-switch {
   position: relative;
   flex: none;
@@ -504,26 +556,39 @@ html[data-platform='ios'] {
   background: var(--ios-green);
 }
 .ios-switch:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
+}
+/* Held, the knob swells into a glass lens (the kit's pressed switch: 58 × 38). */
+.ios-switch:active:not(:disabled) .ios-switch-knob {
+  transform: scale(1.53, 1.58);
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    inset 0 -3px 0.5px -2.25px rgba(40, 40, 40, 0.5),
+    inset 0 3px 0.5px -2.25px rgba(40, 40, 40, 0.5),
+    0 0 6px rgba(0, 0, 0, 0.15);
+}
+.ios-switch.on:active:not(:disabled) .ios-switch-knob {
+  transform: translateX(22px) scale(1.53, 1.58);
 }
 .ios-switch-knob {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 39px;
+  width: 38px;
   height: 24px;
   border-radius: 12px;
   background: #fff;
-  box-shadow:
-    0 3px 8px rgba(0, 0, 0, 0.15),
-    0 1px 1px rgba(0, 0, 0, 0.16);
-  transition: transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1);
+  box-shadow: 0 3px 36px rgba(0, 0, 0, 0.05);
+  transition:
+    transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1),
+    background-color 0.2s;
 }
 .ios-switch.on .ios-switch-knob {
-  transform: translateX(21px);
+  transform: translateX(22px);
 }
 .ios-segmented {
   display: flex;
+  gap: 4px;
   margin: 10px 16px 6px;
   padding: 2px;
   border-radius: 999px;
@@ -531,7 +596,7 @@ html[data-platform='ios'] {
 }
 .ios-segmented button {
   flex: 1;
-  height: 32px;
+  height: 28px;
   border: 0;
   border-radius: 999px;
   background: none;
@@ -540,32 +605,30 @@ html[data-platform='ios'] {
   font-weight: 500;
   color: var(--ios-label);
 }
-/* A 32 pt segment, a 44 pt target. */
+/* A 28 pt segment, a 44 pt target. */
 .ios-segmented button {
   position: relative;
 }
 .ios-segmented button::after {
   content: '';
   position: absolute;
-  inset: -6px 0;
+  inset: -8px 0;
 }
 .ios-segmented button.on {
   background: var(--ios-seg-on);
   font-weight: 600;
-  box-shadow:
-    0 3px 8px rgba(0, 0, 0, 0.12),
-    0 3px 1px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
 }
+/* The kit's large prominent button: a 50 pt capsule, its label 17 pt regular. */
 .ios-filled-btn {
   min-height: 50px;
-  padding: 0 24px;
+  padding: 0 20px;
   border: 0;
   border-radius: 999px;
   background: var(--ios-tint);
   color: #fff;
   font: inherit;
   font-size: calc(17 * var(--u));
-  font-weight: 600;
 }
 .ios-filled-btn:disabled {
   opacity: 0.4;
@@ -647,18 +710,18 @@ html[data-platform='ios'] {
   z-index: 800;
 }
 .ios-menu-layer.dim {
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(41, 41, 58, 0.23);
 }
 .ios-menu {
   position: absolute;
   display: flex;
   max-height: 70%;
   overflow: hidden;
-  border-radius: 24px;
+  border-radius: 34px;
   background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: var(--ios-glass-edge), 0 12px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-lift);
   /* It opens out of its button (morph in IosFrame.tsx); behind a submenu it shrinks a little toward its top edge. */
   transform-origin: top right;
   transition: transform var(--ios-spring-ms, 0.4s) var(--ios-spring, ease);
@@ -679,7 +742,7 @@ html[data-platform='ios'] {
 .ios-menu-scroll {
   flex: 1;
   min-width: 0;
-  padding: 6px;
+  padding: 10px;
   transition: opacity var(--ios-spring-ms, 0.4s) var(--ios-spring, ease);
 }
 .ios-menu.behind > .ios-menu-scroll {
@@ -688,7 +751,7 @@ html[data-platform='ios'] {
 /* The medium layout's row: up to three buttons across the top, a symbol over a short label. */
 .ios-menu-row {
   display: grid;
-  gap: 2px;
+  gap: 6px;
   /* The list sets the menu's width; the row's labels wrap within it. */
   contain: inline-size;
 }
@@ -700,16 +763,16 @@ html[data-platform='ios'] {
   min-width: 0;
   padding: 12px 4px 10px;
   border: 0;
-  border-radius: 18px;
-  background: none;
+  border-radius: 20px;
+  background: var(--ios-fill2);
   font: inherit;
-  font-size: calc(13 * var(--u));
+  font-size: calc(12 * var(--u));
   font-weight: 500;
   line-height: 1.2;
   color: var(--ios-label);
 }
 .ios-menu-tile:active {
-  background: var(--ios-fill2);
+  background: var(--ios-fill);
 }
 .ios-menu-tile-label {
   display: -webkit-box;
@@ -739,18 +802,19 @@ html[data-platform='ios'] {
   content: '';
   display: block;
   height: 0.5px;
-  margin: 6px 12px;
+  margin: 10px 8px;
   background: var(--ios-sep);
 }
+/* 40 pt, as the kit's menu items. */
 .ios-menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 44px;
+  min-height: 40px;
   padding: 0 12px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 20px;
   background: none;
   font: inherit;
   font-size: calc(17 * var(--u));
@@ -779,7 +843,7 @@ html[data-platform='ios'] {
 }
 .ios-menu-sub {
   display: flex;
-  color: var(--ios-label2);
+  color: var(--ios-label);
 }
 .ios-menu-item.destructive {
   color: var(--ios-red);
@@ -796,27 +860,27 @@ html[data-platform='ios'] {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(41, 41, 58, 0.23);
   animation: ph-fade-in 0.2s;
   -webkit-user-select: none;
   user-select: none;
 }
-/* The title and message ranged left over capsule buttons. */
+/* The title and message ranged left over capsule buttons (the kit's alert: 14 of padding, the text 8 more in). */
 .ios-alert {
   width: min(300px, calc(100% - 48px));
   max-height: 90%;
   overflow: auto;
-  padding: 22px 16px 16px;
+  padding: 14px;
   border-radius: 34px;
   background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
-  box-shadow: var(--ios-glass-edge), 0 16px 48px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--ios-glass-edge), var(--ios-glass-lift);
   text-align: left;
   animation: ph-pop-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 .ios-alert-text {
-  padding: 0 6px 20px;
+  padding: 8px 8px 24px;
 }
 .ios-alert-title {
   font-size: calc(17 * var(--u));
@@ -826,10 +890,10 @@ html[data-platform='ios'] {
   white-space: pre-line;
 }
 .ios-alert-message {
-  margin-top: 6px;
-  font-size: calc(15 * var(--u));
-  line-height: 1.35;
-  color: var(--ios-label2);
+  margin-top: 10px;
+  font-size: calc(17 * var(--u));
+  line-height: calc(22 * var(--u));
+  color: var(--ios-label);
   overflow-wrap: anywhere;
   white-space: pre-line;
 }
@@ -893,7 +957,7 @@ html[data-platform='ios'] {
   background: var(--ios-fill2);
   font: inherit;
   font-size: calc(17 * var(--u));
-  font-weight: 500;
+  font-weight: 600;
   color: var(--ios-label);
 }
 .ios-alert-btn:active {
@@ -907,9 +971,10 @@ html[data-platform='ios'] {
   color: #fff;
   font-weight: 600;
 }
+/* A destructive button is never the filled one (HIG: Buttons; the kit draws it red on gray). */
 .ios-alert-btn.bold.destructive {
-  background: var(--ios-red);
-  color: #fff;
+  background: var(--ios-fill2);
+  color: var(--ios-red);
 }
 
 /* ---------- banners and the connection ---------- */
@@ -930,8 +995,8 @@ html[data-platform='ios'] {
   align-items: center;
   gap: 10px;
   width: min(100%, 420px);
-  padding: 12px 14px;
-  border-radius: 26px;
+  padding: 14px;
+  border-radius: 24px;
   background: var(--ios-glass-dense);
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
@@ -951,7 +1016,7 @@ html[data-platform='ios'] {
   flex: 1;
   min-width: 0;
   font-size: calc(15 * var(--u));
-  line-height: 1.3;
+  line-height: calc(18 * var(--u));
 }
 .ios-banner-title {
   font-weight: 600;

@@ -6,20 +6,21 @@
   grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 56px;
-  padding: 6px 16px;
+  min-height: 54px;
+  /* The kit's top bar: its buttons at its top, 10 under them, 16 from the sides, 10 between them. */
+  padding: 0 16px 10px;
 }
 .ios-bar-lead {
   display: flex;
   justify-self: start;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 .ios-bar-trail {
   display: flex;
   justify-self: end;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 .ios-bar-title {
@@ -52,9 +53,12 @@
   min-width: 0;
   transition: opacity 0.2s;
 }
+/* Two lines: the title in Subheadline emphasized, the subtitle in Caption 1 medium (the kit's Title 2 Line). */
 .ios-bar-titles > .ios-bar-title {
   max-width: 100%;
+  font-size: 15px;
   line-height: 20px;
+  letter-spacing: -0.23px;
 }
 .ios-bar-subtitle {
   max-width: 100%;
@@ -63,8 +67,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ios-label2);
-  font-size: 13px;
+  color: var(--ios-glass-label2, var(--ios-label2));
+  font-size: 12px;
+  font-weight: 500;
   line-height: 16px;
 }
 .on-dark .ios-bar-subtitle {

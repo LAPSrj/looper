@@ -188,7 +188,8 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
         nav: navs.get(w) ?? null,
         isTop: depth === topIndex,
         visible: visible.has(w),
-        behind: os === 'ios' && !tablet && depth === topIndex - 1 && topPres === 'page-sheet',
+        // iOS 27 only dims a screen under a page sheet; a page sheet under another narrows (the kit's stacked sheets).
+        behind: os === 'ios' && !tablet && depth === topIndex - 1 && topPres === 'page-sheet' && presOf(win) === 'page-sheet',
         leaving: false,
         below: stack[depth - 1],
       });

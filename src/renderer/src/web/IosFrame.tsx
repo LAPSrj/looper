@@ -51,10 +51,10 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
   }, []);
   // iOS colors the status bar from the fixed element at the top (the served page's .ios-top-edge strip), not from
-  // theme-color: the color of the topmost full screen's bar, or black while a phone's page sheet shrinks the screen behind it.
+  // theme-color: the color of the topmost full screen's bar, which a page sheet leaves in view above it.
   const full = shell.screens.filter((x) => !x.leaving && (x.pres === 'root' || x.pres === 'push')).sort((a, b) => b.depth - a.depth)[0];
   const fullEdge = full ? shell.edges.get(full.win.w) : undefined;
-  const statusBar = !full || (!shell.tablet && shell.top?.pres === 'page-sheet') ? '#000' : !fullEdge ? 'var(--ios-bg)' : fullEdge.scrolled ? 'var(--ios-bar)' : fullEdge.color;
+  const statusBar = !full ? '#000' : !fullEdge ? 'var(--ios-bg)' : fullEdge.scrolled ? 'var(--ios-bar)' : fullEdge.color;
   useEffect(() => {
     const edge = document.querySelector<HTMLElement>('.ios-top-edge');
     if (edge) edge.style.backgroundColor = statusBar;
@@ -570,7 +570,7 @@ function PopupMenu({ controller, shell, menu: m }: { controller: ShellController
     <MenuStack
       items={items}
       from={from}
-      rootStyle={placeMenu(at.x - 20, at.y + 12, 250, items.length * 44 + 24, shell.vp.width, shell.vp.height)}
+      rootStyle={placeMenu(at.x - 20, at.y + 12, 250, items.length * 40 + 20, shell.vp.width, shell.vp.height)}
       bottom={shell.vp.height - shell.vp.safe.bottom - 8}
       dim
       exit={false}
