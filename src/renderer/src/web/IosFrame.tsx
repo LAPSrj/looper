@@ -30,6 +30,7 @@ import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
 import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
 import { placeSubmenu, SMOOTH, SNAPPY } from './menu-motion';
+import { installMotion } from './motion';
 import { IosBarRow, IosBrowserBarRow, NavIcon } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import './ios.css';
@@ -49,6 +50,7 @@ export function IosFrame({ controller }: { controller: ShellController }) {
   useEffect(() => {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
+    installMotion(document);
   }, []);
   // iOS colors the status bar from the fixed element at the top (the served page's .ios-top-edge strip), not from
   // theme-color: the color of the topmost full screen's bar, which a page sheet leaves in view above it.

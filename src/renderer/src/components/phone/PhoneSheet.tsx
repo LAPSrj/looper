@@ -28,7 +28,8 @@ export function PhoneSheet({
 
   const close = () => {
     setClosing(true);
-    setTimeout(onClose, 180);
+    // iOS's leaving spring (phone.css) is within a few pixels of its end by then.
+    setTimeout(onClose, 300);
   };
   const host: BarHost = { presentation: platform === 'android' ? 'bottom-sheet' : 'page-sheet', close };
   // Esc, from a hardware keyboard.

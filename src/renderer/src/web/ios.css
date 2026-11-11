@@ -27,8 +27,8 @@ html[data-platform='ios'] {
   --ios-glass-dense: rgba(250, 250, 250, 0.9);
   --ios-glass-filter: blur(12px) saturate(200%) brightness(1.06);
   --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  --ios-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px #e8e8e8;
+  --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.02);
   /* The larger glass surfaces' shadow (alerts, menus, a medium sheet). */
   --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.25);
   /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
@@ -72,7 +72,7 @@ html[data-platform='ios'] {
     --ios-glass-dense: rgba(26, 26, 26, 0.9);
     --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
       inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
-    --ios-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.04);
     --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.45);
     --ios-glass-label2: #8a8a8a;
     --ios-glass-placeholder: #404040;
@@ -231,12 +231,21 @@ html[data-platform='ios'] {
 }
 
 /* ---------- how windows present ---------- */
+/* Screens and sheets come in on SwiftUI's default spring and leave on the shorter smooth one, both without bounce
+   (ios.md: Motion; the springs are set by motion.ts, the fallbacks are near curves). The screen under a pushed one
+   moves with it: the transition its new place names runs, the default spring going under, the smooth one coming back. */
+.ios .ph-card {
+  transition:
+    transform var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
+    border-radius 0.35s,
+    filter 0.35s;
+}
 .ios .pres-push > .ph-card {
-  animation: ph-push-in 0.42s cubic-bezier(0.2, 0.85, 0.25, 1);
+  animation: ph-push-in var(--spring-default-ms, 0.42s) var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1));
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
 }
 .ios .pres-push.leaving > .ph-card {
-  animation: ph-push-out 0.3s cubic-bezier(0.4, 0, 0.7, 0.4) forwards;
+  animation: ph-push-out var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)) forwards;
 }
 /* Swiped back: already on its way out from where the finger left it. */
 .ios .pres-push.leaving > .ph-card[data-swiped] {
@@ -244,20 +253,26 @@ html[data-platform='ios'] {
 }
 .ios .ph-win[data-under] > .ph-card {
   transform: translateX(-30%);
+  transition-duration: var(--spring-default-ms, 0.42s);
+  transition-timing-function: var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1));
 }
 /* A page sheet starts under the status bar; the screen under it only dims (the kit's Large detent). */
 .ios .pres-page-sheet > .ph-card {
   top: env(safe-area-inset-top);
   border-radius: 38px 38px 0 0;
   box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
-  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+  animation: ph-up-in var(--spring-default-ms, 0.45s) var(--spring-default, cubic-bezier(0.2, 0.9, 0.25, 1));
 }
 .ios .ph-scrim {
   background: rgba(0, 0, 0, 0.2);
+  animation-duration: var(--spring-default-ms, 0.3s);
+}
+.ios .ph-win.leaving .ph-scrim {
+  animation-duration: var(--spring-smooth-ms, 0.3s);
 }
 .ios .pres-page-sheet.leaving > .ph-card,
 .ios .pres-form-sheet.leaving > .ph-card {
-  animation: ph-up-out 0.3s ease-in forwards;
+  animation: ph-up-out var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)) forwards;
 }
 /* A page sheet over another narrows the one under it and starts 10 lower (the kit's Large (Stacked) detent). */
 .ios .ph-win.behind > .ph-card {
@@ -279,7 +294,7 @@ html[data-platform='ios'] {
   height: min(calc(var(--win-h, 620px) + 56px), 620px, calc(100% - 80px));
   border-radius: 32px;
   box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
-  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+  animation: ph-up-in var(--spring-default-ms, 0.45s) var(--spring-default, cubic-bezier(0.2, 0.9, 0.25, 1));
 }
 .ios .pres-form-sheet .ph-body {
   padding: 0;
@@ -296,7 +311,7 @@ html[data-platform='ios'] {
   border-radius: 38px 38px 0 0;
   box-shadow: 0 15px 75px rgba(0, 0, 0, 0.18);
   background: var(--ios-sheet);
-  animation: ph-up-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+  animation: ph-up-in var(--spring-default-ms, 0.45s) var(--spring-default, cubic-bezier(0.2, 0.9, 0.25, 1));
 }
 /* The file browser's bar (FilesBar): the folder's name is a button that opens the folders above it. */
 .ios-files-bar .ios-title-menu {
@@ -580,7 +595,7 @@ html[data-platform='ios'] {
   background: #fff;
   box-shadow: 0 3px 36px rgba(0, 0, 0, 0.05);
   transition:
-    transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1),
+    transform var(--spring-snappy-ms, 0.3s) var(--spring-snappy, cubic-bezier(0.3, 1.3, 0.5, 1)),
     background-color 0.2s;
 }
 .ios-switch.on .ios-switch-knob {
@@ -877,7 +892,7 @@ html[data-platform='ios'] {
   backdrop-filter: saturate(180%) blur(30px);
   box-shadow: var(--ios-glass-edge), var(--ios-glass-lift);
   text-align: left;
-  animation: ph-pop-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  animation: ph-pop-in var(--spring-snappy-ms, 0.25s) var(--spring-snappy, cubic-bezier(0.2, 0.9, 0.3, 1.1));
 }
 .ios-alert-text {
   padding: 8px 8px 24px;
@@ -1003,7 +1018,7 @@ html[data-platform='ios'] {
   box-shadow: var(--ios-glass-edge), 0 8px 30px rgba(0, 0, 0, 0.18);
   pointer-events: auto;
   touch-action: none;
-  animation: ph-banner-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1);
+  animation: ph-banner-in var(--spring-snappy-ms, 0.45s) var(--spring-snappy, cubic-bezier(0.2, 0.9, 0.25, 1));
   cursor: pointer;
 }
 .ios-banner-icon {
@@ -1094,5 +1109,39 @@ html[data-platform='ios'] {
       --ios-glass: rgba(58, 58, 60, 0.97);
       --ios-glass-dense: rgba(44, 44, 46, 1);
     }
+  }
+}
+
+/* Reduce Motion: screens, sheets, alerts and banners fade instead of sliding or scaling, nothing bounces or swells,
+   and what follows a finger still follows it (HIG: Accessibility). */
+@media (prefers-reduced-motion: reduce) {
+  .ios .pres-push > .ph-card,
+  .ios .pres-page-sheet > .ph-card,
+  .ios .pres-form-sheet > .ph-card,
+  .ios-own-sheet .ph-card,
+  .ios-alert,
+  .ios-banner {
+    animation-name: ph-fade-in;
+  }
+  .ios .pres-push.leaving > .ph-card,
+  .ios .pres-page-sheet.leaving > .ph-card,
+  .ios .pres-form-sheet.leaving > .ph-card {
+    animation-name: ph-fade-out;
+  }
+  .ios .ph-win[data-under] > .ph-card,
+  .ios .ph-win.behind > .ph-card {
+    transform: none;
+  }
+  .ios-back:active:not(:disabled),
+  .ios-text-btn:active:not(:disabled),
+  .ios-icon-btn:active:not(:disabled),
+  .ios-switch:active:not(:disabled) .ios-switch-knob {
+    transform: none;
+  }
+  .ios-switch.on:active:not(:disabled) .ios-switch-knob {
+    transform: translateX(22px);
+  }
+  .ios-switch-knob {
+    transition-timing-function: ease;
   }
 }

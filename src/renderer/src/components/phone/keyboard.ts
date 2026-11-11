@@ -61,7 +61,11 @@ function track(): void {
 
 const inPhoneWindow = isPhone && typeof window !== 'undefined' && window !== window.top;
 
-if (inPhoneWindow) track();
+if (inPhoneWindow) {
+  track();
+  // iOS's small motions (ios.md: Motion), in a chunk of its own so the desktop's windows never load it.
+  void import('../../web/motion').then((m) => m.installMotion(document));
+}
 
 /**
  * The phone stylesheet is a chunk only a phone's window pages load (the desktop app and the desktop

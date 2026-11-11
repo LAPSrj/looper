@@ -22,6 +22,12 @@ Each value below names where it comes from:
 - **HIG**: the Human Interface Guidelines page named after it.
 - **press**: MacRumors' "Here's How Liquid Glass Is Changing in iOS 27" (June
   10, 2026). Use it only where neither the kit nor the HIG says anything.
+- **LG guide**: Apple's "Adopting Liquid Glass" technology overview.
+- **WWDC25**: the session "Meet Liquid Glass" (WWDC25 219), for how glass
+  moves; **WWDC23**: "Animate with springs" (WWDC23 10158).
+- **SwiftUI**: the `Animation` reference (`default`, `smooth`, `snappy`).
+- **unverified**: how iOS behaves, from use rather than a document. Keep it,
+  but check it on a device before changing anything around it.
 
 A value with no source here hasn't been checked. Measure it in the kit before
 relying on it, and add it here with its source.
@@ -94,7 +100,11 @@ SF Pro through `-apple-system`, sizes in `--u` so Dynamic Type scales them
   bubbles) never uses it (HIG Materials). A bar's buttons stay glass inside a
   sheet too (kit: Sheet - iPhone).
 - Looper's three strengths, after the kit's:
-  - **Small** (bar buttons, the tab bar, the search field): `--ios-glass`.
+  - **Small** (bar buttons, the tab bar, the search field, the message box and
+    its +): `--ios-glass`, with a faint shadow, `0 8px 15px` black at 2% (4%
+    in dark), and a 0.5 pt ring of `#E8E8E8` (kit: Fill + Shadow). A darker
+    shadow draws a gray band where two glass controls sit side by side, and
+    glass lightens its shadow over a plain light background (WWDC25).
   - **Medium and Large** (menus, alerts, action sheets, a medium sheet):
     `--ios-glass-dense`, white at 70% in light and `#1A1A1A` in dark, with the
     shadow `0 8px 48px` at 25% (45% in dark) as `--ios-glass-lift`.
@@ -269,17 +279,76 @@ Sizes are points, which are CSS pixels.
 
 ## Motion
 
-- Motion follows the finger and can be interrupted; don't make people wait
-  for an animation (HIG Motion).
-- Liquid Glass answers a touch: a pressed glass button grows a little, and a
-  switch's or slider's knob turns to glass while held (HIG Materials, kit
+iOS 27 moves as iOS 26 does: neither the kit log nor the press lists a change
+to motion. `web/motion.ts` sets the springs as CSS variables (`--spring-*`,
+`--spring-*-ms`) and does what CSS can't; `ios.css` and `phone.css` use them.
+
+### Springs
+
+Springs, not eased curves, with no bounce unless the motion is small and quick
+("These types of non-bouncy springs are used in animations all over iOS";
+"be cautious about using values higher than around 0.4", WWDC23).
+
+| Spring | Duration, bounce | For |
+| --- | --- | --- |
+| default | 0.55, 0 | a screen pushed in, a sheet rising, the screen under a push moving aside |
+| smooth | 0.35, 0 | what leaves: a screen popped, a sheet dismissed, a menu going back into its button; a row growing in or folding away |
+| snappy | 0.5, 0.15 | a menu opening out of its button, a selection sliding, a chevron turning, a switch's knob, an alert, a banner |
+
+- default is SwiftUI's `Animation.default`, "spring(response: 0.55,
+  dampingFraction: 1.0)" (SwiftUI). That UIKit's push and sheets use it is
+  unverified.
+- snappy is SwiftUI's preset with "a small amount of bounce" (SwiftUI); its
+  0.15 is unverified (Apple's pages don't give it).
+- `menu-motion.ts` turns a spring into a CSS `linear()` easing that runs until
+  it settles (`springEasing`). Code that removes an element after its
+  animation waits for the spring to come within a pixel of its end
+  (`LEAVE_MS`, `PhoneSheet`'s close).
+
+### What moves
+
+- Everything follows the finger and can be interrupted, and nothing makes
+  people wait for it (HIG Motion, WWDC23). A gesture's end hands its speed to
+  the motion that finishes it (the back swipe, a sheet dragged down).
+- Glass appears by gradually bending light, not by fading (WWDC25). CSS can't
+  bend light, so glass fades in with its shape.
+- Glass answers a touch: it flexes and "illuminates from within as a form of
+  feedback", the glow starting under the finger (WWDC25). A pressed bar button
+  grows to 108%, and a glow lights where the finger is on bar buttons, the
+  tab bar and the + button (`motion.ts`).
+- A switch's or slider's knob turns into glass while held (LG guide, kit
   pressed states).
-- Reduce Motion replaces slides and morphs with fades (HIG Motion: make motion
-  optional).
-- What Looper does now, not yet checked against iOS 27: a menu grows out of its
-  button and shrinks back into it; a pushed screen slides in from the trailing
-  edge while the one under it moves a third of the way out, and the back swipe
-  follows the finger; a sheet slides up and follows the finger down.
-- Reported but not checked, so don't build on them: notifications sliding in
-  from the leading edge, and the keyboard's keys sliding up (press and
-  pre-release reports only).
+- A button morphs into its menu or popover: "the bubble simply pops open"
+  where you tapped, and shrinks back into the button (WWDC25, LG guide). Bar
+  buttons' menus, long-press menus and the message box's + menu do.
+- Larger glass (a menu opened from a button) casts a deeper shadow (WWDC25):
+  `--ios-glass-lift`.
+- An action sheet comes out of the control that opened it, not from the
+  screen's bottom (LG guide).
+- A half-height sheet pulled to full height turns more opaque (LG guide).
+- A pushed screen slides in from the trailing edge while the one under it
+  moves a third of the way out; back reverses it, and the back swipe follows
+  the finger (unverified distances).
+- A sheet rises from the bottom and follows the finger down; what's behind
+  only dims (kit).
+- The selection of a segmented control, the tab bar and the iPad tab bar
+  slides to the new choice rather than jumping (unverified).
+- A pressed row lights at once and fades back as the finger lifts
+  (unverified).
+- Rows a tap adds (a group opened) grow in and push the rows below down, rows
+  it removes fold away, and a chevron turns as its group opens (unverified). A
+  conversation's new message rises in (unverified).
+- Alerts and banners spring in and fade away; a disclosure's content fades in
+  under it (unverified).
+- The tab bar can shrink as content scrolls (LG guide); Looper keeps it full
+  size.
+- Don't add motion to frequent interactions beyond these; keep it brief (HIG
+  Motion).
+
+### Reduce Motion
+
+Reduce Motion keeps fades and what follows a finger, and drops the rest:
+springs lose their bounce, slides along x, y and z become fades, and nothing
+scales, zooms or blurs in or out (HIG Accessibility; WWDC25: it "disables any
+elastic properties for the material"). Screens, sheets, alerts, banners and
+menus fade; selections and rows change in place.

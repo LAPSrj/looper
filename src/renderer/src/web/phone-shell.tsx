@@ -135,7 +135,8 @@ export interface Screen {
   below?: WebWindow;
 }
 
-const LEAVE_MS = 320;
+/** Long enough for iOS's leaving spring (ios.css, --spring-smooth) to come within a pixel of its end. */
+const LEAVE_MS = 450;
 
 /** Closed windows stay a moment, for their exit animation, at their place in the page (moving an iframe reloads it). */
 function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<string, PageNav>): { screens: Screen[]; top: Screen | undefined } {

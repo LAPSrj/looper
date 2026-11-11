@@ -105,6 +105,15 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   }, [nav]);
   const top = topScreen(nav);
   const topKey = JSON.stringify(top);
+  // A screen pushed onto the tab or popped off it slides in (phone.css, web/motion.ts); a tab's own screen doesn't.
+  const depth = nav.stacks[nav.tab]?.length ?? 0;
+  const screenKey = `${nav.tab}:${depth}`;
+  const lastScreen = useRef({ key: screenKey, tab: nav.tab, depth, enter: '' });
+  if (lastScreen.current.key !== screenKey) {
+    const was = lastScreen.current;
+    const enter = was.tab !== nav.tab ? '' : depth > was.depth ? ' enter-push' : ' enter-pop';
+    lastScreen.current = { key: screenKey, tab: nav.tab, depth, enter };
+  }
   // iPad: the tab's list stays in a leading column and what it opens shows beside it.
   const split = useSplit();
   const width = usePageWidth();
@@ -283,7 +292,9 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   return (
     <div className={`phone-main phone-page ${tabClass}`}>
       {bar}
-      <div className="phone-screen">{shown.body}</div>
+      <div key={depth} className={`phone-screen${lastScreen.current.enter}`}>
+        {shown.body}
+      </div>
       {sheets}
       {tabForm === 'bar' && (
         <nav className="phone-tabbar" aria-label="Looper">

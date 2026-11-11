@@ -431,10 +431,11 @@ html.ph-top body {
   }
 }
 
+/* iOS swaps its motion for fades instead (ios.css). */
 @media (prefers-reduced-motion: reduce) {
-  .ph-root *,
-  .ph-root *::before,
-  .ph-root *::after {
+  .ph-root:not(.ios) *,
+  .ph-root:not(.ios) *::before,
+  .ph-root:not(.ios) *::after {
     animation-duration: 1ms !important;
     transition-duration: 1ms !important;
   }

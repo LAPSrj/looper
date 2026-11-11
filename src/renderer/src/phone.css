@@ -43,8 +43,9 @@ html.phone-window[data-platform='ios'] {
   --pg-glass: rgba(255, 255, 255, 0.6);
   --pg-glass-filter: blur(12px) saturate(200%) brightness(1.06);
   --pg-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  --pg-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px #e8e8e8;
+  /* The kit's glass shadow is faint (2%, 4% dark): darker, two controls side by side draw a gray band. */
+  --pg-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.02);
   /* The denser glass of a surface with text on it (a menu), as the frame's --ios-glass-dense. */
   --pg-glass-dense: rgba(250, 250, 250, 0.9);
   --pg-tab-on: rgba(120, 120, 128, 0.16);
@@ -154,7 +155,7 @@ html.phone-window {
     --pg-glass: rgba(64, 64, 68, 0.6);
     --pg-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
       inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
-    --pg-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --pg-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.04);
     --pg-glass-dense: rgba(26, 26, 26, 0.9);
     /* iOS 27: on the lighter dark glass, the selected tab's pill is darker, not lighter. */
     --pg-tab-on: rgba(0, 0, 0, 0.28);
@@ -2152,7 +2153,7 @@ html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']::a
   height: 24px;
   border-radius: 12px;
   box-shadow: 0 3px 36px rgba(0, 0, 0, 0.05);
-  transition: transform 0.3s cubic-bezier(0.3, 1.3, 0.5, 1);
+  transition: transform var(--spring-snappy-ms, 0.3s) var(--spring-snappy, cubic-bezier(0.3, 1.3, 0.5, 1));
 }
 html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']:checked::after {
   transform: translateX(22px);
@@ -3274,4 +3275,90 @@ html.phone-window .builder-label {
 html.phone-window .builder-field > :not(.builder-label) {
   color: var(--pg-label-2);
   font-size: calc(15 * var(--u));
+}
+
+/* ---------- iOS motion (ios.md: Motion; web/motion.ts sets the springs and does what CSS can't) ---------- */
+/* A screen pushed inside the main window slides in from the trailing edge; popped, the one under comes back from a
+   third of the way out (web/motion.ts moves the screen it replaces). */
+html.phone-window[data-platform='ios'] .phone-main > .phone-screen.enter-push {
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  animation: pg-screen-push var(--spring-default-ms, 0.42s) var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1));
+}
+html.phone-window[data-platform='ios'] .phone-main > .phone-screen.enter-pop {
+  animation: pg-screen-under var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+@keyframes pg-screen-push {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes pg-screen-under {
+  from {
+    transform: translateX(-30%);
+  }
+}
+/* A pressed row lights at once and fades back as the finger lifts. */
+html.phone-window[data-platform='ios'] .pg-row.tappable {
+  transition: background-color 0.3s ease-out;
+}
+html.phone-window[data-platform='ios'] .pg-row.tappable:active {
+  transition: none;
+}
+/* A swiped row settles on a spring; under the finger it follows the finger. */
+html.phone-window[data-platform='ios'] .pg-swipe-content {
+  transition: transform var(--spring-smooth-ms, 0.25s) var(--spring-smooth, ease-out);
+}
+html.phone-window[data-platform='ios'] .pg-swipe-content.dragging {
+  transition: none;
+}
+/* A sheet from the bottom rises on the default spring, moves between its heights on the snappy one, leaves on the
+   smooth one, and its dimming fades with it. */
+html.phone-window[data-platform='ios'] .pg-sheet {
+  animation: pg-rise var(--spring-default-ms, 0.3s) var(--spring-default, cubic-bezier(0.2, 0.9, 0.3, 1));
+  transition:
+    height var(--spring-snappy-ms, 0.25s) var(--spring-snappy, cubic-bezier(0.2, 0.9, 0.3, 1)),
+    transform var(--spring-smooth-ms, 0.18s) var(--spring-smooth, ease-in);
+}
+html.phone-window[data-platform='ios'] .pg-sheet-scrim {
+  transition: background-color 0.3s;
+}
+html.phone-window[data-platform='ios'] .pg-sheet-scrim:has(> .pg-sheet.closing) {
+  background-color: transparent;
+}
+/* The + menu opens out of its button (web/motion.ts takes it back in). */
+html.phone-window[data-platform='ios'] .phone-plus-menu {
+  transform-origin: 22px calc(100% + 26px);
+  animation: pg-menu-in var(--spring-snappy-ms, 0.3s) var(--spring-snappy, cubic-bezier(0.2, 0.9, 0.3, 1));
+}
+@keyframes pg-menu-in {
+  from {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+}
+/* A group's and a disclosure's chevron turns on the snappy spring, and what a disclosure opens fades in under it. */
+html.phone-window[data-platform='ios'] .group-header .chev,
+html.phone-window[data-platform='ios'] summary::before {
+  transition: transform var(--spring-snappy-ms, 0.3s) var(--spring-snappy, ease);
+}
+html.phone-window[data-platform='ios'] details[open] > :not(summary) {
+  animation: pg-reveal var(--spring-smooth-ms, 0.3s) var(--spring-smooth, ease-out);
+}
+@keyframes pg-reveal {
+  from {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+}
+/* Reduce Motion: fades in place of rising, opening out and sliding, and no bounce (HIG: Accessibility). The fades
+   keep a duration of their own over styles.css's rule that ends every animation at once. */
+@media (prefers-reduced-motion: reduce) {
+  html.phone-window[data-platform='ios'] :is(.pg-sheet, .phone-plus-menu, details[open] > :not(summary), .phone-main > .phone-screen.enter-push, .phone-main > .phone-screen.enter-pop) {
+    animation-name: pg-fade;
+    animation-duration: 0.25s !important;
+    animation-timing-function: ease-out;
+  }
+  html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']::after {
+    transition-timing-function: ease;
+  }
 }

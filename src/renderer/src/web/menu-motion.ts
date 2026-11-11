@@ -30,8 +30,10 @@ export function springEasing(duration: number, bounce: number, points = 48): Mot
 
 /** Animation.snappy: "a small amount of bounce", 0.5 s with a bounce of 0.15 (SwiftUI's defaults). */
 export const SNAPPY = springEasing(0.5, 0.15);
-/** Animation.smooth: no bounce. A menu goes back into its button at a shorter pace than it came out. */
+/** Animation.smooth: no bounce. A menu goes back into its button at a shorter pace than it came out; a screen leaves the same way. */
 export const SMOOTH = springEasing(0.35, 0);
+/** Animation.default: "spring(response: 0.55, dampingFraction: 1.0)" (SwiftUI docs). Screens and sheets come in on it. */
+export const DEFAULT_SPRING = springEasing(0.55, 0);
 
 export interface Box {
   left: number;
