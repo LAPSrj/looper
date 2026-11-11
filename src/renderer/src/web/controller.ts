@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { isLooperFileName } from '../../../shared/files';
-import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type HostFileView, type MeResponse, type MenuItemSpec, type OpenTarget } from '../../../shared/remote-access';
+import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type HostFileView, type MeResponse, type MenuItemSpec, type MessageBoxSpec, type OpenTarget } from '../../../shared/remote-access';
 import { ClipboardBridge } from './clipboard';
+import { fileType } from './dialog-flows';
 import { runEditRole } from './edit-roles';
 import { findAccelerator, pickChecked } from './menu-model';
-import { pushOnHere, registerServiceWorker } from './push-client';
+import { isIos, pushOnHere, registerServiceWorker } from './push-client';
 import type { Session } from './session';
 import { frontWindow, isBlocked, mainWindow, ShellStore, type OpenMenu, type ShellState, type Toast } from './store';
 
@@ -40,6 +41,9 @@ export class ShellController {
   private computer = '';
   /** A notification tapped while this tab wasn't open: opened once connected. */
   private pendingOpen: OpenTarget | null = takeOpenParam();
+  /** Message boxes the shell asked itself, by dialog id: what each answer does. */
+  private readonly localDialogs = new Map<string, (response: number) => void>();
+  private localDialogSeq = 0;
   /** A window that should flash: a click hit what its modal window blocks. */
   onFlash: ((w: string) => void) | null = null;
 
@@ -66,7 +70,7 @@ export class ShellController {
           this.clipboard.write(m.text);
           break;
         case 'download':
-          this.download(`/api/download/${encodeURIComponent(m.token)}`, m.name);
+          void this.saveDownload(`/api/download/${encodeURIComponent(m.token)}`, m.name);
           break;
         case 'open-url':
           window.open(m.url, '_blank', 'noopener');
@@ -262,7 +266,10 @@ export class ShellController {
   // ---------- dialogs ----------
 
   answer(dialogId: string, result: DialogResult): void {
-    this.session.dialogResult(dialogId, result);
+    const local = this.localDialogs.get(dialogId);
+    this.localDialogs.delete(dialogId);
+    if (local) local(result.kind === 'message' ? result.response : -1);
+    else this.session.dialogResult(dialogId, result);
     this.store.dispatch({ t: 'dialog-done', dialogId });
   }
 
@@ -343,6 +350,43 @@ export class ShellController {
         ? this.invoke(main.w, REMOTE_CHANNELS.openNotification, open.taskId, open.runId ?? null)
         : this.invoke(main.w, REMOTE_CHANNELS.openSession, open.id);
     void call.catch(() => undefined);
+  }
+
+  /**
+   * A file the computer sent this device. iOS opens a download link as a page of its own,
+   * which a Home Screen app has no way back from, so there the file goes to the share sheet
+   * (Save Image, Save to Files). The share sheet needs a tap: when the one that asked for
+   * the download is too long ago, a message box asks for it.
+   */
+  private async saveDownload(href: string, name: string): Promise<void> {
+    if (!isIos()) return this.download(href, name);
+    let file: File;
+    try {
+      const r = await fetch(href);
+      if (!r.ok) throw new Error(`The host computer didn't send ${name}.`);
+      file = new File([await r.blob()], name, { type: fileType(name) });
+    } catch (err) {
+      return this.askLocal({ type: 'error', title: 'Looper', message: err instanceof Error ? err.message : String(err), buttons: ['OK'], defaultId: 0, cancelId: 0 }, () => undefined);
+    }
+    if (!navigator.canShare?.({ files: [file] })) return this.download(href, name);
+    const share = () => navigator.share({ files: [file] });
+    try {
+      await share();
+    } catch (err) {
+      if ((err as Error).name !== 'NotAllowedError') return;
+      this.askLocal({ type: 'none', title: 'Looper', message: `${name} is ready.`, buttons: ['Save…', 'Cancel'], defaultId: 0, cancelId: 1 }, (response) => {
+        if (response === 0) void share().catch(() => undefined);
+      });
+    }
+  }
+
+  /** A message box the shell asks itself, drawn like the computer's; `onAnswer` runs inside the tap, so it may open the share sheet. */
+  private askLocal(spec: MessageBoxSpec, onAnswer: (response: number) => void): void {
+    const w = this.anyWindow();
+    if (!w) return;
+    const dialogId = `local-${++this.localDialogSeq}`;
+    this.localDialogs.set(dialogId, onAnswer);
+    this.store.dispatch({ t: 'dialog', dialogId, w, kind: 'message', spec });
   }
 
   private download(href: string, name: string): void {

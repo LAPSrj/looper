@@ -1,10 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { agentArgs } from '../shared/projects';
 import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
 import { CommandStream } from './command-output';
+import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import {
   CONTINUE_TEXT,
   chatTitle,
@@ -165,7 +165,7 @@ type AppServerCall = (method: string, params: Rec) => Promise<Rec>;
  * longer than `timeoutMs`.
  */
 function codexAppServer<T>(
-  child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
+  child: Pick<OffThreadChild, 'stdin' | 'stdout' | 'on'>,
   timeoutMs: number,
   endedEarly: string,
   body: (call: AppServerCall) => Promise<T>,
@@ -226,7 +226,7 @@ function codexAppServer<T>(
  * the last one. Returns the new thread's id; rejects with the reason.
  */
 export function codexForkThread(
-  child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
+  child: Pick<OffThreadChild, 'stdin' | 'stdout' | 'on'>,
   threadId: string,
   text: string,
   occurrence: number,
@@ -259,7 +259,7 @@ const SKILLS_TIMEOUT_MS = 20_000;
 
 /** The skills Codex offers in a folder, from its app server's `skills/list`; disabled ones are left out. */
 export function codexListSkills(
-  child: Pick<ChildProcess, 'stdin' | 'stdout' | 'on'>,
+  child: Pick<OffThreadChild, 'stdin' | 'stdout' | 'on'>,
   cwd: string,
   timeoutMs = SKILLS_TIMEOUT_MS,
 ): Promise<SlashCommand[]> {
@@ -573,11 +573,11 @@ class ChatSession {
   private status: ChatState['status'] = 'starting';
   private error?: string;
   private history: MessageRow[] = [];
-  private proc: ChildProcess | null = null;
+  private proc: OffThreadChild | null = null;
   /** Codex's app server while it forks the thread. */
-  private forkProc: ChildProcess | null = null;
+  private forkProc: OffThreadChild | null = null;
   /** Processes Looper ended (Stop, a restart): their exit isn't the chat's end. */
-  private readonly retired = new WeakSet<ChildProcess>();
+  private readonly retired = new WeakSet<OffThreadChild>();
   /** A Stop or restart is ending the process: messages wait for the next one. */
   private killing = false;
   /** The conversation to go on with: claude's session, codex's thread. */
@@ -607,7 +607,7 @@ class ChatSession {
   private remoteName?: string;
   private commands: SlashCommand[] = [];
   /** The commands the user ran from the message box that are still running, by id. */
-  private readonly shellCommands = new Map<string, { child: ChildProcess; marker: string; stopped: boolean }>();
+  private readonly shellCommands = new Map<string, { child: OffThreadChild; marker: string; stopped: boolean }>();
   private commandSeq = 0;
   private turnEndedAt?: number;
   private readonly startedAt: number;
@@ -808,7 +808,7 @@ class ChatSession {
   /** Codex's skills for the "/" list, from its app server; without them the list stays empty. */
   private loadCodexSkills(): void {
     const spec = this.launcher('skills', `${this.harness.command} app-server`);
-    const child = spawn(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawnOffThread(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     void codexListSkills(child, this.task.cwd)
       .then((skills) => {
         this.commands = skills;
@@ -816,7 +816,7 @@ class ChatSession {
       })
       .catch((err: unknown) => this.d.log.warn(`chat ${this.id}: cannot list codex skills: ${errMsg(err)}`))
       .finally(() => {
-        if (child.pid) void killHostTree(child.pid).catch(() => undefined);
+        void child.spawned.then((pid) => (pid ? killHostTree(pid) : undefined)).catch(() => undefined);
       });
   }
 
@@ -849,7 +849,8 @@ class ChatSession {
     const child = this.proc;
     this.proc = null;
     if (child) this.retired.add(child);
-    if (child?.pid) await killHostTree(child.pid).catch(() => undefined);
+    const pid = await child?.spawned;
+    if (pid) await killHostTree(pid).catch(() => undefined);
     await this.target.killLeftovers(this.ctx.runId).catch(() => undefined);
   }
 
@@ -878,7 +879,7 @@ class ChatSession {
     // The launcher's interactive bash warns that it has no job control: that's the shell's, not the command's.
     const stderr = stream('stderr', stripShellNoise);
     return new Promise((resolve) => {
-      const child = spawn(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawnOffThread(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       const running = { child, marker, stopped: false };
       this.shellCommands.set(id, running);
       this.scheduleEmit();
@@ -935,7 +936,8 @@ class ChatSession {
         .map(async ([, c]) => {
           c.stopped = true;
           // The launcher's shell first, and for good: an interactive bash ignores SIGTERM, and would go on to the command's next line.
-          if (c.child.pid) await killHostTree(c.child.pid, 'SIGKILL').catch(() => undefined);
+          const pid = await c.child.spawned;
+          if (pid) await killHostTree(pid, 'SIGKILL').catch(() => undefined);
           await this.target.killLeftovers(c.marker).catch(() => undefined);
         }),
     );
@@ -1319,7 +1321,7 @@ class ChatSession {
   private forkCodexThen(fork: { sessionId: string; codexText: string; occurrence: number }, p: Pending): void {
     this.setStatus('working');
     const spec = this.launcher('fork', `${this.harness.command} app-server`);
-    const child = spawn(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawnOffThread(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.forkProc = child;
     let stderr = '';
     child.stderr?.setEncoding('utf8');
@@ -1343,7 +1345,7 @@ class ChatSession {
       )
       .finally(() => {
         this.forkProc = null;
-        if (child.pid) void killHostTree(child.pid).catch(() => undefined);
+        void child.spawned.then((pid) => (pid ? killHostTree(pid) : undefined)).catch(() => undefined);
       });
   }
 
@@ -1372,7 +1374,7 @@ class ChatSession {
   private spawnProc(spec: { command: string; args: string[] }, onExit: (code: number | null, stderr: string) => void): void {
     let stdoutBuf = '';
     let stderrTail = '';
-    const child = spawn(spec.command, spec.args, {
+    const child = spawnOffThread(spec.command, spec.args, {
       cwd: this.dir,
       env: childEnv(),
       stdio: [this.claude ? 'pipe' : 'ignore', 'pipe', 'pipe'],

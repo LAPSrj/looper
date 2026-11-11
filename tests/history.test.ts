@@ -10,7 +10,7 @@ import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { loadSettings } from '../src/engine/store/settings';
 import type { ChatInfo } from '../src/shared/chat';
-import { dateGroupOf, filterHistory, groupHistory, historySourceText, recentChatLabel, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
+import { RECENT_CHATS, dateGroupOf, filterHistory, groupHistory, historySourceText, recentChatLabel, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
 import { projectSessionTask, projectTaskId } from '../src/shared/projects';
 import { ProjectSchema, TaskSchema, type Project } from '../src/shared/types';
 
@@ -167,10 +167,10 @@ describe('the History scanner', () => {
       projects: () => projects,
       runTaskIds: () => runs.listTaskIds(),
       findTask,
-      summaries: (taskId) => runs.summaries(taskId),
+      summaries: (taskId) => runs.loadSummaries(taskId),
       runDir: (taskId, runId) => runs.runDir(taskId, runId),
-      readChatInfo: (taskId, runId) => runs.readChatInfo(taskId, runId),
-      readTerminalInfo: (taskId, runId) => runs.readTerminalInfo(taskId, runId),
+      readChatInfo: (taskId, runId) => runs.readChatInfoAsync(taskId, runId),
+      readTerminalInfo: (taskId, runId) => runs.readTerminalInfoAsync(taskId, runId),
       remoteRuns: () => new Set(),
       readRun: async () => [],
       compactableRun: async () => [],
@@ -319,6 +319,43 @@ describe('the History scanner', () => {
       ['run', 'pruned-run', 'old run', 'Nightly', ''],
       ['chat', 'resumed', 'Resumed', '', '20261011-100000-bbbb'],
     ]);
+  });
+
+  it('keeps the Recent menus ready: a chat shows once recorded, and one from outside after the next rescan', async () => {
+    const { runs, service, folder } = setup();
+    runs.onChange = (taskId, runId) => service.taskChanged(taskId, runId);
+    const chat = (runId: string, ts: string, title: string, sessionId: string) => {
+      runs.writeChatInfo(projectTaskId('looper'), runId, { harnessKind: 'claude-code', title, settings: { permissionMode: '' } });
+      writeFileSync(join(runs.runDir(projectTaskId('looper'), runId), 'session.json'), JSON.stringify({ session_id: sessionId }));
+      runs.append({ ts, taskId: projectTaskId('looper'), runId, phase: 'chat', result: 'chat', summary: title });
+    };
+    chat('20261011-100000-aaaa', '2026-10-11T10:00:00.000Z', 'First chat', 'first');
+    write(join(folder('/w/looper'), 'outside.jsonl'), claudeTranscript('/w/looper', [['from outside', 'ok']]));
+    const titles = (f: '' | `project:${string}`) => service.recent(f, true)?.map((i) => i.title);
+
+    expect(titles('')).toBeUndefined();
+    // From Looper's runs and the cache, which doesn't know the outside one yet; asking starts the rescan that finds it.
+    await service.warm(true);
+    expect(titles('')).toEqual(['First chat']);
+    await until(() => titles('project:looper')?.length === 2, 'the rescan');
+    expect(titles('')).toEqual(['from outside', 'First chat']);
+    expect(titles('project:looper')).toEqual(['from outside', 'First chat']);
+    expect(titles('project:ab')).toEqual([]);
+    // One pass for every list gives what list() gives for each folder.
+    for (const f of ['', 'project:looper', 'project:ab'] as const) {
+      expect(service.recent(f, true)).toEqual((await service.list({ fresh: false, limit: RECENT_CHATS, showRuns: true, folder: f })).items);
+    }
+
+    // A chat Looper records: in the list as soon as its records are written.
+    chat('20261012-100000-bbbb', new Date().toISOString(), 'Second chat', 'second');
+    await until(() => titles('project:looper')?.[0] === 'Second chat', 'the new chat');
+
+    // One from outside: after the rescan a menu starts once the last is over a minute old.
+    write(join(folder('/w/looper'), 'later.jsonl'), claudeTranscript('/w/looper', [['later outside', 'ok']]));
+    expect(titles('')?.includes('later outside')).toBe(false);
+    (service as unknown as { scannedAt: number }).scannedAt = 0;
+    titles('');
+    await until(() => titles('')?.[0] === 'later outside', 'the outside conversation');
   });
 
   it('keeps each transcript by path, size and modified time, shows the cached ones at once, and asks for the folders once', async () => {

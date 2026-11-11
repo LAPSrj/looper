@@ -21,7 +21,6 @@ import {
   PhoneWindows,
   pickMore,
   usePhoneShell,
-  useSubmenus,
   type BackLayer,
   type OpenMore,
   type PhoneShell,
@@ -30,19 +29,15 @@ import {
 import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
 import { barModel, dismissFor, plainLabel, type PageNavAction } from './nav-bar-model';
+import { placeSubmenu, SMOOTH, SNAPPY } from './menu-motion';
 import { IosBarRow, IosBrowserBarRow, NavIcon } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import './ios.css';
 
-const CHEVRON_LEFT = (
-  <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true">
-    <path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 /** iOS (iPhone and iPad), after the Human Interface Guidelines: windows as a navigation stack and sheets. */
 export function IosFrame({ controller }: { controller: ShellController }) {
-  const [more, setMore] = useState<OpenMore | null>(null);
+  const [more, setMore] = useState<(OpenMore & { from: DOMRect; seq: number }) | null>(null);
+  const moreSeq = useRef(0);
   const [device, setDevice] = useState(false);
   const local: BackLayer[] = [];
   if (device) local.push(() => setDevice(false));
@@ -76,10 +71,14 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
   }, []);
 
-  // A bar button's menu hangs from its group's trailing edge, whichever button of the group opened it.
-  const anchorOf = (button: HTMLElement) => (button.closest('.ios-bar-group') ?? button).getBoundingClientRect();
-  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, anchor: anchorOf(button) });
-  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, anchor: anchorOf(button) });
+  // A bar button's menu lines up with its group's trailing edge, whichever button of the group opened it, and grows out of that button.
+  const placed = (button: HTMLElement) => ({
+    anchor: (button.closest('.ios-bar-group') ?? button).getBoundingClientRect(),
+    from: button.getBoundingClientRect(),
+    seq: ++moreSeq.current,
+  });
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, ...placed(button) });
+  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, ...placed(button) });
 
   return (
     <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
@@ -108,13 +107,14 @@ export function IosFrame({ controller }: { controller: ShellController }) {
       )}
       {more && (
         <PullDown
+          key={more.seq}
           items={more.items}
+          row={more.row}
           anchor={more.anchor}
-          onClose={() => setMore(null)}
-          onPick={(item) => {
-            setMore(null);
-            pickMore(controller, more, item);
-          }}
+          from={more.from}
+          bottom={shell.vp.height - shell.vp.safe.bottom - 8}
+          onClose={() => setMore((m) => (m?.seq === more.seq ? null : m))}
+          onPick={(item) => pickMore(controller, more, item)}
         />
       )}
       {s.menus.map((m) => (
@@ -229,41 +229,71 @@ const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'ra
  * (a chevron at the end of a submenu), destructive items in red. A group shows
  * symbols only when every item in it has one (HIG: Menus, "icons for all menu
  * items in a group, or none of them"); the column stays for every item, so the
- * labels line up.
+ * labels line up. `row`: the medium layout's row of buttons across the top, a
+ * symbol over a short label (HIG: Menus, iOS). `header`: a submenu's own row,
+ * which folds it back up.
  */
-function MenuLevel({ items, title, onUp, onItem }: { items: MenuItemSpec[]; title: string | null; onUp: () => void; onItem: (it: MenuItemSpec) => void }) {
+function MenuLevel({
+  items,
+  row = [],
+  header,
+  onHeader,
+  onItem,
+}: {
+  items: MenuItemSpec[];
+  row?: MenuItemSpec[];
+  header?: MenuItemSpec;
+  onHeader?: () => void;
+  onItem: (it: MenuItemSpec, el: HTMLElement) => void;
+}) {
   const iconOf = (it: MenuItemSpec) => (it.type !== 'submenu' ? it.icon : undefined);
-  const groups = menuGroups(items);
+  const inRow = new Set(row.map((it) => it.id));
+  const groups = menuGroups(items.filter((it) => !inRow.has(it.id)));
   const iconGroups = groups.map((group) => group.every((it) => iconOf(it)));
-  const lead = title !== null || items.some(isChoice) || iconGroups.some(Boolean);
+  const lead = items.some(isChoice) || iconGroups.some(Boolean);
   return (
     <div className="ios-menu-scroll ph-scroll" role="menu">
-      {title !== null && (
-        <button className="ios-menu-item ios-menu-up" onClick={onUp}>
-          <span className="ios-menu-lead">{CHEVRON_LEFT}</span>
-          <span className="ios-menu-label">{title}</span>
+      {header && (
+        <button className="ios-menu-item ios-menu-header" aria-expanded="true" onClick={onHeader}>
+          {header.icon && (
+            <span className="ios-menu-lead">
+              <NavIcon name={header.icon} size={20} />
+            </span>
+          )}
+          <span className="ios-menu-label">{plainLabel(header.label)}</span>
+          <span className="ios-menu-sub ios-menu-fold">{CHEVRON_RIGHT}</span>
         </button>
+      )}
+      {row.length > 0 && (
+        <div className="ios-menu-row" style={{ gridTemplateColumns: `repeat(${row.length}, 1fr)` }}>
+          {row.map((it) => (
+            <button key={it.id} role="menuitem" className="ios-menu-tile" onClick={(e) => onItem(it, e.currentTarget)}>
+              <NavIcon name={it.icon!} size={22} />
+              <span className="ios-menu-tile-label">{plainLabel(it.label)}</span>
+            </button>
+          ))}
+        </div>
       )}
       {groups.map((group, gi) => {
         const icons = iconGroups[gi];
         return (
-        <div key={gi} className="ios-menu-group">
-          {group.map((it) => (
-            <button
-              key={it.id}
-              role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
-              aria-checked={isChoice(it) ? !!it.checked : undefined}
-              aria-haspopup={it.type === 'submenu' || undefined}
-              className={`ios-menu-item${it.type !== 'submenu' && it.destructive ? ' destructive' : ''}`}
-              disabled={!it.enabled}
-              onClick={() => onItem(it)}
-            >
-              {lead && <span className="ios-menu-lead">{isChoice(it) && it.checked ? CHECK : icons ? <NavIcon name={iconOf(it)!} size={20} /> : null}</span>}
-              <span className="ios-menu-label">{plainLabel(it.label)}</span>
-              {it.type === 'submenu' && <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>}
-            </button>
-          ))}
-        </div>
+          <div key={gi} className="ios-menu-group">
+            {group.map((it) => (
+              <button
+                key={it.id}
+                role={it.type === 'checkbox' ? 'menuitemcheckbox' : it.type === 'radio' ? 'menuitemradio' : 'menuitem'}
+                aria-checked={isChoice(it) ? !!it.checked : undefined}
+                aria-haspopup={it.type === 'submenu' || undefined}
+                className={`ios-menu-item${it.type !== 'submenu' && it.destructive ? ' destructive' : ''}`}
+                disabled={!it.enabled}
+                onClick={(e) => onItem(it, e.currentTarget)}
+              >
+                {lead && <span className="ios-menu-lead">{isChoice(it) && it.checked ? CHECK : icons ? <NavIcon name={iconOf(it)!} size={20} /> : null}</span>}
+                <span className="ios-menu-label">{plainLabel(it.label)}</span>
+                {it.type === 'submenu' && <span className="ios-menu-sub">{CHEVRON_RIGHT}</span>}
+              </button>
+            ))}
+          </div>
         );
       })}
     </div>
@@ -279,42 +309,251 @@ function placeMenu(x: number, y: number, width: number, height: number, vw: numb
   return below ? { left, top, width, maxHeight: vh - top - 8 } : { left, bottom, width, maxHeight: vh - bottom - 8 };
 }
 
+const springs = typeof CSS !== 'undefined' && CSS.supports('transition-timing-function', 'linear(0, 1)');
+/** The menus' springs as CSS variables, for the transitions in ios.css. */
+const SPRING_VARS = springs ? ({ '--ios-spring': SNAPPY.easing, '--ios-spring-ms': `${SNAPPY.ms}ms` } as React.CSSProperties) : undefined;
+
+interface Morph {
+  cancel: () => void;
+  finished: Promise<unknown>;
+}
+
 /**
- * A bar button's pull-down menu, under its group and as wide as its longest
- * item. A tap outside only closes it: the layer takes the whole tap, so a tap
- * on the button that opened it doesn't open it again.
+ * A menu's glass grows out of `from` (the button or row that opened it) into
+ * its place, or goes back into it: iOS 26 opens a menu from its control ("the
+ * bubble simply pops open to reveal the content", WWDC25 Meet Liquid Glass).
+ * The content keeps its laid-out size while the glass changes around it, and
+ * with `grow` starts smaller, around the source. Reduce Motion fades instead.
+ */
+function morph(el: HTMLElement, from: DOMRect, dir: 'open' | 'close', grow: boolean, start?: DOMRect): Morph {
+  const inner = el.firstElementChild as HTMLElement;
+  const open = dir === 'open';
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const a = el.animate({ opacity: open ? [0, 1] : [1, 0] }, { duration: 150, easing: 'ease-out', fill: open ? 'none' : 'forwards' });
+    return { cancel: () => a.cancel(), finished: a.finished };
+  }
+  const base = (el.offsetParent ?? document.body).getBoundingClientRect();
+  const to = start ?? el.getBoundingClientRect();
+  // min-width gives way while it moves, or a menu's 250 px floor would keep the glass from starting at the button's size.
+  const box = (r: DOMRect, radius: string) => ({ left: `${r.left - base.left}px`, top: `${r.top - base.top}px`, width: `${r.width}px`, minWidth: '0px', height: `${r.height}px`, borderRadius: radius });
+  const source = box(from, `${Math.min(from.width, from.height) / 2}px`);
+  const target = box(to, getComputedStyle(el).borderRadius);
+  const motion = open ? SNAPPY : SMOOTH;
+  const timing: KeyframeAnimationOptions = { duration: motion.ms, easing: springs ? motion.easing : 'cubic-bezier(0.2, 0.9, 0.3, 1)', fill: open ? 'none' : 'forwards' };
+  // The content holds to the glass's edge nearest the source, which barely moves (a bar button's menu: its top and trailing edges),
+  // so it stays in place on the screen; a submenu's header rides its top edge from the row up to where the card settles.
+  const side = Math.abs(from.right - to.right) <= Math.abs(from.left - to.left) ? { right: '0px' } : { left: '0px' };
+  Object.assign(inner.style, {
+    position: 'absolute',
+    top: '0px',
+    ...side,
+    width: `${to.width}px`,
+    height: `${to.height}px`,
+    transformOrigin: `${from.left + from.width / 2 - to.left}px ${from.top + from.height / 2 - to.top}px`,
+  });
+  const away = grow ? 'scale(0.6)' : 'none';
+  const glass = open
+    ? [{ ...source, opacity: 0 }, { opacity: 1, offset: 0.12 }, { ...target, opacity: 1 }]
+    : [{ ...target, opacity: 1 }, { opacity: 1, offset: 0.75 }, { ...source, opacity: 0 }];
+  const content = open
+    ? [{ transform: away, opacity: 0 }, { opacity: 1, offset: 0.3 }, { transform: 'none', opacity: 1 }]
+    : [{ transform: 'none', opacity: 1 }, { opacity: 0, offset: 0.3 }, { transform: away, opacity: 0 }];
+  const a = el.animate(glass, timing);
+  const b = inner.animate(content, timing);
+  if (open) {
+    const settle = () => Object.assign(inner.style, { position: '', top: '', left: '', right: '', width: '', height: '', transformOrigin: '' });
+    a.finished.then(settle, settle);
+  }
+  return {
+    cancel: () => {
+      a.cancel();
+      b.cancel();
+    },
+    finished: a.finished,
+  };
+}
+
+/** A submenu open over its menu: the item, the row it opened from, and the menu's right edge and width it lines up with. */
+interface OpenLevel {
+  item: MenuItemSpec;
+  at: DOMRect;
+  right: number;
+  width: number;
+  leaving?: boolean;
+}
+
+/**
+ * A menu and the submenus opened from it, as iOS 26 stacks them: a submenu is
+ * a card of its own over the row it came from, its header folding it back,
+ * while the menu behind shrinks a little and fades (tapping it folds the
+ * submenu too). `from`: what the menu grows out of. `exit`: the menu closes
+ * back into it (a menu the computer removes goes at once).
+ */
+function MenuStack({
+  items,
+  row,
+  from,
+  rootClass = '',
+  rootStyle,
+  center,
+  bottom,
+  dim,
+  exit = true,
+  onPick,
+  onClose,
+}: {
+  items: MenuItemSpec[];
+  row?: MenuItemSpec[];
+  from: DOMRect;
+  rootClass?: string;
+  rootStyle: React.CSSProperties;
+  /** Centered over this once its width is known, kept on the screen. */
+  center?: DOMRect;
+  /** The lowest a submenu reaches, above the home indicator. */
+  bottom: number;
+  dim?: boolean;
+  exit?: boolean;
+  onPick: (it: MenuItemSpec) => void;
+  onClose: () => void;
+}) {
+  const [path, setPath] = useState<OpenLevel[]>([]);
+  const [closing, setClosing] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const cards = useRef<(HTMLDivElement | null)[]>([]);
+  const running = useRef<Morph | null>(null);
+  const opened = useRef(0);
+  useEffect(() => setPath([]), [items]);
+
+  useLayoutEffect(() => {
+    const el = root.current!;
+    if (center) {
+      const width = el.offsetWidth;
+      el.style.left = `${Math.min(Math.max(8, center.left + center.width / 2 - width / 2), window.innerWidth - width - 8)}px`;
+    }
+    running.current = morph(el, from, 'open', true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A new submenu: placed over its row, then grown out of it.
+  useLayoutEffect(() => {
+    const depth = path.length;
+    if (depth <= opened.current) {
+      opened.current = depth;
+      return;
+    }
+    opened.current = depth;
+    const el = cards.current[depth - 1];
+    const level = path[depth - 1];
+    if (!el) return;
+    const base = (el.offsetParent ?? document.body).getBoundingClientRect();
+    const floor = root.current!.getBoundingClientRect().top + 12;
+    el.style.maxHeight = 'none';
+    const place = placeSubmenu(level.at, el.offsetHeight, floor, bottom);
+    Object.assign(el.style, { top: `${place.top - base.top}px`, maxHeight: `${place.maxHeight}px` });
+    morph(el, level.at, 'open', false);
+  }, [path, bottom]);
+
+  const openSub = (it: MenuItemSpec, rowEl: HTMLElement) => {
+    const menu = (path.length ? cards.current[path.length - 1] : root.current)!.getBoundingClientRect();
+    const base = (root.current!.offsetParent ?? document.body).getBoundingClientRect();
+    setPath((p) => [...p, { item: it, at: rowEl.getBoundingClientRect(), right: base.right - menu.right, width: menu.width }]);
+  };
+  const fold = () => {
+    const depth = path.filter((l) => !l.leaving).length;
+    if (!depth) return;
+    const el = cards.current[depth - 1];
+    setPath((p) => p.map((l, i) => (i === depth - 1 ? { ...l, leaving: true } : l)));
+    const gone = () => setPath((p) => p.slice(0, depth - 1));
+    if (!el) return gone();
+    void morph(el, path[depth - 1].at, 'close', false).finished.then(gone, gone);
+  };
+  const close = () => {
+    if (closing) return;
+    setClosing(true);
+    if (!exit) return onClose();
+    const el = root.current!;
+    const now = el.getBoundingClientRect();
+    running.current?.cancel();
+    for (const card of cards.current) card?.animate({ opacity: [1, 0] }, { duration: 120, fill: 'forwards' });
+    void morph(el, from, 'close', true, now).finished.then(onClose, onClose);
+  };
+  const pick = (it: MenuItemSpec, el: HTMLElement) => {
+    if (it.type === 'submenu') return openSub(it, el);
+    onPick(it);
+    if (exit) close();
+  };
+
+  const shown = path.filter((l) => !l.leaving).length;
+  // A tap on a menu behind its submenu folds the submenu, without reaching its items.
+  const behind = (depth: number) => (depth < shown ? (e: React.MouseEvent) => (e.stopPropagation(), e.preventDefault(), fold()) : undefined);
+  return (
+    <div
+      className={`ios-menu-layer${dim ? ' dim' : ''}${closing ? ' closing' : ''}`}
+      style={SPRING_VARS}
+      onClick={(e) => !dim && e.target === e.currentTarget && close()}
+      onPointerDown={(e) => dim && e.target === e.currentTarget && close()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div ref={root} className={`ios-menu ${rootClass}${shown > 0 ? ' behind' : ''}`} style={rootStyle} onClickCapture={behind(0)}>
+        <MenuLevel items={items} row={row} onItem={pick} />
+      </div>
+      {path.map((level, i) => (
+        <div
+          key={level.item.id}
+          ref={(el) => {
+            cards.current[i] = el;
+          }}
+          className={`ios-menu ios-submenu${i + 1 < shown ? ' behind' : ''}`}
+          style={{ right: level.right, minWidth: level.width, top: level.at.top - 6 }}
+          onClickCapture={behind(i + 1)}
+        >
+          <MenuLevel items={level.item.submenu ?? []} header={level.item} onHeader={fold} onItem={pick} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A bar button's pull-down menu: it opens over the button, out of it, lined
+ * up with its group's trailing edge, and as wide as its longest item. A tap
+ * outside only closes it.
  */
 function PullDown({
   items,
+  row,
   anchor,
+  from,
+  bottom,
   align = 'end',
   onPick,
   onClose,
 }: {
   items: MenuItemSpec[];
+  row?: MenuItemSpec[];
   anchor: DOMRect;
-  /** Where the menu lines up: a bar button's trailing edge, or centered under a title (kept on the screen). */
+  /** The button it opens out of; the anchor when unset. */
+  from?: DOMRect;
+  bottom: number;
+  /** Where the menu lines up: a bar button's trailing edge, or centered over a title (kept on the screen). */
   align?: 'center' | 'end';
   onPick: (it: MenuItemSpec) => void;
   onClose: () => void;
 }) {
-  const sub = useSubmenus(items);
-  const box = useRef<HTMLDivElement>(null);
-  // Centered once its width is known, which depends on its longest item.
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el || align !== 'center') return;
-    const width = el.offsetWidth;
-    el.style.left = `${Math.min(Math.max(8, anchor.left + anchor.width / 2 - width / 2), window.innerWidth - width - 8)}px`;
-  }, [align, anchor, sub.level]);
   const side = align === 'center' ? { left: 8 } : { right: Math.max(8, window.innerWidth - anchor.right) };
-  const top = anchor.bottom + 6;
+  const top = anchor.top;
   return (
-    <div className="ios-menu-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={box} className="ios-menu ios-pull-down" style={{ ...side, top, maxHeight: `calc(100% - ${top + 8}px - env(safe-area-inset-bottom, 0px))` }}>
-        <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={(it) => (it.type === 'submenu' ? sub.open(it) : onPick(it))} />
-      </div>
-    </div>
+    <MenuStack
+      items={items}
+      row={row}
+      from={from ?? anchor}
+      rootClass="ios-pull-down"
+      rootStyle={{ ...side, top, maxHeight: `calc(100% - ${top + 8}px - env(safe-area-inset-bottom, 0px))` }}
+      center={align === 'center' ? anchor : undefined}
+      bottom={bottom}
+      onPick={onPick}
+      onClose={onClose}
+    />
   );
 }
 
@@ -326,16 +565,18 @@ function PullDown({
 function PopupMenu({ controller, shell, menu: m }: { controller: ShellController; shell: PhoneShell; menu: OpenMenu }) {
   const at = useMemo(() => controller.popupPoint(m), [controller, m]);
   const items = useMemo(() => phoneMenu(m.items), [m.items]);
-  const sub = useSubmenus(items);
-  const pick = (it: MenuItemSpec) => (it.type === 'submenu' ? sub.open(it) : controller.pick(m.menuId, m.w, it));
-  const dismiss = () => controller.dismissMenu(m.menuId);
-  const rows = sub.level.length + (sub.title ? 1 : 0);
+  const from = useMemo(() => new DOMRect(at.x - 22, at.y - 22, 44, 44), [at]);
   return (
-    <div className="ios-menu-layer dim" onPointerDown={(e) => e.target === e.currentTarget && dismiss()} onContextMenu={(e) => e.preventDefault()}>
-      <div className="ios-menu" style={placeMenu(at.x - 20, at.y + 12, 250, rows * 44 + 24, shell.vp.width, shell.vp.height)}>
-        <MenuLevel items={sub.level} title={sub.title} onUp={sub.up} onItem={pick} />
-      </div>
-    </div>
+    <MenuStack
+      items={items}
+      from={from}
+      rootStyle={placeMenu(at.x - 20, at.y + 12, 250, items.length * 44 + 24, shell.vp.width, shell.vp.height)}
+      bottom={shell.vp.height - shell.vp.safe.bottom - 8}
+      dim
+      exit={false}
+      onPick={(it) => controller.pick(m.menuId, m.w, it)}
+      onClose={() => controller.dismissMenu(m.menuId)}
+    />
   );
 }
 
@@ -517,11 +758,9 @@ function FilesBar({
             items={above.map((c, i) => ({ id: String(i), type: 'normal', label: c.label, enabled: true, icon: 'openFolder' }))}
             anchor={menu}
             align="center"
+            bottom={shell.vp.height - shell.vp.safe.bottom - 8}
             onClose={() => setMenu(null)}
-            onPick={(it) => {
-              setMenu(null);
-              browser.go(above[Number(it.id)].path);
-            }}
+            onPick={(it) => browser.go(above[Number(it.id)].path)}
           />,
           root,
         )}
@@ -690,7 +929,7 @@ function PathSheet({ controller, shell, req }: { controller: ShellController; sh
           ],
         }}
       >
-        <FileViewBody view={view} name={p.name} />
+        <FileViewBody view={view} name={p.name} steps={steps} />
         <LocalAlert msg={p.message} />
       </Sheet>
     );

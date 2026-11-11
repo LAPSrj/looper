@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { toolImageKey, type MessageRow, type PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
 import { escapeHtml, hunkRows, markRanges, replacedRows, type DiffRow } from './editor-lines';
@@ -139,8 +139,12 @@ export function DiffRows({ rows, file }: { rows: DiffRow[]; file?: string }) {
   const side = (keep: 'add' | 'del') => rows.map((r) => (r.kind === 'hunk' || r.kind === keep ? '' : r.text));
   const oldHtml = useHighlight(side('add'), file);
   const newHtml = useHighlight(side('del'), file);
+  // Each number column is as wide as its longest number; a new file has no old numbers, so no old column.
+  const digits = (key: 'oldN' | 'newN') => rows.reduce((n, r) => (r.kind === 'hunk' ? n : Math.max(n, r[key].length)), 0);
+  const oldDigits = digits('oldN');
+  const newDigits = digits('newN');
   return (
-    <div className="diff">
+    <div className="diff" style={{ '--diff-old-digits': oldDigits, '--diff-new-digits': newDigits } as CSSProperties}>
       {rows.map((r, i) => {
         if (r.kind === 'hunk') {
           return (
@@ -152,8 +156,8 @@ export function DiffRows({ rows, file }: { rows: DiffRow[]; file?: string }) {
         const html = (r.kind === 'del' ? oldHtml : newHtml)?.[i] ?? escapeHtml(r.text);
         return (
           <div key={i} className={`diff-line diff-${r.kind}`}>
-            <span className="diff-num">{r.oldN}</span>
-            <span className="diff-num">{r.newN}</span>
+            {oldDigits > 0 && <span className="diff-num old">{r.oldN}</span>}
+            {newDigits > 0 && <span className="diff-num new">{r.newN}</span>}
             <span className="diff-mark">{r.kind === 'add' ? '+' : r.kind === 'del' ? '−' : ''}</span>
             <span className="diff-code" dangerouslySetInnerHTML={{ __html: (r.words ? markRanges(html, r.words) : html) || ' ' }} />
           </div>

@@ -23,6 +23,14 @@ export function writeJsonAtomic(file: string, data: unknown): void {
   fs.renameSync(tmp, file);
 }
 
+/** writeJsonAtomic without holding the thread on the disk; compact, for files only Looper reads. */
+export async function writeJsonAtomicAsync(file: string, data: unknown): Promise<void> {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.promises.writeFile(tmp, JSON.stringify(data), 'utf8');
+  await fs.promises.rename(tmp, file);
+}
+
 export function writeText(file: string, text: string, mode?: number): void {
   ensureDir(path.dirname(file));
   fs.writeFileSync(file, text, { encoding: 'utf8', mode });

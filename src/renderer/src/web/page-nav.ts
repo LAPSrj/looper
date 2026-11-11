@@ -130,7 +130,7 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
     if (n.cancel) out.cancel = { ...n.cancel, run: () => latest.current?.cancel?.run() };
     if (n.confirm) out.confirm = { ...n.confirm, run: () => latest.current?.confirm?.run() };
     if (n.toolbar) out.toolbar = [...(out.toolbar ?? []), ...wrapToolbar(n.toolbar, () => latest.current?.toolbar)];
-    if (n.more) out.more = { items: n.more.items, run: (id) => latest.current?.more?.run(id) };
+    if (n.more) out.more = { items: n.more.items, toolbar: n.more.toolbar, run: (id) => latest.current?.more?.run(id) };
   }
   return out;
 }

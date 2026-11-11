@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { chatTitle, type ChatInfo, type TerminalInfo } from '../shared/chat';
 import { compactRows } from '../shared/compact';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
-import { inFolderFilter, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions, type HistorySource } from '../shared/history';
+import { RECENT_CHATS, inFolderFilter, type HistoryConversation, type HistoryFolderFilter, type HistoryItem, type HistoryList, type HistoryListOptions, type HistorySource } from '../shared/history';
 import type { MessageRow } from '../shared/messages';
 import { FOLDER_TASK_PREFIX, normalizeFolder, projectIdOf, projectTaskId, sameFolder } from '../shared/projects';
 import type { RunSummary } from '../shared/runs';
@@ -16,7 +16,7 @@ import { errMsg, type Logger } from './log';
 import { CodexAccumulator, TranscriptAccumulator, codexHomeOfRollout, codexThreadName, transcriptHostPath, type SubagentMeta } from './messages';
 import { readSubagentStats, type SubagentStats } from './context';
 import { subagentsOf } from './sessions';
-import { writeJsonAtomic } from './store/fsutil';
+import { writeJsonAtomicAsync } from './store/fsutil';
 
 /** Each subagent's model, effort and context, read from its transcript, by agent id; one not readable yet is left out. */
 async function statsOf(metas: SubagentMeta[], read: (agentId: string) => Promise<SubagentStats | null>): Promise<Map<string, SubagentStats>> {
@@ -331,10 +331,10 @@ export interface HistoryDeps {
   /** Every task id with run history: tasks, and the projects' and folders' stand-ins. */
   runTaskIds: () => string[];
   findTask: (id: string) => Task | undefined;
-  summaries: (taskId: string) => RunSummary[];
+  summaries: (taskId: string) => Promise<RunSummary[]>;
   runDir: (taskId: string, runId: string) => string;
-  readChatInfo: (taskId: string, runId: string) => ChatInfo | null;
-  readTerminalInfo: (taskId: string, runId: string) => TerminalInfo | null;
+  readChatInfo: (taskId: string, runId: string) => Promise<ChatInfo | null>;
+  readTerminalInfo: (taskId: string, runId: string) => Promise<TerminalInfo | null>;
   /** The runs that are Remote Control's own conversations. */
   remoteRuns: () => Set<string>;
   /** A run's conversation (a subagent's with `agentId`). */
@@ -393,10 +393,22 @@ interface FileRef {
   dir?: string;
 }
 
-/** What the list is built from: Looper's runs, the session ids they hold, and every transcript file found. */
-interface HistoryIndex {
+/** One task's runs in the list, and the session ids its run folders hold. */
+interface TaskEntries {
   runs: Entry[];
-  known: Set<string>;
+  known: string[];
+}
+
+/** A run's own record, read for a chat or terminal session, with the result it was read for. */
+interface RunInfo {
+  result: string;
+  chat: ChatInfo | null;
+  term: TerminalInfo | null;
+}
+
+/** What the list is built from: Looper's runs by task, and every transcript file found. */
+interface HistoryIndex {
+  tasks: Map<string, TaskEntries>;
   files: FileRef[];
 }
 
@@ -405,6 +417,10 @@ const LEDGER_SOURCES: Partial<Record<LedgerKind, HistorySource>> = { chat: 'chat
 /** Files read at a time: a stat or a transcript over \\wsl.localhost waits on the network more than the disk. */
 const STAT_AT_ONCE = 32;
 const READ_AT_ONCE = 8;
+/** A run writes its records in bursts: its task is read again once they stop. */
+const CHANGE_WAIT_MS = 100;
+/** How old the last read of the agents' folders can be before a Recent menu starts another. */
+const RESCAN_AFTER_MS = 60_000;
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
@@ -433,10 +449,24 @@ const readdir = (dir: string): Promise<string[]> => fs.promises.readdir(dir).cat
 export class HistoryService {
   private entries = new Map<string, Entry>();
   private cache: Map<string, CacheEntry> | null = null;
+  private cacheLoad: Promise<Map<string, CacheEntry>> | null = null;
   private cacheDirty = false;
+  private saving: Promise<void> = Promise.resolve();
   private readonly dirs = new Map<string, Promise<ConfigDirs>>();
   private index: HistoryIndex | null = null;
+  private building: Promise<HistoryIndex> | null = null;
   private scanning: Promise<HistoryIndex> | null = null;
+  private scannedAt = 0;
+  /** Tasks whose runs changed since the index read them. */
+  private changed = new Set<string>();
+  private changeTimer: NodeJS.Timeout | null = null;
+  /** The Recent menus' lists, by `showRuns|folder`, ready before a menu asks. */
+  private recentLists = new Map<string, HistoryItem[]>();
+  private recentShowRuns = true;
+  private recentRun: Promise<void> | null = null;
+  private recentAgain = false;
+  /** Each chat's and terminal session's info, by `taskId/runId`. */
+  private infos = new Map<string, RunInfo>();
 
   constructor(private readonly d: HistoryDeps) {}
 
@@ -444,29 +474,38 @@ export class HistoryService {
     return path.join(this.d.dataDir, HISTORY_CACHE_FILE);
   }
 
-  private loadCache(): Map<string, CacheEntry> {
-    if (this.cache) return this.cache;
-    const map = new Map<string, CacheEntry>();
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.cacheFile(), 'utf8')) as Record<string, CacheEntry>;
-      for (const [k, v] of Object.entries(raw)) {
-        if (v && typeof v.size === 'number' && typeof v.mtimeMs === 'number' && Array.isArray(v.envIds) && v.envIds.length) map.set(k, v);
-      }
-    } catch {
-      /* none yet, or unreadable: it's only a cache */
-    }
-    this.cache = map;
-    return map;
+  /** The cache, read once without holding the thread on the disk; everything that reads it waits on this first. */
+  private loadCache(): Promise<Map<string, CacheEntry>> {
+    this.cacheLoad ??= fs.promises.readFile(this.cacheFile(), 'utf8').then(
+      (text) => {
+        const map = new Map<string, CacheEntry>();
+        try {
+          const raw = JSON.parse(text) as Record<string, CacheEntry>;
+          for (const [k, v] of Object.entries(raw)) {
+            if (v && typeof v.size === 'number' && typeof v.mtimeMs === 'number' && Array.isArray(v.envIds) && v.envIds.length) map.set(k, v);
+          }
+        } catch {
+          /* unreadable: it's only a cache */
+        }
+        return map;
+      },
+      () => new Map<string, CacheEntry>(),
+    );
+    return this.cacheLoad.then((map) => (this.cache ??= map));
   }
 
-  private saveCache(): void {
-    if (!this.cacheDirty) return;
+  /** The loaded cache, for code that runs after loadCache. */
+  private cached(): Map<string, CacheEntry> {
+    return (this.cache ??= new Map());
+  }
+
+  private saveCache(): Promise<void> {
+    if (!this.cacheDirty) return this.saving;
     this.cacheDirty = false;
-    try {
-      writeJsonAtomic(this.cacheFile(), Object.fromEntries(this.loadCache()));
-    } catch (err) {
-      this.d.log.warn(`history: cannot save the cache: ${errMsg(err)}`);
-    }
+    this.saving = this.saving.then(() =>
+      writeJsonAtomicAsync(this.cacheFile(), Object.fromEntries(this.cached())).catch((err: unknown) => this.d.log.warn(`history: cannot save the cache: ${errMsg(err)}`)),
+    );
+    return this.saving;
   }
 
   /** The environment's folders, asked once per environment and harness setup. */
@@ -520,51 +559,85 @@ export class HistoryService {
    * can be thousands of run folders, so they're read asynchronously, a task at
    * a time, letting the windows go on between tasks.
    */
-  private async runEntries(projects: Project[]): Promise<{ runs: Entry[]; known: Set<string> }> {
-    const runs: Entry[] = [];
-    const known = new Set<string>();
+  private async runEntries(projects: Project[]): Promise<Map<string, TaskEntries>> {
+    const tasks = new Map<string, TaskEntries>();
     const remote = this.d.remoteRuns();
     for (const taskId of this.d.runTaskIds()) {
       await new Promise<void>((resolve) => setImmediate(resolve));
-      const task = this.d.findTask(taskId);
-      if (!task) continue;
-      const project = this.projectOf(taskId, task, projects);
-      const summaries = this.d.summaries(taskId);
-      // Chats and terminal sessions name their session on their first message, whenever that comes.
-      const refs = await mapLimit(summaries, STAT_AT_ONCE, (s) =>
-        // In progress: started, held, or between the classifier's go-ahead ('act') and the agent's first record.
-        this.refsOf(this.d.runDir(taskId, s.runId), !['started', 'held', 'act', 'chat', 'terminal'].includes(s.result)),
-      );
-      summaries.forEach((s, i) => {
-        for (const r of refs[i]) known.add(r.sessionId);
-        const chat = s.result === 'chat' ? this.d.readChatInfo(taskId, s.runId) : null;
-        const term = s.result === 'terminal' ? this.d.readTerminalInfo(taskId, s.runId) : null;
-        if (chat?.resumedSession) known.add(chat.resumedSession);
-        const kind = chat?.harnessKind ?? term?.harnessKind ?? this.taskKind(task);
-        const sessionId = kind ? (refs[i].find((r) => r.own)?.sessionId ?? null) : null;
-        // No conversation to show: a run that stopped at its check, or a folder retention took.
-        if (!kind || !sessionId) return;
-        const source: HistorySource = s.result === 'chat' ? 'chat' : s.result === 'terminal' ? (remote.has(s.runId) ? 'remote' : 'terminal') : 'run';
-        const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task.name || 'Untitled chat').trim();
-        runs.push({
-          item: {
-            id: `run:${taskId}:${s.runId}`,
-            source,
-            ...(project ? { projectId: project.id } : {}),
-            folder: normalizeFolder(task.cwd),
-            environmentId: task.environmentId,
-            title,
-            lastActive: Date.parse(s.endTs) || Date.parse(s.startTs) || 0,
-            harnessKind: kind,
-            sessionId,
-            taskId,
-            runId: s.runId,
-            ...(source === 'run' ? { taskName: task.name } : {}),
-          },
-        });
-      });
+      const entries = await this.taskEntries(taskId, projects, remote);
+      if (entries) tasks.set(taskId, entries);
     }
+    return tasks;
+  }
+
+  /** One task's runs in the list; null when the task is gone. */
+  private async taskEntries(taskId: string, projects: Project[], remote: Set<string>): Promise<TaskEntries | null> {
+    const task = this.d.findTask(taskId);
+    if (!task) return null;
+    const runs: Entry[] = [];
+    const known: string[] = [];
+    const project = this.projectOf(taskId, task, projects);
+    const summaries = await this.d.summaries(taskId);
+    // Chats and terminal sessions name their session on their first message, whenever that comes.
+    const refs = await mapLimit(summaries, STAT_AT_ONCE, (s) =>
+      // In progress: started, held, or between the classifier's go-ahead ('act') and the agent's first record.
+      this.refsOf(this.d.runDir(taskId, s.runId), !['started', 'held', 'act', 'chat', 'terminal'].includes(s.result)),
+    );
+    const infos = await mapLimit(summaries, STAT_AT_ONCE, (s) => this.infoOf(taskId, s));
+    summaries.forEach((s, i) => {
+      for (const r of refs[i]) known.push(r.sessionId);
+      const { chat, term } = infos[i];
+      if (chat?.resumedSession) known.push(chat.resumedSession);
+      const kind = chat?.harnessKind ?? term?.harnessKind ?? this.taskKind(task);
+      const sessionId = kind ? (refs[i].find((r) => r.own)?.sessionId ?? null) : null;
+      // No conversation to show: a run that stopped at its check, or a folder retention took.
+      if (!kind || !sessionId) return;
+      const source: HistorySource = s.result === 'chat' ? 'chat' : s.result === 'terminal' ? (remote.has(s.runId) ? 'remote' : 'terminal') : 'run';
+      const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task.name || 'Untitled chat').trim();
+      runs.push({
+        item: {
+          id: `run:${taskId}:${s.runId}`,
+          source,
+          ...(project ? { projectId: project.id } : {}),
+          folder: normalizeFolder(task.cwd),
+          environmentId: task.environmentId,
+          title,
+          lastActive: Date.parse(s.endTs) || Date.parse(s.startTs) || 0,
+          harnessKind: kind,
+          sessionId,
+          taskId,
+          runId: s.runId,
+          ...(source === 'run' ? { taskName: task.name } : {}),
+        },
+      });
+    });
     return { runs, known };
+  }
+
+  /** A chat's or terminal session's own record, kept until the run store says the run changed. */
+  private async infoOf(taskId: string, s: RunSummary): Promise<RunInfo> {
+    const key = `${taskId}/${s.runId}`;
+    const kept = this.infos.get(key);
+    if (kept && kept.result === s.result) return kept;
+    const info: RunInfo = {
+      result: s.result,
+      chat: s.result === 'chat' ? await this.d.readChatInfo(taskId, s.runId) : null,
+      term: s.result === 'terminal' ? await this.d.readTerminalInfo(taskId, s.runId) : null,
+    };
+    this.infos.set(key, info);
+    return info;
+  }
+
+  /** The index's runs, every task's. */
+  private allRuns(index: HistoryIndex): Entry[] {
+    return [...index.tasks.values()].flatMap((t) => t.runs);
+  }
+
+  /** The session ids Looper's run folders hold, whose transcripts aren't listed again. */
+  private allKnown(index: HistoryIndex): Set<string> {
+    const known = new Set<string>();
+    for (const t of index.tasks.values()) for (const id of t.known) known.add(id);
+    return known;
   }
 
   /** Every transcript in the environments' folders, each file once (config folders can share a `projects` folder through a link). */
@@ -619,8 +692,8 @@ export class HistoryService {
   }
 
   /** The files the cache knows, without reading any folder. */
-  private cachedFiles(): FileRef[] {
-    return [...this.loadCache()].map(([file, c]) => ({
+  private async cachedFiles(): Promise<FileRef[]> {
+    return [...(await this.loadCache())].map(([file, c]) => ({
       path: file,
       format: c.format,
       envIds: c.envIds,
@@ -634,9 +707,9 @@ export class HistoryService {
   private rescan(): Promise<HistoryIndex> {
     if (this.scanning) return this.scanning;
     this.scanning = (async () => {
-      const { runs, known } = await this.runEntries(this.d.projects());
+      const tasks = await this.runEntries(this.d.projects());
       const files = await this.scanFiles();
-      const old = this.loadCache();
+      const old = await this.loadCache();
       const next = new Map<string, CacheEntry>();
       for (const f of files) {
         const c = old.get(f.path);
@@ -644,7 +717,8 @@ export class HistoryService {
       }
       this.cache = next;
       this.cacheDirty = true;
-      this.index = { runs, known, files };
+      this.index = { tasks, files };
+      this.scannedAt = Date.now();
       return this.index;
     })().finally(() => {
       this.scanning = null;
@@ -652,9 +726,171 @@ export class HistoryService {
     return this.scanning;
   }
 
+  /** The index, built from Looper's runs and the cache's files the first time, without reading the agents' folders. */
+  private async currentIndex(): Promise<HistoryIndex> {
+    if (this.index) return this.index;
+    this.building ??= (async () => {
+      const tasks = await this.runEntries(this.d.projects());
+      const files = await this.cachedFiles();
+      // A rescan that finished meanwhile read more.
+      this.index ??= { tasks, files };
+      return this.index;
+    })().finally(() => {
+      this.building = null;
+    });
+    return this.building;
+  }
+
+  /**
+   * A task's runs changed (a record, a chat's title or session): its part of the index is read again shortly,
+   * then the Recent menus' lists, so they show a chat or run as soon as it ends.
+   */
+  taskChanged(taskId: string, runId?: string): void {
+    if (runId) this.infos.delete(`${taskId}/${runId}`);
+    else for (const key of [...this.infos.keys()]) if (key.startsWith(`${taskId}/`)) this.infos.delete(key);
+    this.changed.add(taskId);
+    if (this.changeTimer) return;
+    this.changeTimer = setTimeout(() => {
+      this.changeTimer = null;
+      void this.applyChanges().catch((err: unknown) => this.d.log.warn(`history: cannot update the list: ${errMsg(err)}`));
+    }, CHANGE_WAIT_MS);
+  }
+
+  private async applyChanges(): Promise<void> {
+    // A build or rescan reads every task: what changed during it is read again after it.
+    await this.building?.catch(() => undefined);
+    await this.scanning?.catch(() => undefined);
+    if (!this.index) {
+      this.changed.clear();
+      return;
+    }
+    const ids = [...this.changed];
+    this.changed.clear();
+    const projects = this.d.projects();
+    const remote = this.d.remoteRuns();
+    for (const id of ids) {
+      const entries = await this.taskEntries(id, projects, remote);
+      if (entries) this.index.tasks.set(id, entries);
+      else this.index.tasks.delete(id);
+    }
+    await this.refreshRecent();
+  }
+
+  /**
+   * The Recent menus' list for `folder` ('' or `project:<id>`), ready at once; undefined until it has been worked out
+   * (the first seconds after start, or after View › Show Runs changes). Asking starts a rescan of the agents' folders
+   * when the last is over a minute old, so a conversation from outside Looper shows from the next menu.
+   */
+  recent(folder: HistoryFolderFilter, showRuns: boolean): HistoryItem[] | undefined {
+    if (this.index && !this.scanning && Date.now() - this.scannedAt > RESCAN_AFTER_MS) void this.rescanQuietly();
+    if (showRuns !== this.recentShowRuns) {
+      this.recentShowRuns = showRuns;
+      this.recentLists.clear();
+      void this.refreshRecent();
+      return undefined;
+    }
+    const list = this.recentLists.get(folder);
+    // A project added since the lists were worked out.
+    if (!list && this.index) void this.refreshRecent();
+    return list;
+  }
+
+  /** Builds the index and the Recent menus' lists from Looper's runs and the cache; the first menu starts the agents' folders' rescan. */
+  async warm(showRuns: boolean): Promise<void> {
+    this.recentShowRuns = showRuns;
+    await this.currentIndex();
+    await this.refreshRecent();
+  }
+
+  private async rescanQuietly(): Promise<void> {
+    try {
+      await this.rescan();
+      await this.refreshRecent();
+    } catch (err) {
+      this.d.log.warn(`history: cannot read the folders: ${errMsg(err)}`);
+    }
+  }
+
+  /** Works out every Recent menu's list again: all conversations, and each project's. One at a time; a call meanwhile runs again after. */
+  private refreshRecent(): Promise<void> {
+    if (this.recentRun) {
+      this.recentAgain = true;
+      return this.recentRun;
+    }
+    this.recentRun = (async () => {
+      try {
+        do {
+          this.recentAgain = false;
+          const showRuns = this.recentShowRuns;
+          const lists = await this.recentListsOf(showRuns);
+          if (showRuns === this.recentShowRuns) this.recentLists = lists;
+        } while (this.recentAgain);
+      } catch (err) {
+        this.d.log.warn(`history: cannot work out the Recent menus: ${errMsg(err)}`);
+      }
+    })().finally(() => {
+      this.recentRun = null;
+    });
+    return this.recentRun;
+  }
+
+  /**
+   * Every Recent menu's list in one pass, the same as list() gives for each folder: the conversations sorted once, newest
+   * first, each added to the all list and its project's while they have room. A transcript is read only while a list it
+   * could be in has room, so a project with few conversations doesn't read the others'.
+   */
+  private async recentListsOf(showRuns: boolean): Promise<Map<string, HistoryItem[]>> {
+    await this.loadCache();
+    const index = await this.currentIndex();
+    const known = this.allKnown(index);
+    const projects = this.d.projects();
+    const lists = new Map<string, Entry[]>([['', []], ...projects.map((p) => [`project:${p.id}`, []] as [string, Entry[]])]);
+    const byDir = new Map<string, string[]>();
+    for (const p of projects) {
+      const dir = claudeProjectFolder(p.cwd);
+      byDir.set(dir, [...(byDir.get(dir) ?? []), `project:${p.id}`]);
+    }
+    const room = (key: string) => (lists.get(key)?.length ?? RECENT_CHATS) < RECENT_CHATS;
+    let projectsWithRoom = projects.length;
+    const wanted = (f: FileRef) => room('') || (f.format === 'claude' ? (byDir.get(f.dir ?? '') ?? []).some(room) : projectsWithRoom > 0);
+    const add = (e: Entry) => {
+      if (!showRuns && e.item.source === 'run') return;
+      if (room('')) lists.get('')!.push(e);
+      const key = e.item.projectId ? `project:${e.item.projectId}` : '';
+      if (key && room(key)) {
+        lists.get(key)!.push(e);
+        if (!room(key)) projectsWithRoom--;
+      }
+    };
+    const candidates: { ts: number; run?: Entry; file?: FileRef }[] = [
+      ...this.allRuns(index).map((run) => ({ ts: run.item.lastActive, run })),
+      ...index.files.map((file) => ({ ts: file.mtimeMs, file })),
+    ].sort((a, b) => b.ts - a.ts);
+    let at = 0;
+    let sinceYield = 0;
+    while (at < candidates.length && (room('') || projectsWithRoom > 0)) {
+      const batch = candidates.slice(at, at + READ_AT_ONCE);
+      at += batch.length;
+      const got = await Promise.all(batch.map((c) => (c.run ? c.run : wanted(c.file!) ? this.resolve(c.file!, known, projects) : null)));
+      for (const e of got) if (e) add(e);
+      sinceYield += batch.length;
+      if (sinceYield >= 2000) {
+        sinceYield = 0;
+        await new Promise<void>((r) => setImmediate(r));
+      }
+    }
+    await this.saveCache();
+    const out = new Map<string, HistoryItem[]>();
+    for (const [key, entries] of lists) {
+      for (const e of entries) this.entries.set(e.item.id, e);
+      out.set(key, entries.map((e) => e.item));
+    }
+    return out;
+  }
+
   /** A transcript as an entry of the list, read when the cache doesn't have it; null when it isn't listed (Looper's own, a subagent's, or one with no messages). */
   private async resolve(f: FileRef, known: Set<string>, projects: Project[]): Promise<Entry | null> {
-    const cache = this.loadCache();
+    const cache = this.cached();
     const old = cache.get(f.path);
     const c: CacheEntry = old && old.size === f.size && old.mtimeMs === f.mtimeMs && old.format === f.format ? old : { size: f.size, mtimeMs: f.mtimeMs, format: f.format, envIds: f.envIds };
     try {
@@ -663,6 +899,10 @@ export class HistoryService {
         this.cacheDirty = true;
       }
       if (f.format === 'codex' && (!c.head || c.head.subagent)) return null;
+      // Looper's own sessions aren't listed: known by name (Claude names the file after it) before the whole file is read.
+      const id = f.format === 'claude' ? path.basename(f.path, '.jsonl') : c.head?.sessionId;
+      const own = id ? this.d.ledger.get(id) : undefined;
+      if (id && (known.has(id) || (own && !LEDGER_SOURCES[own.kind]))) return null;
       if (!c.meta) {
         const meta = await transcriptMeta(f.path, f.format, f.mtimeMs);
         c.meta = c.head ? { ...meta, sessionId: c.head.sessionId } : meta;
@@ -723,9 +963,13 @@ export class HistoryService {
   async list(o: HistoryListOptions, progress?: (partial: HistoryList) => void): Promise<HistoryList> {
     const projects = this.d.projects();
     let index: HistoryIndex;
-    if (o.fresh) index = await this.rescan();
-    else if (this.index) index = this.index;
-    else index = this.index = { ...(await this.runEntries(projects)), files: this.cachedFiles() };
+    await this.loadCache();
+    if (o.fresh) {
+      index = await this.rescan();
+      // The Recent menus, once worked out, get what the History window's refresh found.
+      if (this.recentLists.size > 0) void this.refreshRecent();
+    } else index = await this.currentIndex();
+    const known = this.allKnown(index);
 
     const project = o.folder.startsWith('project:') ? projects.find((p) => `project:${p.id}` === o.folder) : undefined;
     if (o.folder.startsWith('project:') && !project) return { items: [], more: false };
@@ -734,7 +978,7 @@ export class HistoryService {
     const passes = (e: Entry) => (o.showRuns || e.item.source !== 'run') && inFolderFilter(e.item, o.folder);
     type Candidate = { ts: number; run?: Entry; file?: FileRef };
     const candidates: Candidate[] = [
-      ...index.runs.filter(passes).map((run) => ({ ts: run.item.lastActive, run })),
+      ...this.allRuns(index).filter(passes).map((run) => ({ ts: run.item.lastActive, run })),
       ...index.files.filter((f) => !projectDir || f.format !== 'claude' || f.dir === projectDir).map((file) => ({ ts: file.mtimeMs, file })),
     ].sort((a, b) => b.ts - a.ts);
 
@@ -745,7 +989,7 @@ export class HistoryService {
     while (at < candidates.length && found.length < o.limit) {
       const batch = candidates.slice(at, at + Math.min(READ_AT_ONCE, o.limit - found.length));
       at += batch.length;
-      const got = await Promise.all(batch.map((c) => (c.run ? Promise.resolve(c.run) : this.resolve(c.file!, index.known, projects))));
+      const got = await Promise.all(batch.map((c) => (c.run ? Promise.resolve(c.run) : this.resolve(c.file!, known, projects))));
       const before = found.length;
       for (const e of got) if (e && passes(e)) found.push(e);
       // Only a batch that read a transcript took long enough to be worth showing on its way.
@@ -754,7 +998,7 @@ export class HistoryService {
         progress({ items: found.map((e) => e.item), more: true });
       }
     }
-    this.saveCache();
+    await this.saveCache();
     const shown = found.slice(0, o.limit);
     shown.forEach(show);
     return { items: shown.map((e) => e.item), more: found.length > o.limit || at < candidates.length };

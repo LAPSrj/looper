@@ -11,6 +11,8 @@ import type { PageNavAction } from './nav-bar-model';
 /** A screen's commands for its More menu: the items as data, and what picking one does. */
 export interface MoreMenuInput {
   items: MenuItemSpec[];
+  /** The items that are buttons on the desktop's toolbar, with their icons (command-surfaces' phoneMoreToolbar). */
+  toolbar?: MenuItemSpec[];
   run: (id: string) => void;
 }
 
@@ -67,8 +69,28 @@ export interface MoreInput {
 
 export interface MoreMenu {
   items: MenuItemSpec[];
+  /**
+   * iOS draws these toolbar buttons as a row across the menu's top, a symbol
+   * over a short label, and leaves them out of the list. Each id is one of
+   * `items`; Android lists them all.
+   */
+  row: MenuItemSpec[];
   /** What each item does, by its id. */
   run: Map<string, () => void>;
+}
+
+/** HIG: Menus, the medium layout: "A row of three items appears at the top of the menu, above a list that contains the remaining items." */
+const ROW_MAX = 3;
+
+/**
+ * The More menu's top row: its toolbar buttons, the page's own first, up to
+ * three. A single one stays in the list, where a row of one would only be a
+ * wide button.
+ */
+export function moreRow(candidates: MenuItemSpec[], items: MenuItemSpec[]): MenuItemSpec[] {
+  const listed = new Set(items.filter((it) => it.type === 'normal').map((it) => it.id));
+  const row = candidates.filter((it) => listed.has(it.id)).slice(0, ROW_MAX);
+  return row.length >= 2 ? row : [];
 }
 
 /** A bar button's menu of choices, as the More menu is drawn. */
@@ -82,7 +104,7 @@ export function actionMenu(action: PageNavAction): MoreMenu {
     if (e.checked === undefined) return { ...shared, type: 'normal' };
     return { ...shared, type: e.type ?? 'radio', checked: e.checked };
   });
-  return { items: phoneMenu(items), run };
+  return { items: phoneMenu(items), row: [], run };
 }
 
 /** The More menu of a screen. */
@@ -128,6 +150,14 @@ export function composeMore(input: MoreInput): MoreMenu {
       return { ...it, id };
     });
 
-  const groups = toolbarFor(input.toolbar ?? [], 'mobile').map((g) => g.items.flatMap(toolbarRows));
-  return { items: phoneMenu(joinGroups([...groups, commandRows(input.more?.items ?? [])])), run };
+  const pageToolbar = toolbarFor(input.toolbar ?? [], 'mobile');
+  const groups = pageToolbar.map((g) => g.items.flatMap(toolbarRows));
+  const items = phoneMenu(joinGroups([...groups, commandRows(input.more?.items ?? [])]));
+  // A page's button can stand in the row when it's a plain action with an icon, as a command can (phoneMoreToolbar).
+  const buttons = pageToolbar
+    .flatMap((g) => g.items)
+    .filter((it) => isEnabled(it) && it.run && it.icon && it.pressed === undefined && !it.destructive && !it.menu)
+    .map((it): MenuItemSpec => ({ id: PAGE + `tb:${it.id}`, type: 'normal', label: it.label, enabled: true, icon: it.icon }));
+  const commands = (input.more?.toolbar ?? []).map((it): MenuItemSpec => ({ ...it, id: PAGE + `cmd:${it.id}` }));
+  return { items, row: moreRow([...buttons, ...commands], items), run };
 }

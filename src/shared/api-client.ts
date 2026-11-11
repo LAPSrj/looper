@@ -271,6 +271,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       menuPopups: (state) => t.invoke('commands:menuPopups', state),
       menuLevelLayout: (depth, layout) => t.send('commands:menuLevelLayout', depth, layout),
       menuLevelInput: (depth, index, kind) => t.send('commands:menuLevelInput', depth, index, kind),
+      openWindows: () => t.invoke('commands:openWindows'),
+      showOpenWindow: (id) => t.send('commands:showOpenWindow', id),
       popup: (items, at) => t.invoke('commands:popup', items, at),
       host: (name, ...args) => t.send('commands:host', name, ...args),
     },

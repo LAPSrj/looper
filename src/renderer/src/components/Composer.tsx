@@ -476,11 +476,13 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
           role="option"
           aria-selected={i === picked}
           className={`slash-item${i === picked ? ' selected' : ''}`}
+          // The box keeps the focus. On a phone the pick waits for the tap, so a drag scrolls the list instead of picking.
           onMouseDown={(e) => {
             e.preventDefault();
-            choose(c);
+            if (!isPhone) choose(c);
           }}
-          onMouseEnter={() => setPick(i)}
+          onClick={isPhone ? () => choose(c) : undefined}
+          onMouseEnter={isPhone ? undefined : () => setPick(i)}
         >
           <span className="slash-name">
             {state.commandPrefix}
@@ -541,7 +543,6 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
     const mode = bash ? 'run' : stoppable && !canSend ? 'stop' : working ? 'queue' : 'send';
     return (
       <div className="chat-composer phone-composer">
-        {pendingList}
         <div className="phone-composer-row">
           <PlusMenu
             ended={ended}
@@ -552,6 +553,7 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
             onSendNow={() => void window.looper.chat.sendNow(id).catch(reportError)}
           />
           <div className={`composer-input phone-composer-box${bash ? ' bash-mode' : ''}`}>
+            {pendingList}
             {slashList}
             {bash && BASH_PROMPT}
             {textarea}

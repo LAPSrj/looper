@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { attachmentName } from '../../../shared/chat';
 import { REMOTE_CHANNELS, type HostDirEntry, type HostDirListing, type MessageBoxSpec } from '../../../shared/remote-access';
+import { languageOf } from '../components/code-languages';
 import type { ShellController } from './controller';
 import {
   allowedExtensions,
@@ -370,13 +371,15 @@ export function useFileDialog(controller: ShellController, dialog: Extract<OpenD
 
 // ---------- show-path ----------
 
-/** An image or text file shown in the app (a chat attachment clicked), with Download to This Device and to Host Computer. */
+/** A file shown in the app (a chat attachment clicked), with Download to This Device and to Host Computer. */
 export interface FileView {
   kind: ViewerKind;
   /** An image's data: URL; null while it loads or when it can't be shown. */
   url: string | null;
-  /** A text file's text; null while it loads or when it can't be shown. */
+  /** A text, code or Markdown file's text; null while it loads or when it can't be shown. */
   text: string | null;
+  /** A PDF's bytes; null while it loads or when it can't be shown. */
+  pdf: ArrayBuffer | null;
   /** Why it can't be shown, or ''. */
   error: string;
   toDevice: () => void;
@@ -392,8 +395,8 @@ export interface PathFlow {
   /** A file the app shows itself; null: a folder, or a file asked about (Open on Host Computer, Download). */
   view: FileView | null;
   message: LocalMessage | null;
-  /** A message's several images: Previous and Next. */
-  steps: { index: number; count: number; go: (index: number) => void } | null;
+  /** A message's several images: Previous and Next, and the images either side for a swipe. */
+  steps: { index: number; count: number; go: (index: number) => void; src: (step: -1 | 1) => string | null } | null;
   /** The selected file, or the request's file. */
   canDownload: boolean;
   download: () => void;
@@ -415,6 +418,31 @@ function dataUrl(blob: Blob): Promise<string> {
   });
 }
 
+interface Shown {
+  url: string | null;
+  text: string | null;
+  pdf: ArrayBuffer | null;
+  error: string;
+}
+
+const LOADING: Shown = { url: null, text: null, pdf: null, error: '' };
+
+const isCodeFile = (name: string): boolean => languageOf(name) !== undefined;
+
+/** A file on the computer read in for the viewer, in the form its kind is shown in. */
+async function readShown(controller: ShellController, path: string, kind: ViewerKind): Promise<Shown> {
+  const name = attachmentName(path);
+  try {
+    const blob = await controller.readHostFile(path, VIEWER_MAX_BYTES[kind]);
+    if (!blob) return { ...LOADING, error: `${name} is too big to show here.` };
+    if (kind === 'image') return { ...LOADING, url: await dataUrl(new Blob([blob], { type: imageType(path) })) };
+    if (kind === 'pdf') return { ...LOADING, pdf: await blob.arrayBuffer() };
+    return { ...LOADING, text: await blob.text() };
+  } catch (err) {
+    return { ...LOADING, error: errorText(err) };
+  }
+}
+
 /** A path the computer showed this device: a folder to browse (download or open what's in it), or a file to open or download. */
 export function usePathRequest(controller: ShellController, req: PathRequest): PathFlow {
   const [w] = useState(() => controller.anyWindow() ?? '');
@@ -428,31 +456,35 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
   const current = siblings ? siblings[index] : req.path;
   // A file by its own name: an attachment copy's without the stamp in front.
   const name = req.isDir ? baseName(current) : attachmentName(current);
-  const kind = req.isDir ? null : viewerKind(name);
-  const [shown, setShown] = useState<{ url: string | null; text: string | null; error: string }>({ url: null, text: null, error: '' });
+  const kind = req.isDir ? null : viewerKind(name, isCodeFile);
+  // Files read in, by path: the shown one and its neighbors, which a swipe draws beside it and shows at once.
+  const read = useRef(new Map<string, Promise<Shown>>());
+  const [loaded, setLoaded] = useState<ReadonlyMap<string, Shown>>(() => new Map());
+  const shown = loaded.get(current) ?? LOADING;
 
-  // An image or text file: read in and shown. An image as a data: URL, which the page's Content-Security-Policy allows (blob: it doesn't).
+  // A file the viewer shows: read in and kept. An image as a data: URL, which the page's Content-Security-Policy allows (blob: it doesn't).
   useEffect(() => {
     if (!kind) return;
     let live = true;
-    setShown({ url: null, text: null, error: '' });
-    void controller
-      .readHostFile(current, VIEWER_MAX_BYTES[kind])
-      .then(async (blob) => {
-        if (!live) return;
-        if (!blob) return setShown({ url: null, text: null, error: `${name} is too big to show here.` });
-        if (kind === 'image') {
-          const url = await dataUrl(new Blob([blob], { type: imageType(current) }));
-          if (live) setShown({ url, text: null, error: '' });
-        } else {
-          const text = await blob.text();
-          if (live) setShown({ url: null, text, error: '' });
-        }
-      })
-      .catch((err) => live && setShown({ url: null, text: null, error: errorText(err) }));
+    const load = (path: string): Promise<Shown> => {
+      let p = read.current.get(path);
+      if (!p) {
+        p = readShown(controller, path, viewerKind(attachmentName(path), isCodeFile) ?? 'text');
+        read.current.set(path, p);
+      }
+      return p;
+    };
+    const near = siblings ? [siblings[index - 1], current, siblings[index + 1]].filter((p): p is string => !!p) : [current];
+    for (const path of read.current.keys()) if (!near.includes(path)) read.current.delete(path);
+    setLoaded((m) => ([...m.keys()].every((p) => near.includes(p)) ? m : new Map([...m].filter(([p]) => near.includes(p)))));
+    for (const path of near)
+      void load(path).then((s) => {
+        if (live) setLoaded((m) => (m.get(path) === s ? m : new Map(m).set(path, s)));
+      });
     return () => {
       live = false;
     };
+    // `siblings` comes with the request and doesn't change.
   }, [controller, current, kind]);
 
   // Any other file: Open on Host Computer | Download | Cancel.
@@ -502,7 +534,17 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
         }
       : null,
     message,
-    steps: siblings ? { index, count: siblings.length, go: (to) => setIndex(Math.max(0, Math.min(siblings.length - 1, to))) } : null,
+    steps: siblings
+      ? {
+          index,
+          count: siblings.length,
+          go: (to) => setIndex(Math.max(0, Math.min(siblings.length - 1, to))),
+          src: (step) => {
+            const path = siblings[index + step];
+            return path ? (loaded.get(path)?.url ?? null) : null;
+          },
+        }
+      : null,
     openFile: (entry) => controller.showPath(entry.path),
     canDownload: !!file,
     download: () => {

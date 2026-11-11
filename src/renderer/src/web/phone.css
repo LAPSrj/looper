@@ -255,6 +255,127 @@ html.ph-top body {
   padding: 32px 16px;
   text-align: center;
 }
+.ph-viewer.pdf {
+  display: flex;
+  padding: 0;
+}
+/* Code as the activity panel shows it: numbered lines in the file's syntax colors, scrolling sideways. */
+.ph-viewer.code {
+  padding: 0;
+  overflow: auto;
+}
+.ph-viewer .code-view {
+  width: max-content;
+  min-width: 100%;
+  padding: 12px 16px 12px 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ph-viewer .code-line {
+  display: flex;
+}
+.ph-viewer .code-gutter {
+  flex: none;
+  min-width: 3ch;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  color: rgba(60, 60, 67, 0.45);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.ph-viewer .code-text {
+  white-space: pre;
+}
+.ph-viewer .hljs-comment,
+.ph-viewer .hljs-quote,
+.ph-viewer .hljs-meta {
+  color: rgba(60, 60, 67, 0.6);
+  font-style: italic;
+}
+.ph-viewer .hljs-keyword,
+.ph-viewer .hljs-selector-tag,
+.ph-viewer .hljs-doctag,
+.ph-viewer .hljs-section {
+  color: #ad3da4;
+}
+.ph-viewer .hljs-string,
+.ph-viewer .hljs-regexp,
+.ph-viewer .hljs-addition,
+.ph-viewer .hljs-meta .hljs-string {
+  color: #d12f1b;
+}
+.ph-viewer .hljs-number,
+.ph-viewer .hljs-literal,
+.ph-viewer .hljs-symbol,
+.ph-viewer .hljs-bullet,
+.ph-viewer .hljs-variable.constant_ {
+  color: #272ad8;
+}
+.ph-viewer .hljs-title,
+.ph-viewer .hljs-title.function_,
+.ph-viewer .hljs-selector-id,
+.ph-viewer .hljs-selector-class {
+  color: #3e8087;
+}
+.ph-viewer .hljs-type,
+.ph-viewer .hljs-built_in,
+.ph-viewer .hljs-title.class_,
+.ph-viewer .hljs-tag,
+.ph-viewer .hljs-name,
+.ph-viewer .hljs-attr,
+.ph-viewer .hljs-attribute,
+.ph-viewer .hljs-deletion {
+  color: #703daa;
+}
+.ph-viewer .hljs-strong {
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .ph-viewer .code-gutter {
+    color: rgba(235, 235, 245, 0.4);
+  }
+  .ph-viewer .hljs-comment,
+  .ph-viewer .hljs-quote,
+  .ph-viewer .hljs-meta {
+    color: rgba(235, 235, 245, 0.55);
+  }
+  .ph-viewer .hljs-keyword,
+  .ph-viewer .hljs-selector-tag,
+  .ph-viewer .hljs-doctag,
+  .ph-viewer .hljs-section {
+    color: #ff7ab2;
+  }
+  .ph-viewer .hljs-string,
+  .ph-viewer .hljs-regexp,
+  .ph-viewer .hljs-addition,
+  .ph-viewer .hljs-meta .hljs-string {
+    color: #ff8170;
+  }
+  .ph-viewer .hljs-number,
+  .ph-viewer .hljs-literal,
+  .ph-viewer .hljs-symbol,
+  .ph-viewer .hljs-bullet,
+  .ph-viewer .hljs-variable.constant_ {
+    color: #d9c97c;
+  }
+  .ph-viewer .hljs-title,
+  .ph-viewer .hljs-title.function_,
+  .ph-viewer .hljs-selector-id,
+  .ph-viewer .hljs-selector-class {
+    color: #78c2b3;
+  }
+  .ph-viewer .hljs-type,
+  .ph-viewer .hljs-built_in,
+  .ph-viewer .hljs-title.class_,
+  .ph-viewer .hljs-tag,
+  .ph-viewer .hljs-name,
+  .ph-viewer .hljs-attr,
+  .ph-viewer .hljs-attribute,
+  .ph-viewer .hljs-deletion {
+    color: #dabaff;
+  }
+}
 
 @keyframes ph-fade-in {
   from {

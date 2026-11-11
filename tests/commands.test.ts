@@ -10,7 +10,7 @@ import { COMMANDS } from '../src/shared/commands/list';
 import { readAddonManifest, type AddonCommand, type AddonInfo } from '../src/shared/addons';
 import type { MenuItemSpec } from '../src/shared/remote-access';
 import { SettingsSchema, type Task, type TaskRuntime } from '../src/shared/types';
-import { commandToolbar, phoneActions, phoneMore } from '../src/renderer/src/components/command-surfaces';
+import { commandToolbar, phoneActions, phoneMore, phoneMoreToolbar } from '../src/renderer/src/components/command-surfaces';
 import { composeMore } from '../src/renderer/src/web/more-menu';
 
 const task = (o: Partial<Task> = {}) => ({ id: 't1', name: 'Nightly', enabled: true, maxConcurrentRuns: 1, completion: { allowed: true }, ...o }) as Task;
@@ -198,6 +198,28 @@ describe('the menu bar', () => {
     expect(menuBar(mainWindowViews('chats'), withChat).map((m) => m.key)).toEqual(['file', 'edit', 'view', 'chat', 'tools', 'advanced', 'window', 'help']);
   });
 
+  it('orders the Window menu from windows to this window’s panes to the chats in its list', () => {
+    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code' };
+    const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
+    const c = context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never });
+    expect(labels(menu(mainWindowViews('chats'), 'window', c))).toEqual([
+      'Dashboard',
+      'Projects',
+      'Tasks',
+      'Chats',
+      '-',
+      'Previous Pane',
+      'Next Pane',
+      '-',
+      'Previous Waiting Chat',
+      'Next Waiting Chat',
+      'Previous Chat',
+      'Next Chat',
+      '-',
+      'Open Windows',
+    ]);
+  });
+
   it('has only what a view window’s view is about', () => {
     const c = context({ tab: 'tasks', fixed: true });
     const keys = menuBar(mainWindowViews('tasks', true), c).map((m) => m.key);
@@ -368,6 +390,21 @@ describe('a phone', () => {
     expect(more).toContain('New Chat in Project');
     expect(more).not.toContain('Send to Chats…');
     expect([...phoneActions(['chats'], c).map((a) => a.label), ...labels(phoneMore(['chats'], c))]).toContain('Send to Chats');
+  });
+
+  it('offers a conversation’s toolbar buttons for More’s top row: plain actions with an icon, not the destructive ones or what the bar shows', () => {
+    const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle', projectId: 'p' };
+    const c = context({ chats: { single: false, tab: true, selected: 'c', summary, chat: null, sessions: [summary], shown: {} } as never }, 'mobile');
+    const toolbar = phoneMoreToolbar(['conversation'], c);
+    // A phone's short name for Open Working Directory, which fits the row's two lines.
+    expect(labels(toolbar)).toEqual(['Restart Agent', 'Open Folder']);
+    // The toolbar's icon, even where the menu draws none (menuGlyph: false).
+    expect(toolbar.every((it) => it.icon)).toBe(true);
+    const items = phoneMore(['conversation'], c);
+    for (const it of toolbar) expect(items.map((i) => i.id)).toContain(it.id);
+    const m = composeMore({ more: { items, toolbar, run: () => undefined } });
+    expect(labels(m.row)).toEqual(['Restart Agent', 'Open Folder']);
+    expect(labels(m.items)).toEqual(expect.arrayContaining(['Restart Agent', 'Open Working Directory', 'Close Conversation']));
   });
 });
 

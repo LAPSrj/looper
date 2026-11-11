@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnOffThread } from './exec-worker';
 import type { Environment, Harness } from '../shared/types';
 import type { AgentKind, McpServer, McpTool } from '../shared/agent-config';
 import { DEFAULT_SHELL } from '../shared/environments';
@@ -122,7 +122,7 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
     argv = [...prefix, ...shellParts, script];
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(argv[0], argv.slice(1), { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawnOffThread(argv[0], argv.slice(1), { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     const pending = new Map<number, { ok: (r: Record<string, unknown>) => void; fail: (e: Error) => void }>();
     let nextId = 1;
     let stderr = '';
@@ -134,7 +134,7 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
       clearTimeout(timer);
       for (const p of pending.values()) p.fail(err ?? new Error('done'));
       pending.clear();
-      child.stdin.end();
+      child.stdin!.end();
       // A server that doesn't leave once its input closes is stopped.
       setTimeout(() => child.kill(), 2000).unref?.();
       if (err) reject(err);
@@ -142,7 +142,7 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
     };
     const timer = setTimeout(() => finish(new Error(`the server didn't answer within ${timeoutMs / 1000}s`)), timeoutMs);
     child.on('error', (e: NodeJS.ErrnoException) => finish(new Error(e.code === 'ENOENT' ? `${argv[0]} is not available on this machine` : e.message)));
-    child.stderr.on('data', (d: Buffer) => {
+    child.stderr!.on('data', (d: Buffer) => {
       stderr = (stderr + d.toString('utf8')).slice(-4000);
     });
     child.on('close', (code) => {
@@ -153,7 +153,7 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
         .pop();
       finish(new Error(last ? `the server stopped: ${last.slice(0, 300)}` : `the server stopped (exit code ${code ?? '?'}) before it answered`));
     });
-    child.stdout.on('data', (d: Buffer) => {
+    child.stdout!.on('data', (d: Buffer) => {
       buf += d.toString('utf8');
       let nl = buf.indexOf('\n');
       while (nl >= 0) {
@@ -178,8 +178,8 @@ function listStdio(env: Environment, host: HostKind, script: string, timeoutMs: 
         }
       }
     });
-    child.stdin.on('error', () => undefined);
-    const write = (msg: Record<string, unknown>) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
+    child.stdin!.on('error', () => undefined);
+    const write = (msg: Record<string, unknown>) => child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
     const call: Rpc = (method, params) =>
       new Promise((ok, fail) => {
         const id = nextId++;

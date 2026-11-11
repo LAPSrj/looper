@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { RunStore } from '../src/engine/store/runs';
-import { groupRuns, runShown } from '../src/shared/runs';
+import { RunSummaries, groupRuns, runShown } from '../src/shared/runs';
 import { TaskSchema, type RunRecord } from '../src/shared/types';
 
 function task(id: string, name: string) {
@@ -61,6 +61,83 @@ describe('groupRuns', () => {
   });
 });
 
+/** Random records over a few runs, in time order (some sharing a second), with every phase and result a summary reads. */
+function randomRecords(seed: number, count: number, shuffled = false): RunRecord[] {
+  let x = seed;
+  const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pick = <T,>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
+  const phases: RunRecord['phase'][] = ['watcher', 'check', 'classify', 'agent', 'guidance', 'events', 'question', 'delegate', 'result', 'skip', 'system', 'chat', 'terminal'];
+  const results: RunRecord['result'][] = ['act', 'noop', 'error', 'skipped', 'started', 'done', 'success', 'warning', 'idle-timeout', 'max-runtime', 'exited', 'stopped', 'interrupted', 'held', 'restarted', 'sent', 'delivered', 'undelivered', 'chat', 'terminal'];
+  let t = Date.parse('2026-10-20T10:00:00Z');
+  const out: RunRecord[] = [];
+  for (let i = 0; i < count; i++) {
+    // Shuffled, each its own second: two runs starting in the same second sort by where they first appear.
+    if (shuffled || rnd() < 0.7) t += 1000;
+    const r: RunRecord = { ts: new Date(t).toISOString(), taskId: 't1', runId: pick(['a', 'b', 'c', 'd', 'e']), phase: pick(phases), result: pick(results) };
+    if (rnd() < 0.5) r.summary = `s${i}`;
+    if (rnd() < 0.2) r.error = `e${i}`;
+    if (rnd() < 0.3) r.durationMs = Math.floor(rnd() * 1000);
+    if (rnd() < 0.3) r.detail = { costUsd: rnd() };
+    if (r.phase === 'delegate' && rnd() < 0.6) r.detail = { parentRunId: `p${i}`, ...(rnd() < 0.5 ? { title: `t${i}` } : {}) };
+    out.push(r);
+  }
+  return shuffled ? out.sort(() => rnd() - 0.5) : out;
+}
+
+const summariesFrom = (records: RunRecord[]) => groupRuns(records).map(({ records: _r, resultText: _t, ...s }) => s);
+
+describe('RunSummaries', () => {
+  it('gives what groupRuns gives, a record at a time', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const records = randomRecords(seed, 40);
+      const runs = new RunSummaries();
+      for (const r of records) expect(runs.add(r)).toBe(true);
+      expect(runs.list()).toEqual(summariesFrom(records));
+    }
+  });
+
+  it('turns down a record older than its run\'s last', () => {
+    const runs = new RunSummaries();
+    expect(runs.add(rec('t1', 'a', '2026-10-20T10:00:05Z', 'agent', 'started'))).toBe(true);
+    expect(runs.add(rec('t1', 'a', '2026-10-20T10:00:01Z', 'check', 'act'))).toBe(false);
+  });
+
+  it('reads a log written out of time order as groupRuns does, and follows records appended after', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-summaries-'));
+    try {
+      const shuffled = randomRecords(7, 60, true);
+      const writer = new RunStore(dataDir);
+      for (const r of shuffled) writer.append(r);
+      const store = new RunStore(dataDir);
+      expect(await store.loadSummaries('t1')).toEqual(summariesFrom(shuffled));
+      // Appended through this store: the summaries follow without reading the log.
+      const later = rec('t1', 'b', '2027-01-01T00:00:00Z', 'result', 'success', 'later');
+      store.append(later);
+      expect(store.summaries('t1')).toEqual(summariesFrom([...shuffled, later]));
+      // Appended by another store: the size no longer matches, and the log is read again.
+      const other = rec('t1', 'f', '2027-01-02T00:00:00Z', 'result', 'error', 'elsewhere');
+      writer.append(other);
+      expect(await store.loadSummaries('t1')).toEqual(summariesFrom([...shuffled, later, other]));
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the last records from the end of the log', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-tail-'));
+    try {
+      const store = new RunStore(dataDir);
+      const records = randomRecords(3, 5000);
+      for (const r of records) store.append({ ...r, body: 'x'.repeat(200) });
+      expect(await store.listTail('t1', 200)).toEqual(store.list('t1', 200));
+      expect(await store.listTail('t1', 10_000)).toEqual(store.list('t1', 10_000));
+      expect(await store.listTail('none', 5)).toEqual([]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('engine recent runs', () => {
   let engine: Engine | null = null;
   let dataDir = '';
@@ -70,7 +147,7 @@ describe('engine recent runs', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('lists the newest shown runs across tasks, newest first', () => {
+  it('lists the newest shown runs across tasks, newest first', async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'looper-recent-'));
     engine = createEngine({ dataDir });
     engine.start();
@@ -85,22 +162,22 @@ describe('engine recent runs', () => {
     store.append(rec('gone', 'd', '2026-10-23T10:00:00Z', 'result', 'success'));
 
     const hide = { hideSkipped: false, hideNoAction: true };
-    expect(engine.recentRuns(10, hide).map((r) => [r.taskName, r.runId, r.result])).toEqual([
+    expect((await engine.recentRuns(10, hide)).map((r) => [r.taskName, r.runId, r.result])).toEqual([
       ['Second', 'c', 'started'],
       ['First', 'a', 'success'],
     ]);
-    expect(engine.recentRuns(10, { ...hide, hideNoAction: false }).map((r) => r.runId)).toEqual(['c', 'b', 'a']);
-    expect(engine.recentRuns(1, hide).map((r) => r.runId)).toEqual(['c']);
+    expect((await engine.recentRuns(10, { ...hide, hideNoAction: false })).map((r) => r.runId)).toEqual(['c', 'b', 'a']);
+    expect((await engine.recentRuns(1, hide)).map((r) => r.runId)).toEqual(['c']);
 
     // A new record shows on the next read.
     store.append(rec('t1', 'e', '2026-10-23T11:00:00Z', 'result', 'error'));
-    expect(engine.recentRuns(2, hide).map((r) => [r.runId, r.details])).toEqual([
+    expect((await engine.recentRuns(2, hide)).map((r) => [r.runId, r.details])).toEqual([
       ['e', ''],
       ['c', ''],
     ]);
   });
 
-  it('lists task runs only: chats and terminal sessions show in their project', () => {
+  it('lists task runs only: chats and terminal sessions show in their project', async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'looper-recent-'));
     engine = createEngine({ dataDir });
     engine.start();
@@ -109,6 +186,6 @@ describe('engine recent runs', () => {
     store.append(rec('t1', 'a', '2026-10-20T10:00:00Z', 'result', 'success'));
     store.append(rec('t1', 'b', '2026-10-21T10:00:00Z', 'chat', 'chat', 'a chat'));
     store.append(rec('t1', 'c', '2026-10-22T10:00:00Z', 'terminal', 'terminal', 'a terminal'));
-    expect(engine.recentRuns(10, { hideSkipped: false, hideNoAction: false }).map((r) => r.runId)).toEqual(['a']);
+    expect((await engine.recentRuns(10, { hideSkipped: false, hideNoAction: false })).map((r) => r.runId)).toEqual(['a']);
   });
 });

@@ -184,6 +184,19 @@ if (!app.requestSingleInstanceLock()) {
       openSendGuidance: openSendGuidanceWindow,
       openFolderNoteEditor: openFolderNoteEditorWindow,
       openMoveToFolder: openMoveToFolderWindow,
+      openWindows: (dialog) => {
+        const over = dialog instanceof BrowserWindow ? dialog.getParentWindow() : null;
+        return { windows: openWindowsInOrder().map((w) => ({ id: w.id, title: w.getTitle() })), current: over?.id ?? null };
+      },
+      showOpenWindow: (id, dialog) => {
+        const w = BrowserWindow.fromId(id);
+        if (!w || w.isDestroyed() || !listedWindows().includes(w)) return;
+        // After the dialog is gone: closing a modal dialog gives its owner the focus back.
+        if (dialog && !dialog.isDestroyed()) {
+          dialog.once('closed', () => !w.isDestroyed() && bringForward(w));
+          dialog.close();
+        } else bringForward(w);
+      },
       openNewFolder: openNewFolderWindow,
       openRenameFolder: openRenameFolderWindow,
 
@@ -327,6 +340,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('browser-window-created', (_e, w) => {
+    openedAt.set(w, ++windowsOpened);
     w.on('show', refreshOpenWindowLists);
     w.on('hide', refreshOpenWindowLists);
     w.on('closed', refreshOpenWindowLists);
@@ -853,7 +867,20 @@ function macTemplate(template: Electron.MenuItemConstructorOptions[]): Electron.
 const listedWindows = (): BrowserWindow[] =>
   BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isVisible() && !w.isModal() && !isMenuLevelWindow(w));
 
-const openWindowList = (): Electron.MenuItemConstructorOptions[] => openWindowItems(listedWindows(), bringForward);
+/** The order the windows opened in, which the Window menu lists them in. */
+const openedAt = new WeakMap<BrowserWindow, number>();
+let windowsOpened = 0;
+
+/** The listed windows in the order they opened. */
+const openWindowsInOrder = (): BrowserWindow[] => listedWindows().sort((a, b) => (openedAt.get(a) ?? 0) - (openedAt.get(b) ?? 0));
+
+const openWindowList = (): Electron.MenuItemConstructorOptions[] =>
+  openWindowItems(openWindowsInOrder(), bringForward, (from) => openSelectWindowDialog(from instanceof BrowserWindow ? from : null));
+
+/** Window → More Windows…: every open window to pick from, modal over the window whose menu it was. */
+function openSelectWindowDialog(from: BrowserWindow | null): void {
+  openChildWindow('select-window', 'Select Window', 360, 300, from, { role: 'prompt', minWidth: 300, minHeight: 240, resizable: false, contentSize: true });
+}
 
 let listedWindowsKey = '';
 
@@ -2308,19 +2335,23 @@ function historyRunFromMenu(from: AppWindow, id: string, command: HistoryCommand
 }
 
 /**
- * The most recent conversations (the History window's order, from what it has
- * read before, so a menu doesn't wait on a scan of the folders) as menu items
- * that continue each in a chat, or show it when a chat holds it already.
- * `projectId`: only that project's. Empty when there are none.
+ * The most recent conversations (the History window's order, kept ready by
+ * the engine so a menu reads nothing) as menu items that continue each in a
+ * chat, or show it when a chat holds it already. `projectId`: only that
+ * project's. Empty when there are none.
  */
 async function recentChatItems(from: AppWindow, projectId?: string): Promise<Electron.MenuItemConstructorOptions[]> {
   if (!engine) return [];
-  const { items } = await engine.historyList({
-    fresh: false,
-    limit: RECENT_CHATS,
-    showRuns: engine.settings.view.history.showRuns,
-    folder: projectId ? `project:${projectId}` : '',
-  });
+  const items =
+    engine.recentHistory(projectId) ??
+    (
+      await engine.historyList({
+        fresh: false,
+        limit: RECENT_CHATS,
+        showRuns: engine.settings.view.history.showRuns,
+        folder: projectId ? `project:${projectId}` : '',
+      })
+    ).items;
   return items.map((item): Electron.MenuItemConstructorOptions => {
     const where = projectId ? undefined : ((item.projectId && engine?.getProject(item.projectId)?.name) || item.folder.split(/[\\/]/).filter(Boolean).pop());
     return {
@@ -2854,8 +2885,28 @@ function drawTemplate(w: AppWindow, template: Electron.MenuItemConstructorOption
 function setCommandMenu(w: AppWindow | null, items: MenuItemSpec[]): void {
   if (!w) return;
   if (!commandMenus.has(w)) w.on('closed', () => commandMenus.delete(w));
+  else if (JSON.stringify(commandMenus.get(w)) === JSON.stringify(items)) return;
   commandMenus.set(w, items);
-  drawCommandMenu(w, items);
+  // A page sends three in 35 ms as a chat opens (up to 20 ms each to build): the last is drawn once they stop.
+  menusToDraw.add(w);
+  menuDrawFirst ??= Date.now();
+  if (menuDraw) clearTimeout(menuDraw);
+  menuDraw = setTimeout(drawPendingMenus, Math.max(0, Math.min(MENU_QUIET_MS, menuDrawFirst + MENU_WAIT_MS - Date.now())));
+}
+const MENU_QUIET_MS = 30;
+const MENU_WAIT_MS = 100;
+const menusToDraw = new Set<AppWindow>();
+let menuDraw: NodeJS.Timeout | null = null;
+let menuDrawFirst: number | null = null;
+
+function drawPendingMenus(): void {
+  menuDraw = null;
+  menuDrawFirst = null;
+  for (const m of [...menusToDraw]) {
+    menusToDraw.delete(m);
+    const latest = commandMenus.get(m);
+    if (latest) drawCommandMenu(m, latest);
+  }
 }
 
 /** A window with no commands (an addon's form) has no menu bar, as a dialog hasn't; macOS keeps its app menu for every window. */

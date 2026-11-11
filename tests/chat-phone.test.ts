@@ -2,7 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { sendsOnEnter } from '../src/renderer/src/components/composer-text';
 import { draggedHeight, settleSheet } from '../src/renderer/src/components/phone/sheet-detents';
 import { newestFirst, runningText, subagentContext, subagentTabs } from '../src/renderer/src/components/subagents';
-import { cacheText, contextValue, limitFacts, sessionFacts, sessionLimits, usageLabel, usageTone } from '../src/renderer/src/components/usage';
+import {
+  FIVE_HOUR_MS,
+  WEEK_MS,
+  cachePassed,
+  cacheText,
+  contextValue,
+  limitFacts,
+  sessionFacts,
+  sessionLimits,
+  usageLabel,
+  usageTone,
+  windowPassed,
+} from '../src/renderer/src/components/usage';
 import type { SessionSummary, SubagentInfo } from '../src/shared/sessions';
 
 const NOW = Date.parse('2026-10-31T12:00:00');
@@ -88,9 +100,26 @@ describe('sessionFacts', () => {
 });
 
 describe('usageLabel', () => {
-  it('names the numbers the icon draws', () => {
-    expect(usageLabel({ tokens: 58_000, window: 1_000_000 }, { fiveHour: { used: 0.67, resetsAt: NOW } })).toBe('Usage: 58k of 1M context (6%), 5-hour limit 67%');
-    expect(usageLabel(undefined, {})).toBe('Usage');
+  it('names what the icon draws', () => {
+    const limits = { fiveHour: { used: 0.67, resetsAt: NOW + 130 * 60_000 }, sevenDay: { used: 0.31, resetsAt: NOW + (4 * 24 + 6) * 3_600_000 } };
+    expect(usageLabel({ tokens: 58_000, window: 1_000_000 }, limits, NOW + 3 * 60_000, NOW)).toBe(
+      'Usage: 58k of 1M context (6%); 5-hour limit 67%, resets in 2 h 10 min; weekly limit 31%, resets in 4 d 6 h; prompt cache 3 min left',
+    );
+    expect(usageLabel(undefined, { fiveHour: { used: 0.9, resetsAt: NOW } }, NOW - 1, NOW)).toBe('Usage: 5-hour limit 90%, resets now; prompt cache expired');
+    expect(usageLabel(undefined, {}, undefined, NOW)).toBe('Usage');
+  });
+});
+
+describe('windowPassed and cachePassed', () => {
+  it("say how much of a window's time has passed, from its reset time", () => {
+    expect(windowPassed({ used: 0, resetsAt: NOW + 2 * 3_600_000 }, FIVE_HOUR_MS, NOW)).toBeCloseTo(0.6);
+    expect(windowPassed({ used: 0, resetsAt: NOW - 1 }, FIVE_HOUR_MS, NOW)).toBe(1);
+    expect(windowPassed({ used: 0, resetsAt: NOW + 2 * WEEK_MS }, WEEK_MS, NOW)).toBe(0);
+  });
+
+  it("say how much of the cache's time has passed, and nothing once it has expired", () => {
+    expect(cachePassed({ from: NOW - 60_000, until: NOW + 240_000 }, NOW)).toBeCloseTo(0.2);
+    expect(cachePassed({ from: NOW - 300_000, until: NOW }, NOW)).toBeNull();
   });
 });
 

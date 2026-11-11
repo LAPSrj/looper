@@ -4,7 +4,7 @@ import type { MessageRow } from '@shared/messages';
 import type { SubagentInfo } from '@shared/sessions';
 import { Measured } from '../perf';
 import { isPhone } from '../web/page-nav';
-import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
+import { ChatRow, ToolGroup, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
 import { sendsOnEnter } from './composer-text';
 import { useChatsSettings } from './hooks';
@@ -14,10 +14,11 @@ import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst, useStayAtEnd } from './newest-
 import { InfoBar } from './ui';
 
 /** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
-function rowMenu(taskId: string, runId: string, r: MessageRow): void {
+function rowMenu(taskId: string, runId: string, r: MessageRow, selectText: string | undefined): void {
   window.looper.showMessageContextMenu({
     taskId,
     runId,
+    selectText,
     agentId: r.agentId,
     label: r.preview,
     file: r.file,
@@ -64,13 +65,14 @@ export function TranscriptView({
   }, [rows.length, pendingGuidance]);
   // Also when the guidance box (or the question) showing under it makes the view shorter.
   useStayAtEnd(scrollRef, atBottom);
+  const selectText = useSelectText(`${taskId}/${runId}`);
   const ctx = useMemo<RowCtx>(
     () => ({
       taskId,
       runId,
-      onContextMenu: (_e, row) => rowMenu(taskId, runId, row),
+      onContextMenu: (e, row) => rowMenu(taskId, runId, row, selectText(e)),
     }),
-    [taskId, runId],
+    [taskId, runId, selectText],
   );
   const allItems = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
   const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll, embedded ? CARD_ITEMS : FIRST_ITEMS);

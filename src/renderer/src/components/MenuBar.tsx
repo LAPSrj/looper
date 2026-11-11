@@ -251,8 +251,20 @@ function ContextMenu({ menu: m, back, onDone }: { menu: OpenContextMenu; back: R
     box.current?.focus({ preventScroll: true });
     // As a Windows menu does, it closes when the window loses the focus.
     const onBlur = () => finish();
+    // And it keeps the keys while it's open: what takes the focus meanwhile (a chat the right-click opened focuses
+    // its message box) gets it once the menu closes.
+    const onFocus = (e: FocusEvent) => {
+      const el = box.current;
+      if (done.current || !el || !(e.target instanceof HTMLElement) || el.contains(e.target)) return;
+      back.current = e.target;
+      (el.querySelector<HTMLElement>('.ws-menu-item.active') ?? el).focus({ preventScroll: true });
+    };
     window.addEventListener('blur', onBlur);
-    return () => window.removeEventListener('blur', onBlur);
+    document.addEventListener('focusin', onFocus);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('focusin', onFocus);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return createPortal(
     <div

@@ -67,6 +67,7 @@ function fakePtys() {
     const state = { killed: false, size: [0, 0] };
     const proc: SessionProc = {
       pid: 0,
+      spawned: Promise.resolve(0),
       onStdout: (cb) => (out = cb),
       onStderr: () => {},
       onExit: () => {},

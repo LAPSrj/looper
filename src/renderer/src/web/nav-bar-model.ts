@@ -1,4 +1,5 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
+import type { UsageRing } from '../../../shared/sessions';
 import type { Presentation } from './nav-stack';
 
 /** A button at a bar's trailing edge (iOS) or in the top app bar's actions (Android). */
@@ -7,8 +8,8 @@ export interface PageNavAction {
   label: string;
   /** What iconNode draws (components/icons.tsx); the label is its accessible name. */
   icon?: string;
-  /** A usage ring instead of an icon (components/ContextRing.tsx): the context used, and the 5-hour limit used, as fractions. */
-  ring?: { context: number | null; used: number | null };
+  /** The usage glyph instead of an icon (components/ContextRing.tsx). */
+  ring?: UsageRing;
   disabled?: boolean;
   /** What it controls isn't at its default (a filter that's on): tinted. */
   on?: boolean;

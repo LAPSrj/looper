@@ -207,6 +207,10 @@ html[data-platform='ios'] {
 .ios .pres-push.leaving > .ph-card {
   animation: ph-push-out 0.3s cubic-bezier(0.4, 0, 0.7, 0.4) forwards;
 }
+/* Swiped back: already on its way out from where the finger left it. */
+.ios .pres-push.leaving > .ph-card[data-swiped] {
+  animation: none;
+}
 .ios .ph-win[data-under] > .ph-card {
   transform: translateX(-30%);
 }
@@ -655,22 +659,83 @@ html[data-platform='ios'] {
   -webkit-backdrop-filter: saturate(180%) blur(30px);
   backdrop-filter: saturate(180%) blur(30px);
   box-shadow: var(--ios-glass-edge), 0 12px 40px rgba(0, 0, 0, 0.2);
-  animation: ph-pop-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  /* It opens out of its button (morph in IosFrame.tsx); behind a submenu it shrinks a little toward its top edge. */
+  transform-origin: top right;
+  transition: transform var(--ios-spring-ms, 0.4s) var(--ios-spring, ease);
 }
-/* A bar button's menu takes its longest item's width, up to the screen's, instead of cutting it short. */
-.ios-menu.ios-pull-down {
+.ios-menu-layer.closing {
+  pointer-events: none;
+}
+/* A bar button's menu, and a submenu, take their longest item's width, up to the screen's, instead of cutting it short. */
+.ios-menu.ios-pull-down,
+.ios-menu.ios-submenu {
   width: max-content;
   min-width: 250px;
   max-width: calc(100% - 16px);
+}
+.ios-menu.behind {
+  transform: scale(0.97);
 }
 .ios-menu-scroll {
   flex: 1;
   min-width: 0;
   padding: 6px;
+  transition: opacity var(--ios-spring-ms, 0.4s) var(--ios-spring, ease);
+}
+.ios-menu.behind > .ios-menu-scroll {
+  opacity: 0.35;
+}
+/* The medium layout's row: up to three buttons across the top, a symbol over a short label. */
+.ios-menu-row {
+  display: grid;
+  gap: 2px;
+  /* The list sets the menu's width; the row's labels wrap within it. */
+  contain: inline-size;
+}
+.ios-menu-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px 4px 10px;
+  border: 0;
+  border-radius: 18px;
+  background: none;
+  font: inherit;
+  font-size: calc(13 * var(--u));
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ios-label);
+}
+.ios-menu-tile:active {
+  background: var(--ios-fill2);
+}
+.ios-menu-tile-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+/* A submenu's header: its row from the menu, bold, with the chevron turned down. */
+.ios-menu-item.ios-menu-header {
+  font-weight: 600;
+}
+.ios-menu-fold svg {
+  transform: rotate(90deg);
+  animation: ios-menu-fold var(--ios-spring-ms, 0.4s) var(--ios-spring, ease);
+}
+@keyframes ios-menu-fold {
+  from {
+    transform: none;
+  }
 }
 /* Groups split by a hairline; no lines between the items of a group. */
 .ios-menu-group + .ios-menu-group::before,
-.ios-menu-up + .ios-menu-group::before {
+.ios-menu-row + .ios-menu-group::before,
+.ios-menu-header + .ios-menu-group::before {
   content: '';
   display: block;
   height: 0.5px;
@@ -697,9 +762,6 @@ html[data-platform='ios'] {
 }
 .ios-menu-item:disabled {
   color: var(--ios-label3);
-}
-.ios-menu-up {
-  font-weight: 600;
 }
 /* Before the label: a chosen item's check, or else the item's symbol. */
 .ios-menu-lead {

@@ -3316,6 +3316,32 @@
   ],
   "result": {}
  },
+ "commands.openWindows": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "commands:openWindows",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'commands:openWindows': Error: boom commands:openWindows"
+  }
+ },
+ "commands.showOpenWindow": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "commands:showOpenWindow",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "commands.menuBarItems": {
   "arity": 0,
   "calls": [

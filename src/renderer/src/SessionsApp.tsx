@@ -960,8 +960,15 @@ function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boole
       activityOpen: panel.open,
       toggleActivity: panel.toggle,
       showUsage: () => setUsage(true),
-      usageLabel: summary ? usageLabel(chat?.context ?? summary.context, limits) : undefined,
-      usageRing: summary ? { context: contextFraction(chat?.context ?? summary.context), used: limits.fiveHour?.used ?? null } : undefined,
+      usageLabel: summary ? usageLabel(chat?.context ?? summary.context, limits, summary.lastReplyAt ? summary.cacheUntil : undefined, Date.now()) : undefined,
+      usageRing: summary
+        ? {
+            context: contextFraction(chat?.context ?? summary.context),
+            fiveHour: limits.fiveHour,
+            sevenDay: limits.sevenDay,
+            cache: summary.lastReplyAt && summary.cacheUntil !== undefined ? { from: summary.lastReplyAt, until: summary.cacheUntil } : undefined,
+          }
+        : undefined,
     }),
   };
   useCommandMenu(null, commands);

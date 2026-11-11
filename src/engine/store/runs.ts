@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { attachmentName, type ChatInfo, type TerminalInfo } from '../../shared/chat';
-import { groupRuns, type RunSummary } from '../../shared/runs';
+import { RunSummaries, type RunSummary } from '../../shared/runs';
 import type { RunRecord } from '../../shared/types';
 import { ensureDir, writeJsonAtomic } from './fsutil';
 
@@ -26,9 +26,16 @@ export function newRunId(now = new Date()): string {
   return `${stampOf(now)}-${rand}`;
 }
 
+/** Run log lines parsed between yields while a log loads, so a 4 MB log doesn't hold the thread. */
+const LINES_PER_SLICE = 2000;
+const TAIL_CHUNK = 256 * 1024;
+
 export class RunStore {
-  /** Each task's run summaries, with the run log's size and time they were read at. */
-  private summaryCache = new Map<string, { stamp: string; runs: RunSummary[] }>();
+  /** Each task's run summaries, once its log has been read. */
+  private summaryCache = new Map<string, { runs: RunSummaries; size: number }>();
+  private loading = new Map<string, Promise<RunSummary[]>>();
+  /** Told after anything changes a task's runs: a record, a chat's or terminal's info, a clear or a prune. */
+  onChange: (taskId: string, runId?: string) => void = () => {};
 
   constructor(private readonly dataDir: string) {}
 
@@ -66,19 +73,15 @@ export class RunStore {
   }
 
   /** Delete attachments older than `cutoffMs`; returns how many. */
-  pruneAttachments(taskId: string, cutoffMs: number): number {
+  async pruneAttachments(taskId: string, cutoffMs: number): Promise<number> {
     const stamp = stampOf(new Date(cutoffMs));
-    let names: string[];
-    try {
-      names = fs.readdirSync(this.attachmentsDir(taskId));
-    } catch {
-      return 0;
-    }
+    const names = await fs.promises.readdir(this.attachmentsDir(taskId)).catch(() => null);
+    if (!names) return 0;
     let n = 0;
     for (const name of names) {
       if (!/^\d{8}-\d{6}/.test(name) || name >= stamp) continue;
       try {
-        fs.rmSync(path.join(this.attachmentsDir(taskId), name), { force: true });
+        await fs.promises.rm(path.join(this.attachmentsDir(taskId), name), { force: true });
         n++;
       } catch {
         /* best effort */
@@ -92,8 +95,13 @@ export class RunStore {
     return this.readInfo<ChatInfo>(taskId, runId, CHAT_FILE);
   }
 
+  readChatInfoAsync(taskId: string, runId: string): Promise<ChatInfo | null> {
+    return this.readInfoAsync<ChatInfo>(taskId, runId, CHAT_FILE);
+  }
+
   writeChatInfo(taskId: string, runId: string, info: ChatInfo): void {
     writeJsonAtomic(path.join(this.runDir(taskId, runId), CHAT_FILE), info);
+    this.onChange(taskId, runId);
   }
 
   /** The task's runs that are chats, oldest first. */
@@ -106,8 +114,13 @@ export class RunStore {
     return this.readInfo<TerminalInfo>(taskId, runId, TERMINAL_FILE);
   }
 
+  readTerminalInfoAsync(taskId: string, runId: string): Promise<TerminalInfo | null> {
+    return this.readInfoAsync<TerminalInfo>(taskId, runId, TERMINAL_FILE);
+  }
+
   writeTerminalInfo(taskId: string, runId: string, info: TerminalInfo): void {
     writeJsonAtomic(path.join(this.runDir(taskId, runId), TERMINAL_FILE), info);
+    this.onChange(taskId, runId);
   }
 
   /** The task's runs that are terminal sessions, oldest first. */
@@ -123,6 +136,19 @@ export class RunStore {
     }
   }
 
+  private readInfoAsync<T>(taskId: string, runId: string, file: string): Promise<T | null> {
+    return fs.promises.readFile(path.join(this.runDir(taskId, runId), file), 'utf8').then(
+      (text) => {
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          return null;
+        }
+      },
+      () => null,
+    );
+  }
+
   createRunDir(taskId: string, runId: string): string {
     const dir = this.runDir(taskId, runId);
     ensureDir(path.join(dir, 'bin'));
@@ -135,7 +161,53 @@ export class RunStore {
 
   append(record: RunRecord): void {
     ensureDir(this.taskDir(record.taskId));
-    fs.appendFileSync(this.logFile(record.taskId), JSON.stringify(record) + '\n', 'utf8');
+    const line = JSON.stringify(record) + '\n';
+    fs.appendFileSync(this.logFile(record.taskId), line, 'utf8');
+    const cached = this.summaryCache.get(record.taskId);
+    if (cached) {
+      if (cached.runs.add(record)) cached.size += Buffer.byteLength(line);
+      else this.summaryCache.delete(record.taskId);
+    }
+    // A load under way may have read the log before this record: it reads it again.
+    this.loading.delete(record.taskId);
+    this.onChange(record.taskId, record.runId);
+  }
+
+  /** list without holding the thread: reads the log back from its end only as far as `limit` records need. */
+  async listTail(taskId: string, limit = 200): Promise<RunRecord[]> {
+    let fh: fs.promises.FileHandle;
+    try {
+      fh = await fs.promises.open(this.logFile(taskId), 'r');
+    } catch {
+      return [];
+    }
+    try {
+      let end = (await fh.stat()).size;
+      const chunks: Buffer[] = [];
+      let newlines = 0;
+      while (end > 0 && newlines <= limit) {
+        const start = Math.max(0, end - TAIL_CHUNK);
+        const buf = Buffer.alloc(end - start);
+        await fh.read(buf, 0, buf.length, start);
+        chunks.unshift(buf);
+        for (const b of buf) if (b === 10) newlines++;
+        end = start;
+      }
+      // Cut at a line start: the first line is partial unless the read reached the file's start.
+      let lines = Buffer.concat(chunks).toString('utf8').split('\n');
+      if (end > 0) lines = lines.slice(1);
+      const out: RunRecord[] = [];
+      for (const line of lines.filter(Boolean).slice(-limit)) {
+        try {
+          out.push(JSON.parse(line) as RunRecord);
+        } catch {
+          /* skip torn line */
+        }
+      }
+      return out;
+    } finally {
+      await fh.close();
+    }
   }
 
   /** Last `limit` records, oldest first. */
@@ -159,21 +231,57 @@ export class RunStore {
     return out;
   }
 
-  /** Every run in the task's log, newest first. The log is read again only once it changes. */
+  /**
+   * Every run in the task's log, newest first. The log is read once, then each record `append` writes updates it.
+   * Code that can wait uses loadSummaries, which doesn't hold the thread and notices a log written by someone else.
+   */
   summaries(taskId: string): RunSummary[] {
-    let stamp: string;
-    try {
-      const st = fs.statSync(this.logFile(taskId));
-      stamp = `${st.size}:${st.mtimeMs}`;
-    } catch {
-      this.summaryCache.delete(taskId);
-      return [];
-    }
     const cached = this.summaryCache.get(taskId);
-    if (cached?.stamp === stamp) return cached.runs;
-    const runs = groupRuns(this.list(taskId, Infinity)).map(({ records: _r, resultText: _t, ...s }) => s);
-    this.summaryCache.set(taskId, { stamp, runs });
-    return runs;
+    if (cached) return cached.runs.list();
+    let text = '';
+    try {
+      text = fs.readFileSync(this.logFile(taskId), 'utf8');
+    } catch {
+      /* no runs yet */
+    }
+    const runs = summariesOf(text.split('\n'));
+    this.summaryCache.set(taskId, { runs, size: Buffer.byteLength(text) });
+    return runs.list();
+  }
+
+  /** summaries, reading the log without holding the thread: the file asynchronously, its lines a slice at a time. */
+  async loadSummaries(taskId: string): Promise<RunSummary[]> {
+    const cached = this.summaryCache.get(taskId);
+    if (cached) {
+      // Bytes this store didn't write (another engine's, a test's): read it all again.
+      const size = await fs.promises.stat(this.logFile(taskId)).then((st) => st.size, () => 0);
+      if (this.summaryCache.get(taskId) !== cached) return this.loadSummaries(taskId);
+      if (size === cached.size) return cached.runs.list();
+      this.summaryCache.delete(taskId);
+    }
+    let p = this.loading.get(taskId);
+    if (p) return p;
+    p = (async () => {
+      const text = await fs.promises.readFile(this.logFile(taskId), 'utf8').catch(() => '');
+      const lines = text.split('\n');
+      const runs = new RunSummaries();
+      let ok = true;
+      for (let at = 0; at < lines.length && ok; at += LINES_PER_SLICE) {
+        if (at > 0) await new Promise<void>((r) => setImmediate(r));
+        ok = addLines(runs, lines.slice(at, at + LINES_PER_SLICE));
+      }
+      if (this.loading.get(taskId) !== p) return this.loadSummaries(taskId);
+      this.loading.delete(taskId);
+      if (!this.summaryCache.has(taskId)) this.summaryCache.set(taskId, { runs: ok ? runs : summariesOf(lines), size: Buffer.byteLength(text) });
+      return this.summaryCache.get(taskId)!.runs.list();
+    })();
+    this.loading.set(taskId, p);
+    return p;
+  }
+
+  private forget(taskId: string): void {
+    this.summaryCache.delete(taskId);
+    this.loading.delete(taskId);
   }
 
   /** Read the clean log when available, falling back to the raw terminal capture. */
@@ -208,6 +316,8 @@ export class RunStore {
   clear(taskId: string): void {
     fs.rmSync(this.logFile(taskId), { force: true });
     fs.rmSync(path.join(this.taskDir(taskId), 'runs'), { recursive: true, force: true });
+    this.forget(taskId);
+    this.onChange(taskId);
   }
 
   listRunIds(taskId: string): string[] {
@@ -234,40 +344,94 @@ export class RunStore {
   }
 
   /**
-   * Delete records and run directories older than `cutoffMs`, sparing `keep`
-   * (the runs currently in progress).
+   * Delete records and run directories older than `cutoffMs`, sparing `keep` (the runs currently in progress),
+   * without holding the thread: the log is read and rewritten only when a run in it started before the cutoff.
    */
-  pruneOlderThan(taskId: string, cutoffMs: number, keep: ReadonlySet<string> = new Set()): { records: number; dirs: number } {
+  async pruneOlderThan(taskId: string, cutoffMs: number, keep: ReadonlySet<string> = new Set()): Promise<{ records: number; dirs: number }> {
     // Run ids start with a local-time stamp, so an id below the cutoff's stamp is older.
     const cutoffStamp = stampOf(new Date(cutoffMs));
     let dirs = 0;
-    for (const id of this.listRunIds(taskId)) {
-      if (keep.has(id) || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;
+    const ids = await fs.promises.readdir(path.join(this.taskDir(taskId), 'runs')).catch(() => [] as string[]);
+    for (const id of ids) {
+      if (id.startsWith('.') || keep.has(id) || !/^\d{8}-\d{6}/.test(id) || id >= cutoffStamp) continue;
       try {
-        fs.rmSync(this.runDir(taskId, id), { recursive: true, force: true });
+        await fs.promises.rm(this.runDir(taskId, id), { recursive: true, force: true });
         dirs++;
       } catch {
         /* best effort */
       }
     }
-    let text: string;
-    try {
-      text = fs.readFileSync(this.logFile(taskId), 'utf8');
-    } catch {
+    // A record is never older than its run's first.
+    const summaries = await this.loadSummaries(taskId);
+    if (!summaries.some((r) => !keep.has(r.runId) && Date.parse(r.startTs) < cutoffMs)) return { records: 0, dirs };
+    const file = this.logFile(taskId);
+    const text = await fs.promises.readFile(file, 'utf8').catch(() => null);
+    if (text === null) return { records: 0, dirs };
+    const lines = text.split('\n').filter(Boolean);
+    const kept: string[] = [];
+    for (let at = 0; at < lines.length; at += LINES_PER_SLICE) {
+      if (at > 0) await new Promise<void>((r) => setImmediate(r));
+      for (const line of lines.slice(at, at + LINES_PER_SLICE)) {
+        try {
+          const r = JSON.parse(line) as RunRecord;
+          if (keep.has(r.runId) || Date.parse(r.ts) >= cutoffMs) kept.push(line);
+        } catch {
+          /* a torn line goes */
+        }
+      }
+    }
+    if (kept.length === lines.length) return { records: 0, dirs };
+    const tmp = `${file}.${process.pid}.prune.tmp`;
+    if (kept.length > 0) await fs.promises.writeFile(tmp, kept.join('\n') + '\n', 'utf8');
+    // A record appended meanwhile would be lost: the log waits for the next sweep. Checked and replaced in one go.
+    if (fileSize(file) !== Buffer.byteLength(text)) {
+      await fs.promises.rm(tmp, { force: true });
       return { records: 0, dirs };
     }
-    const lines = text.split('\n').filter(Boolean);
-    const kept = lines.filter((line) => {
-      try {
-        const r = JSON.parse(line) as RunRecord;
-        return keep.has(r.runId) || Date.parse(r.ts) >= cutoffMs;
-      } catch {
-        return false;
-      }
-    });
-    if (kept.length === lines.length) return { records: 0, dirs };
-    if (kept.length === 0) fs.rmSync(this.logFile(taskId), { force: true });
-    else fs.writeFileSync(this.logFile(taskId), kept.join('\n') + '\n', 'utf8');
+    if (kept.length === 0) fs.rmSync(file, { force: true });
+    else fs.renameSync(tmp, file);
+    this.forget(taskId);
+    this.onChange(taskId);
     return { records: lines.length - kept.length, dirs };
   }
+}
+
+function fileSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return -1;
+  }
+}
+
+/** Adds each record the lines hold, skipping torn ones; false when one is older than its run's last. */
+function addLines(runs: RunSummaries, lines: string[]): boolean {
+  for (const line of lines) {
+    if (!line) continue;
+    let r: RunRecord;
+    try {
+      r = JSON.parse(line) as RunRecord;
+    } catch {
+      continue;
+    }
+    if (!runs.add(r)) return false;
+  }
+  return true;
+}
+
+/** A whole log's summaries; records out of time order are sorted first, as groupRuns does. */
+function summariesOf(lines: string[]): RunSummaries {
+  const runs = new RunSummaries();
+  if (addLines(runs, lines)) return runs;
+  const records: RunRecord[] = [];
+  for (const line of lines) {
+    try {
+      if (line) records.push(JSON.parse(line) as RunRecord);
+    } catch {
+      /* torn line */
+    }
+  }
+  const sorted = new RunSummaries();
+  for (const r of records.sort((a, b) => a.ts.localeCompare(b.ts))) sorted.add(r);
+  return sorted;
 }

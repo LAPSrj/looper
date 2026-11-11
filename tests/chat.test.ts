@@ -289,7 +289,7 @@ describe('Fork from Here', () => {
 });
 
 describe('attachments', () => {
-  it('copies files under the task with a stamp, and prunes them with the run logs', () => {
+  it('copies files under the task with a stamp, and prunes them with the run logs', async () => {
     const store = new RunStore(tmp());
     const src = path.join(tmp(), 'notes.txt');
     fs.writeFileSync(src, 'hello');
@@ -300,14 +300,14 @@ describe('attachments', () => {
     expect(RunStore.attachmentName(b)).toBe('bad_name_.png');
     expect(path.dirname(a)).toBe(store.attachmentsDir('t1'));
     // An hour from now: both are older than that.
-    expect(store.pruneAttachments('t1', Date.now() + 3_600_000)).toBe(2);
+    expect(await store.pruneAttachments('t1', Date.now() + 3_600_000)).toBe(2);
     expect(fs.readdirSync(store.attachmentsDir('t1'))).toEqual([]);
   });
 
-  it('keeps attachments newer than the cutoff', () => {
+  it('keeps attachments newer than the cutoff', async () => {
     const store = new RunStore(tmp());
     store.saveAttachment('t1', 'a.png', { data: Buffer.from('x') });
-    expect(store.pruneAttachments('t1', Date.now() - 3_600_000)).toBe(0);
+    expect(await store.pruneAttachments('t1', Date.now() - 3_600_000)).toBe(0);
   });
 });
 

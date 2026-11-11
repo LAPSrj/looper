@@ -499,7 +499,7 @@ function PathScreen({ controller, shell, req }: { controller: ShellController; s
             : undefined
         }
       >
-        <FileViewBody view={p.view} name={p.name} />
+        <FileViewBody view={p.view} name={p.name} steps={steps} />
         <div className="md-bottom-actions">
           <button className="md-text-btn" onClick={p.view.toHost}>
             Download to host computer

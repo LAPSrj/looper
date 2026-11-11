@@ -15,6 +15,7 @@ function fakeProc() {
   const state = { killed: false, size: [0, 0] };
   const proc: SessionProc = {
     pid: 0,
+    spawned: Promise.resolve(0),
     onStdout: (cb) => (out = cb),
     onStderr: () => {},
     onExit: (cb) => (exit = cb),
@@ -62,6 +63,26 @@ describe('terminal sessions', () => {
     expect(sessions.output(id)?.ended).toBe(true);
     expect(sessions.running()).toBe(0);
     expect(fs.existsSync(launcher)).toBe(false);
+  });
+
+  it("shows why a harness couldn't start, then ends", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-terminals-'));
+    const events: EngineEvent[] = [];
+    const fake = fakeProc();
+    let fail: (e: Error) => void = () => {};
+    const sessions = new TerminalSessions({
+      emit: (e) => events.push(e),
+      log: new Logger(),
+      spawn: (_spec, _cwd, onError) => {
+        fail = onError;
+        return fake.proc;
+      },
+    });
+    const id = sessions.start('task-1', () => ({ spec: { command: 'wsl.exe', args: [] }, cwd: dir, launcher: path.join(dir, 'terminal.sh') }));
+    fail(new Error('spawn wsl.exe ENOENT'));
+    fake.exit();
+    expect(sessions.output(id)?.data).toContain("Couldn't start: spawn wsl.exe ENOENT");
+    expect(events.map((e) => e.type)).toEqual(['terminal:data', 'terminal:end']);
   });
 
   it('closing the window kills the session and forgets it', () => {

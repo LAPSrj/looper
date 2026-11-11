@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import type { ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
+import { editingIn, keyboardUp, tallestTracker } from './keyboard-up';
 import { composeMore, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
 import { plainLabel } from './nav-bar-model';
@@ -52,10 +53,12 @@ function readSafeArea(probe: HTMLElement | null): Viewport['safe'] {
  * sheets and the page's bottom stay above the keyboard.
  */
 function useViewport(probe: React.RefObject<HTMLDivElement | null>): Viewport {
+  const [tallestAt] = useState(tallestTracker);
   const read = (): Viewport => {
     const vv = window.visualViewport;
     const height = vv?.height ?? window.innerHeight;
-    return { width: vv?.width ?? window.innerWidth, height, keyboard: window.innerHeight - height > 120, safe: readSafeArea(probe.current) };
+    const keyboard = keyboardUp(tallestAt(window.innerWidth, window.innerHeight), height, editingIn(document));
+    return { width: vv?.width ?? window.innerWidth, height, keyboard, safe: readSafeArea(probe.current) };
   };
   const [vp, setVp] = useState<Viewport>(read);
   useLayoutEffect(() => {
@@ -241,11 +244,17 @@ function useBack(layers: BackLayer[]): { goBack: () => void } {
 
 // ---------- the pages' documents ----------
 
-/** Put into every window's page: no double-tap zoom, no iOS callout on what isn't text input. */
+/**
+ * Put into every window's page: no double-tap zoom, no iOS callout on what isn't text input, and text
+ * selects only in a field or a message under Select Text, so a long press opens the menu and nothing else.
+ */
 const FRAME_CSS = `
 html { touch-action: manipulation; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
 body { -webkit-touch-callout: none; overscroll-behavior: none; }
 input, textarea, [contenteditable], [contenteditable] * { -webkit-touch-callout: default; }
+body, body * { -webkit-user-select: none; user-select: none; }
+body :is(input, textarea, [contenteditable], [contenteditable] *, [data-selecting], [data-selecting] *) { -webkit-user-select: text; user-select: text; }
+[data-selecting], [data-selecting] * { -webkit-touch-callout: default; }
 `;
 
 const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
@@ -253,7 +262,7 @@ const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditabl
 export interface FrameHooks {
   /** Whether the screen can go back by an edge swipe now (iOS). */
   canSwipeBack: (w: string) => boolean;
-  swipe: (w: string, dx: number | null, commit?: boolean) => void;
+  swipe: (w: string, dx: number | null, commit?: boolean, speed?: number) => void;
 }
 
 /** Long press → contextmenu, and iOS's edge swipe, in a window's page. */
@@ -280,7 +289,8 @@ function attachTouch(win: Window, w: string, os: PhoneOs, hooks: React.RefObject
       const t = e.touches[0];
       const target = e.target as Element | null;
       if (!t || !target) return;
-      if (target.closest?.(EDITABLE)) press.cancel();
+      // Text input, and a message being selected (Select Text): the system's own long press selects there.
+      if (target.closest?.(`${EDITABLE}, [data-selecting]`)) press.cancel();
       else press.down(t.clientX, t.clientY, target, e.touches.length);
       edgeOn = os === 'ios' && e.touches.length === 1 && t.clientX <= EDGE_WIDTH && hooks.current.canSwipeBack(w);
       if (edgeOn) edge.begin(t.clientX, t.clientY, e.timeStamp);
@@ -309,7 +319,8 @@ function attachTouch(win: Window, w: string, os: PhoneOs, hooks: React.RefObject
     }
     if (edgeOn) {
       edgeOn = false;
-      hooks.current.swipe(w, null, edge.end(win.innerWidth));
+      const speed = edge.speed;
+      hooks.current.swipe(w, null, edge.end(win.innerWidth), speed);
     }
   };
   doc.addEventListener('touchend', end, { passive: false, capture: true });
@@ -516,6 +527,47 @@ export function setDrag(root: HTMLElement | null, w: string, axis: 'x' | 'y', of
   }
 }
 
+const SWIPE_FINISH_MS = 300;
+
+/**
+ * A back swipe let go past its threshold: the screen carries on to the right from where the finger
+ * left it, at the finger's speed (px/ms), and the one under it comes into place, without waiting for
+ * the history's back. The leave animation doesn't play over it (data-swiped).
+ */
+function finishBackSwipe(root: HTMLElement | null, w: string, speed: number): void {
+  const card = root?.querySelector<HTMLElement>(`.ph-win[data-w="${CSS.escape(w)}"] > .ph-card`);
+  if (!card) return;
+  const under = root?.querySelector<HTMLElement>(`.ph-win[data-under="${CSS.escape(w)}"] > .ph-card`);
+  const width = card.clientWidth;
+  const left = Math.max(1, width - new DOMMatrixReadOnly(getComputedStyle(card).transform).m41);
+  // The curve's first slope is the finger's speed over the distance left.
+  const x1 = 0.2;
+  const y1 = Math.min(1, Math.max(1.2, Math.min((Math.max(0, speed) * SWIPE_FINISH_MS) / left, 5)) * x1);
+  const transition = `transform ${SWIPE_FINISH_MS}ms cubic-bezier(${x1}, ${y1}, 0.3, 1)`;
+  card.dataset.swiped = '';
+  card.style.transition = transition;
+  card.style.transform = `translateX(${width}px)`;
+  if (under) {
+    under.style.transition = transition;
+    under.style.transform = 'translateX(0px)';
+    // Handed back to the stylesheet once it's the top screen, where the stylesheet puts it in the same place.
+    const release = (tries: number) => {
+      if (under.closest(`.ph-win[data-under="${CSS.escape(w)}"]`) && tries > 0) return void setTimeout(() => release(tries - 1), 100);
+      under.style.transition = 'none';
+      under.style.transform = '';
+      requestAnimationFrame(() => (under.style.transition = ''));
+    };
+    setTimeout(() => release(30), SWIPE_FINISH_MS);
+  }
+  // A back that didn't happen leaves the screen where it was.
+  setTimeout(() => {
+    if (!card.isConnected || card.closest('.leaving')) return;
+    delete card.dataset.swiped;
+    card.style.transition = '';
+    card.style.transform = '';
+  }, LEAVE_MS + 1000);
+}
+
 export function usePhoneShell(controller: ShellController, os: PhoneOs, localLayers: BackLayer[]): PhoneShell {
   const s = useShellState(controller.store);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -526,6 +578,18 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
   const [scrolledPast, setScrolledPast] = useState(() => new Set<string>());
   // Only iOS's bar takes the page's color; Android's top app bar has its own.
   const edges = useTopEdges(controller, screens, os === 'ios');
+
+  // The keyboard goes with its screen: a window no longer on top (gone back from, hidden, under a new one) gives up the focus, or iOS keeps the keyboard up over the list.
+  const topW = top?.win.w;
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLIFrameElement)) return;
+    const sc = screens.find((x) => controller.frameOf(x.win.w) === active);
+    if (!sc || sc.win.w === topW) return;
+    (active.contentDocument?.activeElement as HTMLElement | null | undefined)?.blur?.();
+    active.blur();
+    // The screens as they are when the top one changes.
+  }, [topW]);
 
   // Back: bottom to top, the windows over the main one, the top page's own deeper screen, then what the shell has open.
   const layers: BackLayer[] = [];
@@ -567,11 +631,12 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
       const sc = screens.find((x) => x.win.w === w);
       return !!sc?.isTop && (sc.pres === 'push' || !!sc.nav?.back) && s.dialogs.length === 0 && s.menus.length === 0;
     },
-    swipe: (w, dx, commit) => {
+    swipe: (w, dx, commit, speed = 0) => {
       const sc = screens.find((x) => x.win.w === w);
       // A page's own deeper screen has nothing of the frame's under it to show.
       const moves = sc?.pres === 'push' && !sc.nav?.back;
-      if (moves) setDrag(rootRef.current, w, 'x', dx);
+      if (moves && dx === null && commit) finishBackSwipe(rootRef.current, w, speed);
+      else if (moves) setDrag(rootRef.current, w, 'x', dx);
       if (dx === null && commit) historyBack();
     },
   };

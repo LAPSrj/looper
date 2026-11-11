@@ -4,7 +4,7 @@ import type { LooperApi, UiEvent } from '../api';
 import type { ChatState } from '../chat';
 import type { HistoryCommands, HistoryFolderFilter } from '../history';
 import type { RemoteAccessState } from '../remote-access';
-import type { SessionSummary } from '../sessions';
+import type { SessionSummary, UsageRing } from '../sessions';
 import type { PreventSleepState, Project, ProjectFolder, RestState, Settings, Task, TaskFolder, TaskRuntime, View } from '../types';
 import type { UiPlatform } from '../ui-platform';
 
@@ -76,7 +76,7 @@ export interface ChatsContext {
   /** A phone's Usage sheet, and what its ring shows. */
   showUsage?(): void;
   usageLabel?: string;
-  usageRing?: { context: number | null; used: number | null };
+  usageRing?: UsageRing;
 }
 
 /** A History window's state. */

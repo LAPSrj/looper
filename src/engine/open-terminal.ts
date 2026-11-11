@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnOffThread } from './exec-worker';
 import path from 'node:path';
 import type { Harness, Settings, Task } from '../shared/types';
 import { agentArgs, taskEnv } from '../shared/projects';
@@ -154,7 +154,7 @@ export function buildTerminalLaunches(
 function trySpawn(l: TerminalLaunch): Promise<boolean> {
   return new Promise((resolve) => {
     try {
-      const child = spawn(l.command, l.args, {
+      const child = spawnOffThread(l.command, l.args, {
         detached: true,
         stdio: 'ignore',
         ...(l.verbatim ? { windowsVerbatimArguments: true } : {}),

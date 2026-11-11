@@ -89,6 +89,70 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
   return result.sort((a, b) => b.startTs.localeCompare(a.startTs));
 }
 
+/** What a run's summary needs of its records so far, kept as they come in time order. */
+interface RunAcc {
+  runId: string;
+  by?: { parentRunId: string; title?: string };
+  startTs: string;
+  endTs: string;
+  totalDurationMs: number;
+  /** Results of the steps that always count: not a result phase, not a start. */
+  results: Set<string>;
+  /** A step started after the last step that ended something (bestResult's `i > lastEnd`). */
+  startedAfterEnd: boolean;
+  /** The last step's result and what lastDetail shows of it, without its body or detail. */
+  lastStep?: { result: string; text: string; costUsd?: unknown };
+  /** The last result step's summary. */
+  lastResultSummary?: string;
+}
+
+/**
+ * A task's run summaries, the same as groupRuns gives, updated a record at a time without keeping the records.
+ * `add` returns false for a record older than its run's last one: groupRuns sorts by time, so the caller reads the log again.
+ */
+export class RunSummaries {
+  private runs = new Map<string, RunAcc>();
+  private listed: RunSummary[] | null = null;
+
+  add(r: RunRecord): boolean {
+    let a = this.runs.get(r.runId);
+    if (a && r.ts < a.endTs) return false;
+    if (!a) {
+      a = { runId: r.runId, startTs: r.ts, endTs: r.ts, totalDurationMs: 0, results: new Set(), startedAfterEnd: false };
+      this.runs.set(r.runId, a);
+    }
+    a.endTs = r.ts;
+    if (r.durationMs !== undefined) a.totalDurationMs += r.durationMs;
+    const isBy = !a.by && r.phase === 'delegate' && typeof r.detail?.parentRunId === 'string';
+    if (isBy) a.by = { parentRunId: r.detail!.parentRunId as string, ...(typeof r.detail!.title === 'string' ? { title: r.detail!.title } : {}) };
+    const step = r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question' && (r.phase !== 'delegate' || isBy);
+    if (step) {
+      if (r.result !== 'started' && PRIORITY.includes(r.result)) a.startedAfterEnd = false;
+      else if (r.result === 'started' && r.phase !== 'result') a.startedAfterEnd = true;
+      if (r.phase !== 'result' && r.result !== 'started') a.results.add(r.result);
+      if (r.phase === 'result') a.lastResultSummary = r.summary ?? '';
+      a.lastStep = { result: r.result, text: r.error ?? r.summary ?? '', ...(r.detail?.costUsd !== undefined ? { costUsd: r.detail.costUsd } : {}) };
+    }
+    this.listed = null;
+    return true;
+  }
+
+  /** Newest first, as groupRuns sorts them. */
+  list(): RunSummary[] {
+    this.listed ??= [...this.runs.values()].map(summaryOf).sort((x, y) => y.startTs.localeCompare(x.startTs));
+    return this.listed;
+  }
+}
+
+function summaryOf(a: RunAcc): RunSummary {
+  const best = PRIORITY.find((p) => (p === 'started' ? a.startedAfterEnd : a.results.has(p))) ?? a.lastStep?.result ?? '';
+  let details: string;
+  if (a.lastResultSummary !== undefined) details = a.lastResultSummary;
+  else if (!a.lastStep) details = '';
+  else details = a.lastStep.text + (a.lastStep.costUsd !== undefined ? ` ($${Number(a.lastStep.costUsd).toFixed(3)})` : '');
+  return { runId: a.runId, ...(a.by ?? {}), startTs: a.startTs, endTs: a.endTs, result: best, totalDurationMs: a.totalDurationMs, details };
+}
+
 /** Whether a run is a chat or terminal session, not a task run. */
 export const isSessionRun = (g: Pick<RunSummary, 'result'>): boolean => g.result === 'chat' || g.result === 'terminal';
 

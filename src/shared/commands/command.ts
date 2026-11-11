@@ -1,4 +1,5 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
+import type { UsageRing } from '../sessions';
 import type { UiPlatform } from '../ui-platform';
 import type { CommandContext } from './context';
 
@@ -126,7 +127,7 @@ export interface Command {
   /** A split button whose drop-down only the main process can fill (recent conversations). */
   openDropdown?: (c: CommandContext, x: number, y: number) => void;
   /** A face that isn't an icon (the usage ring). */
-  ring?: (c: CommandContext) => { context: number | null; used: number | null };
+  ring?: (c: CommandContext) => UsageRing;
   /** A menu role the system carries out (Copy, Paste, Exit). */
   role?: string;
   /** Its items are what only the main process knows, which it fills in as it draws the menu. */

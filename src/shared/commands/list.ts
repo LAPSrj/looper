@@ -32,6 +32,8 @@ const isChat = (c: CommandContext): boolean => summaryOf(c)?.kind === 'chat';
 const isTerminal = (c: CommandContext): boolean => summaryOf(c)?.kind === 'terminal';
 const isRun = (c: CommandContext): boolean => summaryOf(c)?.kind === 'run';
 const inChatWindow = (c: CommandContext): boolean => !!c.chats?.single;
+/** Open Working Directory's name in an iOS menu's top row, whose two lines fit "Open Folder". */
+const workFolderToolbarLabel = (c: CommandContext): string => (c.here === 'mobile' ? 'Open Folder' : 'Open Working Directory');
 
 // ---------- what a window's view window and own window don't have ----------
 
@@ -569,6 +571,7 @@ export const COMMANDS: readonly Command[] = [
   {
     id: 'taskWorkFolder',
     label: 'Open &Working Directory',
+    toolbarLabel: workFolderToolbarLabel,
     group: 'organize',
     toolbarGroup: 'edit',
     icon: 'openFolder',
@@ -885,6 +888,7 @@ export const COMMANDS: readonly Command[] = [
   {
     id: 'conversationWorkFolder',
     label: 'Open &Working Directory',
+    toolbarLabel: workFolderToolbarLabel,
     group: 'open',
     toolbarGroup: 'turn',
     icon: 'openFolder',
@@ -961,7 +965,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'usage',
     label: (c) => c.chats?.usageLabel ?? 'Usage',
     group: 'panes',
-    ring: (c) => c.chats?.usageRing ?? { context: null, used: null },
+    ring: (c) => c.chats?.usageRing ?? { context: null },
     hide: [{ on: OFF_PHONE, why: 'The status bar shows usage all the time.' }],
     run: (c) => c.chats?.showUsage?.(),
     in: { conversation: { main: true } },
@@ -995,6 +999,38 @@ export const COMMANDS: readonly Command[] = [
     run: (c) => c.chats?.setShown({ waitingFirst: !c.chats.shown.waitingFirst }),
     in: { chats: { menu: 'view' } },
   },
+  // The Window menu, from the widest to the narrowest: windows, this window's panes, the chats in its list.
+  {
+    id: 'viewWindows',
+    label: 'View Windows',
+    group: 'view-windows',
+    inline: true,
+    hide: [{ on: ON_PHONE, why: 'These open separate windows, and a phone has the tabs.' }],
+    entries: (c) =>
+      mainTabs(c.addons).map((t) => ({ id: t.id, label: VIEW_WINDOW_LABELS[t.id] ?? menuText(t.label), icon: t.icon, run: () => c.host('open-view', t.id) })),
+    in: { app: { menu: 'window' } },
+  },
+  {
+    id: 'alwaysOnTop',
+    label: 'Always on &Top',
+    group: 'on-top',
+    provided: 'always-on-top',
+    hide: [{ on: ['web', 'mobile'], why: 'A browser tab or a phone can’t keep a window above the device’s others.' }, { if: (c) => !c.chats?.single, why: 'Only a single chat’s window stays on top.' }],
+    in: { chatWindow: { menu: 'window' } },
+  },
+  ...([
+    ['previousPane', 'Prev&ious Pane', 'Shift+F6', -1],
+    ['nextPane', 'Next Pan&e', 'F6', 1],
+  ] as const).map(([id, label, accelerator, dir]): Command => ({
+    id,
+    label,
+    group: 'panes-nav',
+    accelerator,
+    pageKey: true,
+    hide: [{ on: ON_PHONE, why: 'A phone shows one pane at a time.' }],
+    run: (c) => c.chats?.focusPane(dir),
+    in: { conversation: { menu: 'window' }, chatWindow: { menu: 'window' } },
+  })),
   ...([
     ['previousWaiting', 'Pre&vious Waiting Chat', 'F8', -1, true],
     ['nextWaiting', 'Next W&aiting Chat', 'F9', 1, true],
@@ -1008,19 +1044,6 @@ export const COMMANDS: readonly Command[] = [
     hide: [{ if: inChatWindow, why: 'A single chat’s window has no list to step through.' }],
     run: (c) => c.chats?.step(dir, waiting),
     in: { chats: { menu: 'window' }, conversation: { menu: 'window' } },
-  })),
-  ...([
-    ['nextPane', 'Next Pan&e', 'F6', 1],
-    ['previousPane', 'Prev&ious Pane', 'Shift+F6', -1],
-  ] as const).map(([id, label, accelerator, dir]): Command => ({
-    id,
-    label,
-    group: 'panes-nav',
-    accelerator,
-    pageKey: true,
-    hide: [{ on: ON_PHONE, why: 'A phone shows one pane at a time.' }],
-    run: (c) => c.chats?.focusPane(dir),
-    in: { conversation: { menu: 'window' }, chatWindow: { menu: 'window' } },
   })),
 
   // ---------- the Tasks list ----------
@@ -1181,25 +1204,7 @@ export const COMMANDS: readonly Command[] = [
     in: { app: { menu: 'advanced' } },
   },
 
-  // ---------- Window ----------
-  {
-    id: 'viewWindows',
-    label: 'View Windows',
-    group: 'view-windows',
-    inline: true,
-    hide: [{ on: ON_PHONE, why: 'These open separate windows, and a phone has the tabs.' }],
-    entries: (c) =>
-      mainTabs(c.addons).map((t) => ({ id: t.id, label: VIEW_WINDOW_LABELS[t.id] ?? menuText(t.label), icon: t.icon, run: () => c.host('open-view', t.id) })),
-    in: { app: { menu: 'window' } },
-  },
-  {
-    id: 'alwaysOnTop',
-    label: 'Always on &Top',
-    group: 'on-top',
-    provided: 'always-on-top',
-    hide: [{ on: ['web', 'mobile'], why: 'A browser tab or a phone can’t keep a window above the device’s others.' }, { if: (c) => !c.chats?.single, why: 'Only a single chat’s window stays on top.' }],
-    in: { chatWindow: { menu: 'window' } },
-  },
+  // ---------- Window (its windows, panes and chats come with the chats' commands above) ----------
   {
     id: 'openWindows',
     label: 'Open Windows',
@@ -1239,6 +1244,7 @@ export const COMMANDS: readonly Command[] = [
   {
     id: 'historyWorkFolder',
     label: 'Open &Working Directory',
+    toolbarLabel: workFolderToolbarLabel,
     group: 'history-item',
     icon: 'openFolder',
     enabled: (c) => !!c.history?.commands.folder,

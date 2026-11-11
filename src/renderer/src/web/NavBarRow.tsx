@@ -63,12 +63,12 @@ export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
   );
 }
 
-/** A bar button's glyph: its usage ring, or its icon. */
+/** A bar button's glyph: the usage glyph, or its icon. */
 export function ActionGlyph({ action, size = 22 }: { action: Pick<PageNavAction, 'icon' | 'ring'>; size?: number }) {
   if (action.ring) {
     return (
       <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden="true">
-        <UsageGlyph context={action.ring.context} used={action.ring.used} />
+        <UsageGlyph ring={action.ring} />
       </svg>
     );
   }

@@ -75,8 +75,15 @@ export function StatusGlyph({ level, label, className }: { level: StatusLevel; l
 /** A speech bubble on the left of the icon, leaving the bottom-right corner for an action glyph. Its top is at 3, level with the checklist's and the folder's. */
 const BUBBLE = 'M3 3h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 13.8V11H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 3Z';
 
-/** The same bubble lower down, leaving the top-right corner for an action glyph. */
-const BUBBLE_LOW = 'M3 5h8a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 15v-2.5H3A1.5 1.5 0 0 1 1.5 11V6.5A1.5 1.5 0 0 1 3 5Z';
+/** BUBBLE stopped short of a bottom-right mark, its round caps ending at the gap; not a mask, which WebKit keeps at the size an iOS menu opens from. */
+const bubbleClear = (bottomX: number, rightY: number) =>
+  `M${bottomX} 11H6.5L3.5 13.8V11H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 3h8a1.5 1.5 0 0 1 1.5 1.5V${rightY}`;
+
+/** Clear of a square mark from 8,8 to the corner. */
+const BUBBLE_CLEAR_SQUARE = bubbleClear(7.3, 7.3);
+
+/** Clear of the corner plus: a gap of radius 4.3 around 12,12. */
+const BUBBLE_CLEAR_PLUS = bubbleClear(7.1, 7);
 
 /** The tasks icon's three checks, down its left side. */
 const TASK_CHECKS = 'm1.8 3.8 1.2 1.2L5 3M1.8 8.3l1.2 1.2L5 7.5M1.8 12.8l1.2 1.2L5 12';
@@ -157,14 +164,10 @@ export const ICONS: Record<
   ),
   // The chat actions' bubble, moved to the middle of the box.
   chat: <path d={BUBBLE} transform="translate(1 -0.4)" />,
-  // A speech bubble with a plus at its bottom-right corner, a gap cut around it (Fluent's compound icons).
+  // A speech bubble with a plus at its bottom-right corner, a gap left around it (Fluent's compound icons).
   newChat: (
     <>
-      <mask id="ico-cut-plus" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE} mask="url(#ico-cut-plus)" />
+      <path d={BUBBLE_CLEAR_PLUS} />
       <path d="M12 9.2v5.6M9.2 12h5.6" />
     </>
   ),
@@ -177,22 +180,14 @@ export const ICONS: Record<
   // A speech bubble with fast-forward at its corner: the queued messages skip ahead of the agent's turn.
   sendNow: (
     <>
-      <mask id="ico-cut-ff" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <rect x="7.2" y="8" width="9" height="8" rx="2" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE} mask="url(#ico-cut-ff)" />
+      <path d={bubbleClear(6.5, 7.3)} />
       <path d="m9 9.4 2.6 2.6L9 14.6M12.3 9.4l2.6 2.6-2.6 2.6" />
     </>
   ),
   // A speech bubble with lines of text, and a small empty one at its corner: the conversation goes on in a new, shorter one.
   compact: (
     <>
-      <mask id="ico-cut-compact" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE} mask="url(#ico-cut-compact)" />
+      <path d={BUBBLE_CLEAR_SQUARE} />
       <path d="M4.5 5.6h5M4.5 8.2h3" />
       <path d="M10 9.6h4a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-2.2l-1.6 1.4V14H10a1 1 0 0 1-1-1v-2.4a1 1 0 0 1 1-1Z" />
     </>
@@ -200,33 +195,21 @@ export const ICONS: Record<
   // A speech bubble with a stop square at its corner: the agent's turn stops.
   stopChat: (
     <>
-      <mask id="ico-cut-stop" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE} mask="url(#ico-cut-stop)" />
+      <path d={BUBBLE_CLEAR_SQUARE} />
       <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="0.8" />
     </>
   ),
   // A speech bubble with a circular arrow at its corner: the agent starts again on the same conversation.
   restartAgent: (
     <>
-      <mask id="ico-cut-restart" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <rect x="8" y="8" width="8" height="8" rx="2" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE} mask="url(#ico-cut-restart)" />
+      <path d={BUBBLE_CLEAR_SQUARE} />
       <path d="M14.4 12a2.4 2.4 0 1 1-.7-1.7M14 8.9v1.6h-1.6" />
     </>
   ),
-  // A speech bubble lower down with an X at the top-right corner, as on a window's close button.
+  // The speech bubble lower down with an X at the top-right corner, as on a window's close button.
   closeChat: (
     <>
-      <mask id="ico-cut-close" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <circle cx="12.5" cy="3.5" r="3.9" fill="black" stroke="none" />
-      </mask>
-      <path d={BUBBLE_LOW} mask="url(#ico-cut-close)" />
+      <path d="M12.5 8.1V11a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 15v-2.5H3a1.5 1.5 0 0 1-1.5-1.5V6.5A1.5 1.5 0 0 1 3 5h5.2" />
       <path d="m10.6 1.6 3.8 3.8M14.4 1.6l-3.8 3.8" />
     </>
   ),
@@ -262,14 +245,10 @@ export const ICONS: Record<
       <path d="M12 9.2v5.6M9.2 12h5.6" />
     </>
   ),
-  // The folder icon with a plus at its bottom-right corner, a gap cut around it.
+  // The folder icon with a plus at its bottom-right corner, a gap of radius 4.3 left around it.
   newProject: (
     <>
-      <mask id="ico-cut-plus-project" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-        <rect width="16" height="16" fill="white" stroke="none" />
-        <circle cx="12" cy="12" r="4.3" fill="black" stroke="none" />
-      </mask>
-      <path d="M1.5 12.5v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" mask="url(#ico-cut-plus-project)" />
+      <path d="M7.3 13.5H2.5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3.2L7 5h6.5a1 1 0 0 1 1 1v1.8" />
       <path d="M12 9.2v5.6M9.2 12h5.6" />
     </>
   ),

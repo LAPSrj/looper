@@ -17,7 +17,7 @@ export const PUSH_HINTS: Partial<Record<PushState, string>> = {
 
 const FLAG = 'looper.push';
 
-const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+export const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 /** Running as a Home Screen (installed) app. */
 export const isStandalone = (): boolean =>

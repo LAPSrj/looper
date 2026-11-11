@@ -13,6 +13,7 @@ import {
   breadcrumbs,
   emptyHistory,
   fileSources,
+  fileType,
   filterLabel,
   folderNameError,
   groupPlaces,
@@ -34,6 +35,7 @@ import {
   visibleEntries,
   withExtension,
 } from '../src/renderer/src/web/dialog-flows';
+import { languageOf } from '../src/renderer/src/components/code-languages';
 import { eventMatches, findAccelerator, menuHover, menuKey, openNav, parseAccelerator, pickChecked, shortcutText, type KeyLike, type MenuNav } from '../src/renderer/src/web/menu-model';
 import type { ShellMessage } from '../src/renderer/src/web/session';
 import { childStack, frontWindow, initialShellState, isBlocked, mainWindow, reduceShell, topModal, type ShellState } from '../src/renderer/src/web/store';
@@ -339,13 +341,25 @@ describe('file dialog choice flow', () => {
     expect(placeGroup(undefined)).toBe('Folders');
   });
 
-  it('shows images and text files in the viewer, Markdown rendered', () => {
-    expect(viewerKind('shot.PNG')).toBe('image');
-    expect(viewerKind('a.jpeg')).toBe('image');
-    expect(viewerKind('notes.md')).toBe('markdown');
-    expect(viewerKind('log.txt')).toBe('text');
-    expect(viewerKind('data.json')).toBeNull();
-    expect(viewerKind('README')).toBeNull();
+  it('shows images, PDFs, code and text files in the viewer, Markdown rendered', () => {
+    const kind = (name: string) => viewerKind(name, (n) => languageOf(n) !== undefined);
+    expect(kind('shot.PNG')).toBe('image');
+    expect(kind('a.jpeg')).toBe('image');
+    expect(kind('report.PDF')).toBe('pdf');
+    expect(kind('notes.md')).toBe('markdown');
+    expect(kind('data.json')).toBe('code');
+    expect(kind('main.tsx')).toBe('code');
+    expect(kind('log.txt')).toBe('text');
+    expect(kind('run.log')).toBe('text');
+    expect(kind('README')).toBe('text');
+    expect(kind('.gitignore')).toBe('text');
+    expect(kind('Dockerfile')).toBe('text');
+    expect(kind('archive.zip')).toBeNull();
+    expect(kind('photo.heic')).toBeNull();
+    expect(fileType('shot.png')).toBe('image/png');
+    expect(fileType('report.pdf')).toBe('application/pdf');
+    expect(fileType('archive.zip')).toBe('application/zip');
+    expect(fileType('blob.bin')).toBe('application/octet-stream');
     expect(imageType('a.jpg')).toBe('image/jpeg');
     expect(imageType('a.svg')).toBe('image/svg+xml');
     expect(imageType('a.webp')).toBe('image/webp');

@@ -119,7 +119,31 @@ export function phoneMore(views: readonly CommandView[], c: CommandContext, extr
   return out;
 }
 
+/**
+ * The More menu's commands that are buttons on the desktop's toolbar and can
+ * stand as one in a phone's menu: a plain action with an icon, as the toolbar
+ * labels it. Each id is also one of phoneMore's items.
+ */
+export function phoneMoreToolbar(views: readonly CommandView[], c: CommandContext, extraSlots = 0): MenuItemSpec[] {
+  const bar = new Set(phoneBarCommands(views, c, extraSlots));
+  const hasBox = c.chats?.summary?.kind === 'chat';
+  return commandsOf(c).flatMap((cmd): MenuItemSpec[] => {
+    const w = placed(cmd, views, c, (x) => !!x.toolbar);
+    const icon = iconOf(cmd, c);
+    if (!w || !icon || bar.has(cmd) || (hasBox && w.box) || !isEnabled(cmd, c)) return [];
+    if (cmd.entries || cmd.checked || cmd.destructive || cmd.ring || cmd.provided || cmd.role) return [];
+    return [{ id: cmd.id, type: 'normal', label: shortLabel(cmd, c), enabled: true, icon }];
+  });
+}
+
 /** A screen's bar and More menu, as NavBar takes them. */
-export function phoneNav(views: readonly CommandView[], c: CommandContext, extraSlots = 0): { actions: PageNavAction[]; more: { items: MenuItemSpec[]; run: (id: string) => void } } {
-  return { actions: phoneActions(views, c, extraSlots), more: { items: phoneMore(views, c, extraSlots), run: (id) => runCommand(id, c) } };
+export function phoneNav(
+  views: readonly CommandView[],
+  c: CommandContext,
+  extraSlots = 0,
+): { actions: PageNavAction[]; more: { items: MenuItemSpec[]; toolbar: MenuItemSpec[]; run: (id: string) => void } } {
+  return {
+    actions: phoneActions(views, c, extraSlots),
+    more: { items: phoneMore(views, c, extraSlots), toolbar: phoneMoreToolbar(views, c, extraSlots), run: (id) => runCommand(id, c) },
+  };
 }

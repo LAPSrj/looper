@@ -1,7 +1,7 @@
-import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execOffThread, spawnOffThread, type OffThreadChild } from './exec-worker';
 
 export type HostKind = 'windows' | 'wsl' | 'linux' | 'mac';
 
@@ -39,18 +39,11 @@ export function detectedDefaultWslDistro(): string | undefined {
  * WSL_DISTRO_NAME` runs there when no -d is given), so its files get a
  * \\wsl.localhost\<name> host path. Windows hosts only.
  */
-export function detectDefaultWslDistro(): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    try {
-      execFile('wsl.exe', ['printenv', 'WSL_DISTRO_NAME'], { timeout: 15_000, windowsHide: true }, (err, stdout) => {
-        const name = stdout ? String(stdout).replace(/\0/g, '').trim() : '';
-        if (!err && name) defaultWslDistro = name;
-        resolve(defaultWslDistro);
-      });
-    } catch {
-      resolve(undefined);
-    }
-  });
+export async function detectDefaultWslDistro(): Promise<string | undefined> {
+  const r = await execOffThread('wsl.exe', ['printenv', 'WSL_DISTRO_NAME'], { timeout: 15_000, windowsHide: true });
+  const name = r.stdout.replace(/\0/g, '').trim();
+  if (!r.error && name) defaultWslDistro = name;
+  return defaultWslDistro;
 }
 
 /** Tests: set or clear the detected default distro. */
@@ -58,8 +51,9 @@ export function setDefaultWslDistro(name: string | undefined): void {
   defaultWslDistro = name;
 }
 
-/** Cached: the lookup spawns a process, and the regional format never changes mid-session. */
-let systemLocale: string | null | undefined;
+/** Cached: the lookup starts a process, and the regional format never changes mid-session. */
+let systemLocale: Promise<string | undefined> | undefined;
+let knownLocale: string | undefined;
 
 /**
  * The locale dates and times are shown in — Windows' **regional format**
@@ -67,28 +61,23 @@ let systemLocale: string | null | undefined;
  * reports. The two are set separately, so an English machine formatting dates
  * as 12/09/2026 is ordinary. Undefined = let the runtime pick.
  */
+export function loadSystemLocale(): Promise<string | undefined> {
+  systemLocale ??= readWindowsLocale().then((l) => (knownLocale = l ?? readPosixLocale()));
+  return systemLocale;
+}
+
+/** The locale once loadSystemLocale has read it; until then undefined, and the read starts. */
 export function detectSystemLocale(): string | undefined {
-  if (systemLocale !== undefined) return systemLocale ?? undefined;
-  systemLocale = readWindowsLocale() ?? readPosixLocale() ?? null;
-  return systemLocale ?? undefined;
+  void loadSystemLocale();
+  return knownLocale;
 }
 
 /** `HKCU\Control Panel\International\LocaleName`, e.g. "en-150". Also reachable from WSL through interop. */
-function readWindowsLocale(): string | undefined {
+async function readWindowsLocale(): Promise<string | undefined> {
   const host = detectHost();
   if (host !== 'windows' && host !== 'wsl') return undefined;
-  try {
-    const out = execFileSync('reg.exe', ['query', 'HKCU\\Control Panel\\International', '/v', 'LocaleName'], {
-      encoding: 'utf8',
-      timeout: 5_000,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const m = /LocaleName\s+REG_SZ\s+(\S+)/.exec(out);
-    return m?.[1];
-  } catch {
-    return undefined;
-  }
+  const r = await execOffThread('reg.exe', ['query', 'HKCU\\Control Panel\\International', '/v', 'LocaleName'], { timeout: 5_000, windowsHide: true });
+  return r.error ? undefined : /LocaleName\s+REG_SZ\s+(\S+)/.exec(r.stdout)?.[1];
 }
 
 /** LC_TIME/LC_ALL/LANG, e.g. "pt_BR.UTF-8" -> "pt-BR". */
@@ -114,16 +103,10 @@ export function detectWslMountPrefix(distro?: string): Promise<string | undefine
   const local = !distro && detectHost() === 'wsl';
   const cmd = local ? 'wslpath' : 'wsl.exe';
   const args = local ? ['-u', 'C:\\'] : [...(distro ? ['-d', distro] : []), 'wslpath', '-u', 'C:\\'];
-  return new Promise((resolve) => {
-    try {
-      // The child's stdout passes through as UTF-8 (unlike wsl.exe's own UTF-16 listings).
-      execFile(cmd, args, { timeout: 15_000, windowsHide: true }, (err, stdout) => {
-        resolve(err || !stdout ? undefined : mountPrefixFromWslPath(String(stdout)));
-      });
-    } catch {
-      resolve(undefined);
-    }
-  });
+  // The child's stdout passes through as UTF-8 (unlike wsl.exe's own UTF-16 listings).
+  return execOffThread(cmd, args, { timeout: 15_000, windowsHide: true }).then((r) =>
+    r.error || !r.stdout ? undefined : mountPrefixFromWslPath(r.stdout),
+  );
 }
 
 /**
@@ -163,15 +146,9 @@ function viaWslpath(p: string, to: 'windows' | 'posix', distro?: string): Promis
   const flag = to === 'windows' ? '-w' : '-u';
   // -e: without it wsl.exe runs the command through the shell, which drops a Windows path's backslashes.
   const args = local ? [flag, p] : [...(distro ? ['-d', distro] : []), '-e', 'wslpath', flag, p];
-  return new Promise<string | undefined>((resolve) => {
-    try {
-      execFile(local ? 'wslpath' : 'wsl.exe', args, { timeout: 15_000, windowsHide: true }, (err, stdout) => {
-        const out = stdout ? String(stdout).replace(/\0/g, '').trim() : '';
-        resolve(err || !out ? undefined : out);
-      });
-    } catch {
-      resolve(undefined);
-    }
+  return execOffThread(local ? 'wslpath' : 'wsl.exe', args, { timeout: 15_000, windowsHide: true }).then((r) => {
+    const out = r.stdout.replace(/\0/g, '').trim();
+    return r.error || !out ? undefined : out;
   });
 }
 
@@ -249,8 +226,9 @@ interface WslpathServer {
 }
 
 /** Keep the Node process alive for the wsl.exe only while a conversion waits on it (a CLI command ends otherwise). */
-function hold(c: ChildProcess, on: boolean): void {
-  for (const h of [c, c.stdin, c.stdout] as ({ ref?: () => void; unref?: () => void } | null)[]) (on ? h?.ref : h?.unref)?.call(h);
+function hold(c: OffThreadChild, on: boolean): void {
+  if (on) c.ref();
+  else c.unref();
 }
 const servers = new Map<string, WslpathServer>();
 
@@ -259,7 +237,7 @@ function wslpathServer(distro?: string): WslpathServer {
   const k = distro ?? '';
   const known = servers.get(k);
   if (known) return known;
-  let child: ChildProcess | null = null;
+  let child: OffThreadChild | null = null;
   let waiting: { done: (out: string | undefined) => void; timer: ReturnType<typeof setTimeout> }[] = [];
   let buffer = '';
   let idle: ReturnType<typeof setTimeout> | null = null;
@@ -273,8 +251,8 @@ function wslpathServer(distro?: string): WslpathServer {
     }
     c?.kill();
   };
-  const start = (): ChildProcess => {
-    const c = spawn('wsl.exe', [...(distro ? ['-d', distro] : []), '-e', 'sh', '-c', SERVER_SCRIPT], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  const start = (): OffThreadChild => {
+    const c = spawnOffThread('wsl.exe', [...(distro ? ['-d', distro] : []), '-e', 'sh', '-c', SERVER_SCRIPT], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     c.stdout!.setEncoding('utf8');
     c.stdout!.on('data', (chunk: string) => {
       buffer += chunk;
@@ -322,26 +300,12 @@ function wslpathServer(distro?: string): WslpathServer {
  * Installed WSL distros via `wsl.exe --list --quiet` (works on a Windows host
  * and from inside WSL through interop). Empty when wsl.exe is unavailable.
  */
-export function listWslDistros(): Promise<string[]> {
-  return new Promise((resolve) => {
-    try {
-      execFile(
-        'wsl.exe',
-        ['--list', '--quiet'],
-        { encoding: 'buffer', timeout: 15_000, windowsHide: true },
-        (err, stdout) => {
-          if (err || !stdout) return resolve([]);
-          // wsl.exe prints UTF-16LE.
-          const names = stdout
-            .toString('utf16le')
-            .split(/\r?\n/)
-            .map((s) => s.replace(/\0/g, '').trim())
-            .filter(Boolean);
-          resolve(names);
-        },
-      );
-    } catch {
-      resolve([]);
-    }
-  });
+export async function listWslDistros(): Promise<string[]> {
+  // wsl.exe prints UTF-16LE.
+  const r = await execOffThread('wsl.exe', ['--list', '--quiet'], { encoding: 'utf16le', timeout: 15_000, windowsHide: true });
+  if (r.error) return [];
+  return r.stdout
+    .split(/\r?\n/)
+    .map((s) => s.replace(/\0/g, '').trim())
+    .filter(Boolean);
 }

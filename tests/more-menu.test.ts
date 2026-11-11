@@ -4,7 +4,7 @@ import { readAddonManifest } from '../src/shared/addons';
 import type { MenuItemSpec } from '../src/shared/remote-access';
 import { menuForPlatform, showsOn, uiPlatformOf } from '../src/shared/ui-platform';
 import { findToolbarItem, groupsAtSeparators, toolbarFor, type ToolbarGroup } from '../src/renderer/src/components/toolbar-model';
-import { actionMenu, composeMore, phoneMenu } from '../src/renderer/src/web/more-menu';
+import { actionMenu, composeMore, moreRow, phoneMenu } from '../src/renderer/src/web/more-menu';
 
 const labels = (items: MenuItemSpec[]): string[] => items.map((i) => (i.type === 'separator' ? '—' : (i.label ?? '')));
 const item = (id: string, label: string, extra: Partial<MenuItemSpec> = {}): MenuItemSpec => ({ id, type: 'normal', label, enabled: true, ...extra });
@@ -232,6 +232,36 @@ describe('composeMore', () => {
 
   it('is empty when there is nothing to offer', () => {
     expect(composeMore({}).items).toEqual([]);
+    expect(composeMore({}).row).toEqual([]);
+  });
+
+  it('puts the toolbar’s plain buttons with an icon in the top row, the page’s before the commands', () => {
+    const page: ToolbarGroup[] = [{ id: 'g', items: [{ id: 'zoom', label: 'Zoom', icon: 'zoomIn', run }, toolbar[0].items[0]] }];
+    const m = composeMore({ toolbar: page, more: { ...more, toolbar: [item('run-now', 'Run', { icon: 'play' })] } });
+    expect(labels(m.row)).toEqual(['Zoom', 'Run']);
+    // Each is one of the list's items, so a pick runs it the same way.
+    for (const it of m.row) expect(m.run.has(it.id)).toBe(true);
+    m.run.get(m.row[1].id)!();
+    expect(pick).toHaveBeenCalledWith('run-now');
+  });
+});
+
+describe('moreRow', () => {
+  const items = ['a', 'b', 'c', 'd'].map((id) => item(id, id.toUpperCase()));
+  const icon = (id: string) => item(id, id.toUpperCase(), { icon: 'play' });
+
+  it('holds three, the medium layout’s row, and leaves the rest in the list', () => {
+    expect(labels(moreRow(['a', 'b', 'c', 'd'].map(icon), items))).toEqual(['A', 'B', 'C']);
+  });
+
+  it('holds two side by side, and leaves a single one in the list', () => {
+    expect(labels(moreRow(['a', 'b'].map(icon), items))).toEqual(['A', 'B']);
+    expect(moreRow([icon('a')], items)).toEqual([]);
+  });
+
+  it('skips what the list doesn’t have, such as what can’t be done now', () => {
+    expect(labels(moreRow(['x', 'a', 'b'].map(icon), items))).toEqual(['A', 'B']);
+    expect(moreRow(['x', 'a'].map(icon), items)).toEqual([]);
   });
 });
 

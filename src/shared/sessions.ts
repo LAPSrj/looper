@@ -64,6 +64,14 @@ export interface UsageLimits {
   sevenDay?: UsageWindow;
 }
 
+/** What a phone's Usage button draws: the context used (0..1, null when its size isn't known), the account's limits, and the prompt cache's span (ms since the epoch). */
+export interface UsageRing {
+  context: number | null;
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
+  cache?: { from: number; until: number };
+}
+
 /** A harness's key in SessionsState.limits: harness ids are only unique within their environment. */
 export const limitsKey = (environmentId: string, harnessId: string): string => `${environmentId}/${harnessId}`;
 

@@ -261,6 +261,8 @@ export interface LooperApi {
       file?: string;
       resend?: { text: string; attachments: Attachment[] };
       fork?: number;
+      /** The message has text to select: Select Text, which comes back as a message-select-text ui event with this key. */
+      selectText?: string;
     }): void;
   };
   /** The Sessions window: every chat and terminal session, and the one it shows. */
@@ -486,10 +488,14 @@ export interface LooperApi {
      * edges; true when they draw it, false when the page draws it itself. Pointer input comes back as `menu-popup-input`.
      */
     menuPopups(state: { levels: { items: MenuItemSpec[]; active: number }[]; at: { x: number; y: number }; cues: boolean } | null): Promise<boolean>;
-    /** A menu level window's page: ready (null), or its menu's size and each item's top. */
-    menuLevelLayout(depth: number, layout: { width: number; height: number; tops: Record<number, number> } | null): void;
+    /** A menu level window's page: ready or drawn empty after a menu (null), or its menu's size and each item's top; `seq` comes back in `menu-level-placed`. */
+    menuLevelLayout(depth: number, layout: { width: number; height: number; tops: Record<number, number>; seq: number } | null): void;
     /** A menu level window's page: the pointer on an item. */
     menuLevelInput(depth: number, index: number, kind: 'hover' | 'choose'): void;
+    /** The Select Window dialog (Window → More Windows…): the computer's open windows in the order they opened, and the one it shows over. */
+    openWindows(): Promise<{ windows: { id: number; title: string }[]; current: number | null }>;
+    /** The Select Window dialog's pick: the dialog closes and that window comes forward. */
+    showOpenWindow(id: number): void;
     /** A menu at a point in the window, or at the finger: the id picked, or null once it closes. */
     popup(items: MenuItemSpec[], at?: { x: number; y: number }): Promise<string | null>;
     /** Something only the main process can do. */
@@ -502,7 +508,8 @@ export interface LooperApi {
   /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
   showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
-  showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }): void;
+  /** `selectText`: as in chat.showContextMenu. */
+  showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }): void;
   /** Filter window only: apply this filter to the parent conversation window and close. */
   applyMessagesFilter(value: string): void;
   /** Export-options window only: confirm the Save-as-Markdown choice and close. */
@@ -559,10 +566,14 @@ export type UiEvent =
   | { type: 'context-menu'; menuId: string; items: MenuItemSpec[]; x: number; y: number; atPointer: boolean }
   /** A menu level window: the level it draws (null: none). */
   | { type: 'menu-level'; level: { items: MenuItemSpec[]; active: number; cues: boolean } | null }
+  /** A menu level window: it's in place for the layout it sent with this `seq`. */
+  | { type: 'menu-level-placed'; seq: number }
   /** The page whose menu the level windows draw: the pointer on one of its items. */
   | { type: 'menu-popup-input'; depth: number; index: number; kind: 'hover' | 'choose' }
   /** Chat window: Edit → Find…. */
   | { type: 'chat-find' }
+  /** A message's Select Text: the page selects the text of the message whose menu it was (`key`: its chat or run). */
+  | { type: 'message-select-text'; key: string }
   /** A list window's row menu (showListContextMenu): the item picked. */
   | { type: 'list-menu'; token: string; id: string }
   /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */

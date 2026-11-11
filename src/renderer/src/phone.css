@@ -1362,8 +1362,98 @@ html.phone-window .chat-composer.phone-composer {
 html.phone-window.keyboard-up .chat-composer.phone-composer {
   padding-bottom: 6px;
 }
-html.phone-window .phone-composer .chat-pending {
-  padding: 0 0 6px;
+/* Attachments sit inside the field, above the text, as in Messages: thumbnails in a row that scrolls
+   sideways and files as rounded chips, each with an × badge on its corner. */
+html.phone-window .phone-composer-box {
+  flex-wrap: wrap;
+}
+html.phone-window .phone-composer-box > .chat-pending {
+  order: -1;
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 10px 10px 0;
+}
+html.phone-window .phone-composer-box .chat-attachments {
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+html.phone-window .phone-composer-box .chat-thumbs {
+  display: contents;
+}
+html.phone-window .phone-composer-box .chat-thumb-wrap,
+html.phone-window .phone-composer-box .chat-file {
+  position: relative;
+  flex: none;
+}
+html.phone-window .phone-composer-box .chat-thumb {
+  border: none;
+  border-radius: 12px;
+  overflow: hidden;
+}
+html.phone-window .phone-composer-box .chat-thumb img {
+  min-width: 56px;
+  min-height: 56px;
+  max-height: 96px;
+  max-width: 160px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+html.phone-window .phone-composer-box .chat-file {
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 120px;
+  max-width: 220px;
+  min-height: 44px;
+  padding: 0 34px 0 12px;
+  border-radius: 12px;
+  background: var(--pg-fill);
+}
+html.phone-window .phone-composer-box .chat-file > .link:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pg-label);
+  font-size: calc(15 * var(--u));
+  text-decoration: none;
+}
+html.phone-window .phone-composer-box .chat-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  box-sizing: border-box;
+  width: 22px;
+  min-width: 0;
+  height: 22px;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+/* A 22 pt badge, a 44 pt target. */
+html.phone-window .phone-composer-box .chat-remove::after {
+  content: '';
+  position: absolute;
+  inset: -11px;
+}
+html.phone-window .phone-composer-box .chat-file .chat-remove {
+  top: 11px;
+  right: 8px;
+  background: var(--pg-label-3);
+}
+html.phone-window .phone-composer-box .chat-remove-text {
+  display: none;
+}
+html.phone-window .phone-composer-box .chat-remove-glyph {
+  display: block;
 }
 html.phone-window .phone-composer-row {
   display: flex;
@@ -1517,8 +1607,61 @@ html.phone-window .session-sub.error-text {
 html.phone-window .chat-status.chat-working {
   padding: 2px 14px 6px;
 }
+/* The commands and skills "/" lists: a floating card above the field, as an iOS suggestion list draws
+   it, with rows of at least 44 pt (the name, then up to two lines of what it does) that scroll by touch. */
 html.phone-window .slash-list {
-  max-height: 40vh;
+  bottom: calc(100% + 8px);
+  max-height: min(42vh, 360px);
+  border: none;
+  border-radius: 16px;
+  background: var(--pg-cell);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  overscroll-behavior: contain;
+}
+html.phone-window .slash-item {
+  position: relative;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 10px 16px;
+  line-height: normal;
+}
+html.phone-window .slash-item + .slash-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  border-top: 0.5px solid var(--pg-sep);
+}
+html.phone-window .slash-item.selected,
+html.phone-window .slash-item.selected .slash-desc {
+  background: none;
+  color: inherit;
+}
+html.phone-window .slash-item:active {
+  background: var(--pg-fill);
+}
+html.phone-window .slash-name {
+  max-width: 100%;
+  color: var(--pg-label);
+  font-family: inherit;
+  font-size: calc(17 * var(--u));
+  font-weight: 600;
+}
+html.phone-window .slash-hint {
+  color: var(--pg-label-3);
+  font-weight: 400;
+}
+html.phone-window .slash-item .slash-desc,
+html.phone-window .slash-item.selected .slash-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  color: var(--pg-label-2);
+  font-size: calc(15 * var(--u));
 }
 html.phone-window .chat-find {
   flex-wrap: wrap;

@@ -1,13 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import type * as PtyNS from 'node-pty';
 import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { delegateMessage, eventsMessage, guidanceMessage } from '../../shared/messages';
 import { resolveEnvironment } from '../../shared/environments';
 import { readContextTokens } from '../context';
+import { spawnOffThread, spawnPtyOffThread } from '../exec-worker';
 import {
   DELEGATE_FILE,
   EVENTS_FILE,
@@ -427,14 +426,10 @@ export const FOCUS_REPORT_RE = /^(?:\x1b\[[IO])+$/;
 /** Bytes of recent output kept to explain an exit or a timer that fired. */
 const RECENT_OUT_BYTES = 4096;
 
-let ptyModule: typeof PtyNS | null = null;
-function loadPty(): typeof PtyNS {
-  if (!ptyModule) {
-    // Lazy so the CLI's non-serve commands never load the native module.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ptyModule = require('node-pty') as typeof PtyNS;
-  }
-  return ptyModule;
+/** node-pty's entry, outside app.asar, where the process worker can load it from (electron-builder unpacks the whole package). */
+function ptyModulePath(): string {
+  const file = require.resolve('node-pty');
+  return file.includes('app.asar.unpacked') ? file : file.replace('app.asar', 'app.asar.unpacked');
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
@@ -443,8 +438,10 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
 
 /** What the session needs from a running process, whether it sits behind a pty or plain pipes. */
 export interface SessionProc {
-  /** 0 when the spawn itself failed. */
+  /** 0 until it has started, and when the spawn itself failed. */
   readonly pid: number;
+  /** The pid once it has started, 0 when it couldn't start. */
+  readonly spawned: Promise<number>;
   onStdout(cb: (data: string) => void): void;
   onStderr(cb: (data: string) => void): void;
   /** Fires once, after all output has been delivered. */
@@ -475,32 +472,22 @@ export function resolveWinCommand(command: string, env: Record<string, string>):
   return command;
 }
 
-/** Interactive: a real terminal, so the TUI renders and can be typed into. */
-export function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
-  const pty = loadPty();
+/** Interactive: a real terminal, so the TUI renders and can be typed into. A start that fails reaches `onError`, then the exit. */
+export function spawnPty(spec: SpawnSpec, cwd: string, onError: (e: Error) => void): SessionProc {
   const env = childEnv();
-  let proc: PtyNS.IPty;
-  try {
-    proc = pty.spawn(resolveWinCommand(spec.command, env), spec.args, {
-      name: 'xterm-256color',
-      cols: PTY_COLS,
-      rows: PTY_ROWS,
-      cwd,
-      env,
-    });
-  } catch (e) {
-    // ConPTY says "File not found: <path>" (an empty path when PATH has no
-    // match); worded like Node's spawn error so a missing wsl.exe reads the same
-    // whichever way the step was started.
-    const msg = (e as Error).message;
-    if (/^File not found:/.test(msg)) throw new Error(`spawn ${spec.command} ENOENT (${msg})`);
-    throw e;
-  }
+  const proc = spawnPtyOffThread(ptyModulePath(), resolveWinCommand(spec.command, env), spec.args, { name: 'xterm-256color', cols: PTY_COLS, rows: PTY_ROWS, cwd, env }, (e) =>
+    // ConPTY says "File not found: <path>" (an empty path when PATH has no match); worded like Node's spawn
+    // error so a missing wsl.exe reads the same whichever way the step was started.
+    onError(/^File not found:/.test(e.message) ? new Error(`spawn ${spec.command} ENOENT (${e.message})`) : e),
+  );
   return {
-    pid: proc.pid,
+    get pid() {
+      return proc.pid;
+    },
+    spawned: proc.spawned,
     onStdout: (cb) => proc.onData(cb),
     onStderr: () => {},
-    onExit: (cb) => proc.onExit(({ exitCode }) => cb(exitCode)),
+    onExit: (cb) => proc.onExit(cb),
     write: (d) => proc.write(d),
     resize: (c, r) => proc.resize(c, r),
     kill: () => proc.kill(),
@@ -513,14 +500,14 @@ export function spawnPty(spec: SpawnSpec, cwd: string): SessionProc {
  * which makes the result object unparseable. Pipes deliver the bytes as written.
  */
 function spawnPiped(spec: SpawnSpec, cwd: string, onError: (e: Error) => void): SessionProc {
-  const child = spawn(spec.command, spec.args, {
+  const child = spawnOffThread(spec.command, spec.args, {
     cwd,
     env: childEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
+  child.stdout!.setEncoding('utf8');
+  child.stderr!.setEncoding('utf8');
   let exitCb: ((code: number | null) => void) | null = null;
   let exitFired = false;
   const fireExit = (code: number | null): void => {
@@ -535,9 +522,12 @@ function spawnPiped(spec: SpawnSpec, cwd: string, onError: (e: Error) => void): 
   // 'close' rather than 'exit': the stdio streams have been drained by then.
   child.on('close', (code) => fireExit(code));
   return {
-    pid: child.pid ?? 0,
-    onStdout: (cb) => child.stdout.on('data', cb),
-    onStderr: (cb) => child.stderr.on('data', cb),
+    get pid() {
+      return child.pid ?? 0;
+    },
+    spawned: child.spawned.then((pid) => pid ?? 0),
+    onStdout: (cb) => child.stdout!.on('data', cb),
+    onStderr: (cb) => child.stderr!.on('data', cb),
     onExit: (cb) => {
       exitCb = cb;
     },
@@ -802,13 +792,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       });
 
   let spawnError: string | undefined;
-  const proc = headless
-    ? spawnPiped(launcher.spec, ctx.runDir, (e) => {
-        ctx.log.error(`[${task.id}] cannot start ${harness.name}: ${e.message}`);
-        spawnError = e.message;
-      })
-    : spawnPty(launcher.spec, ctx.runDir);
-  ctx.log.info(`[${task.id}] ${opts.step} pid ${proc.pid}: ${launcher.spec.command} ${launcher.spec.args.join(' ')}`);
+  const onSpawnError = (e: Error) => {
+    ctx.log.error(`[${task.id}] cannot start ${harness.name}: ${e.message}`);
+    spawnError = e.message;
+  };
+  const proc = headless ? spawnPiped(launcher.spec, ctx.runDir, onSpawnError) : spawnPty(launcher.spec, ctx.runDir, onSpawnError);
+  void proc.spawned.then((pid) => ctx.log.info(`[${task.id}] ${opts.step} pid ${pid}: ${launcher.spec.command} ${launcher.spec.args.join(' ')}`));
 
   const started = Date.now();
   let ended = false;
@@ -917,7 +906,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     } catch {
       /* already gone */
     }
-    if (proc.pid > 0) await killHostTree(proc.pid);
+    // A console that hasn't connected or printed yet has no pid to kill by; its kill above ends it.
+    const pid = (await withTimeout(proc.spawned, 3000)) ?? 0;
+    if (pid > 0) await killHostTree(pid);
     await withTimeout(target.killLeftovers(ctx.runId), 20_000);
     await withTimeout(exitPromise, 3000);
   };
@@ -1104,6 +1095,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (ended) return;
     if (headless) {
       void finishHeadless(code);
+    } else if (spawnError) {
+      void finish('error', spawnError, undefined, undefined, undefined, looksLikeEnvironmentError(spawnError));
     } else if (doneMtime !== null) {
       // Signalled done, then exited before the turn ended: headline only.
       void finish('done', doneHeadline);
@@ -1413,7 +1406,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   return {
     runId: ctx.runId,
-    pid: proc.pid,
+    get pid() {
+      return proc.pid;
+    },
     get held() {
       return held;
     },

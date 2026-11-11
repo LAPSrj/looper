@@ -33,7 +33,7 @@ import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
 import { ChatManager, imageMediaType, kindMismatchText } from './chat';
 import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
-import { NO_HISTORY_COMMANDS, RECENT_CHATS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
+import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
 import type { CommandOutput } from '../shared/bash-mode';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
 import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
@@ -271,6 +271,8 @@ export interface Engine {
   // the History window
   /** The newest conversations on this computer: Looper's runs, and every Claude Code and Codex conversation in the environments' folders. */
   historyList(o: HistoryListOptions, progress?: (partial: HistoryList) => void): Promise<HistoryList>;
+  /** A Recent menu's conversations (a project's with `projectId`), ready at once; undefined in the moments before they've been worked out. */
+  recentHistory(projectId?: string): HistoryItem[] | undefined;
   /** Of the listed conversations `ids`, the ones whose user or agent messages contain the text. */
   historySearch(query: string, ids: string[]): Promise<string[]>;
   /** A listed conversation's rows and subagents (a subagent's rows with `agentId`); null once it's no longer listed. */
@@ -390,9 +392,9 @@ export interface Engine {
   setPreventSleep(timer: PreventSleepTimer): void;
   preventSleepState(): PreventSleepState;
   // history
-  listRuns(id: string, limit?: number): RunRecord[];
+  listRuns(id: string, limit?: number): Promise<RunRecord[]>;
   /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
-  recentRuns(limit: number, filter: RunFilter): RecentRun[];
+  recentRuns(limit: number, filter: RunFilter): Promise<RecentRun[]>;
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
   /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
   readMessages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
@@ -741,7 +743,10 @@ export function createEngine(opts: EngineOptions): Engine {
       if (info?.titleBy) return info.title;
       return messages.sessionName(taskId, runId).catch(() => undefined);
     },
-    onSession: (c) => ledger.add({ ...c, kind: 'chat', taskName: lookup(c.taskId)?.name }),
+    onSession: (c) => {
+      ledger.add({ ...c, kind: 'chat', taskName: lookup(c.taskId)?.name });
+      history.taskChanged(c.taskId, c.runId);
+    },
     writeInfo: (taskId, runId, info) => runs.writeChatInfo(taskId, runId, info),
     appendRecord,
     taskVersion,
@@ -762,8 +767,10 @@ export function createEngine(opts: EngineOptions): Engine {
     appendRecord,
     taskVersion,
     log,
-    onSession: (taskId, runId, sessionId) =>
-      ledger.add({ sessionId, kind: remote.owns(runId) ? 'remote' : 'terminal', taskId, taskName: lookup(taskId)?.name, runId }),
+    onSession: (taskId, runId, sessionId) => {
+      ledger.add({ sessionId, kind: remote.owns(runId) ? 'remote' : 'terminal', taskId, taskName: lookup(taskId)?.name, runId });
+      history.taskChanged(taskId, runId);
+    },
   });
 
   remote = new RemoteControl({
@@ -882,10 +889,10 @@ export function createEngine(opts: EngineOptions): Engine {
     projects: () => projects.list(),
     runTaskIds: () => runs.listTaskIds(),
     findTask: lookup,
-    summaries: (taskId) => runs.summaries(taskId),
+    summaries: (taskId) => runs.loadSummaries(taskId),
     runDir: runDirOf,
-    readChatInfo: (taskId, runId) => runs.readChatInfo(taskId, runId),
-    readTerminalInfo: (taskId, runId) => runs.readTerminalInfo(taskId, runId),
+    readChatInfo: (taskId, runId) => runs.readChatInfoAsync(taskId, runId),
+    readTerminalInfo: (taskId, runId) => runs.readTerminalInfoAsync(taskId, runId),
     remoteRuns: () => new Set(remote.state(false).conversations.filter((c) => c.source !== 'chat' && c.source !== 'terminal').map((c) => c.id)),
     readRun: async (taskId, runId, agentId) => {
       const r = await messages.read(taskId, runId, agentId);
@@ -898,6 +905,7 @@ export function createEngine(opts: EngineOptions): Engine {
     ledger,
     configDirs: opts.historyDirs,
   });
+  runs.onChange = (taskId, runId) => history.taskChanged(taskId, runId);
 
   /**
    * A conversation from outside Looper's runs, and the stand-in a chat or
@@ -1347,28 +1355,40 @@ export function createEngine(opts: EngineOptions): Engine {
   /** How often idle sessions are checked for an expired prompt cache (Settings → Chats). */
   const CACHE_CHECK_MS = 15_000;
   let retentionTimer: NodeJS.Timeout | null = null;
+  let sweeping = false;
+  /** Each task's runs a task at a time, letting the windows go on between them. */
+  const pruneRuns = async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
+      for (const taskId of runs.listTaskIds()) {
+        await new Promise<void>((r) => setImmediate(r));
+        try {
+          // Runs in progress and open chats keep their records and folders.
+          const active = new Set([
+            ...(scheduler.get(taskId)?.runs.map((r) => r.runId) ?? []),
+            ...chats.openIds(),
+            ...terminalRuns.openIds(),
+          ]);
+          const { records, dirs } = await runs.pruneOlderThan(taskId, cutoffMs, active);
+          if (records || dirs) {
+            log.info(`${taskId}: pruned ${records} run records and ${dirs} run folders older than ${settings.runRetentionDays} days`);
+          }
+          const files = await runs.pruneAttachments(taskId, cutoffMs);
+          if (files) log.info(`${taskId}: pruned ${files} attachments older than ${settings.runRetentionDays} days`);
+        } catch (err) {
+          log.error(`run-log prune of ${taskId} failed: ${errMsg(err)}`);
+        }
+      }
+    } finally {
+      sweeping = false;
+    }
+  };
   const sweepRunLogs = () => {
     sweepCompletedTasks();
     sweepRecycleBin();
-    const cutoffMs = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
-    for (const taskId of runs.listTaskIds()) {
-      try {
-        // Runs in progress and open chats keep their records and folders.
-        const active = new Set([
-          ...(scheduler.get(taskId)?.runs.map((r) => r.runId) ?? []),
-          ...chats.openIds(),
-          ...terminalRuns.openIds(),
-        ]);
-        const { records, dirs } = runs.pruneOlderThan(taskId, cutoffMs, active);
-        if (records || dirs) {
-          log.info(`${taskId}: pruned ${records} run records and ${dirs} run folders older than ${settings.runRetentionDays} days`);
-        }
-        const files = runs.pruneAttachments(taskId, cutoffMs);
-        if (files) log.info(`${taskId}: pruned ${files} attachments older than ${settings.runRetentionDays} days`);
-      } catch (err) {
-        log.error(`run-log prune of ${taskId} failed: ${errMsg(err)}`);
-      }
-    }
+    void pruneRuns();
     const logCutoffMs = Date.now() - settings.engineLogRetentionDays * 24 * 60 * 60 * 1000;
     log
       .pruneOlderThan(logCutoffMs)
@@ -1480,10 +1500,17 @@ export function createEngine(opts: EngineOptions): Engine {
       // Neither is needed to show the first window, and checking the projects for git starts a process for each.
       deferredTimer = setTimeout(() => {
         deferredTimer = null;
-        sweepRunLogs();
-        git.checkAll();
-        // The history index, so the first Recent menu (a project's Open Recent Chat, History's drop-down) doesn't wait on reading it.
-        void history.list({ fresh: false, limit: RECENT_CHATS, showRuns: settings.view.history.showRuns, folder: '' }).catch(() => undefined);
+        const later: string[] = [];
+        const time = (name: string, fn: () => unknown) => {
+          const t0 = performance.now();
+          fn();
+          later.push(`${name} ${Math.round(performance.now() - t0)} ms`);
+        };
+        time('sweep', sweepRunLogs);
+        time('git', () => git.checkAll());
+        // The history index and the Recent menus' lists (a project's Open Recent Chat, History's drop-down), so no menu waits on reading them.
+        time('history', () => void history.warm(settings.view.history.showRuns).catch(() => undefined));
+        perfLog.info(`engine | after start: ${later.join(', ')}`);
       }, STARTUP_DEFER_MS);
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
       sessionHub.start();
@@ -1810,6 +1837,7 @@ export function createEngine(opts: EngineOptions): Engine {
       return chats.start(task, { kind: 'compact', from: runId, history, ...(kept ? { harnessId: info.harnessId, settings: info.settings } : {}) });
     },
     historyList: (o, progress) => history.list(o, progress),
+    recentHistory: (projectId) => history.recent(projectId ? `project:${projectId}` : '', settings.view.history.showRuns),
     historySearch: (query, ids) => history.search(query, ids),
     historyRead: (id, agentId) => history.read(id, agentId),
     historyItem: (id) => history.item(id),
@@ -2022,15 +2050,18 @@ export function createEngine(opts: EngineOptions): Engine {
       preventSleep.set(timer);
     },
     preventSleepState: () => preventSleep?.state() ?? { timer: 'off', until: null, active: false },
-    listRuns: (id, limit) => runs.list(id, limit),
-    recentRuns(limit: number, filter: RunFilter): RecentRun[] {
+    listRuns: (id, limit) => runs.listTail(id, limit),
+    async recentRuns(limit: number, filter: RunFilter): Promise<RecentRun[]> {
       const out: RecentRun[] = [];
-      for (const taskId of runs.listTaskIds()) {
+      const listed = runs.listTaskIds().flatMap((taskId) => {
         const task = lookup(taskId);
-        if (!task) continue;
-        const shown = runs.summaries(taskId).filter((r) => runShown(r, filter));
+        return task ? [{ taskId, task }] : [];
+      });
+      const all = await Promise.all(listed.map(({ taskId }) => runs.loadSummaries(taskId)));
+      listed.forEach(({ taskId, task }, i) => {
+        const shown = all[i].filter((r) => runShown(r, filter));
         for (const r of shown.slice(0, limit)) out.push({ ...r, taskId, taskName: task.name });
-      }
+      });
       return out.sort((a, b) => b.startTs.localeCompare(a.startTs)).slice(0, limit);
     },
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),

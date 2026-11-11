@@ -1,7 +1,8 @@
-import { Fragment, useRef } from 'react';
+import { Fragment, lazy, Suspense, useRef } from 'react';
 import type { HostDirEntry } from '../../../shared/remote-access';
 import { Markdown } from '../components/Markdown';
-import { ZoomImage } from '../components/ZoomImage';
+import { CodeBlock } from '../components/ToolContent';
+import { ZoomImage, type ZoomSwipe } from '../components/ZoomImage';
 import { fmtDateTime } from '../format';
 import { groupPlaces } from './dialog-flows';
 import type { FileView, HostBrowser } from './file-flows';
@@ -31,14 +32,50 @@ export const CHECK = (
   </svg>
 );
 
-/** A file shown before it's downloaded: an image fit to the screen that zooms, or a text file's text, Markdown rendered. */
-export function FileViewBody({ view, name }: { view: FileView; name: string }) {
+/** pdf.js is over a megabyte, so it loads the first time a PDF is shown. */
+const PdfPages = lazy(() => import('./PdfPages'));
+
+/** A message's images either side of the shown one. */
+export interface ViewSteps {
+  index: number;
+  count: number;
+  go: (index: number) => void;
+  /** The image a step away, or null while it loads. */
+  src: (step: -1 | 1) => string | null;
+}
+
+/**
+ * A file shown before it's downloaded, as the activity panel shows it: an
+ * image fit to the screen that zooms (and swipes to a message's other images),
+ * a PDF's pages, code in its syntax colors, Markdown formatted, or text.
+ */
+export function FileViewBody({ view, name, steps }: { view: FileView; name: string; steps?: ViewSteps | null }) {
+  const loading = <div className="ph-viewer-note">Loading…</div>;
   let body;
   if (view.error) body = <div className="ph-viewer-note">{view.error}</div>;
-  else if (view.kind === 'image') body = view.url ? <ZoomImage key={view.url} src={view.url} alt={name} /> : <div className="ph-viewer-note">Loading…</div>;
-  else if (view.text === null) body = <div className="ph-viewer-note">Loading…</div>;
-  else body = view.kind === 'markdown' ? <Markdown text={view.text} breaks={false} /> : <pre className="ph-viewer-text">{view.text}</pre>;
-  return <div className={`ph-viewer ph-scroll${view.kind === 'image' ? ' image' : ''}`}>{body}</div>;
+  else if (view.kind === 'image') {
+    const swipe: ZoomSwipe | undefined = steps
+      ? {
+          can: (step) => steps.index + step >= 0 && steps.index + step < steps.count,
+          src: steps.src,
+          go: (step) => steps.go(steps.index + step),
+        }
+      : undefined;
+    body = view.url ? <ZoomImage src={view.url} alt={name} swipe={swipe} /> : loading;
+  } else if (view.kind === 'pdf') {
+    body = view.pdf ? (
+      <Suspense fallback={loading}>
+        <PdfPages data={view.pdf} name={name} />
+      </Suspense>
+    ) : (
+      loading
+    );
+  } else if (view.text === null) body = loading;
+  else if (view.kind === 'markdown') body = <Markdown text={view.text} breaks={false} />;
+  else if (view.kind === 'code') body = <CodeBlock text={view.text} file={name} />;
+  else body = <pre className="ph-viewer-text">{view.text}</pre>;
+  const layout = view.kind === 'image' || view.kind === 'pdf' || view.kind === 'code' ? ` ${view.kind}` : '';
+  return <div className={`ph-viewer ph-scroll${layout}`}>{body}</div>;
 }
 
 /** What a tap on a row does: a folder opens (a push); a file is picked, toggled or named. */

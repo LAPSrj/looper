@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { taskEnv } from '../../shared/projects';
 import type { Settings, Task } from '../../shared/types';
 import { hasPlaceholder, renderTemplate } from '../../shared/template';
+import { spawnOffThread, type OffThreadChild } from '../exec-worker';
 import type { HostKind } from '../host';
 import type { Logger } from '../log';
 import type { SpawnSpec, Target } from '../target';
@@ -319,7 +319,7 @@ export function runCaptured(spec: SpawnSpec, opts: CaptureOpts): Promise<Capture
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    let child: ReturnType<typeof spawn>;
+    let child: OffThreadChild | undefined;
     let onAbort: (() => void) | null = null;
     const finish = (r: Omit<CapturedResult, 'stdout' | 'stderr' | 'timedOut' | 'durationMs'>) => {
       if (settled) return;
@@ -331,7 +331,8 @@ export function runCaptured(spec: SpawnSpec, opts: CaptureOpts): Promise<Capture
     /** Kill the tree, run the caller's cleanup, and force an end if 'close' never comes. */
     const killTree = async (endSignal: string, error: string) => {
       if (settled) return;
-      if (child?.pid) await killHostTree(child.pid);
+      const pid = await child?.spawned;
+      if (pid) await killHostTree(pid);
       try {
         await opts.onKill?.();
       } catch {
@@ -350,7 +351,7 @@ export function runCaptured(spec: SpawnSpec, opts: CaptureOpts): Promise<Capture
     onAbort = () => void killTree('ABORTED', 'stopped');
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      child = spawn(spec.command, spec.args, {
+      child = spawnOffThread(spec.command, spec.args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         env: childEnv(),

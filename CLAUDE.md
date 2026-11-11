@@ -74,6 +74,11 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   `STARTUP_DEFER_MS`), and `perf.log`'s startup lines time each step.
 - **A poll asks whether anything changed before it reads.** The Engine Log
   sends the size it has, and gets text only when the file grew.
+- **A menu reads nothing when it opens.** What it lists is kept current as
+  it changes: the history index works out the Recent menus' chats after each
+  run or chat record (`HistoryService.recent`), and run summaries follow each
+  appended record (`RunSummaries`) instead of reading the run log again, which
+  held the app 64-140 ms for each Dashboard refresh on a 4 MB log.
 - **Expensive results are cached by their input.** Markdown keeps parsed
   messages, so going back to a chat doesn't parse them again.
 - **Windows stay sandboxed and share one renderer process.** The preload uses
@@ -102,7 +107,13 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   images there froze the app for seconds on each chat switch (20-50 ms a
   screenshot, for every image in the Files tab); thumbnails now come from a
   worker (`main/thumbnails.ts`). Read files with `fs.promises`, and put
-  anything that takes more than a few ms in a worker. `npm run perf` fails a
+  anything that takes more than a few ms in a worker. Starting a process
+  holds the thread that starts it (8 ms for an agent's `wsl.exe` most times,
+  485 ms for one and 736 ms for a terminal's console when many were starting),
+  so every process starts from `engine/exec-worker.ts`: `execOffThread` for a
+  command whose output comes back at its end, `spawnOffThread` for one that
+  streams, `spawnPtyOffThread` for a terminal (`tests/perf-rules.test.ts`).
+  Code that kills one by its pid waits for `spawned`. `npm run perf` fails a
   step that holds the main process past its budget (`mainFreezeMs`).
 - **Measure on data shaped like real use.** Real chats keep 1,000 rows, about
   60% of them tool calls holding 1-2 MB; the benchmark's chats (`longChat` in

@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +10,7 @@ import { taskSchemaDoc } from '../../shared/schema-doc';
 import { TaskSchema, type EngineEvent, type Environment, type Harness, type Settings, type Task } from '../../shared/types';
 import { validateTask } from '../../shared/validate';
 import { changedFields, definitionOf, STATUS_FIELDS } from '../../shared/versions';
+import { spawnOffThread, type OffThreadChild } from '../exec-worker';
 import type { HostKind } from '../host';
 import { errMsg, type Logger } from '../log';
 import { runCheck } from '../steps/check';
@@ -90,7 +90,7 @@ class BuilderSession {
   /** Files whose before-state came from codex's own record of its patches (not a best-effort read). */
   private readonly exactBefore = new Set<string>();
   /** Chat: the claude process (one for the whole conversation) or the codex turn running now. */
-  private proc: ChildProcess | null = null;
+  private proc: OffThreadChild | null = null;
   private pty: SessionProc | null = null;
   private terminalBuffer = '';
   private stdoutBuf = '';
@@ -233,7 +233,8 @@ class BuilderSession {
   }
 
   private async killSession(): Promise<void> {
-    const pid = this.proc?.pid ?? (this.pty?.pid || undefined);
+    const proc = this.proc;
+    const ptyPid = this.pty?.pid || undefined;
     this.proc = null;
     if (this.pty) {
       try {
@@ -243,6 +244,7 @@ class BuilderSession {
       }
       this.pty = null;
     }
+    const pid = (proc ? await proc.spawned : undefined) ?? ptyPid;
     if (pid) await killHostTree(pid).catch(() => undefined);
     await this.target.killLeftovers(this.ctx.runId).catch(() => undefined);
   }
@@ -448,7 +450,7 @@ class BuilderSession {
     this.stdoutBuf = '';
     this.stderrTail = '';
     const claude = this.harness.kind === 'claude-code';
-    const child = spawn(spec.command, spec.args, {
+    const child = spawnOffThread(spec.command, spec.args, {
       cwd: this.dir,
       env: childEnv(),
       stdio: [claude ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -662,12 +664,11 @@ class BuilderSession {
       body = parts.join(' ');
     }
     const spec = this.harness.kind === 'codex' ? this.codexLauncher('builder', body) : this.launcher('builder', body);
-    try {
-      this.pty = spawnPty(spec, this.dir);
-    } catch (err) {
+    let failed = false;
+    this.pty = spawnPty(spec, this.dir, (err) => {
+      failed = true;
       this.end(`Couldn't start ${this.harness.name}: ${errMsg(err)}`);
-      return;
-    }
+    });
     // The folder was chosen deliberately, so the CLI's first-use trust dialog
     // is answered for the user, as for a run (unless the harness says not to).
     const claude = this.harness.kind === 'claude-code';
@@ -690,7 +691,7 @@ class BuilderSession {
     if (this.harness.kind === 'codex') this.timers.push(setInterval(() => void this.refreshCodexBefore(), 5000));
     this.pty.onExit(() => {
       this.pty = null;
-      if (!this.closed) this.end('The session ended.');
+      if (!this.closed && !failed) this.end('The session ended.');
     });
     this.setStatus('ready');
   }

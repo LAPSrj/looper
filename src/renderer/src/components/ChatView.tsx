@@ -7,7 +7,7 @@ import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
 import { useSessionsState } from './phone/useSessionsState';
-import { ChatRow, ToolGroup, UserMessage, type RowCtx } from './ChatRows';
+import { ChatRow, systemSelecting, ToolGroup, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows, type ChatItem } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
@@ -136,13 +136,13 @@ function LimitNotice({ state }: { state: ChatState }) {
 }
 
 /** Right-click on a message or tool call: the chat's menu for that row. */
-function showRowMenu(state: ChatState, row: MessageRow): void {
+function showRowMenu(state: ChatState, row: MessageRow, selectText: string | undefined): void {
   const ended = state.status === 'ended';
   const all = [...state.history, ...state.rows];
   const selection = window.getSelection()?.toString() || undefined;
   const index = all.indexOf(row);
   const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
-  const base = { chatId: state.id, taskId: state.taskId, selection, quote: !ended, fork };
+  const base = { chatId: state.id, taskId: state.taskId, selection, quote: !ended, fork, selectText };
   switch (row.kind) {
     case 'prompt':
       window.looper.chat.showContextMenu({
@@ -270,7 +270,11 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   // Stable while the chat is the same one, so the rows don't re-render for what changes around them; the menu reads the chat as it is.
   const latest = useRef(state);
   latest.current = state;
-  const ctx = useMemo<RowCtx>(() => ({ taskId: state.taskId, runId: state.id, onContextMenu: (_e, row) => showRowMenu(latest.current, row) }), [state.taskId, state.id]);
+  const selectText = useSelectText(id);
+  const ctx = useMemo<RowCtx>(
+    () => ({ taskId: state.taskId, runId: state.id, onContextMenu: (e, row) => showRowMenu(latest.current, row, selectText(e)) }),
+    [state.taskId, state.id, selectText],
+  );
   const { expandThinking } = useChatsSettings();
   const allHistory = useMemo(() => groupRows(state.history, expandThinking), [state.history, expandThinking]);
   const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
@@ -351,7 +355,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           }}
           onContextMenu={(e) => {
             const selection = window.getSelection()?.toString();
-            if (!selection) return;
+            if (!selection || systemSelecting(e)) return;
             e.preventDefault();
             window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection, quote: !ended });
           }}

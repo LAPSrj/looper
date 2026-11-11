@@ -103,6 +103,11 @@ export class AxisDrag {
     return this.claimed;
   }
 
+  /** px/ms along the drag's direction at the last move. */
+  get speed(): number {
+    return this.velocity;
+  }
+
   begin(x: number, y: number, t: number): void {
     this.s = { x, y, t };
     this.last = null;

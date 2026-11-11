@@ -57,15 +57,16 @@ action mark in a corner.
 - The other marks are the stop square, fast-forward, the circular arrow
   (Restart Agent) and the small bubble at the bottom-right, and the X at the
   top-right for Close.
-- Leave a gap of about 1.5 between the mark and the base. Either cut the base
-  with a mask (a black circle of radius 4.3 at 12,12 for the plus, as
-  `newProject` does), or draw the base's parts clear of the mark (as `newTask`
-  does).
+- Leave a gap of about 1.5 between the mark and the base by drawing the base's
+  parts clear of the mark. For the plus, the gap is a circle of radius 4.3 at
+  12,12, and each line of the base ends 0.7 (half the stroke) before it, so
+  its round cap reaches the gap's edge (`bubbleClear`, `newProject`).
+- Don't cut the base with a mask. WebKit keeps a mask at the size it was
+  first drawn, and an iOS menu grows out of its button, so a masked icon in a
+  menu showed only its top-left corner.
 - When the mark covers most of a part of the base, leave that part out
   instead of keeping a stub that touches the mark. `newTask` drops its last
   row's line and shortens the second.
-- Give every mask its own id (`ico-cut-…`). The page finds masks by id, so two
-  icons with the same id and different cuts would both draw with one of them.
 
 ## Keep shapes apart
 

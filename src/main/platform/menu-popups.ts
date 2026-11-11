@@ -22,6 +22,8 @@ export interface MenuLevelLayout {
   width: number;
   height: number;
   tops: Record<number, number>;
+  /** Sent back once the window is in place for this layout: its page keeps the menu hidden until then. */
+  seq: number;
 }
 
 /** The room around a menu in its window, for its shadow. MenuLevelApp draws the menu this far in. */
@@ -129,7 +131,8 @@ function hideFrom(depth: number): void {
   for (let d = depth; d < levels.length; d++) {
     const level = levels[d];
     if (!level || level.win.isDestroyed()) continue;
-    if (level.shown) park(level);
+    // Shrunk once its page has drawn it empty (menuLevelLayout(null)).
+    if (level.shown) conceal(level);
     level.shown = false;
     level.layout = null;
     send(level, null);
@@ -143,9 +146,18 @@ function hideFrom(depth: number): void {
  * window has its menu drawn as it moves into place.
  */
 function park(level: Level): void {
+  conceal(level);
   const { x, y } = level.win.getBounds();
-  level.win.setIgnoreMouseEvents(true);
   level.win.setBounds({ x, y, width: 1, height: 1 });
+}
+
+/**
+ * Gone from the screen at once: its page shares the windows' thread, and while that's busy the page can't draw it
+ * empty. Shrunk before it had, the window went on showing its menu's corner.
+ */
+function conceal(level: Level): void {
+  level.win.setOpacity(0);
+  level.win.setIgnoreMouseEvents(true);
 }
 
 function closeAll(): void {
@@ -154,10 +166,14 @@ function closeAll(): void {
   for (const level of levels.splice(0)) if (level && !level.win.isDestroyed()) level.win.destroy();
 }
 
-/** A level window's page is ready (null), or has laid its menu out, which places the window. */
+/** A level window's page is ready or has drawn no menu since its last closed (null), or has laid its menu out, which places the window. */
 export function menuLevelLayout(from: unknown, depth: number, layout: MenuLevelLayout | null): void {
   const level = levels[depth];
   if (!level || level.win.webContents !== from) return;
+  if (!layout && level.ready) {
+    if (!level.shown) park(level);
+    return;
+  }
   if (!layout) {
     level.ready = true;
     // `transparent` alone leaves it opaque white while its page shares the windows' process (process-per-site).
@@ -204,9 +220,11 @@ function place(depth: number): void {
     if (y + height > work.y + work.height) y = Math.max(work.y, work.y + work.height - height);
   }
   level.win.setBounds({ x: x - MENU_PAD, y: y - MENU_PAD, width: width + 2 * MENU_PAD, height: height + 2 * MENU_PAD });
+  if (!level.win.webContents.isDestroyed()) level.win.webContents.send('ui:event', { type: 'menu-level-placed', seq: level.layout.seq });
   if (!level.shown) {
     if (level.win.getParentWindow() !== owner) level.win.setParentWindow(owner);
     level.win.setIgnoreMouseEvents(false);
+    level.win.setOpacity(1);
     level.shown = true;
   }
   if (levels[depth + 1]?.layout) place(depth + 1);

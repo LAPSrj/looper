@@ -60,6 +60,7 @@ const RemoteAccessRenameApp = lazy(() => import('./RemoteAccessApps').then((m) =
 const RemoteAccessSettingsApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessSettingsApp })));
 const RemoteAccessSetupApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessSetupApp })));
 const RunOptionsApp = lazy(() => import('./RunOptionsApp').then((m) => ({ default: m.RunOptionsApp })));
+const SelectWindowApp = lazy(() => import('./SelectWindowApp').then((m) => ({ default: m.SelectWindowApp })));
 const SendToSessionsApp = lazy(() => import('./SendToSessionsApp').then((m) => ({ default: m.SendToSessionsApp })));
 const SessionsApp = lazy(() => import('./SessionsApp').then((m) => ({ default: m.SessionsApp })));
 const SettingsApp = lazy(() => import('./SettingsApp').then((m) => ({ default: m.SettingsApp })));
@@ -163,6 +164,7 @@ function pickRoot() {
   if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} single={!!sessionsMatch[2]} />;
   if (sendToSessionsMatch) return <SendToSessionsApp group={sendToSessionsMatch[1] ? decodeURIComponent(sendToSessionsMatch[1]) : undefined} />;
   if (hash === 'history') return <HistoryApp />;
+  if (hash === 'select-window') return <SelectWindowApp />;
   if (terminalMatch) {
     return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
   }

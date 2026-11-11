@@ -149,6 +149,11 @@ function DesktopSelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
   });
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ key: string; pos: 'before' | 'after' } | null>(null);
+  // React's autoFocus focuses only form controls, so a listbox is focused here.
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (autoFocus) list.current?.focus({ preventScroll: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dragProps = (key: string): LiHTMLAttributes<HTMLLIElement> => {
     if (!onReorder) return {};
@@ -184,11 +189,11 @@ function DesktopSelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
 
   return (
     <ul
+      ref={list}
       className="env-list boxed"
       role="listbox"
       aria-label={label}
       tabIndex={0}
-      autoFocus={autoFocus}
       onKeyDown={nav}
       onContextMenu={hasMenu ? (e) => listContextMenu(e, index, (i) => openMenu(items[i], i)) : undefined}
       aria-activedescendant={index >= 0 ? `${idPrefix}-${selectedKey}` : undefined}

@@ -18,6 +18,21 @@ describe('performance rules (CLAUDE.md, Performance)', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('the main process starts processes only from the process worker', () => {
+    // Starting one holds the thread that starts it (485 ms for an agent, 736 ms for a console when many were
+    // starting), and on Windows the main process's thread takes every window's input.
+    const SRC = path.join(__dirname, '..', 'src');
+    const offenders = ['engine', 'main']
+      .flatMap((d) => files(path.join(SRC, d), /\.ts$/))
+      .filter((f) => path.basename(f) !== 'exec-worker.ts')
+      .filter((f) => {
+        const text = fs.readFileSync(f, 'utf8');
+        return /import\s+(?!type\b)[^;]*from\s+'(node:)?child_process'/.test(text) || /require\(\s*'(node:)?child_process'\s*\)|require\(\s*'node-pty'\s*\)/.test(text);
+      })
+      .map((f) => path.relative(SRC, f).replace(/\\/g, '/'));
+    expect(offenders).toEqual([]);
+  });
+
   it('no stylesheet puts :has() on the whole document', () => {
     // html:has(…) made every inserted element recheck the whole document's style.
     const offenders = files(RENDERER, /\.css$/).flatMap((f) =>

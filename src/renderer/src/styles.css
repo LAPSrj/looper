@@ -1428,6 +1428,9 @@ html:not(.phone-window) .session-group ~ .session-row {
 .chat-file .link {
   font-size: var(--font-body);
 }
+.chat-remove-glyph {
+  display: none;
+}
 
 /* A Looper terminal window: the session fills it. */
 .terminal-session {
@@ -2841,11 +2844,18 @@ button:focus-visible,
 }
 .diff-num {
   flex: none;
-  width: 44px;
+  box-sizing: content-box;
+  min-width: 2ch;
   padding: 0 8px;
   text-align: right;
   color: var(--code-muted);
   user-select: none;
+}
+.diff-num.old {
+  width: calc(var(--diff-old-digits) * 1ch);
+}
+.diff-num.new {
+  width: calc(var(--diff-new-digits) * 1ch);
 }
 .diff-mark {
   flex: none;
@@ -5398,6 +5408,18 @@ html.phone-window .workflow-text {
   align-items: center;
   justify-content: center;
   background: var(--bg-2);
+}
+.ws-viewer-body.pdf {
+  display: flex;
+  padding: 0;
+}
+.ws-viewer-body.code {
+  padding: 0;
+}
+.ws-viewer-body.code .code-text {
+  flex: none;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 .ws-viewer-image {
   max-width: 100%;

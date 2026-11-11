@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execOffThread } from '../exec-worker';
 import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
 import {
   DELEGATE_BUSY_VAR,
@@ -413,13 +413,7 @@ export class BashTarget implements Target {
   private runShell(script: string, timeoutMs: number): Promise<void> {
     // `--` hands the line to the distro's shell, which would expand the script's `$` before bash -c sees it.
     const full = [...this.wslPrefix('-e'), 'bash', '-c', script];
-    return new Promise((resolve) => {
-      try {
-        execFile(full[0], full.slice(1), { timeout: timeoutMs, windowsHide: true }, () => resolve());
-      } catch {
-        resolve();
-      }
-    });
+    return execOffThread(full[0], full.slice(1), { timeout: timeoutMs, windowsHide: true }).then(() => undefined);
   }
 
   async killLeftovers(runId: string): Promise<void> {

@@ -1,6 +1,6 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 import { contextText, type ChatContext } from '../../../shared/chat';
-import { waitedText, type SessionSummary, type SessionsState, type UsageLimits } from '../../../shared/sessions';
+import { waitedText, type SessionSummary, type SessionsState, type UsageLimits, type UsageWindow } from '../../../shared/sessions';
 
 /** The usage ring turns to its warning color from here, and to its critical color from the next. */
 export const USAGE_WARNING = 0.8;
@@ -85,10 +85,34 @@ export function sessionFacts(s: SessionFactsInput, now: number, clock: (ts: numb
   return facts;
 }
 
-/** The Usage button's accessible name: the numbers its icon draws. */
-export function usageLabel(context: ChatContext | undefined, limits: UsageLimits): string {
+export const FIVE_HOUR_MS = 5 * 3_600_000;
+export const WEEK_MS = 7 * 24 * 3_600_000;
+
+/** How much of a usage window's time has passed (0..1), from when it resets. */
+export function windowPassed(w: UsageWindow, spanMs: number, now: number): number {
+  return Math.min(1, Math.max(0, 1 - (w.resetsAt - now) / spanMs));
+}
+
+/** How much of a prompt cache's time has passed (0..1); null once it has expired. */
+export function cachePassed(cache: { from: number; until: number }, now: number): number | null {
+  if (now >= cache.until) return null;
+  const span = cache.until - cache.from;
+  return span > 0 ? Math.max(0, (now - cache.from) / span) : 0;
+}
+
+const resetText = (w: UsageWindow, now: number): string => {
+  const left = w.resetsAt - now;
+  if (left < 86_400_000) return left < 60_000 ? 'resets now' : `resets in ${waitedText(left)}`;
+  const d = Math.floor(left / 86_400_000), h = Math.floor((left % 86_400_000) / 3_600_000);
+  return `resets in ${d} d${h ? ` ${h} h` : ''}`;
+};
+
+/** The Usage button's accessible name: what its icon draws. */
+export function usageLabel(context: ChatContext | undefined, limits: UsageLimits, cacheUntil: number | undefined, now: number): string {
   const parts: string[] = [];
   if (context) parts.push(contextText(context));
-  if (limits.fiveHour) parts.push(`5-hour limit ${percent(limits.fiveHour.used)}`);
-  return parts.length ? `Usage: ${parts.join(', ')}` : 'Usage';
+  if (limits.fiveHour) parts.push(`5-hour limit ${percent(limits.fiveHour.used)}, ${resetText(limits.fiveHour, now)}`);
+  if (limits.sevenDay) parts.push(`weekly limit ${percent(limits.sevenDay.used)}, ${resetText(limits.sevenDay, now)}`);
+  if (cacheUntil !== undefined) parts.push(`prompt cache ${cacheText(cacheUntil, now).toLowerCase()}`);
+  return parts.length ? `Usage: ${parts.join('; ')}` : 'Usage';
 }

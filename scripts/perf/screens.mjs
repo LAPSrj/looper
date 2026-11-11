@@ -48,6 +48,7 @@ export const WINDOWS = [
   { name: 'Task note', hash: 'note-editor/{task}', size: [600, 480] },
   { name: 'Folder note', hash: 'note-editor-folder/{folder}', size: [600, 480] },
   { name: 'Move to Folder', hash: 'move-to-folder/{task}', size: [420, 480] },
+  { name: 'Select Window', hash: 'select-window', size: [360, 300], contentSize: true, fits: true },
   { name: 'New Folder', hash: 'folder-new', size: [420, 300], fits: true },
   { name: 'Rename Folder', hash: 'folder-rename/{folder}', size: [420, 240], fits: true },
   { name: 'New Project Folder', hash: 'project-folder-new', size: [420, 300], fits: true },

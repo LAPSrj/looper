@@ -689,6 +689,14 @@
     "heapMb": 26,
     "rendererMb": 102
   },
+  "window: Select Window": {
+    "readyMs": 350,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 62,
+    "heapMb": 23,
+    "rendererMb": 96
+  },
   "window: Send Guidance": {
     "readyMs": 290,
     "longestMs": 100,

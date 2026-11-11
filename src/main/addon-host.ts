@@ -1,7 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { z } from 'zod';
+import { spawnOffThread, type OffThreadChild } from '../engine/exec-worker';
 import type { HostKind } from '../engine/host';
 import { errMsg, type Logger } from '../engine/log';
 import { childEnv, stripShellNoise } from '../engine/steps/common';
@@ -119,7 +119,7 @@ interface Pending {
 class AddonProcess {
   status: AddonStatus = 'starting';
   error?: string;
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: OffThreadChild | null = null;
   private buf = '';
   private stderrTail = '';
   private stderrBuf = '';
@@ -165,9 +165,9 @@ class AddonProcess {
       return;
     }
     this.d.log.info(`addon ${m.id}: starting ${line.command} ${line.args.join(' ')}`);
-    let child: ChildProcessWithoutNullStreams;
+    let child: OffThreadChild;
     try {
-      child = spawn(line.command, line.args, {
+      child = spawnOffThread(line.command, line.args, {
         cwd: line.cwd,
         env: addonEnv(run, this.d.host, childEnv()),
         windowsHide: true,
@@ -179,14 +179,14 @@ class AddonProcess {
     }
     this.child = child;
     const started = performance.now();
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d: string) => this.onStdout(d));
-    child.stderr.on('data', (d: string) => {
+    child.stdout!.setEncoding('utf8');
+    child.stderr!.setEncoding('utf8');
+    child.stdout!.on('data', (d: string) => this.onStdout(d));
+    child.stderr!.on('data', (d: string) => {
       this.stderrTail = (this.stderrTail + d).slice(-STDERR_TAIL);
       this.onStderr(d);
     });
-    child.stdin.on('error', () => undefined);
+    child.stdin!.on('error', () => undefined);
     child.on('error', (e) => this.exited(child, null, e.message));
     child.on('exit', (code) => this.exited(child, code));
     void this.request('initialize', { protocol: 1, looper: this.d.appVersion, host: this.d.host })
@@ -211,9 +211,9 @@ class AddonProcess {
     this.stopping = true;
     this.child = null;
     this.failPending(new Error(`${this.manifest.name} stopped.`));
-    child.stdin.end();
+    child.stdin!.end();
     const timer = setTimeout(() => {
-      if (child.exitCode === null && child.pid) void killHostTree(child.pid);
+      if (child.exitCode === null) void child.spawned.then((pid) => (pid ? killHostTree(pid) : undefined));
     }, STOP_GRACE_MS);
     timer.unref();
     child.once('exit', () => clearTimeout(timer));
@@ -268,7 +268,7 @@ class AddonProcess {
         reject(new Error(`${this.manifest.name} didn't answer within ${REQUEST_TIMEOUT_MS / 1000} s.`));
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+      child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
     return { id, done };
   }
@@ -333,14 +333,14 @@ class AddonProcess {
       this.d.log.warn(`addon ${this.manifest.id}: unknown method ${msg.method}`);
       // A request (it has an id) is owed an answer.
       if (msg.id !== undefined && this.child) {
-        this.child.stdin.write(
+        this.child.stdin!.write(
           `${JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `Looper has no method "${msg.method}"` } })}\n`,
         );
       }
     }
   }
 
-  private exited(child: ChildProcessWithoutNullStreams, code: number | null, spawnError?: string): void {
+  private exited(child: OffThreadChild, code: number | null, spawnError?: string): void {
     if (this.child !== child && !this.stopping) return;
     if (this.child === child) this.child = null;
     if (this.stderrBuf) {

@@ -21,7 +21,7 @@ export interface TerminalSessionsDeps {
   emit: (e: EngineEvent) => void;
   log: Logger;
   /** Tests replace the pty. */
-  spawn?: (spec: SpawnSpec, cwd: string) => SessionProc;
+  spawn?: (spec: SpawnSpec, cwd: string, onError: (e: Error) => void) => SessionProc;
 }
 
 interface Session {
@@ -60,7 +60,14 @@ export class TerminalSessions {
     const { spec, cwd, launcher } = prepare(id);
     let proc: SessionProc;
     try {
-      proc = (this.d.spawn ?? spawnPty)(spec, cwd);
+      proc = (this.d.spawn ?? spawnPty)(spec, cwd, (err) => {
+        // The window shows why, as the session ends right after.
+        this.d.log.error(`[${taskId}] cannot start terminal session ${id}: ${err.message}`);
+        if (this.sessions.get(id) !== session) return;
+        const note = noteLine(`Couldn't start: ${err.message}`);
+        session.output = (session.output + note).slice(-OUTPUT_BYTES);
+        this.d.emit({ type: 'terminal:data', id, data: note });
+      });
     } catch (err) {
       removeFile(launcher);
       throw err;

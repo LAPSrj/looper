@@ -10,20 +10,29 @@ const app = { about: vi.fn(), settings: vi.fn() };
 describe('openWindowItems', () => {
   const win = (title: string) => ({ getTitle: () => title });
 
-  it('lists the windows alphabetically with numbers as access keys, and escapes & in a title', () => {
-    const items = openWindowItems([win('Tasks'), win('R&D'), win('Chats')], () => {});
-    expect(items.map((i) => i.label)).toEqual(['&1 Chats', '&2 R&&D', '&3 Tasks']);
+  it('lists the windows in the order given (the order they opened), numbered as access keys, and escapes & in a title', () => {
+    const items = openWindowItems([win('Tasks'), win('R&D'), win('Chats')], () => {}, () => {});
+    expect(items.map((i) => i.label)).toEqual(['&1 Tasks', '&2 R&&D', '&3 Chats']);
     expect(items.every((i) => i.platforms?.join() === 'desktop')).toBe(true);
   });
 
-  it('gives no access key past 9, and a pick shows its window', () => {
+  it('names nine windows and no More Windows… with nine open; a pick shows its window', () => {
     const show = vi.fn();
-    const windows = Array.from({ length: 10 }, (_v, i) => win(`W${String(i).padStart(2, '0')}`));
-    const items = openWindowItems(windows, show);
-    expect(items[8].label).toBe('&9 W08');
-    expect(items[9].label).toBe('10 W09');
+    const windows = Array.from({ length: 9 }, (_v, i) => win(`W${i + 1}`));
+    const items = openWindowItems(windows, show, () => {});
+    expect(items.map((i) => i.label)).toEqual(windows.map((w, i) => `&${i + 1} ${w.getTitle()}`));
     (items[0].click as () => void)();
     expect(show).toHaveBeenCalledWith(windows[0]);
+  });
+
+  it('names the first nine and adds More Windows… past them, which opens over the window whose menu it was', () => {
+    const more = vi.fn();
+    const windows = Array.from({ length: 12 }, (_v, i) => win(`W${i + 1}`));
+    const items = openWindowItems(windows, () => {}, more);
+    expect(items.map((i) => i.label)).toEqual([...windows.slice(0, 9).map((w, i) => `&${i + 1} ${w.getTitle()}`), '&More Windows…']);
+    const from = {} as Electron.BaseWindow;
+    (items[9].click as (item: unknown, w: unknown) => void)({}, from);
+    expect(more).toHaveBeenCalledWith(from);
   });
 });
 
@@ -32,7 +41,7 @@ describe('macMenuBar', () => {
     { id: 'file', label: '&File', submenu: [{ label: '&New' }, { type: 'separator' }, { id: 'settings', label: 'S&ettings', platforms: ['mobile'] }, { id: 'templates', label: 'Temp&lates', platforms: ['mobile'] }] },
     { id: 'view', label: '&View', submenu: [{ label: 'R&&D &Tools' }] },
     { id: 'tools', label: 'T&ools', submenu: [{ id: 'settings', label: 'S&ettings' }, { label: 'Temp&lates' }] },
-    { id: 'window', label: '&Window', submenu: [{ label: '&History' }, { type: 'separator' }, ...openWindowItems([{ getTitle: () => 'Looper' }], () => {})] },
+    { id: 'window', label: '&Window', submenu: [{ label: '&History' }, { type: 'separator' }, ...openWindowItems([{ getTitle: () => 'Looper' }], () => {}, () => {})] },
     { id: 'help', label: '&Help', submenu: [{ label: '&Instructions' }, { type: 'separator' }, { id: 'about', label: '&About Looper' }] },
   ];
 

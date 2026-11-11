@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execOffThread } from './exec-worker';
 import type { PowerOps } from './rest';
 
 /**
@@ -16,13 +16,10 @@ import type { PowerOps } from './rest';
 const TASK_PATH = '\\Looper\\';
 const TASK_NAME = 'Wake';
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) reject(new Error(String(stderr).trim() || err.message));
-      else resolve(String(stdout));
-    });
-  });
+async function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  const { error, stdout, stderr } = await execOffThread(cmd, args, { timeout: timeoutMs, windowsHide: true });
+  if (error) throw new Error(stderr.trim() || error.message);
+  return stdout;
 }
 
 function ps(script: string, timeoutMs = 60_000): Promise<string> {

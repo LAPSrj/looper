@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execOffThread } from './exec-worker';
 import type { Environment, Harness } from '../shared/types';
 import type { DiscoveredModel } from '../shared/model-update';
 import { DEFAULT_SHELL } from '../shared/environments';
@@ -49,23 +49,14 @@ export function runProbe(env: Environment, host: HostKind, script: string): Prom
       env.kind === 'wsl' ? (env.distro ? ['wsl.exe', '-d', env.distro, '-e'] : ['wsl.exe', '-e']) : [];
     argv = [...prefix, ...shellParts, script];
   }
-  return new Promise((resolve, reject) => {
-    execFile(
-      argv[0],
-      argv.slice(1),
-      { timeout: PROBE_TIMEOUT_MS, maxBuffer: PROBE_MAX_BUFFER, windowsHide: true },
-      (err, stdout, stderr) => {
-        if (err) {
-          const e = err as NodeJS.ErrnoException;
-          if (e.code === 'ENOENT') reject(new Error(`${argv[0]} is not available on this machine`));
-          else if (err.killed) reject(new Error(`no answer after ${PROBE_TIMEOUT_MS / 1000}s`));
-          else reject(new Error(stderrSummary(String(stderr ?? ''), side) || `probe exited with code ${e.code ?? '?'}`));
-          return;
-        }
-        resolve(String(stdout));
-      },
-    );
-  });
+  return execOffThread(argv[0], argv.slice(1), { timeout: PROBE_TIMEOUT_MS, maxBuffer: PROBE_MAX_BUFFER, windowsHide: true }).then(
+    ({ error, stdout, stderr }) => {
+      if (!error) return stdout;
+      if (error.code === 'ENOENT') throw new Error(`${argv[0]} is not available on this machine`);
+      if (error.killed) throw new Error(`no answer after ${PROBE_TIMEOUT_MS / 1000}s`);
+      throw new Error(stderrSummary(stderr, side) || `probe exited with code ${error.code ?? '?'}`);
+    },
+  );
 }
 
 /** `export K=V; ...` / `$env:K = 'V'; ...` prefix carrying the harness's env vars. */

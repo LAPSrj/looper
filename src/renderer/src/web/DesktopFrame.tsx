@@ -1,5 +1,7 @@
 import {
   Fragment,
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -22,6 +24,7 @@ import { filterLabel, groupPlaces, HOST_COMPUTER, messageResult } from './dialog
 import { useFileDialog, usePathRequest, type FileView, type HostBrowser, type LocalMessage } from './file-flows';
 import { Markdown } from '../components/Markdown';
 import { Tabs } from '../components/Tabs';
+import { CodeBlock } from '../components/ToolContent';
 import { CheckboxField, Field } from '../components/ui';
 import { WindowActions } from '../components/WindowActions';
 import { PLACE_ICONS } from './places';
@@ -786,12 +789,26 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
   );
 }
 
-/** An image, or a text file (Markdown rendered), shown before it's downloaded. */
+/** pdf.js is over a megabyte, so it loads the first time a PDF is shown. */
+const PdfPages = lazy(() => import('./PdfPages'));
+
+/** A file shown before it's downloaded, as the activity panel shows it: an image, a PDF's pages, code in its syntax colors, Markdown formatted, or text. */
 function FileViewBody({ view, name }: { view: FileView; name: string }) {
+  const loading = <div className="muted ws-viewer-note">Loading…</div>;
   if (view.error) return <div className="muted ws-viewer-note">{view.error}</div>;
-  if (view.kind === 'image') return view.url ? <img className="ws-viewer-image" src={view.url} alt={name} /> : <div className="muted ws-viewer-note">Loading…</div>;
-  if (view.text === null) return <div className="muted ws-viewer-note">Loading…</div>;
-  return view.kind === 'markdown' ? <Markdown text={view.text} breaks={false} /> : <pre className="ws-viewer-text">{view.text}</pre>;
+  if (view.kind === 'image') return view.url ? <img className="ws-viewer-image" src={view.url} alt={name} /> : loading;
+  if (view.kind === 'pdf')
+    return view.pdf ? (
+      <Suspense fallback={loading}>
+        <PdfPages data={view.pdf} name={name} />
+      </Suspense>
+    ) : (
+      loading
+    );
+  if (view.text === null) return loading;
+  if (view.kind === 'markdown') return <Markdown text={view.text} breaks={false} />;
+  if (view.kind === 'code') return <CodeBlock text={view.text} file={name} />;
+  return <pre className="ws-viewer-text">{view.text}</pre>;
 }
 
 /** A folder or file on the host computer the user asked to see (Open Working Directory, an attachment clicked…). */
@@ -807,7 +824,7 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
     const steps = p.steps;
     return (
       <ShellDialog title={p.name} width={900} height={680} className="ws-viewer" onClose={p.close}>
-        <div ref={viewer} className={`ws-viewer-body${p.view.kind === 'image' ? ' image' : ''}`} tabIndex={0}>
+        <div ref={viewer} className={`ws-viewer-body${['image', 'pdf', 'code'].includes(p.view.kind) ? ` ${p.view.kind}` : ''}`} tabIndex={0}>
           <FileViewBody view={p.view} name={p.name} />
         </div>
         <WindowActions

@@ -1,3 +1,4 @@
+import { editingIn, keyboardUp, tallestTracker } from '../../web/keyboard-up';
 import { isTablet } from '../../web/nav-stack';
 import { isPhone } from '../../web/page-nav';
 
@@ -36,10 +37,11 @@ function track(): void {
     if (root.classList.contains('keyboard-up')) revealFormRow();
   });
   let shownInset = 0;
+  const tallestAt = tallestTracker();
   const update = () => {
     // html.tablet: an iPad or Android tablet (the screen's, not this iframe's, size), for its readable widths.
     root.classList.toggle('tablet', isTablet({ width: top.innerWidth, height: top.innerHeight }));
-    const up = top.innerHeight - vv.height > 120;
+    const up = keyboardUp(tallestAt(top.innerWidth, top.innerHeight), vv.height, editingIn(document));
     // Only the keyboard counts: a sheet's iframe sliding in also reaches below the screen for a moment.
     const frame = window.frameElement as HTMLElement | null;
     const bottom = frame ? frame.getBoundingClientRect().bottom : window.innerHeight;

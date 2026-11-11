@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
 import type { Settings, Task } from '../shared/types';
 import { watcherOf } from '../shared/types';
+import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import { taskEnv } from '../shared/projects';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
@@ -57,7 +57,7 @@ interface Entry {
   /** Live-updatable: a debounce change never respawns the watcher. */
   debounceMs: number;
   target: Target | null;
-  child: ChildProcess | null;
+  child: OffThreadChild | null;
   /** Each spawn gets a number so a stale exit event cannot restart the current child. */
   gen: number;
   startedAt: number;
@@ -165,7 +165,7 @@ export class WatcherPool {
       const child = entry.child;
       entry.child = null;
       entry.gen += 1;
-      if (child?.pid) void killHostTree(child.pid);
+      if (child) void child.spawned.then((pid) => (pid ? killHostTree(pid) : undefined));
       this.setState(entry, 'restarting');
     }
   }
@@ -223,7 +223,7 @@ export class WatcherPool {
     const watcher = watcherOf(task);
     if (!watcher) return;
     const gen = ++entry.gen;
-    let child: ChildProcess;
+    let child: OffThreadChild;
     try {
       const watchDir = path.join(this.d.dataDir, 'tasks', task.id, 'watcher');
       ensureDir(watchDir);
@@ -243,7 +243,7 @@ export class WatcherPool {
         vars: {},
       };
       const { spec } = writeLauncher(ctx, 'watcher', watcher.command);
-      child = spawn(spec.command, spec.args, {
+      child = spawnOffThread(spec.command, spec.args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         env: childEnv(),
@@ -257,7 +257,7 @@ export class WatcherPool {
     entry.stdoutBuf = '';
     entry.stderrTail = '';
     entry.envOutput = false;
-    this.d.log.info(`[${entry.taskId}] watcher started (pid ${child.pid ?? '?'})`);
+    child.once('spawn', () => this.d.log.info(`[${entry.taskId}] watcher started (pid ${child.pid})`));
     this.setState(entry, 'watching');
     child.stdout?.on('data', (d: Buffer) => this.onStdout(entry, d.toString('utf8')));
     child.stderr?.on('data', (d: Buffer) => {
@@ -391,7 +391,8 @@ export class WatcherPool {
     const child = entry.child;
     entry.child = null;
     try {
-      if (child?.pid) await killHostTree(child.pid);
+      const pid = await child?.spawned;
+      if (pid) await killHostTree(pid);
       await entry.target?.killLeftovers(watchRunId(entry.taskId));
     } catch (e) {
       this.d.log.warn(`[${entry.taskId}] cannot kill the watcher: ${errMsg(e)}`);

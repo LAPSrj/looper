@@ -192,22 +192,54 @@ export function groupPlaces(entries: HostDirEntry[]): { heading: string | null; 
 
 // ---------- the file viewer ----------
 
-export type ViewerKind = 'image' | 'text' | 'markdown';
+export type ViewerKind = 'image' | 'pdf' | 'markdown' | 'code' | 'text';
 
-/** How a file opened on the device shows in the app itself; null: it doesn't (Open on Host Computer or Download). */
-export function viewerKind(name: string): ViewerKind | null {
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+const TEXT_EXTS = ['txt', 'text', 'log', 'out', 'err', 'csv', 'tsv', 'diff', 'patch', 'lock', 'properties'];
+const TEXT_NAMES = ['dockerfile', 'makefile', 'license', 'readme', 'changelog', '.gitignore', '.gitattributes', '.editorconfig', '.npmrc', '.nvmrc', '.env'];
+
+/**
+ * How a file opened on the device shows in the app itself, as the activity
+ * panel shows it; null: it doesn't (Open on Host Computer or Download).
+ * `isCode` says whether the highlighter colors the file.
+ */
+export function viewerKind(name: string, isCode: (name: string) => boolean): ViewerKind | null {
   const ext = extensionOf(name);
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return 'image';
+  if (IMAGE_EXTS.includes(ext)) return 'image';
+  if (ext === 'pdf') return 'pdf';
   if (ext === 'md' || ext === 'markdown') return 'markdown';
-  if (ext === 'txt') return 'text';
+  if (isCode(name)) return 'code';
+  if (TEXT_EXTS.includes(ext) || TEXT_NAMES.includes(name.toLowerCase())) return 'text';
   return null;
 }
 
 /** The largest file the viewer reads in, by kind. */
-export const VIEWER_MAX_BYTES: Record<ViewerKind, number> = { image: 25 * 1024 * 1024, text: 5 * 1024 * 1024, markdown: 5 * 1024 * 1024 };
+export const VIEWER_MAX_BYTES: Record<ViewerKind, number> = {
+  image: 25 * 1024 * 1024,
+  pdf: 50 * 1024 * 1024,
+  markdown: 5 * 1024 * 1024,
+  code: 5 * 1024 * 1024,
+  text: 5 * 1024 * 1024,
+};
 
 /** An <img>'s type for an image read as bytes (the download comes as application/octet-stream; an SVG needs its own). */
 export function imageType(name: string): string {
   const ext = extensionOf(name);
   return ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+}
+
+/** A file's type by its name, so a shared file is offered as what it is (Save Image for a picture). */
+export function fileType(name: string): string {
+  const ext = extensionOf(name);
+  if (IMAGE_EXTS.includes(ext)) return imageType(name);
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'json') return 'application/json';
+  if (ext === 'md' || ext === 'markdown') return 'text/markdown';
+  if (ext === 'csv') return 'text/csv';
+  if (ext === 'html' || ext === 'htm') return 'text/html';
+  if (ext === 'txt' || ext === 'log') return 'text/plain';
+  if (ext === 'heic' || ext === 'heif') return `image/${ext}`;
+  if (ext === 'mp4' || ext === 'mov') return ext === 'mov' ? 'video/quicktime' : 'video/mp4';
+  if (ext === 'zip') return 'application/zip';
+  return 'application/octet-stream';
 }

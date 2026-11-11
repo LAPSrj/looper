@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { onUi } from '../events';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
 import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
@@ -134,6 +135,18 @@ function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemov
  * its default app); then the commands the user ran. `onStop`: the message box's
  * Stop under a running command; `files`: where a saved output opens.
  */
+/** An attachment's Remove link; a phone's message box draws it as the × badge on the attachment's corner, as Messages does. */
+function RemoveButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button className="link chat-remove" aria-label={`Remove ${name}`} onClick={onClick}>
+      <span className="chat-remove-text">Remove</span>
+      <svg className="chat-remove-glyph" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+        <path d="M2 2l6 6M8 2l-6 6" />
+      </svg>
+    </button>
+  );
+}
+
 export function AttachmentList({
   items,
   onRemove,
@@ -155,11 +168,7 @@ export function AttachmentList({
           {images.map((a) => (
             <span key={a.path} className="chat-thumb-wrap">
               <Thumbnail a={a} />
-              {onRemove && (
-                <button className="link" onClick={() => onRemove(a)}>
-                  Remove
-                </button>
-              )}
+              {onRemove && <RemoveButton name={a.name} onClick={() => onRemove(a)} />}
             </span>
           ))}
         </div>
@@ -169,11 +178,7 @@ export function AttachmentList({
           <button className="link" title={`Open ${a.name}`} onClick={() => openAttachment(a)}>
             {a.name}
           </button>
-          {onRemove && (
-            <button className="link chat-file-remove" onClick={() => onRemove(a)}>
-              Remove
-            </button>
-          )}
+          {onRemove && <RemoveButton name={a.name} onClick={() => onRemove(a)} />}
         </div>
       ))}
       {commands.map((a) => (
@@ -316,6 +321,48 @@ export function UserMessage({
   );
 }
 
+/**
+ * Select Text: the message's text selected, its ends there to drag. Until a touch outside it, a long
+ * press in it is the system's (selecting a word, its Copy bar) instead of opening the message menu.
+ */
+function selectMessage(el: HTMLElement): void {
+  el.dataset.selecting = '';
+  window.getSelection()?.selectAllChildren(el);
+  const leave = (e: Event) => {
+    if (el.contains(e.target as Node)) return;
+    delete el.dataset.selecting;
+    document.removeEventListener('pointerdown', leave, true);
+  };
+  document.addEventListener('pointerdown', leave, true);
+}
+
+/**
+ * A message menu's Select Text: `remember` takes the message a menu opens for and gives the key the
+ * menu sends back (a message-select-text ui event), or undefined when the message has no text.
+ */
+export function useSelectText(key: string): (e: React.MouseEvent) => string | undefined {
+  const message = useRef<HTMLElement | null>(null);
+  useEffect(
+    () =>
+      onUi((ev) => {
+        if (ev.type === 'message-select-text' && ev.key === key && message.current?.isConnected) selectMessage(message.current);
+      }),
+    [key],
+  );
+  return useCallback(
+    (e: React.MouseEvent) => {
+      const el = e.currentTarget as HTMLElement;
+      message.current = el.matches('.chat-msg') ? el : el.querySelector<HTMLElement>('.chat-msg');
+      return message.current?.textContent?.trim() ? key : undefined;
+    },
+    [key],
+  );
+}
+
+/** A press in a message being selected on a phone (Select Text): the system's selection takes it, not a menu. */
+export const systemSelecting = (e: React.SyntheticEvent): boolean =>
+  document.documentElement.classList.contains('phone-window') && !!(e.target as Element).closest?.('[data-selecting]');
+
 const sameCtx = (a: RowCtx, b: RowCtx): boolean =>
   a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu);
 
@@ -323,6 +370,10 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   // The innermost row answers: a tool call inside its group, not the group.
   const onContextMenu = ctx.onContextMenu
     ? (e: React.MouseEvent) => {
+        if (systemSelecting(e)) {
+          e.stopPropagation();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         ctx.onContextMenu!(e, row);

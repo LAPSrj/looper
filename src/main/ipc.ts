@@ -4,7 +4,7 @@ import { thumbnail } from './thumbnails';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
-import { convertWslPath, detectedDefaultWslDistro, detectSystemLocale, detectWslMountPrefix, listWslDistros } from '../engine/host';
+import { convertWslPath, detectedDefaultWslDistro, detectWslMountPrefix, listWslDistros, loadSystemLocale } from '../engine/host';
 import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
 import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
@@ -77,6 +77,10 @@ export interface IpcHost {
   openSendGuidance: (taskId: string, runId: string) => void;
   openFolderNoteEditor: (folderId: string) => void;
   openMoveToFolder: (taskId: string) => void;
+  /** The Select Window dialog `dialog`'s list: the open windows in the order they opened, and the one it shows over. */
+  openWindows: (dialog: AppWindow | null) => { windows: { id: number; title: string }[]; current: number | null };
+  /** The Select Window dialog `dialog` closes, and the window `id` comes forward. */
+  showOpenWindow: (id: number, dialog: AppWindow | null) => void;
   openNewFolder: (parentId?: string) => void;
   openRenameFolder: (folderId: string) => void;
 
@@ -204,13 +208,19 @@ function attachmentInputs(files: unknown): AttachmentInput[] {
   return out;
 }
 
+/** A message menu's Select Text: on a phone the long press opens the menu, so it can't also start a selection. */
+function selectTextItem(sender: AppWindow, key: string): Electron.MenuItemConstructorOptions {
+  return { label: 'Select Text', click: () => sender.webContents.send('ui:event', { type: 'message-select-text', key: String(key) }) };
+}
+
 export function registerIpc(engine: Engine, host: IpcHost): void {
-  ipc.handle('info', (): AppInfo => ({
+  void loadSystemLocale();
+  ipc.handle('info', async (): Promise<AppInfo> => ({
     version: app.getVersion(),
     dataDir: engine.dataDir,
     inboxDir: engine.inboxDir(),
     host: engine.host,
-    locale: detectSystemLocale(),
+    locale: await loadSystemLocale(),
     settings: engine.settings,
   }));
 
@@ -439,6 +449,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         file?: string;
         resend?: { text: string; attachments: Attachment[] };
         fork?: number;
+        selectText?: string;
       },
     ) => {
       const sender = windowOf(e);
@@ -461,6 +472,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const copies: Electron.MenuItemConstructorOptions[] = [];
       if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => writeClipboard(info.text!) });
       if (info.result) copies.push({ label: 'Copy Result', click: () => writeClipboard(info.result!) });
+      if (info.selectText && !info.selection) copies.push(selectTextItem(sender, info.selectText));
       if (copies.length) groups.push(copies);
       if (info.file) {
         const file = info.file;
@@ -1182,6 +1194,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   // A desktop page's open menu, drawn in level windows past its edges (platform/menu-popups.ts).
   ipc.handle('commands:menuPopups', (e, next: MenuPopupState | null) => showMenuPopups(windowOf(e), next && Array.isArray(next.levels) && next.at ? next : null));
   ipc.on('commands:menuLevelLayout', (e, depth: unknown, layout: MenuLevelLayout | null) => menuLevelLayout(e.sender, Number(depth), layout ?? null));
+  ipc.handle('commands:openWindows', (e) => host.openWindows(windowOf(e)));
+  ipc.on('commands:showOpenWindow', (e, id: unknown) => host.showOpenWindow(Number(id), windowOf(e)));
   ipc.on('commands:menuLevelInput', (e, depth: unknown, index: unknown, kind: unknown) => {
     if (kind === 'hover' || kind === 'choose') menuLevelInput(e.sender, Number(depth), Number(index), kind);
   });
@@ -1400,7 +1414,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.on(
     'context-menu:message',
-    (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string }) => {
+    (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }) => {
       const sender = windowOf(e);
       if (!sender) return;
       const items: Electron.MenuItemConstructorOptions[] = [];
@@ -1434,6 +1448,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         const text = info.text;
         if (items.length) items.push({ type: 'separator' });
         items.push({ label: 'Copy Content', click: () => writeClipboard(text) });
+      }
+      if (info.selectText) {
+        if (items.length && !info.text) items.push({ type: 'separator' });
+        items.push(selectTextItem(sender, info.selectText));
       }
       if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
     },

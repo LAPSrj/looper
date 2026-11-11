@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { spawnOffThread, type OffThreadChild } from '../../engine/exec-worker';
 import type { Logger } from '../../engine/log';
 import { tail } from '../../engine/store/fsutil';
 import type { RemoteAccessPhase, RemoteAccessProviderId, TsnetMessage } from '../../shared/remote-access';
@@ -112,7 +112,7 @@ export function parseTsnetLine(line: string): TsnetMessage | null {
  */
 export class TailscaleProvider extends BaseProvider implements AccessProvider {
   readonly id = 'tailscale' as const;
-  private child: ChildProcess | null = null;
+  private child: OffThreadChild | null = null;
   private opts: ProviderStartOptions | null = null;
   private stopping = false;
   private failures = 0;
@@ -144,9 +144,9 @@ export class TailscaleProvider extends BaseProvider implements AccessProvider {
     this.status({ phase: 'starting' });
     this.lastError = undefined;
     const args = ['--dir', opts.stateDir, '--hostname', opts.hostname, '--target', `http://127.0.0.1:${opts.port}`];
-    let child: ChildProcess;
+    let child: OffThreadChild;
     try {
-      child = spawn(this.helperPath, args, {
+      child = spawnOffThread(this.helperPath, args, {
         env: { ...process.env, LOOPER_PROXY_SECRET: opts.secret },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -233,11 +233,11 @@ export class TailscaleProvider extends BaseProvider implements AccessProvider {
     if (!stateDir) return;
     if (!fs.existsSync(this.helperPath)) throw new Error(`Looper's Tailscale helper is missing (${this.helperPath}).`);
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(this.helperPath, ['logout', '--dir', stateDir], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawnOffThread(this.helperPath, ['logout', '--dir', stateDir], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       let out = '';
       const collect = (d: Buffer) => (out = tail(out + d.toString('utf8'), 4000));
-      child.stdout.on('data', collect);
-      child.stderr.on('data', collect);
+      child.stdout!.on('data', collect);
+      child.stderr!.on('data', collect);
       const timer = setTimeout(() => child.kill(), LOGOUT_TIMEOUT_MS);
       child.on('error', (err) => {
         clearTimeout(timer);

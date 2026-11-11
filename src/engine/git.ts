@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
 import { resolveEnvironment } from '../shared/environments';
+import { execOffThread } from './exec-worker';
 import {
   LOG_FORMAT,
   SHOW_FORMAT,
@@ -201,27 +201,15 @@ export class GitService {
     if (env.kind === 'wsl' && this.d.host === 'windows') argv = ['wsl.exe', ...(env.distro ? ['-d', env.distro] : []), '--exec', 'git', ...git];
     else if (env.kind === 'windows' && this.d.host !== 'windows') argv = ['git.exe', ...git];
     else argv = ['git', ...git];
-    return new Promise((resolve, reject) => {
-      execFile(
-        argv[0],
-        argv.slice(1),
-        { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0' } },
-        (err, stdout, stderr) => {
-          const e = err as (NodeJS.ErrnoException & { code?: number | string; killed?: boolean }) | null;
-          if (e && e.code === 'ENOENT') {
-            reject(new Error(`${argv[0]} isn't installed${argv[0] === 'wsl.exe' ? '' : ' on this machine'}.`));
-            return;
-          }
-          if (e?.killed) {
-            reject(new Error(`git didn't answer within ${TIMEOUT_MS / 1000} seconds.`));
-            return;
-          }
-          // wsl.exe reports a git it can't find as exit code 1 with its own message.
-          const code = e ? (typeof e.code === 'number' ? e.code : 1) : 0;
-          resolve({ code, stdout: String(stdout), stderr: String(stderr) });
-        },
-      );
-    });
+    return execOffThread(argv[0], argv.slice(1), { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0' } }).then(
+      ({ error: e, stdout, stderr }) => {
+        if (e && e.code === 'ENOENT') throw new Error(`${argv[0]} isn't installed${argv[0] === 'wsl.exe' ? '' : ' on this machine'}.`);
+        if (e?.killed) throw new Error(`git didn't answer within ${TIMEOUT_MS / 1000} seconds.`);
+        // wsl.exe reports a git it can't find as exit code 1 with its own message.
+        const code = e ? (typeof e.code === 'number' ? e.code : 1) : 0;
+        return { code, stdout, stderr };
+      },
+    );
   }
 }
 
