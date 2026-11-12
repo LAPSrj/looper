@@ -31,7 +31,7 @@ import {
   type McpServerMap,
   type McpTool,
 } from '@shared/agent-config';
-import { Field, FieldRow, FormGroup, SelectInput, TabBar, TextArea } from './components/ui';
+import { EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ListActions, SelectList } from './components/SelectList';
 import { useDialogKeys } from './components/hooks';
@@ -148,9 +148,9 @@ export function AgentSettingsApp() {
     setScope(next);
   };
 
-  if (!settings || !scope) return <Empty text="Loading…" />;
+  if (!settings || !scope) return <EmptyWindow />;
   const envs = settings.environments.filter((e) => e.harnesses.some((h) => h.kind !== 'custom'));
-  if (envs.length === 0) return <Empty text="No environment has a Claude Code or Codex harness." />;
+  if (envs.length === 0) return <EmptyWindow gone="No environment has a Claude Code or Codex harness." />;
   const env = envs.find((e) => e.id === scope.envId) ?? envs[0];
   const harnesses = env.harnesses.filter((h) => h.kind !== 'custom');
   const envProjects = projects.filter((p) => p.cwd);
@@ -521,17 +521,6 @@ export function AgentSettingsApp() {
         apply={{ disabled: !data || !dirty, run: () => void doSave() }}
         busy={saving}
       />
-    </div>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <div className="editor">
-      <div className="editor-body">
-        <div className="empty">{text}</div>
-      </div>
-      <WindowActions close />
     </div>
   );
 }

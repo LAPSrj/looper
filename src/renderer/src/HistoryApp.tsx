@@ -15,14 +15,11 @@ import { ViewSchema, type Project, type View } from '@shared/types';
 import { HISTORY_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { ActivityPanel } from './components/ActivityPanel';
-import { AddonSearchBox } from './components/AddonPane';
-import { ChatRow, ToolGroup } from './components/ChatRows';
+import { FindStrip } from './components/FindBar';
 import { commandToolbar, phoneNav } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
-import { groupRows } from './components/chat-groups';
 import { HistoryList } from './components/HistoryList';
-import { SubagentIcon } from './components/SubagentIcon';
-import { useChatsSettings } from './components/hooks';
+import { CONVERSATION_TAB, subagentTab } from './components/SubagentIcon';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
 import { NavBar } from './components/NavBar';
@@ -30,6 +27,7 @@ import { TreeListSection } from './components/phone/PhoneList';
 import { useSplit } from './components/phone/PhoneSplit';
 import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
+import { TranscriptView } from './components/Transcript';
 import { subscribe } from './events';
 import { isPhone } from './web/page-nav';
 
@@ -37,27 +35,6 @@ const WIDTHS_KEY = 'history.widths';
 const DEFAULT_VIEW: View['history'] = ViewSchema.parse({}).history;
 
 const fail = (e: Error) => void window.looper.showError(e.message);
-
-/** The conversation in the middle, read only: its rows as a chat shows them. */
-function ConversationView({ rows, ctx, empty }: { rows: MessageRow[]; ctx: { taskId: string; runId: string }; empty: string }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const { expandThinking } = useChatsSettings();
-  // A conversation opens at its end, where it left off.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [rows]);
-  return (
-    <div className="chat-app">
-      <div className="chat-scroll" ref={scrollRef}>
-        {groupRows(rows, expandThinking).map((item) =>
-          item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
-        )}
-        {rows.length === 0 && <div className="muted">{empty}</div>}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The History window: the conversations on this computer on the left, newest
@@ -280,16 +257,7 @@ export function HistoryApp() {
   const rows = conv?.rows ?? [];
   const watched = follow ? subRows : rows;
   const ctx = { taskId: item?.taskId ?? '', runId: item?.runId ?? '' };
-  const tabs: TabItem[] = [
-    { id: 'conversation', label: 'Conversation', dividerAfter: true },
-    ...subagents.map((a) => ({
-      id: `agent:${a.agentId}`,
-      label: a.description || a.type,
-      title: `${a.description || a.type} (${a.type})`,
-      status: a.status,
-      mark: <SubagentIcon a={a} />,
-    })),
-  ];
+  const tabs: TabItem[] = [CONVERSATION_TAB, ...subagents.map(subagentTab)];
   const emptyText =
     items === null ? 'Loading…' : found ? `No conversation’s messages contain “${query.trim()}”.` : query.trim() ? 'No conversation’s title contains that.' : 'No conversations.';
   const findStatus = searching ? 'Searching…' : found ? (found.size === 1 ? '1 conversation' : `${found.size} conversations`) : '';
@@ -298,27 +266,11 @@ export function HistoryApp() {
     <div className="sessions-app history-app">
       <Toolbar groups={toolbar} className="sessions-toolbar" />
       {finding && (
-        <div
-          className="chat-find"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              searchMessages();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              closeFind();
-            }
-          }}
-        >
-          <AddonSearchBox value={query} onChange={typed} placeholder="Find" inputRef={(el) => (searchRef.current = el)} />
-          <span className="muted">{findStatus}</span>
+        <FindStrip query={query} onQuery={typed} status={findStatus} onEnter={searchMessages} onClose={closeFind} inputRef={(el) => (searchRef.current = el)}>
           <button className="btn small" disabled={!query.trim() || searching} onClick={searchMessages}>
             Search Messages
           </button>
-          <button className="btn small" onClick={closeFind}>
-            Close
-          </button>
-        </div>
+        </FindStrip>
       )}
       <NavBar
         title={split ? (item?.title ?? '') : 'History'}
@@ -372,9 +324,9 @@ export function HistoryApp() {
                   />
                 )}
                 {follow && followed ? (
-                  <ConversationView key={`${item.id}:${follow}`} rows={subRows} ctx={ctx} empty="The subagent has no messages." />
+                  <TranscriptView key={`${item.id}:${follow}`} taskId={ctx.taskId} runId={ctx.runId} rows={subRows} waitingText="The subagent has no messages." rowMenu={false} />
                 ) : (
-                  <ConversationView key={item.id} rows={rows} ctx={ctx} empty="The conversation has no messages." />
+                  <TranscriptView key={item.id} taskId={ctx.taskId} runId={ctx.runId} rows={rows} waitingText="The conversation has no messages." rowMenu={false} />
                 )}
                 {commands.chat && (
                   <div className="history-continue">

@@ -21,6 +21,14 @@ export const TASKS = Number(process.env.BENCH_TASKS || 20);
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** BENCH_SHOTS set to a folder: each screen check.mjs measures is saved there as `<name>.png`, to compare two builds. */
+export async function shoot(page, name) {
+  const dir = process.env.BENCH_SHOTS;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  await page.screenshot({ path: path.join(dir, `${name.replace(/\W+/g, '-')}.png`) }).catch(() => undefined);
+}
+
 export async function launch() {
   const app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),

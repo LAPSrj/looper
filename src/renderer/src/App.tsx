@@ -13,11 +13,13 @@ import { commandToolbar, popupEntries } from './components/command-surfaces';
 import { setRowMenuContext } from './components/row-menus';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { Dashboard } from './components/Dashboard';
-import { useDragResize } from './components/hooks';
 import { RestStatusText } from './components/Live';
 import { PhoneMain } from './components/phone/PhoneMain';
+import { ProjectCollection } from './components/ProjectCollection';
 import { ProjectDetail } from './components/ProjectDetail';
-import { ProjectsSidebar } from './components/Sidebar';
+import { ListDetail } from './components/ListDetail';
+import { PaneHeader } from './components/Sidebar';
+import { StatusBar } from './components/StatusBar';
 import { TaskCollection } from './components/TaskCollection';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
 import { Toolbar } from './components/Toolbar';
@@ -45,14 +47,18 @@ function PhoneApp() {
   return <PhoneMain m={useMainWindow()} />;
 }
 
+/** Where the sidebar's width is kept, as last dragged (a window's own, like the Chats window's panes). */
 const SIDEBAR_WIDTH_KEY = 'main.sidebarWidth';
 /** The tab the main window showed last, which it opens on. */
 const TAB_KEY = 'main.tab';
 
-/** The sidebar's width as last dragged (a window's own, like the Chats window's panes). */
-function savedSidebarWidth(): number {
-  const width = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  return width >= 180 ? width : 300;
+/** A tab's list beside what it shows, or what it shows alone. */
+function WithSidebar({ sidebar, children }: { sidebar: React.ReactNode | false; children: React.ReactNode }) {
+  return (
+    <div className="app single">
+      {sidebar ? <ListDetail panes={{ axis: 'x', initial: 300, min: 180, maxShare: 0.5, storageKey: SIDEBAR_WIDTH_KEY }} list={sidebar} detail={children} /> : children}
+    </div>
+  );
 }
 
 /**
@@ -103,9 +109,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const tabDef = tabs.find((t) => t.id === picked);
   // The addon screen showing (a tab's, or a pane item's), for the commands its addon placed on it.
   const [addonScreen, setAddonScreen] = useState<AddonScreenReport | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const [addonQueries, setAddonQueries] = useState<Record<string, string>>({});
-  const appRef = useRef<HTMLDivElement>(null);
   const memory = useRef<TabMemory>({ projects: null, tasks: null });
   const pickedRef = useRef(picked);
   pickedRef.current = picked;
@@ -166,16 +170,6 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     [],
   );
 
-  const onSidebarDragStart = useDragResize({
-    axis: 'x',
-    containerRef: appRef,
-    onDrag: (x, rect) => {
-      const width = Math.max(180, Math.min(rect.width * 0.5, x));
-      setSidebarWidth(width);
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width)));
-    },
-  });
-
   const tab = tabDef?.id ?? picked;
   const onChats = tab === 'chats';
   const environments = m.info?.settings.environments ?? [];
@@ -195,8 +189,6 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   setRowMenuContext(commands);
   const toolbarGroups: ToolbarGroup[] = commandToolbar(mainToolbarViews(tab, !!fixed, !!item), commands);
 
-  const sidebarColumns = (shown: boolean) => ({ gridTemplateColumns: shown ? `${sidebarWidth}px 5px 1fr` : '1fr' });
-  const divider = <div className="sidebar-divider" onMouseDown={onSidebarDragStart} />;
   const alone = (content: React.ReactNode) => (
     <div className="app single">
       <main className="main">{content}</main>
@@ -221,12 +213,8 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     );
   } else if (tab === 'projects') {
     // A project's own window has the project alone.
-    const sidebar = !item;
     body = (
-      <div className="app" ref={appRef} style={sidebarColumns(sidebar)}>
-        {sidebar &&
-          (view ? <ProjectsSidebar projects={projects} folders={m.projectFolders} layout={m.projectLayout} selected={m.projectSel} onSelect={m.selectProject} environments={environments} view={view} /> : <aside className="sidebar" />)}
-        {sidebar && divider}
+      <WithSidebar sidebar={!item && <ProjectCollection m={m} />}>
         <main className="main">
           {m.project ? (
             <ProjectDetail
@@ -243,16 +231,14 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
             <div className="empty">{item ? 'Loading…' : 'No project selected.'}</div>
           )}
         </main>
-      </div>
+      </WithSidebar>
     );
   } else if (tab === 'tasks') {
     // With every pane hidden (View menu) there is no sidebar: the task takes the whole width. A task's own window has the task alone.
     const sidebar = !item && (!view || sidebarHasPanes(view));
     const { task } = m;
     body = (
-      <div className="app" ref={appRef} style={sidebarColumns(sidebar)}>
-        {sidebar && <TaskCollection m={m} />}
-        {sidebar && divider}
+      <WithSidebar sidebar={sidebar && <TaskCollection m={m} />}>
         <main className="main">
           {task ? (
             <TaskDetail
@@ -285,7 +271,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
             />
           )}
         </main>
-      </div>
+      </WithSidebar>
     );
   } else if (onChats) {
     body = <SessionsBody s={s} />;
@@ -293,22 +279,13 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     // An addon with only panes: its panes as the list, the item picked beside them.
     const addon = addons.find((a) => a.id === tabDef.addon!.id);
     const { addonShown } = m;
-    body = (
-      <div className="app" ref={appRef} style={sidebarColumns(true)}>
-        <aside className="sidebar">
-          {addon?.panes.map((p) => {
+    const panes = (
+      <aside className="sidebar">
+        {addon?.panes.map((p) => {
             const state = m.addonPanes[addonPaneKey(addon.id, p.id)];
             return (
               <div key={p.id} className="sidebar-pane" style={{ flex: '1 1 0px' }}>
-                <div
-                  className="sidebar-header"
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    showPaneMenu(commands, addon.id, p.id, state);
-                  }}
-                >
-                  <span className="pane-title">{p.title}</span>
-                </div>
+                <PaneHeader title={p.title} onMenu={() => showPaneMenu(commands, addon.id, p.id, state)} />
                 <AddonPaneList
                   addon={addon}
                   pane={p.id}
@@ -324,8 +301,10 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               </div>
             );
           })}
-        </aside>
-        {divider}
+      </aside>
+    );
+    body = (
+      <WithSidebar sidebar={panes}>
         <main className="main">
           {addonShown ? (
             <AddonScreenView
@@ -341,7 +320,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
             <div className="empty">Nothing selected.</div>
           )}
         </main>
-      </div>
+      </WithSidebar>
     );
   } else if (tabDef?.addon?.tab) {
     const addon = { ...tabDef.addon, tab: tabDef.addon.tab };
@@ -378,7 +357,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         {computerStatus}
       </SessionsStatusBar>
     ) : (
-      <div className="statusbar">
+      <StatusBar end={computerStatus}>
         <span>{counts.enabled} enabled</span>
         <span>{counts.disabled} disabled</span>
         <span>{counts.completed} completed</span>
@@ -386,9 +365,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         <span>{counts.running} running</span>
         {remoteOpen && <span>{remoteOpen.length} Remote Control conversation{remoteOpen.length === 1 ? '' : 's'}</span>}
         {addons.length > 0 && <span>{m.runningAddons} addon{m.runningAddons === 1 ? '' : 's'} running</span>}
-        <span className="spacer" />
-        {computerStatus}
-      </div>
+      </StatusBar>
     ));
 
   const position = view?.tabs.position ?? 'top';

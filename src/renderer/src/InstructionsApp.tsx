@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Markdown } from './components/Markdown';
-import { NavBar } from './components/NavBar';
-import { isPhone } from './web/page-nav';
+import { Toolbar } from './components/Toolbar';
 
 const HOME = 'README.md';
 
@@ -21,35 +20,6 @@ for (const [file, url] of Object.entries(
 )) {
   images['img/' + file.split('/').pop()!] = url as string;
 }
-
-function Icon({ children }: { children: React.ReactNode }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
-}
-
-const ICONS = {
-  back: <path d="M10.5 3.2 5.7 8l4.8 4.8" />,
-  forward: <path d="m5.5 3.2 4.8 4.8-4.8 4.8" />,
-  home: (
-    <>
-      <path d="m2.2 7.6 5.8-5 5.8 5" />
-      <path d="M4 6.8v6.7h8V6.8" />
-    </>
-  ),
-};
 
 /** Standalone window browsing the user guide in docs/ (Help → Instructions). */
 export function InstructionsApp() {
@@ -112,35 +82,24 @@ export function InstructionsApp() {
     };
   }, [history.length]);
 
-  const button = (icon: React.ReactNode, title: string, onClick: () => void, enabled: boolean) => (
-    <button title={title} aria-label={title} disabled={!enabled} onClick={onClick}>
-      <Icon>{icon}</Icon>
-    </button>
-  );
+  const forwardItem = { id: 'forward', label: 'Forward', enabled: pos < history.length - 1, run: forward };
+  const homeItem = { id: 'home', label: 'Home', enabled: page !== HOME, run: () => open(HOME) };
 
   return (
     <div className="instructions-app">
-      {isPhone ? (
-        <NavBar
-          back={pos > 0 ? back : undefined}
-          toolbar={[
-            {
-              id: 'pages',
-              items: [
-                { id: 'forward', label: 'Forward', enabled: pos < history.length - 1, run: forward },
-                { id: 'home', label: 'Home', enabled: page !== HOME, run: () => open(HOME) },
-              ],
-            },
-          ]}
-        />
-      ) : (
-        <div className="toolbar">
-          {button(ICONS.back, 'Back (Alt+Left)', back, pos > 0)}
-          {button(ICONS.forward, 'Forward (Alt+Right)', forward, pos < history.length - 1)}
-          <span className="toolbar-sep" />
-          {button(ICONS.home, 'Home', () => open(HOME), page !== HOME)}
-        </div>
-      )}
+      <Toolbar
+        groups={[
+          {
+            id: 'pages',
+            items: [
+              { id: 'back', label: 'Back', shortcut: 'Alt+Left', icon: 'previous', enabled: pos > 0, run: back },
+              { ...forwardItem, shortcut: 'Alt+Right', icon: 'next' },
+            ],
+          },
+          { id: 'home', items: [{ ...homeItem, icon: 'home' }] },
+        ]}
+        nav={{ back: pos > 0 ? back : undefined, toolbar: [{ id: 'pages', items: [forwardItem, homeItem] }] }}
+      />
       <div className="instructions" ref={scrollRef}>
         {text !== null && (
           <Markdown

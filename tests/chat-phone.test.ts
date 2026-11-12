@@ -79,7 +79,7 @@ describe('sessionFacts', () => {
       { label: 'Model', value: 'Opus' },
       { label: 'Context', value: '58k of 1M (6%)' },
       { label: 'Last reply', value: 'at 5' },
-      { label: 'Prompt cache', value: '3 min left' },
+      { label: 'Prompt cache', value: 'Cached for 3 min' },
     ]);
   });
 
@@ -89,9 +89,9 @@ describe('sessionFacts', () => {
   });
 
   it('says how long the cache has left', () => {
-    expect(cacheText(NOW - 1, NOW)).toBe('Expired');
-    expect(cacheText(NOW + 30_000, NOW)).toBe('Under a minute left');
-    expect(cacheText(NOW + 61 * 60_000, NOW)).toBe('1 h 1 min left');
+    expect(cacheText(NOW - 1, NOW)).toBe('Cache expired');
+    expect(cacheText(NOW + 30_000, NOW)).toBe('Cached for less than a minute');
+    expect(cacheText(NOW + 61 * 60_000, NOW)).toBe('Cached for 1 h 1 min');
   });
 
   it('shortens a context without a window', () => {
@@ -103,7 +103,7 @@ describe('usageLabel', () => {
   it('names what the icon draws', () => {
     const limits = { fiveHour: { used: 0.67, resetsAt: NOW + 130 * 60_000 }, sevenDay: { used: 0.31, resetsAt: NOW + (4 * 24 + 6) * 3_600_000 } };
     expect(usageLabel({ tokens: 58_000, window: 1_000_000 }, limits, NOW + 3 * 60_000, NOW)).toBe(
-      'Usage: 58k of 1M context (6%); 5-hour limit 67%, resets in 2 h 10 min; weekly limit 31%, resets in 4 d 6 h; prompt cache 3 min left',
+      'Usage: 58k of 1M context (6%); 5-hour limit 67%, resets in 2 h 10 min; weekly limit 31%, resets in 4 d 6 h; prompt cached for 3 min',
     );
     expect(usageLabel(undefined, { fiveHour: { used: 0.9, resetsAt: NOW } }, NOW - 1, NOW)).toBe('Usage: 5-hour limit 90%, resets now; prompt cache expired');
     expect(usageLabel(undefined, {}, undefined, NOW)).toBe('Usage');

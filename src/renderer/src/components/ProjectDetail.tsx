@@ -12,6 +12,7 @@ import { DataTable, type DataCol } from './DataTable';
 import { GitView, useGitStatus } from './GitView';
 import { useGitRepo } from './hooks';
 import { useSessionsState } from './phone/useSessionsState';
+import { PropertyList } from './PropertyList';
 import { RunLog } from './RunLog';
 import { TabBar } from './ui';
 import { subscribe } from '../events';
@@ -113,29 +114,27 @@ export function ProjectDetail({
       <section className="tab-body">
         {tab === 'status' && (
           <div className="status-pane">
-            <dl className="props">
-              <dt>Working directory</dt>
-              <dd className="mono">{project.cwd}</dd>
-              <dt>Environment</dt>
-              <dd>{env ? withKind(env.name, describeEnvironment(env)) :<span className="warn">Unknown environment "{project.environmentId}"</span>}</dd>
-              <dt>Harness</dt>
-              <dd>{harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None'}</dd>
-              <dt>Model</dt>
-              <dd>
-                {model}
-                {effort ? `, ${effort.toLowerCase()} effort` : ''}
-              </dd>
-              <dt>Session type</dt>
-              <dd>{project.mode === 'headless' ? 'Headless' : 'Interactive'}</dd>
-              <dt>Permission mode</dt>
-              <dd>{mode || 'None'}</dd>
-              <dt>Extra command-line arguments</dt>
-              <dd className={project.extraArgs.length ? 'mono' : undefined}>{project.extraArgs.length ? joinTokens(project.extraArgs) : 'None'}</dd>
-              <dt>Extra environment variables</dt>
-              <dd className={Object.keys(project.env).length ? 'mono' : undefined}>{Object.keys(project.env).length ? envToLine(project.env) : 'None'}</dd>
-              <dt>Remote Control</dt>
-              <dd>{remoteText}</dd>
-            </dl>
+            <PropertyList
+              items={[
+                { label: 'Working directory', value: project.cwd, className: 'mono' },
+                { label: 'Environment', value: env ? withKind(env.name, describeEnvironment(env)) : <span className="warn">Unknown environment "{project.environmentId}"</span> },
+                { label: 'Harness', value: harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None' },
+                {
+                  label: 'Model',
+                  value: (
+                    <>
+                      {model}
+                      {effort ? `, ${effort.toLowerCase()} effort` : ''}
+                    </>
+                  ),
+                },
+                { label: 'Session type', value: project.mode === 'headless' ? 'Headless' : 'Interactive' },
+                { label: 'Permission mode', value: mode || 'None' },
+                { label: 'Extra command-line arguments', value: project.extraArgs.length ? joinTokens(project.extraArgs) : 'None', className: project.extraArgs.length ? 'mono' : undefined },
+                { label: 'Extra environment variables', value: Object.keys(project.env).length ? envToLine(project.env) : 'None', className: Object.keys(project.env).length ? 'mono' : undefined },
+                { label: 'Remote Control', value: remoteText },
+              ]}
+            />
           </div>
         )}
         {tab === 'tasks' && (

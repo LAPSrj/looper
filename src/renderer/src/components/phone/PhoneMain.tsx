@@ -7,10 +7,9 @@ import type { CommandContext } from '@shared/commands/context';
 import { siblingOrder, withSiblingsOrdered } from '@shared/folders';
 import { mainTabs } from '@shared/main-tabs';
 import { ALL_FILTERS, passesFilter } from '@shared/panes';
-import { groupProjects } from '@shared/projects';
 import type { MainTabDef } from '@shared/main-tabs';
 import type { SessionsState } from '@shared/sessions';
-import type { Project, View } from '@shared/types';
+import type { View } from '@shared/types';
 import { platform } from '../../platform';
 import {
   PHONE_TABS,
@@ -40,7 +39,8 @@ import { NavBar } from '../NavBar';
 import { AddonPaneList, showPaneItemMenu, showPaneMenu } from '../AddonPane';
 import { AddonScreenView, type AddonScreenReport } from '../AddonScreen';
 import { phoneNav, popupCommands } from '../command-surfaces';
-import { setRowMenuContext, showProjectMenu, showProjectsListMenu, showTaskMenu } from '../row-menus';
+import { setRowMenuContext, showProjectMenu, showTaskMenu } from '../row-menus';
+import { ProjectCollection, projectEntries } from '../ProjectCollection';
 import { useCommandMenu, useCommandState } from '../useCommands';
 import { ListDetail } from '../ListDetail';
 import { ProjectDetail } from '../ProjectDetail';
@@ -51,7 +51,7 @@ import { PhoneDashboard } from './PhoneDashboard';
 import { OverviewSwitch, type OverviewChoice } from './OverviewSwitch';
 import type { TasksSwitch } from '../TaskCollection';
 import { ReorderSheet } from './ReorderSheet';
-import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
+import { Group, LargeTitle, Row } from './PhoneList';
 import { usePageWidth, useSplit } from './PhoneSplit';
 import { TabIcon } from './tab-icons';
 import { TaskCollection } from '../TaskCollection';
@@ -88,7 +88,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
     const exists = (s: PhoneScreen) =>
       s.kind === 'task' ? m.tasks.some((t) => t.id === s.id)
       : s.kind === 'project' ? m.projects.some((p) => p.id === s.id)
-      : s.kind === 'folder' ? m.folders.some((f) => f.id === s.id)
+      : s.kind === 'folder' ? m.folders.some((f) => f.id === s.id) || m.projectFolders.some((f) => f.id === s.id)
       : s.kind === 'addon' ? m.addons.some((a) => a.id === s.addonId)
       : true;
     // Not over what the reader already opened since the page loaded.
@@ -144,7 +144,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   }, [m.dashboardShown]);
 
   // A folder that was deleted (or never existed) takes its screen away.
-  const folderGone = top?.kind === 'folder' && m.loaded && !m.folders.some((f) => f.id === top.id);
+  const folderGone = top?.kind === 'folder' && m.loaded && !(nav.tab === 'projects' ? m.projectFolders : m.folders).some((f) => f.id === top.id);
   useEffect(() => {
     if (folderGone) setNav(popScreen);
   }, [folderGone]);
@@ -245,10 +245,10 @@ export function PhoneMain({ m }: { m: MainWindow }) {
           more: detail?.more ?? list.more,
           toolbar,
           largeTitle: false,
-          split: { width: split!.lead, title: list.title, actions: list.actions, largeTitle: platform === 'ios' },
+          split: { width: split!.lead, title: list.title, actions: list.actions, largeTitle: true },
           tabs: topTabs,
         }
-      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: tabForm === 'bar', largeTitle: platform === 'ios' && !top, tabs: topTabs })}
+      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: tabForm === 'bar', largeTitle: !top, tabs: topTabs })}
     />
   );
 
@@ -322,13 +322,13 @@ function reorderSheet(m: MainWindow, tab: PhoneTab, folderId: string): Omit<Reac
       },
     };
   }
-  // Grouped by folder or harness the groups have their own order: only the user's own folders can be arranged.
-  if (tab === 'projects' && (view?.projectsPane.groupBy ?? 'none') === 'none' && m.projects.length > 1) {
-    const groups = groupProjects(m.projects, 'none', m.info?.settings.environments ?? [], m.projectFolders).filter((g) => g.projects.length > 1);
-    if (groups.length === 0) return null;
+  // Grouped by harness or environment the groups have their own order: only the user's own folders can be arranged.
+  if (tab === 'projects' && (view?.projectsPane.groupBy ?? 'none') === 'none') {
+    const entries = projectEntries(m, folderId);
+    if (entries.length < 2) return null;
     return {
       title: 'Reorder Projects',
-      sections: groups.map((g) => ({ key: g.folderId ?? '', title: g.title || undefined, items: g.projects.map((p) => ({ key: p.id, title: p.name })) })),
+      sections: [{ key: folderId, items: entries.map((e) => (e.kind === 'folder' ? { key: `folder:${e.folder.id}`, title: e.folder.name } : { key: e.task.id, title: e.task.name })) }],
       onReorder: (container, keys) => {
         const nextLayout = withSiblingsOrdered(siblingOrder(m.projects, m.projectFolders, m.projectLayout), container, keys);
         void window.looper.projects.reorder(m.projects.map((p) => p.id), undefined, nextLayout).catch(failed);
@@ -484,8 +484,11 @@ function rootFor(
   switch (tab) {
     case 'dashboard':
       return { title: 'Dashboard', ...phoneNav(['dashboard'], c), body: <PhoneDashboard m={m} /> };
-    case 'projects':
-      return { title: 'Projects', ...phoneNav(['projects'], c), body: <PhoneProjects m={m} current={current} /> };
+    case 'projects': {
+      // A folder's screen shows what the folder holds, as the tab shows the top level.
+      const folder = folderId ? m.projectFolders.find((f) => f.id === folderId) : undefined;
+      return { title: folder?.name ?? 'Projects', ...phoneNav(['projects'], c), body: <ProjectCollection m={m} current={current} phone={{ container: folder?.id ?? '', onOpenFolder: openFolder }} /> };
+    }
     case 'tasks': {
       // A folder's screen shows what the folder holds, as the tab shows the top level.
       const folder = folderId ? m.folders.find((f) => f.id === folderId) : undefined;
@@ -528,42 +531,6 @@ function taskMenuAt(e: React.MouseEvent, m: MainWindow) {
   if ((e.target as HTMLElement).closest('.run-row, .pg-row, a, input, textarea, select')) return;
   e.preventDefault();
   showTaskMenu(m.task, m.runtimes[m.task.id]);
-}
-
-function PhoneProjects({ m, current = null }: { m: MainWindow; current?: string | null }) {
-  const projectsMenu = showProjectsListMenu;
-  // The user's folders show as groups too, those with projects in them.
-  const groups = groupProjects(m.projects, m.view?.projectsPane.groupBy ?? 'none', m.info?.settings.environments ?? [], m.projectFolders).filter(
-    (g) => g.projects.length > 0,
-  );
-  const rows = (list: Project[]) =>
-    list.map((p) => (
-      <Row
-        key={p.id}
-        title={p.name}
-        sub={<span className="mono">{p.cwd}</span>}
-        chevron
-        selected={p.id === current}
-        onOpen={() => m.selectProject(p.id)}
-        onMenu={() => showProjectMenu(p)}
-      />
-    ));
-  return (
-    <div className="pg-scroll">
-      <LargeTitle>Projects</LargeTitle>
-      {m.projects.length === 0 ? (
-        <Group onTitleMenu={projectsMenu}>
-          <EmptyRow onMenu={projectsMenu}>No projects yet.</EmptyRow>
-        </Group>
-      ) : (
-        groups.map((g) => (
-          <Group key={g.key} title={g.title || undefined} onTitleMenu={projectsMenu}>
-            {rows(g.projects)}
-          </Group>
-        ))
-      )}
-    </div>
-  );
 }
 
 /** Each started addon in the More view: its tabs, then its commands no phone screen shows (moreViewCommands). */

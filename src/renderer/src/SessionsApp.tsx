@@ -17,25 +17,22 @@ import type { CommandContext } from '@shared/commands/context';
 import { contextText, type ChatState } from '@shared/chat';
 import type { SessionSummary, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
-import { canStop, dashboardOrder, liveCards, showsConversation, waitedText } from '@shared/sessions';
+import { canStop, dashboardOrder, liveCards, showsConversation } from '@shared/sessions';
 import type { EngineEvent } from '@shared/types';
 import { ActivityPanel, type ActivityTab } from './components/ActivityPanel';
 import { fmtClock } from './format';
 import { WaitedFor } from './components/Live';
 import { MINUTE, useNow } from './useNow';
-import { ICONS } from './components/icons';
-import { ToolButton } from './components/ToolButton';
+import { StatusBar } from './components/StatusBar';
 import { Toolbar } from './components/Toolbar';
 import { commandToolbar, phoneNav } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { ChatView, PermissionButtons } from './components/ChatView';
-import { sendsOnEnter } from './components/composer-text';
 import { useDragResize } from './components/hooks';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
 import { MessageBox, type MessageBoxStop } from './components/MessageBox';
 import { RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
-import { useAutoGrow } from './components/phone/auto-grow';
 import { OverviewSwitch, type OverviewChoice } from './components/phone/OverviewSwitch';
 import { LargeTitle } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
@@ -45,16 +42,16 @@ import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { SessionIcon, SessionList, statusText } from './components/SessionList';
 import { runningText, subagentTabs } from './components/subagents';
-import { SubagentIcon } from './components/SubagentIcon';
-import { contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
+import { CONVERSATION_TAB, subagentTab } from './components/SubagentIcon';
+import { cacheText, contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
 import { Tabs, type TabItem } from './components/Tabs';
-import { PhoneWorkflow, WorkflowAgentBack, WorkflowOverview } from './components/WorkflowView';
-import { platform } from './platform';
+import { WorkflowView } from './components/WorkflowView';
 import { terminalTitle } from './phone-lists';
 import { getChat, subscribe } from './events';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 import type { PageNavAction } from './web/nav-bar-model';
+import type { SplitLayout } from './web/nav-stack';
 import { NavBar } from './components/NavBar';
 
 // The terminal emulator was a quarter of the main chunk, and only a terminal session needs it.
@@ -68,10 +65,7 @@ const WINDOW_WIDTHS_KEY = 'sessions.window.widths';
 function replyParts(s: SessionSummary | undefined, now: number): string[] {
   if (!s?.lastReplyAt) return [];
   const parts = [`Last reply ${fmtClock(s.lastReplyAt, now)}`];
-  if (s.cacheUntil !== undefined) {
-    const left = s.cacheUntil - now;
-    parts.push(left <= 0 ? 'Cache expired' : left < 60_000 ? 'Cached for less than a minute' : `Cached for ${waitedText(left)}`);
-  }
+  if (s.cacheUntil !== undefined) parts.push(cacheText(s.cacheUntil, now));
   return parts;
 }
 
@@ -87,7 +81,16 @@ export function SessionsStatusBar({ summary, chat, limits, children }: { summary
   const left = chat ? [chat.harnessName] : summary ? [summary.harnessName] : [];
   const context = chat?.context ?? summary?.context;
   return (
-    <div className="statusbar">
+    <StatusBar
+      end={
+        <>
+          {limitParts(limits, now).map((p) => (
+            <span key={p}>{p}</span>
+          ))}
+          {children}
+        </>
+      }
+    >
       {left.map((p) => (
         <span key={p}>{p}</span>
       ))}
@@ -97,12 +100,7 @@ export function SessionsStatusBar({ summary, chat, limits, children }: { summary
           {p}
         </span>
       ))}
-      <span className="spacer" />
-      {limitParts(limits, now).map((p) => (
-        <span key={p}>{p}</span>
-      ))}
-      {children}
-    </div>
+    </StatusBar>
   );
 }
 
@@ -189,14 +187,12 @@ function CardTitle({ s, size, drag }: { s: SessionSummary; size?: CardSize; drag
         <SessionIcon s={s} />
         <span className="overview-title">{s.title}</span>
         {size && (
-          <span className="toolbar overview-tools" onClick={(e) => e.stopPropagation()}>
-            <ToolButton
-              icon={size.big ? ICONS.normalSize : ICONS.doubleSize}
-              title={size.big ? 'Normal Size' : 'Double Size'}
-              enabled
-              onClick={size.onToggle}
-            />
-          </span>
+          <Toolbar
+            inline
+            className="overview-tools"
+            onClick={(e) => e.stopPropagation()}
+            groups={[{ id: 'size', items: [{ id: 'size', label: size.big ? 'Normal Size' : 'Double Size', icon: size.big ? 'normalSize' : 'doubleSize', run: size.onToggle }] }]}
+          />
         )}
       </div>
       <div className="muted overview-meta">
@@ -225,8 +221,6 @@ const stopOf = (s: SessionSummary): MessageBoxStop => ({ enabled: canStop(s), ru
  */
 export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag }) {
   const [reply, setReply] = useState('');
-  const replyBox = useRef<HTMLTextAreaElement>(null);
-  useAutoGrow(replyBox, reply, 120, isPhone);
   const run = s.kind === 'run';
   const send = () => {
     const text = reply.trim();
@@ -247,34 +241,8 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
         <PermissionButtons chatId={s.id} permissionId={s.permissionId} />
       </div>
     );
-  } else if (s.status !== 'ended' && isPhone) {
-    // On a phone Enter is a line break; Send, or Ctrl+Enter from a hardware keyboard, sends.
-    bottom = (
-      <div className="overview-actions" onClick={keep}>
-        <textarea
-          ref={replyBox}
-          rows={1}
-          value={reply}
-          placeholder={placeholder}
-          onChange={(e) => setReply(e.target.value)}
-          onKeyDown={(e) => {
-            if (sendsOnEnter(e, true)) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <button className="btn small" disabled={!reply.trim()} onClick={send}>
-          Send
-        </button>
-      </div>
-    );
   } else if (s.status !== 'ended') {
-    bottom = (
-      <div className="overview-composer" onClick={keep}>
-        <MessageBox text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />
-      </div>
-    );
+    bottom = <MessageBox look="card" text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />;
   }
   return (
     <div
@@ -737,15 +705,8 @@ function SubagentTabs({ s }: { s: SessionsWindow }) {
   const openRun = s.workflow?.run.runId ?? null;
   const active = openRun ? `run:${openRun}` : follow ? `agent:${follow}` : 'conversation';
   const tabs: TabItem[] = [
-    { id: 'conversation', label: 'Conversation', dividerAfter: true },
-    ...subagents.map((a) => ({
-      id: `agent:${a.agentId}`,
-      label: a.description || a.type,
-      title: `${a.description || a.type} (${a.type})`,
-      status: a.status,
-      mark: <SubagentIcon a={a} />,
-      onClose: follow === a.agentId && a.status !== 'running' ? () => s.setFollow(null) : undefined,
-    })),
+    CONVERSATION_TAB,
+    ...subagents.map((a) => ({ ...subagentTab(a), onClose: follow === a.agentId && a.status !== 'running' ? () => s.setFollow(null) : undefined })),
     ...workflows.map((run) => ({ id: `run:${run.runId}`, label: run.name, title: `${run.name} (workflow)`, status: tabStatus(run.status) })),
   ];
   const select = (id: string) => {
@@ -776,8 +737,171 @@ function SessionsToolbar({ c, single }: { c: CommandContext; single: boolean }) 
  */
 export function SessionsApp({ initial, single = false }: { initial?: string; single?: boolean }) {
   const s = useSessionsWindow(initial, single);
-  if (isPhone) return <PhoneSessions s={s} single={single} opened={!!initial} />;
-  return <DesktopSessions s={s} single={single} />;
+  const { state, summary, chat, shown } = s;
+  const limits = sessionLimits(state, summary);
+  // A window opened on a conversation (a tap on the main window's Chats tab or its Dashboard) is that conversation's screen: Back closes it.
+  const opened = !!initial;
+  const closesWindow = single || opened;
+  // iPad: the list in a leading column and the conversation beside it; Activity a trailing inspector when there's room.
+  const split = useSplit(!single);
+  const [listShow, setListShow] = useState<OverviewChoice>('list');
+  const [reordering, setReordering] = useState(false);
+  const reorderGroup = !summary && state.sessions.length > 1 && listShow === 'overview' ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReordering(true) }] }] : [];
+  const panel = useInspector<ActivityTab>('now', !!split?.inspector);
+  const [usage, setUsage] = useState(false);
+  useEffect(() => {
+    panel.dismiss();
+    setUsage(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary?.id]);
+  const sheet = panel.sheetOpen || usage;
+  // A conversation that isn't listed yet (a new chat or terminal is on its way) shows "Starting…" instead of the list.
+  const starting = !summary && !!s.selected && !single;
+  const listed = useRef(false);
+  useEffect(() => {
+    if (summary) listed.current = true;
+    // On a phone, the shown conversation closed. Not one on its way (Compact or Fork shows the new chat before it's
+    // listed), which shows "Starting…" until it is. With the list beside it (iPad), the window stays and
+    // shows the list (useSessionsWindow drops the selection).
+    else if (isPhone && opened && listed.current && !split && !starting) window.close();
+  }, [summary, opened, split, starting]);
+
+  // The menus, the toolbar and a phone's bar, from the one list. A phone's Activity and Usage sheets answer for what the desktop's pane and status bar do.
+  const commandState = useCommandState();
+  const commands: CommandContext = {
+    ...commandState,
+    chats: s.chatsContext(
+      isPhone
+        ? {
+            activityOpen: panel.open,
+            toggleActivity: panel.toggle,
+            showUsage: () => setUsage(true),
+            usageLabel: summary ? usageLabel(chat?.context ?? summary.context, limits, summary.lastReplyAt ? summary.cacheUntil : undefined, Date.now()) : undefined,
+            usageRing: summary
+              ? {
+                  context: contextFraction(chat?.context ?? summary.context),
+                  fiveHour: limits.fiveHour,
+                  sevenDay: limits.sevenDay,
+                  cache: summary.lastReplyAt && summary.cacheUntil !== undefined ? { from: summary.lastReplyAt, until: summary.cacheUntil } : undefined,
+                }
+              : undefined,
+          }
+        : undefined,
+    ),
+  };
+  useCommandMenu(isPhone ? null : single ? CHAT_WINDOW_VIEWS : CHATS_WINDOW_VIEWS, commands);
+  const listNav = phoneNav(['chats'], commands);
+  const conversationNav = phoneNav(['conversation'], commands);
+  const actions: PageNavAction[] = summary ? conversationNav.actions : split ? [] : listNav.actions;
+  const more = summary ? conversationNav.more : listNav.more;
+  // A workflow is a page pushed over the conversation, and its agent's conversation one over the workflow; a subagent's is one over the conversation.
+  const workflow = s.workflow;
+  const subagent = s.follow && s.followed ? s.followed : null;
+  const back = (): void => {
+    if (sheet) {
+      panel.dismiss();
+      setUsage(false);
+    } else if (workflow) s.showWorkflow(workflow.agent ? workflow.run.runId : null);
+    else if (s.follow) s.setFollow(null);
+    else s.setSelected(null);
+  };
+  const title = workflow
+    ? (workflow.agent?.label ?? workflow.run.name)
+    : subagent
+      ? subagent.description || subagent.type
+      : summary
+        ? summary.kind === 'terminal'
+          ? terminalTitle(summary)
+          : summary.title
+        : undefined;
+  // What runs beside the conversation, under its title (the bar's Activity button lists them).
+  const subtitle = summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status))) ?? undefined) : undefined;
+  const pageBack = summary && (!closesWindow || sheet || workflow || s.follow) ? back : undefined;
+  const bar = (
+    <NavBar
+      {...(split
+        ? {
+            // iPad: the bar over the list has its title and buttons; the rest is the conversation's.
+            title: title ?? '',
+            subtitle,
+            back: summary && (sheet || workflow || s.follow) ? back : undefined,
+            actions,
+            largeTitle: false,
+            split: {
+              width: split.lead,
+              title: 'Chats',
+              actions: listNav.actions,
+              largeTitle: true,
+              inspector: panel.open && split.inspector && summary ? { width: split.inspector, title: 'Activity' } : undefined,
+            },
+            toolbar: reorderGroup,
+            more,
+            modal: sheet,
+          }
+        : {
+            title: title ?? (single ? undefined : 'Chats'),
+            subtitle,
+            back: pageBack,
+            actions: single && !summary ? [] : actions,
+            // The list's large title; a conversation on its way has none to scroll past.
+            largeTitle: !summary && !single && !starting,
+            toolbar: reorderGroup,
+            more,
+            // The Activity and Usage sheets are drawn in the page: the frame's bar stays out of reach under them.
+            modal: sheet,
+          })}
+    />
+  );
+
+  // A phone's list, as a list or as the Overview's cards.
+  const phoneList = (
+    <div className="pg-scroll">
+      <LargeTitle>Chats</LargeTitle>
+      <OverviewSwitch
+        listLabel="Chats"
+        list={
+          <section className="pg-group pg-sessions">
+            <SessionList
+              sessions={state.sessions}
+              selected={split ? s.selected : null}
+              collapsed={shown.collapsed}
+              waitingFirst={shown.waitingFirst}
+              onToggle={s.toggleGroup}
+              onSelect={s.setSelected}
+            />
+          </section>
+        }
+        value={listShow}
+        onChange={setListShow}
+        overview={<PhoneOverview sessions={state.sessions} shown={shown} setShown={s.setShown} onOpen={s.setSelected} reordering={reordering} onReordered={() => setReordering(false)} />}
+      />
+    </div>
+  );
+
+  const page = isPhone ? `phone-sessions phone-page${split ? ' split' : summary ? ` phone-conversation kind-${summary.kind}` : starting ? ' phone-starting' : ''}` : 'sessions-app';
+  return (
+    <div className={page}>
+      {bar}
+      {!isPhone && (single ? shown.windowToolbar : shown.toolbar) && <SessionsToolbar c={commands} single={single} />}
+      {/* A window opened on its conversation never shows the list without a column for it: Back closes the window. */}
+      <SessionsBody s={s} single={single} phone={isPhone ? { split, list: closesWindow && !split ? null : phoneList, panel, back: pageBack, title } : undefined} />
+      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={limits} />}
+      {summary && usage && (
+        <PhoneSheet title="Usage" onClose={() => setUsage(false)}>
+          <UsagePanel summary={summary} chat={chat} limits={limits} />
+        </PhoneSheet>
+      )}
+    </div>
+  );
+}
+
+/** What the Chats window's body takes on a phone or tablet: its columns, its list, its Activity sheet, and Back from a conversation. */
+interface PhoneChats {
+  split: SplitLayout | null;
+  list: React.ReactNode;
+  panel: ReturnType<typeof useInspector<ActivityTab>>;
+  back?: () => void;
+  title?: string;
 }
 
 /**
@@ -792,21 +916,15 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
   if (!summary) return s.single || s.selected ? <div className="empty">Loading…</div> : <ChatsDashboard s={s} />;
   if (workflow) {
     const { run, agent } = workflow;
-    const openAgent = (id: string | null) => s.showWorkflow(run.runId, id);
-    const props = { run, taskId: summary.taskId, sessionId: summary.id, onAgent: openAgent };
-    const agentView = agent && <TranscriptView key={agent.agentId} taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the agent's first message…" />;
-    if (isPhone) return agentView || <PhoneWorkflow {...props} />;
     return (
-      <div className="workflow-view">
-        {agentView ? (
-          <>
-            <WorkflowAgentBack run={run} agent={agent} onBack={() => openAgent(null)} />
-            {agentView}
-          </>
-        ) : (
-          <WorkflowOverview {...props} />
-        )}
-      </div>
+      <WorkflowView
+        run={run}
+        agent={agent}
+        agentView={agent && <TranscriptView key={agent.agentId} taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the agent's first message…" />}
+        taskId={summary.taskId}
+        sessionId={summary.id}
+        onAgent={(id) => s.showWorkflow(run.runId, id)}
+      />
     );
   }
   if (follow && followed) {
@@ -841,34 +959,39 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
   return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
 }
 
-function DesktopSessions({ s, single }: { s: SessionsWindow; single: boolean }) {
-  const { state, summary, chat, shown } = s;
-  const commandState = useCommandState();
-  const commands: CommandContext = { ...commandState, chats: s.chatsContext() };
-  useCommandMenu(single ? CHAT_WINDOW_VIEWS : CHATS_WINDOW_VIEWS, commands);
-  return (
-    <div className="sessions-app">
-      {(single ? shown.windowToolbar : shown.toolbar) && <SessionsToolbar c={commands} single={single} />}
-      <SessionsBody s={s} single={single} />
-      {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={sessionLimits(state, summary)} />}
-    </div>
-  );
-}
-
 /**
- * The Chats window's panes, as in the main window's Chats tab: the session
- * list, the session shown, and its activity pane. A single chat's window has
- * the session alone, with its activity pane when the View menu shows it.
+ * The Chats window's panes, as in the main window's Chats tab: the session list, the session shown, and its
+ * activity pane. A single chat's window has the session alone, with its activity pane when the View menu shows
+ * it. On a phone or tablet (`phone`) the list is a screen and a conversation is pushed over it, or the two are
+ * columns side by side; Activity is a sheet or a trailing column; the conversation's agents are pages, not tabs.
  */
-export function SessionsBody({ s, single = false }: { s: SessionsWindow; single?: boolean }) {
+export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; single?: boolean; phone?: PhoneChats }) {
   const { state, selected, summary, activity, shown, subagents } = s;
-  const pane = !!summary && (single ? shown.windowActivityPane : shown.activityPane);
+  const pane = !!summary && (phone ? phone.panel.open : single ? shown.windowActivityPane : shown.activityPane);
+  const starting = !summary && !!selected && !single;
+  // Opening a page from a sheet takes the sheet away; a column stays.
+  const dismiss = () => phone?.panel.dismiss();
+  const center = (
+    <main className="sessions-center">
+      {!phone && summary && hasTabs(s) && <SubagentTabs s={s} />}
+      <SessionCenter s={s} />
+    </main>
+  );
+  let detail: React.ReactNode = center;
+  if (phone?.split) detail = summary ? <div className={`pg-split-pane phone-conversation kind-${summary.kind}`}>{center}</div> : <div className="pg-split-pane phone-starting">{starting && <TerminalOverlay />}</div>;
+  else if (phone && starting) detail = <TerminalOverlay />;
 
   return (
     <ListDetail
       sides={{ storageKey: single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY, left: { initial: 280, min: 200, max: 480 }, right: { initial: 400, min: 280, max: 720 }, minDetail: single ? 0 : 480 }}
+      split={phone?.split}
+      open={single || !!summary || starting}
+      onClose={phone?.back}
+      detailTitle={phone?.title}
+      empty="No Chat Selected"
       list={
-        !single && (
+        !single &&
+        (phone ? phone.list : (
           <SessionList
             sessions={state.sessions}
             selected={selected}
@@ -877,286 +1000,47 @@ export function SessionsBody({ s, single = false }: { s: SessionsWindow; single?
             onToggle={s.toggleGroup}
             onSelect={s.setSelected}
           />
-        )
+        ))
       }
-      detail={
-        <main className="sessions-center">
-          {summary && hasTabs(s) && <SubagentTabs s={s} />}
-          <SessionCenter s={s} />
-        </main>
-      }
+      detail={detail}
       inspectorOpen={pane}
       inspector={
         summary && (
-          <Inspector title="Activity" open={pane}>
-            <ActivityPanel
-              sessionId={summary.id}
-              taskId={summary.taskId}
-              rows={s.watchedRows}
-              rowsAgent={s.watchedAgent}
-              attachments={s.attachments}
-              background={activity?.background ?? []}
-              subagents={subagents}
-              gitProject={s.gitRepo ? summary.projectId : undefined}
-              following={s.follow}
-              onFollow={s.setFollow}
-              onOpenWorkflow={(runId) => s.showWorkflow(runId)}
-              workflowRun={s.workflow?.run ?? null}
-              onOpenWorkflowAgent={(runId, agentId) => s.showWorkflow(runId, agentId)}
-              working={summary.status === 'working'}
-              pos={s.nowPos}
-              onPos={s.setNowPos}
-            />
+          <Inspector title="Activity" open={pane} onClose={phone?.panel.dismiss}>
+            <Fragment key={phone?.panel.showKey}>
+              <ActivityPanel
+                sessionId={summary.id}
+                taskId={summary.taskId}
+                rows={s.watchedRows}
+                rowsAgent={s.watchedAgent}
+                attachments={s.attachments}
+                background={activity?.background ?? []}
+                subagents={subagents}
+                gitProject={s.gitRepo ? summary.projectId : undefined}
+                following={s.follow}
+                onFollow={(id) => {
+                  s.setFollow(id);
+                  dismiss();
+                }}
+                onOpenWorkflow={(runId) => {
+                  s.showWorkflow(runId);
+                  dismiss();
+                }}
+                workflowRun={s.workflow?.run ?? null}
+                onOpenWorkflowAgent={(runId, agentId) => {
+                  s.showWorkflow(runId, agentId);
+                  dismiss();
+                }}
+                working={summary.status === 'working'}
+                pos={s.nowPos}
+                onPos={s.setNowPos}
+                initialTab={phone?.panel.tab}
+              />
+            </Fragment>
           </Inspector>
         )
       }
     />
   );
 }
-
-/**
- * The Chats window on a phone: the session list (or the Overview, as a
- * list), then a session's own screen. A chat's message box stays above the
- * keyboard; the activity pane, and the usage panel with the status bar's facts,
- * are sheets. A single chat's window is that chat's screen alone, and Back closes it.
- * So is a window opened on a conversation (`opened`: a tap on the main window's Chats
- * tab or its Dashboard): the list is the tab's, so Back, or closing the conversation,
- * closes the window and returns there.
- */
-function PhoneSessions({ s, single, opened }: { s: SessionsWindow; single: boolean; opened: boolean }) {
-  const { state, summary, chat, activity, subagents } = s;
-  const limits = sessionLimits(state, summary);
-  const closesWindow = single || opened;
-  // iPad: the list in a leading column and the conversation beside it; Activity a trailing inspector when there's room.
-  const split = useSplit(!single);
-  const [listShow, setListShow] = useState<OverviewChoice>('list');
-  const [reordering, setReordering] = useState(false);
-  const reorderGroup = !summary && state.sessions.length > 1 && listShow === 'overview' ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReordering(true) }] }] : [];
-  const panel = useInspector<ActivityTab>('now', !!split?.inspector);
-  const [usage, setUsage] = useState(false);
-  useEffect(() => {
-    panel.dismiss();
-    setUsage(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summary?.id]);
-  const sheet = panel.sheetOpen || usage;
-  const inspectorShown = !!split?.inspector && panel.open && !!summary;
-  // A conversation that isn't listed yet (a new chat or terminal is on its way) shows "Starting…" instead of the list.
-  const starting = !summary && !!s.selected && !single;
-  const listed = useRef(false);
-  useEffect(() => {
-    if (summary) listed.current = true;
-    // The shown conversation closed. Not one on its way (Compact or Fork shows the new chat before it's
-    // listed), which shows "Starting…" until it is. With the list beside it (iPad), the window stays and
-    // shows the list (useSessionsWindow drops the selection).
-    else if (opened && listed.current && !split && !starting) window.close();
-  }, [summary, opened, split, starting]);
-
-  // The bar and More, from the one list: the Activity sheet and the Usage sheet answer for what the desktop's status bar and pane do.
-  const commandState = useCommandState();
-  const commands: CommandContext = {
-    ...commandState,
-    chats: s.chatsContext({
-      activityOpen: panel.open,
-      toggleActivity: panel.toggle,
-      showUsage: () => setUsage(true),
-      usageLabel: summary ? usageLabel(chat?.context ?? summary.context, limits, summary.lastReplyAt ? summary.cacheUntil : undefined, Date.now()) : undefined,
-      usageRing: summary
-        ? {
-            context: contextFraction(chat?.context ?? summary.context),
-            fiveHour: limits.fiveHour,
-            sevenDay: limits.sevenDay,
-            cache: summary.lastReplyAt && summary.cacheUntil !== undefined ? { from: summary.lastReplyAt, until: summary.cacheUntil } : undefined,
-          }
-        : undefined,
-    }),
-  };
-  useCommandMenu(null, commands);
-  const listNav = phoneNav(['chats'], commands);
-  const conversationNav = phoneNav(['conversation'], commands);
-  const actions: PageNavAction[] = summary ? conversationNav.actions : split ? [] : listNav.actions;
-  const more = summary ? conversationNav.more : listNav.more;
-  // A workflow is a page pushed over the conversation, and its agent's conversation one over the workflow; a subagent's is one over the conversation.
-  const workflow = s.workflow;
-  const subagent = s.follow && s.followed ? s.followed : null;
-  const back = (): void => {
-    if (sheet) {
-      panel.dismiss();
-      setUsage(false);
-    } else if (workflow) s.showWorkflow(workflow.agent ? workflow.run.runId : null);
-    else if (s.follow) s.setFollow(null);
-    else s.setSelected(null);
-  };
-  const title = workflow
-    ? (workflow.agent?.label ?? workflow.run.name)
-    : subagent
-      ? subagent.description || subagent.type
-      : summary
-        ? summary.kind === 'terminal'
-          ? terminalTitle(summary)
-          : summary.title
-        : undefined;
-  // What runs beside the conversation, under its title (the bar's Activity button lists them).
-  const subtitle = summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status))) ?? undefined) : undefined;
-  const bar = (
-    <NavBar
-      {...(split
-      ? {
-          // iPad: the bar over the list has its title and buttons; the rest is the conversation's.
-          title: title ?? '',
-          subtitle,
-          back: summary && (sheet || workflow || s.follow) ? back : undefined,
-          actions,
-          largeTitle: false,
-          split: {
-            width: split.lead,
-            title: 'Chats',
-            actions: listNav.actions,
-            largeTitle: platform === 'ios',
-            inspector: inspectorShown ? { width: split.inspector, title: 'Activity' } : undefined,
-          },
-          toolbar: reorderGroup,
-          more,
-          modal: sheet,
-        }
-      : {
-          title: title ?? (single ? undefined : 'Chats'),
-          subtitle,
-          back: summary && (!closesWindow || sheet || workflow || s.follow) ? back : undefined,
-          actions: single && !summary ? [] : actions,
-          // The list's large title; a conversation on its way has none to scroll past.
-          largeTitle: platform === 'ios' && !summary && !single && !starting,
-          toolbar: reorderGroup,
-          more,
-          // The Activity and Usage sheets are drawn in the page: the frame's bar stays out of reach under them.
-          modal: sheet,
-        })}
-    />
-  );
-
-  const sessionsList = (
-    <div className="pg-scroll">
-      <LargeTitle>Chats</LargeTitle>
-      <OverviewSwitch
-        listLabel="Chats"
-        list={
-          <section className="pg-group pg-sessions">
-            <SessionList
-              sessions={state.sessions}
-              selected={split ? s.selected : null}
-              collapsed={s.shown.collapsed}
-              waitingFirst={s.shown.waitingFirst}
-              onToggle={s.toggleGroup}
-              onSelect={s.setSelected}
-            />
-          </section>
-        }
-        value={listShow}
-        onChange={setListShow}
-        overview={<PhoneOverview sessions={state.sessions} shown={s.shown} setShown={s.setShown} onOpen={s.setSelected} reordering={reordering} onReordered={() => setReordering(false)} />}
-      />
-    </div>
-  );
-  // Activity: opening a page from it takes a sheet away, and an inspector stays.
-  const activityPanel = summary && (
-    <Inspector title="Activity" open={panel.open} onClose={panel.dismiss}>
-      <Fragment key={panel.showKey}>
-        <ActivityPanel
-          sessionId={summary.id}
-          taskId={summary.taskId}
-          rows={s.watchedRows}
-          rowsAgent={s.watchedAgent}
-          attachments={s.attachments}
-          background={activity?.background ?? []}
-          subagents={subagents}
-          gitProject={s.gitRepo ? summary.projectId : undefined}
-          following={s.follow}
-          onFollow={(id) => {
-            s.setFollow(id);
-            panel.dismiss();
-          }}
-          onOpenWorkflow={(runId) => {
-            s.showWorkflow(runId);
-            panel.dismiss();
-          }}
-          working={summary.status === 'working'}
-          pos={s.nowPos}
-          onPos={s.setNowPos}
-          initialTab={panel.tab}
-        />
-      </Fragment>
-    </Inspector>
-  );
-  const usageSheet = summary && usage && (
-    <PhoneSheet title="Usage" onClose={() => setUsage(false)}>
-      <UsagePanel summary={summary} chat={chat} limits={limits} />
-    </PhoneSheet>
-  );
-
-  if (split) {
-    return (
-      <div className="phone-sessions phone-page split">
-        {bar}
-        <ListDetail
-          split={split}
-          list={sessionsList}
-          open={!!summary || starting}
-          detail={
-            summary ? (
-              <div className={`pg-split-pane phone-conversation kind-${summary.kind}`}>
-                <main className="sessions-center">
-                  <SessionCenter s={s} />
-                </main>
-              </div>
-            ) : (
-              <div className="pg-split-pane phone-starting">
-                <TerminalOverlay />
-              </div>
-            )
-          }
-          empty="No Chat Selected"
-          inspector={activityPanel}
-        />
-        {usageSheet}
-      </div>
-    );
-  }
-
-  if (!summary && single) {
-    return (
-      <div className="empty">
-        {bar}
-        Loading…
-      </div>
-    );
-  }
-  if (starting) {
-    return (
-      <div className="phone-sessions phone-page phone-starting">
-        {bar}
-        <TerminalOverlay />
-      </div>
-    );
-  }
-  if (!summary) {
-    return (
-      <div className="phone-sessions phone-page">
-        {bar}
-        {sessionsList}
-      </div>
-    );
-  }
-
-  return (
-    <div className={`phone-sessions phone-page phone-conversation kind-${summary.kind}`}>
-      {bar}
-      <main className="sessions-center">
-        <SessionCenter s={s} />
-      </main>
-      {activityPanel}
-      {usageSheet}
-    </div>
-  );
-}
-
 

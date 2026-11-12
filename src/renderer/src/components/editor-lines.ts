@@ -72,6 +72,21 @@ export function wordChanges(a: string, b: string): { a: TextRange[]; b: TextRang
   return { a: changedA, b: changedB };
 }
 
+/** A line diff of two whole texts (`lineDiff`'s) as numbered rows with the changed words marked. */
+export function lineDiffRows(lines: { op: ' ' | '-' | '+'; text: string }[]): DiffRow[] {
+  let oldN = 0;
+  let newN = 0;
+  return withWords(
+    lines.map(({ op, text }) =>
+      op === '+'
+        ? { kind: 'add' as const, oldN: '', newN: String(++newN), text }
+        : op === '-'
+          ? { kind: 'del' as const, oldN: String(++oldN), newN: '', text }
+          : { kind: 'ctx' as const, oldN: String(++oldN), newN: String(++newN), text },
+    ),
+  );
+}
+
 /** Marks the changed words: each run of removed lines is compared, line by line, with the added lines after it. */
 function withWords(rows: DiffRow[]): DiffRow[] {
   const out = rows.map((r) => ({ ...r }));

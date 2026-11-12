@@ -25,7 +25,7 @@ export function phoneTabForm(os: 'ios' | 'android', width: number, top: boolean)
 export type PhoneScreen =
   | { kind: 'task'; id: string }
   | { kind: 'project'; id: string }
-  /** The Tasks tab inside a folder: its subfolders and tasks. Not a selection: the main window selects nothing while it shows. */
+  /** The Tasks or Projects tab inside a folder: its subfolders and items. Not a selection: the main window selects nothing while it shows. */
   | { kind: 'folder'; id: string }
   /** The More tab's list of a menu (Advanced): its rows. Not a selection either. */
   | { kind: 'list'; id: string }

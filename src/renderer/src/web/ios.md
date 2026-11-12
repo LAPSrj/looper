@@ -119,6 +119,12 @@ SF Pro through `-apple-system`, sizes in `--u` so Dynamic Type scales them
   the page (`#fdfdfd`, dark `#050505`) and `--ios-bar-line` the line.
 - **Soft**, behind the floating tab bar: a 10 pt blur under a gradient mask,
   with no color (kit). `.phone-main::after` on a tab's own screen.
+- A conversation runs to the screen's bottom under its message box, as in
+  Messages, with the soft edge behind the box and nothing opaque under it.
+  Its end scrolls clear of the box (`--chat-dock-h`). Nothing else floats
+  over the conversation: "Claude Code is working…" is its last row, as
+  Messages shows its typing bubble, because a line of text over scrolling
+  messages runs into theirs.
 - One per view, and only behind floating controls (HIG Scroll views).
 
 ## Components
@@ -149,7 +155,9 @@ Sizes are points, which are CSS pixels.
   in label on glass. The selected tab sits on a capsule (`#EDEDED`, dark
   `#121212`) and takes the tint (kit). Looper's selected label is `#0062CC`,
   darker than the tint, because the tint gives 2.9:1 on the pill.
-- Filled symbols (HIG Tab bars).
+- HIG Tab bars asks for filled symbols. Looper draws the desktop's line tab
+  icons instead, so the views look the same on every device (Leandro's
+  choice); only More keeps filled dots.
 - iPad: a 44 high glass capsule near the top, padding 4; tabs 36 high with
   18 of side padding and 15/20 medium labels, the selected one bold in the
   tint on a capsule (kit: Tab Bar - iPad).
@@ -218,16 +226,25 @@ Sizes are points, which are CSS pixels.
 
 - A glass panel (Medium) with corner radius 34, 10 of padding at the top and
   bottom (kit: Menu).
-- Items 40 high: an optional 17 pt symbol in a 28 wide column, 8 from the
-  label in 17/20 regular, label on glass; a subtitle 13/18 in secondary label
-  on glass; disabled in placeholder on glass; destructive in red; a submenu's
-  chevron 15 pt bold in label on glass (kit).
-- No line between items; a group ends with a separator inset 8 with 10 above
-  and below, and a section title is 13/15 medium in placeholder on glass
-  (kit).
-- A control group puts three actions in tiles above the list: 56 high, corner
-  radius 20, a fill, 6 apart, a symbol over a 12/18 medium label (kit: Control
-  Group).
+- Items 40 high, their content 22 from the menu's edge: an optional 17 pt
+  symbol in a 28 wide column, 8 from the label in 17/20 regular, label on
+  glass; a subtitle 13/18 in secondary label on glass; disabled in placeholder
+  on glass; destructive in red; a submenu's chevron 15 pt bold in label on
+  glass (kit).
+- The symbol column is there only in a group with symbols or a check; a group
+  of plain items starts its labels at 22 from the edge (kit: Menu, its
+  Submenu rows).
+- No line between items; a group ends with a 1 pt separator 24 in from each
+  side with 10 above and below, and a section title is 13/15 medium in
+  placeholder on glass (kit).
+- A control group puts three actions in tiles above the list, 10 from the
+  menu's sides and 6 apart: 56 high, corner radius 20, a symbol over one line
+  of 12/18 medium that truncates. A tile has no fill until the finger is on it
+  (kit: Control Group, its BG layer hidden on all but the highlighted tile).
+- The kit's separator (`#E6E6E6`, dark `#1A1A1A`) and pressed tile
+  (`#EDEDED`, dark `#121212`) are blended, not painted: its render gives
+  `#DFDFDF` and `#343434` on `#F8F8F8` and `#1A1A1A` menus. Looper draws them
+  as black at 10% and 7% in light and white at 11% and 8% in dark.
 - Icons for every item in a group or for none (HIG Menus).
 - Behind a menu the screen dims with `rgba(41, 41, 58, 0.23)` (tokens).
 

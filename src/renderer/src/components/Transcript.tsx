@@ -3,10 +3,8 @@ import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SubagentInfo } from '@shared/sessions';
 import { Measured } from '../perf';
-import { isPhone } from '../web/page-nav';
 import { ChatRow, ToolGroup, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
-import { sendsOnEnter } from './composer-text';
 import { useChatsSettings } from './hooks';
 import { PromptBody } from './Markdown';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
@@ -14,7 +12,7 @@ import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst, useStayAtEnd } from './newest-
 import { InfoBar } from './ui';
 
 /** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
-function rowMenu(taskId: string, runId: string, r: MessageRow, selectText: string | undefined): void {
+function showRowMenu(taskId: string, runId: string, r: MessageRow, selectText: string | undefined): void {
   window.looper.showMessageContextMenu({
     taskId,
     runId,
@@ -43,6 +41,7 @@ export function TranscriptView({
   footer,
   drawAll = false,
   embedded = false,
+  rowMenu = true,
 }: {
   taskId: string;
   runId: string;
@@ -55,6 +54,8 @@ export function TranscriptView({
   drawAll?: boolean;
   /** One of several on the dashboard: only its newest messages are drawn at first. */
   embedded?: boolean;
+  /** A right-click on a row shows its menu (Copy, Open File, the subagent's conversation). */
+  rowMenu?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -67,12 +68,8 @@ export function TranscriptView({
   useStayAtEnd(scrollRef, atBottom);
   const selectText = useSelectText(`${taskId}/${runId}`);
   const ctx = useMemo<RowCtx>(
-    () => ({
-      taskId,
-      runId,
-      onContextMenu: (e, row) => rowMenu(taskId, runId, row, selectText(e)),
-    }),
-    [taskId, runId, selectText],
+    () => (rowMenu ? { taskId, runId, onContextMenu: (e, row) => showRowMenu(taskId, runId, row, selectText(e)) } : { taskId, runId }),
+    [taskId, runId, selectText, rowMenu],
   );
   const allItems = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
   const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll, embedded ? CARD_ITEMS : FIRST_ITEMS);
@@ -159,27 +156,7 @@ function SubagentMessageBox({ chat, agent }: { chat: ChatState; agent: SubagentI
     if ('stale' in document.documentElement.dataset) return;
     setText('');
   };
-  const placeholder = `Message ${agent.description || agent.type}`;
-  if (!isPhone) return <MessageBox text={text} onText={setText} placeholder={placeholder} canSend={!!text.trim()} onSend={() => void send()} />;
-  return (
-    <div className="guidance-compose">
-      <textarea
-        rows={3}
-        placeholder={placeholder}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (sendsOnEnter(e, true)) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-      />
-      <button className="btn primary" disabled={!text.trim()} onClick={() => void send()}>
-        Send
-      </button>
-    </div>
-  );
+  return <MessageBox text={text} onText={setText} placeholder={`Message ${agent.description || agent.type}`} canSend={!!text.trim()} onSend={send} />;
 }
 
 /**
@@ -232,35 +209,10 @@ export function RunGuidance({
     }
   };
   const placeholder = question !== null ? 'Your answer' : 'Guidance for the agent';
-  const info = question !== null && <InfoBar stacked title="The agent has a question" message={question} />;
-  if (!isPhone) {
-    return (
-      <>
-        {info}
-        <MessageBox text={text} onText={setText} placeholder={placeholder} canSend={!sending && !!text.trim()} onSend={() => void send()} stop={stop} />
-      </>
-    );
-  }
   return (
     <>
-      {info}
-      <div className="guidance-compose">
-        <textarea
-          rows={3}
-          placeholder={placeholder}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (sendsOnEnter(e, true)) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <button className="btn primary" disabled={sending || !text.trim()} onClick={() => void send()}>
-          Send
-        </button>
-      </div>
+      {question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
+      <MessageBox text={text} onText={setText} placeholder={placeholder} canSend={!sending && !!text.trim()} onSend={() => void send()} stop={stop} />
     </>
   );
 }

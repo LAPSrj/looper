@@ -3,7 +3,7 @@
 // WebKit has no long-frame reports, so a screen's cost is its frame gaps while it's drawn, and what it holds after.
 import { webkit, chromium, devices } from 'playwright-core';
 import * as path from 'node:path';
-import { ROOT, sleep } from './lib.mjs';
+import { ROOT, shoot, sleep } from './lib.mjs';
 
 const DEVICE = { ios: devices['iPhone 15'], android: devices['Pixel 7'] };
 
@@ -134,6 +134,7 @@ export async function phoneScreens(app, page, chats, screens, phones, wanted) {
         if (!step) continue;
         if (errors.length) broken.push(`${name}: ${errors[0].slice(0, 200)}`);
         measured[name] = { ...step, nodes: await nodeCount(phone) };
+        await shoot(phone, name);
       }
     } catch (e) {
       broken.push(`${os}: ${e.message.split('\n')[0]}`);

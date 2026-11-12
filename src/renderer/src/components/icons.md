@@ -84,8 +84,15 @@ or button shown at the same time looks like it.
 
 ## Other places
 
-- The phone's tab bar and rail draw their own 24 px icons (`TabIcon` in
-  `phone/tab-icons.tsx`), not these.
+- A phone's tab bar and rail draw these tab icons (`…Tab`) at 24 px (`TabIcon`
+  in `phone/tab-icons.tsx`), in place of the systems' own symbols, so the views
+  look the same as on the desktop. Only More, which the desktop has no tab for,
+  draws its own dots.
+- The status glyphs (`StatusGlyph`) are Windows' on the desktop, and on a phone
+  that system's own symbols: SF Symbols' xmark.circle.fill,
+  exclamationmark.triangle.fill and info.circle.fill on iOS, and Material
+  Symbols' error, warning and info on Android, in the system's red, orange and
+  tint.
 - A New button shows its New icon on a phone's bar too (`newProject`,
   `newTask`). The plain `add` plus is for an addon that chooses it.
 - Addons can name the icons in `ADDON_ICONS` (`src/shared/addons.ts`), the ones

@@ -230,8 +230,9 @@ const isChoice = (it: MenuItemSpec) => it.type === 'checkbox' || it.type === 'ra
  * before the labels holding a chosen item's check or else the item's symbol
  * (a chevron at the end of a submenu), destructive items in red. A group shows
  * symbols only when every item in it has one (HIG: Menus, "icons for all menu
- * items in a group, or none of them"); the column stays for every item, so the
- * labels line up. `row`: the medium layout's row of buttons across the top, a
+ * items in a group, or none of them"). The column is only in a group with
+ * symbols or a check; a group of plain items starts at the menu's edge, as
+ * the kit draws it. `row`: the medium layout's row of buttons across the top, a
  * symbol over a short label (HIG: Menus, iOS). `header`: a submenu's own row,
  * which folds it back up.
  */
@@ -252,7 +253,6 @@ function MenuLevel({
   const inRow = new Set(row.map((it) => it.id));
   const groups = menuGroups(items.filter((it) => !inRow.has(it.id)));
   const iconGroups = groups.map((group) => group.every((it) => iconOf(it)));
-  const lead = items.some(isChoice) || iconGroups.some(Boolean);
   return (
     <div className="ios-menu-scroll ph-scroll" role="menu">
       {header && (
@@ -278,6 +278,7 @@ function MenuLevel({
       )}
       {groups.map((group, gi) => {
         const icons = iconGroups[gi];
+        const lead = icons || group.some(isChoice);
         return (
           <div key={gi} className="ios-menu-group">
             {group.map((it) => (

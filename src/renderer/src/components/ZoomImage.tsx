@@ -1,4 +1,33 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { isPhone } from '../web/page-nav';
+
+/**
+ * An image in a viewer window: on a phone it fits the screen and zooms by touch (ZoomImage); on the desktop
+ * it scrolls in a viewport at `width` (the window's zoom), or fits its width until that's known. `missing`
+ * shows in its place while there's no image.
+ */
+export function ImageViewer({
+  src,
+  alt,
+  width,
+  onLoad,
+  viewportRef,
+  missing,
+}: {
+  src: string | null;
+  alt: string;
+  width?: number;
+  onLoad?: (e: React.SyntheticEvent<HTMLImageElement>) => void;
+  viewportRef?: Ref<HTMLDivElement>;
+  missing?: ReactNode;
+}) {
+  if (isPhone) return <>{src ? <ZoomImage key={src} src={src} alt={alt} /> : missing}</>;
+  return (
+    <div className="image-viewport" ref={viewportRef}>
+      {src ? <img src={src} alt={alt} onLoad={onLoad} style={width !== undefined ? { width } : { maxWidth: '100%' }} /> : missing}
+    </div>
+  );
+}
 
 const MAX_SCALE = 8;
 const TAP_SCALE = 2.5;

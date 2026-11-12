@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { FindBar, useFindHighlights, type FindState } from './FindBar';
 import { CARD_ITEMS, FIRST_ITEMS, readPlace, useKeepPlace, useNewestFirst, useStayAtEnd } from './newest-first';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
@@ -166,6 +166,42 @@ function showRowMenu(state: ChatState, row: MessageRow, selectText: string | und
 }
 
 /**
+ * On iOS the message box floats over the conversation's end (phone.css), so the conversation scrolls under it:
+ * this keeps its height in `--chat-dock-h` for the conversation to scroll clear of it.
+ */
+function useDockHeight(sectionRef: RefObject<HTMLElement | null>, on: boolean): void {
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    if (!on || !section) return;
+    const measure = () => {
+      let h = 0;
+      let scroll: HTMLElement | null = null;
+      for (const el of section.children) {
+        if (el.classList.contains('chat-scroll')) scroll = el as HTMLElement;
+        else h += (el as HTMLElement).offsetHeight;
+      }
+      // A reader at the end stays there as the box takes more or less room.
+      const atEnd = !!scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+      section.style.setProperty('--chat-dock-h', `${h}px`);
+      if (scroll && atEnd) scroll.scrollTop = scroll.scrollHeight;
+    };
+    const ro = new ResizeObserver(measure);
+    const watch = () => {
+      ro.disconnect();
+      for (const el of section.children) if (!el.classList.contains('chat-scroll')) ro.observe(el);
+      measure();
+    };
+    const mo = new MutationObserver(watch);
+    mo.observe(section, { childList: true });
+    watch();
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [sectionRef, on]);
+}
+
+/**
  * A chat in the Sessions window: the conversation, its queue, and the message box.
  * `embedded`: one of several on the dashboard, so it doesn't take the focus when it
  * opens, and Esc stops its agent only while the focus is in it.
@@ -218,6 +254,10 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [state.rows.length, state.history.length, state.permissions.length, state.status, state.queued.length]);
   useStayAtEnd(scrollRef, atBottom);
+  const sectionRef = useRef<HTMLElement>(null);
+  // On iOS the message box floats over the conversation, and what the agent is doing is the conversation's last row.
+  const floatingBox = !embedded && document.documentElement.dataset.platform === 'ios';
+  useDockHeight(sectionRef, floatingBox);
 
   const matches = useFindHighlights(scrollRef, find, setFind, () => {
     atBottom.current = false;
@@ -343,7 +383,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           }}
         />
       )}
-      <section className="builder-chat">
+      <section className="builder-chat" ref={sectionRef}>
         <div
           className="chat-scroll"
           ref={scrollRef}
@@ -386,8 +426,9 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
               )}
             </div>
           ))}
+          {floatingBox && <ChatStatus state={state} />}
         </div>
-        <ChatStatus state={state} />
+        {!floatingBox && <ChatStatus state={state} />}
         <Composer
           ref={composer}
           state={state}

@@ -6,10 +6,10 @@ import { AttachmentList } from './ChatRows';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from './chat-settings';
 import { bashModeEntry, commandAttachment } from '@shared/bash-mode';
 import { useBoxHeight } from './hooks';
+import { ARROW_UP } from './MessageBox';
 import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
-import { ICONS } from './icons';
 import { useAutoGrow } from './phone/auto-grow';
-import { ToolButton } from './ToolButton';
+import { Toolbar } from './Toolbar';
 import { isPhone } from '../web/page-nav';
 import { onUi, subscribe } from '../events';
 import { withShortcut } from '../shortcut';
@@ -34,9 +34,19 @@ function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach:
   const labels = settingLabels(state);
   const open = (which: ChatSettingMenu | 'all') => (e: React.MouseEvent<HTMLButtonElement>) => showSettingMenu(state, which, e.currentTarget.getBoundingClientRect());
   return (
-    <div className="toolbar chat-commandbar">
-      <ToolButton icon={ICONS.attach} title={withShortcut('Attach Files', 'Ctrl+O')} enabled={!ended} onClick={onAttach} />
-      <ToolButton icon={ICONS.skills} title={withShortcut('Skills and Commands', '/')} enabled={!ended && state.commands.length > 0} onClick={onSkills} />
+    <Toolbar
+      inline
+      className="chat-commandbar"
+      groups={[
+        {
+          id: 'add',
+          items: [
+            { id: 'attach', label: 'Attach Files', shortcut: 'Ctrl+O', icon: 'attach', enabled: !ended, run: onAttach },
+            { id: 'skills', label: 'Skills and Commands', shortcut: '/', icon: 'skills', enabled: !ended && state.commands.length > 0, run: onSkills },
+          ],
+        },
+      ]}
+    >
       <span className="spacer" />
       <span className="commandbar-full">
         {SETTINGS.map((which) => (
@@ -65,18 +75,13 @@ function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach:
         {labels.model}
         {MENU_ARROW}
       </button>
-    </div>
+    </Toolbar>
   );
 }
 
 const PLUS = (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
     <path d="M10 4v12M4 10h12" />
-  </svg>
-);
-export const ARROW_UP = (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M9 14.5v-11M4.5 8 9 3.5 13.5 8" />
   </svg>
 );
 const STOP = (

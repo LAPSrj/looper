@@ -5,7 +5,8 @@ import { StatusIcon, dashboardOpeners } from '../Dashboard';
 import { WaitedFor } from '../Live';
 import { statusText } from '../SessionList';
 import { AttentionGroup, RecentGroup, RunningGroup, taskRowMenu } from './overview-rows';
-import { EmptyRow, Group, LargeTitle, Row } from './PhoneList';
+import { Section } from '../Section';
+import { LargeTitle, Row } from './PhoneList';
 import { useSessionsState } from './useSessionsState';
 
 /**
@@ -33,7 +34,7 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
     <div className="pg-scroll">
       <LargeTitle>Dashboard</LargeTitle>
       {waiting.length > 0 && (
-        <Group title="Waiting for You">
+        <Section title="Waiting for You">
           {waiting.map((w) => (
             <Row
               key={w.key}
@@ -48,51 +49,43 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
               onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskRowMenu(m, w.attention.task.id, 'attention', w.attention.runId)}
             />
           ))}
-        </Group>
+        </Section>
       )}
 
       <AttentionGroup m={m} rows={attention} />
       <RunningGroup m={m} rows={running} />
       {sessions && (
-        <Group title="Chats">
-          {chats.length === 0 ? (
-            <EmptyRow>{waitingChats.size ? 'No other chats are open.' : 'No chats are open.'}</EmptyRow>
-          ) : (
-            chats.map((s) => (
-              <Row
-                key={s.id}
-                title={s.title}
-                sub={[s.groupName, s.lastReplyAt !== undefined ? fmtClock(s.lastReplyAt, now) : '', s.latest ?? statusText(s)].filter(Boolean).join(' · ')}
-                chevron
-                onOpen={() => window.looper.sessions.openWindow(s.id)}
-                onMenu={() => window.looper.sessions.showContextMenu(s.id, false)}
-              />
-            ))
-          )}
-        </Group>
+        <Section title="Chats" empty={chats.length === 0 && (waitingChats.size ? 'No other chats are open.' : 'No chats are open.')}>
+          {chats.map((s) => (
+            <Row
+              key={s.id}
+              title={s.title}
+              sub={[s.groupName, s.lastReplyAt !== undefined ? fmtClock(s.lastReplyAt, now) : '', s.latest ?? statusText(s)].filter(Boolean).join(' · ')}
+              chevron
+              onOpen={() => window.looper.sessions.openWindow(s.id)}
+              onMenu={() => window.looper.sessions.showContextMenu(s.id, false)}
+            />
+          ))}
+        </Section>
       )}
       <RecentGroup m={m} />
 
       {remoteOpen && (
-        <Group title="Remote Control">
-          {remoteOpen.length === 0 ? (
-            <EmptyRow>No sessions are open.</EmptyRow>
-          ) : (
-            remoteOpen.map((c) => (
-              <Row
-                key={c.id}
-                title={c.name}
-                sub={[fmtClock(Date.parse(c.startedAt), now), REMOTE_STATUS_LABELS[c.status], c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')].filter(Boolean).join(' · ')}
-                chevron
-                onOpen={() => opens.remote(c)}
-                onMenu={() => {
-                  m.setPick({ list: 'remote', taskId: c.taskId, runId: c.id });
-                  window.looper.remote.showContextMenu(c.id);
-                }}
-              />
-            ))
-          )}
-        </Group>
+        <Section title="Remote Control" empty={remoteOpen.length === 0 && 'No sessions are open.'}>
+          {remoteOpen.map((c) => (
+            <Row
+              key={c.id}
+              title={c.name}
+              sub={[fmtClock(Date.parse(c.startedAt), now), REMOTE_STATUS_LABELS[c.status], c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '')].filter(Boolean).join(' · ')}
+              chevron
+              onOpen={() => opens.remote(c)}
+              onMenu={() => {
+                m.setPick({ list: 'remote', taskId: c.taskId, runId: c.id });
+                window.looper.remote.showContextMenu(c.id);
+              }}
+            />
+          ))}
+        </Section>
       )}
     </div>
   );

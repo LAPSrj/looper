@@ -45,6 +45,35 @@ interface PaneEntry {
   body: ReactNode;
 }
 
+/** A sidebar pane's header: its title and count, and a right-click shows its menu. With `onToggle` it is a button that opens and closes the pane. */
+export function PaneHeader({ title, count, onMenu, open, onToggle }: { title: string; count?: number; onMenu: () => void; open?: boolean; onToggle?: () => void }) {
+  return (
+    <div
+      className={onToggle ? 'sidebar-header pane-header' : 'sidebar-header'}
+      onClick={onToggle}
+      role={onToggle && 'button'}
+      tabIndex={onToggle && 0}
+      aria-expanded={onToggle && open}
+      onKeyDown={
+        onToggle &&
+        ((e) => {
+          if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+          e.preventDefault();
+          onToggle();
+        })
+      }
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu();
+      }}
+    >
+      {onToggle && <Chevron open={open} />}
+      <span className="pane-title">{title}</span>
+      {count !== undefined && <span className="pane-count">{count}</span>}
+    </div>
+  );
+}
+
 /** The Projects tab's list of projects, under its header (a right-click there: Group By and New Project). */
 export function ProjectsSidebar({
   projects,
@@ -65,16 +94,7 @@ export function ProjectsSidebar({
 }) {
   return (
     <aside className="sidebar">
-      <div
-        className="sidebar-header"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          showProjectsListMenu();
-        }}
-      >
-        <span className="pane-title">Projects</span>
-        <span className="pane-count">{projects.length}</span>
-      </div>
+      <PaneHeader title="Projects" count={projects.length} onMenu={showProjectsListMenu} />
       <ProjectList
         projects={projects}
         folders={folders}
@@ -148,16 +168,7 @@ export function Sidebar({
     const singleCount = tasks.filter((t) => passesFilter(t, view.single, ALL_FILTERS)).length;
     return (
       <aside className="sidebar">
-        <div
-          className="sidebar-header"
-          onContextMenu={(e) => {
-            e.preventDefault();
-            showPaneMenu();
-          }}
-        >
-          <span className="pane-title">Tasks</span>
-          <span className="pane-count">{singleCount}</span>
-        </div>
+        <PaneHeader title="Tasks" count={singleCount} onMenu={showPaneMenu} />
         <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders />
       </aside>
     );
@@ -247,27 +258,7 @@ export function Sidebar({
                 }}
               />
             )}
-            <div
-              className="sidebar-header pane-header"
-              onClick={p.onToggle}
-              // The header is a button: Enter or Space opens and closes the pane.
-              role="button"
-              tabIndex={0}
-              aria-expanded={p.open}
-              onKeyDown={(e) => {
-                if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-                e.preventDefault();
-                p.onToggle();
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                p.onMenu();
-              }}
-            >
-              <Chevron open={p.open} />
-              <span className="pane-title">{p.title}</span>
-              <span className="pane-count">{p.count}</span>
-            </div>
+            <PaneHeader title={p.title} count={p.count} onMenu={p.onMenu} open={p.open} onToggle={p.onToggle} />
             {p.open && p.body}
           </div>
         );

@@ -8,6 +8,7 @@ import { DataTable, type DataCol } from './DataTable';
 import { showTaskMenu } from './row-menus';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
+import { Section } from './Section';
 import { statusText } from './SessionList';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
@@ -138,122 +139,97 @@ export function Dashboard({ attention, running, remote, chats, recent, runtimes,
         <span className="pane-title">Dashboard</span>
       </div>
       <div className="dashboard">
-        <section className="dashboard-section">
-          <span className="pane-title">Running now</span>
-          {running.length === 0 ? (
-            <div className="dashboard-empty muted">Nothing is running.</div>
-          ) : (
-            <DataTable
-              wrapClass="dashboard-list"
-              label="Running now"
-              cols={runningCols}
-              rows={running}
-              rowKey={(r) => pickKey(runningPick(r))}
-              idPrefix="dash-running"
-              storageKey="dashboard-running"
-              selected={pickedIn('running')}
-              onSelect={(r) => onPick(runningPick(r))}
-              onOpen={opens.running}
-              onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
-              empty={null}
-            />
-          )}
-        </section>
+        <Section className="dashboard-section" title="Running now" empty={running.length === 0 && 'Nothing is running.'}>
+          <DataTable
+            wrapClass="dashboard-list"
+            label="Running now"
+            cols={runningCols}
+            rows={running}
+            rowKey={(r) => pickKey(runningPick(r))}
+            idPrefix="dash-running"
+            storageKey="dashboard-running"
+            selected={pickedIn('running')}
+            onSelect={(r) => onPick(runningPick(r))}
+            onOpen={opens.running}
+            onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
+            empty={null}
+          />
+        </Section>
 
-        <section className="dashboard-section">
-          <div className="dashboard-section-head">
-            <span className="pane-title">Needs attention</span>
-            <button className="btn small" disabled={attention.length === 0} onClick={() => onClearAttention(attention)}>
-              Clear
-            </button>
-          </div>
-          {attention.length === 0 ? (
-            <div className="dashboard-empty muted">Nothing needs attention.</div>
-          ) : (
-            <DataTable
-              wrapClass="dashboard-list"
-              label="Needs attention"
-              cols={attentionCols}
-              rows={attention}
-              rowKey={(r) => pickKey(attentionPick(r))}
-              idPrefix="dash-attention"
-              storageKey="dashboard-attention"
-              selected={pickedIn('attention')}
-              onSelect={(r) => onPick(attentionPick(r))}
-              onOpen={opens.attention}
-              onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
-              empty={null}
-            />
-          )}
-        </section>
+        <Section
+          className="dashboard-section"
+          title="Needs attention"
+          action={{ label: 'Clear', disabled: attention.length === 0, run: () => onClearAttention(attention) }}
+          empty={attention.length === 0 && 'Nothing needs attention.'}
+        >
+          <DataTable
+            wrapClass="dashboard-list"
+            label="Needs attention"
+            cols={attentionCols}
+            rows={attention}
+            rowKey={(r) => pickKey(attentionPick(r))}
+            idPrefix="dash-attention"
+            storageKey="dashboard-attention"
+            selected={pickedIn('attention')}
+            onSelect={(r) => onPick(attentionPick(r))}
+            onOpen={opens.attention}
+            onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
+            empty={null}
+          />
+        </Section>
 
         {chats && (
-          <section className="dashboard-section">
-            <span className="pane-title">Chats</span>
-            {chats.length === 0 ? (
-              <div className="dashboard-empty muted">No chats are open.</div>
-            ) : (
-              <DataTable
-                wrapClass="dashboard-list"
-                label="Chats"
-                cols={chatCols}
-                rows={chats}
-                rowKey={(s) => s.id}
-                idPrefix="dash-chats"
-                storageKey="dashboard-chats"
-                onOpen={(s) => window.looper.sessions.openWindow(s.id)}
-                onMenu={(s) => window.looper.sessions.showContextMenu(s.id, false)}
-                empty={null}
-              />
-            )}
-          </section>
-        )}
-
-        <section className="dashboard-section">
-          <span className="pane-title">Recent runs</span>
-          {recent && recentRuns.length === 0 ? (
-            <div className="dashboard-empty muted">No runs yet.</div>
-          ) : (
+          <Section className="dashboard-section" title="Chats" empty={chats.length === 0 && 'No chats are open.'}>
             <DataTable
               wrapClass="dashboard-list"
-              label="Recent runs"
-              cols={recentCols}
-              rows={recentRuns}
-              rowKey={(r) => pickKey(recentPick(r))}
-              idPrefix="dash-recent"
-              storageKey="dashboard-recent"
-              rowClass={(r) => `result-${r.result}`}
-              selected={pickedIn('recent')}
-              onSelect={(r) => onPick(recentPick(r))}
-              onOpen={opens.recent}
-              onMenu={(r) => window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details })}
+              label="Chats"
+              cols={chatCols}
+              rows={chats}
+              rowKey={(s) => s.id}
+              idPrefix="dash-chats"
+              storageKey="dashboard-chats"
+              onOpen={(s) => window.looper.sessions.openWindow(s.id)}
+              onMenu={(s) => window.looper.sessions.showContextMenu(s.id, false)}
               empty={null}
             />
-          )}
-        </section>
+          </Section>
+        )}
+
+        <Section className="dashboard-section" title="Recent runs" empty={!!recent && recentRuns.length === 0 && 'No runs yet.'}>
+          <DataTable
+            wrapClass="dashboard-list"
+            label="Recent runs"
+            cols={recentCols}
+            rows={recentRuns}
+            rowKey={(r) => pickKey(recentPick(r))}
+            idPrefix="dash-recent"
+            storageKey="dashboard-recent"
+            rowClass={(r) => `result-${r.result}`}
+            selected={pickedIn('recent')}
+            onSelect={(r) => onPick(recentPick(r))}
+            onOpen={opens.recent}
+            onMenu={(r) => window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details })}
+            empty={null}
+          />
+        </Section>
 
         {remote && (
-          <section className="dashboard-section">
-            <span className="pane-title">Remote Control</span>
-            {conversations.length === 0 ? (
-              <div className="dashboard-empty muted">No conversations are open.</div>
-            ) : (
-              <DataTable
-                wrapClass="dashboard-list"
-                label="Remote Control"
-                cols={remoteCols}
-                rows={conversations}
-                rowKey={(c) => pickKey(remotePick(c))}
-                idPrefix="dash-remote"
-                storageKey="dashboard-remote"
-                selected={pickedIn('remote')}
-                onSelect={(c) => onPick(remotePick(c))}
-                onOpen={opens.remote}
-                onMenu={(c) => window.looper.remote.showContextMenu(c.id)}
-                empty={null}
-              />
-            )}
-          </section>
+          <Section className="dashboard-section" title="Remote Control" empty={conversations.length === 0 && 'No conversations are open.'}>
+            <DataTable
+              wrapClass="dashboard-list"
+              label="Remote Control"
+              cols={remoteCols}
+              rows={conversations}
+              rowKey={(c) => pickKey(remotePick(c))}
+              idPrefix="dash-remote"
+              storageKey="dashboard-remote"
+              selected={pickedIn('remote')}
+              onSelect={(c) => onPick(remotePick(c))}
+              onOpen={opens.remote}
+              onMenu={(c) => window.looper.remote.showContextMenu(c.id)}
+              empty={null}
+            />
+          </Section>
         )}
       </div>
     </div>

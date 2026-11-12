@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import { formatTokens, type Attachment } from '@shared/chat';
 import { EFFORT_LEVELS } from '@shared/environments';
@@ -13,12 +13,13 @@ import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
-import { useListNav } from './hooks';
+import { RowList } from './DataTable';
 import { Markdown, MessageBody } from './Markdown';
-import { isPhone } from '../web/page-nav';
+import { Section } from './Section';
 import { StatusMark } from './StatusMark';
 import { newestFirst } from './subagents';
-import { ToolButton } from './ToolButton';
+import { PropertyList } from './PropertyList';
+import { Toolbar } from './Toolbar';
 import { CodeBlock, CodeText, DiffRows, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
 
@@ -28,16 +29,6 @@ type Tab = ActivityTab;
 /** Tools that change a file (Delete and Patch are Codex's). */
 const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
 
-/** The Now tab's toolbar icons. */
-const NAV_ICONS = {
-  previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
-  next: <path d="M6 3.5 10.5 8 6 12.5" />,
-  latest: <path d="M4 3.5 8.5 8 4 12.5M12 3v10" />,
-  // A bulleted list: every tool call, one per row.
-  list: <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01M5.5 4h8M5.5 8h8M5.5 12h8" />,
-  // Angle brackets: a Markdown file as its source text.
-  source: <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />,
-};
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const MARKDOWN_RE = /\.(md|markdown)$/i;
 
@@ -164,24 +155,36 @@ function CallList({
   onIndex: (i: number) => void;
   onShow: (i: number) => void;
 }) {
-  const listRef = useRef<HTMLDivElement>(null);
-  const rowId = (n: number) => `now-call-${tools[n]?.id}`;
-  const onKeyDown = useListNav({ count: tools.length, index, onIndex, onActivate: onShow, scrollToId: tools[index] ? rowId(index) : null });
-  // On a phone this mounts in a sheet still rising from below the screen, which WebKit would scroll the page to show.
-  useEffect(() => listRef.current?.focus({ preventScroll: true }), []);
+  const state = (t: MessageRow) => (t.result === undefined ? 'Running' : t.resultError ? 'Failed' : undefined);
   return (
-    <div ref={listRef} className="now-calls" role="listbox" aria-label="Tool calls" tabIndex={0} aria-activedescendant={tools[index] ? rowId(index) : undefined} onKeyDown={onKeyDown}>
-      {tools.map((t, n) => {
+    <RowList
+      rows={tools}
+      rowKey={(t) => t.id}
+      idPrefix="now-call"
+      selected={tools[index]?.id ?? null}
+      onSelect={(_, n) => onIndex(n)}
+      onOpen={(t) => onShow(tools.indexOf(t))}
+      activateOnClick
+      autoFocus
+      label="Tool calls"
+      listClass="now-calls"
+      rowClass="now-call"
+      empty={null}
+      row={(t) => {
         const { title, subject } = callTitle(t, addons);
         return (
-          <div key={t.id} id={rowId(n)} role="option" aria-selected={n === index} className={`now-call${n === index ? ' selected' : ''}`} onClick={() => onShow(n)}>
+          <>
             <span className="now-call-tool">{title}</span>
             <span className="mono now-call-subject">{subject}</span>
-            {t.result === undefined ? <span className="muted now-call-state">Running</span> : t.resultError ? <span className="error-text now-call-state">Failed</span> : null}
-          </div>
+            {state(t) && <span className={`now-call-state ${t.resultError ? 'error-text' : 'muted'}`}>{state(t)}</span>}
+          </>
         );
-      })}
-    </div>
+      }}
+      phoneRow={(t) => {
+        const { title, subject } = callTitle(t, addons);
+        return { title, sub: subject, value: state(t), valueTone: t.resultError ? 'error' : undefined, chevron: false };
+      }}
+    />
   );
 }
 
@@ -430,48 +433,28 @@ function NowScreen({
   );
 }
 
-/** A file the agent worked on: an image shows as a thumbnail. */
-function FileItem({ path, taskId, runId, onShow }: { path: string; taskId: string; runId: string; onShow: () => void }) {
+/** A file's thumbnail when it's an image. */
+function FileThumb({ path, taskId }: { path: string; taskId: string }) {
   const [thumb, setThumb] = useState<string | null>(null);
   useEffect(() => {
     if (!IMAGE_RE.test(path)) return;
     void window.looper.sessions.fileThumbnail(taskId, path).then(setThumb);
   }, [taskId, path]);
-  return (
-    <div
-      className="file-item"
-      onClick={onShow}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        window.looper.showMessageContextMenu({ taskId, runId, file: path, text: path });
-      }}
-    >
-      {thumb && <img className="file-thumb" src={thumb} alt="" />}
-      <div className="file-item-text">
-        <div>{baseName(path)}</div>
-        <div className="muted mono file-dir">{dirName(path)}</div>
-      </div>
-    </div>
-  );
+  return thumb ? <img className="file-thumb" src={thumb} alt="" /> : null;
 }
 
-/** One background command or workflow; opened, the end of a command's output, read again every few seconds. */
-function BackgroundItem({
-  b,
-  sessionId,
-  taskId,
-  onOpenWorkflow,
-}: {
-  b: BackgroundTask;
-  sessionId: string;
-  taskId: string;
-  /** A workflow's item opens its tab beside the conversation. */
-  onOpenWorkflow: (runId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
+/** A background command's or workflow's state: "Running for 3 min" counts whole minutes, from a minute on. */
+function BackgroundStatus({ b }: { b: BackgroundTask }) {
+  const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
+  const now = useNow(b.status === 'running' && !Number.isNaN(started) ? MINUTE : null);
+  if (b.status !== 'running') return <>{b.status === 'completed' ? 'Completed' : b.status === 'failed' ? 'Failed' : 'Stopped'}</>;
+  return <>Running{Number.isNaN(started) || now - started < 60_000 ? '' : ` for ${waitedText(now - started)}`}</>;
+}
+
+/** The end of a background command's output, read again every few seconds while it runs. */
+function BackgroundOutput({ b, sessionId }: { b: BackgroundTask; sessionId: string }) {
   const [output, setOutput] = useState<string | null>(null);
   useEffect(() => {
-    if (!open || !b.outputFile) return;
     let live = true;
     const load = () =>
       void window.looper.sessions.backgroundOutput(sessionId, b.id).then((t) => {
@@ -483,55 +466,8 @@ function BackgroundItem({
       live = false;
       if (timer) clearInterval(timer);
     };
-  }, [open, b.outputFile, b.status, sessionId, b.id]);
-  const activate = b.workflowRunId ? () => onOpenWorkflow(b.workflowRunId!) : b.outputFile ? () => setOpen((o) => !o) : undefined;
-  const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
-  // The text counts whole minutes, from a minute on.
-  const now = useNow(b.status === 'running' && !Number.isNaN(started) ? MINUTE : null);
-  const status =
-    b.status === 'running'
-      ? `Running${Number.isNaN(started) || now - started < 60_000 ? '' : ` for ${waitedText(now - started)}`}`
-      : b.status === 'completed'
-        ? 'Completed'
-        : b.status === 'failed'
-          ? 'Failed'
-          : 'Stopped';
-  return (
-    <div
-      className={`bg-item ${b.status}`}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: b.outputFile, text: b.command });
-      }}
-    >
-      <div
-        className="bg-item-head"
-        role={activate ? 'button' : undefined}
-        tabIndex={activate ? 0 : undefined}
-        aria-expanded={b.workflowRunId || !b.outputFile ? undefined : open}
-        onClick={activate}
-        onKeyDown={
-          activate &&
-          ((e) => {
-            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-            e.preventDefault();
-            activate();
-          })
-        }
-      >
-        <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}${b.status === 'running' ? ' live-only' : ''}`}>{status}</span>
-        <span className="bg-label">{b.label}</span>
-        <span className="muted bg-kind">{b.kind === 'workflow' ? 'Workflow' : ''}</span>
-        {isPhone && b.workflowRunId && (
-          <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
-            <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        )}
-      </div>
-      {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
-      {open && <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>}
-    </div>
-  );
+  }, [b.status, sessionId, b.id]);
+  return <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>;
 }
 
 /** The installed addons, kept current: their toolCalls say how some tool calls show on Now. */
@@ -548,6 +484,10 @@ function useAddonList(): AddonInfo[] {
   }, []);
   return addons;
 }
+
+const subagentStatus = (a: SubagentInfo) => (a.status === 'running' ? 'Running' : a.status === 'done' ? 'Done' : 'Failed');
+const effortText = (a: SubagentInfo) => (a.effort ? (EFFORT_LEVELS['claude-code'].find(([v]) => v === a.effort)?.[1] ?? a.effort) : undefined);
+const contextText = (a: SubagentInfo) => (a.contextTokens !== undefined ? `${formatTokens(a.contextTokens)} tokens` : undefined);
 
 /** The tool call Now shows: the one at `pos`, or the latest when it's null. */
 export function nowIndex(count: number, pos: number | null): number {
@@ -646,6 +586,95 @@ export function ActivityPanel({
   const own = background.filter((b) => b.kind !== 'agent');
   const running = own.filter((b) => b.status === 'running');
   const finished = own.filter((b) => b.status !== 'running').slice(0, 5);
+  // Each list's selected row, for its keys, and the background commands whose output is open.
+  const [sel, setSel] = useState<{ background: string | null; file: string | null; agent: string | null }>({ background: null, file: null, agent: null });
+  const [openOutput, setOpenOutput] = useState<ReadonlySet<string>>(new Set());
+
+  const openBackground = (b: BackgroundTask) => {
+    if (b.workflowRunId) onOpenWorkflow(b.workflowRunId);
+    else if (b.outputFile)
+      setOpenOutput((s) => {
+        const next = new Set(s);
+        if (!next.delete(b.id)) next.add(b.id);
+        return next;
+      });
+  };
+  const backgroundList = (title: string, list: BackgroundTask[]) =>
+    list.length > 0 && (
+      <Section className="activity-section" title={title}>
+        <RowList
+          bare
+          rows={list}
+          rowKey={(b) => b.id}
+          idPrefix={`background-${title.toLowerCase()}`}
+          label={title}
+          listClass="pane-rows"
+          rowClass={title === 'Running' ? 'bg-item running' : 'bg-item'}
+          selected={sel.background}
+          onSelect={(b) => setSel((p) => ({ ...p, background: b.id }))}
+          onOpen={openBackground}
+          activateOnClick
+          onMenu={(b) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: b.outputFile, text: b.command })}
+          empty={null}
+          row={(b) => (
+            <>
+              <div className="bg-item-head">
+                <span className={`bg-status${b.status === 'failed' ? ' error-text' : ''}${b.status === 'running' ? ' live-only' : ''}`}>
+                  <BackgroundStatus b={b} />
+                </span>
+                <span className="bg-label">{b.label}</span>
+                <span className="muted bg-kind">{b.kind === 'workflow' ? 'Workflow' : ''}</span>
+              </div>
+              {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
+              {openOutput.has(b.id) && <BackgroundOutput b={b} sessionId={sessionId} />}
+            </>
+          )}
+          phoneRow={(b) => ({
+            title: b.label,
+            sub: (
+              <>
+                <BackgroundStatus b={b} />
+                {b.kind === 'workflow' ? ' · Workflow' : ''}
+                {b.summary && b.status !== 'running' ? ` · ${b.summary}` : ''}
+              </>
+            ),
+            tone: b.status === 'failed' ? 'error' : b.status === 'running' ? undefined : 'muted',
+            chevron: !!b.workflowRunId,
+            detail: openOutput.has(b.id) && <BackgroundOutput b={b} sessionId={sessionId} />,
+          })}
+        />
+      </Section>
+    );
+  const fileList = (title: string, list: [string, { index: number }][]) =>
+    list.length > 0 && (
+      <Section className="activity-section" title={title}>
+        <RowList
+          bare
+          rows={list}
+          rowKey={([p]) => p}
+          idPrefix={`file-${title.toLowerCase()}`}
+          label={title}
+          listClass="pane-rows"
+          rowClass="file-item"
+          selected={sel.file}
+          onSelect={([p]) => setSel((s) => ({ ...s, file: p }))}
+          onOpen={([, f]) => showFile(f.index)}
+          activateOnClick
+          onMenu={([p]) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: p, text: p })}
+          empty={null}
+          row={([p]) => (
+            <>
+              <FileThumb path={p} taskId={taskId} />
+              <div className="file-item-text">
+                <div>{baseName(p)}</div>
+                <div className="muted mono file-dir">{dirName(p)}</div>
+              </div>
+            </>
+          )}
+          phoneRow={([p]) => ({ lead: <FileThumb path={p} taskId={taskId} />, title: baseName(p), sub: dirName(p), chevron: false })}
+        />
+      </Section>
+    );
 
   return (
     <aside className="activity-panel">
@@ -668,19 +697,31 @@ export function ActivityPanel({
         {tab === 'now' &&
           (row ? (
             <>
-              <div className="toolbar pane-toolbar">
-                <ToolButton icon={NAV_ICONS.previous} title="Previous Tool Call" enabled={i > 0} onClick={() => step(i - 1)} />
-                <ToolButton icon={NAV_ICONS.next} title="Next Tool Call" enabled={i < tools.length - 1} onClick={() => step(i + 1)} />
-                <ToolButton icon={NAV_ICONS.latest} title="Follow the Latest Tool Call" enabled onClick={() => onPos(null)} pressed={pos === null} />
-                <span className="toolbar-sep" />
-                <ToolButton icon={NAV_ICONS.list} title="Tool Call List" enabled onClick={() => setListView((v) => !v)} pressed={listView} />
-                {!listView && markdownDoc(row) !== null && (
-                  <ToolButton icon={NAV_ICONS.source} title="Markdown Source" enabled onClick={() => setMdSource((v) => !v)} pressed={mdSource} />
-                )}
+              <Toolbar
+                inline
+                className="pane-toolbar"
+                groups={[
+                  {
+                    id: 'calls',
+                    items: [
+                      { id: 'previous', label: 'Previous Tool Call', icon: 'previous', enabled: i > 0, run: () => step(i - 1) },
+                      { id: 'next', label: 'Next Tool Call', icon: 'next', enabled: i < tools.length - 1, run: () => step(i + 1) },
+                      { id: 'latest', label: 'Follow the Latest Tool Call', icon: 'latest', pressed: pos === null, run: () => onPos(null) },
+                    ],
+                  },
+                  {
+                    id: 'view',
+                    items: [
+                      { id: 'list', label: 'Tool Call List', icon: 'list', pressed: listView, run: () => setListView((v) => !v) },
+                      ...(!listView && markdownDoc(row) !== null ? [{ id: 'source', label: 'Markdown Source', icon: 'source', pressed: mdSource, run: () => setMdSource((v) => !v) }] : []),
+                    ],
+                  },
+                ]}
+              >
                 <span className="muted now-place">
                   {i + 1} of {tools.length}
                 </span>
-              </div>
+              </Toolbar>
               {listView ? (
                 <CallList
                   tools={tools}
@@ -702,70 +743,83 @@ export function ActivityPanel({
         {tab === 'background' && (
           <div className="background-tab">
             {running.length === 0 && finished.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
-            {running.length > 0 && <div className="pane-title files-heading">Running</div>}
-            {running.map((b) => (
-              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} onOpenWorkflow={onOpenWorkflow} />
-            ))}
-            {finished.length > 0 && <div className="pane-title files-heading">Finished</div>}
-            {finished.map((b) => (
-              <BackgroundItem key={b.id} b={b} sessionId={sessionId} taskId={taskId} onOpenWorkflow={onOpenWorkflow} />
-            ))}
+            {backgroundList('Running', running)}
+            {backgroundList('Finished', finished)}
           </div>
         )}
         {tab === 'subagents' && (
           <div className="subagent-list">
-            {newestFirst(subagents).map((a) => (
-              <div
-                key={a.agentId}
-                className={`subagent-item${following === a.agentId ? ' selected' : ''}`}
-                onClick={() => onFollow(a.agentId)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.description });
-                }}
-              >
-                <div className="subagent-head">
-                  <span className="subagent-desc">{a.description || a.type}</span>
-                  <span className={a.status === 'failed' ? 'error-text' : 'muted'}>
-                    {a.status === 'running' ? 'Running' : a.status === 'done' ? 'Done' : 'Failed'}
-                  </span>
-                </div>
-                <dl className="subagent-facts">
-                  <dt>Agent</dt>
-                  <dd>{a.type}</dd>
-                  <dt>Model</dt>
-                  <dd className="mono">{a.modelId ?? a.model ?? 'Not known yet'}</dd>
-                  <dt>Effort</dt>
-                  <dd>{a.effort ? (EFFORT_LEVELS['claude-code'].find(([v]) => v === a.effort)?.[1] ?? a.effort) : 'Not known yet'}</dd>
-                  <dt>Context</dt>
-                  <dd>{a.contextTokens !== undefined ? `${formatTokens(a.contextTokens)} tokens` : 'Not known yet'}</dd>
-                </dl>
-              </div>
-            ))}
+            {subagents.length > 0 && (
+              <Section className="activity-section">
+                <RowList
+                  bare
+                  rows={newestFirst(subagents)}
+                  rowKey={(a) => a.agentId}
+                  idPrefix="subagent"
+                  label="Subagents"
+                  listClass="pane-rows"
+                  rowClass="subagent-item"
+                  selected={following}
+                  onSelect={(a) => onFollow(a.agentId)}
+                  onMenu={(a) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.description })}
+                  empty={null}
+                  row={(a) => (
+                    <>
+                      <div className="subagent-head">
+                        <span className="subagent-desc">{a.description || a.type}</span>
+                        <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{subagentStatus(a)}</span>
+                      </div>
+                      <PropertyList
+                        className="subagent-facts"
+                        items={[
+                          { label: 'Agent', value: a.type },
+                          { label: 'Model', value: a.modelId ?? a.model ?? 'Not known yet', className: 'mono' },
+                          { label: 'Effort', value: effortText(a) ?? 'Not known yet' },
+                          { label: 'Context', value: contextText(a) ?? 'Not known yet' },
+                        ]}
+                      />
+                    </>
+                  )}
+                  phoneRow={(a) => ({
+                    title: a.description || a.type,
+                    sub: [a.type, a.modelId ?? a.model, effortText(a), contextText(a)].filter(Boolean).join(' · '),
+                    value: subagentStatus(a),
+                    valueTone: a.status === 'failed' ? 'error' : undefined,
+                    chevron: false,
+                  })}
+                />
+              </Section>
+            )}
             {workflowRun && workflowAgents(workflowRun).length > 0 && (
-              <>
-                <div className="pane-title files-heading">Workflow</div>
-                {workflowAgents(workflowRun).map((a) => (
-                  <div
-                    key={a.agentId}
-                    className="subagent-item"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onOpenWorkflowAgent?.(workflowRun.runId, a.agentId)}
-                    onKeyDown={(e) => {
-                      if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-                      e.preventDefault();
-                      onOpenWorkflowAgent?.(workflowRun.runId, a.agentId);
-                    }}
-                  >
+              <Section className="activity-section" title="Workflow">
+                <RowList
+                  bare
+                  rows={workflowAgents(workflowRun)}
+                  rowKey={(a) => a.agentId}
+                  idPrefix="workflow-agent"
+                  label="Workflow"
+                  listClass="pane-rows"
+                  rowClass="subagent-item"
+                  selected={sel.agent}
+                  onSelect={(a) => setSel((p) => ({ ...p, agent: a.agentId }))}
+                  onOpen={(a) => onOpenWorkflowAgent?.(workflowRun.runId, a.agentId)}
+                  activateOnClick
+                  empty={null}
+                  row={(a) => (
                     <div className="subagent-head">
                       <StatusMark status={tabStatus(a.status)} />
                       <span className="subagent-desc">{a.label}</span>
                       <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[a.status]}</span>
                     </div>
-                  </div>
-                ))}
-              </>
+                  )}
+                  phoneRow={(a) => ({
+                    lead: <StatusMark status={tabStatus(a.status)} />,
+                    title: a.label,
+                    value: WORKFLOW_STATUS_TEXT[a.status],
+                    valueTone: a.status === 'failed' ? 'error' : undefined,
+                  })}
+                />
+              </Section>
             )}
             {subagents.length === 0 && !workflowRun?.phases.some((p) => p.agents.length > 0) && <div className="empty">{working ? 'No subagents yet.' : 'No subagents.'}</div>}
           </div>
@@ -773,24 +827,16 @@ export function ActivityPanel({
         {tab === 'files' && (
           <div className="files-tab">
             {received.length > 0 && (
-              <>
-                <div className="pane-title files-heading">Received</div>
+              <Section className="activity-section" title="Received">
                 <SentFileList files={received} ctx={{ taskId, runId: sessionId }} />
-              </>
+              </Section>
             )}
-            {changed.length > 0 && <div className="pane-title files-heading">Changed</div>}
-            {changed.map(([p, f]) => (
-              <FileItem key={p} path={p} taskId={taskId} runId={sessionId} onShow={() => showFile(f.index)} />
-            ))}
-            {read.length > 0 && <div className="pane-title files-heading">Read</div>}
-            {read.map(([p, f]) => (
-              <FileItem key={p} path={p} taskId={taskId} runId={sessionId} onShow={() => showFile(f.index)} />
-            ))}
+            {fileList('Changed', changed)}
+            {fileList('Read', read)}
             {attachments.length > 0 && (
-              <>
-                <div className="pane-title files-heading">Attached</div>
+              <Section className="activity-section" title="Attached">
                 <AttachmentList items={attachments} />
-              </>
+              </Section>
             )}
             {files.size === 0 && attachments.length === 0 && received.length === 0 && <div className="empty">No files yet.</div>}
           </div>

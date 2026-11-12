@@ -23,6 +23,10 @@ export interface PhoneRowModel {
   lead?: ReactNode;
   tone?: 'error' | 'warning' | 'muted';
   valueTone?: 'error' | 'warning';
+  /** Under the row, across the list's width (a command's output while it's open). */
+  detail?: ReactNode;
+  /** Whether a tap pushes another screen; unset: whenever the row can be tapped. */
+  chevron?: boolean;
 }
 
 interface Rows<T> {
@@ -108,7 +112,6 @@ function PhoneRows<T>({
           return all;
         }, [])
       : [{ key: 'all', title: '', items: keyed }];
-  const tappable = !!(onOpen || onSelect);
   return (
     <div className="pg-rows" onScroll={onRowsScroll} ref={rowsRef}>
       {head}
@@ -120,29 +123,49 @@ function PhoneRows<T>({
       ) : (
         sections.map((s) => (
           <Group key={s.key} title={sectionTitle ? sectionTitle(s.title, sections.length) : s.title || undefined}>
-            {s.items.map(({ row, index }) => {
-              const m = phoneRow(row);
-              const key = rowKey(row, index);
-              return (
-                <Row
-                  key={key}
-                  title={m.title}
-                  sub={typeof m.sub === 'string' ? <span className="pg-oneline">{m.sub}</span> : m.sub}
-                  value={m.value}
-                  lead={m.lead}
-                  tone={m.tone}
-                  valueTone={m.valueTone}
-                  chevron={tappable}
-                  selected={key === selected}
-                  onOpen={tappable ? () => (onOpen ? onOpen(row) : onSelect!(row, index)) : undefined}
-                  onMenu={onMenu && (() => onMenu(row))}
-                />
-              );
-            })}
+            <PhoneRowItems items={s.items} rowKey={rowKey} selected={selected} onSelect={onSelect} onOpen={onOpen} onMenu={onMenu} phoneRow={phoneRow} />
           </Group>
         ))
       )}
     </div>
+  );
+}
+
+/** The Rows of a phone list, without a section around them. */
+function PhoneRowItems<T>({
+  items,
+  rowKey,
+  selected,
+  onSelect,
+  onOpen,
+  onMenu,
+  phoneRow,
+}: Pick<Rows<T>, 'rowKey' | 'selected' | 'onSelect' | 'onOpen' | 'onMenu' | 'phoneRow'> & { items: { row: T; index: number }[] }) {
+  const tappable = !!(onOpen || onSelect);
+  return (
+    <>
+      {items.map(({ row, index }) => {
+        const m = phoneRow(row);
+        const key = rowKey(row, index);
+        return (
+          <Fragment key={key}>
+            <Row
+              title={m.title}
+              sub={typeof m.sub === 'string' ? <span className="pg-oneline">{m.sub}</span> : m.sub}
+              value={m.value}
+              lead={m.lead}
+              tone={m.tone}
+              valueTone={m.valueTone}
+              chevron={m.chevron ?? tappable}
+              selected={key === selected}
+              onOpen={tappable ? () => (onOpen ? onOpen(row) : onSelect!(row, index)) : undefined}
+              onMenu={onMenu && (() => onMenu(row))}
+            />
+            {m.detail && <div className="pg-row-detail">{m.detail}</div>}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
@@ -352,20 +375,35 @@ export interface RowListProps<T> extends Omit<Rows<T>, 'copyText'> {
   listClass: string;
   rowClass: string;
   onListScroll?: (e: UIEvent<HTMLDivElement>) => void;
+  /** Only the rows, for a Section around them: on a phone, its section's rows; the desktop's listbox is the same. Its `empty` shows nothing. */
+  bare?: boolean;
+  /** A click on the desktop opens the row (a list to pick from); the arrow keys still only select. */
+  activateOnClick?: boolean;
+  /** The desktop's list takes the focus when it shows. */
+  autoFocus?: boolean;
 }
 
 /** A list of selectable multi-line rows: a listbox on the desktop, list rows on a phone or tablet. */
 export function RowList<T>(props: RowListProps<T>) {
-  return isPhone ? <PhoneRows {...props} onRowsScroll={props.onListScroll} /> : <DesktopRowList {...props} />;
+  if (!isPhone) return <DesktopRowList {...props} />;
+  if (props.bare) return <PhoneRowItems {...props} items={props.rows.map((row, index) => ({ row, index }))} />;
+  return <PhoneRows {...props} onRowsScroll={props.onListScroll} />;
 }
 
 function DesktopRowList<T>(props: RowListProps<T>) {
-  const { rows, rowKey, idPrefix, selected, onSelect, onMenu, label, row, listClass, rowClass, onListScroll } = props;
+  const { rows, rowKey, idPrefix, selected, onSelect, onOpen, onMenu, label, row, listClass, rowClass, onListScroll, activateOnClick, autoFocus } = props;
   const { index, onKeyDown } = useRowKeys(props);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (props.bare && rows.length === 0) return null;
   return (
-    <div className={listClass} role="listbox" tabIndex={0} aria-label={label} aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined} onKeyDown={onKeyDown} onScroll={onListScroll}>
+    <div ref={ref} className={listClass} role="listbox" tabIndex={0} aria-label={label} aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined} onKeyDown={onKeyDown} onScroll={onListScroll}>
       {rows.map((r, i) => {
         const key = rowKey(r, i);
+        const click = activateOnClick && onOpen ? () => onOpen(r) : onSelect && (() => onSelect(r, i));
         return (
           <div
             key={key}
@@ -373,7 +411,8 @@ function DesktopRowList<T>(props: RowListProps<T>) {
             role="option"
             aria-selected={key === selected}
             className={`${rowClass}${key === selected ? ' selected' : ''}`}
-            onClick={onSelect && (() => onSelect(r, i))}
+            onClick={click}
+            onDoubleClick={activateOnClick || !onOpen ? undefined : () => onOpen(r)}
             onContextMenu={
               onMenu &&
               ((e) => {

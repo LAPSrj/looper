@@ -300,8 +300,26 @@ html.phone-window .pg-row-lead {
   display: flex;
   flex: none;
 }
-html.phone-window .pg-row-lead .status-icon {
+html.phone-window .pg-row-lead .status-glyph {
   margin: 0;
+}
+/* The system's status symbols (StatusGlyph): its red, orange and tint, at a list row's symbol size (iOS 22 pt, Material 24 dp). */
+html.phone-window .status-glyph.error .status-glyph-symbol {
+  fill: var(--pg-red);
+}
+html.phone-window .status-glyph.warning .status-glyph-symbol {
+  fill: var(--pg-orange);
+}
+html.phone-window .status-glyph.info .status-glyph-symbol {
+  fill: var(--pg-tint);
+}
+html.phone-window[data-platform='ios'] .pg-row-lead .status-glyph {
+  width: 22px;
+  height: 22px;
+}
+html.phone-window[data-platform='android'] .pg-row-lead .status-glyph {
+  width: 24px;
+  height: 24px;
 }
 html.phone-window .pg-row-text {
   flex: 1;
@@ -744,7 +762,11 @@ html.phone-window[data-platform='ios'] .phone-tab.active {
 html.phone-window[data-platform='ios'] .phone-tab.active svg {
   stroke-width: 2.1;
 }
-/* Filled symbols in the tab bar (HIG: Tab bars). */
+/* The desktop's tab icons (TabIcon), on their 16-unit grid: the same step bolder when selected. */
+html.phone-window[data-platform='ios'] .phone-tab.active svg.desktop-tab-icon {
+  stroke-width: 1.8;
+}
+/* Filled symbols in the tab bar (HIG: Tab bars), for More: the views draw the desktop's line icons. */
 html.phone-window[data-platform='ios'] .phone-tab svg .fill {
   fill: currentColor;
 }
@@ -875,7 +897,8 @@ html.phone-window .props dd .mono {
   font-size: calc(14 * var(--u));
 }
 html.phone-window[data-platform='ios'] .status-pane > .props,
-html.phone-window[data-platform='ios'] .addon-screen .props {
+html.phone-window[data-platform='ios'] .addon-screen .props,
+html.phone-window[data-platform='ios'] .builder-props {
   border-radius: 26px;
   background: var(--pg-cell);
 }
@@ -884,7 +907,8 @@ html.phone-window[data-platform='android'] .status-pane {
   padding-right: 0;
 }
 html.phone-window[data-platform='android'] .status-pane > .props,
-html.phone-window[data-platform='android'] .addon-screen .props {
+html.phone-window[data-platform='android'] .addon-screen .props,
+html.phone-window[data-platform='android'] .builder-props {
   margin: 0 16px;
   border-radius: 16px;
   background: var(--pg-container);
@@ -1000,6 +1024,18 @@ html.phone-window .pg-rows-search {
   flex-direction: column;
 }
 /* A row's metadata line stays on one line, cut with an ellipsis. */
+/* What a row shows under itself while it's open (a background command's output). */
+html.phone-window .pg-row-detail {
+  padding: 0 16px 10px;
+}
+html.phone-window .pg-row-detail pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: calc(12 * var(--u));
+}
 html.phone-window .pg-oneline {
   display: block;
   overflow: hidden;
@@ -1060,9 +1096,6 @@ html.phone-window .builder-panel {
 }
 html.phone-window .compare-pane {
   overflow: auto;
-}
-html.phone-window .sbs {
-  min-width: 640px;
 }
 
 /* ---------- task and session lists ---------- */
@@ -1642,6 +1675,40 @@ html.phone-window[data-platform='ios'] .phone-composer-box:not(.bash-mode) :is(t
 html.phone-window[data-platform='ios'] .phone-plus-button {
   color: var(--pg-label);
 }
+/* The conversation runs under the message box to the screen's bottom, as in Messages, and scrolls clear of
+   it (--chat-dock-h, from ChatView). Behind it the soft scroll edge blurs what passes (ios.md: Scroll edge
+   effects). */
+html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) > .chat-scroll {
+  grid-area: 1 / 1 / -1 / -1;
+  padding-bottom: calc(var(--chat-dock-h, 0px) + 12px);
+}
+html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) > .phone-composer {
+  grid-area: 2 / 1;
+  z-index: 2;
+}
+/* What the agent is doing is the conversation's last row, as Messages shows its typing bubble, so it scrolls
+   with the messages instead of floating over them. */
+html.phone-window[data-platform='ios'] .chat-scroll > .chat-status {
+  padding: 0 4px;
+  border-top: none;
+  background: none;
+}
+html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *)::after {
+  content: '';
+  grid-area: 2 / 1 / -1 / -1;
+  z-index: 1;
+  margin-top: -16px;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent, #000 70%);
+}
 /* Its menu is an iOS menu: glass, 34 corners, 40 pt items with no line between them (ios.md: Menus). */
 html.phone-window[data-platform='ios'] .phone-plus-menu {
   min-width: 250px;
@@ -2004,8 +2071,7 @@ html.phone-window .send-sessions-text,
 html.phone-window .inline-field .input-suffix input,
 html.phone-window .json-editor,
 html.phone-window .chat-find input,
-html.phone-window .addon-search input,
-html.phone-window .mu-item select {
+html.phone-window .addon-search input {
   font-size: calc(16 * var(--u));
   background: var(--pg-cell);
   color: var(--pg-label);
@@ -2014,9 +2080,6 @@ html.phone-window .field input:where(:not([type='checkbox'], [type='radio'])),
 html.phone-window .inline-field .input-suffix input,
 html.phone-window .field select {
   height: auto;
-  min-height: 44px;
-}
-html.phone-window .mu-item select {
   min-height: 44px;
 }
 html.phone-window .input-suffix .suffix {
@@ -2394,9 +2457,9 @@ html.phone-window .mu-list {
   background: var(--pg-cell);
   padding: 0;
 }
-html.phone-window .mu-item,
 html.phone-window .mu-group {
   min-height: 44px;
+  margin: 0;
   padding: 10px 16px;
   border: none;
   border-radius: 0;
@@ -2407,7 +2470,11 @@ html.phone-window[data-platform='android'] .mu-list {
   background: var(--pg-container);
   overflow: hidden;
 }
-html.phone-window .mu-item-sub,
+/* The models are rows of the list's card, not a card of their own. */
+html.phone-window .mu-list .form-group-rows {
+  border-radius: 0;
+  background: transparent;
+}
 html.phone-window .mu-group-note {
   font-size: calc(14 * var(--u));
 }
@@ -2419,16 +2486,13 @@ html.phone-window .mu-group {
   column-gap: 8px;
   row-gap: 2px;
 }
-html.phone-window .mu-group > .mu-chev,
-html.phone-window .mu-group > .mu-chev-space {
+html.phone-window .mu-group > .chev {
   grid-column: 1;
   grid-row: 1;
   align-self: center;
 }
-html.phone-window .mu-group-name {
+html.phone-window .mu-group .group-header-name {
   grid-column: 2;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 html.phone-window .mu-group-note {
   grid-column: 2;
@@ -2443,13 +2507,6 @@ html.phone-window .env-actions {
 }
 html.phone-window .env-actions .btn {
   flex: 1 1 40%;
-}
-html.phone-window .mu-item {
-  flex-wrap: wrap;
-  padding-left: 16px;
-}
-html.phone-window .mu-item select {
-  width: 100%;
 }
 html.phone-window .picker-body {
   padding: 8px 16px;
@@ -2480,8 +2537,8 @@ html.phone-window .msg-sections {
 html.phone-window .msg-section-label {
   margin-top: 8px;
 }
-/* .addon-prop is display: contents, so its row is the dd: actions that don't fit go below the value, whole. */
-html.phone-window .addon-prop dd {
+/* A row's actions that don't fit go below the value, whole. */
+html.phone-window .addon-screen .props dd {
   flex-wrap: wrap;
   column-gap: 10px;
 }
@@ -2593,7 +2650,7 @@ html.phone-window:is([data-platform='ios'], [data-platform='android']) .input-su
   padding-right: 56px;
 }
 /* Pop-up buttons drawn by the page, with the platform's disclosure mark at the end. */
-html.phone-window[data-platform='android'] :is(.field select, .mu-item select) {
+html.phone-window[data-platform='android'] .field select {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 36px;
@@ -3254,27 +3311,12 @@ html.phone-window .builder-panel-body {
   padding: 16px;
   overflow: auto;
 }
-html.phone-window .builder-field {
-  padding: 11px 16px;
-  margin: 0;
-  background: var(--pg-cell, var(--pg-container));
-  border-bottom: 0.5px solid var(--pg-sep);
-}
-html.phone-window .builder-field:first-child {
-  border-radius: 26px 26px 0 0;
-}
-html.phone-window .builder-field:last-child {
-  border-radius: 0 0 26px 26px;
-  border-bottom: none;
-}
-html.phone-window .builder-label {
-  color: var(--pg-label);
-  font-size: calc(17 * var(--u));
+html.phone-window .builder-props dt {
   font-weight: 400;
+  margin: 0;
 }
-html.phone-window .builder-field > :not(.builder-label) {
-  color: var(--pg-label-2);
-  font-size: calc(15 * var(--u));
+html.phone-window .builder-props dd {
+  margin: 0;
 }
 
 /* ---------- iOS motion (ios.md: Motion; web/motion.ts sets the springs and does what CSS can't) ---------- */

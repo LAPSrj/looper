@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { toolImageKey, type MessageRow, type PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
-import { escapeHtml, hunkRows, markRanges, replacedRows, type DiffRow } from './editor-lines';
+import { isPhone } from '../web/page-nav';
+import { escapeHtml, hunkRows, lineDiffRows, markRanges, replacedRows, type DiffRow } from './editor-lines';
 import { Markdown, MessageBody, parseTagSections, TagSections } from './Markdown';
 
 type Rec = Record<string, unknown>;
@@ -167,6 +168,100 @@ export function DiffRows({ rows, file }: { rows: DiffRow[]; file?: string }) {
   );
 }
 
+/** One line on one side of a side-by-side diff; null: no line there (the other side has one). */
+type Side = { n: number; text: string; kind: 'same' | 'del' | 'add' } | null;
+
+/** A line diff as aligned rows: kept lines side by side, a removed block next to the added one. */
+function alignedRows(lines: { op: ' ' | '-' | '+'; text: string }[]): [Side, Side][] {
+  const rows: [Side, Side][] = [];
+  let na = 0;
+  let nb = 0;
+  let dels: string[] = [];
+  let adds: string[] = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(dels.length, adds.length); i++) {
+      rows.push([i < dels.length ? { n: ++na, text: dels[i], kind: 'del' } : null, i < adds.length ? { n: ++nb, text: adds[i], kind: 'add' } : null]);
+    }
+    dels = [];
+    adds = [];
+  };
+  for (const l of lines) {
+    if (l.op === '-') dels.push(l.text);
+    else if (l.op === '+') adds.push(l.text);
+    else {
+      flush();
+      rows.push([
+        { n: ++na, text: l.text, kind: 'same' },
+        { n: ++nb, text: l.text, kind: 'same' },
+      ]);
+    }
+  }
+  flush();
+  return rows;
+}
+
+/**
+ * Two texts side by side under their titles, with line numbers and the changed lines marked. `missing`: a side
+ * that has no text at all (not set, no file), which shows `placeholder` on its first line.
+ */
+export function SideBySideDiff({
+  lines,
+  titles,
+  missing,
+  placeholder,
+}: {
+  lines: { op: ' ' | '-' | '+'; text: string }[];
+  titles: [string, string];
+  missing: [boolean, boolean];
+  placeholder: string;
+}) {
+  const cell = (s: Side, gone: boolean, first: boolean) =>
+    s ? (
+      <>
+        <td className={`sbs-num ${s.kind}`}>{s.n}</td>
+        <td className={`sbs-text ${s.kind}`}>{s.text}</td>
+      </>
+    ) : (
+      <>
+        <td className="sbs-num empty" />
+        <td className="sbs-text empty">{first && gone ? <span className="muted">{placeholder}</span> : null}</td>
+      </>
+    );
+  return (
+    <table className="sbs">
+      <colgroup>
+        <col className="sbs-num-col" />
+        <col />
+        <col className="sbs-num-col" />
+        <col />
+      </colgroup>
+      <thead>
+        <tr>
+          <th colSpan={2}>{titles[0]}</th>
+          <th colSpan={2}>{titles[1]}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {alignedRows(lines).map(([a, b], i) => (
+          <tr key={i}>
+            {cell(a, missing[0], i === 0)}
+            {cell(b, missing[1], i === 0)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Two whole texts compared: side by side on the desktop; a phone, too narrow for two columns, shows one, the
+ * removed lines over the added ones, in the file's colors.
+ */
+export function TextDiff(props: Parameters<typeof SideBySideDiff>[0] & { file?: string }) {
+  const rows = useMemo(() => (isPhone ? lineDiffRows(props.lines) : null), [props.lines]);
+  return rows ? <DiffRows rows={rows} file={props.file} /> : <SideBySideDiff {...props} />;
+}
+
 export function DiffView({ hunks, file }: { hunks: PatchHunk[]; file?: string }) {
   const rows = useMemo(() => hunkRows(hunks), [hunks]);
   return <DiffRows rows={rows} file={file} />;
@@ -211,10 +306,22 @@ function CodeView({ lines, file, language, numbered = true }: { lines: { n: stri
   );
 }
 
-/** Code with numbered lines (unless `numbered` is off); a Read result keeps the numbers it came with. */
-export function CodeBlock({ text, file, language, numbered = true }: { text: string; file?: string; language?: string; numbered?: boolean }) {
+/**
+ * Code with numbered lines (unless `numbered` is off); a Read result keeps the numbers it came with. `caption`:
+ * a line naming it above, which the desktop draws; a phone's bar already names the screen.
+ */
+export function CodeBlock({ text, file, language, numbered = true, caption }: { text: string; file?: string; language?: string; numbered?: boolean; caption?: { text: string; title?: string } }) {
   const lines = gutterLines(text) ?? text.replace(/\n$/, '').split('\n').map((t, i) => ({ n: String(i + 1), text: t }));
-  return <CodeView lines={lines} file={file} language={language} numbered={numbered} />;
+  return (
+    <>
+      {caption && !isPhone && (
+        <div className="code-caption" title={caption.title}>
+          {caption.text}
+        </div>
+      )}
+      <CodeView lines={lines} file={file} language={language} numbered={numbered} />
+    </>
+  );
 }
 
 /* ---------- JSON tree ---------- */

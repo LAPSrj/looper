@@ -2,8 +2,8 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Settings, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
 import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
-import { Chevron } from './components/icons';
-import { EmptyWindow, SelectInput } from './components/ui';
+import { GroupHeader } from './components/GroupHeader';
+import { EmptyWindow, Field, FormGroup, SelectInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { subscribe } from './events';
 
@@ -151,75 +151,63 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="mu-list">
+        <div className="mu-list" role="tree" aria-label="Harnesses">
           {groups.map((g) => {
             const expandable = g.status === 'ready' && g.rows.length > 0;
-            const toggle = (open: boolean) => patchGroup(g, { open });
+            const open = expandable && g.open;
+            const toggle = (next: boolean) => expandable && patchGroup(g, { open: next });
             return (
-            <Fragment key={`${g.envId}/${g.harnessId}`}>
-              <div
-                className="mu-group"
-                role={expandable ? 'button' : undefined}
-                tabIndex={expandable ? 0 : undefined}
-                aria-expanded={expandable ? g.open : undefined}
-                onClick={expandable ? () => toggle(!g.open) : undefined}
-                onKeyDown={
-                  expandable
-                    ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') toggle(!g.open);
-                        else if (e.key === 'ArrowRight') toggle(true);
-                        else if (e.key === 'ArrowLeft') toggle(false);
-                        else return;
-                        e.preventDefault();
-                      }
-                    : undefined
-                }
-              >
-                {expandable ? <Chevron open={g.open} className="mu-chev" /> : <span className="mu-chev-space" />}
-                <span className="mu-group-name">{g.label}</span>
-                {g.status === 'loading' && <span className="mu-group-note">checking…</span>}
-                {g.status === 'error' && (
-                  <>
-                    <span className="mu-group-note">{sentence(g.error)}</span>
-                    <button
-                      className="link"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void window.looper.showError(`${g.label}: ${g.error ?? ''}`);
-                      }}
-                    >
-                      Details…
-                    </button>
-                  </>
-                )}
-              </div>
-              {g.open &&
-                g.rows.map((row) => {
-                  const action = g.actions[row.id] ?? row.suggested;
-                  const greyed = action === 'keep' && !row.inList;
-                  const note = rowNote(row, g.usedBy[row.id] ?? 0);
-                  return (
-                    <div key={row.id} className={`mu-item${greyed ? ' muted' : ''}`}>
-                      <div className="mu-item-main">
-                        <div className="mu-item-name">{row.name}</div>
-                        <div className="mu-item-sub">
-                          {row.id}
-                          {note && ` · ${note}`}
-                        </div>
-                      </div>
-                      <SelectInput
-                        value={action}
-                        onChange={(e) =>
-                          patchGroup(g, { actions: { ...g.actions, [row.id]: e.target.value as ModelAction } })
-                        }
+              <Fragment key={`${g.envId}/${g.harnessId}`}>
+                <GroupHeader
+                  name={g.label}
+                  open={open}
+                  className="mu-group"
+                  tabIndex={0}
+                  aria-disabled={!expandable || undefined}
+                  onToggle={() => toggle(!g.open)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') toggle(!g.open);
+                    else if (e.key === 'ArrowRight') toggle(true);
+                    else if (e.key === 'ArrowLeft') toggle(false);
+                    else return;
+                    e.preventDefault();
+                  }}
+                >
+                  {g.status === 'loading' && <span className="mu-group-note">checking…</span>}
+                  {g.status === 'error' && (
+                    <>
+                      <span className="mu-group-note">{sentence(g.error)}</span>
+                      <button
+                        className="link"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void window.looper.showError(`${g.label}: ${g.error ?? ''}`);
+                        }}
                       >
-                        {row.inList ? <option value="remove">Remove</option> : <option value="add">Add</option>}
-                        <option value="keep">Do nothing</option>
-                      </SelectInput>
-                    </div>
-                  );
-                })}
-            </Fragment>
+                        Details…
+                      </button>
+                    </>
+                  )}
+                </GroupHeader>
+                {open && (
+                  <div role="group" className="mu-rows">
+                    <FormGroup>
+                      {g.rows.map((row) => {
+                        const note = rowNote(row, g.usedBy[row.id] ?? 0);
+                        return (
+                          <Field key={row.id} label={row.name} help={note ? `${row.id} · ${note}` : row.id}>
+                            <SelectInput value={g.actions[row.id] ?? row.suggested} onChange={(e) => patchGroup(g, { actions: { ...g.actions, [row.id]: e.target.value as ModelAction } })}>
+                              {row.inList ? <option value="remove">Remove</option> : <option value="add">Add</option>}
+                              <option value="keep">Do nothing</option>
+                            </SelectInput>
+                          </Field>
+                        );
+                      })}
+                    </FormGroup>
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </div>

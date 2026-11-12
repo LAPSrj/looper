@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { platform } from '../../platform';
 import { AxisDrag } from '../../web/gestures';
+import { isPhone } from '../../web/page-nav';
 import { tabKeyTarget, tabStop } from '../tabs-model';
 
 /**
@@ -111,13 +112,21 @@ export function Row({
           <path d="m2 7.5 3.2 3.2L12 3.5" />
         </svg>
       )}
-      {chevron && platform === 'ios' && (
-        <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
-          <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
+      {chevron && platform === 'ios' && CHEVRON}
     </div>
   );
+}
+
+/** iOS's disclosure chevron: the row opens another screen. */
+const CHEVRON = (
+  <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
+    <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** A disclosure chevron at the end of an item that isn't a Row but opens another screen: drawn on phones only. */
+export function PhoneChevron() {
+  return isPhone ? CHEVRON : null;
 }
 
 /** How wide a row's swipe action sits while it stays open. */

@@ -35,9 +35,16 @@ export function NavBar(props: NavBarProps) {
 }
 
 function ReportedBar({ order = 0, ...nav }: NavBarProps) {
-  usePageNav(nav, order);
+  usePageNav(platform === 'ios' ? nav : withoutLargeTitle(nav), order);
   return null;
 }
+
+/** A large title is iOS's: elsewhere the bar shows the title from the start, so a screen asks for one everywhere. */
+const withoutLargeTitle = (nav: PageNav): PageNav => ({
+  ...nav,
+  largeTitle: nav.largeTitle && false,
+  split: nav.split && { ...nav.split, largeTitle: nav.split.largeTitle && false },
+});
 
 function HostedBar({ host, nav }: { host: BarHost; nav: PageNav }) {
   const model = barModel({

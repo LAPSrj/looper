@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { fileImageId, type MessageImage } from '@shared/messages';
-import { Icon } from './components/Icon';
-import { ICONS as SHARED_ICONS } from './components/icons';
-import { NavBar } from './components/NavBar';
+import { StatusBar } from './components/StatusBar';
+import { Toolbar } from './components/Toolbar';
 import { NumberInput } from './components/ui';
-import { ZoomImage } from './components/ZoomImage';
-import { isPhone } from './web/page-nav';
+import { ImageViewer } from './components/ZoomImage';
 
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 800;
@@ -24,33 +22,6 @@ function scrollbarWidth(): number {
   }
   return sbWidth;
 }
-
-const ICONS = {
-  zoomOut: (
-    <>
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="m13.5 13.5-3.3-3.3M5 7h4" />
-    </>
-  ),
-  zoomIn: (
-    <>
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="m13.5 13.5-3.3-3.3M5 7h4M7 5v4" />
-    </>
-  ),
-  fitWindow: (
-    <>
-      <path d="M1.5 5V3.5a1 1 0 0 1 1-1H4M12 2.5h1.5a1 1 0 0 1 1 1V5M14.5 11v1.5a1 1 0 0 1-1 1H12M4 13.5H2.5a1 1 0 0 1-1-1V11" />
-      <rect x="5.5" y="6" width="5" height="4" />
-    </>
-  ),
-  fitWidth: (
-    <>
-      <path d="M2.5 3.5v9M13.5 3.5v9" />
-      <path d="M4.5 8h7M7 5.5 4.5 8 7 10.5M9 5.5 11.5 8 9 10.5" />
-    </>
-  ),
-};
 
 /** The window's title for a sent image's row id: "Image – name". */
 const sentTitle = (key: string): string | null => {
@@ -168,71 +139,62 @@ export function ImageApp({
   const url = image !== null && image !== 'missing' ? `data:${image.mediaType};base64,${image.data}` : null;
   const width = zoom !== null && natural ? Math.max(1, Math.round((natural.w * zoom) / 100)) : undefined;
 
-  if (isPhone) {
-    return (
-      <div className="image-app">
-        <NavBar
-          title={many ? `${index + 1} of ${count}` : title}
-          actions={
-            many
-              ? [
-                  { id: 'previous', label: 'Previous Image', icon: 'previous', disabled: index <= 0, run: () => go(index - 1) },
-                  { id: 'next', label: 'Next Image', icon: 'next', disabled: index >= count - 1, run: () => go(index + 1) },
-                ]
-              : undefined
-          }
-        />
-        {image === 'missing' ? <div className="muted image-missing">The image is no longer available.</div> : url ? <ZoomImage key={url} src={url} alt={title} /> : null}
-      </div>
-    );
-  }
+  const previous = { id: 'previous', label: 'Previous Image', icon: 'previous', enabled: index > 0, run: () => go(index - 1) };
+  const next = { id: 'next', label: 'Next Image', icon: 'next', enabled: index < count - 1, run: () => go(index + 1) };
+  // A phone zooms with a pinch, and steps through the images from its bar.
+  const toolbar = (
+    <Toolbar
+      groups={[
+        ...(many ? [{ id: 'images', items: [previous, next] }] : []),
+        {
+          id: 'zoom',
+          items: [
+            { id: 'zoomOut', label: 'Zoom Out', icon: 'zoomOut', enabled: !!url && (zoom ?? 100) > MIN_ZOOM, run: () => step(-1) },
+            { id: 'zoom', label: 'Zoom' },
+            { id: 'zoomIn', label: 'Zoom In', icon: 'zoomIn', enabled: !!url && (zoom ?? 100) < MAX_ZOOM, run: () => step(1) },
+          ],
+        },
+        {
+          id: 'fit',
+          items: [
+            { id: 'fitWindow', label: 'Fit to Window', icon: 'fitWindow', enabled: !!url && !!natural, run: () => fit('window') },
+            { id: 'fitWidth', label: 'Fit to Width', icon: 'fitWidth', enabled: !!url && !!natural, run: () => fit('width') },
+          ],
+        },
+      ]}
+      controls={{
+        zoom: (
+          <NumberInput
+            className="image-zoom"
+            label="Zoom"
+            suffix="%"
+            min={MIN_ZOOM}
+            max={MAX_ZOOM}
+            value={zoom}
+            disabled={!url}
+            onChange={(v) => Number.isFinite(v) && v > 0 && setZoom(clamp(v))}
+          />
+        ),
+      }}
+      nav={{
+        title: many ? `${index + 1} of ${count}` : title,
+        actions: many ? [previous, next].map(({ enabled, ...a }) => ({ ...a, disabled: !enabled })) : undefined,
+      }}
+    />
+  );
 
   return (
     <div className="image-app">
-      <div className="toolbar">
-        {many && (
-          <>
-            <button title="Previous Image" aria-label="Previous Image" disabled={index <= 0} onClick={() => go(index - 1)}>
-              <Icon>{SHARED_ICONS.previous}</Icon>
-            </button>
-            <button title="Next Image" aria-label="Next Image" disabled={index >= count - 1} onClick={() => go(index + 1)}>
-              <Icon>{SHARED_ICONS.next}</Icon>
-            </button>
-            <span className="toolbar-sep" />
-          </>
-        )}
-        <button title="Zoom Out" aria-label="Zoom Out" disabled={!url || (zoom ?? 100) <= MIN_ZOOM} onClick={() => step(-1)}>
-          <Icon>{ICONS.zoomOut}</Icon>
-        </button>
-        <NumberInput
-          className="image-zoom"
-          label="Zoom"
-          suffix="%"
-          min={MIN_ZOOM}
-          max={MAX_ZOOM}
-          value={zoom}
-          disabled={!url}
-          onChange={(v) => Number.isFinite(v) && v > 0 && setZoom(clamp(v))}
-        />
-        <button title="Zoom In" aria-label="Zoom In" disabled={!url || (zoom ?? 100) >= MAX_ZOOM} onClick={() => step(1)}>
-          <Icon>{ICONS.zoomIn}</Icon>
-        </button>
-        <span className="toolbar-sep" />
-        <button title="Fit to Window" aria-label="Fit to Window" disabled={!url || !natural} onClick={() => fit('window')}>
-          <Icon>{ICONS.fitWindow}</Icon>
-        </button>
-        <button title="Fit to Width" aria-label="Fit to Width" disabled={!url || !natural} onClick={() => fit('width')}>
-          <Icon>{ICONS.fitWidth}</Icon>
-        </button>
-      </div>
-      <div className="image-viewport" ref={viewportRef}>
-        {image === 'missing' ? (
-          <div className="muted image-missing">The image is no longer available.</div>
-        ) : url ? (
-          <img src={url} alt="" onLoad={onLoad} style={width !== undefined ? { width } : { maxWidth: '100%' }} />
-        ) : null}
-      </div>
-      <div className="statusbar">
+      {toolbar}
+      <ImageViewer
+        src={url}
+        alt={title}
+        width={width}
+        onLoad={onLoad}
+        viewportRef={viewportRef}
+        missing={image === 'missing' && <div className="muted image-missing">The image is no longer available.</div>}
+      />
+      <StatusBar>
         <span>
           {[
             many ? `${index + 1} of ${count}` : null,
@@ -242,7 +204,7 @@ export function ImageApp({
             .filter(Boolean)
             .join(' · ')}
         </span>
-      </div>
+      </StatusBar>
     </div>
   );
 }

@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonSide } from '@shared/addons';
 import type { Environment } from '@shared/types';
 import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
-import { Group, Row } from './components/phone/PhoneList';
-import { isPhone } from './web/page-nav';
+import { PropertyList } from './components/PropertyList';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { EmptyWindow, Field, FormGroup, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
@@ -74,39 +73,17 @@ export function AddonsApp() {
               Remove
             </ListButton>
           </ListActions>
-          {addon && isPhone && (
-            <Group title={addon.name}>
-              {addon.description && <Row title="Description" sub={addon.description} />}
-              <Row title="Runs" sub={addon.localRun ? `${addon.run} (changed in Edit…)` : addon.run} />
-              <Row title="Panes" sub={addon.panes.map((p) => p.title).join(', ') || 'None'} />
-              {addon.error && <Row title="Stopped" sub={addon.error} tone="error" />}
-            </Group>
-          )}
-          {addon && !isPhone && (
-            <dl className="props addon-details">
-              {addon.description && (
-                <>
-                  <dt>Description</dt>
-                  <dd>{addon.description}</dd>
-                </>
-              )}
-              <dt>Runs</dt>
-              <dd className="mono addon-wrap">{addon.run}</dd>
-              {addon.localRun && (
-                <>
-                  <dt />
-                  <dd className="muted">Changed in Edit…</dd>
-                </>
-              )}
-              <dt>Panes</dt>
-              <dd>{addon.panes.map((p) => p.title).join(', ') || 'None'}</dd>
-              {addon.error && (
-                <>
-                  <dt>Stopped</dt>
-                  <dd className="mono addon-wrap">{addon.error}</dd>
-                </>
-              )}
-            </dl>
+          {addon && (
+            <PropertyList
+              className="props addon-details"
+              rows={{ title: addon.name }}
+              items={[
+                !!addon.description && { label: 'Description', value: addon.description },
+                { label: 'Runs', value: addon.run, className: 'mono addon-wrap', note: addon.localRun ? 'Changed in Edit…' : undefined },
+                { label: 'Panes', value: addon.panes.map((p) => p.title).join(', ') || 'None' },
+                !!addon.error && { label: 'Stopped', value: addon.error, className: 'mono addon-wrap', tone: 'error' },
+              ]}
+            />
           )}
         </div>
       </div>

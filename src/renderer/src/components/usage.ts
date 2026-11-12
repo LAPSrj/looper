@@ -55,10 +55,10 @@ export function limitFacts(limits: UsageLimits, now: number): Fact[] {
   return facts;
 }
 
-/** What a prompt cache that lasts until `until` has left. */
+/** What a prompt cache that lasts until `until` has left: "Cached for 3 min", "Cache expired". */
 export function cacheText(until: number, now: number): string {
   const left = until - now;
-  return left <= 0 ? 'Expired' : left < 60_000 ? 'Under a minute left' : `${waitedText(left)} left`;
+  return left <= 0 ? 'Cache expired' : left < 60_000 ? 'Cached for less than a minute' : `Cached for ${waitedText(left)}`;
 }
 
 /** A context as a fact's value: "58k of 1M (6%)". */
@@ -113,6 +113,6 @@ export function usageLabel(context: ChatContext | undefined, limits: UsageLimits
   if (context) parts.push(contextText(context));
   if (limits.fiveHour) parts.push(`5-hour limit ${percent(limits.fiveHour.used)}, ${resetText(limits.fiveHour, now)}`);
   if (limits.sevenDay) parts.push(`weekly limit ${percent(limits.sevenDay.used)}, ${resetText(limits.sevenDay, now)}`);
-  if (cacheUntil !== undefined) parts.push(`prompt cache ${cacheText(cacheUntil, now).toLowerCase()}`);
+  if (cacheUntil !== undefined) parts.push(`prompt ${cacheText(cacheUntil, now).toLowerCase()}`);
   return parts.length ? `Usage: ${parts.join('; ')}` : 'Usage';
 }

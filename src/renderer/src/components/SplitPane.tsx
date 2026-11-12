@@ -14,19 +14,35 @@ export interface PaneSize {
   /** The first pane's limits, in its unit. */
   min?: number;
   max?: number;
+  /** The first pane's largest share of the room (0.5: half the window), past `max`. */
+  maxShare?: number;
+  /** Where the first pane's size is kept, so the panes open as they were left. */
+  storageKey?: string;
+}
+
+/** A size kept under `key`, when there is one at least `min`. */
+function savedSize(key: string | undefined, min: number): number | null {
+  if (!key) return null;
+  const saved = Number(localStorage.getItem(key));
+  return saved > 0 && saved >= min ? saved : null;
 }
 
 /** Two panes with a splitter between them: dragged with the mouse, or moved with the arrow keys once it has the focus. */
-export function SplitPane({ axis, initial, unit = 'px', min, max, first, second }: PaneSize & { first: ReactNode; second: ReactNode }) {
+export function SplitPane({ axis, initial, unit = 'px', min, max, maxShare, storageKey, first, second }: PaneSize & { first: ReactNode; second: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState(initial);
+  const low = min ?? (unit === '%' ? 0 : MIN_PX);
+  const [size, setSize] = useState(() => savedSize(storageKey, low) ?? initial);
+  const resize = (next: number) => {
+    setSize(next);
+    if (storageKey) localStorage.setItem(storageKey, String(Math.round(next)));
+  };
   const total = () => {
     const rect = ref.current?.getBoundingClientRect();
     return (axis === 'x' ? rect?.width : rect?.height) ?? 0;
   };
   const clamp = (value: number, room: number) => {
-    const low = min ?? (unit === '%' ? 0 : MIN_PX);
-    const high = max ?? (unit === '%' ? 100 : Math.max(low, room - DIVIDER - MIN_PX));
+    let high = max ?? (unit === '%' ? 100 : Math.max(low, room - DIVIDER - MIN_PX));
+    if (maxShare !== undefined) high = Math.min(high, unit === '%' ? maxShare * 100 : room * maxShare);
     return Math.round(Math.max(low, Math.min(high, value)) * 100) / 100;
   };
   const onMouseDown = useDragResize({
@@ -34,14 +50,14 @@ export function SplitPane({ axis, initial, unit = 'px', min, max, first, second 
     containerRef: ref,
     onDrag: (pos, rect) => {
       const room = axis === 'x' ? rect.width : rect.height;
-      setSize(clamp(unit === '%' ? (pos / room) * 100 : pos - DIVIDER / 2, room));
+      resize(clamp(unit === '%' ? (pos / room) * 100 : pos - DIVIDER / 2, room));
     },
   });
   const onKeyDown = (e: React.KeyboardEvent) => {
     const [less, more] = axis === 'x' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown'];
     if (e.key !== less && e.key !== more) return;
     e.preventDefault();
-    setSize((s) => clamp(s + (e.key === more ? KEY_STEP[unit] : -KEY_STEP[unit]), total()));
+    resize(clamp(size + (e.key === more ? KEY_STEP[unit] : -KEY_STEP[unit]), total()));
   };
   return (
     <div ref={ref} className={`split-pane ${axis}`}>

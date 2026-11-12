@@ -163,3 +163,12 @@ export function enterPressesDefault(target: unknown): boolean {
   if (el.isContentEditable) return false;
   return !['TEXTAREA', 'BUTTON', 'SELECT', 'A', 'SUMMARY'].includes(el.tagName);
 }
+
+/** Enter or Space on an element that acts as a button (role="button"), not on a control inside it: runs `run`. */
+export const pressKeys =
+  (run: () => void) =>
+  (e: { key: string; target: unknown; currentTarget: unknown; preventDefault: () => void }): void => {
+    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    run();
+  };

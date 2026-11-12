@@ -28,6 +28,8 @@ describe('list and detail', () => {
   it('draws a two-pane splitter only through SplitPane', () => {
     onlyIn(['components/SplitPane.tsx'], /className="split-(pane|cell|divider)/);
     for (const [file, text] of files) expect(text, file).not.toMatch(/\b(runlog|run-detail|git)-divider\b/);
+    // A three-pane window's dividers and the Activity pane's are the shared components' own.
+    onlyIn(['components/ListDetail.tsx', 'components/Inspector.tsx'], /className="sidebar-divider"/);
   });
 
   it('leaves a row\'s gestures and placement to the components in the screens that moved onto them', () => {
@@ -52,6 +54,30 @@ describe('data tables', () => {
   it('writes a table of rows only in DataTable', () => {
     onlyIn(['components/DataTable.tsx'], /className="runlog-table"/);
     onlyIn(['components/DataTable.tsx', 'components/ui.tsx'], /\bResizableColumns\b/);
+  });
+});
+
+describe('toolbars', () => {
+  it('draws a toolbar only through Toolbar, from its data and the shared icons', () => {
+    onlyIn(['components/Toolbar.tsx'], /className=["{`](?:[^"}`]*\s)?toolbar(?=[\s"}`])/);
+  });
+});
+
+describe('panes and sections', () => {
+  it('draws a sidebar pane\'s header only through PaneHeader', () => {
+    onlyIn(['components/Sidebar.tsx'], /className=["{`](?:[^"}`]*\s)?sidebar-header(?=[\s"}`])/);
+  });
+
+  it('draws a titled section with a command or an empty text only through Section', () => {
+    onlyIn(['components/Section.tsx'], /\b(dashboard-section-head|dashboard-empty|files-heading|workflow-phase-title|workflow-none)\b/);
+  });
+
+  it('draws a phone\'s workflow and Chats window in the same tree as the desktop\'s', () => {
+    onlyIn([], /\bfunction (PhoneWorkflow|PhoneSessions|DesktopSessions)\b/);
+  });
+
+  it('leaves a property list\'s markup to PropertyList', () => {
+    onlyIn(['components/PropertyList.tsx'], /<dl\b/);
   });
 });
 

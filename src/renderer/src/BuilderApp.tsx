@@ -7,12 +7,11 @@ import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
 import { ChatRow, ToolGroup } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
 import { useChatsSettings } from './components/hooks';
-import { ARROW_UP } from './components/Composer';
-import { Icon } from './components/Icon';
 import { Inspector, useInspector } from './components/Inspector';
 import { InspectorHost } from './components/ListDetail';
-import { NavBar } from './components/NavBar';
-import { useAutoGrow } from './components/phone/auto-grow';
+import { Toolbar } from './components/Toolbar';
+import { MessageBox } from './components/MessageBox';
+import { PropertyList, type Property } from './components/PropertyList';
 import { useSplit } from './components/phone/PhoneSplit';
 import { EmptyWindow, TabBar } from './components/ui';
 import { openXterm } from './components/xterm';
@@ -98,82 +97,77 @@ function DraftPanel({ state, environments, stored }: { state: BuilderState; envi
     ...(stored ? [['changes', changeCount ? `Changes (${changeCount})` : 'Changes'] as [PanelTab, string]] : []),
   ];
 
-  const field = (name: string, value: React.ReactNode, className?: string) => (
-    <div className="builder-field" key={name}>
-      <div className="builder-label">{name}</div>
-      <div className={className}>{value}</div>
-    </div>
-  );
+  const prop = (label: string, value: React.ReactNode, className?: string): Property => ({ label, value, className });
+  const list = (items: Parameters<typeof PropertyList>[0]['items']) => <PropertyList className="props builder-props" items={items} />;
 
   return (
     <aside className="builder-panel">
       <TabBar tabs={tabs} active={tab} onSelect={setTab} className="builder-tabs" />
       <div className="builder-panel-body">
-        {tab === 'task' && (
-          <>
-            {field('Name', str(raw.name) ?? 'Not named yet', str(raw.name) ? undefined : 'muted')}
-            {field('Runs', triggerText(raw))}
-            {watcher && obj(raw.trigger)?.mode === 'watcher' && field('Watcher command', str(watcher.command) ?? '(not set)', 'mono')}
-            {field('Working directory', str(raw.cwd) ?? state.setup.cwd, 'mono')}
-            {field('Check', checkOn ? (str(check?.command) ?? '(not set)') : 'None', checkOn ? 'mono' : 'muted')}
-            {agentFields(raw, environments).map(([name, value]) => field(name, value))}
-            <div className="builder-field">
-              <div className="builder-label">Prompt</div>
-              {prompt ? <div className="builder-prompt">{prompt}</div> : <div className="muted">Not written yet</div>}
-            </div>
-            <div className="builder-field">
-              <div className="builder-label">Validation</div>
-              {state.draft.errors.length === 0 ? (
-                <div>{valid ? 'Valid' : 'Not checked yet'}</div>
-              ) : (
-                <ul className="builder-list error-text">
-                  {state.draft.errors.map((e, i) => (
-                    <li key={i}>{e}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </>
-        )}
+        {tab === 'task' &&
+          list([
+            prop('Name', str(raw.name) ?? 'Not named yet', str(raw.name) ? undefined : 'muted'),
+            prop('Runs', triggerText(raw)),
+            !!watcher && obj(raw.trigger)?.mode === 'watcher' && prop('Watcher command', str(watcher.command) ?? '(not set)', 'mono'),
+            prop('Working directory', str(raw.cwd) ?? state.setup.cwd, 'mono'),
+            prop('Check', checkOn ? (str(check?.command) ?? '(not set)') : 'None', checkOn ? 'mono' : 'muted'),
+            ...agentFields(raw, environments).map(([name, value]) => prop(name, value)),
+            prompt ? prop('Prompt', <div className="builder-prompt">{prompt}</div>) : prop('Prompt', 'Not written yet', 'muted'),
+            state.draft.errors.length === 0
+              ? prop('Validation', valid ? 'Valid' : 'Not checked yet')
+              : prop(
+                  'Validation',
+                  <ul className="builder-list">
+                    {state.draft.errors.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>,
+                  'error-text',
+                ),
+          ])}
         {tab === 'tests' &&
           (state.tests.length === 0 ? (
             <div className="muted">No tests yet.</div>
           ) : (
-            state.tests.map((t) => (
-              <div className="builder-field" key={t.id}>
-                <div className={`builder-label${t.status === 'failed' ? ' error-text' : ''}`}>{testTitle(t)}</div>
-                <div>{t.summary}</div>
-                {t.operations && (
-                  <ul className="builder-list">
-                    {t.operations.map((o, i) => (
-                      <li key={i} className={o.allowed ? undefined : 'error-text'}>
-                        {o.allowed ? 'Allowed' : 'Not allowed'}: {o.operation}
-                        {o.detail && <div className="muted">{o.detail}</div>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))
+            list(
+              state.tests.map((t) =>
+                prop(
+                  testTitle(t),
+                  <>
+                    <div className={t.status === 'failed' ? 'error-text' : undefined}>{t.summary}</div>
+                    {t.operations && (
+                      <ul className="builder-list">
+                        {t.operations.map((o, i) => (
+                          <li key={i} className={o.allowed ? undefined : 'error-text'}>
+                            {o.allowed ? 'Allowed' : 'Not allowed'}: {o.operation}
+                            {o.detail && <div className="muted">{o.detail}</div>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>,
+                ),
+              ),
+            )
           ))}
         {tab === 'files' &&
           (state.files.length === 0 ? (
             <div className="muted">The agent hasn't written any files yet.</div>
           ) : (
-            state.files.map((f) => field(fileName(f), f, 'mono muted'))
+            list(state.files.map((f) => prop(fileName(f), f, 'mono muted')))
           ))}
         {tab === 'changes' &&
           (changeCount === 0 ? (
             <div className="muted">Nothing changed yet.</div>
           ) : (
-            <>
-              {diffs.map((d) => {
+            list([
+              ...diffs.map((d) => {
                 const a = settingValue(d.path, d.a, definitionOf(stored!) as unknown as Rec, environments);
                 const b = settingValue(d.path, d.b, raw, environments);
-                return field(settingLabel(d.path), a !== undefined && b !== undefined ? `${a} → ${b}` : 'Changed');
-              })}
-              {state.changedFiles.map((f) => field(fileName(f), 'File changed'))}
-            </>
+                return prop(settingLabel(d.path), a !== undefined && b !== undefined ? `${a} → ${b}` : 'Changed');
+              }),
+              ...state.changedFiles.map((f) => prop(fileName(f), 'File changed')),
+            ])
           ))}
       </div>
     </aside>
@@ -196,34 +190,6 @@ function DraftCard({ state }: { state: BuilderState }) {
     </div>
   );
 }
-
-const TOOLBAR_ICONS = {
-  save: (
-    <>
-      <path d="M2.5 3.5a1 1 0 0 1 1-1h7.3l2.7 2.7v7.3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
-      <path d="M5 2.5v3h5v-3M5 13.5v-4h6v4" />
-    </>
-  ),
-  undo: (
-    <>
-      <path d="M5.5 3 2.5 6l3 3" />
-      <path d="M2.5 6h6.5a3.5 3.5 0 0 1 0 7H6" />
-    </>
-  ),
-  redo: (
-    <>
-      <path d="m10.5 3 3 3-3 3" />
-      <path d="M13.5 6H7a3.5 3.5 0 0 0 0 7h3" />
-    </>
-  ),
-  history: (
-    <>
-      <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" />
-      <path d="M2.5 2.5V5H5" />
-      <path d="M8 5v3l2 1.5" />
-    </>
-  ),
-};
 
 /** Save, Undo/Redo through the builder's changes, and the task's Version History, with their keys. */
 function useBuilderCommands(state: BuilderState) {
@@ -264,43 +230,41 @@ function useBuilderCommands(state: BuilderState) {
   };
 }
 
-function BuilderToolbar({ state }: { state: BuilderState }) {
-  const c = useBuilderCommands(state);
-  const button = (icon: React.ReactNode, title: string, enabled: boolean, onClick: () => void) => (
-    <button title={title} aria-label={title} disabled={!enabled} onClick={onClick}>
-      <Icon>{icon}</Icon>
-    </button>
-  );
-  return (
-    <div className="toolbar builder-toolbar">
-      {button(TOOLBAR_ICONS.save, 'Save (Ctrl+S)', c.canSave, c.save)}
-      <span className="toolbar-sep" />
-      {button(TOOLBAR_ICONS.undo, 'Undo (Ctrl+Z)', c.canUndo, c.undo)}
-      {button(TOOLBAR_ICONS.redo, 'Redo (Ctrl+Y)', c.canRedo, c.redo)}
-      <span className="toolbar-sep" />
-      {button(TOOLBAR_ICONS.history, 'Version History', !!state.taskId, c.versions)}
-    </div>
-  );
-}
-
-/** A phone's or tablet's bar: Save is the confirming action, the draft has its button, and the rest is in More. */
+/**
+ * The builder's commands: on the desktop a toolbar of Save, Undo and Redo, and Version History; on a phone or
+ * tablet Save is the bar's confirming action, the draft has its button, and the rest is in More.
+ */
 function BuilderBar({ state, onDraft, modal, beside }: { state: BuilderState; onDraft: () => void; modal: boolean; beside: boolean }) {
   const c = useBuilderCommands(state);
   return (
-    <NavBar
-      confirm={{ label: 'Save', disabled: !c.canSave, run: c.save }}
-      actions={[{ id: 'draft', label: beside ? 'Show or Hide Draft' : 'Draft', icon: 'activity', run: onDraft }]}
-      toolbar={[
+    <Toolbar
+      className="builder-toolbar"
+      groups={[
+        { id: 'save', items: [{ id: 'save', label: 'Save', shortcut: 'Ctrl+S', icon: 'save', enabled: c.canSave, run: c.save }] },
         {
           id: 'edit',
           items: [
-            { id: 'undo', label: 'Undo', enabled: c.canUndo, run: c.undo },
-            { id: 'redo', label: 'Redo', enabled: c.canRedo, run: c.redo },
-            { id: 'versions', label: 'Version History', icon: 'history', enabled: !!state.taskId, run: c.versions },
+            { id: 'undo', label: 'Undo', shortcut: 'Ctrl+Z', icon: 'undo', enabled: c.canUndo, run: c.undo },
+            { id: 'redo', label: 'Redo', shortcut: 'Ctrl+Y', icon: 'redo', enabled: c.canRedo, run: c.redo },
           ],
         },
+        { id: 'versions', items: [{ id: 'versions', label: 'Version History', icon: 'history', enabled: !!state.taskId, run: c.versions }] },
       ]}
-      modal={modal}
+      nav={{
+        confirm: { label: 'Save', disabled: !c.canSave, run: c.save },
+        actions: [{ id: 'draft', label: beside ? 'Show or Hide Draft' : 'Draft', icon: 'activity', run: onDraft }],
+        toolbar: [
+          {
+            id: 'edit',
+            items: [
+              { id: 'undo', label: 'Undo', enabled: c.canUndo, run: c.undo },
+              { id: 'redo', label: 'Redo', enabled: c.canRedo, run: c.redo },
+              { id: 'versions', label: 'Version History', icon: 'history', enabled: !!state.taskId, run: c.versions },
+            ],
+          },
+        ],
+        modal,
+      }}
     />
   );
 }
@@ -333,31 +297,10 @@ function Chat({ state }: { state: BuilderState }) {
     atBottom.current = true;
   };
 
-  const placeholder = state.mode === 'edit' ? 'Describe what to change' : isPhone ? 'Describe the task' : 'Describe the task you want Looper to run';
-  const boxRef = useRef<HTMLTextAreaElement>(null);
-  useAutoGrow(boxRef, text, 150, isPhone);
   const items = groupRows(state.rows, expandThinking);
   const showCard = state.status === 'ready' && state.unsaved && draftValid(state);
   const last = items.at(-1);
   const cardUnder = showCard && last?.kind === 'row' && last.row.kind === 'agent';
-  const box = (
-    <textarea
-      ref={boxRef}
-      value={text}
-      placeholder={placeholder}
-      rows={isPhone ? 1 : 3}
-      autoFocus={!isPhone}
-      disabled={state.status === 'ended'}
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => {
-        // On a phone or tablet Enter is a line break, and Ctrl+Enter or Cmd+Enter sends.
-        if (e.key === 'Enter' && (isPhone ? e.ctrlKey || e.metaKey : !e.shiftKey)) {
-          e.preventDefault();
-          send();
-        }
-      }}
-    />
-  );
   return (
     <section className="builder-chat">
       <div
@@ -384,25 +327,17 @@ function Chat({ state }: { state: BuilderState }) {
         {showCard && !cardUnder && <DraftCard state={state} />}
       </div>
       <ChatStatus state={state} />
-      {isPhone ? (
-        <div className="chat-composer phone-composer">
-          <div className="phone-composer-row">
-            <div className="composer-input phone-composer-box">
-              {box}
-              <button className="phone-composer-action send" aria-label="Send" disabled={!text.trim() || state.status === 'ended'} onMouseDown={(e) => e.preventDefault()} onClick={send}>
-                {ARROW_UP}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="chat-composer">
-          {box}
-          <button className="btn primary" disabled={!text.trim() || state.status === 'ended'} onClick={send}>
-            Send
-          </button>
-        </div>
-      )}
+      <MessageBox
+        look="builder"
+        text={text}
+        onText={setText}
+        placeholder={state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run'}
+        shortPlaceholder={state.mode === 'edit' ? undefined : 'Describe the task'}
+        canSend={!!text.trim() && state.status !== 'ended'}
+        onSend={send}
+        disabled={state.status === 'ended'}
+        autoFocus
+      />
     </section>
   );
 }
@@ -487,7 +422,7 @@ export function BuilderApp({ id }: { id: string }) {
   if (!state) return <EmptyWindow gone={state === null && 'This conversation with the agent was closed.'} />;
   return (
     <div className="builder-app">
-      {isPhone ? <BuilderBar state={state} onDraft={panel.toggle} modal={panel.sheetOpen} beside={beside} /> : <BuilderToolbar state={state} />}
+      <BuilderBar state={state} onDraft={panel.toggle} modal={panel.sheetOpen} beside={beside} />
       <div className="builder" style={{ '--split-inspector': `${INSPECTOR_WIDTH}px` } as React.CSSProperties}>
         {state.view === 'terminal' ? <BuilderTerminal state={state} /> : <Chat state={state} />}
         {isPhone ? (

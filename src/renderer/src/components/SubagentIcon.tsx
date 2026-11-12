@@ -1,5 +1,6 @@
 import type { SubagentInfo } from '@shared/sessions';
 import { ContextRing } from './ContextRing';
+import type { TabItem } from './Tabs';
 import { subagentContext } from './subagents';
 
 const STATE: Record<SubagentInfo['status'], string> = { running: 'working', done: 'done', failed: 'failed' };
@@ -17,3 +18,15 @@ export function SubagentIcon({ a }: { a: SubagentInfo }) {
     </svg>
   );
 }
+
+/** The tab before the subagents' tabs: the conversation itself. */
+export const CONVERSATION_TAB: TabItem = { id: 'conversation', label: 'Conversation', dividerAfter: true };
+
+/** A subagent's tab beside its conversation (`agent:<id>`): its description, type, state and icon. */
+export const subagentTab = (a: SubagentInfo): TabItem => ({
+  id: `agent:${a.agentId}`,
+  label: a.description || a.type,
+  title: `${a.description || a.type} (${a.type})`,
+  status: a.status,
+  mark: <SubagentIcon a={a} />,
+});

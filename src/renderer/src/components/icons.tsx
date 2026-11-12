@@ -1,6 +1,7 @@
 import { createElement, type ReactNode } from 'react';
 import { DRAWN_ICON, type IconDrawing, type IconShape } from '@shared/addon-icons';
 import type { AddonIconName } from '@shared/addons';
+import { platform } from '../platform';
 
 /** The stroke of every line icon, and of the glyphs drawn beside text (chevrons, status marks). */
 export const ICON_STROKE = 1.4;
@@ -33,13 +34,51 @@ export function Chevron({ open, className }: { open?: boolean; className?: strin
 /** How serious a status glyph is. */
 export type StatusLevel = 'error' | 'warning' | 'info';
 
+/** A circle of radius 7.5 around the box's center, for the phones' symbols. */
+const CIRCLE = 'M8 .5a7.5 7.5 0 1 1 0 15a7.5 7.5 0 1 1 0-15Z';
+
 /**
- * Windows' 16 px error, warning and information glyphs, drawn once for the
- * dashboard's status column and the InfoBar. Colors come from the theme tokens
- * (styles.css `.status-glyph`). With a `label` it is an image; without, it is
- * hidden from assistive technology because the text beside it says the same.
+ * The phones' status symbols, each one shape with its mark cut out (`evenodd`), as the systems draw them in one
+ * color: SF Symbols' xmark.circle.fill, exclamationmark.triangle.fill and info.circle.fill on iOS, with round
+ * corners and ends; Material Symbols' error, warning and info on Android, with square ones.
+ */
+const PHONE_SYMBOLS: Record<'ios' | 'android', Record<StatusLevel, string>> = {
+  ios: {
+    error: `${CIRCLE}M8 9.13 5.96 11.17 4.83 10.04 6.87 8 4.83 5.96 5.96 4.83 8 6.87 10.04 4.83 11.17 5.96 9.13 8 11.17 10.04 10.04 11.17Z`,
+    warning: 'M6.7 2.2a1.5 1.5 0 0 1 2.6 0l5.8 10.1a1.5 1.5 0 0 1-1.3 2.2H2.2a1.5 1.5 0 0 1-1.3-2.2ZM8 5.4a.8.8 0 0 1 .8.8v3.4a.8.8 0 0 1-1.6 0V6.2a.8.8 0 0 1 .8-.8ZM8 10.9a.95.95 0 1 1 0 1.9a.95.95 0 1 1 0-1.9Z',
+    info: `${CIRCLE}M8 3.9a1 1 0 1 1 0 2a1 1 0 1 1 0-2ZM8 6.9a.8.8 0 0 1 .8.8v4.1a.8.8 0 0 1-1.6 0V7.7a.8.8 0 0 1 .8-.8Z`,
+  },
+  android: {
+    error: `${CIRCLE}M7.25 4h1.5v5h-1.5ZM8 10.4a.85.85 0 1 1 0 1.7a.85.85 0 1 1 0-1.7Z`,
+    warning: 'M8 1.5 15.2 14H.8ZM7.25 6h1.5v4h-1.5ZM8 11a.8.8 0 1 1 0 1.6a.8.8 0 1 1 0-1.6Z',
+    info: `${CIRCLE}M7.25 7h1.5v5h-1.5ZM8 3.9a.85.85 0 1 1 0 1.7a.85.85 0 1 1 0-1.7Z`,
+  },
+};
+
+/**
+ * The 16 px error, warning and information glyphs, drawn once for the
+ * dashboard's status column and the InfoBar: Windows' on the desktop, and each
+ * phone system's own symbol on a phone. Colors come from the theme tokens
+ * (styles.css and phone.css `.status-glyph`). With a `label` it is an image;
+ * without, it is hidden from assistive technology because the text beside it says the same.
  */
 export function StatusGlyph({ level, label, className }: { level: StatusLevel; label?: string; className?: string }) {
+  const symbols = platform === 'ios' || platform === 'android' ? PHONE_SYMBOLS[platform] : null;
+  if (symbols) {
+    return (
+      <svg
+        className={`status-glyph ${level}${className ? ` ${className}` : ''}`}
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        role={label ? 'img' : undefined}
+        aria-label={label}
+        aria-hidden={label ? undefined : true}
+      >
+        <path className="status-glyph-symbol" fillRule="evenodd" d={symbols[level]} />
+      </svg>
+    );
+  }
   return (
     <svg
       className={`status-glyph ${level}${className ? ` ${className}` : ''}`}
@@ -121,7 +160,18 @@ export const ICONS: Record<
   | 'next'
   | 'close'
   | 'download'
-  | 'filter',
+  | 'filter'
+  | 'save'
+  | 'undo'
+  | 'redo'
+  | 'zoomOut'
+  | 'zoomIn'
+  | 'fitWindow'
+  | 'fitWidth'
+  | 'home'
+  | 'latest'
+  | 'list'
+  | 'source',
   ReactNode
 > = {
   previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
@@ -331,6 +381,64 @@ export const ICONS: Record<
       <path d="M7 3.2L7.2 1.3L8.8 1.3L9 3.2L10.7 3.9L12.1 2.7L13.3 3.9L12.1 5.3L12.8 7L14.7 7.2L14.7 8.8L12.8 9L12.1 10.7L13.3 12.1L12.1 13.3L10.7 12.1L9 12.8L8.8 14.7L7.2 14.7L7 12.8L5.3 12.1L3.9 13.3L2.7 12.1L3.9 10.7L3.2 9L1.3 8.8L1.3 7.2L3.2 7L3.9 5.3L2.7 3.9L3.9 2.7L5.3 3.9Z" />
     </>
   ),
+  // A floppy disk.
+  save: (
+    <>
+      <path d="M2.5 3.5a1 1 0 0 1 1-1h7.3l2.7 2.7v7.3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
+      <path d="M5 2.5v3h5v-3M5 13.5v-4h6v4" />
+    </>
+  ),
+  undo: (
+    <>
+      <path d="M5.5 3 2.5 6l3 3" />
+      <path d="M2.5 6h6.5a3.5 3.5 0 0 1 0 7H6" />
+    </>
+  ),
+  redo: (
+    <>
+      <path d="m10.5 3 3 3-3 3" />
+      <path d="M13.5 6H7a3.5 3.5 0 0 0 0 7h3" />
+    </>
+  ),
+  // A magnifier with a minus, and with a plus.
+  zoomOut: (
+    <>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m13.5 13.5-3.3-3.3M5 7h4" />
+    </>
+  ),
+  zoomIn: (
+    <>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m13.5 13.5-3.3-3.3M5 7h4M7 5v4" />
+    </>
+  ),
+  // A frame's four corners around a picture.
+  fitWindow: (
+    <>
+      <path d="M1.5 5V3.5a1 1 0 0 1 1-1H4M12 2.5h1.5a1 1 0 0 1 1 1V5M14.5 11v1.5a1 1 0 0 1-1 1H12M4 13.5H2.5a1 1 0 0 1-1-1V11" />
+      <rect x="5.5" y="6" width="5" height="4" />
+    </>
+  ),
+  // Arrows out to two sides.
+  fitWidth: (
+    <>
+      <path d="M2.5 3.5v9M13.5 3.5v9" />
+      <path d="M4.5 8h7M7 5.5 4.5 8 7 10.5M9 5.5 11.5 8 9 10.5" />
+    </>
+  ),
+  home: (
+    <>
+      <path d="m2.2 7.6 5.8-5 5.8 5" />
+      <path d="M4 6.8v6.7h8V6.8" />
+    </>
+  ),
+  // Next with a bar: go to the last one, and stay there.
+  latest: <path d="M4 3.5 8.5 8 4 12.5M12 3v10" />,
+  // A bulleted list: every item, one per row.
+  list: <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01M5.5 4h8M5.5 8h8M5.5 12h8" />,
+  // Angle brackets: a document as its source text.
+  source: <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />,
 };
 
 const ATTRIBUTE_PROPS: Record<string, string> = { 'fill-rule': 'fillRule', 'clip-rule': 'clipRule' };

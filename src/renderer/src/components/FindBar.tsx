@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import { perfSpan } from '../perf';
 import { AddonSearchBox } from './AddonPane';
 
@@ -144,25 +144,60 @@ export function FindBar({
 }) {
   const step = (dir: 1 | -1) => onChange({ ...find, index: find.index + dir });
   return (
-    <div className="chat-find">
-      <div
-        style={{ display: 'contents' }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            step(e.shiftKey ? -1 : 1);
-          }
-        }}
-      >
-        <AddonSearchBox value={find.query} placeholder="Find" inputRef={inputRef} onChange={(query) => onChange({ query, index: 0 })} />
-      </div>
-      <span className="muted">{!find.query ? '' : matches ? `${wrap(find.index, matches) + 1} of ${matches}` : 'No matches'}</span>
+    <FindStrip
+      query={find.query}
+      onQuery={(query) => onChange({ query, index: 0 })}
+      status={!find.query ? '' : matches ? `${wrap(find.index, matches) + 1} of ${matches}` : 'No matches'}
+      onEnter={(back) => step(back ? -1 : 1)}
+      onClose={onClose}
+      inputRef={inputRef}
+    >
       <button className="btn small" disabled={!matches} onClick={() => step(-1)}>
         Previous
       </button>
       <button className="btn small" disabled={!matches} onClick={() => step(1)}>
         Next
       </button>
+    </FindStrip>
+  );
+}
+
+/**
+ * A find strip over what it searches: the field, what was found, the strip's own buttons, then Close. Enter in
+ * the field does `onEnter` (`back` with Shift); Esc clears the field, then closes the strip.
+ */
+export function FindStrip({
+  query,
+  onQuery,
+  status,
+  onEnter,
+  onClose,
+  inputRef,
+  children,
+}: {
+  query: string;
+  onQuery: (query: string) => void;
+  status: string;
+  onEnter: (back: boolean) => void;
+  onClose: () => void;
+  inputRef?: (el: HTMLInputElement | null) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="chat-find">
+      <div
+        style={{ display: 'contents' }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onEnter(e.shiftKey);
+          else if (e.key === 'Escape') onClose();
+          else return;
+          e.preventDefault();
+        }}
+      >
+        <AddonSearchBox value={query} placeholder="Find" inputRef={inputRef} onChange={onQuery} />
+      </div>
+      <span className="muted">{status}</span>
+      {children}
       <button className="btn small" onClick={onClose}>
         Close
       </button>

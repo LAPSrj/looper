@@ -34,6 +34,10 @@ html[data-platform='ios'] {
   /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
   --ios-glass-label2: #727272;
   --ios-glass-placeholder: #bfbfbf;
+  /* A menu's separator and its pressed control-group tile (kit: Menu). The kit multiplies #E6E6E6 and #EDEDED
+     over the glass in light and adds #1A1A1A and #121212 in dark: these give the same colors on any glass. */
+  --ios-menu-sep: rgba(0, 0, 0, 0.1);
+  --ios-menu-press: rgba(0, 0, 0, 0.07);
   --ios-folder: #1a9cf0;
   --ios-seg-on: #ffffff;
   --ios-switch-off: rgba(60, 60, 67, 0.3);
@@ -76,6 +80,8 @@ html[data-platform='ios'] {
     --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.45);
     --ios-glass-label2: #8a8a8a;
     --ios-glass-placeholder: #404040;
+    --ios-menu-sep: rgba(255, 255, 255, 0.11);
+    --ios-menu-press: rgba(255, 255, 255, 0.08);
     --ios-folder: #39a8f0;
     --ios-seg-on: rgba(255, 255, 255, 0.27);
     --ios-switch-off: rgba(235, 235, 245, 0.3);
@@ -770,32 +776,33 @@ html[data-platform='ios'] {
   /* The list sets the menu's width; the row's labels wrap within it. */
   contain: inline-size;
 }
+/* The kit's Control Group: 56 high, no fill until pressed, a symbol over one line of 12/18 medium. */
 .ios-menu-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 5px;
   min-width: 0;
-  padding: 12px 4px 10px;
+  height: 56px;
+  padding: 6px 4px;
   border: 0;
   border-radius: 20px;
-  background: var(--ios-fill2);
+  background: none;
   font: inherit;
   font-size: calc(12 * var(--u));
-  font-weight: 500;
-  line-height: 1.2;
+  font-weight: 510;
+  line-height: calc(18 * var(--u));
   color: var(--ios-label);
 }
 .ios-menu-tile:active {
-  background: var(--ios-fill);
+  background: var(--ios-menu-press);
 }
 .ios-menu-tile-label {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  max-width: 100%;
   overflow: hidden;
-  text-align: center;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* A submenu's header: its row from the menu, bold, with the chevron turned down. */
 .ios-menu-item.ios-menu-header {
@@ -810,15 +817,16 @@ html[data-platform='ios'] {
     transform: none;
   }
 }
-/* Groups split by a hairline; no lines between the items of a group. */
+/* Groups split by a 1 pt line 24 in from each side, with 10 above and below; no lines between the items of a
+   group (kit: Menu). */
 .ios-menu-group + .ios-menu-group::before,
 .ios-menu-row + .ios-menu-group::before,
 .ios-menu-header + .ios-menu-group::before {
   content: '';
   display: block;
-  height: 0.5px;
-  margin: 10px 8px;
-  background: var(--ios-sep);
+  height: 1px;
+  margin: 10px 14px;
+  background: var(--ios-menu-sep);
 }
 /* 40 pt, as the kit's menu items. */
 .ios-menu-item {
@@ -842,12 +850,12 @@ html[data-platform='ios'] {
 .ios-menu-item:disabled {
   color: var(--ios-label3);
 }
-/* Before the label: a chosen item's check, or else the item's symbol. */
+/* Before the label: a chosen item's check, or else the item's symbol, in the kit's 28 pt column. */
 .ios-menu-lead {
   display: flex;
   flex: none;
   justify-content: center;
-  width: 24px;
+  width: 28px;
 }
 .ios-menu-label {
   flex: 1;

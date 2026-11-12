@@ -6,6 +6,7 @@ import { CommandBar } from './Toolbar';
 import { useCommandMenu, useCommandState } from './useCommands';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
+import { PropertyList, type Property } from './PropertyList';
 import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
 
@@ -277,13 +278,13 @@ export function AddonScreenView({
     }
   };
 
-  const prop = (p: AddonProp, i: number) => {
+  const prop = (p: AddonProp): Property => {
     const secret = p.secret;
     const shown = secret ? revealed[secret] : undefined;
-    return (
-      <div key={i} className="addon-prop">
-        <dt>{p.label}</dt>
-        <dd>
+    return {
+      label: p.label,
+      value: (
+        <>
           {/* A secret is monospace shown or hidden, so revealing it never moves the row. */}
           <span className={`addon-prop-value${p.mono || secret ? ' mono' : ''}`}>{secret ? (shown ?? SECRET_MASK) : p.value}</span>
           {secret && (
@@ -317,19 +318,15 @@ export function AddonScreenView({
           )}
           {/* After the buttons, so a note whose length changes (a countdown) never moves them. */}
           {p.note && <span className="addon-prop-note muted">{p.note}</span>}
-        </dd>
-      </div>
-    );
+        </>
+      ),
+    };
   };
 
   const node = (n: AddonNode, i: number) => {
     switch (n.type) {
       case 'props':
-        return (
-          <dl key={i} className="props">
-            {n.items.map(prop)}
-          </dl>
-        );
+        return <PropertyList key={i} items={n.items.map(prop)} />;
       case 'text':
         return (
           <p key={i} className={`addon-text${n.muted ? ' muted' : ''}`}>

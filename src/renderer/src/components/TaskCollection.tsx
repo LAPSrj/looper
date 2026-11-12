@@ -40,8 +40,8 @@ export function TaskCollection({ m, phone }: { m: MainWindow; phone?: PhoneTasks
   return <Sidebar tasks={m.tasks} folders={m.folders} layout={m.layout} runtimes={m.runtimes} selected={m.selected} onSelect={m.select} view={m.view} onView={m.changeView} />;
 }
 
-/** A folder row's symbol. */
-const FOLDER_ICON = (
+/** A folder row's symbol on a phone. */
+export const FOLDER_ICON = (
   <span className="pg-folder-icon">
     <Icon>{ICONS.folder}</Icon>
   </span>

@@ -1,56 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Environment } from '@shared/types';
-import { definitionFields, fileName, lineDiff, type VersionDetail } from '@shared/versions';
+import { definitionFields, fileName, lineDiff, type DiffLine, type VersionDetail } from '@shared/versions';
 import { DataTable, type DataCol } from './components/DataTable';
 import { ListDetail, selectsFirstRow } from './components/ListDetail';
+import { CodeBlock, TextDiff } from './components/ToolContent';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { settingGroup, settingLabel, settingValue } from './taskSettings';
 import { subscribe } from './events';
 
-/** One line on one side of the side-by-side view; null = no line there (the other side has one). */
-type Side = { n: number; text: string; kind: 'same' | 'del' | 'add' } | null;
+/** A text's lines: a file's final newline ends its last line, it isn't one more empty line. */
+const linesOf = (text: string) => text.replace(/\n$/, '').split('\n');
 
-/** Two texts as aligned rows: kept lines side by side, a removed block next to the added one. null = the side has nothing. */
-function sideBySide(rawA: string | null, rawB: string | null): [Side, Side][] {
-  // A file's final newline ends its last line; it isn't one more empty line.
-  const a = rawA?.replace(/\n$/, '') ?? null;
-  const b = rawB?.replace(/\n$/, '') ?? null;
-  if (a === null || b === null) {
-    const lines = (a ?? b ?? '').split('\n');
-    return lines.map((text, i) => {
-      const s: Side = { n: i + 1, text, kind: a === null ? 'add' : 'del' };
-      return a === null ? [null, s] : [s, null];
-    });
-  }
-  const rows: [Side, Side][] = [];
-  let na = 0;
-  let nb = 0;
-  let dels: string[] = [];
-  let adds: string[] = [];
-  const flush = () => {
-    for (let i = 0; i < Math.max(dels.length, adds.length); i++) {
-      rows.push([
-        i < dels.length ? { n: ++na, text: dels[i], kind: 'del' } : null,
-        i < adds.length ? { n: ++nb, text: adds[i], kind: 'add' } : null,
-      ]);
-    }
-    dels = [];
-    adds = [];
-  };
-  for (const l of lineDiff(a, b)) {
-    if (l.op === '-') dels.push(l.text);
-    else if (l.op === '+') adds.push(l.text);
-    else {
-      flush();
-      rows.push([
-        { n: ++na, text: l.text, kind: 'same' },
-        { n: ++nb, text: l.text, kind: 'same' },
-      ]);
-    }
-  }
-  flush();
-  return rows;
+/** Both sides' line diff; a side that's null (not set, no file) has no lines. */
+function diffLines(a: string | null, b: string | null): DiffLine[] {
+  if (a === null || b === null) return linesOf(a ?? b ?? '').map((text) => ({ op: a === null ? '+' : '-', text }));
+  return lineDiff(a.replace(/\n$/, ''), b.replace(/\n$/, ''));
 }
 
 /** One difference in the list: a field or a file, with both sides as text (null = not set / no file). */
@@ -116,46 +81,11 @@ function differencesOf(detail: VersionDetail, environments: Environment[]): Diff
   return [...fields, ...files];
 }
 
-/** The selected difference side by side, with line numbers and the changed lines marked. */
-function SideBySide({ d, n }: { d: Difference; n: number }) {
-  const rows = sideBySide(d.textA, d.textB);
-  const cell = (s: Side, missing: string | null, first: boolean) =>
-    s ? (
-      <>
-        <td className={`sbs-num ${s.kind}`}>{s.n}</td>
-        <td className={`sbs-text ${s.kind}`}>{s.text}</td>
-      </>
-    ) : (
-      <>
-        <td className="sbs-num empty" />
-        <td className="sbs-text empty">{first && missing ? <span className="muted">{missing}</span> : null}</td>
-      </>
-    );
-  const missing = d.key.startsWith('file:') ? 'No file' : 'Not set';
-  return (
-    <table className="sbs">
-      <colgroup>
-        <col className="sbs-num-col" />
-        <col />
-        <col className="sbs-num-col" />
-        <col />
-      </colgroup>
-      <thead>
-        <tr>
-          <th colSpan={2}>Version {n}</th>
-          <th colSpan={2}>Current</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(([a, b], i) => (
-          <tr key={i}>
-            {cell(a, d.textA === null ? missing : null, i === 0)}
-            {cell(b, d.textB === null ? missing : null, i === 0)}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+/** The selected difference, with line numbers and the changed lines marked. */
+function DifferenceView({ d, n }: { d: Difference; n: number }) {
+  const lines = useMemo(() => diffLines(d.textA, d.textB), [d.textA, d.textB]);
+  const file = d.key.startsWith('file:') ? d.title : undefined;
+  return <TextDiff lines={lines} titles={[`Version ${n}`, 'Current']} missing={[d.textA === null, d.textB === null]} placeholder={file ? 'No file' : 'Not set'} file={file} />;
 }
 
 /** Compare: the differences from the current version as a list, the selected one side by side underneath. */
@@ -193,7 +123,7 @@ function CompareView({ detail, n, environments }: { detail: VersionDetail; n: nu
           phoneRow={(d) => ({ title: d.name, sub: `${d.a} → ${d.b}` })}
         />
       }
-      detail={<div className="compare-pane">{current && <SideBySide d={current} n={n} />}</div>}
+      detail={<div className="compare-pane">{current && <DifferenceView d={current} n={n} />}</div>}
     />
   );
 }
@@ -242,39 +172,10 @@ function itemsOf(detail: VersionDetail, environments: Environment[]): Item[] {
   return [...fields, ...files].sort((x, y) => GROUP_ORDER.indexOf(x.group) - GROUP_ORDER.indexOf(y.group));
 }
 
-/** The selected item in full, with line numbers. */
+/** The selected item in full, with line numbers, a file in its language's colors. */
 function TextView({ item }: { item: Item }) {
-  const lines = item.text === null ? null : item.text.replace(/\n$/, '').split('\n');
-  return (
-    <table className="sbs">
-      <colgroup>
-        <col className="sbs-num-col" />
-        <col />
-      </colgroup>
-      <thead>
-        <tr>
-          <th colSpan={2} title={item.title}>
-            {item.name}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {lines === null ? (
-          <tr>
-            <td className="sbs-num" />
-            <td className="sbs-text muted">{item.missing}</td>
-          </tr>
-        ) : (
-          lines.map((text, i) => (
-            <tr key={i}>
-              <td className="sbs-num">{i + 1}</td>
-              <td className="sbs-text">{text}</td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  );
+  if (item.text === null) return <div className="muted compare-missing">{item.missing}</div>;
+  return <CodeBlock text={item.text} file={item.key.startsWith('file:') ? item.title : undefined} caption={{ text: item.name, title: item.title }} />;
 }
 
 /** View: the version's settings and files as a list, the selected one in full underneath. */

@@ -6,6 +6,8 @@ import { isPhone } from '../web/page-nav';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { useListNav } from './hooks';
+import { Icon } from './Icon';
+import { ICONS } from './icons';
 import { listContextMenu } from './list-nav';
 import { selectsOnMenu } from './ListDetail';
 import { InfoBar } from './ui';
@@ -352,10 +354,9 @@ export function AddonSearchBox({
   const [focused, setFocused] = useState(false);
   const prompt = placeholder ?? (isPhone ? 'Search' : 'Type to search');
   const glass = (
-    <svg className="addon-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="m10.3 10.3 3.2 3.2" />
-    </svg>
+    <Icon size={14} className="addon-search-icon">
+      {ICONS.search}
+    </Icon>
   );
   const field = (
     <>
@@ -398,9 +399,9 @@ export function AddonSearchBox({
             ref.current?.focus();
           }}
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-            <path d="m2 2 6 6M8 2 2 8" />
-          </svg>
+          <Icon size={10} bold>
+            {ICONS.close}
+          </Icon>
         </button>
       ) : (
         !isPhone && glass

@@ -804,6 +804,7 @@ export const COMMANDS: readonly Command[] = [
   {
     id: 'compact',
     label: '&Compact into New Chat',
+    toolbarLabel: (c) => (c.here === 'mobile' ? 'Compact' : 'Compact into New Chat'),
     group: 'conversation',
     toolbarGroup: 'turn',
     icon: 'compact',

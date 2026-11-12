@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 process.env.BENCH_ROOT ||= path.join(os.tmpdir(), 'looper-perf-check');
 process.env.BENCH_ADDONS = '1';
-const { launch, quit, watch, sleep, seeded, profiled, APP_DIR, CAT_HARNESS } = await import('./lib.mjs');
+const { launch, quit, watch, sleep, seeded, profiled, shoot, APP_DIR, CAT_HARNESS } = await import('./lib.mjs');
 const { journey } = await import('./journey.mjs');
 const { WINDOWS, MAIN_SCREENS, PHONE_SCREENS, PHONES } = await import('./screens.mjs');
 const { phoneScreens } = await import('./phone.mjs');
@@ -227,6 +227,7 @@ async function measureWindow(app, main, screen, ids) {
     const m = a.getAppMetrics().find((x) => x.pid === pid);
     return m ? Math.round((m.memory.privateBytes ?? 0) / 1024) : 0;
   }, page.url());
+  await shoot(page, `window ${screen.name}`);
   await page.close().catch(() => undefined);
   if (!drew) broken.push(`${screen.name}: drew nothing`);
   if (errors.length) broken.push(`${screen.name}: ${errors[0].slice(0, 200)}`);
@@ -273,6 +274,7 @@ async function measureMain(app, page, chats, terminal) {
     if (!step) continue;
     if (errors.length) broken.push(`${s.name}: ${errors[0].slice(0, 200)}`);
     const nodes = await page.evaluate(() => document.getElementsByTagName('*').length);
+    await shoot(page, `main ${s.name}`);
     measured[`main: ${s.name}`] = { worstFrameMs: step.worstFrame, longestMs: step.longest, mainFreezeMs: step.mainFreeze, nodes };
     console.log(`main: ${s.name}`, JSON.stringify(measured[`main: ${s.name}`]));
   }

@@ -680,16 +680,27 @@ html:not(.phone-window) .session-group ~ .session-row {
   flex-direction: column;
   gap: 18px;
 }
-.dashboard-section > .pane-title {
-  display: block;
-  margin-bottom: 6px;
-}
 .dashboard-list:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
-.dashboard-empty {
+.dashboard-section .section-empty {
   padding: 6px 10px;
+}
+
+/* A pane's titled part (components/Section): its heading, with a state or a command at its end. */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.section-head > .section-state,
+.section-head > .btn {
+  margin-left: auto;
+}
+.section-head:has(> .btn) {
+  min-height: 24px;
 }
 .runlog-table .num {
   text-align: right;
@@ -1762,8 +1773,7 @@ details[open] > summary::before {
 .chat-composer textarea,
 .json-editor,
 .send-sessions-text,
-.pair-source,
-.mu-item select {
+.pair-source {
   width: 100%;
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -1784,8 +1794,7 @@ details[open] > summary::before {
 .chat-composer textarea:focus,
 .json-editor:focus,
 .send-sessions-text:focus,
-.pair-source:focus,
-.mu-item select:focus {
+.pair-source:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -2200,13 +2209,21 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
   padding: 12px 14px;
   font-size: var(--font-caption);
 }
-.builder-field {
-  margin-bottom: 12px;
-  overflow-wrap: anywhere;
+.builder-props {
+  display: block;
+  margin: 0;
+  font-size: inherit;
 }
-.builder-label {
+.builder-props dt {
+  color: inherit;
   font-weight: 600;
   margin-bottom: 3px;
+}
+.builder-props dd {
+  margin: 0 0 12px;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
 }
 .builder-prompt {
   white-space: pre-wrap;
@@ -2253,6 +2270,19 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
 }
 .compare-same {
   padding: 20px 16px;
+}
+.code-caption {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+.compare-missing {
+  padding: 6px 10px;
 }
 .sbs {
   width: 100%;
@@ -2368,42 +2398,27 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
   min-height: 120px;
   flex: 1;
 }
+/* A harness's header: its name in the list's text, not a group's caption. */
 .mu-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
+  margin: 0;
   padding: 7px 6px;
-  border-radius: var(--radius-control);
-  cursor: default;
-  user-select: none;
+  font-size: var(--font-body);
+  color: var(--fg);
 }
-@media (hover: hover) and (pointer: fine) {
-  .mu-group:hover {
-    background: var(--bg-3);
-  }
-}
-.mu-group-name {
+.mu-group .group-header-name {
   font-weight: 600;
-  white-space: nowrap;
+  flex: none;
+}
+.mu-group[aria-disabled] .chev {
+  visibility: hidden;
 }
 .mu-group-note {
   color: var(--fg-muted);
   font-size: var(--font-caption);
+  font-weight: 400;
   flex: 1;
   min-width: 0;
-}
-.mu-chev {
-  flex: none;
-  color: var(--fg-muted);
-  transition: transform 0.1s;
-}
-.mu-chev.open {
-  transform: rotate(90deg);
-}
-.mu-chev-space {
-  width: 10px;
-  flex: none;
 }
 .mu-group:focus-visible {
   outline: 2px solid var(--accent);
@@ -2412,46 +2427,37 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
 .mu-group .link {
   flex: none;
 }
-.mu-item {
-  display: flex;
+/* A model's row on the desktop: its name and id on the left, the action's drop-down on the right, as a property grid. */
+.mu-rows .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  column-gap: 10px;
+  row-gap: 1px;
   align-items: center;
-  gap: 10px;
+  margin: 0;
   padding: 5px 10px 5px 26px;
   border-radius: var(--radius-control);
-  border: 1px solid transparent;
 }
 @media (hover: hover) and (pointer: fine) {
-  .mu-item:hover {
+  .mu-rows .field:hover {
     background: var(--bg-3);
   }
 }
-.mu-item-main {
-  flex: 1;
-  min-width: 0;
-}
-.mu-item-name {
-  font-weight: 500;
+.mu-rows .field-label,
+.mu-rows .field > .help {
+  grid-column: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mu-item-sub {
+.mu-rows .field > .help {
+  margin: 0;
   color: var(--fg-muted);
   font-size: var(--font-caption);
-  margin-top: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.mu-item.muted .mu-item-name,
-.mu-item.muted .mu-item-sub {
-  color: var(--fg-muted);
-  opacity: 0.65;
-}
-/* The text box's look comes from the shared rule near .field; this one is its size. */
-.mu-item select {
-  width: 120px;
-  flex: none;
+.mu-rows .field > select {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   height: 28px;
   background-color: var(--bg);
   padding-top: 3px;
@@ -3027,10 +3033,6 @@ button:focus-visible,
 /* Addon screens and panes (components/AddonScreen, AddonPane). */
 .addon-screen .props {
   row-gap: 8px;
-}
-
-.addon-prop {
-  display: contents;
 }
 
 /* Every row is as tall as one with buttons, so rows with and without them line up evenly. */
@@ -3838,13 +3840,6 @@ button:focus-visible,
 .chat-limit-notice .link {
   margin-left: 8px;
 }
-.dashboard-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 24px;
-  margin-bottom: 6px;
-}
 /* A Markdown file on Now: a page of a readable width on a grey desk, like a document in a word processor. */
 .now-doc {
   flex: 1;
@@ -3950,9 +3945,24 @@ button:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.files-heading {
-  display: block;
+.activity-section .section-head {
+  margin: 0;
   padding: 10px 6px 4px;
+}
+/* The Activity pane's and the workflow Overview's lists: the selected row shows, and the focus rings it. */
+.pane-rows {
+  outline: none;
+}
+.pane-rows:focus-visible > .selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.file-item.selected,
+.bg-item.selected {
+  background: var(--bg-3);
+}
+.bg-item {
+  border-radius: var(--radius-control);
 }
 .file-item {
   display: flex;
@@ -4401,15 +4411,15 @@ button:focus-visible,
 .workflow-phase {
   margin-top: 16px;
 }
-.workflow-phase-title {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: var(--font-body);
-  font-weight: 600;
+.workflow-phase .section-head {
+  margin: 0;
 }
-.workflow-phase-state {
-  font-weight: 400;
+/* A phase's title reads as a heading of the run, not as a pane's caption. */
+.workflow-agents .section-head > .pane-title {
+  font-size: var(--font-body);
+  text-transform: none;
+  letter-spacing: normal;
+  color: inherit;
 }
 .workflow-json {
   margin-top: 8px;
@@ -4428,14 +4438,14 @@ button:focus-visible,
 html.phone-window .workflow-text {
   font-size: 17px;
 }
-.workflow-phase-detail {
+.workflow-phase .section-detail {
   margin-top: 2px;
 }
 .workflow-phase .subagent-list {
   padding: 4px 0 0;
 }
-.workflow-none {
-  padding: 4px 10px;
+.workflow-phase .section-empty {
+  padding: 8px 10px 4px;
 }
 .workflow-log {
   margin: 6px 0 0;

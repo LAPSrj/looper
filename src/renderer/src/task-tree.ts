@@ -2,22 +2,25 @@
 import { folderParents, folderSubtree, siblingOrder } from '../../shared/folders';
 import type { Task, TaskFolder } from '../../shared/types';
 
-/** One row of a phone's Tasks screen: a folder (it opens its own screen) or a task. */
-export type TaskEntry =
+/** An item a folder can hold: a task, or a project in the Projects tab's folders. */
+type Filed = { id: string; folderId?: string };
+
+/** One row of a phone's Tasks or Projects screen: a folder (it opens its own screen) or an item. */
+export type TaskEntry<T extends Filed = Task> =
   | {
       kind: 'folder';
       folder: TaskFolder;
-      /** The tasks in the folder and every folder under it that the list shows. */
+      /** The items in the folder and every folder under it that the list shows. */
       count: number;
     }
-  | { kind: 'task'; task: Task };
+  | { kind: 'task'; task: T };
 
-export interface TaskTree {
-  tasks: Task[];
+export interface TaskTree<T extends Filed = Task> {
+  tasks: T[];
   folders: TaskFolder[];
   layout: Record<string, string[]>;
-  /** The list's filters: whether a task shows. */
-  passes: (t: Task) => boolean;
+  /** The list's filters: whether an item shows. */
+  passes: (t: T) => boolean;
   /** Off: the list shows its tasks straight, without folder rows. */
   showFolders: boolean;
   /** Hide a folder none of whose tasks the list shows. */
@@ -30,7 +33,7 @@ export interface TaskTree {
  * with its subtree's task count. With folders off, the top level is every shown
  * task in tree order.
  */
-export function taskEntries(container: string, tree: TaskTree): TaskEntry[] {
+export function taskEntries<T extends Filed>(container: string, tree: TaskTree<T>): TaskEntry<T>[] {
   const { tasks, folders, layout, passes } = tree;
   const parents = folderParents(folders);
   const order = siblingOrder(tasks, folders, layout, parents);
@@ -43,7 +46,7 @@ export function taskEntries(container: string, tree: TaskTree): TaskEntry[] {
 
   if (!tree.showFolders) {
     if (container !== '') return [];
-    const out: TaskEntry[] = [];
+    const out: TaskEntry<T>[] = [];
     const walk = (c: string) => {
       for (const entry of order.get(c) ?? []) {
         if (entry.startsWith('folder:')) walk(entry.slice(7));
@@ -57,7 +60,7 @@ export function taskEntries(container: string, tree: TaskTree): TaskEntry[] {
     return out;
   }
 
-  const out: TaskEntry[] = [];
+  const out: TaskEntry<T>[] = [];
   for (const entry of order.get(container) ?? []) {
     if (entry.startsWith('folder:')) {
       const folder = folderById.get(entry.slice(7));
