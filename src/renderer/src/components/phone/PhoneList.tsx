@@ -50,6 +50,7 @@ export function Row({
   value,
   lead,
   chevron,
+  popUp,
   tone,
   valueTone,
   selected,
@@ -66,6 +67,8 @@ export function Row({
   lead?: ReactNode;
   /** It opens another screen (iOS shows a disclosure chevron). */
   chevron?: boolean;
+  /** The value is a pop-up button: a tap opens a menu of the choices out of it, and `onOpen` gets the button. */
+  popUp?: boolean;
   /** `action`: the row is a command; `destructive`: one that destroys something. */
   tone?: 'error' | 'warning' | 'muted' | 'action' | 'destructive';
   /** The value's color (a limit close to its end). */
@@ -77,12 +80,15 @@ export function Row({
   onOpen?: (row: HTMLElement) => void;
   onMenu?: () => void;
 }) {
-  const open = disabled ? undefined : onOpen;
+  const button = useRef<HTMLSpanElement>(null);
+  const open = disabled || !onOpen ? undefined : (row: HTMLElement) => onOpen((popUp && button.current) || row);
+  const valueEl = value !== undefined && <span className="pg-row-value">{value}</span>;
   return (
     <div
       className={`pg-row${open ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}
       role={checked !== undefined ? 'radio' : onOpen ? 'button' : undefined}
       aria-checked={checked}
+      aria-haspopup={(popUp && onOpen && 'menu') || undefined}
       aria-disabled={disabled || undefined}
       aria-current={selected || undefined}
       tabIndex={open ? 0 : undefined}
@@ -106,7 +112,14 @@ export function Row({
         <span className="pg-row-title">{title}</span>
         {sub && <span className="pg-row-sub">{sub}</span>}
       </span>
-      {value !== undefined && <span className="pg-row-value">{value}</span>}
+      {popUp ? (
+        <span ref={button} className="pg-popup">
+          {valueEl}
+          {platform === 'ios' ? UP_DOWN : DOWN}
+        </span>
+      ) : (
+        valueEl
+      )}
       {checked && (
         <svg className="pg-row-check" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="m2 7.5 3.2 3.2L12 3.5" />
@@ -121,6 +134,20 @@ export function Row({
 const CHEVRON = (
   <svg className="pg-chevron" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
     <path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** iOS's pop-up button mark, chevron.up.chevron.down (kit: Lists, Pop-up Menu Indicator). */
+const UP_DOWN = (
+  <svg className="pg-popup-mark" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true">
+    <path d="M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** Material's drop-down arrow, as a form's select draws it on Android. */
+const DOWN = (
+  <svg className="pg-popup-mark" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+    <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 

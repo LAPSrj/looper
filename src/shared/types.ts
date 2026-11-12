@@ -806,6 +806,13 @@ export const SettingsSchema = z.object({
           aboveTokens: z.number().int().positive().default(200_000),
         })
         .prefault({}),
+      /** What a compacted conversation sends the agent (shared/compact.ts): tokens for tool results, and the most for the whole text. */
+      compaction: z
+        .object({
+          resultTokens: z.union([z.literal(20_000), z.literal(35_000), z.literal(50_000)]).default(35_000),
+          maxTotalTokens: z.number().int().positive().default(90_000),
+        })
+        .prefault({}),
     })
     .prefault({}),
   /** Main-window view options (View menu). */

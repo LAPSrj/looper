@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, ipcMain, screen, shell, type Menu } from 'electron';
-import type { FileDialogSpec, MenuItemSpec, MessageBoxSpec, ServerMessage, WindowRole } from '../../shared/remote-access';
+import type { FileDialogSpec, MenuItemSpec, MessageBoxSpec, PopupButton, ServerMessage, WindowRole } from '../../shared/remote-access';
 import { isWebLink } from '../../shared/links';
 import type { RemoteClients } from './clients';
 import { caller } from './context';
@@ -98,10 +98,10 @@ export function newWindow(options: WindowOptions, hash: string, opts: { role: Wi
 // ---------- menus ----------
 
 /** menu.popup(...) for the window it's for: a remote one gets the menu as data. */
-export function popupMenu(menu: Menu, options: Omit<Electron.PopupOptions, 'window'> & { window: AppWindow }): void {
+export function popupMenu(menu: Menu, { button, ...options }: Omit<Electron.PopupOptions, 'window'> & { window: AppWindow; button?: PopupButton }): void {
   const w = options.window;
   if (w instanceof RemoteWindow) {
-    if (!w.isDestroyed()) w.client.popup(w, menu, options.x, options.y);
+    if (!w.isDestroyed()) w.client.popup(w, menu, options.x, options.y, button);
     return;
   }
   hideOffPlatform(menu, 'desktop');

@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { UsageGlyph } from '../components/ContextRing';
 import { iconNode } from '../components/icons';
 import type { BarModel, PageNavAction } from './nav-bar-model';
@@ -75,6 +75,45 @@ export function ActionGlyph({ action, size = 22 }: { action: Pick<PageNavAction,
   return action.icon ? <NavIcon name={action.icon} size={size} /> : null;
 }
 
+const FIT_TEXT: CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+/** No height, so it only widens the line to its longest form, as far as the bar has room. */
+const FIT_SIZES: CSSProperties = { display: 'block', height: 0, overflow: 'hidden', visibility: 'hidden' };
+const FIT_SIZE: CSSProperties = { display: 'block', width: 'max-content', whiteSpace: 'nowrap' };
+
+/** One line in the first of its forms (longest first) that fits its room, else the last one cut short. */
+function FitLine({ className, forms }: { className: string; forms: string[] }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [pick, setPick] = useState(0);
+  const key = forms.join('\n');
+  useLayoutEffect(() => {
+    const line = ref.current;
+    if (!line || forms.length < 2) return;
+    const [text, sizes] = [line.children[0] as HTMLElement, line.children[1] as HTMLElement];
+    const choose = () => {
+      const i = [...sizes.children].findIndex((form) => form.getBoundingClientRect().width <= text.clientWidth + 0.5);
+      setPick(i < 0 ? forms.length - 1 : i);
+    };
+    choose();
+    const ro = new ResizeObserver(choose);
+    ro.observe(line);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` is the forms' content
+  }, [key]);
+  if (forms.length < 2) return <p className={className}>{forms[0]}</p>;
+  return (
+    <p ref={ref} className={`${className} fit`}>
+      <span style={FIT_TEXT}>{forms[Math.min(pick, forms.length - 1)]}</span>
+      <span style={FIT_SIZES} aria-hidden="true">
+        {forms.map((f) => (
+          <span key={f} style={FIT_SIZE}>
+            {f}
+          </span>
+        ))}
+      </span>
+    </p>
+  );
+}
+
 // ---------- iOS ----------
 
 export interface IosBarRowProps {
@@ -112,7 +151,7 @@ export function IosBarRow({ model, onMore, onActionMenu, titleFaded, className, 
       {model.subtitle ? (
         <div className={`ios-bar-titles${titleFaded ? ' faded' : ''}`}>
           <Title className="ios-bar-title">{model.title}</Title>
-          <p className="ios-bar-subtitle">{model.subtitle}</p>
+          <FitLine className="ios-bar-subtitle" forms={model.subtitle} />
         </div>
       ) : (
         <Title className={`ios-bar-title${titleFaded ? ' faded' : ''}`}>{model.title}</Title>
@@ -234,7 +273,7 @@ export function MdBarRow({ model, onMore, onActionMenu, dialogLike }: MdBarRowPr
       {model.subtitle ? (
         <div className={`md-bar-titles${lead ? '' : ' no-lead'}`}>
           <h1 className="md-bar-title">{model.title}</h1>
-          <p className="md-bar-subtitle">{model.subtitle}</p>
+          <FitLine className="md-bar-subtitle" forms={model.subtitle} />
         </div>
       ) : (
         <h1 className={`md-bar-title${lead ? '' : ' no-lead'}`}>{model.title}</h1>

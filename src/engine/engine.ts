@@ -1494,6 +1494,11 @@ export function createEngine(opts: EngineOptions): Engine {
       // Remote Control first: a chat that opens again starts with it, as a new one would.
       applyRemote();
       step('scheduler');
+      // In the background: a compacted chat's history waits for it.
+      void messages.migrateCompacted(runs.listRunDirs()).then(
+        (n) => n && log.info(`migrated ${n} compacted.json files to version 2`),
+        (err: unknown) => log.error(`cannot migrate compacted.json files: ${errMsg(err)}`),
+      );
       // Before the sweep: an open conversation's run is never pruned.
       restoreConversations();
       step('conversations');

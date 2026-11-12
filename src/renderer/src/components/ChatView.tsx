@@ -188,7 +188,8 @@ function useDockHeight(sectionRef: RefObject<HTMLElement | null>, on: boolean): 
     const ro = new ResizeObserver(measure);
     const watch = () => {
       ro.disconnect();
-      for (const el of section.children) if (!el.classList.contains('chat-scroll')) ro.observe(el);
+      // The border box: the box's padding changes alone as the keyboard and the home indicator's inset come and go.
+      for (const el of section.children) if (!el.classList.contains('chat-scroll')) ro.observe(el, { box: 'border-box' });
       measure();
     };
     const mo = new MutationObserver(watch);

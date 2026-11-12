@@ -328,7 +328,6 @@ function Chat({ state }: { state: BuilderState }) {
       </div>
       <ChatStatus state={state} />
       <MessageBox
-        look="builder"
         text={text}
         onText={setText}
         placeholder={state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run'}

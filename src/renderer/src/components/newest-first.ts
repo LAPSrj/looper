@@ -105,7 +105,9 @@ export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, atEnd: Re
       if (performance.now() - input < OWN_CHANGE_MS) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       else if (atEnd.current) el.scrollTop = el.scrollHeight;
     });
-    ro.observe(el);
+    // The border box: on iOS the message box sets the scroller's padding from a ResizeObserver of its own, which
+    // keeps the reader at the end itself, and a content box seen here would be a loop the browser reports as an error.
+    ro.observe(el, { box: 'border-box' });
     for (const child of el.children) ro.observe(child);
     const mo = new MutationObserver((records) => {
       for (const r of records) {

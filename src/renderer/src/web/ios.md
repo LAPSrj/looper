@@ -246,6 +246,11 @@ Sizes are points, which are CSS pixels.
   `#DFDFDF` and `#343434` on `#F8F8F8` and `#1A1A1A` menus. Looper draws them
   as black at 10% and 7% in light and white at 11% and 8% in dark.
 - Icons for every item in a group or for none (HIG Menus).
+- A list row that picks one of a few choices is a pop-up button: the value in
+  secondary label, then chevron.up.chevron.down 10 after it, never the
+  disclosure chevron (kit: Lists, Type=Pop-up). Its menu opens over the
+  value, lined up with its trailing edge, and opens upward from the value's
+  bottom when there isn't room below (`Row`'s `popUp`, `placePopUp`).
 - Behind a menu the screen dims with `rgba(41, 41, 58, 0.23)` (tokens).
 
 ### Alerts

@@ -226,6 +226,14 @@ export class ShellController {
     return { x: (rect?.left ?? 0) + p.x, y: (rect?.top ?? 0) + p.y };
   }
 
+  /** The pop-up button a menu belongs to, in page coordinates; null for a menu at a point. */
+  popupButton(menu: OpenMenu): DOMRect | null {
+    const b = menu.button;
+    if (!b) return null;
+    const rect = this.frameOf(menu.w)?.getBoundingClientRect();
+    return new DOMRect((rect?.left ?? 0) + b.x, (rect?.top ?? 0) + b.y, b.width, b.height);
+  }
+
   /** A menu item was picked (in a click or key press: the clipboard may be used now). menuId: a popup's, or the window's for its menu bar. */
   pick(menuId: string, w: string, item: MenuItemSpec): void {
     const popup = this.state.menus.some((m) => m.menuId === menuId);

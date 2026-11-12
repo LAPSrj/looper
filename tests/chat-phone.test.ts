@@ -162,14 +162,20 @@ describe('subagentTabs', () => {
 });
 
 describe('runningText', () => {
-  it('counts only the running ones', () => {
-    expect(runningText(['done', 'running', 'running'], [])).toBe('2 subagents running');
-    expect(runningText([], ['running', 'failed'])).toBe('1 workflow running');
-    expect(runningText(['running'], ['running'])).toBe('1 subagent and 1 workflow running');
+  it('counts only the running ones, in shorter forms for a narrow bar', () => {
+    expect(runningText(['done', 'running', 'running'], [])).toEqual(['2 subagents running', '2 subagents', '2 running']);
+    expect(runningText([], ['running', 'failed'])).toEqual(['1 workflow running', '1 workflow', '1 running']);
+    expect(runningText(['running'], ['running'])).toEqual(['1 subagent and 1 workflow running', '1 subagent, 1 workflow', '2 running']);
+  });
+
+  it('counts the background processes too', () => {
+    expect(runningText([], [], 1)).toEqual(['1 process running', '1 process', '1 running']);
+    expect(runningText(['running', 'done'], [], 3)).toEqual(['1 subagent and 3 processes running', '1 subagent, 3 processes', '4 running']);
+    expect(runningText(['running'], ['running'], 2)).toEqual(['1 subagent, 1 workflow and 2 processes running', '1 subagent, 1 workflow, 2 processes', '4 running']);
   });
 
   it('is null when none is running, so the bar has no subtitle', () => {
-    expect(runningText(['done', 'failed'], ['done'])).toBeNull();
+    expect(runningText(['done', 'failed'], ['done'], 0)).toBeNull();
     expect(runningText([], [])).toBeNull();
   });
 });

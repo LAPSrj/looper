@@ -338,7 +338,9 @@ program
       process.stdout.write(text);
       return;
     }
-    const isDir = fs.existsSync(opts.out) && fs.statSync(opts.out).isDirectory();
+    // A path ending in a separator names a folder, which is made when it doesn't exist yet.
+    const isDir = /[\\/]$/.test(opts.out) || (fs.existsSync(opts.out) && fs.statSync(opts.out).isDirectory());
+    if (isDir) fs.mkdirSync(opts.out, { recursive: true });
     const dest = isDir ? path.join(opts.out, `${taskId}.${FILE_KINDS.task.ext}`) : opts.out;
     fs.writeFileSync(dest, text, 'utf8');
     console.log(`exported task ${taskId} -> ${dest}`);

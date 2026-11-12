@@ -331,6 +331,20 @@ export class RunStore {
     }
   }
 
+  /** Every task's run folders on disk, without holding the thread. */
+  async listRunDirs(): Promise<string[]> {
+    const tasks = await fs.promises.readdir(path.join(this.dataDir, 'tasks'), { withFileTypes: true }).catch(() => [] as fs.Dirent[]);
+    const dirs = await Promise.all(
+      tasks
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map(async (e) => {
+          const ids = await fs.promises.readdir(path.join(this.taskDir(e.name), 'runs')).catch(() => [] as string[]);
+          return ids.filter((id) => !id.startsWith('.')).map((id) => this.runDir(e.name, id));
+        }),
+    );
+    return dirs.flat();
+  }
+
   /** Every task id with run history on disk, including tasks that no longer exist. */
   listTaskIds(): string[] {
     try {

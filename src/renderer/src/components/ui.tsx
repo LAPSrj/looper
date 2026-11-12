@@ -365,8 +365,9 @@ interface NumberInputProps {
   id?: string;
   /** A name for it when no Field's label names it (the second box of a pair). */
   label?: string;
-  /** Fired when focus leaves the input; the place to normalize against other fields. */
-  onBlur?: () => void;
+  /** Fired when focus leaves the input, with the value as it was brought into range; the place to normalize against other fields. */
+  onBlur?: (value: number | null) => void;
+  /** The range: any number goes to onChange while typing, and leaving the box brings the value into it. */
   min?: number;
   max?: number;
   disabled?: boolean;
@@ -376,6 +377,8 @@ interface NumberInputProps {
 }
 
 export function NumberInput({ suffix, value, onChange, onBlur, min, max, disabled, autoFocus, id, label, className }: NumberInputProps) {
+  // What's typed, while it's being typed: a cleared box, or a number the field didn't take, shows until the box is left.
+  const [typed, setTyped] = useState<string | null>(null);
   return (
     <InputSuffix suffix={suffix} className={className}>
       <input
@@ -388,14 +391,22 @@ export function NumberInput({ suffix, value, onChange, onBlur, min, max, disable
         max={max}
         disabled={disabled}
         autoFocus={autoFocus && !isPhone}
-        value={value ?? ''}
+        value={typed ?? value ?? ''}
         onChange={(e) => {
+          setTyped(e.target.value);
           // A cleared field is a keystroke on the way to a new number, not a 0.
           if (e.target.value === '') return;
           const n = Number(e.target.value);
           if (!Number.isNaN(n)) onChange(n);
         }}
-        onBlur={onBlur}
+        onBlur={() => {
+          // What was typed, brought into range: a field that refused it (a schedule can't hold 60 minutes) takes the nearest it can.
+          const n = typed !== null && typed !== '' && !Number.isNaN(Number(typed)) ? Number(typed) : value;
+          setTyped(null);
+          const inRange = n === null ? null : Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n));
+          if (inRange !== null && inRange !== value) onChange(inRange);
+          onBlur?.(inRange);
+        }}
       />
     </InputSuffix>
   );

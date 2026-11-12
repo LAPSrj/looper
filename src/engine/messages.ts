@@ -14,13 +14,14 @@ import {
 } from '../shared/messages';
 import { commandAttachment, parseCommands, parseOutputOnly, withOutput } from '../shared/bash-mode';
 import { parseTaskNotification } from '../shared/sessions';
-import { compactRow, compactRows, withoutCompacted } from '../shared/compact';
+import { compactRow, compactRows, proseRows, slimCall, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
+import { writeJsonAtomicAsync } from './store/fsutil';
 import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
 import { convertWslPath } from './host';
-import type { Logger } from './log';
+import { errMsg, type Logger } from './log';
 import type { WorkflowRun } from '../shared/workflows';
 import { SessionWorkflows, workflowAgentTranscript, type WorkflowLaunch } from './workflows';
 
@@ -339,7 +340,7 @@ export function endedSessions(runDir: string): number[] {
 export class TranscriptAccumulator {
   rows: MessageRow[] = [];
   dropped = 0;
-  /** The dropped rows a compacted conversation keeps (compactRow), oldest first: compaction gets the whole conversation. */
+  /** The dropped rows a compacted conversation keeps (compactRow, calls slimmed), oldest first: compaction gets the whole conversation. */
   evicted: MessageRow[] = [];
   /** Image payloads by row id; the rows only carry a marker. */
   readonly images = new Map<string, MessageImage>();
@@ -708,8 +709,9 @@ export class TranscriptAccumulator {
     if (this.recordUuid) row.uuid = this.recordUuid;
     this.rows.push(row);
     if (this.rows.length > MAX_ROWS) {
+      // A call this far back never wins a result's place in a compaction, so it keeps only its line.
       const old = compactRow(this.rows.shift()!);
-      if (old) this.evicted.push(old);
+      if (old) this.evicted.push(slimCall(old));
       this.dropped++;
     }
     return row;
@@ -911,14 +913,70 @@ export class TranscriptReader {
 /** A compacted chat's run folder keeps the conversation it was compacted from, as rows, once its first message makes it a run. */
 export const COMPACTED_FILE = 'compacted.json';
 
-function readCompactedRows(runDir: string): MessageRow[] {
+/** compacted.json: the compacted rows (compactRows, then layered), with every call of the newest session. */
+export interface CompactedFile {
+  version: 2;
+  rows: MessageRow[];
+}
+
+export const compactedFile = (rows: MessageRow[]): CompactedFile => ({ version: 2, rows });
+
+/** compacted.json files read, by path, while their size and modified time stay the same: a reopened chat's history reads its file on every poll. */
+const compactedCache = new Map<string, { size: number; mtimeMs: number; rows: MessageRow[] }>();
+const MAX_COMPACTED_CACHE = 16;
+
+/** The rows of a compacted chat's compacted.json; empty for any other run. */
+export function readCompactedRows(runDir: string): MessageRow[] {
+  const file = path.join(runDir, COMPACTED_FILE);
+  let st: fs.Stats;
   try {
-    const rows: unknown = JSON.parse(fs.readFileSync(path.join(runDir, COMPACTED_FILE), 'utf8'));
-    return Array.isArray(rows) ? (rows as MessageRow[]) : [];
+    st = fs.statSync(file);
   } catch {
     return []; // not a compacted chat
   }
+  const hit = compactedCache.get(file);
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.rows;
+  let rows: MessageRow[] = [];
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<CompactedFile>;
+    if (data.version === 2 && Array.isArray(data.rows)) rows = data.rows;
+  } catch {
+    /* torn file: no rows */
+  }
+  compactedCache.delete(file);
+  compactedCache.set(file, { size: st.size, mtimeMs: st.mtimeMs, rows });
+  if (compactedCache.size > MAX_COMPACTED_CACHE) compactedCache.delete(compactedCache.keys().next().value!);
+  return rows;
 }
+
+/**
+ * The first compacted.json was an array of the messages alone: it becomes a
+ * version 2 file whose rows are the oldest session's. Its first character
+ * tells the versions apart, so a run without one costs a failed open. True
+ * when it rewrote the file.
+ */
+export async function migrateCompactedFile(runDir: string): Promise<boolean> {
+  const file = path.join(runDir, COMPACTED_FILE);
+  let fh: fs.promises.FileHandle;
+  try {
+    fh = await fs.promises.open(file, 'r');
+  } catch {
+    return false; // not a compacted chat
+  }
+  const head = Buffer.alloc(1);
+  try {
+    await fh.read(head, 0, 1, 0);
+  } finally {
+    await fh.close();
+  }
+  if (head.toString('utf8') !== '[') return false;
+  const rows = JSON.parse(await fs.promises.readFile(file, 'utf8')) as MessageRow[];
+  await writeJsonAtomicAsync(file, compactedFile(rows.map((r) => ({ ...r, layer: 0 }))));
+  return true;
+}
+
+/** Run folders the compacted.json migration opens at once. */
+const MIGRATE_BATCH = 32;
 
 /**
  * The SessionStart/Stop hook payloads both name the transcript file. The
@@ -1090,8 +1148,30 @@ export interface MessagesDeps {
  */
 export class MessagesService {
   private readers = new Map<string, TranscriptReader>();
+  /** Settles once migrateCompacted has gone through every run: nothing reads a compacted.json before. */
+  private compactedReady: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly deps: MessagesDeps) {}
+
+  /** Rewrites each first-version compacted.json in `runDirs` as version 2; resolves with how many it rewrote. */
+  migrateCompacted(runDirs: Promise<string[]>): Promise<number> {
+    const done = (async () => {
+      const dirs = await runDirs;
+      let migrated = 0;
+      for (let at = 0; at < dirs.length; at += MIGRATE_BATCH) {
+        const batch = dirs.slice(at, at + MIGRATE_BATCH).map((dir) =>
+          migrateCompactedFile(dir).catch((err: unknown) => {
+            this.deps.log.error(`${dir}: cannot migrate compacted.json: ${errMsg(err)}`);
+            return false;
+          }),
+        );
+        for (const ok of await Promise.all(batch)) if (ok) migrated++;
+      }
+      return migrated;
+    })();
+    this.compactedReady = done.catch(() => undefined);
+    return done;
+  }
 
   async read(taskId: string, runId: string, agentId?: string, raw = false): Promise<MessagesResult> {
     const none = (status: 'no-session' | 'no-transcript'): MessagesResult => ({ status, rows: [], dropped: 0 });
@@ -1106,8 +1186,9 @@ export class MessagesService {
       return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
     }
     const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
-    // A compacted chat's run starts with the conversation it was compacted from.
-    const rows: MessageRow[] = raw ? [] : readCompactedRows(this.deps.runDir(taskId, runId));
+    // A compacted chat's run starts with the messages of the conversation it was compacted from.
+    if (!raw) await this.compactedReady;
+    const rows: MessageRow[] = raw ? [] : proseRows(readCompactedRows(this.deps.runDir(taskId, runId)));
     let dropped = 0;
     let refs = 0;
     let readable = 0;
@@ -1141,7 +1222,8 @@ export class MessagesService {
    */
   async compactable(taskId: string, runId: string): Promise<MessageRow[]> {
     const runDir = this.deps.runDir(taskId, runId);
-    const rows: MessageRow[] = readCompactedRows(runDir);
+    await this.compactedReady;
+    const rows: MessageRow[] = [...readCompactedRows(runDir)];
     for (const source of [...endedSessions(runDir), 'agent' as const]) {
       const reader = await this.mainReader(taskId, runId, source, false);
       if (typeof reader === 'string') continue;

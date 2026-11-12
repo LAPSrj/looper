@@ -404,6 +404,18 @@ html.phone-window .pg-chevron {
   flex: none;
   color: var(--pg-label-3);
 }
+/* A pop-up button at the row's end: the value, then its mark 10 pt after it, both in secondary label (kit: Lists, Type=Pop-up). */
+html.phone-window .pg-popup {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--pg-label-2);
+}
+html.phone-window .pg-popup-mark {
+  flex: none;
+}
 
 /* iOS: inset grouped sections, 16 pt from the edges, rounded, 52 pt rows, hairlines inset on both sides. */
 html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .radio-rows > .field-label, .form section h3, .addon-screen section h3, .picker-body > .field > .field-label) {
@@ -1295,7 +1307,11 @@ html.phone-window .phone-sessions .overview-chat > :is(.chat-app, .transcript) {
 html.phone-window .phone-sessions .overview-chat :is(.chat-scroll, .transcript-scroll) {
   overflow: hidden;
 }
-html.phone-window .phone-sessions .overview-chat .phone-composer {
+/* A card's reply box reaches the card's edges and bottom, as a chat card's message box does. */
+html.phone-window .phone-sessions .overview-composer {
+  margin: 0 -18px -14px;
+}
+html.phone-window .phone-sessions :is(.overview-chat, .overview-composer) .phone-composer {
   padding-bottom: 10px;
 }
 /* The agent's last message as whole lines (four at most, then an ellipsis), not a box scrolled to its end. */
@@ -1406,28 +1422,11 @@ html.phone-window .chat-aside > summary {
   padding: 12px 0;
   font-size: calc(15 * var(--u));
 }
-/* The Builder's message box: the box and its Send beside each other. */
-html.phone-window .chat-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 0 8px;
-  padding: 6px 10px calc(8px + var(--looper-safe-bottom, 0px));
-}
-html.phone-window.keyboard-up .chat-composer,
 html.phone-window.keyboard-up .term-keys,
-html.phone-window.keyboard-up .editor-footer,
-html.phone-window.keyboard-up .guidance-compose {
+html.phone-window.keyboard-up .editor-footer {
   padding-bottom: 8px;
 }
-html.phone-window .chat-composer textarea {
-  min-height: 44px;
-  max-height: 30vh;
-  font-size: calc(16 * var(--u));
-  border-radius: 20px;
-  padding: 9px 14px;
-}
-/* A chat's message box, as Messages draws it: a + button, then a capsule that starts at one line and
+/* The message box, as Messages draws it: a + button, then a capsule that starts at one line and
    grows to six, with one round button at its trailing edge (Send, Queue or Stop). About 52 px at rest. */
 html.phone-window .chat-composer.phone-composer {
   display: block;
@@ -1730,26 +1729,6 @@ html.phone-window[data-platform='ios'] .phone-plus-menu button + button {
 html.phone-window[data-platform='ios'] .phone-plus-menu button:active:not(:disabled) {
   background: var(--pg-fill);
 }
-/* An Overview card's Reply box grows with its text, like the chat's. */
-html.phone-window .overview-actions {
-  align-items: flex-end;
-}
-html.phone-window .overview-actions textarea {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  max-height: 120px;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 22px;
-  outline: none;
-  background: var(--pg-cell);
-  color: var(--pg-label);
-  font: inherit;
-  font-size: calc(16 * var(--u));
-  line-height: calc(24 * var(--u));
-  resize: none;
-}
 html.phone-window .session-sub.error-text {
   color: var(--pg-red);
 }
@@ -1911,10 +1890,12 @@ html.phone-window .usage-panel .pg-row {
 html.phone-window .usage-panel .pg-row-value {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 62%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+html.phone-window .usage-panel .pg-row > :is(.pg-row-value, .pg-popup) {
+  max-width: 62%;
 }
 html.phone-window .pg-row.value-warning .pg-row-value {
   color: var(--pg-orange);
@@ -2435,12 +2416,6 @@ html.phone-window .help code {
 }
 html.phone-window .send-sessions-text {
   margin: 0 16px 12px;
-}
-html.phone-window .guidance-compose {
-  padding: 8px 10px calc(8px + var(--looper-safe-bottom, 0px));
-}
-html.phone-window .guidance-compose textarea {
-  min-height: 44px;
 }
 html.phone-window .statusbar {
   flex-wrap: wrap;

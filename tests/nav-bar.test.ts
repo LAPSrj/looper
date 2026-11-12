@@ -34,9 +34,14 @@ describe('a bar’s buttons (barModel)', () => {
 
 describe('a bar’s subtitle (barModel)', () => {
   it('keeps a status line under the title, and has none when it’s empty', () => {
-    expect(barModel({ title: 'Fix the build', subtitle: '2 subagents running', dismiss: null }).subtitle).toBe('2 subagents running');
+    expect(barModel({ title: 'Fix the build', subtitle: '2 subagents running', dismiss: null }).subtitle).toEqual(['2 subagents running']);
     expect(barModel({ title: 'Fix the build', subtitle: '', dismiss: null }).subtitle).toBeNull();
+    expect(barModel({ title: 'Fix the build', subtitle: [], dismiss: null }).subtitle).toBeNull();
     expect(barModel({ title: 'Fix the build', dismiss: null }).subtitle).toBeNull();
+  });
+
+  it('keeps a subtitle’s forms in order, longest first', () => {
+    expect(barModel({ title: 'Fix the build', subtitle: ['1 subagent and 3 processes running', '4 running'], dismiss: null }).subtitle).toEqual(['1 subagent and 3 processes running', '4 running']);
   });
 });
 

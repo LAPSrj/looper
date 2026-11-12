@@ -2569,22 +2569,6 @@ button:focus-visible,
   overflow: hidden;
 }
 
-.guidance-compose {
-  flex: none;
-  display: flex;
-  /* Windows places a button that acts on a text box to its right, top-aligned. */
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-2);
-}
-
-.guidance-compose textarea {
-  flex: 1;
-  resize: none;
-}
-
 .messages .runlog-table tr.msg-row {
   cursor: default;
 }
@@ -4477,10 +4461,12 @@ html.phone-window .workflow-text {
   margin-left: -6px;
   background: transparent;
 }
+/* As tall as Send and Stop, where there's no Stop too, so every message box is the chat's size. */
 .composer-actions {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: calc(2 * var(--control-height) + 6px);
 }
 .composer-actions .btn {
   min-width: 72px;

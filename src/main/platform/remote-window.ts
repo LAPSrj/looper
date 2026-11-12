@@ -7,6 +7,7 @@ import type {
   FileDialogSpec,
   MenuItemSpec,
   MessageBoxSpec,
+  PopupButton,
   RemoteWindowSpec,
   ServerMessage,
   WindowRole,
@@ -414,14 +415,14 @@ export class RemoteClient {
 
   // ---------- menus ----------
 
-  popup(win: RemoteWindow, menu: MenuLike, x?: number, y?: number): void {
+  popup(win: RemoteWindow, menu: MenuLike, x?: number, y?: number, button?: PopupButton): void {
     const { items, byId } = serializeMenu(menu, this.uiPlatform);
     if (items.length === 0 || win.isDestroyed()) return;
     // One popup at a time, as on the desktop: a new one replaces the last.
     this.popups.clear();
     const menuId = `m${++this.seq}`;
     this.popups.set(menuId, { window: win, byId });
-    this.send({ t: 'menu', menuId, w: win.w, items, ...(typeof x === 'number' ? { x } : {}), ...(typeof y === 'number' ? { y } : {}) });
+    this.send({ t: 'menu', menuId, w: win.w, items, ...(typeof x === 'number' ? { x } : {}), ...(typeof y === 'number' ? { y } : {}), ...(button ? { button } : {}) });
   }
 
   /** A pick from a popup (its menuId) or from a window's menu bar (menuId = the window's w). */

@@ -49,6 +49,10 @@ export interface MessageRow {
   uuid?: string;
   /** A SendUserFile call whose result confirmed delivery: the views show it as the agent's message with these files, not as a tool call. */
   sent?: SentFiles;
+  /** A tool call as a compacted conversation keeps it: its result's length, whether or not the result itself was kept. */
+  resultChars?: number;
+  /** A compacted conversation's row: which session of the chain it came from, 0 for the first. */
+  layer?: number;
 }
 
 /** A file the agent sent the user (SendUserFile). */

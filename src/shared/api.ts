@@ -21,7 +21,7 @@ import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { AgentSettingsData, AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest, McpTool } from './agent-config';
 import type { RemoteMessage, RemoteState } from './remote';
-import type { MenuItemSpec, PairingCode, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
+import type { MenuItemSpec, PairingCode, PopupButton, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
 import type { EngineEvent, PreventSleepState, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -496,8 +496,11 @@ export interface LooperApi {
     openWindows(): Promise<{ windows: { id: number; title: string }[]; current: number | null }>;
     /** The Select Window dialog's pick: the dialog closes and that window comes forward. */
     showOpenWindow(id: number): void;
-    /** A menu at a point in the window, or at the finger: the id picked, or null once it closes. */
-    popup(items: MenuItemSpec[], at?: { x: number; y: number }): Promise<string | null>;
+    /**
+     * A menu at a point in the window, or at the finger: the id picked, or null once it closes. `button`: the
+     * pop-up button it belongs to, in the window, which a phone opens it out of.
+     */
+    popup(items: MenuItemSpec[], at?: { x: number; y: number; button?: PopupButton }): Promise<string | null>;
     /** Something only the main process can do. */
     host(name: HostCommand, ...args: string[]): void;
   };

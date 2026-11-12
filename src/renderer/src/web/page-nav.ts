@@ -13,8 +13,11 @@ import type { NavCommand, PageNavAction } from './nav-bar-model';
 export interface PageNav {
   /** The bar's title; unset = the window's title. */
   title?: string;
-  /** A short status line under the title ("2 subagents running"), as iOS 26's navigation bar subtitle. */
-  subtitle?: string;
+  /**
+   * A short status line under the title ("2 subagents running"), as iOS 26's navigation bar subtitle; or its
+   * forms longest first, and the bar shows the first that fits on its line.
+   */
+  subtitle?: string | readonly string[];
   /**
    * The page shows a deeper screen of its own (a task under the task list):
    * Back, the back gesture and Android's back button call this instead of

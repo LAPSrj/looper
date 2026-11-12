@@ -242,7 +242,12 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
       </div>
     );
   } else if (s.status !== 'ended') {
-    bottom = <MessageBox look="card" text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />;
+    // A click in the box stays in the box; anywhere else on the card opens it.
+    bottom = (
+      <div className="overview-composer" onClick={keep}>
+        <MessageBox text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />
+      </div>
+    );
   }
   return (
     <div
@@ -815,7 +820,9 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
           : summary.title
         : undefined;
   // What runs beside the conversation, under its title (the bar's Activity button lists them).
-  const subtitle = summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status))) ?? undefined) : undefined;
+  const processes = (s.activity?.background ?? []).filter((b) => b.kind === 'command' && b.status === 'running').length;
+  const subtitle =
+    summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status)), processes) ?? undefined) : undefined;
   const pageBack = summary && (!closesWindow || sheet || workflow || s.follow) ? back : undefined;
   const bar = (
     <NavBar

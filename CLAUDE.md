@@ -2,9 +2,12 @@
 
 ## Development
 
-- **No backward-compat code.** The project is in active development. No
-  migration logic, no fallback parsing of old formats, no legacy shims. When
-  the schema changes, old data is simply invalid.
+- **A format change migrates the old files, and the code reads only the new
+  format.** When the structure of a file Looper stores changes, a migration
+  rewrites the files in the old format, and everything else reads only the
+  new one: no fallback parsing of old formats, no legacy shims. The migration
+  tells an old file from a new one by the file itself (a version in it, or its
+  shape), never by a marker file or any other record kept outside it.
 - **Clean up the full stack when removing a feature.** Check and delete all
   references: types, engine, IPC handler, preload bridge, API, renderer
   components, routes, CSS, and menu items.

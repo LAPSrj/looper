@@ -172,7 +172,7 @@ export function ImageApp({
             max={MAX_ZOOM}
             value={zoom}
             disabled={!url}
-            onChange={(v) => Number.isFinite(v) && v > 0 && setZoom(clamp(v))}
+            onChange={(v) => setZoom(Math.round(v))}
           />
         ),
       }}

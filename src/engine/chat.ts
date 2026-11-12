@@ -34,7 +34,7 @@ import {
   resolveEnvironment,
   resolveHarness,
 } from '../shared/environments';
-import { compactRows, compactedText } from '../shared/compact';
+import { compactRows, compactedText, layered, proseRows } from '../shared/compact';
 import type { MessageRow } from '../shared/messages';
 import type { EngineEvent, Harness, RunRecord, Settings, Task } from '../shared/types';
 import { queueGuidance, readPendingGuidance, takePendingGuidance } from './guidance';
@@ -42,7 +42,7 @@ import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream'
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { COMPACTED_FILE, findCodexRollout, transcriptHostPath } from './messages';
+import { COMPACTED_FILE, compactedFile, findCodexRollout, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
 import { usageLimitOf } from './sessions';
@@ -687,10 +687,13 @@ class ChatSession {
     } else if (opening.kind === 'compact') {
       this.compactedFrom = opening.from;
       this.historyLabel = opening.label ?? `Compacted from run ${opening.from}`;
-      // Its ids (c0, c1…) are compacted.json's, which a reopened chat's history starts with.
-      this.history = opening.history;
-      this.historyCompact = opening.history;
-      this.compacted = opening.history;
+      // The newest session's rows get their layer here, once, so a conversation continued in a chat stays one session.
+      const rows = layered(opening.history);
+      this.opening = { ...opening, history: rows };
+      // Its ids (c0, c1…) are compacted.json's, which a reopened chat's history starts with. It shows the messages only.
+      this.history = proseRows(rows);
+      this.historyCompact = rows;
+      this.compacted = rows;
       this.draft = opening.draft;
     }
     if (saved) {
@@ -1590,7 +1593,9 @@ class ChatSession {
     this.acc.addPrompt(p.text, p.attachments);
     this.markOpened();
     // A compacted chat's first message takes the earlier conversation to the agent, once.
-    const compacted = this.compacted ? compactedText(this.compacted, (x) => this.target.toTargetPath(x)) : undefined;
+    const compacted = this.compacted
+      ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x) })
+      : undefined;
     this.compacted = undefined;
     if (this.claude) this.writeClaude(p, compacted);
     else this.startCodexTurn(p, compacted);
@@ -1745,7 +1750,7 @@ class ChatSession {
       this.recorded = true;
       if (!this.titleBy) this.title = chatTitle(this.acc.rows);
       // The transcript holds the compacted conversation only as text inside the first message: the run keeps its rows.
-      if (this.opening.kind === 'compact') writeJsonAtomic(path.join(this.dir, COMPACTED_FILE), this.opening.history);
+      if (this.opening.kind === 'compact') writeJsonAtomic(path.join(this.dir, COMPACTED_FILE), compactedFile(this.opening.history));
       // chat.json says how it opens again from now on.
       fs.rmSync(path.join(this.dir, OPENING_FILE), { force: true });
       if (this.sessionId) this.d.onSession?.({ taskId: this.taskId, runId: this.id, sessionId: this.sessionId });

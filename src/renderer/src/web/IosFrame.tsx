@@ -25,6 +25,7 @@ import {
   type OpenMore,
   type PhoneShell,
   type Screen,
+  type Viewport,
 } from './phone-shell';
 import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, OpenMenu, PathRequest, Toast } from './store';
@@ -312,6 +313,18 @@ function placeMenu(x: number, y: number, width: number, height: number, vw: numb
   return below ? { left, top, width, maxHeight: vh - top - 8 } : { left, bottom, width, maxHeight: vh - bottom - 8 };
 }
 
+/**
+ * A pop-up button's menu: over the button, out of it, lined up with its trailing edge as a bar button's is;
+ * opening upward from the button's bottom when there isn't room for it below.
+ */
+function placePopUp(button: DOMRect, height: number, vp: Viewport): React.CSSProperties {
+  const right = Math.max(8, vp.width - button.right);
+  const floor = vp.height - vp.safe.bottom - 8;
+  const ceiling = vp.safe.top + 8;
+  if (button.top + height <= floor || floor - button.top >= button.bottom - ceiling) return { right, top: button.top, maxHeight: floor - button.top };
+  return { right, bottom: vp.height - button.bottom, maxHeight: button.bottom - ceiling, transformOrigin: 'bottom right' };
+}
+
 const springs = typeof CSS !== 'undefined' && CSS.supports('transition-timing-function', 'linear(0, 1)');
 /** The menus' springs as CSS variables, for the transitions in ios.css. */
 const SPRING_VARS = springs ? ({ '--ios-spring': SNAPPY.easing, '--ios-spring-ms': `${SNAPPY.ms}ms` } as React.CSSProperties) : undefined;
@@ -567,13 +580,16 @@ function PullDown({
  */
 function PopupMenu({ controller, shell, menu: m }: { controller: ShellController; shell: PhoneShell; menu: OpenMenu }) {
   const at = useMemo(() => controller.popupPoint(m), [controller, m]);
+  const button = useMemo(() => controller.popupButton(m), [controller, m]);
   const items = useMemo(() => phoneMenu(m.items), [m.items]);
-  const from = useMemo(() => new DOMRect(at.x - 22, at.y - 22, 44, 44), [at]);
+  const from = useMemo(() => button ?? new DOMRect(at.x - 22, at.y - 22, 44, 44), [at, button]);
+  const height = items.length * 40 + 20;
   return (
     <MenuStack
       items={items}
       from={from}
-      rootStyle={placeMenu(at.x - 20, at.y + 12, 250, items.length * 40 + 20, shell.vp.width, shell.vp.height)}
+      rootClass={button ? 'ios-pull-down' : ''}
+      rootStyle={button ? placePopUp(button, height, shell.vp) : placeMenu(at.x - 20, at.y + 12, 250, height, shell.vp.width, shell.vp.height)}
       bottom={shell.vp.height - shell.vp.safe.bottom - 8}
       dim
       exit={false}

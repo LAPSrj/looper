@@ -27,7 +27,7 @@ export const SETTINGS = ['harness', 'model', 'effort', 'permission'] as const;
 /** A setting that can't change now: the harness once the chat has started, any of them once it has ended. */
 export const settingDisabled = (state: ChatState, which: ChatSettingMenu): boolean => (which === 'harness' ? state.harnessLocked : state.status === 'ended');
 
-/** Open a setting's menu (or `all` of them) below `box`. */
+/** Open a setting's menu (or `all` of them) below `box`, the button it belongs to (a phone opens it out of the button). */
 export function showSettingMenu(state: ChatState, which: ChatSettingMenu | 'all', box: DOMRect): void {
   const all = chatSettingEntries(state, window.looper);
   const entries: Entry[] =
@@ -35,5 +35,6 @@ export function showSettingMenu(state: ChatState, which: ChatSettingMenu | 'all'
       ? SETTINGS.map((k) => ({ id: k, label: SETTING_TITLES[k], entries: all[k].map((e) => ('separator' in e ? e : { ...e, id: `${k}-${e.id}` })) }))
       : all[which];
   const { items, pick } = entriesMenu('setting', entries);
-  void window.looper.commands.popup(items, { x: box.left, y: box.bottom }).then((id) => id && pick(id));
+  const button = { x: box.left, y: box.top, width: box.width, height: box.height };
+  void window.looper.commands.popup(items, { x: box.left, y: box.bottom, button }).then((id) => id && pick(id));
 }

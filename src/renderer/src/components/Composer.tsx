@@ -5,10 +5,8 @@ import type { SlashCommand } from '@shared/sessions';
 import { AttachmentList } from './ChatRows';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from './chat-settings';
 import { bashModeEntry, commandAttachment } from '@shared/bash-mode';
-import { useBoxHeight } from './hooks';
-import { ARROW_UP } from './MessageBox';
+import { MessageBox } from './MessageBox';
 import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
-import { useAutoGrow } from './phone/auto-grow';
 import { Toolbar } from './Toolbar';
 import { isPhone } from '../web/page-nav';
 import { onUi, subscribe } from '../events';
@@ -82,11 +80,6 @@ function CommandBar({ state, onAttach, onSkills }: { state: ChatState; onAttach:
 const PLUS = (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
     <path d="M10 4v12M4 10h12" />
-  </svg>
-);
-const STOP = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-    <rect x="3.5" y="3.5" width="9" height="9" rx="2" />
   </svg>
 );
 
@@ -182,11 +175,10 @@ export interface ComposerHandle {
 }
 
 /**
- * The message box of a chat: its text, the files waiting to go with it, the "/"
- * list of commands and the buttons. It keeps its own state, so typing re-renders
- * this and not the conversation above it. On a phone it's a Messages-style box:
- * a + menu, a capsule that grows with the text, and one round button that sends,
- * queues or stops by the chat's state.
+ * The message box of a chat: the MessageBox with the chat's parts, its command
+ * bar (a + menu on a phone), the files waiting to go with the message, the "/"
+ * list of commands and bash mode. It keeps its own state, so typing re-renders
+ * this and not the conversation above it.
  */
 export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded: boolean; onSent: () => void }>(function Composer({ state, embedded, onSent }, ref) {
   const id = state.id;
@@ -211,8 +203,6 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
   const [picker, setPicker] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const box = useBoxHeight(rootRef);
   /** Up/Down in the message box: which sent message is shown, and the draft to go back to. */
   const recall = useRef<{ index: number; draft: string } | null>(null);
   const ended = state.status === 'ended';
@@ -266,7 +256,6 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
     ta.setSelectionRange(at, at);
     if (at === ta.value.length) ta.scrollTop = ta.scrollHeight;
   }, [text]);
-  useAutoGrow(composerRef, text, 150, isPhone);
 
   // Quote: the selection goes after what the box holds, and the cursor after the quote.
   const quoteIntoBox = (selection: string) => {
@@ -499,105 +488,74 @@ export const Composer = forwardRef<ComposerHandle, { state: ChatState; embedded:
       ))}
     </div>
   );
-  const textarea = (
-    <textarea
-      ref={composerRef}
-      value={text}
-      placeholder={bash ? 'Command' : `Message ${harnessKindLabel(state.harnessKind)}`}
-      aria-label={bash ? 'Command' : undefined}
-      spellCheck={!bash}
-      rows={isPhone ? 1 : 3}
-      disabled={ended}
-      aria-autocomplete="list"
-      aria-controls={options.length > 0 ? `slash-list-${id}` : undefined}
-      aria-activedescendant={options.length > 0 ? `slash-${id}-${picked}` : undefined}
-      onChange={(e) => {
-        recall.current = null;
-        const v = e.target.value;
-        // "!" typed or pasted into an empty box: bash mode, the "!" its prompt and the rest the command.
-        const command = bash ? null : bashModeEntry(text, v);
-        if (command !== null) {
-          setBox(command, true);
-          setCaret(command.length);
-          return;
-        }
-        const at = e.target.selectionStart;
-        setText(v);
-        setCaret(at);
-        setPick(0);
-        if (commandAt(e.target.value, at, ['/', state.commandPrefix])?.start !== closedAt) setClosedAt(null);
-      }}
-      onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-      onPaste={(e) => {
-        const files = [...e.clipboardData.files];
-        if (files.length === 0) return;
-        e.preventDefault();
-        attach(files);
-      }}
-      onKeyDown={onComposerKey}
-      onFocus={() => setFocused(true)}
-      onBlur={() => {
-        setFocused(false);
-        setPicker(false);
-      }}
-    />
-  );
-
-  if (isPhone) {
-    // Run in bash mode; Stop while the agent (or a command) works and there's nothing to queue; otherwise Send, or Queue while it works.
-    const mode = bash ? 'run' : stoppable && !canSend ? 'stop' : working ? 'queue' : 'send';
-    return (
-      <div className="chat-composer phone-composer">
-        <div className="phone-composer-row">
-          <PlusMenu
-            ended={ended}
-            hasCommands={state.commands.length > 0}
-            queued={state.queued.length > 0}
-            onAttach={pickFiles}
-            onSkills={openPicker}
-            onSendNow={() => void window.looper.chat.sendNow(id).catch(reportError)}
-          />
-          <div className={`composer-input phone-composer-box${bash ? ' bash-mode' : ''}`}>
-            {pendingList}
-            {slashList}
-            {bash && BASH_PROMPT}
-            {textarea}
-            <button
-              className={`phone-composer-action ${mode}`}
-              aria-label={mode === 'stop' ? 'Stop' : mode === 'queue' ? 'Queue' : mode === 'run' ? 'Run' : 'Send'}
-              disabled={mode === 'run' ? !canRun : mode !== 'stop' && !canSend}
-              // The box keeps the focus, so the keyboard stays up.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={mode === 'stop' ? stop : send}
-            >
-              {mode === 'stop' ? STOP : ARROW_UP}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const input: React.TextareaHTMLAttributes<HTMLTextAreaElement> = {
+    'aria-label': bash ? 'Command' : undefined,
+    spellCheck: !bash,
+    'aria-autocomplete': 'list',
+    'aria-controls': options.length > 0 ? `slash-list-${id}` : undefined,
+    'aria-activedescendant': options.length > 0 ? `slash-${id}-${picked}` : undefined,
+    onChange: (e) => {
+      recall.current = null;
+      const v = e.target.value;
+      // "!" typed or pasted into an empty box: bash mode, the "!" its prompt and the rest the command.
+      const command = bash ? null : bashModeEntry(text, v);
+      if (command !== null) {
+        setBox(command, true);
+        setCaret(command.length);
+        return;
+      }
+      const at = e.target.selectionStart;
+      setText(v);
+      setCaret(at);
+      setPick(0);
+      if (commandAt(e.target.value, at, ['/', state.commandPrefix])?.start !== closedAt) setClosedAt(null);
+    },
+    onSelect: (e) => setCaret(e.currentTarget.selectionStart),
+    onPaste: (e) => {
+      const files = [...e.clipboardData.files];
+      if (files.length === 0) return;
+      e.preventDefault();
+      attach(files);
+    },
+    onKeyDown: onComposerKey,
+    onFocus: () => setFocused(true),
+    onBlur: () => {
+      setFocused(false);
+      setPicker(false);
+    },
+  };
 
   return (
-    <div className="chat-composer" ref={rootRef}>
-      <div className="composer-main">
-        <CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />
-        {pendingList}
-        <div className={`composer-input${bash ? ' bash-mode' : ''}`} style={{ minHeight: box.minHeight }}>
-          <div className="composer-grip" onMouseDown={box.onGrip} />
+    <MessageBox
+      text={text}
+      placeholder={bash ? 'Command' : `Message ${harnessKindLabel(state.harnessKind)}`}
+      canSend={bash ? canRun : canSend}
+      onSend={() => void send()}
+      // Run in bash mode; Queue while the agent works; otherwise Send.
+      action={bash ? 'run' : working ? 'queue' : 'send'}
+      stop={{ enabled: stoppable, run: stop, title: withShortcut('Stop', 'Esc') }}
+      disabled={ended}
+      bash={bash}
+      bar={<CommandBar state={state} onAttach={pickFiles} onSkills={openPicker} />}
+      plus={
+        <PlusMenu
+          ended={ended}
+          hasCommands={state.commands.length > 0}
+          queued={state.queued.length > 0}
+          onAttach={pickFiles}
+          onSkills={openPicker}
+          onSendNow={() => void window.looper.chat.sendNow(id).catch(reportError)}
+        />
+      }
+      pending={pendingList}
+      inside={
+        <>
           {slashList}
           {bash && BASH_PROMPT}
-          {textarea}
-        </div>
-      </div>
-      <div className="composer-actions">
-        <button className="btn primary" disabled={bash ? !canRun : !canSend} onClick={() => void send()}>
-          {bash ? 'Run' : working ? 'Queue' : 'Send'}
-        </button>
-        <button className="btn" title={withShortcut('Stop', 'Esc')} disabled={!stoppable} onClick={stop}>
-          Stop
-        </button>
-      </div>
-    </div>
+        </>
+      }
+      inputRef={composerRef}
+      input={input}
+    />
   );
 });

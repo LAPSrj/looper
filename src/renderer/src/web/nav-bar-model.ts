@@ -40,8 +40,8 @@ export type Dismiss = { kind: 'back' | 'close'; run: () => void } | null;
 
 export interface BarInput {
   title: string;
-  /** A short status line under the title. */
-  subtitle?: string;
+  /** A short status line under the title, or its forms longest first: the bar shows the first that fits. */
+  subtitle?: string | readonly string[];
   /** The page shows a deeper screen of its own: Back returns from it. */
   back?: () => void;
   /** An editor's Cancel. */
@@ -55,7 +55,8 @@ export interface BarInput {
 export interface BarModel {
   lead: BarLead | null;
   title: string;
-  subtitle: string | null;
+  /** The subtitle's forms, longest first. */
+  subtitle: string[] | null;
   actions: PageNavAction[];
   confirm: { label: string; disabled?: boolean; run: () => void } | null;
 }
@@ -90,5 +91,6 @@ export function barModel(i: BarInput): BarModel {
           : { kind: 'close', label: 'Close', run: i.dismiss.run }
         : null;
   const confirm = i.confirm ? { label: plainLabel(i.confirm.label ?? 'Save'), disabled: i.confirm.disabled, run: i.confirm.run } : null;
-  return { lead, title: plainLabel(i.title), subtitle: i.subtitle || null, actions: i.actions ?? [], confirm };
+  const subtitle = (typeof i.subtitle === 'string' ? [i.subtitle] : (i.subtitle ?? [])).filter(Boolean);
+  return { lead, title: plainLabel(i.title), subtitle: subtitle.length ? subtitle : null, actions: i.actions ?? [], confirm };
 }

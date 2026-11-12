@@ -71,6 +71,8 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
+  /* A shorter form than the longest (FitLine) stays under the title's middle. */
+  text-align: center;
 }
 .on-dark .ios-bar-subtitle {
   color: rgba(255, 255, 255, 0.7);

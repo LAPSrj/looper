@@ -181,7 +181,11 @@ function ActiveHours({ value, onChange }: { value: Hours | undefined; onChange: 
       label={label}
       value={hours[bound]}
       onChange={(v) => hour(v) && onChange({ ...hours, [bound]: v })}
-      onBlur={() => hours.from > hours.to && onChange({ from: hours[bound], to: hours[bound] })}
+      onBlur={(v) => {
+        if (v === null) return;
+        const next = { ...hours, [bound]: v };
+        if (next.from > next.to) onChange({ from: v, to: v });
+      }}
     />
   );
   return <RangeField label="Active hours" mode={mode} on={!!value} box={(bound, label) => value && box(bound, value, label)} fromLabel="From hour" toLabel="To hour" />;

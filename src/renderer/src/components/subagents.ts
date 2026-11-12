@@ -28,14 +28,20 @@ export function subagentTabs(subagents: SubagentInfo[], follow: string | null): 
 type RunState = 'running' | 'done' | 'failed';
 
 /**
- * What a conversation has running beside it, as its bar's subtitle: "2 subagents
- * running", "1 subagent and 1 workflow running"; null when nothing is.
+ * What a conversation has running beside it, as its bar's subtitle, longest form first for the bar to show the
+ * first that fits: ["1 subagent and 2 processes running", "1 subagent, 2 processes", "3 running"]; null when
+ * nothing is. `processes`: its background commands still running.
  */
-export function runningText(subagents: RunState[], workflows: RunState[]): string | null {
-  const count = (statuses: RunState[], noun: string) => {
-    const n = statuses.filter((s) => s === 'running').length;
-    return n ? `${n} ${noun}${n === 1 ? '' : 's'}` : null;
-  };
-  const parts = [count(subagents, 'subagent'), count(workflows, 'workflow')].filter(Boolean);
-  return parts.length ? `${parts.join(' and ')} running` : null;
+export function runningText(subagents: RunState[], workflows: RunState[], processes = 0): string[] | null {
+  const running = (statuses: RunState[]) => statuses.filter((s) => s === 'running').length;
+  const counts: [number, string, string][] = [
+    [running(subagents), 'subagent', 'subagents'],
+    [running(workflows), 'workflow', 'workflows'],
+    [processes, 'process', 'processes'],
+  ];
+  const parts = counts.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
+  if (!parts.length) return null;
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+  const total = counts.reduce((sum, [n]) => sum + n, 0);
+  return [...new Set([`${list} running`, parts.join(', '), `${total} running`])];
 }

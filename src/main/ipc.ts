@@ -54,7 +54,7 @@ import {
 import { withAccessKeys } from './platform/menus';
 import { specTemplate } from './command-menu';
 import type { HostCommand } from '../shared/commands/context';
-import type { MenuItemSpec } from '../shared/remote-access';
+import type { MenuItemSpec, PopupButton } from '../shared/remote-access';
 import type { RemoteAccess } from './remote-access';
 
 /** Every context menu built here: each item gets an access key (withAccessKeys) unless its label has one. */
@@ -1204,13 +1204,16 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   ipc.on('commands:host', (e, name: HostCommand, ...args: unknown[]) => host.runHostCommand(windowOf(e), name, args.map(String)));
   // A page's own menu at a point (or at the finger); the id picked comes back, or null once it closes without a pick.
-  ipc.handle('commands:popup', (e, items: MenuItemSpec[], at?: { x: number; y: number }) => {
+  ipc.handle('commands:popup', (e, items: MenuItemSpec[], at?: { x: number; y: number; button?: PopupButton }) => {
     const sender = windowOf(e);
     if (!sender || !Array.isArray(items) || !items.length) return null;
+    const b = at?.button;
+    const button = b && { x: Number(b.x) || 0, y: Number(b.y) || 0, width: Number(b.width) || 0, height: Number(b.height) || 0 };
     return new Promise<string | null>((resolve) => {
       popupMenu(Menu.buildFromTemplate(specTemplate(items, resolve)), {
         window: sender,
         ...(at ? { x: Math.round(Number(at.x) || 0), y: Math.round(Number(at.y) || 0) } : {}),
+        ...(button ? { button } : {}),
         // A pick's click comes just after the menu closes.
         callback: () => setTimeout(() => resolve(null), 200),
       });

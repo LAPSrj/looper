@@ -380,6 +380,14 @@ export type ClientMessage =
   | { t: 'window-title'; w: string; title: string }
   | { t: 'ping' };
 
+/** A pop-up button's box in its window, which its menu opens out of on a phone. */
+export interface PopupButton {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type ServerMessage =
   /**
    * `resumed`: the windows of `clientId` are still there and follow as
@@ -401,7 +409,7 @@ export type ServerMessage =
   | { t: 'window-load'; w: string; hash: string }
   /** webContents.send to that window. */
   | { t: 'event'; w: string; channel: string; args: unknown[] }
-  | { t: 'menu'; menuId: string; w: string; items: MenuItemSpec[]; x?: number; y?: number }
+  | { t: 'menu'; menuId: string; w: string; items: MenuItemSpec[]; x?: number; y?: number; button?: PopupButton }
   | { t: 'dialog'; dialogId: string; w: string; kind: 'message'; spec: MessageBoxSpec }
   | { t: 'dialog'; dialogId: string; w: string; kind: 'open' | 'save'; spec: FileDialogSpec }
   | { t: 'clipboard'; text: string }

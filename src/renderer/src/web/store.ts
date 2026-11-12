@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { MenuItemSpec, MessageBoxSpec, FileDialogSpec, RemoteWindowSpec } from '../../../shared/remote-access';
+import type { MenuItemSpec, MessageBoxSpec, FileDialogSpec, PopupButton, RemoteWindowSpec } from '../../../shared/remote-access';
 import type { StoredShell } from './offline-store';
 import type { Session, ShellMessage } from './session';
 
@@ -15,6 +15,7 @@ export interface OpenMenu {
   items: MenuItemSpec[];
   x?: number;
   y?: number;
+  button?: PopupButton;
 }
 
 export type OpenDialog =

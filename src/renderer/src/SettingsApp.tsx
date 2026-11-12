@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
+import { COMPACTION_RESULT_TOKENS, type CompactionResultTokens } from '@shared/compact';
 import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { FolderOptions } from './components/form-blocks';
@@ -356,10 +357,6 @@ export function SettingsApp() {
                     disabled={!chats.confirmExpiredSend.onlyAbove}
                     value={chats.confirmExpiredSend.aboveTokens / 1000}
                     onChange={(n) => setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: Math.round(n * 1000) } })}
-                    onBlur={() =>
-                      chats.confirmExpiredSend.aboveTokens < 1000 &&
-                      setChats({ ...chats, confirmExpiredSend: { ...chats.confirmExpiredSend, aboveTokens: 1000 } })
-                    }
                   />
                 </InlineField>
               </StepFields>
@@ -382,9 +379,29 @@ export function SettingsApp() {
                   min={0}
                   disabled={!chats.skipExpiredContinue.enabled}
                   value={chats.skipExpiredContinue.aboveTokens / 1000}
-                  onChange={(n) => setChats({ ...chats, skipExpiredContinue: { ...chats.skipExpiredContinue, aboveTokens: Math.max(0, Math.round(n * 1000)) } })}
+                  onChange={(n) => setChats({ ...chats, skipExpiredContinue: { ...chats.skipExpiredContinue, aboveTokens: Math.round(n * 1000) } })}
                 />
               </InlineField>
+            </FormGroup>
+            <FormGroup>
+              <Field label="Tool results when compacting">
+                <SelectInput
+                  value={chats.compaction.resultTokens}
+                  onChange={(e) => setChats({ ...chats, compaction: { ...chats.compaction, resultTokens: Number(e.target.value) as CompactionResultTokens } })}
+                >
+                  {COMPACTION_RESULT_TOKENS.map((n) => (
+                    <option key={n} value={n}>
+                      {n / 1000}k tokens
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              <NumberField
+                label="Largest compacted conversation"
+                suffix="k tokens"
+                min={10}
+                value={chats.compaction.maxTotalTokens / 1000}
+                onChange={(n) => setChats({ ...chats, compaction: { ...chats.compaction, maxTotalTokens: Math.round(n * 1000) } })}              />
             </FormGroup>
           </div>
         )}

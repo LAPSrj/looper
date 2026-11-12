@@ -80,8 +80,8 @@ describe('form elements', () => {
   });
 
   it('draws a form\'s controls with TextInput, TextArea, NumberInput and SelectInput, which set them up for a phone', () => {
-    // Message boxes and the browser frames' own dialogs keep their own: Enter sends there, and they have no Field.
-    const OWN = new Set(['components/ui.tsx', 'components/Composer.tsx', 'components/MessageBox.tsx', 'components/AddonPane.tsx']);
+    // The message box and the browser frames' own dialogs keep their own: Enter sends there, and they have no Field.
+    const OWN = new Set(['components/ui.tsx', 'components/MessageBox.tsx', 'components/AddonPane.tsx']);
     for (const [file, text] of files) {
       if (OWN.has(file) || file.startsWith('web/')) continue;
       expect(text, file).not.toMatch(/<(input|textarea|select)\b/);

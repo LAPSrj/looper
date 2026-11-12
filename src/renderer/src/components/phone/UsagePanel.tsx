@@ -54,7 +54,7 @@ export function UsagePanel({ summary, chat, limits }: { summary: SessionSummary;
             settingDisabled(chat, which) ? (
               <Row key={which} title={SETTING_TITLES[which]} value={labels[which]} tone="muted" />
             ) : (
-              <Row key={which} title={SETTING_TITLES[which]} value={labels[which]} chevron onOpen={(row) => showSettingMenu(chat, which, row.getBoundingClientRect())} />
+              <Row key={which} title={SETTING_TITLES[which]} value={labels[which]} popUp onOpen={(button) => showSettingMenu(chat, which, button.getBoundingClientRect())} />
             ),
           )}
         </Group>
