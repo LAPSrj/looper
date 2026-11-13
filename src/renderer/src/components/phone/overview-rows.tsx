@@ -1,7 +1,7 @@
 import type { AttentionRow, RunningRow } from '@shared/dashboard';
 import { fmtClock, formatDuration, resultLabel } from '../../format';
 import type { MainWindow } from '../../useMainWindow';
-import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners } from '../Dashboard';
+import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners, needAt, needRows, needTitle, showNeedMenu } from '../Dashboard';
 import { Elapsed } from '../Live';
 import { showTaskMenu } from '../row-menus';
 import { Section } from '../Section';
@@ -15,23 +15,31 @@ export const taskRowMenu = (m: MainWindow, taskId: string, list: 'attention' | '
   showTaskMenu(task, m.runtimes[taskId]);
 };
 
-/** Needs Attention: a tap opens a row as a double-click does. */
+/** Needs Attention, with the Claude Code logins that need the user: a tap opens a row as a double-click does. */
 export function AttentionGroup({ m, rows }: { m: MainWindow; rows: AttentionRow[] }) {
   const opens = dashboardOpeners(m.openFromDashboard);
   const now = Date.now();
+  const needs = needRows(rows, m.loginAttention);
   return (
-    <Section title="Needs Attention" action={{ label: 'Clear', disabled: rows.length === 0, run: () => m.clearAttention(rows) }} empty={rows.length === 0 && 'Nothing needs attention.'}>
-      {rows.map((r) => (
-        <Row
-          key={`${r.task.id}-${r.runId ?? 'last'}`}
-          lead={<StatusIcon level={r.level} />}
-          title={r.task.name}
-          sub={r.at !== null ? `${fmtClock(r.at, now)} · ${r.problem}` : r.problem}
-          chevron
-          onOpen={() => opens.attention(r)}
-          onMenu={taskRowMenu(m, r.task.id, 'attention', r.runId)}
-        />
-      ))}
+    <Section
+      title="Needs Attention"
+      action={{ label: 'Clear', disabled: needs.length === 0, run: () => m.clearAttention(rows, m.loginAttention) }}
+      empty={needs.length === 0 && 'Nothing needs attention.'}
+    >
+      {needs.map((n) => {
+        const at = needAt(n);
+        return (
+          <Row
+            key={n.kind === 'task' ? `${n.r.task.id}-${n.r.runId ?? 'last'}` : n.r.login.key}
+            lead={<StatusIcon level={n.r.level} />}
+            title={needTitle(n)}
+            sub={at !== null ? `${fmtClock(at, now)} · ${n.r.problem}` : n.r.problem}
+            chevron
+            onOpen={() => opens.need(n)}
+            onMenu={n.kind === 'task' ? taskRowMenu(m, n.r.task.id, 'attention', n.r.runId) : () => showNeedMenu(n, m.runtimes)}
+          />
+        );
+      })}
     </Section>
   );
 }

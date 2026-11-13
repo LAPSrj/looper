@@ -97,6 +97,8 @@ export interface Command {
   group: string;
   /** On a toolbar, the group next to it instead: a toolbar keeps few separators. */
   toolbarGroup?: string;
+  /** On a toolbar, last in its group, wherever the menus list it. */
+  toolbarLast?: true;
   /** What iconNode draws (renderer components/icons.tsx): an ICONS key, or an addon's drawing. */
   icon?: string | ((c: CommandContext) => string | undefined);
   /** No glyph in a menu: only the toolbar shows the icon. */

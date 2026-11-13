@@ -65,6 +65,8 @@ interface Harness {
   completeSignals: string[];
   /** The next agent start throws this instead of starting (a spawn that failed outright). */
   agentThrows: Error | null;
+  /** What each agent's end told about the login (onLogin's `worked`), in order. */
+  logins: boolean[];
   tickN(n: number): Promise<void>;
 }
 
@@ -112,8 +114,10 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     hangChecks: false,
     completeSignals: [],
     agentThrows: null,
+    logins: [],
   };
   const sched = new Scheduler({
+    onLogin: (_task, worked) => h.logins!.push(worked),
     dataDir: dir,
     host: 'wsl',
     settings,
@@ -1377,6 +1381,22 @@ describe('notifications', () => {
     expect(h.sched.get('t1')!.lastDetail).toBe('environment unavailable: Fake never started: Wsl/Service/WSAETIMEDOUT');
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
     expect(h.tasks.get('t1')!.note).toEqual({ text: 'hint', runsLeft: 1 });
+  });
+
+  it("a run Claude Code couldn't start for want of a login is silent, says so, and reports the login; one that worked reports it working", async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 1 } });
+    h.checks.push(check('act'));
+    h.agentEnds.push({ ...agentEnd('error', 'Not logged in · Please run /login'), environment: true, login: true });
+    await h.tickN(1);
+    expect(notifies()).toHaveLength(0);
+    expect(h.sched.get('t1')!).toMatchObject({ lastDetail: 'Not logged in · Please run /login', consecutiveErrors: 0, state: 'idle' });
+    expect(h.logins).toEqual([false]);
+
+    h.checks.push(check('act'));
+    h.agentEnds.push(agentEnd('exited', 'done'));
+    h.clock.now += 24 * 3_600_000;
+    await h.tickN(1);
+    expect(h.logins).toEqual([false, true]);
   });
 
   it('a step that could not be spawned for want of wsl.exe is an environment error', async () => {

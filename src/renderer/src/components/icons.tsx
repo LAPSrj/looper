@@ -118,9 +118,6 @@ const BUBBLE = 'M3 3h8a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 13.
 const bubbleClear = (bottomX: number, rightY: number) =>
   `M${bottomX} 11H6.5L3.5 13.8V11H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 3h8a1.5 1.5 0 0 1 1.5 1.5V${rightY}`;
 
-/** Clear of a square mark from 8,8 to the corner. */
-const BUBBLE_CLEAR_SQUARE = bubbleClear(7.3, 7.3);
-
 /** Clear of the corner plus: a gap of radius 4.3 around 12,12. */
 const BUBBLE_CLEAR_PLUS = bubbleClear(7.1, 7);
 
@@ -140,9 +137,8 @@ export const ICONS: Record<
   | 'bullhorn'
   | 'sendNow'
   | 'compact'
-  | 'stopChat'
   | 'restartAgent'
-  | 'closeChat'
+  | 'recycleBin'
   | 'activity'
   | 'attach'
   | 'skills'
@@ -227,42 +223,19 @@ export const ICONS: Record<
       <path d="m5.4 9.5 1 3.8h1.8l-.8-3.1M13.5 6v3.5" />
     </>
   ),
-  // A speech bubble with fast-forward at its corner: the queued messages skip ahead of the agent's turn.
-  sendNow: (
-    <>
-      <path d={bubbleClear(6.5, 7.3)} />
-      <path d="m9 9.4 2.6 2.6L9 14.6M12.3 9.4l2.6 2.6-2.6 2.6" />
-    </>
-  ),
-  // A speech bubble with lines of text, and a small empty one at its corner: the conversation goes on in a new, shorter one.
-  compact: (
-    <>
-      <path d={BUBBLE_CLEAR_SQUARE} />
-      <path d="M4.5 5.6h5M4.5 8.2h3" />
-      <path d="M10 9.6h4a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-2.2l-1.6 1.4V14H10a1 1 0 0 1-1-1v-2.4a1 1 0 0 1 1-1Z" />
-    </>
-  ),
-  // A speech bubble with a stop square at its corner: the agent's turn stops.
-  stopChat: (
-    <>
-      <path d={BUBBLE_CLEAR_SQUARE} />
-      <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="0.8" />
-    </>
-  ),
-  // A speech bubble with a circular arrow at its corner: the agent starts again on the same conversation.
+  // Fast-forward: the queued messages skip ahead of the agent's turn.
+  sendNow: <path d="M2 3.5v9L7.5 8ZM8.5 3.5v9L14 8Z" />,
+  // Arrows from above and below meeting at a line: the conversation goes on in a new, shorter one.
+  compact: <path d="M8 1.5v4.3M5.8 3.6 8 5.8l2.2-2.2M8 14.5v-4.3M5.8 12.4 8 10.2l2.2 2.2M2.5 8h11" />,
+  // A circular arrow around Run's triangle: the agent starts again on the same conversation, unlike Refresh.
   restartAgent: (
     <>
-      <path d={BUBBLE_CLEAR_SQUARE} />
-      <path d="M14.4 12a2.4 2.4 0 1 1-.7-1.7M14 8.9v1.6h-1.6" />
+      <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.5h-2.5" />
+      <path d="M7 6.2v3.6L10 8Z" />
     </>
   ),
-  // The speech bubble lower down with an X at the top-right corner, as on a window's close button.
-  closeChat: (
-    <>
-      <path d="M12.5 8.1V11a1.5 1.5 0 0 1-1.5 1.5H6.5L3.5 15v-2.5H3a1.5 1.5 0 0 1-1.5-1.5V6.5A1.5 1.5 0 0 1 3 5h5.2" />
-      <path d="m10.6 1.6 3.8 3.8M14.4 1.6l-3.8 3.8" />
-    </>
-  ),
+  // Delete's can with slats down its side: where deleted tasks wait.
+  recycleBin: <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9M6.7 7v4M9.3 7v4" />,
   // A window with a column on its right: the activity pane, so it doesn't read as another chat button.
   activity: (
     <>

@@ -1057,6 +1057,35 @@
    "err": "Error invoking remote method 'prevent-sleep:state': Error: boom prevent-sleep:state"
   }
  },
+ "logins.list": {
+  "arity": 0,
+  "calls": [
+   [
+    "invoke",
+    "logins:list",
+    []
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'logins:list': Error: boom logins:list"
+  }
+ },
+ "logins.logIn": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "logins:logIn",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'logins:logIn': Error: boom logins:logIn"
+  }
+ },
  "openPath": {
   "arity": 1,
   "calls": [
@@ -3113,20 +3142,21 @@
    "err": "boom addons:setRun"
   }
  },
- "addons.pickFile": {
-  "arity": 2,
+ "addons.pickPath": {
+  "arity": 3,
   "calls": [
    [
     "invoke",
-    "addons:pickFile",
+    "addons:pickPath",
     [
      "a0",
-     "a1"
+     "a1",
+     "a2"
     ]
    ]
   ],
   "result": {
-   "err": "Error invoking remote method 'addons:pickFile': Error: boom addons:pickFile"
+   "err": "Error invoking remote method 'addons:pickPath': Error: boom addons:pickPath"
   }
  },
  "addons.setEnabled": {

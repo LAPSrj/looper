@@ -110,12 +110,26 @@ describe('a task on every surface', () => {
   it('builds the toolbar in that order, on the Tasks tab only', () => {
     const c = context({ task: task(), tab: 'tasks' });
     const groups = commandToolbar(['task'], c).map((g) => g.items.map((i) => i.label));
-    expect(groups).toEqual([
-      ['Run Now', 'Stop Task', 'Pause', 'Disable', 'Complete'],
-      ['Edit Task', 'Add Guidance for Next Run', 'Open Working Directory'],
-    ]);
+    // One group: the Task menu's separators aren't on the toolbar.
+    expect(groups).toEqual([['Run Now', 'Stop Task', 'Pause', 'Disable', 'Complete', 'Edit Task', 'Add Guidance for Next Run', 'Open Working Directory']]);
     expect(mainToolbarViews('dashboard')).not.toContain('task');
     expect(mainToolbarViews('tasks')).toContain('task');
+  });
+
+  it('puts Dashboard, pressed while no task is selected, and Recycle Bin after the Tasks tab’s New buttons', () => {
+    const select = vi.fn();
+    const bar = (taskSelected: boolean) => commandToolbar(mainToolbarViews('tasks'), context({ task: task(), tab: 'tasks', taskSelected, selectTask: select }));
+    const [first, second] = bar(false);
+    expect(first.id).toBe('new');
+    expect(second.items.map((i) => [i.label, i.pressed])).toEqual([['Dashboard', true], ['Recycle Bin', undefined]]);
+    expect(bar(true)[1].items[0].pressed).toBe(false);
+    bar(true)[1].items[0].run!();
+    expect(select).toHaveBeenCalledWith(null);
+    expect(labels(contextMenu('tasks', context({ tab: 'tasks' })))).not.toContain('Dashboard');
+    // A phone's Tasks screen has it in More, and its More view no longer does.
+    expect(phoneMore(['tasks'], context({ tab: 'tasks' }, 'mobile')).map((i) => i.id)).toContain('recycleBin');
+    expect(phoneMoreToolbar(['tasks'], context({ tab: 'tasks' }, 'mobile')).map((i) => i.id)).toContain('recycleBin');
+    expect(moreViewCommands(context({}, 'mobile')).map((c) => c.id)).not.toContain('recycleBin');
   });
 
   it('builds the right-click menu with the project’s two and without Export', () => {
@@ -253,7 +267,7 @@ describe('the menu bar', () => {
   it('puts an addon’s New items beside Looper’s, and only its own in a view window of its tab', () => {
     const addon = (id: string) => addonWith(id, [{ id: 'new', label: `New ${id}…`, icon: 'add', in: { new: { toolbar: true } } }]);
     const c = context({ tab: 'tasks', addons: [addon('servers'), addon('keys')] });
-    const newGroup = commandToolbar(mainToolbarViews('tasks'), c)[0].items.map((i) => i.label);
+    const newGroup = commandToolbar(mainToolbarViews('tasks'), c).find((g) => g.id === 'new')!.items.map((i) => i.label);
     expect(newGroup).toEqual(['New Project', 'New Task', 'New Chat', 'New servers', 'New keys']);
     expect(labels(menu(mainWindowViews('tasks'), 'file', c))).toEqual(expect.arrayContaining(['New servers…', 'New keys…']));
     const own = context({ tab: 'addon/servers/overview', fixed: true, addons: [addon('servers'), addon('keys')] });
@@ -276,10 +290,47 @@ describe('the menu bar', () => {
       ['sendNow', false],
       ['restartAgent', false],
       ['compact', false],
-      ['conversationWorkFolder', false],
       ['closeConversation', false],
+      ['conversationWorkFolder', false],
     ]);
     expect(labels(menu(CHATS_WINDOW_VIEWS, 'file', c))).toContain('New Project…');
+  });
+
+  describe('New Chat’s list of projects', () => {
+    const projects = [
+      { id: 'a', name: 'Alpha', cwd: '/w/a', folderId: 'f' },
+      { id: 'b', name: 'Beta', cwd: '/w/b' },
+      { id: 'c', name: 'Gamma', cwd: '/x/c' },
+    ] as never;
+    const at = (groupBy: string, here: CommandContext['here'] = 'desktop') =>
+      context({ tab: 'tasks', projects, projectFolders: [{ id: 'f', name: 'Clients' }] as never, settings: SettingsSchema.parse({ view: { projectsPane: { groupBy } } }) }, here);
+    const entries = (c: CommandContext) => COMMANDS.find((x) => x.id === 'newChat')!.entries!(c);
+    const shape = (list: ReturnType<typeof entries>): unknown[] =>
+      list.map((e) => ('separator' in e ? '-' : e.entries ? { [noMnemonic(e.label)]: shape(e.entries) } : noMnemonic(e.label)));
+
+    it('groups them as the Projects tab does, the ungrouped ones first, and has no New Project', () => {
+      expect(shape(entries(at('none')))).toEqual(['Beta', 'Gamma', { Clients: ['Alpha'] }, '-', 'Other Folder…']);
+      expect(shape(entries(at('folder')))).toEqual([{ '/w': ['Alpha', 'Beta'] }, { '/x': ['Gamma'] }, '-', 'Other Folder…']);
+    });
+
+    it('starts a chat in a project picked inside a group, on the desktop and on a phone', () => {
+      const c = at('none');
+      runCommand('newChat/a', c);
+      expect(c.calls).toEqual(['looper.projects.newChat']);
+      const chats = { single: false, tab: true, selected: null, summary: undefined, chat: null, sessions: [], shown: {} } as never;
+      const phone = context({ ...at('none', 'mobile'), chats });
+      const group = phoneActions(['chats'], phone).find((a) => a.id === 'newChat')!.menu!.find((e) => e.label === 'Clients')!;
+      expect(group.submenu!.map((e) => e.label)).toEqual(['Alpha']);
+    });
+
+    it('keeps File → New Chat’s chat and terminal picks apart inside the groups', () => {
+      const c = at('folder');
+      const file = menu(mainWindowViews('tasks'), 'file', c).find((i) => i.id === 'newChatMenu')!;
+      const ids = (i: MenuItemSpec): string[] => (i.submenu ? i.submenu.flatMap(ids) : [i.id]);
+      expect(ids(file).filter((id) => id.endsWith('-a'))).toEqual(['newChatMenu/chat-a', 'newChatMenu/terminal-a']);
+      runCommand('newChatMenu/terminal-a', c);
+      expect(c.calls).toEqual(['looper.projects.newTerminal']);
+    });
   });
 });
 
@@ -668,7 +719,7 @@ describe('an addon’s commands', () => {
 describe('the More view', () => {
   it('lists every menu item no phone screen has, Tools, Advanced and Help', () => {
     const list = moreViewCommands(context({}, 'mobile')).map((c) => c.id);
-    for (const id of ['settings', 'agentSettings', 'recycleBin', 'remoteAccess', 'remoteControl', 'addons', 'preventSleep', 'updateModels', 'engineLog', 'openDataDirectory', 'instructions', 'about']) {
+    for (const id of ['settings', 'agentSettings', 'remoteAccess', 'remoteControl', 'addons', 'preventSleep', 'updateModels', 'engineLog', 'openDataDirectory', 'instructions', 'about']) {
       expect(list, id).toContain(id);
     }
     for (const id of ['exit', 'tabs', 'toolbar', 'statusBar', 'reloadUi', 'viewWindows', 'runNow', 'templates']) expect(list, id).not.toContain(id);

@@ -31,8 +31,8 @@ acts on it use that shape:
 |---|---|---|---|
 | Project | `folder` | `projectsTab`: two folders | `newProject` |
 | Task | `TASK_CHECKS` | `tasksTab`: the checklist, smaller | `newTask` |
-| Chat | `BUBBLE` | `chatsTab`: two bubbles | `newChat`, `stopChat`, `sendNow`, `restartAgent`, `compact`, `closeChat` |
-| Dashboard | `dashboard` | `dashboardTab`: the grid, smaller | the Chats toolbar's Dashboard (Overview) |
+| Chat | `BUBBLE` | `chatsTab`: two bubbles | `newChat` |
+| Dashboard | `dashboard` | `dashboardTab`: the grid, smaller | the Chats and Tasks toolbars' Dashboard (Overview) |
 
 - Tab labels are plural, so a tab whose shape is one thing shows two of it,
   one in front of the other. A tab whose shape is already many (the
@@ -46,6 +46,11 @@ acts on it use that shape:
   has a New button, draw that button from the tab's shape.
 - The New buttons are one toolbar group, in the order of the tabs: New
   Project, New Task, New Chat, then New Terminal on the Chats tab.
+- A button that shows only beside the object it acts on doesn't repeat the
+  object's shape. A conversation's toolbar shows only in a conversation, so its
+  buttons are the action alone: Stop is the task's `stop` square, Close
+  Conversation the `close` X, Send Now fast-forward, Restart Agent a circular
+  arrow around Run's triangle, and Compact arrows meeting at a line.
 
 ## Compound icons
 
@@ -54,9 +59,6 @@ action mark in a corner.
 
 - New is the object's shape with a plus at the bottom-right (`M12 9.2v5.6M9.2
   12h5.6`). Don't use that corner plus for anything else.
-- The other marks are the stop square, fast-forward, the circular arrow
-  (Restart Agent) and the small bubble at the bottom-right, and the X at the
-  top-right for Close.
 - Leave a gap of about 1.5 between the mark and the base by drawing the base's
   parts clear of the mark. For the plus, the gap is a circle of radius 4.3 at
   12,12, and each line of the base ends 0.7 (half the stroke) before it, so
@@ -77,6 +79,11 @@ or button shown at the same time looks like it.
   forward) opens a folder in Explorer: Open Folder and Open Working Directory.
 - The speech bubble is chats only. Guidance for the next run is a note with a
   folded corner (`guidance`).
+- `delete`, the can with a lid, is Delete. The Recycle Bin (`recycleBin`) is
+  the same can with slats, so its button on the Tasks toolbar isn't read as
+  deleting the selected task.
+- Restart Agent's circular arrow holds Run's triangle, so it isn't read as
+  `refresh`, which an addon can put on the same toolbar.
 - The pencil is Edit. Don't put a pencil on another icon, because Edit Task is
   next to Guidance on the Tasks tab.
 - Activity Pane is a window with a right column, so it isn't read as another

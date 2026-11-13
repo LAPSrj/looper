@@ -27,6 +27,7 @@ export const READ_CHANNELS: ReadonlySet<string> = new Set([
   'runs:messageImage',
   'rest:state',
   'prevent-sleep:state',
+  'logins:list',
   'chat:get',
   'sessions:state',
   'sessions:activity',
@@ -296,6 +297,8 @@ export class OfflineStore {
         return this.update('rest:state', [], () => ev.rest);
       case 'prevent-sleep':
         return this.update('prevent-sleep:state', [], () => ev.state);
+      case 'logins':
+        return this.update('logins:list', [], () => ev.logins);
       case 'remote':
         return this.update('remote:state', [], () => ev.state);
       case 'remote-access':

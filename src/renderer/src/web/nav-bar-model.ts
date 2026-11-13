@@ -14,7 +14,21 @@ export interface PageNavAction {
   /** What it controls isn't at its default (a filter that's on): tinted. */
   on?: boolean;
   /** The button opens this menu of choices (a filter); `run` isn't called. */
-  menu?: { id: string; label: string; icon?: string; enabled?: boolean; destructive?: true; checked?: boolean; type?: 'radio' | 'checkbox'; separator?: true; run: () => void }[];
+  menu?: PageNavMenuEntry[];
+  run: () => void;
+}
+
+export interface PageNavMenuEntry {
+  id: string;
+  label: string;
+  icon?: string;
+  enabled?: boolean;
+  destructive?: true;
+  checked?: boolean;
+  type?: 'radio' | 'checkbox';
+  separator?: true;
+  /** A submenu; `run` isn't called. */
+  submenu?: PageNavMenuEntry[];
   run: () => void;
 }
 

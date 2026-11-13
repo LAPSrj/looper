@@ -66,6 +66,18 @@ async function tab(page, label, timeout = 5000) {
 /** Elements in the page and in its windows' frames. */
 const nodeCount = (page) => Promise.all(page.frames().map((f) => f.evaluate(() => document.getElementsByTagName('*').length).catch(() => 0))).then((n) => n.reduce((s, x) => s + x, 0));
 
+/** Elements once the screen stops adding them: a conversation draws its older messages while the page is idle, so an early count swings by 300. */
+async function settledCount(page) {
+  let last = await nodeCount(page);
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    const n = await nodeCount(page);
+    if (n === last) return n;
+    last = n;
+  }
+  return last;
+}
+
 export async function phoneScreens(app, page, chats, screens, phones, wanted) {
   const measured = {};
   const broken = [];
@@ -133,7 +145,7 @@ export async function phoneScreens(app, page, chats, screens, phones, wanted) {
         });
         if (!step) continue;
         if (errors.length) broken.push(`${name}: ${errors[0].slice(0, 200)}`);
-        measured[name] = { ...step, nodes: await nodeCount(phone) };
+        measured[name] = { ...step, nodes: await settledCount(phone) };
         await shoot(phone, name);
       }
     } catch (e) {

@@ -7,6 +7,7 @@ import { isStandInTaskId } from '@shared/projects';
 import type { PreventSleepState, Project, ProjectFolder, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
 import { attentionKey, attentionRows, runningRows, type AttentionRow, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
+import { loginRowKey, loginRows, type ClaudeLogin, type LoginRow } from '@shared/logins';
 import { subscribe } from './events';
 import { useAddons, type AddonSelection } from './components/AddonPane';
 import type { DashboardPick } from './components/Dashboard';
@@ -67,6 +68,10 @@ export function useMainWindow(menuTab?: string) {
   const allAttention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const attentionCleared = info?.settings.view.attentionCleared;
   const attention = useMemo(() => allAttention.filter((r) => !attentionCleared?.includes(attentionKey(r))), [allAttention, attentionCleared]);
+  // The Claude Code logins; null until they load.
+  const [logins, setLogins] = useState<ClaudeLogin[] | null>(null);
+  const allLoginRows = useMemo(() => loginRows(logins ?? []), [logins]);
+  const loginAttention = useMemo(() => allLoginRows.filter((r) => !attentionCleared?.includes(loginRowKey(r))), [allLoginRows, attentionCleared]);
   const running =useMemo(() => runningRows(tasks, runtimes), [tasks, runtimes]);
   // Remote Control's open conversations while it runs; null while it's stopped.
   const remoteOpen = useMemo(
@@ -91,15 +96,17 @@ export function useMainWindow(menuTab?: string) {
   const pickedRows = (list: DashboardPick['list']) =>
     list === 'remote'
       ? (remoteOpen ?? []).map((c) => ({ taskId: c.taskId, runId: c.id }))
-      : list === 'recent'
-        ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
-        : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
+      : list === 'login'
+        ? loginAttention.map((r) => ({ taskId: r.login.key, runId: null }))
+        : list === 'recent'
+          ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
+          : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
   // A row picked on a dashboard (the Dashboard tab's, or the Tasks tab's with no task selected) counts only while it shows.
   const onDashboard = menuTab === undefined || menuTab === 'dashboard' || (menuTab === 'tasks' && !addonSel);
   const livePick =
     !selected && onDashboard && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
   // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
-  const taskPick = livePick?.list === 'remote' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
+  const taskPick = livePick?.list === 'remote' || livePick?.list === 'login' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
 
   // On the dashboard, Stop Task stops the picked row's run.
@@ -132,8 +139,12 @@ export function useMainWindow(menuTab?: string) {
     void window.looper.restState().then(setRest);
     void window.looper.preventSleepState().then(setPreventSleep);
     void window.looper.remote.state().then(setRemote);
+    void window.looper.logins.list().then(setLogins);
     const unsub = subscribe((e) => {
       switch (e.type) {
+        case 'logins':
+          setLogins(e.logins);
+          break;
         case 'remote':
           setRemote(e.state);
           break;
@@ -275,15 +286,17 @@ export function useMainWindow(menuTab?: string) {
   };
 
   /** Clear: these Needs attention rows leave the dashboards, and their runs show in Recent runs. */
-  const clearAttention = (rows: AttentionRow[]) => changeView({ attentionCleared: [...(attentionCleared ?? []), ...rows.map(attentionKey)] });
+  const clearAttention = (rows: AttentionRow[], logins: LoginRow[] = []) =>
+    changeView({ attentionCleared: [...(attentionCleared ?? []), ...rows.map(attentionKey), ...logins.map(loginRowKey)] });
   // A row that's gone is forgotten, so the same problem coming back (a run that holds again) shows.
+  const loginsLoaded = logins !== null;
   useEffect(() => {
-    if (!loaded || !attentionCleared?.length) return;
-    const live = new Set(allAttention.map(attentionKey));
+    if (!loaded || !loginsLoaded || !attentionCleared?.length) return;
+    const live = new Set([...allAttention.map(attentionKey), ...allLoginRows.map(loginRowKey)]);
     const kept = attentionCleared.filter((k) => live.has(k));
     if (kept.length !== attentionCleared.length) changeView({ attentionCleared: kept });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, allAttention, attentionCleared]);
+  }, [loaded, loginsLoaded, allAttention, allLoginRows, attentionCleared]);
 
   /** Show the dashboard, its tab on a phone (Window → Dashboard). */
   const showDashboard = useCallback(() => {
@@ -324,6 +337,8 @@ export function useMainWindow(menuTab?: string) {
     pickedRun,
     project: projects.find((p) => p.id === menuProject) ?? null,
     projectSelected: !!projectSel && !selected,
+    taskSelected: !!selected,
+    selectTask: select,
     projects,
     taskFolders: folders,
     projectFolders,
@@ -385,6 +400,7 @@ export function useMainWindow(menuTab?: string) {
     dashboardShown,
     // The dashboard.
     attention,
+    loginAttention,
     running,
     recentShown,
     livePick,

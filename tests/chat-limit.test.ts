@@ -19,7 +19,7 @@ const until = async (cond: () => boolean, what: string) => {
  * an error result, as Claude Code reports it), the next ones answer. It
  * records each message and each control request it gets.
  */
-function fakeClaude(dir: string, resetsAt: number): string {
+function fakeClaude(dir: string, resetsAt: number, firstError?: string): string {
   const js = join(dir, 'fake-claude.mjs');
   writeFileSync(
     js,
@@ -47,7 +47,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.type !== 'user') return;
   fs.appendFileSync(path.join(dir, 'received'), m.message.content.filter((c) => c.type === 'text').map((c) => c.text).join('') + '\\n');
   out({ type: 'system', subtype: 'init', session_id: 's1', model: 'fake' });
-  if (++turns === 1 && ${resetsAt} > 0) {
+  if (++turns === 1 && ${JSON.stringify(firstError ?? null)}) {
+    out({ type: 'assistant', parent_tool_use_id: null, is_api_error_message: true, message: { content: [{ type: 'text', text: ${JSON.stringify(firstError ?? '')} }] } });
+    out({ type: 'result', subtype: 'success', is_error: true, result: ${JSON.stringify(firstError ?? '')} });
+  } else if (turns === 1 && ${resetsAt} > 0) {
     out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: ${resetsAt} } });
     out({ type: 'assistant', parent_tool_use_id: null, is_api_error_message: true, message: { content: [{ type: 'text', text: "You've hit your session limit · resets 5:50am" }] } });
     out({ type: 'result', subtype: 'success', is_error: true });
@@ -66,14 +69,14 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 
 const lines = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : []);
 
-async function setUp(resetsAt: number): Promise<{ engine: Engine; dir: string; dataDir: string; chatId: string }> {
+async function setUp(resetsAt: number, firstError?: string): Promise<{ engine: Engine; dir: string; dataDir: string; chatId: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
   const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
-  const engine = createEngine({ dataDir });
+  const engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) });
   engine.start();
   engine.updateSettings({
     environments: engine.settings.environments.map((e) =>
-      e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, resetsAt) }] } : e,
+      e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, resetsAt, firstError) }] } : e,
     ),
   });
   engine.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } }));
@@ -113,6 +116,26 @@ describe("a chat's name from Claude Code", { timeout: 30_000 }, () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(s.engine.getChat(s.chatId)?.title).toBeUndefined();
     await until(() => s.engine.sessionsState().sessions[0]?.title === 'fail', 'the first message’s title');
+  });
+});
+
+describe('a chat Claude Code has no login for', { timeout: 30_000 }, () => {
+  let engine: Engine | null = null;
+  afterEach(async () => {
+    await engine?.stop();
+    engine = null;
+  });
+
+  it("marks the harness's login as needed, until a turn on it works", async () => {
+    const s = await setUp(0, 'Please run /login · API Error: 401 Invalid authentication credentials');
+    engine = s.engine;
+    s.engine.sendChat(s.chatId, 'go', []);
+    await until(() => s.engine.logins().length > 0, 'the login');
+    expect(s.engine.logins()).toMatchObject([{ environmentId: 'local', harnessIds: ['fake'], name: 'Fake in Local Shell', stage: 'needed' }]);
+    await until(() => s.engine.getChat(s.chatId)?.status === 'ready', 'the turn to end');
+    s.engine.sendChat(s.chatId, 'again', []);
+    // Known only by its failure (the tests answer no `auth status`), it leaves the list.
+    await until(() => s.engine.logins().length === 0, 'the login to work');
   });
 });
 

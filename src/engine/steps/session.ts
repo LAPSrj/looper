@@ -4,6 +4,7 @@ import type { Harness } from '../../shared/types';
 import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { delegateMessage, eventsMessage, guidanceMessage } from '../../shared/messages';
+import { LOGIN_FAILED_RE } from '../../shared/logins';
 import { resolveEnvironment } from '../../shared/environments';
 import { readContextTokens } from '../context';
 import { spawnOffThread, spawnPtyOffThread } from '../exec-worker';
@@ -72,6 +73,8 @@ export interface SessionEnd {
   network?: boolean;
   /** The machine's environment never started the harness (WSL unreachable, wsl.exe missing). */
   environment?: boolean;
+  /** With environment: Claude Code had no usable login. */
+  login?: boolean;
   durationMs: number;
   wasHeld: boolean;
 }
@@ -352,6 +355,8 @@ export class HeadlessStream {
   /** The result event's terminal_reason and api_error_status. */
   terminalReason?: string;
   apiErrorStatus?: number | null;
+  /** Claude Code had no usable login: an API error that says to run /login. */
+  loginFailed = false;
 
   feed(line: string): void {
     let obj: Record<string, unknown>;
@@ -370,9 +375,12 @@ export class HeadlessStream {
       // A retry with a status is the API answering (429, 500…); without one the
       // request never got out of the machine.
       if (obj.error_status === null) this.networkRetries += 1;
+    } else if (obj.type === 'assistant' && obj.is_api_error_message === true) {
+      if (LOGIN_FAILED_RE.test(line)) this.loginFailed = true;
     } else if (obj.type === 'result') {
       if (typeof obj.result === 'string') this.result = obj.result;
       this.isError = obj.is_error === true;
+      if (this.isError && typeof obj.result === 'string' && LOGIN_FAILED_RE.test(obj.result)) this.loginFailed = true;
       if (obj.structured_output !== undefined) this.structured = obj.structured_output;
       if (typeof obj.total_cost_usd === 'number') this.costUsd = obj.total_cost_usd;
       if (typeof obj.terminal_reason === 'string') this.terminalReason = obj.terminal_reason;
@@ -801,6 +809,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   const started = Date.now();
   let ended = false;
+  /** Claude Code had no usable login (SessionEnd.login). */
+  let noLogin = false;
   let held = false;
   let exitCode: number | null = null;
   let exited = false;
@@ -947,6 +957,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       retryAtMs,
       network: network || undefined,
       environment: environment || undefined,
+      login: noLogin || undefined,
       durationMs: Date.now() - started,
       wasHeld: held,
     });
@@ -987,6 +998,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       const headline = headlineOf(body) ?? 'usage limit reached';
       ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(resetMs).toISOString()}`);
       await finish('error', headline, body, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+      return;
+    }
+    // Claude Code has no login: an environment error, which doesn't count toward auto-pause and is retried.
+    if (stream.isError && stream.loginFailed) {
+      const headline = headlineOf(body) ?? 'Claude Code needs you to log in again';
+      ctx.log.error(`[${task.id}] ${headline}`);
+      noLogin = true;
+      await finish('error', headline, body, undefined, undefined, true);
       return;
     }
     // The API was never reached: an engine error, not a run the agent failed.
@@ -1175,6 +1194,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             const resetMs = parseUsageLimitReset(headline, now) ?? now + USAGE_LIMIT_FALLBACK_MS;
             ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(resetMs).toISOString()}`);
             void finish('error', headline, undefined, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+            return;
+          }
+          // Claude Code has no login: the prompt never got an answer, and the environment needs the user.
+          if (host.screenMatch(LOGIN_FAILED_RE)) {
+            const headline = 'Claude Code needs you to log in again';
+            ctx.log.error(`[${task.id}] ${headline}`);
+            noLogin = true;
+            void finish('error', headline, undefined, undefined, undefined, true);
             return;
           }
           // The API is out of reach (claude gives up after its retries): the

@@ -233,7 +233,9 @@ export function AddonScreenView({
           </Field>
         );
       case 'file':
-        // A path box with Browse…, as the Windows guidelines give every box that takes a file.
+      case 'folder': {
+        const input = f.input;
+        // A path box with Browse…, as the Windows guidelines give every box that takes a file or folder.
         return (
           <Field key={f.id} label={f.label}>
             <InputRow>
@@ -241,7 +243,7 @@ export function AddonScreenView({
               <button
                 className="btn"
                 onClick={() =>
-                  void window.looper.addons.pickFile(addonId, f.accept).then((p) => {
+                  void window.looper.addons.pickPath(addonId, input, f.accept).then((p) => {
                     if (p) setValue(f.id, p);
                   })
                 }
@@ -251,6 +253,7 @@ export function AddonScreenView({
             </InputRow>
           </Field>
         );
+      }
       case 'select':
         return (
           <Field key={f.id} label={f.label}>

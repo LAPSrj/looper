@@ -1,5 +1,5 @@
 import type { HostKind } from '../host';
-import type { Settings, Task } from '../../shared/types';
+import type { Environment, Settings, Task } from '../../shared/types';
 import type { GuideFiles, GuideHookFormat, StopHookSpec } from './stop-hook';
 import { resolveEnvironment } from '../../shared/environments';
 import { BashTarget } from './bash';
@@ -168,18 +168,21 @@ function mountPrefixFor(env: { distro?: string; mountPrefix?: string }, key?: st
 }
 
 export function createTarget(task: Task, opts: { host: HostKind; settings: Settings }): Target {
-  const env = resolveEnvironment(task, opts.settings);
-  const ctx: TargetContext = { host: opts.host };
+  return createEnvTarget(resolveEnvironment(task, opts.settings), opts.host);
+}
+
+export function createEnvTarget(env: Environment, host: HostKind): Target {
+  const ctx: TargetContext = { host };
   switch (env.kind) {
     case 'windows':
       return new WindowsTarget(ctx, mountPrefixFor(env));
     case 'wsl':
-      if (opts.host !== 'windows') {
+      if (host !== 'windows') {
         throw new Error(`environment "${env.name}" is a WSL bridge and only works from a Windows host`);
       }
       return new BashTarget(ctx, env.distro, env.shell, mountPrefixFor(env, env.distro));
     case 'local':
-      return opts.host === 'windows' ? new WindowsTarget(ctx) : new BashTarget(ctx, undefined, env.shell);
+      return host === 'windows' ? new WindowsTarget(ctx) : new BashTarget(ctx, undefined, env.shell);
   }
 }
 

@@ -4,7 +4,7 @@ import { iconOf, labelOf, noMnemonic, plainLabel, type Command, type CommandView
 import type { CommandContext } from '../../../shared/commands/context';
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import { hint } from '../../../shared/shortcuts';
-import type { PageNavAction } from '../web/nav-bar-model';
+import type { PageNavAction, PageNavMenuEntry } from '../web/nav-bar-model';
 import type { ToolbarGroup, ToolbarItem } from './toolbar-model';
 
 const textOf = (label: LabelOf | undefined, c: CommandContext): string | undefined => (typeof label === 'function' ? label(c) : label);
@@ -46,17 +46,20 @@ const hasPrimary = (cmd: Command, c: CommandContext): boolean => !!cmd.run && (c
 /** The toolbar of a window showing these views, a separator between groups. */
 export function commandToolbar(views: readonly CommandView[], c: CommandContext): ToolbarGroup[] {
   const groups: ToolbarGroup[] = [];
+  const atEnd = new Set<string>();
   for (const cmd of commandsOf(c)) {
     if (!placed(cmd, views, c, (w) => !!w.toolbar, 'toolbar')) continue;
+    if (cmd.toolbarLast) atEnd.add(cmd.id);
     const id = cmd.toolbarGroup ?? cmd.group;
     const last = groups.find((g) => g.id === id);
     if (last) last.items.push(toolbarItem(cmd, c));
     else groups.push({ id, items: [toolbarItem(cmd, c)] });
   }
+  if (atEnd.size) for (const g of groups) g.items.sort((a, b) => Number(atEnd.has(a.id)) - Number(atEnd.has(b.id)));
   return groups;
 }
 
-const actionEntry = (e: Entry, at: number): NonNullable<PageNavAction['menu']>[number] => {
+const actionEntry = (e: Entry, at: number): PageNavMenuEntry => {
   if ('separator' in e) return { id: `-${at}`, label: '', separator: true, run: () => undefined };
   return {
     id: e.id,
@@ -65,6 +68,7 @@ const actionEntry = (e: Entry, at: number): NonNullable<PageNavAction['menu']>[n
     ...(e.enabled === false ? { enabled: false } : {}),
     ...(e.destructive ? { destructive: true as const } : {}),
     ...(e.checked !== undefined ? { checked: e.checked, type: e.radio ? ('radio' as const) : ('checkbox' as const) } : {}),
+    ...(e.entries ? { submenu: e.entries.map(actionEntry) } : {}),
     run: () => e.run?.(),
   };
 };

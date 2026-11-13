@@ -167,6 +167,9 @@ export interface CommandContext {
   project: Project | null;
   /** The shown project itself, not the task's. */
   projectSelected?: boolean;
+  /** A task is selected, so the Tasks tab shows it instead of its dashboard. */
+  taskSelected?: boolean;
+  selectTask?(id: string | null): void;
   /** A project row's own folder when moved through its menu. */
   projects: Project[];
   taskFolders: TaskFolder[];

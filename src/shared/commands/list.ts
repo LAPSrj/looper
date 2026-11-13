@@ -5,9 +5,9 @@ import { folderTree } from '../folders';
 import { mainTabs } from '../main-tabs';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../panes';
 import type { ProjectGroupBy } from '../projects';
-import { projectTaskId } from '../projects';
+import { groupProjects, projectTaskId } from '../projects';
 import { SHORTCUTS } from '../shortcuts';
-import type { TaskFilter, TaskListOptions } from '../types';
+import type { Project, TaskFilter, TaskListOptions } from '../types';
 import { NOT_MOBILE } from '../ui-platform';
 import { hasToolbarIn } from './addon-commands';
 import { menuText, type Command, type Entry, type Hide } from './command';
@@ -53,15 +53,20 @@ const IN_RUN_FOLDERS: Hide = { on: ON_PHONE, why: 'The Folders submenu has it.' 
 
 // ---------- submenus built from state ----------
 
-const projectChoices = (c: CommandContext, kind: 'chat' | 'terminal'): Entry[] => [
-  ...c.projects.map((p): Entry => ({
+/** The projects grouped as the Projects tab groups them: the ungrouped ones in the list, each group a submenu. */
+const projectChoices = (c: CommandContext, kind: 'chat' | 'terminal'): Entry[] => {
+  const choice = (p: Project): Entry => ({
     id: p.id,
     label: menuText(p.name),
     run: () => void (kind === 'chat' ? c.looper.projects.newChat(p.id) : c.looper.projects.newTerminal(p.id)),
-  })),
-  ...(c.projects.length ? [{ separator: true } as const] : []),
-  { id: 'other', label: 'Other &Folder…', run: () => c.host('other-folder', kind) },
-];
+  });
+  const groups = groupProjects(c.projects, viewOf(c)?.projectsPane.groupBy ?? 'none', c.settings?.environments ?? [], c.projectFolders).filter((g) => g.projects.length);
+  return [
+    ...groups.flatMap((g): Entry[] => (g.title ? [{ id: `group-${g.key}`, label: menuText(g.title), entries: g.projects.map(choice) }] : g.projects.map(choice))),
+    ...(c.projects.length ? [{ separator: true } as const] : []),
+    { id: 'other', label: 'Other &Folder…', run: () => c.host('other-folder', kind) },
+  ];
+};
 
 /** File → New Chat: on the Chats tab or window a chat and a terminal in the shown conversation's project first, then a list of projects for each. */
 function newChatEntries(c: CommandContext): Entry[] {
@@ -96,7 +101,8 @@ function newChatEntries(c: CommandContext): Entry[] {
   ];
 }
 
-const prefixed = (prefix: string) => (e: Entry): Entry => ('separator' in e ? e : { ...e, id: `${prefix}-${e.id}` });
+const prefixed = (prefix: string) => (e: Entry): Entry =>
+  'separator' in e ? e : { ...e, id: `${prefix}-${e.id}`, ...(e.entries ? { entries: e.entries.map(prefixed(prefix)) } : {}) };
 
 const SHOW_LABELS: Record<PaneId, string> = { tasks: 'Ta&sks Pane', goals: 'Go&als Pane', watchers: '&Watchers Pane' };
 
@@ -384,7 +390,7 @@ export const COMMANDS: readonly Command[] = [
     accelerator: (c) => ((onChatsTab(c) ? summaryOf(c)?.projectId : c.project?.id) ? SHORTCUTS.newChat : undefined),
     pageKey: true,
     hide: [onlyInViews('projects')],
-    entries: (c) => [...projectChoices(c, 'chat'), { id: 'new-project', label: 'New P&roject…', run: () => void c.looper.projects.openEditor() }],
+    entries: (c) => projectChoices(c, 'chat'),
     dropdown: 'New Chat in Project',
     runnable: (c) => !!(onChatsTab(c) ? summaryOf(c)?.projectId : c.project?.id),
     run: (c) => {
@@ -421,6 +427,18 @@ export const COMMANDS: readonly Command[] = [
     hide: [{ if: (c) => !!c.fixed && c.tab !== 'tasks', view: 'new', why: 'Only the Tasks view adds tasks.' }, { if: (c) => !!c.chats && !c.chats.tab, view: 'new', why: 'The Chats window doesn’t list tasks.' }],
     run: (c) => c.host('import-task'),
     in: { new: { menu: 'file' }, tasks: { menu: 'file' } },
+  },
+
+  // ---------- the Tasks list: on its toolbar after the New buttons, Recycle Bin joining it ----------
+  {
+    id: 'tasksDashboard',
+    label: '&Dashboard',
+    group: 'views',
+    icon: 'dashboard',
+    checked: (c) => !c.taskSelected,
+    hide: [{ on: ON_PHONE, why: 'A phone’s Dashboard tab shows the dashboard.' }],
+    run: (c) => c.selectTask?.(null),
+    in: { tasks: { menu: 'view', toolbar: true, context: false } },
   },
 
   // ---------- a task ----------
@@ -502,6 +520,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'editTask',
     label: '&Edit Task…',
     group: 'edit',
+    toolbarGroup: 'state',
     icon: 'edit',
     accelerator: 'CmdOrCtrl+E',
     enabled: hasTask,
@@ -520,6 +539,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'note',
     label: 'Add &Guidance for Next Run…',
     group: 'edit',
+    toolbarGroup: 'state',
     icon: 'guidance',
     alt: { label: 'Edit &Guidance for Next Run…', when: (c) => !!c.task?.note },
     enabled: hasTask,
@@ -573,7 +593,7 @@ export const COMMANDS: readonly Command[] = [
     label: 'Open &Working Directory',
     toolbarLabel: workFolderToolbarLabel,
     group: 'organize',
-    toolbarGroup: 'edit',
+    toolbarGroup: 'state',
     icon: 'openFolder',
     menuGlyph: false,
     enabled: hasTask,
@@ -726,7 +746,8 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'tabs',
-    label: 'Ta&bs',
+    // Not Ta&bs: Status &Bar has that letter.
+    label: 'T&abs',
     group: 'tabs',
     hide: [{ on: ON_PHONE, why: 'Each OS decides where its tabs go.' }],
     entries: tabEntries,
@@ -760,7 +781,7 @@ export const COMMANDS: readonly Command[] = [
     id: 'stop',
     label: '&Stop',
     group: 'turn',
-    icon: 'stopChat',
+    icon: 'stop',
     // Esc is a chat's: a terminal's goes to its agent, so its tooltip names none.
     accelerator: (c) => (isChat(c) ? 'Esc' : undefined),
     pageKey: true,
@@ -892,6 +913,7 @@ export const COMMANDS: readonly Command[] = [
     toolbarLabel: workFolderToolbarLabel,
     group: 'open',
     toolbarGroup: 'turn',
+    toolbarLast: true,
     icon: 'openFolder',
     menuGlyph: false,
     enabled: (c) => !!summaryOf(c),
@@ -934,7 +956,7 @@ export const COMMANDS: readonly Command[] = [
     label: 'Close C&onversation',
     group: 'close',
     toolbarGroup: 'turn',
-    icon: 'closeChat',
+    icon: 'close',
     accelerator: 'CmdOrCtrl+W',
     pageKey: true,
     destructive: true,
@@ -1148,9 +1170,10 @@ export const COMMANDS: readonly Command[] = [
     id: 'recycleBin',
     label: 'Recycle &Bin',
     group: 'tools',
-    icon: 'delete',
+    toolbarGroup: 'views',
+    icon: 'recycleBin',
     run: (c) => c.host('recycle-bin'),
-    in: { app: { menu: 'tools' } },
+    in: { app: { menu: 'tools' }, tasks: { toolbar: true } },
   },
   {
     id: 'templates',

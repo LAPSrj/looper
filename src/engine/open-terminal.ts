@@ -1,13 +1,14 @@
 import { spawnOffThread } from './exec-worker';
 import path from 'node:path';
-import type { Harness, Settings, Task } from '../shared/types';
+import type { Environment, Harness, Settings, Task } from '../shared/types';
 import { agentArgs, taskEnv } from '../shared/projects';
 import { DEFAULT_SHELL, codexPermissionArgs, projectMcpApproval, resolveEffort, resolveEnvironment, resolveHarness } from '../shared/environments';
 import type { HostKind } from './host';
 import { wslDistroName } from './host';
 import type { Logger } from './log';
 import { recordCodexHome } from './steps/session';
-import { createTarget, type Target } from './target';
+import { harnessCommand } from './logins';
+import { createEnvTarget, createTarget, type Target } from './target';
 import { writeJsonAtomic, writeText } from './store/fsutil';
 
 /** The hooks that record a terminal session's conversation, as target paths. */
@@ -193,6 +194,25 @@ export interface OpenTerminalDeps {
   host: HostKind;
   settings: Settings;
   log: Logger;
+}
+
+/**
+ * Log In's launcher: Claude Code's `auth login` with the harness's arguments
+ * (an account profile among them) and variables, in the home folder. The
+ * session ends when the login does.
+ */
+export function writeLoginLauncher(env: Environment, harness: Harness, host: HostKind, file: string): { target: Target; launcherHost: string } {
+  const target = createEnvTarget(env, host);
+  const side = target.kind === 'windows' ? 'windows' : 'posix';
+  const command = harnessCommand(side, harness, 'auth login');
+  const vars = Object.entries(harness.env);
+  const launcherHost = file + target.launcherExt;
+  const script =
+    side === 'windows'
+      ? [...vars.map(([k, v]) => `$env:${k} = ${target.quote(v)}`), 'Set-Location -LiteralPath $HOME', command, ''].join('\r\n')
+      : ['#!/usr/bin/env bash', ...vars.map(([k, v]) => `export ${k}=${target.quote(v)}`), 'cd "$HOME" || true', `exec ${command}`, ''].join('\n');
+  writeText(launcherHost, script, 0o755);
+  return { target, launcherHost };
 }
 
 /**

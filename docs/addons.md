@@ -261,7 +261,7 @@ button instead: the icon does the command itself, and the arrow opens the list.
 
 | Method | Params | Result |
 |---|---|---|
-| `initialize` | `{ protocol: 1, looper, host }` | `{}`. Looper marks the addon as running once it answers. |
+| `initialize` | `{ protocol: 1, looper, host, dataDir }` | `{}`. Looper marks the addon as running once it answers. `dataDir` is Looper's data folder (where `projects.json` and `settings.json` are) as a path on the addon's side, such as `/mnt/c/Users/me/looper` for an addon in WSL. |
 | `pane` | `{ pane }` | A pane's content (below). |
 | `render` | `{ view, params }` | A screen (below). |
 | `event` | an event (below) | `{ actions?, value?, values? }` |
@@ -346,7 +346,7 @@ placed in `screen` in its menu bar and toolbar.
 | `markdown` | `text` | Formatted text. |
 | `infobar` | `title`, `message`, `button?` | An information bar. |
 | `buttons` | `items`: buttons | A row of buttons. |
-| `field` | `id`, `label`, `input`, `value?`, `options?`, `accept?`, `placeholder?`, `suffix?`, `required?`, `autofocus?` | An input. `input` is `text`, `password`, `textarea`, `number`, `checkbox`, `select` (with `options: [{ value, label }]`) or `file`. `suffix` is a unit shown inside the input. A `file` field is a path box with a **Browse…** button, and `accept: [{ label, extensions }]` (such as `{ "label": "CSV files", "extensions": ["csv"] }`) sets the kinds of file Browse… offers. Its value is the path as the addon sees it: a file picked on Windows reaches an addon in WSL as a `/mnt/c/...` path. |
+| `field` | `id`, `label`, `input`, `value?`, `options?`, `accept?`, `placeholder?`, `suffix?`, `required?`, `autofocus?` | An input. `input` is `text`, `password`, `textarea`, `number`, `checkbox`, `select` (with `options: [{ value, label }]`), `file` or `folder`. `suffix` is a unit shown inside the input. A `file` or `folder` field is a path box with a **Browse…** button, which picks a file or a folder. On a `file` field, `accept: [{ label, extensions }]` (such as `{ "label": "CSV files", "extensions": ["csv"] }`) sets the kinds of file Browse… offers. Its value is the path as the addon sees it: a file or folder picked on Windows reaches an addon in WSL as a `/mnt/c/...` path. |
 | `row` | `items`: fields | Fields side by side. |
 | `section` | `title`, `body` | A titled group of nodes. |
 | `tabs` | `id`, `items`: `{ id, title, body }` | Looper's tabs, showing one tab's `body` at a time. In a window, top-level tabs go across the top of the window, and Ctrl+Tab moves between them. The selected tab stays selected when the screen is drawn again, and the fields on every tab keep their values. |

@@ -45,7 +45,8 @@ import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, compactedFile, findCodexRollout, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
-import { usageLimitOf } from './sessions';
+import { endingError, usageLimitOf } from './sessions';
+import { LOGIN_FAILED_RE } from '../shared/logins';
 import { recordCodexHome, usageLimitReset } from './steps/session';
 import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
@@ -338,6 +339,8 @@ export interface ChatDeps {
   taskVersion: (taskId: string) => number | undefined;
   /** Claude reported the usage limits of the account the harness (by limitsKey) runs on. */
   onLimits: (key: string, limits: UsageLimits) => void;
+  /** A Claude turn ended: on Claude Code's error for a missing login (`worked` false), or without an error. */
+  onLogin?: (environmentId: string, harnessId: string, worked: boolean) => void;
   /** Until when the chat's prompt cache lasts, when its harness says. */
   cacheUntil?: (chatId: string) => number | undefined;
   /**
@@ -1145,6 +1148,12 @@ class ChatSession {
 
   /** The turn ended: it failed on the usage limit when it said so (`turnLimit`) or its error row does. */
   private takeLimit(): void {
+    if (this.claude) {
+      // Another error (the network, an overloaded API) says nothing about the login.
+      const ending = endingError(this.acc.rows);
+      if (!ending) this.d.onLogin?.(this.environmentId, this.harness.id, true);
+      else if (LOGIN_FAILED_RE.test(ending.text)) this.d.onLogin?.(this.environmentId, this.harness.id, false);
+    }
     const now = Date.now();
     const said = this.turnLimit;
     this.turnLimit = undefined;

@@ -1,8 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { FindBar, useFindHighlights, type FindState } from './FindBar';
 import { CARD_ITEMS, FIRST_ITEMS, readPlace, useKeepPlace, useNewestFirst, useStayAtEnd } from './newest-first';
+import { firstBelow } from './kept-place';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
+import { LOGIN_FAILED_RE } from '@shared/logins';
 import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
@@ -29,6 +31,13 @@ const Items = memo(function Items({ items, ctx, prefix }: { items: ChatItem[]; c
     </>
   );
 });
+
+/** The first `count` items' elements: each item draws one, and the dividers between the earlier sessions and this chat are the only others among them. */
+const itemEls = (el: HTMLElement, count: number): Element[] =>
+  [...el.children].filter((c) => !c.classList.contains('chat-divider')).slice(0, Math.max(0, count));
+
+/** Where the scroller's view starts on the screen. */
+const viewTop = (el: HTMLElement): number => el.getBoundingClientRect().top + el.clientTop;
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
 
@@ -133,6 +142,29 @@ function LimitNotice({ state }: { state: ChatState }) {
   }
   if (passed) return null;
   return notice(at === undefined ? 'Looper will try to continue this chat every hour.' : `Looper will continue this chat at ${fmtClock(at, now)}.`, dontContinue);
+}
+
+/** The latest turn ended on Claude Code's error for a missing login, and nothing came after it. */
+function endsOnLogin(rows: readonly MessageRow[]): boolean {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.kind === 'prompt' || r.kind === 'agent') return false;
+    if (r.kind === 'error') return LOGIN_FAILED_RE.test(r.text);
+  }
+  return false;
+}
+
+/** Under Claude Code's error for a missing login: Log In, in a terminal window. */
+function LoginNotice({ state }: { state: ChatState }) {
+  const logIn = () => void window.looper.logins.logIn(state.environmentId, state.harnessId).catch((e) => void window.looper.showError((e as Error).message));
+  return (
+    <div className="chat-limit-notice">
+      Claude Code needs you to log in again.
+      <button className="link" onClick={logIn}>
+        Log In
+      </button>
+    </div>
+  );
 }
 
 /** Right-click on a message or tool call: the chat's menu for that row. */
@@ -247,7 +279,8 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && place && !place.atEnd) el.scrollTop = place.top;
+    const kept = el && place && !place.atEnd ? itemEls(el, 1)[0] : undefined;
+    if (el && kept) el.scrollTop += kept.getBoundingClientRect().top - viewTop(el) + place!.offset;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useLayoutEffect(() => {
@@ -321,17 +354,35 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
 
   // Find draws every item, so it searches the whole chat.
-  const { hidden, onScroll: showOlder } = useNewestFirst(
+  const total = allHistory.length + allItems.length;
+  const { hidden, newer, onScroll: showMore, toEnd } = useNewestFirst(
     scrollRef,
     id,
-    allHistory.length + allItems.length,
+    total,
     find !== null,
     embedded ? CARD_ITEMS : FIRST_ITEMS,
-    place && !place.atEnd ? place.start : undefined,
+    place && !place.atEnd ? place.item : undefined,
   );
-  const keepPlace = useKeepPlace(scrollRef, id, hidden, atBottom, embedded);
-  const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length)), [allHistory, hidden]);
-  const items = useMemo(() => allItems.slice(Math.max(0, hidden - allHistory.length)), [allItems, allHistory.length, hidden]);
+  const end = total - newer;
+  const keepPlace = useKeepPlace(
+    id,
+    () => {
+      const el = scrollRef.current;
+      if (!el) return null;
+      const els = itemEls(el, end - hidden);
+      if (els.length === 0) return { item: hidden, offset: 0 };
+      const top = viewTop(el);
+      const i = firstBelow(els.length, (n) => els[n].getBoundingClientRect().bottom, top);
+      return { item: hidden + i, offset: Math.round(top - els[i].getBoundingClientRect().top) };
+    },
+    atBottom,
+    embedded,
+  );
+  const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length), Math.min(end, allHistory.length)), [allHistory, hidden, end]);
+  const items = useMemo(
+    () => allItems.slice(Math.max(0, hidden - allHistory.length), Math.max(0, end - allHistory.length)),
+    [allItems, allHistory.length, hidden, end],
+  );
 
   const editQueued = (messageId: string) =>
     void window.looper.chat.unqueue(id, messageId).then((m) => {
@@ -390,9 +441,10 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           ref={scrollRef}
           onScroll={(e) => {
             const el = e.currentTarget;
-            atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-            showOlder(el);
-            keepPlace(el);
+            // The end of what's drawn is the chat's end only once its newest item is drawn.
+            atBottom.current = newer === 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            showMore(el);
+            keepPlace();
           }}
           onContextMenu={(e) => {
             const selection = window.getSelection()?.toString();
@@ -404,30 +456,33 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           {history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
           <Measured id="Chat rows">
             <Items items={history} ctx={ctx} prefix="h" />
-            {state.history.length > 0 && hidden <= allHistory.length && state.historyLabel && <div className="pane-title chat-divider">This chat</div>}
+            {state.history.length > 0 && hidden <= allHistory.length && end >= allHistory.length && state.historyLabel && (
+              <div className="pane-title chat-divider">This chat</div>
+            )}
             <Items items={items} ctx={ctx} prefix="r" />
           </Measured>
-          {state.limit && state.status === 'ready' && <LimitNotice state={state} />}
-          {state.permissions.map((p) => (
-            <PermissionCard key={p.id} state={state} p={p} />
-          ))}
+          {/* What follows the newest item waits until it's drawn. */}
+          {newer === 0 && state.limit && state.status === 'ready' && <LimitNotice state={state} />}
+          {newer === 0 && state.harnessKind === 'claude-code' && state.status !== 'working' && endsOnLogin(state.rows) && <LoginNotice state={state} />}
+          {newer === 0 && state.permissions.map((p) => <PermissionCard key={p.id} state={state} p={p} />)}
           {/* Queued messages close the conversation, outlined until the agent reads them; Edit and Cancel until they've gone to it. */}
-          {state.queued.map((m) => (
-            <div key={m.id} className="chat-queued">
-              <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
-              {!m.sent && (
-                <div className="chat-queued-actions">
-                  <button className="link" onClick={() => editQueued(m.id)}>
-                    Edit
-                  </button>
-                  <button className="link" onClick={() => void window.looper.chat.unqueue(id, m.id)}>
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-          {floatingBox && <ChatStatus state={state} />}
+          {newer === 0 &&
+            state.queued.map((m) => (
+              <div key={m.id} className="chat-queued">
+                <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
+                {!m.sent && (
+                  <div className="chat-queued-actions">
+                    <button className="link" onClick={() => editQueued(m.id)}>
+                      Edit
+                    </button>
+                    <button className="link" onClick={() => void window.looper.chat.unqueue(id, m.id)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          {floatingBox && newer === 0 && <ChatStatus state={state} />}
         </div>
         {!floatingBox && <ChatStatus state={state} />}
         <Composer
@@ -435,6 +490,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           state={state}
           embedded={embedded}
           onSent={() => {
+            if (newer > 0) toEnd();
             atBottom.current = true;
           }}
         />

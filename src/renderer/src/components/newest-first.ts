@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { firstDrawn, placeKey as keyOf, placeToRestore, type Place } from './kept-place';
 
 /** How many items a conversation draws at first: about a screen's worth, so it shows at once. */
 export const FIRST_ITEMS = 15;
@@ -20,24 +21,17 @@ const whenIdle = (fn: () => void): (() => void) => {
   return () => clearTimeout(t);
 };
 
-/** Where the reader was in a conversation: the first item drawn, the scroll offset from it, and whether at the end. */
-export interface Place {
-  chat: string;
-  start: number;
-  top: number;
-  atEnd: boolean;
-}
+const placeKey = (): string => keyOf(location.search, location.hash);
 
-/** A conversation shown as its page loads, this soon, is the page coming back (a phone reconnecting, the app relaunched), not one the reader opened. */
-const RESTORE_WITHIN_MS = 10_000;
-const placeKey = (): string => `looper.place.${new URLSearchParams(location.search).get('w') ?? location.hash}`;
+/** The page put its kept place back already: a later conversation is one the reader opened. */
+let placeRead = false;
 
-/** Where the reader left `chat` in this window, when its page is coming back; null for a conversation opened anew. */
+/** Where the reader left `chat` in this window, as its page loads again (placeToRestore); null for a conversation opened anew. */
 export function readPlace(chat: string): Place | null {
-  if (performance.now() > RESTORE_WITHIN_MS) return null;
+  if (placeRead) return null;
+  placeRead = true;
   try {
-    const p = JSON.parse(localStorage.getItem(placeKey()) ?? 'null') as Place | null;
-    return p && p.chat === chat && Number.isFinite(p.start) && Number.isFinite(p.top) ? p : null;
+    return placeToRestore(chat, location.hash, localStorage.getItem(placeKey()));
   } catch {
     return null;
   }
@@ -45,18 +39,18 @@ export function readPlace(chat: string): Place | null {
 
 /**
  * Keeps where the reader is in `chat`, so the page loading again (a phone back from another app) puts them there,
- * and forgets it when they leave the conversation, so opening it again starts at its end. Items are only ever added
- * after the first one drawn, so that item and the offset from it find the same place.
+ * and forgets it when they leave the conversation, so opening it again starts at its end. `where` gives the item at
+ * the top of the view and how far into it the view starts, so the page draws only from that item to come back.
  */
-export function useKeepPlace(scrollRef: RefObject<HTMLElement | null>, chat: string, start: number, atEnd: RefObject<boolean>, off: boolean): (el: HTMLElement) => void {
+export function useKeepPlace(chat: string, where: () => Pick<Place, 'item' | 'offset'> | null, atEnd: RefObject<boolean>, off: boolean): () => void {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const now = useRef({ chat, start });
-  now.current = { chat, start };
+  const now = useRef({ chat, where });
+  now.current = { chat, where };
   const save = () => {
-    const el = scrollRef.current;
-    if (off || !el) return;
+    const at = off ? null : now.current.where();
+    if (!at) return;
     try {
-      localStorage.setItem(placeKey(), JSON.stringify({ ...now.current, top: Math.round(el.scrollTop), atEnd: !!atEnd.current } satisfies Place));
+      localStorage.setItem(placeKey(), JSON.stringify({ chat: now.current.chat, ...at, atEnd: !!atEnd.current } satisfies Place));
     } catch {
       // Storage full or off: the page comes back at the end.
     }
@@ -137,7 +131,8 @@ export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, atEnd: Re
  * touches and keys; what it drew stays drawn afterwards. `key` names the
  * conversation: another one starts over. `first`: how many it draws at first;
  * with fewer than FIRST_ITEMS (a card) it doesn't draw more while idle.
- * `startAt`: the first item to draw instead, where a reader's place was kept.
+ * `startAt`: the item to draw from instead, where a reader's place was kept. Only `first` items are drawn from it,
+ * and the newer ones below are added as the reader scrolls down to them; `newer` counts those not drawn yet.
  */
 export function useNewestFirst(
   scrollRef: RefObject<HTMLElement | null>,
@@ -146,42 +141,60 @@ export function useNewestFirst(
   all: boolean,
   first = FIRST_ITEMS,
   startAt?: number,
-): { hidden: number; onScroll: (el: HTMLElement) => void } {
-  const [drawn, setDrawn] = useState(() => ({ key, start: startAt !== undefined ? Math.max(0, Math.min(startAt, total)) : Math.max(0, total - first) }));
-  if (drawn.key !== key) setDrawn({ key, start: Math.max(0, total - first) });
+): { hidden: number; newer: number; onScroll: (el: HTMLElement) => void; toEnd: () => void } {
+  const [drawn, setDrawn] = useState(() => ({ key, ...firstDrawn(total, first, startAt) }));
+  if (drawn.key !== key) setDrawn({ key, ...firstDrawn(total, first) });
+  // Once the newest item is drawn, what arrives after it is drawn too.
+  else if (drawn.end !== null && drawn.end >= total) setDrawn({ ...drawn, end: null });
   const hidden = Math.min(drawn.start, total);
+  const newer = drawn.end === null ? 0 : Math.max(0, total - drawn.end);
   const card = first < FIRST_ITEMS;
   // Where the reader was as older items were added above, to keep them there.
   const anchor = useRef<{ height: number; top: number } | null>(null);
+  // Newer items are being added: older ones wait, or the anchor would count their height too.
+  const addingNewer = useRef(false);
   const older = (count: number) => {
     const el = scrollRef.current;
-    if (el && !anchor.current) anchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    if (anchor.current || addingNewer.current) return;
+    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop };
     setDrawn((d) => ({ ...d, start: Math.max(0, d.start - count) }));
+  };
+  const drawNewer = (count: number) => {
+    if (anchor.current || addingNewer.current) return;
+    addingNewer.current = true;
+    setDrawn((d) => ({ ...d, end: d.end === null ? null : d.end + count }));
   };
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const a = anchor.current;
     anchor.current = null;
+    addingNewer.current = false;
     if (el && a) el.scrollTop = a.top + el.scrollHeight - a.height;
     // Too few to scroll, so no scroll would ever ask for more: add them now. A card only fills its own height.
-    else if (el && hidden > 0 && el.scrollHeight <= el.clientHeight + (card ? 0 : OLDER_AT)) older(card ? CARD_ITEMS : BATCH);
+    else if (el && el.scrollHeight <= el.clientHeight + (card ? 0 : OLDER_AT)) {
+      if (newer > 0) drawNewer(BATCH);
+      else if (hidden > 0) older(card ? CARD_ITEMS : BATCH);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hidden]);
-  // `all`: the next batch once this one is on the screen. Otherwise, more while the page has nothing else to do.
-  const prefetch = !card && total - hidden < READY;
+  }, [hidden, drawn.end]);
+  // `all`: the next batch once this one is on the screen. Otherwise, older ones while the page has nothing else to do.
+  const prefetch = !card && total - newer - hidden < READY;
   useEffect(() => {
-    if (hidden === 0) return;
     if (all) {
-      const t = setTimeout(() => older(BATCH), 0);
+      if (hidden === 0 && newer === 0) return;
+      const t = setTimeout(() => (hidden > 0 ? older(BATCH) : drawNewer(BATCH)), 0);
       return () => clearTimeout(t);
     }
-    if (prefetch) return whenIdle(() => older(BATCH));
+    if (hidden > 0 && prefetch) return whenIdle(() => older(BATCH));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, hidden, prefetch]);
+  }, [all, hidden, newer, prefetch]);
   // `all` is drawing them already, a batch a frame.
   const onScroll = (el: HTMLElement) => {
-    if (all || hidden === 0 || el.scrollTop > OLDER_AT || anchor.current) return;
-    older(BATCH);
+    if (all) return;
+    if (hidden > 0 && el.scrollTop <= OLDER_AT) older(BATCH);
+    else if (newer > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= OLDER_AT) drawNewer(BATCH);
   };
-  return { hidden, onScroll };
+  // Draws the newest items as a conversation opened anew does, without drawing everything between.
+  const toEnd = () => setDrawn((d) => ({ ...d, ...firstDrawn(total, first) }));
+  return { hidden, newer, onScroll, toEnd };
 }

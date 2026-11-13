@@ -1,7 +1,7 @@
 import { nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { convertWslPath, type HostKind } from '../engine/host';
+import type { HostKind } from '../engine/host';
 import { errMsg } from '../engine/log';
 import { ADDON_EXT } from '../shared/files';
 import {
@@ -21,7 +21,7 @@ import {
   type AddonUiEvent,
 } from '../shared/addons';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
-import type { AddonHost, AddonLaunch } from './addon-host';
+import { forAddonSide, type AddonHost } from './addon-host';
 import { addonIconError } from './addon-icons';
 import { allWindows, ipc, showMessageBox, showOpenDialog, windowOf, WindowSlots, writeClipboard, type AppWindow, type MessageBoxOptions } from './platform';
 import type { WindowRole } from '../shared/remote-access';
@@ -276,15 +276,18 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     if (!parsed.success) throw new Error(issueLines(parsed.error));
     host.setRun(id, parsed.data);
   });
-  ipc.handle('addons:pickFile', async (e, id: string, accept?: { label: string; extensions: string[] }[]) => {
+  ipc.handle('addons:pickPath', async (e, id: string, input: 'file' | 'folder', accept?: { label: string; extensions: string[] }[]) => {
     const sender = windowOf(e);
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      filters: [...(accept ?? []).map((a) => ({ name: a.label, extensions: a.extensions })), { name: 'All files', extensions: ['*'] }],
-    };
+    const opts: Electron.OpenDialogOptions =
+      input === 'folder'
+        ? { properties: ['openDirectory'] }
+        : {
+            properties: ['openFile'],
+            filters: [...(accept ?? []).map((a) => ({ name: a.label, extensions: a.extensions })), { name: 'All files', extensions: ['*'] }],
+          };
     const r = await showOpenDialog(sender, opts);
-    const file = r.canceled ? undefined : r.filePaths[0];
-    return file ? addonPath(deps, id, file) : null;
+    const picked = r.canceled ? undefined : r.filePaths[0];
+    return picked ? addonPath(deps, id, picked) : null;
   });
   ipc.handle('addons:setEnabled', (_e, id: string, enabled: boolean) => {
     host.setEnabled(id, enabled);
@@ -323,13 +326,6 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     const file = r.canceled ? undefined : r.filePaths[0];
     if (file) await installAddonFile(deps, file, sender);
   });
-}
-
-/** A path on Looper's side, in the form the addon's side uses (in its environment's distro). */
-async function forAddonSide(launch: AddonLaunch, hostKind: HostKind, p: string): Promise<string> {
-  if (launch.run.on === 'wsl' && hostKind === 'windows') return (await convertWslPath(p, 'posix', launch.environment?.distro || undefined)) ?? p;
-  if (launch.run.on === 'windows' && hostKind === 'wsl') return (await convertWslPath(p, 'windows')) ?? p;
-  return p;
 }
 
 /**

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { z } from 'zod';
 import { spawnOffThread, type OffThreadChild } from '../engine/exec-worker';
-import type { HostKind } from '../engine/host';
+import { convertWslPath, type HostKind } from '../engine/host';
 import { errMsg, type Logger } from '../engine/log';
 import { childEnv, stripShellNoise } from '../engine/steps/common';
 import { killHostTree } from '../engine/target/kill';
@@ -109,6 +109,13 @@ export function addonEnv(run: AddonRun, host: HostKind, base: Record<string, str
   return env;
 }
 
+/** A path on Looper's side, in the form the addon's side uses (in its environment's distro). */
+export async function forAddonSide(launch: AddonLaunch, hostKind: HostKind, p: string): Promise<string> {
+  if (launch.run.on === 'wsl' && hostKind === 'windows') return (await convertWslPath(p, 'posix', launch.environment?.distro || undefined)) ?? p;
+  if (launch.run.on === 'windows' && hostKind === 'wsl') return (await convertWslPath(p, 'windows')) ?? p;
+  return p;
+}
+
 interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
@@ -133,6 +140,7 @@ class AddonProcess {
     private readonly d: {
       host: HostKind;
       appVersion: string;
+      dataDir: string;
       log: Logger;
       /** How to run it right now (addonLaunch). */
       launch: () => AddonLaunch;
@@ -150,7 +158,8 @@ class AddonProcess {
     this.stderrBuf = '';
     this.stderrMinute = { start: 0, lines: 0 };
     const m = this.manifest;
-    const { run, environment } = this.d.launch();
+    const launch = this.d.launch();
+    const { run, environment } = launch;
     if (!environment) {
       this.stopped(
         `It's a ${sideName(run.on)} program, and no environment in Settings → Environments runs ${sideName(run.on)} programs. Add one, then start the addon again.`,
@@ -189,8 +198,10 @@ class AddonProcess {
     child.stdin!.on('error', () => undefined);
     child.on('error', (e) => this.exited(child, null, e.message));
     child.on('exit', (code) => this.exited(child, code));
-    void this.request('initialize', { protocol: 1, looper: this.d.appVersion, host: this.d.host })
-      .then(() => {
+    void forAddonSide(launch, this.d.host, this.d.dataDir)
+      .then(async (dataDir) => {
+        if (this.child !== child) return;
+        await this.request('initialize', { protocol: 1, looper: this.d.appVersion, host: this.d.host, dataDir });
         if (this.child !== child) return;
         this.status = 'running';
         this.d.log.info(`addon ${m.id}: running after ${Math.round(performance.now() - started)} ms`);
@@ -559,6 +570,7 @@ export class AddonHost {
     const p = new AddonProcess(manifest, {
       host: this.d.host,
       appVersion: this.d.appVersion,
+      dataDir: path.dirname(this.d.dir),
       log: this.d.log,
       launch: () => this.launchOf(manifest),
       onStatus: () => this.changed(),

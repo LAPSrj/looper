@@ -39,6 +39,14 @@ describe('a bar button’s menu', () => {
     picks.get(items[0].id)?.();
     expect(pick).toHaveBeenCalled();
   });
+
+  it('opens a submenu, and runs what is picked in it', () => {
+    const pick = vi.fn();
+    const { items, run: picks } = action([{ id: 'g', label: 'Group', run, submenu: [{ id: 'x', label: 'X', run: pick }] }]);
+    expect(items[0]).toMatchObject({ type: 'submenu', label: 'Group' });
+    picks.get(items[0].submenu![0].id)?.();
+    expect(pick).toHaveBeenCalled();
+  });
 });
 
 describe('platform marks', () => {

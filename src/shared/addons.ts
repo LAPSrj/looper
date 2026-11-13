@@ -500,13 +500,13 @@ const FieldSchema = z
     type: z.literal('field'),
     id,
     label: z.string().min(1),
-    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'file']),
+    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'file', 'folder']),
     value: z.union([z.string(), z.number(), z.boolean()]).optional(),
     options: z.array(z.object({ value: z.string(), label: z.string() }).strict()).optional(),
     placeholder: z.string().optional(),
     /** A unit shown inside the input, at its right ("s", "min"). */
     suffix: z.string().min(1).optional(),
-    /** `file`: the kinds of file Browse… offers, such as `{ label: 'CSV files', extensions: ['csv'] }`. */
+    /** `file` (not `folder`): the kinds of file Browse… offers, such as `{ label: 'CSV files', extensions: ['csv'] }`. */
     accept: z
       .array(z.object({ label: z.string().min(1), extensions: z.array(z.string().min(1)).min(1) }).strict())
       .optional(),

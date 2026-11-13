@@ -3,7 +3,7 @@ import { uiPlatformOf } from '../../../shared/ui-platform';
 import { findToolbarItem, toolbarKey, type ToolbarGroup } from '../components/toolbar-model';
 import { platform } from '../platform';
 import type { MoreMenuInput } from './more-menu';
-import type { NavCommand, PageNavAction } from './nav-bar-model';
+import type { NavCommand, PageNavAction, PageNavMenuEntry } from './nav-bar-model';
 
 /**
  * What a page tells the phone frame (iOS/Android) about the screen it shows;
@@ -141,7 +141,16 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
 /** A bar button whose callbacks, and its menu's, look up the part's current ones by id. */
 function wrapAction(a: PageNavAction, current: () => PageNavAction[] | undefined): PageNavAction {
   const now = () => current()?.find((x) => x.id === a.id);
-  return { ...a, run: () => now()?.run(), menu: a.menu?.map((e) => ({ ...e, run: () => now()?.menu?.find((x) => x.id === e.id)?.run() })) };
+  const wrap = (e: PageNavMenuEntry): PageNavMenuEntry => ({ ...e, run: () => findMenuEntry(now()?.menu, e.id)?.run(), ...(e.submenu ? { submenu: e.submenu.map(wrap) } : {}) });
+  return { ...a, run: () => now()?.run(), menu: a.menu?.map(wrap) };
+}
+
+function findMenuEntry(entries: PageNavMenuEntry[] | undefined, id: string): PageNavMenuEntry | undefined {
+  for (const e of entries ?? []) {
+    const found = e.id === id && !e.separator ? e : findMenuEntry(e.submenu, id);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /** A toolbar whose callbacks look up the part's current ones by id. */

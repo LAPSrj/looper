@@ -11,6 +11,7 @@ import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey, watchedSessions } from '../shared/sessions';
 import type { UiEvent } from '../shared/api';
 import { chatIsEmpty } from '../shared/chat';
+import { loginRowKey, loginRows, type ClaudeLogin, type LoginRow } from '../shared/logins';
 import { startsWithRemoteControl } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
 import { readJson } from '../engine/store/fsutil';
@@ -150,6 +151,7 @@ if (!app.requestSingleInstanceLock()) {
     useMenuPopupPage({ preload: webPreferences().preload!, load: (w, hash) => loadRenderer(w, hash) });
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
+      else if (event.type === 'logins') showLoginNotifications(event.logins);
       else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
       // Task runs in the Chats window aren't pushed: their own notifications cover them.
       else if (event.type === 'sessions')
@@ -215,7 +217,7 @@ if (!app.requestSingleInstanceLock()) {
       reviewBuilder,
       builderWindow: (id) => (builderWindows.get(id) ?? []).filter((w) => !w.isDestroyed()),
       openTerminal,
-      terminalWindow: (id) => [...terminalWindows.all(id), ...sessionWindowsShowing(id)],
+      terminalWindow: (id) => [...terminalWindows.all(id), ...loginWindows.all(id), ...sessionWindowsShowing(id)],
       openChat,
       forkChat,
       compactChat,
@@ -245,6 +247,7 @@ if (!app.requestSingleInstanceLock()) {
       openRemoteAccessRename: openRemoteAccessRenameWindow,
       finishRemoteAccessSetup,
       openNotification,
+      logIn: openLogIn,
       openProjectEditor,
       openNewTaskIn,
       openInFolder,
@@ -780,6 +783,40 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
   toast.on('click', () => {
     liveToasts.delete(toast);
     openToastTarget(target);
+  });
+  toast.show();
+}
+
+/** The login rows already notified (loginRowKey): each login notifies once a stage, for the whole app instead of once a task. */
+const notifiedLogins = new Set<string>();
+
+function showLoginNotifications(logins: ClaudeLogin[]): void {
+  for (const row of loginRows(logins)) {
+    const key = loginRowKey(row);
+    if (notifiedLogins.has(key)) continue;
+    notifiedLogins.add(key);
+    showLoginNotification(row);
+  }
+}
+
+/** A login that needs the user, on the desktop and the devices; the toast's click opens Log In. */
+function showLoginNotification(row: LoginRow): void {
+  if (!engine?.settings.notificationsEnabled) return;
+  const n = { title: row.login.name, body: row.problem };
+  notifyClients(n);
+  if (BrowserWindow.getFocusedWindow()) return;
+  void remoteAccess?.pushToast(n);
+  if (!Notification.isSupported()) return;
+  const toast = new Notification({ ...n, icon: appIcon });
+  liveToasts.add(toast);
+  if (liveToasts.size > MAX_LIVE_TOASTS) liveToasts.delete(liveToasts.values().next().value!);
+  toast.on('click', () => {
+    liveToasts.delete(toast);
+    try {
+      openLogIn(row.login.environmentId, row.login.harnessIds[0]);
+    } catch (err) {
+      void showMessageBox(undefined, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 });
+    }
   });
   toast.show();
 }
@@ -1539,6 +1576,30 @@ function openTerminalWindow(sessionId: string, title: string): void {
   });
   child.setMaximizable(true);
   terminalWindows.set(child, sessionId);
+}
+
+/** Log In's windows by session id (one per client). */
+const loginWindows = new WindowSlots();
+
+/** Log In: Claude Code's `auth login` for the harness in a terminal window. The login ends once no window shows it. */
+function openLogIn(environmentId: string, harnessId: string): void {
+  if (!engine) return;
+  const sessionId = engine.logIn(environmentId, harnessId);
+  const open = loginWindows.get(sessionId);
+  if (open) {
+    if (open.isMinimized()) open.restore();
+    open.focus();
+    return;
+  }
+  const env = engine.settings.environments.find((e) => e.id === environmentId);
+  const harness = env?.harnesses.find((h) => h.id === harnessId);
+  const title = `Log In – ${harness?.name ?? 'Claude Code'} in ${env?.name ?? ''}`;
+  const hash = `terminal/${encodeURIComponent(sessionId)}/${encodeURIComponent(title)}`;
+  const child = openChildWindow(hash, title, 800, 500, undefined, { role: 'workspace', minWidth: 480, minHeight: 300, contentSize: true });
+  loginWindows.set(child, sessionId);
+  child.on('closed', () => {
+    if (loginWindows.all(sessionId).length === 0) engine?.closeLogin(sessionId);
+  });
 }
 
 // ---------- Remote Control ----------

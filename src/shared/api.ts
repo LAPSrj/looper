@@ -12,6 +12,7 @@ import type { RunFilter } from './runs';
 import type { CommandOutput } from './bash-mode';
 import type { Attachment, ChatSettings, ChatState, QueuedMessage } from './chat';
 import type { HostCommand } from './commands/context';
+import type { ClaudeLogin } from './logins';
 import type { SessionActivity, SessionsState } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
@@ -181,6 +182,12 @@ export interface LooperApi {
   restState(): Promise<RestState>;
   /** Current Prevent Sleep state; live updates arrive as `prevent-sleep` engine events. */
   preventSleepState(): Promise<PreventSleepState>;
+  logins: {
+    /** The Claude Code logins the harnesses start on; changes arrive as `logins` engine events. */
+    list(): Promise<ClaudeLogin[]>;
+    /** Log In: Claude Code's `auth login` for the harness, in a terminal window. */
+    logIn(environmentId: string, harnessId: string): Promise<void>;
+  };
   openPath(p: string): Promise<void>;
   /** Open a dropped Looper document (.loopertask/.loopertpl) as if it were double-clicked. */
   openLooperFile(file: File): Promise<void>;
@@ -542,8 +549,8 @@ export interface LooperApi {
     edit(id: string): Promise<void>;
     /** Change how the addon runs and restart it; null goes back to its own file's settings and the default environment. Rejects with the reason when `run` isn't valid. */
     setRun(id: string, run: AddonLocalRun | null): Promise<void>;
-    /** A file field's Browse…: the picked file's path as the addon sees it (WSL or Windows), or null. */
-    pickFile(id: string, accept?: { label: string; extensions: string[] }[]): Promise<string | null>;
+    /** A file or folder field's Browse…: the picked path as the addon sees it (WSL or Windows), or null. */
+    pickPath(id: string, input: 'file' | 'folder', accept?: { label: string; extensions: string[] }[]): Promise<string | null>;
     /** Start (true) or stop (false) an addon; Looper remembers it, and a stopped addon's windows close. */
     setEnabled(id: string, enabled: boolean): Promise<void>;
     /** The window a command's `opens` names, or the open one brought forward. */

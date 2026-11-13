@@ -173,6 +173,8 @@ export interface IpcHost {
   finishRemoteAccessSetup: (choice: { sources?: unknown; hostname?: unknown }, pair: boolean) => Promise<void>;
   /** A device's click on a task notification: what a click on the desktop's toast opens, on that device. */
   openNotification: (taskId: string, runId?: string) => void;
+  /** Log In: Claude Code's `auth login` for the harness, in a terminal window (the open one brought forward). Throws when the harness is gone. */
+  logIn: (environmentId: string, harnessId: string) => void;
   /** The Edit Project window (no id = New Project). */
   openProjectEditor: (id?: string) => void;
   /** The New Task editor with the project picked. */
@@ -328,6 +330,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.handle('rest:state', () => engine.restState());
   ipc.handle('prevent-sleep:state', () => engine.preventSleepState());
+  ipc.handle('logins:list', () => engine.logins());
+  ipc.handle('logins:logIn', (_e, environmentId: unknown, harnessId: unknown) => {
+    if (typeof environmentId !== 'string' || typeof harnessId !== 'string') throw new Error('Log In needs an environment and a harness.');
+    host.logIn(environmentId, harnessId);
+  });
 
   ipc.handle('runtime:list', () => engine.listRuntimes());
   // With the setting on, the run is started by the Run Options window instead.

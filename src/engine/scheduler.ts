@@ -91,6 +91,8 @@ export interface SchedulerDeps {
   projects?: () => readonly Project[];
   /** Why a delegated agent must wait for its folder (another session is working there), or null. Default: ask `claude agents`. */
   folderBusy?: (task: Task) => Promise<string | null>;
+  /** A run's agent ended: Claude Code had no usable login (`worked` false), or it had one. */
+  onLogin?: (task: Task, worked: boolean) => void;
 }
 
 /** How often a delegated agent waiting for its folder asks again whether a session outside Looper is working there. */
@@ -2024,6 +2026,9 @@ export class Scheduler extends EventEmitter {
         }
         const end = await this.runAgent(task, rt, ctx);
         agentEnd = end;
+        // An agent that never got an answer from the API says nothing about the login.
+        if (end.login) this.d.onLogin?.(task, false);
+        else if (!end.network && !end.environment && end.reason !== 'stopped') this.d.onLogin?.(task, true);
         // A done run's outcome is the status the agent reported via looper-done;
         // every other end keeps its mechanism (idle-timeout, exited, ...).
         outcome = end.doneStatus ?? end.reason;
@@ -2044,7 +2049,8 @@ export class Scheduler extends EventEmitter {
           network = !!end.network;
           environment = !!end.environment;
         }
-        detail = `${machinePrefix()}${end.headline ?? ''}`;
+        // A missing login says what it is: it's no more the environment's being unavailable than the task's failing.
+        detail = end.login ? (end.headline ?? '') : `${machinePrefix()}${end.headline ?? ''}`;
         retryAtMs = end.retryAtMs;
         // codex assigns its own thread id on a fresh run; book it once
         // reported. Only a rolling-conversation task books at all — a

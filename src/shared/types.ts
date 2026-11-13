@@ -6,6 +6,7 @@ z.config({ jitless: true });
 import { AddonLocalRunSchema } from './addons';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
+import type { ClaudeLogin } from './logins';
 import type { RemoteState } from './remote';
 import type { RemoteAccessState } from './remote-access';
 import type { SessionActivity, SessionsState } from './sessions';
@@ -1103,6 +1104,8 @@ export type EngineEvent =
   | { type: 'settings'; settings: Settings }
   | { type: 'rest'; rest: RestState; disarmReason?: 'user-wake' }
   | { type: 'prevent-sleep'; state: PreventSleepState }
+  /** The Claude Code logins the harnesses start on changed: how long each lasts, or one failed. */
+  | { type: 'logins'; logins: ClaudeLogin[] }
   /** Remote Control started or stopped, or one of its conversations changed. */
   | { type: 'remote'; state: RemoteState }
   /** Remote Access started, stopped or changed status, or its paired devices changed. */

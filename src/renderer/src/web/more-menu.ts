@@ -1,7 +1,7 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import { isEnabled, toolbarFor, type ToolbarGroup, type ToolbarItem } from '../components/toolbar-model';
-import type { PageNavAction } from './nav-bar-model';
+import type { PageNavAction, PageNavMenuEntry } from './nav-bar-model';
 
 /**
  * The phone's More (…) menu: the toolbar a page reports (an addon's buttons, a
@@ -96,15 +96,16 @@ export function moreRow(candidates: MenuItemSpec[], items: MenuItemSpec[]): Menu
 /** A bar button's menu of choices, as the More menu is drawn. */
 export function actionMenu(action: PageNavAction): MoreMenu {
   const run = new Map<string, () => void>();
-  const items = (action.menu ?? []).map((e): MenuItemSpec => {
+  const spec = (e: PageNavMenuEntry): MenuItemSpec => {
     const id = `${PAGE}${action.id}:${e.id}`;
     if (e.separator) return { id, type: 'separator', enabled: true };
-    run.set(id, e.run);
     const shared = { id, label: e.label, enabled: e.enabled ?? true, ...(e.icon ? { icon: e.icon } : {}), ...(e.destructive ? { destructive: true as const } : {}) };
+    if (e.submenu) return { ...shared, type: 'submenu', submenu: e.submenu.map(spec) };
+    run.set(id, e.run);
     if (e.checked === undefined) return { ...shared, type: 'normal' };
     return { ...shared, type: e.type ?? 'radio', checked: e.checked };
-  });
-  return { items: phoneMenu(items), row: [], run };
+  };
+  return { items: phoneMenu((action.menu ?? []).map(spec)), row: [], run };
 }
 
 /** The More menu of a screen. */

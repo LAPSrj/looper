@@ -33,6 +33,11 @@ export function deleteTask(t: Task, rt: TaskRuntime | undefined): void {
   if (current) runCommand('deleteTask', forTask(current, t, rt));
 }
 
+/** A Claude Code login's row: Log In. */
+export function showLoginMenu(logIn: () => void): void {
+  if (current) popupEntries(current, 'login', [{ id: 'log-in', label: '&Log In', run: logIn }]);
+}
+
 /** A project row's menu. */
 export function showProjectMenu(p: Project): void {
   if (!current) return;

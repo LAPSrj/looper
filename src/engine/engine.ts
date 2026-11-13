@@ -25,7 +25,7 @@ import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { MessagesService, readRunSessionId, transcriptHostPath } from './messages';
-import { openTaskTerminal, writeTerminalLauncher } from './open-terminal';
+import { openTaskTerminal, writeLoginLauncher, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions';
 import { CODEX_CACHE_MS } from './context';
@@ -42,6 +42,8 @@ import { GitService } from './git';
 import { createWindowsPowerOps } from './power-win';
 import { isBusy, RestController, type PowerAdapter, type PowerOps } from './rest';
 import { PreventSleep } from './prevent-sleep';
+import { ClaudeLogins, type ClaudeLoginsDeps } from './logins';
+import type { ClaudeLogin } from '../shared/logins';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir, readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { RunStore, newRunId } from './store/runs';
@@ -79,6 +81,8 @@ export interface EngineOptions {
   keepAwake?: (on: boolean) => void;
   /** Tests replace the terminal sessions' pty. */
   spawnTerminal?: TerminalSessionsDeps['spawn'];
+  /** Tests answer for `claude auth status`, instead of asking each environment. */
+  authStatus?: ClaudeLoginsDeps['status'];
   /** Tests give the folders the History window reads conversations from outside Looper in, instead of asking each environment. */
   historyDirs?: HistoryDeps['configDirs'];
 }
@@ -391,6 +395,13 @@ export interface Engine {
   /** Start a Prevent Sleep timer (turning Rest Mode off) or turn it off. Throws when Prevent Sleep is unavailable. */
   setPreventSleep(timer: PreventSleepTimer): void;
   preventSleepState(): PreventSleepState;
+  // Claude Code logins
+  /** The Claude Code logins the harnesses start on; changes arrive as `logins` events. */
+  logins(): ClaudeLogin[];
+  /** Log In: Claude Code's `auth login` for the harness, in a terminal session of its own (the open one while it runs). Returns its id. */
+  logIn(environmentId: string, harnessId: string): string;
+  /** Its window closed: end the login session. */
+  closeLogin(sessionId: string): void;
   // history
   listRuns(id: string, limit?: number): Promise<RunRecord[]>;
   /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
@@ -545,6 +556,13 @@ export function createEngine(opts: EngineOptions): Engine {
     log,
   });
 
+  const logins = new ClaudeLogins({ settings, host, log, emit: (list) => emit({ type: 'logins', logins: list }), status: opts.authStatus });
+  /** Tell the logins how a session on the harness went. */
+  const loginOutcome = (environmentId: string, harnessId: string, worked: boolean): void => {
+    if (worked) logins.worked(environmentId, harnessId);
+    else logins.failed(environmentId, harnessId);
+  };
+
   const scheduler = new Scheduler({
     dataDir,
     host,
@@ -556,6 +574,10 @@ export function createEngine(opts: EngineOptions): Engine {
     steps: opts.steps,
     taskVersion: (id) => versions.current(id),
     projects: () => projects.list(),
+    onLogin: (task, worked) => {
+      const env = resolveEnvironment(task, settings);
+      loginOutcome(env.id, resolveHarness(task, env).id, worked);
+    },
   });
 
   // ---------- version history ----------
@@ -671,6 +693,21 @@ export function createEngine(opts: EngineOptions): Engine {
     spawn: opts.spawnTerminal,
   });
 
+  /** Log In's sessions: Claude Code's `auth login`, each in a window of its own and in no list. */
+  const loginTerminals = new TerminalSessions({
+    emit: (e) => {
+      emit(e);
+      // Logged in, or given up: read the logins again.
+      if (e.type === 'terminal:end') logins.recheck();
+    },
+    log,
+    spawn: opts.spawnTerminal,
+  });
+  /** The open Log In session of each harness. */
+  const loginSessions = new Map<string, string>();
+  /** The sessions a terminal window's input, size and output go to. */
+  const terminalsOf = (id: string): TerminalSessions => (loginTerminals.taskOf(id) !== undefined ? loginTerminals : terminals);
+
   /** The harness a run's conversation is on: a chat's own (its chat.json), else the task's. Throws when it's gone. */
   const runHarness = (task: Task, runId: string): Harness => {
     const env = resolveEnvironment(task, settings);
@@ -751,6 +788,7 @@ export function createEngine(opts: EngineOptions): Engine {
     appendRecord,
     taskVersion,
     onLimits: (key, limits) => hub?.setLimits(key, limits),
+    onLogin: loginOutcome,
     cacheUntil: (chatId) => hub?.state().sessions.find((s) => s.id === chatId)?.cacheUntil,
     remoteName: (task, harness) => (remote.isRunning() && startsWithRemoteControl(harness) ? task.name : undefined),
     onRemote: (c) => remote.attach({ ...c, source: 'chat' }),
@@ -1515,6 +1553,8 @@ export function createEngine(opts: EngineOptions): Engine {
         time('git', () => git.checkAll());
         // The history index and the Recent menus' lists (a project's Open Recent Chat, History's drop-down), so no menu waits on reading them.
         time('history', () => void history.warm(settings.view.history.showRuns).catch(() => undefined));
+        // How long each Claude Code login lasts: its own process per harness.
+        time('logins', () => logins.start());
         perfLog.info(`engine | after start: ${later.join(', ')}`);
       }, STARTUP_DEFER_MS);
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
@@ -1534,6 +1574,8 @@ export function createEngine(opts: EngineOptions): Engine {
       if (deferredTimer) clearTimeout(deferredTimer);
       deferredTimer = null;
       inbox.stop();
+      logins.stop();
+      loginTerminals.closeAll();
       rest?.dispose();
       preventSleep?.dispose();
       remote.stop();
@@ -1561,6 +1603,7 @@ export function createEngine(opts: EngineOptions): Engine {
     updateSettings(patch: unknown): Settings {
       const oldTasksFile = settings.tasksFile;
       const oldTemplatesFile = settings.templatesFile;
+      const oldEnvironments = JSON.stringify(settings.environments);
       const merged = { ...settings, ...(patch as Record<string, unknown>) };
       const result = SettingsSchema.safeParse(merged, REPORT_INPUT);
       if (!result.success) throw new Error(issueLines(result.error));
@@ -1585,6 +1628,8 @@ export function createEngine(opts: EngineOptions): Engine {
       // While a Session Is Working may have changed.
       preventSleep?.poke();
       rest?.poke();
+      // A harness added, removed or given other arguments may be on another login.
+      if (JSON.stringify(parsed.environments) !== oldEnvironments) logins.recheck();
       if (parsed.tasksFile !== oldTasksFile) {
         emit({ type: 'tasks', tasks: tasks.list() });
         emit({ type: 'recycleBin', entries: tasks.listBin() });
@@ -1790,9 +1835,31 @@ export function createEngine(opts: EngineOptions): Engine {
       saveConversations();
       return sessionId;
     },
-    writeTerminalSession: (sessionId, data) => terminals.write(sessionId, data),
-    resizeTerminalSession: (sessionId, cols, rows) => terminals.resize(sessionId, cols, rows),
-    terminalSessionOutput: (sessionId) => terminals.output(sessionId),
+    writeTerminalSession: (sessionId, data) => terminalsOf(sessionId).write(sessionId, data),
+    resizeTerminalSession: (sessionId, cols, rows) => terminalsOf(sessionId).resize(sessionId, cols, rows),
+    terminalSessionOutput: (sessionId) => terminalsOf(sessionId).output(sessionId),
+    logins: () => logins.state(),
+    logIn(environmentId: string, harnessId: string): string {
+      const env = settings.environments.find((e) => e.id === environmentId);
+      const harness = env?.harnesses.find((h) => h.id === harnessId);
+      if (!env || !harness) throw new Error('This harness is no longer in its environment.');
+      const key = `${environmentId}|${harnessId}`;
+      const open = loginSessions.get(key);
+      if (open && loginTerminals.output(open)?.ended === false) return open;
+      if (open) loginTerminals.close(open);
+      const dir = path.join(dataDir, 'logins');
+      ensureDir(dir);
+      const id = loginTerminals.start('login', (sessionId) => {
+        const { target, launcherHost } = writeLoginLauncher(env, harness, host, path.join(dir, sessionId));
+        return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
+      });
+      loginSessions.set(key, id);
+      return id;
+    },
+    closeLogin(sessionId: string): void {
+      loginTerminals.close(sessionId);
+      for (const [key, id] of loginSessions) if (id === sessionId) loginSessions.delete(key);
+    },
     runningTerminalSessions: () => terminals.running() - remote.liveCount(),
     remoteState: () => remote.state(),
     remoteLastMessage: (id) => remote.lastMessage(id),

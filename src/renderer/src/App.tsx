@@ -199,7 +199,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   if (tab === 'dashboard') {
     body = alone(
       <Dashboard
-        attention={m.attention}
+        attention={m.attention} logins={m.loginAttention}
         running={m.running}
         remote={remoteOpen}
         chats={chatsState?.sessions ?? []}
@@ -259,7 +259,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
           ) : (
             // No task selected: the tasks' dashboard, as the Chats tab shows its own.
             <Dashboard
-              attention={m.attention}
+              attention={m.attention} logins={m.loginAttention}
               running={m.running}
               remote={null}
               recent={m.recentShown}

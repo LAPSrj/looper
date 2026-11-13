@@ -5,7 +5,8 @@ import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
 import type { DetailTab } from './TaskDetail';
 import { DataTable, type DataCol } from './DataTable';
-import { showTaskMenu } from './row-menus';
+import type { LoginRow } from '@shared/logins';
+import { showLoginMenu, showTaskMenu } from './row-menus';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
 import { Section } from './Section';
@@ -13,8 +14,8 @@ import { statusText } from './SessionList';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
-  /** remote: a Remote Control conversation, which the task menus leave alone. */
-  list: 'attention' | 'running' | 'remote' | 'recent';
+  /** remote: a Remote Control conversation, and login: a Claude Code login's row in Needs attention (its key as taskId), which the task menus leave alone. */
+  list: 'attention' | 'running' | 'remote' | 'recent' | 'login';
   taskId: string;
   /** The run the row is about (a conversation's id); null for a row about the task's last result. */
   runId: string | null;
@@ -40,8 +41,24 @@ function StatusIcon({ level }: { level: 'error' | 'warning' }) {
   return <StatusGlyph level={level} label={level === 'error' ? 'Error' : 'Warning'} />;
 }
 
+/** A Needs attention row: a task's, or a Claude Code login's. */
+export type NeedRow = { kind: 'task'; r: AttentionRow } | { kind: 'login'; r: LoginRow };
+
+/** Needs attention's rows, errors first; within a level the logins first, since every task on one waits for it. */
+export function needRows(attention: AttentionRow[], logins: LoginRow[]): NeedRow[] {
+  const rows: NeedRow[] = [...logins.map((r) => ({ kind: 'login' as const, r })), ...attention.map((r) => ({ kind: 'task' as const, r }))];
+  return rows.sort((a, b) => (a.r.level === b.r.level ? 0 : a.r.level === 'error' ? -1 : 1));
+}
+
+/** A need's title: its task, or the login's harnesses and environment. */
+export const needTitle = (n: NeedRow): string => (n.kind === 'task' ? n.r.task.name : n.r.login.name);
+/** When its problem started: the task's run, or the run or chat that failed on the login. */
+export const needAt = (n: NeedRow): number | null => (n.kind === 'task' ? n.r.at : (n.r.login.failedAt ?? null));
+
 interface Props {
   attention: AttentionRow[];
+  /** The Claude Code logins that need the user. */
+  logins: LoginRow[];
   running: RunningRow[];
   /** Remote Control's open conversations; null while it is stopped (no section shows). */
   remote: RemoteConversation[] | null;
@@ -54,35 +71,49 @@ interface Props {
   onPick: (pick: DashboardPick) => void;
   /** Double-click or Enter: select the task and show one of its tabs. */
   onOpen: (taskId: string, tab: DetailTab) => void;
-  onClearAttention: (rows: AttentionRow[]) => void;
+  onClearAttention: (rows: AttentionRow[], logins: LoginRow[]) => void;
 }
 
 /** What opening a dashboard row does (double-click or Enter; a tap on a phone). */
+/** Log In: Claude Code's own login, in a terminal window. */
+export const logIn = (r: LoginRow): void =>
+  void window.looper.logins.logIn(r.login.environmentId, r.login.harnessIds[0]).catch((e) => void window.looper.showError((e as Error).message));
+
 export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => void) {
+  // A waiting or failed run opens in its run window, where its question is answered and guidance sent.
+  const attention = (r: AttentionRow) => {
+    const runId = r.runId ?? r.lastRunId;
+    if (runId) void window.looper.openMessages(r.task.id, runId);
+    else onOpen(r.task.id, 'runs');
+  };
   return {
-    // A waiting or failed run opens in its run window, where its question is answered and guidance sent.
-    attention: (r: AttentionRow) => {
-      const runId = r.runId ?? r.lastRunId;
-      if (runId) void window.looper.openMessages(r.task.id, runId);
-      else onOpen(r.task.id, 'runs');
-    },
+    attention,
     running: (r: RunningRow) => void window.looper.openMessages(r.task.id, r.runId),
     // An open conversation opens in a Looper terminal window.
     remote: (c: RemoteConversation) => void window.looper.remote.open(c.id),
     recent: (r: RecentRun) => void window.looper.openMessages(r.taskId, r.runId),
+    need: (n: NeedRow) => (n.kind === 'task' ? attention(n.r) : logIn(n.r)),
   };
+}
+
+/** A need's right-click menu (a long press on a phone): its task's, or Log In. */
+export function showNeedMenu(n: NeedRow, runtimes: Record<string, TaskRuntime>): void {
+  if (n.kind === 'task') showTaskMenu(n.r.task, runtimes[n.r.task.id]);
+  else showLoginMenu(() => logIn(n.r));
 }
 
 export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
 
 /** What the main window shows when no task is selected. */
-export function Dashboard({ attention, running, remote, chats, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
+export function Dashboard({ attention, logins, running, remote, chats, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
   // Only names the day of a time: the running time ticks in its own component.
   const now = Date.now();
   const pickKey = (p: DashboardPick) => `${p.taskId}-${p.runId ?? 'last'}`;
   const pickedIn = (list: DashboardPick['list']) => (pick?.list === list ? pickKey(pick) : null);
 
-  const attentionPick = (r: AttentionRow): DashboardPick => ({ list: 'attention', taskId: r.task.id, runId: r.runId });
+  const needs = needRows(attention, logins);
+  const needPick = (n: NeedRow): DashboardPick =>
+    n.kind === 'task' ? { list: 'attention', taskId: n.r.task.id, runId: n.r.runId } : { list: 'login', taskId: n.r.login.key, runId: null };
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
   const opens = dashboardOpeners(onOpen);
   const conversations = remote ?? [];
@@ -97,20 +128,28 @@ export function Dashboard({ attention, running, remote, chats, recent, runtimes,
     { label: 'Started', width: STARTED_WIDTH, num: true, cell: (r) => fmtClock(r.run.startedAt, now) },
     { label: 'Elapsed', width: 100, num: true, cellClass: 'live-only', cell: (r) => <Elapsed since={r.run.startedAt} /> },
   ];
-  const attentionCols: DataCol<AttentionRow>[] = [
+  const attentionCols: DataCol<NeedRow>[] = [
     {
       label: 'Task',
       width: 240,
-      title: (r) => r.task.name,
-      cell: (r) => (
+      title: needTitle,
+      cell: (n) => (
         <>
-          <StatusIcon level={r.level} />
-          {r.task.name}
+          <StatusIcon level={n.r.level} />
+          {needTitle(n)}
         </>
       ),
     },
-    { label: 'Problem', cell: (r) => r.problem, title: (r) => r.problem },
-    { label: 'Run started', width: STARTED_WIDTH, num: true, cell: (r) => (r.at !== null ? fmtClock(r.at, now) : '') },
+    { label: 'Problem', cell: (n) => n.r.problem, title: (n) => n.r.problem },
+    {
+      label: 'Run started',
+      width: STARTED_WIDTH,
+      num: true,
+      cell: (n) => {
+        const at = needAt(n);
+        return at !== null ? fmtClock(at, now) : '';
+      },
+    },
   ];
   const recentCols: DataCol<RecentRun>[] = [
     { label: 'Task', width: 240, cell: (r) => r.taskName, title: (r) => r.taskName },
@@ -159,21 +198,21 @@ export function Dashboard({ attention, running, remote, chats, recent, runtimes,
         <Section
           className="dashboard-section"
           title="Needs attention"
-          action={{ label: 'Clear', disabled: attention.length === 0, run: () => onClearAttention(attention) }}
-          empty={attention.length === 0 && 'Nothing needs attention.'}
+          action={{ label: 'Clear', disabled: needs.length === 0, run: () => onClearAttention(attention, logins) }}
+          empty={needs.length === 0 && 'Nothing needs attention.'}
         >
           <DataTable
             wrapClass="dashboard-list"
             label="Needs attention"
             cols={attentionCols}
-            rows={attention}
-            rowKey={(r) => pickKey(attentionPick(r))}
+            rows={needs}
+            rowKey={(n) => pickKey(needPick(n))}
             idPrefix="dash-attention"
             storageKey="dashboard-attention"
-            selected={pickedIn('attention')}
-            onSelect={(r) => onPick(attentionPick(r))}
-            onOpen={opens.attention}
-            onMenu={(r) => showTaskMenu(r.task, runtimes[r.task.id])}
+            selected={pickedIn('attention') ?? pickedIn('login')}
+            onSelect={(n) => onPick(needPick(n))}
+            onOpen={(n) => opens.need(n)}
+            onMenu={(n) => showNeedMenu(n, runtimes)}
             empty={null}
           />
         </Section>

@@ -443,6 +443,7 @@ describe('the fields lapm asked for', () => {
     const screen = {
       body: [
         { type: 'field', id: 'csv', label: 'Export file', input: 'file', accept: [{ label: 'CSV files', extensions: ['csv'] }] },
+        { type: 'field', id: 'dir', label: 'Folder', input: 'folder' },
         { type: 'text', text: 'line one\nline two' },
       ],
     };
@@ -475,16 +476,21 @@ const readline = require('node:readline');
 console.log('profile noise that is not JSON');
 const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
 let n = 0;
+let init;
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const msg = JSON.parse(line);
   const p = msg.params;
-  if (msg.method === 'initialize') return send({ id: msg.id, result: {} });
+  if (msg.method === 'initialize') {
+    init = p;
+    return send({ id: msg.id, result: {} });
+  }
   if (msg.method === 'pane') return send({ id: msg.id, result: { items: [{ id: process.env.DEMO_ITEM || 'a', label: 'A', view: 'thing', params: { n: ++n } }] } });
   if (msg.method === 'render') {
     if (p.view === 'bad') return send({ id: msg.id, result: { body: [{ type: 'video' }] } });
     return send({ id: msg.id, result: { title: 'Thing ' + p.params.n, body: [{ type: 'text', text: 'hi' }] } });
   }
   if (msg.method === 'event') {
+    if (p.id === 'init') return send({ id: msg.id, result: { value: JSON.stringify(init) } });
     if (p.id === 'boom') return send({ id: msg.id, error: { code: 1, message: 'It broke.' } });
     if (p.id === 'crash') { process.stderr.write('fatal: gone\n'); process.exit(3); }
     if (p.id === 'slow') return setTimeout(() => send({ id: msg.id, result: { value: 'secret-value' } }), 300);
@@ -572,6 +578,8 @@ describe('AddonHost', () => {
     const r = await host.event('demo', { source: { pane: 'things' }, kind: 'reveal', id: 'pw' });
     expect(r).toEqual({ value: 'reveal:pw', actions: [{ type: 'refresh' }] });
     expect(refreshes).toEqual(['demo']);
+    const init = await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'init' });
+    expect(JSON.parse(String(init.value))).toEqual({ protocol: 1, looper: '0.0.0', host: 'linux', dataDir: root });
     await expect(host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'boom' })).rejects.toThrow('It broke.');
   }, 20_000);
 
