@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import { modelWindows } from './model-windows';
-import type { MessageImage, MessagesResult } from '../shared/messages';
+import { eventsMessage, type MessageImage, type MessagesResult } from '../shared/messages';
 import { runShown, type RunFilter } from '../shared/runs';
 import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
@@ -796,6 +796,22 @@ export function createEngine(opts: EngineOptions): Engine {
       remote.detach(chatId);
       saveConversations();
     },
+    // A run of a task opened in a chat is in flight while the chat is open: its related events go to the chat's agent.
+    onOpen: (c) =>
+      scheduler.holdInChat(c.taskId, c.fromRunId, c.id, {
+        deliver: (lines) => chats.send(c.id, eventsMessage(lines), []),
+        idleSince: () => chats.idleSince(c.id),
+        sessionId: () => chats.sessionIdOf(c.id),
+        stop: () => chats.stop(c.id),
+        holdForReport: () => chats.holdForReport(c.id),
+        reportWritten: () => chats.reportWritten(c.id),
+        close: async () => {
+          await chats.close(c.id);
+          hub?.changed();
+        },
+      }),
+    onTalk: (c) => scheduler.chatTalked(c.taskId, c.id),
+    onClosed: (c) => scheduler.releaseChat(c.taskId, c.id, c.sessionId),
   });
 
   const terminalRuns = new TerminalRuns({
@@ -857,7 +873,8 @@ export function createEngine(opts: EngineOptions): Engine {
       settings.view.sessions.showRuns
         ? scheduler.list().flatMap((rt) =>
             rt.runs
-              .filter((r) => r.state === 'running')
+              // A run open in a chat is listed as its chat.
+              .filter((r) => r.state === 'running' && !r.chat)
               .map((r) => ({ id: r.runId, taskId: rt.taskId, startedAt: r.startedAt, held: r.held, question: r.question })),
           )
         : [],
@@ -2083,7 +2100,10 @@ export function createEngine(opts: EngineOptions): Engine {
       const task = taskOrProject(id);
       if (!task) return none;
       const rt = scheduler.get(id);
-      if (rt?.runs.some((r) => r.runId === runId) || rt?.children.some((r) => r.runId === runId)) return none;
+      const active = rt?.runs.find((r) => r.runId === runId);
+      // A run open in a chat: Continue in Chat brings the chat forward.
+      if (active?.chat && active.report !== 'writing') return { ...none, chat: true, compact: true };
+      if (active || rt?.children.some((r) => r.runId === runId)) return none;
       // A delegated agent ran in a folder of its own, which the task's sessions and runs don't open in.
       if (runs.summaries(id).some((s) => s.runId === runId && s.parentRunId)) return none;
       try {

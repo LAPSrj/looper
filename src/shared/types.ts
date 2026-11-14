@@ -807,6 +807,13 @@ export const SettingsSchema = z.object({
           aboveTokens: z.number().int().positive().default(200_000),
         })
         .prefault({}),
+      /** A run continued in a chat goes idle after `minutes` instead of its task's idle limit; the chat then closes. */
+      runIdle: z
+        .object({
+          enabled: z.boolean().default(false),
+          minutes: z.number().positive().default(45),
+        })
+        .prefault({}),
       /** What a compacted conversation sends the agent (shared/compact.ts): tokens for tool results, and the most for the whole text. */
       compaction: z
         .object({
@@ -902,6 +909,18 @@ export interface ActiveRun {
   folder?: string;
   /** A delegated agent that hasn't started yet: why it waits. */
   waiting?: string;
+  /**
+   * A finished run opened in a chat (Continue in Chat): the chat's id. The run
+   * is in flight while the chat is open, and while its agent writes the run's
+   * report after the chat closes.
+   */
+  chat?: string;
+  /**
+   * A run in a chat: `owed` once a message reached the chat's agent, so the
+   * chat's end writes the report; `writing` while it does; `stopped` after
+   * Stop, so the chat's end records the run as stopped, until the next message.
+   */
+  report?: 'owed' | 'writing' | 'stopped';
 }
 
 /**

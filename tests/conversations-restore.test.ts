@@ -89,7 +89,8 @@ describe('conversations across a restart of Looper', { timeout: 30_000 }, () => 
 
   const dataDir = () => tmp('looper-engine-');
   const open = (dir: string, opts: Partial<EngineOptions> = {}): Engine => {
-    const e = createEngine({ dataDir: dir, ...opts });
+    // The fake logs every start: the login check's `claude auth status` would be one.
+    const e = createEngine({ dataDir: dir, authStatus: async () => Promise.reject(new Error('not asked in tests')), ...opts });
     engines.push(e);
     e.start();
     return e;

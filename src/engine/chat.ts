@@ -352,6 +352,12 @@ export interface ChatDeps {
   onRemote?: (chat: { id: string; taskId: string; name: string; cwd: string; dir: string; link: string }) => void;
   /** The chat closed (Close Conversation, or a move to another harness); quitting Looper keeps it for the next start. */
   onClose?: (chatId: string) => void;
+  /** A chat that goes on with a run (Continue in Chat) opened, at Looper's start too. */
+  onOpen?: (chat: { id: string; taskId: string; fromRunId: string }) => void;
+  /** A message for the chat's agent: the user's, or Looper's (related events). */
+  onTalk?: (chat: { id: string; taskId: string }) => void;
+  /** A chat closed for good has ended its processes: `sessionId` is the conversation it went on with. */
+  onClosed?: (chat: { id: string; taskId: string; sessionId?: string }) => void;
 }
 
 /** Claude's stream-json control request that turns Remote Control on (with the name the Claude app lists the session under) or off. */
@@ -583,6 +589,8 @@ class ChatSession {
   private readonly retired = new WeakSet<OffThreadChild>();
   /** A Stop or restart is ending the process: messages wait for the next one. */
   private killing = false;
+  /** The run the chat goes on with is writing its report on the conversation: messages wait until it's written. */
+  private reporting = false;
   /** The conversation to go on with: claude's session, codex's thread. */
   sessionId?: string;
   private codexTurns = 0;
@@ -1071,6 +1079,44 @@ class ChatSession {
     return true;
   }
 
+  /**
+   * When the chat went idle: its agent's last turn ended (or the chat opened),
+   * with nothing running, queued, waiting on the user or on a limit to reset.
+   * Null while it isn't idle.
+   */
+  idleSince(): number | null {
+    if (this.closed || this.killing || this.reporting || this.busy() || this.queued.length > 0 || this.shellCommands.size > 0) return null;
+    if (this.limit && this.autoContinue) return null;
+    return this.turnEndedAt ?? this.startedAt;
+  }
+
+  /**
+   * The run the chat goes on with writes its report on this conversation:
+   * the agent's process ends, and messages wait in the queue until it's
+   * written. False when the chat isn't idle.
+   */
+  async holdForReport(): Promise<boolean> {
+    if (this.idleSince() === null) return false;
+    this.reporting = true;
+    this.acc.addNote('Writing the run’s report.');
+    this.scheduleEmit();
+    if (this.proc) {
+      this.killing = true;
+      await this.kill();
+      this.killing = false;
+    }
+    return true;
+  }
+
+  /** The report is written: whether a message came meanwhile, which goes to the agent now. */
+  reportWritten(): boolean {
+    this.reporting = false;
+    const waited = this.queued.length > 0;
+    this.drainQueue();
+    this.scheduleEmit();
+    return waited;
+  }
+
   /** Whether the harness's process runs now (Claude's lives between turns; Codex's only during one). */
   agentRunning(): boolean {
     return !!this.proc;
@@ -1373,7 +1419,7 @@ class ChatSession {
 
   /** Send what waited, all of it as one message, once the agent isn't working. */
   private drainQueue(): void {
-    if (this.queued.length === 0 || this.killing || this.status === 'working' || this.status === 'ended' || this.closed) return;
+    if (this.queued.length === 0 || this.killing || this.reporting || this.status === 'working' || this.status === 'ended' || this.closed) return;
     const next: Pending = {
       text: this.queued.map((x) => x.text).filter(Boolean).join('\n\n'),
       attachments: this.queued.flatMap((x) => x.attachments),
@@ -1579,18 +1625,20 @@ class ChatSession {
     }
   }
 
-  /** The user's message: to the agent now, or into the queue while it works. */
-  send(text: string, attachments: Attachment[]): void {
+  /** The user's message: to the agent now, or into the queue while it works. False when the chat can't take it. */
+  send(text: string, attachments: Attachment[]): boolean {
     const t = text.trim();
-    if (this.closed || this.status === 'ended' || (!t && attachments.length === 0)) return;
-    if (this.killing || this.status === 'working') {
+    if (this.closed || this.status === 'ended' || (!t && attachments.length === 0)) return false;
+    this.d.onTalk?.({ id: this.id, taskId: this.taskId });
+    if (this.killing || this.reporting || this.status === 'working') {
       this.queued.push({ id: `q${++this.queueSeq}`, text: t, attachments });
       // A tool is running: the agent reads it with that tool's result.
       if (!this.killing && this.toolsRunning.size > 0) this.writeQueued();
       this.scheduleEmit();
-      return;
+      return true;
     }
     this.dispatch({ text: t, attachments });
+    return true;
   }
 
   private dispatch(p: Pending): void {
@@ -2055,6 +2103,7 @@ export class ChatManager {
       void session.close();
       throw err;
     }
+    if (session.fromRunId) this.d.onOpen?.({ id: session.id, taskId: session.taskId, fromRunId: session.fromRunId });
     return session.state();
   }
 
@@ -2089,8 +2138,8 @@ export class ChatManager {
     return [...this.sessions.values()].some((s) => s.taskId === taskId);
   }
 
-  send(id: string, text: string, attachments: Attachment[]): void {
-    this.sessions.get(id)?.send(text, attachments);
+  send(id: string, text: string, attachments: Attachment[]): boolean {
+    return this.sessions.get(id)?.send(text, attachments) ?? false;
   }
 
   messageSubagent(id: string, agentId: string, text: string): void {
@@ -2130,6 +2179,23 @@ export class ChatManager {
     return this.sessions.get(id)?.agentRunning() ?? false;
   }
 
+  idleSince(id: string): number | null {
+    return this.sessions.get(id)?.idleSince() ?? null;
+  }
+
+  async holdForReport(id: string): Promise<boolean> {
+    return (await this.sessions.get(id)?.holdForReport()) ?? false;
+  }
+
+  reportWritten(id: string): boolean {
+    return this.sessions.get(id)?.reportWritten() ?? false;
+  }
+
+  /** The conversation the chat goes on with (claude's session, codex's thread). */
+  sessionIdOf(id: string): string | undefined {
+    return this.sessions.get(id)?.sessionId;
+  }
+
   async configure(id: string, patch: Partial<ChatSettings>): Promise<void> {
     await this.sessions.get(id)?.configure(patch);
   }
@@ -2166,6 +2232,7 @@ export class ChatManager {
     this.sessions.delete(id);
     this.d.onClose?.(id);
     await s.close();
+    this.d.onClosed?.({ id, taskId: s.taskId, ...(s.sessionId ? { sessionId: s.sessionId } : {}) });
   }
 
   /** Remote Control was turned off: every chat goes on without it. */

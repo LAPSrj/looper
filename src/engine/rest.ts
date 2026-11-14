@@ -43,10 +43,12 @@ const WAKE_WINDOW_AFTER_MS = 180_000;
 
 /**
  * A held agent is a parked session waiting for a human: it does not keep the
- * computer awake. With several runs in flight, one busy run is enough.
+ * computer awake, and neither does a run open in a chat (its chat counts on
+ * its own) until its agent writes the report. With several runs in flight,
+ * one busy run is enough.
  */
 export function isBusy(rt: TaskRuntime): boolean {
-  return rt.runs.some((r) => (r.state === 'running' ? !r.held : true));
+  return rt.runs.some((r) => (r.state === 'running' ? !r.held && (!r.chat || r.report === 'writing') : true));
 }
 
 /**

@@ -337,6 +337,23 @@ export function SettingsApp() {
               />
             </FormGroup>
             <FormGroup>
+              <InlineField>
+                <CheckboxField
+                  label="Instead of the task’s idle limit, end a run continued in a chat once it’s idle for"
+                  checked={chats.runIdle.enabled}
+                  onChange={(on) => setChats({ ...chats, runIdle: { ...chats.runIdle, enabled: on } })}
+                />
+                <NumberInput
+                  label="Idle limit for runs in a chat"
+                  suffix="min"
+                  min={1}
+                  disabled={!chats.runIdle.enabled}
+                  value={chats.runIdle.minutes}
+                  onChange={(n) => setChats({ ...chats, runIdle: { ...chats.runIdle, minutes: n } })}
+                />
+              </InlineField>
+            </FormGroup>
+            <FormGroup>
               <CheckboxField
                 label="Ask before sending a message once the cache has expired"
                 checked={chats.confirmExpiredSend.enabled}

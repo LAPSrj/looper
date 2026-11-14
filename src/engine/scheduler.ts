@@ -19,6 +19,7 @@ import { RELATED_ID_FIELD, scheduleOf, watcherOf } from '../shared/types';
 import { cronTz, runWindowOpen } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
+import { isSessionRun } from '../shared/runs';
 import { detectSystemLocale, type HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { readRunSessionId } from './messages';
@@ -129,6 +130,18 @@ const RESUME_GRACE_MS = 20_000;
 const MAX_PENDING_EVENTS = 1000;
 /** Waits before each retry of a scheduled run the machine failed (offline, WSL unavailable); the last repeats. */
 const MACHINE_RETRY_MS = [2, 5, 15, 30].map((min) => min * 60_000);
+/** In a run's folder: the related id it handles, so a chat that opens it again gets that id's events. */
+const RELATED_ID_FILE = 'related-id';
+/** In a run's folder: the session that writes its report after a chat it was opened in closes, kept apart from the run's own conversation. */
+const REPORT_DIR = 'report';
+
+/** What the agent of a chat a run was opened in is told when the chat closes. */
+function reportPrompt(runId: string): string {
+  return (
+    `This conversation went on with Looper's run ${runId}, and it's ending. Write that run's report now, without starting any new work: ` +
+    'run looper-done with the status of the whole run, the work done in this conversation included, then write the report as your final message.'
+  );
+}
 
 /**
  * A scheduled run the machine failed, owed a retry before the next regular
@@ -153,6 +166,31 @@ interface PendingEvents {
   lines: string[];
   /** They came out of a check, which told only once: the run that takes them doesn't run it again. */
   checked?: boolean;
+}
+
+/** What the scheduler needs of the chat a run is open in (Continue in Chat). */
+export interface ChatLink {
+  /** Hand related events to the chat's agent; false when the chat can't take them. */
+  deliver(lines: string[]): boolean;
+  /** When the chat went idle (its agent's turn ended, nothing running or waiting), or null while it isn't. */
+  idleSince(): number | null;
+  /** The conversation the chat goes on with. */
+  sessionId(): string | undefined;
+  /** Stop: the chat's agent ends its turn. */
+  stop(): Promise<void>;
+  /** The agent's process ends so the report can go on with the conversation, and messages wait; false when the chat isn't idle. */
+  holdForReport(): Promise<boolean>;
+  /** The report is written: whether a message came meanwhile. */
+  reportWritten(): boolean;
+  /** Close the chat for good. */
+  close(): Promise<void>;
+}
+
+/** A run open in a chat: the chat, since when the run is open in it, and whether its idle limit is closing it. */
+interface ChatHold {
+  link: ChatLink;
+  heldAt: number;
+  closing?: boolean;
 }
 
 /** How a cycle relates to sendRelatedEvents. */
@@ -246,6 +284,12 @@ export class Scheduler extends EventEmitter {
   private readonly catchUpOwed = new Set<string>();
   /** Watcher tasks whose run window was closed at the last tick; reopening starts watching cold. */
   private readonly windowClosed = new Set<string>();
+  /** Per run opened in a chat, by run id: the chat it's open in. */
+  private readonly chatLinks = new Map<string, ChatHold>();
+  /** Per run open in a chat that Stop stopped: why, for the record once the chat ends. */
+  private readonly chatStops = new Map<string, string>();
+  /** Runs that were open in a chat when Looper quit, by run id, until the chat opens again and takes its run back. */
+  private readonly chatRestores = new Map<string, ActiveRun>();
   private readonly steps: SchedulerSteps;
   private readonly watchers: WatcherPool;
   private readonly now: () => number;
@@ -299,8 +343,13 @@ export class Scheduler extends EventEmitter {
       // Nothing survives a restart: every run the snapshot had in flight is
       // gone. A snapshot without `runs` is stale runtime state, not history.
       for (const run of prev?.runs ?? []) {
+        // A chat survives the restart: it opens again and takes its run back (holdInChat).
+        if (run.chat && run.report !== 'writing') {
+          this.chatRestores.set(run.runId, run);
+          continue;
+        }
         this.record(task.id, run.runId, 'system', 'interrupted', {
-          summary: `looper restarted while ${run.state}`,
+          summary: run.chat ? 'looper restarted while the agent wrote the report' : `looper restarted while ${run.state}`,
         });
       }
       for (const run of prev?.children ?? []) {
@@ -408,7 +457,7 @@ export class Scheduler extends EventEmitter {
     const run = rt?.runs.find((r) => r.runId === runId) ?? rt?.children.find((r) => r.runId === runId);
     const handle = this.agents.get(runId);
     const runTask = this.children.get(runId)?.task ?? task;
-    if (!runTask || run?.state !== 'running') return false;
+    if (!runTask || run?.state !== 'running' || run.chat) return false;
     if (this.waitingRuns.has(runId)) return true;
     return !!handle && (handle.question !== null || this.takesGuidance(runTask));
   }
@@ -428,6 +477,7 @@ export class Scheduler extends EventEmitter {
     if (!trimmed) throw new Error('The guidance is empty.');
     const run = runId ? (rt.runs.find((r) => r.runId === runId) ?? rt.children.find((r) => r.runId === runId)) : newestRun(rt);
     if (!run) throw new Error('This run has already ended. Use Continue with Guidance… to continue its conversation.');
+    if (run.chat) throw new Error('This run goes on in a chat. Write to its agent there.');
     const handle = this.agents.get(run.runId);
     if (run.state !== 'running' || (!handle && !this.waitingRuns.has(run.runId))) throw new Error('The agent of this run has not started yet.');
     if (handle?.answer(trimmed)) {
@@ -481,6 +531,15 @@ export class Scheduler extends EventEmitter {
    * harness without hooks): they stay pending, for this agent or the next run.
    */
   private sendEvents(task: Task, run: ActiveRun, lines: string[]): boolean {
+    // A run open in a chat: they go to the chat's agent as a message. Once it's stopped, or writing the report, they wait for the next run.
+    if (run.chat) {
+      if (run.report === 'writing' || run.report === 'stopped' || !this.chatLinks.get(run.runId)?.link.deliver(lines)) return false;
+      this.record(task.id, run.runId, 'events', 'sent', {
+        summary: `${lines.length} event(s), to chat ${run.chat}`,
+        body: '```\n' + lines.join('\n') + '\n```',
+      });
+      return true;
+    }
     const handle = this.agents.get(run.runId);
     if (run.state !== 'running' || (!handle && !this.waitingRuns.has(run.runId)) || !this.takesGuidance(task)) return false;
     const runDir = this.d.runs.runDir(task.id, run.runId);
@@ -550,6 +609,227 @@ export class Scheduler extends EventEmitter {
       body: text,
     });
     return text;
+  }
+
+  // ---------- runs opened in a chat (Continue in Chat) ----------
+
+  /**
+   * A finished run of a task opened in a chat: it's in flight again while the
+   * chat is open, so the events related to it go to the chat's agent
+   * (`deliver`), and the others wait or start runs as they would while it ran.
+   * A chat's or terminal session's run, a delegated agent's, and a run still
+   * in flight stay as they are.
+   */
+  holdInChat(taskId: string, runId: string, chatId: string, link: ChatLink): void {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt || this.stopping) return;
+    if (rt.runs.some((r) => r.runId === runId) || rt.children.some((r) => r.runId === runId)) return;
+    const summary = this.d.runs.summaries(taskId).find((s) => s.runId === runId);
+    if (!summary || summary.parentRunId || isSessionRun(summary)) return;
+    const saved = this.chatRestores.get(runId);
+    this.chatRestores.delete(runId);
+    let run: ActiveRun;
+    if (saved?.chat === chatId) run = { ...saved, state: 'running', held: false, question: null };
+    else {
+      let relatedId: string | undefined;
+      try {
+        relatedId = fs.readFileSync(path.join(this.d.runs.runDir(taskId, runId), RELATED_ID_FILE), 'utf8') || undefined;
+      } catch {
+        /* the run handled no related id */
+      }
+      run = { runId, state: 'running', held: false, question: null, startedAt: this.now(), trigger: 'manual', chat: chatId, ...(relatedId !== undefined ? { relatedId } : {}) };
+    }
+    rt.runs.push(run);
+    this.chatLinks.set(runId, { link, heldAt: this.now() });
+    this.d.log.info(`[${taskId}] run ${runId} goes on in chat ${chatId}`);
+    this.recompute(rt);
+    this.emitRuntime(rt);
+    this.persist();
+    this.flushEvents(task);
+  }
+
+  /**
+   * A message reached the agent of the chat a run is open in: the chat's end
+   * writes the run's report. After Stop, it takes the run up again.
+   */
+  chatTalked(taskId: string, chatId: string): void {
+    const run = this.runtimes.get(taskId)?.runs.find((r) => r.chat === chatId);
+    if (!run || run.report === 'owed' || run.report === 'writing') return;
+    run.report = 'owed';
+    this.chatStops.delete(run.runId);
+    this.persist();
+  }
+
+  /**
+   * The chat a run was open in closed. After Stop the run ends as stopped.
+   * When a message reached its agent, the agent writes the run's report in
+   * the background, going on with the chat's conversation (`sessionId`), and
+   * the run ends with it. Otherwise the run ends as it was before the chat
+   * opened it.
+   */
+  releaseChat(taskId: string, chatId: string, sessionId: string | undefined): void {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    const run = rt?.runs.find((r) => r.chat === chatId);
+    if (!rt || !run || run.report === 'writing') return;
+    this.chatLinks.delete(run.runId);
+    if (task && run.report === 'stopped') {
+      this.endStopped(task, rt, run);
+      return;
+    }
+    if (!task || run.report !== 'owed' || !sessionId || this.stopping) {
+      this.dropRun(rt, run.runId);
+      return;
+    }
+    run.report = 'writing';
+    this.emitRuntime(rt);
+    this.persist();
+    void this.writeReport(task, rt, run, sessionId);
+  }
+
+  /**
+   * The chats of the task's runs that have been idle past the limit close:
+   * Settings → Chats' idle limit for runs in a chat, else the task's own.
+   * A chat whose run owes its report has the agent write it first.
+   */
+  private idleChats(task: Task, rt: TaskRuntime): void {
+    const { runIdle } = this.d.settings.chats;
+    const limitMs = (runIdle.enabled ? runIdle.minutes : task.agent.idleGraceMin) * 60_000;
+    for (const run of rt.runs) {
+      const held = this.chatLinks.get(run.runId);
+      if (!run.chat || !held || held.closing || run.report === 'writing') continue;
+      const since = held.link.idleSince();
+      if (since === null || this.now() - Math.max(since, held.heldAt) < limitMs) continue;
+      held.closing = true;
+      this.d.log.info(`[${task.id}] chat ${run.chat} of run ${run.runId} reached its idle limit`);
+      void this.idleOut(task, rt, run, held).catch((e: Error) => this.d.log.error(`[${task.id}] cannot close chat ${run.chat}: ${e.message}`));
+    }
+  }
+
+  private async idleOut(task: Task, rt: TaskRuntime, run: ActiveRun, held: ChatHold): Promise<void> {
+    const { link } = held;
+    const sessionId = link.sessionId();
+    // Stopped, or nothing said: the chat's close ends the run (releaseChat).
+    if (run.report !== 'owed' || !sessionId) return link.close();
+    run.report = 'writing';
+    this.emitRuntime(rt);
+    this.persist();
+    if (!(await link.holdForReport())) {
+      // A message came first: the chat goes on, and its next idle spell counts.
+      run.report = 'owed';
+      held.closing = false;
+      this.emitRuntime(rt);
+      this.persist();
+      return;
+    }
+    await this.writeReport(task, rt, run, sessionId);
+    // A message that came while the report was written takes the run up again, in the same chat.
+    if (link.reportWritten()) {
+      this.holdInChat(task.id, run.runId, run.chat!, link);
+      this.chatTalked(task.id, run.chat!);
+    } else await link.close();
+  }
+
+  /** Stop on a run open in a chat, and the chat ended: the run ends as stopped, without a report. */
+  private endStopped(task: Task, rt: TaskRuntime, run: ActiveRun): void {
+    const reason = this.chatStops.get(run.runId) ?? 'stopped by user';
+    this.chatStops.delete(run.runId);
+    this.record(task.id, run.runId, 'system', 'started', { summary: `went on in chat ${run.chat}`, detail: { chat: run.chat } });
+    this.record(task.id, run.runId, 'system', 'stopped', { summary: reason });
+    this.record(task.id, run.runId, 'result', 'stopped', { summary: reason });
+    this.finishCycle(task.id, rt, run.runId, false, 'stopped', reason);
+  }
+
+  /** A run open in a chat ends as it was: nothing is recorded, and the task's last result stays. */
+  private dropRun(rt: TaskRuntime, runId: string): void {
+    this.chatLinks.delete(runId);
+    this.chatStops.delete(runId);
+    const at = rt.runs.findIndex((r) => r.runId === runId);
+    if (at < 0) return;
+    rt.runs.splice(at, 1);
+    this.recompute(rt);
+    const fresh = this.d.tasks.get(rt.taskId);
+    if (!fresh) {
+      if (rt.runs.length === 0) this.forget(rt.taskId);
+    } else if (rt.runs.length === 0) {
+      this.park(fresh, rt, rt.lastDetail ?? '');
+    }
+    this.emitRuntime(rt);
+    this.persist();
+  }
+
+  /**
+   * The report of a run whose chat ends: a headless session goes on with
+   * the chat's conversation and ends with looper-done and the report, as the
+   * run's own agent would. Its files are in the run's REPORT_DIR, so the run's
+   * conversation stays the one it shows.
+   */
+  private async writeReport(task: Task, rt: TaskRuntime, run: ActiveRun, sessionId: string): Promise<void> {
+    const { runId } = run;
+    const runDir = path.join(this.d.runs.runDir(task.id, runId), REPORT_DIR);
+    const wasCompleted = !!task.completedAt;
+    const stopper = { controller: new AbortController(), reason: 'stopped by user' };
+    this.cycleStops.set(runId, stopper);
+    let errored = false;
+    let network = false;
+    let environment = false;
+    let outcome: RunResult = 'error';
+    let detail = '';
+    let retryAtMs: number | undefined;
+    this.record(task.id, runId, 'system', 'started', { summary: `went on in chat ${run.chat}; writing the report`, detail: { chat: run.chat } });
+    try {
+      fs.rmSync(runDir, { recursive: true, force: true });
+      fs.mkdirSync(path.join(runDir, 'bin'), { recursive: true });
+      // In the background, and only the report: no terminal to hold for a human, no agents of its own, no context restart.
+      const reportTask: Task = {
+        ...task,
+        agent: { ...task.agent, mode: 'headless', contextLimitK: undefined, delegate: { ...task.agent.delegate, allowed: false } },
+      };
+      const ctx: RunContext = {
+        task: reportTask,
+        runId,
+        runDir,
+        target: createTarget(task, { host: this.d.host, settings: this.d.settings }),
+        settings: this.d.settings,
+        host: this.d.host,
+        log: this.d.log,
+        dataDir: this.d.dataDir,
+        signal: stopper.controller.signal,
+        promptOverride: reportPrompt(runId),
+        agentSession: { id: sessionId, resume: true },
+        vars: { task: task.name, taskId: task.id, runId, trigger: run.trigger },
+      };
+      this.record(task.id, runId, 'agent', 'started', { summary: 'writing the report', body: agentPrompt(ctx) });
+      const end = await this.runAgent(reportTask, rt, ctx);
+      if (end.login) this.d.onLogin?.(task, false);
+      else if (!end.network && !end.environment && end.reason !== 'stopped') this.d.onLogin?.(task, true);
+      outcome = end.doneStatus ?? end.reason;
+      this.record(task.id, runId, 'agent', outcome, {
+        durationMs: end.durationMs,
+        exitCode: end.exitCode,
+        network: end.network,
+        environment: end.environment,
+      });
+      if (end.headline || end.body) this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
+      errored = end.reason === 'error' || end.doneStatus === 'error' || !!end.network || !!end.environment;
+      network = !!end.network;
+      environment = !!end.environment;
+      detail = end.headline ?? '';
+      retryAtMs = end.retryAtMs;
+      this.applyCompleteSignal(task, runId, runDir, end);
+    } catch (e) {
+      errored = true;
+      environment = looksLikeEnvironmentError(errMsg(e));
+      detail = errMsg(e);
+      this.d.log.error(`[${task.id}] the report of run ${runId} failed: ${errMsg(e)}`);
+      this.record(task.id, runId, 'system', 'error', { error: errMsg(e), environment: environment || undefined });
+    } finally {
+      this.agents.delete(runId);
+      this.cycleStops.delete(runId);
+      this.chatLinks.delete(runId);
+      this.finishCycle(task.id, rt, runId, errored, outcome, detail, retryAtMs, network, wasCompleted, false, environment);
+    }
   }
 
   // ---------- delegated agents (looper-delegate) ----------
@@ -1106,8 +1386,20 @@ export class Scheduler extends EventEmitter {
    * agent is ended. Without a run id the newest run in flight is stopped.
    */
   async stopTask(taskId: string, reason = 'stopped by user', runId?: string): Promise<boolean> {
-    const target = runId ?? newestRun(this.runtimes.get(taskId))?.runId;
+    const rt = this.runtimes.get(taskId);
+    const target = runId ?? newestRun(rt)?.runId;
     if (!target) return false;
+    // A run open in a chat: its chat's agent ends its turn, and the chat stays for a correction. If none comes before
+    // the chat ends (its idle limit, or Close), the run ends as stopped.
+    const inChat = rt?.runs.find((r) => r.runId === target && r.chat && r.report !== 'writing');
+    if (rt && inChat) {
+      inChat.report = 'stopped';
+      this.chatStops.set(target, reason);
+      this.emitRuntime(rt);
+      this.persist();
+      await this.chatLinks.get(target)?.link.stop();
+      return true;
+    }
     const h = this.agents.get(target);
     if (h) {
       await h.stop('stopped', reason);
@@ -1134,7 +1426,8 @@ export class Scheduler extends EventEmitter {
     this.watchers.suspend();
     for (const rt of this.runtimes.values()) {
       for (const run of [...rt.runs]) {
-        if (run.held) continue;
+        // A run open in a chat isn't the slot's work: its chat handles the sleep.
+        if (run.held || run.chat) continue;
         this.sleptRuns.add(run.runId);
         this.sleepOwed.add(rt.taskId);
         void this.stopTask(rt.taskId, SLEEP_STOP_REASON, run.runId);
@@ -1300,7 +1593,11 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'tasks', tasks: this.d.tasks.list() });
     if (kind === 'remove') {
       const gone = this.runtimes.get(task.id);
-      for (const run of [...(gone?.runs ?? [])]) void this.stopTask(task.id, 'task removed', run.runId);
+      // A run open in a chat has no task left to end as: it's let go, and the chat goes on as a chat.
+      for (const run of [...(gone?.runs ?? [])]) {
+        if (run.chat && run.report !== 'writing') this.dropRun(gone!, run.runId);
+        else void this.stopTask(task.id, 'task removed', run.runId);
+      }
       void this.watchers.stop(task.id);
       this.pendingEvents.delete(task.id);
       this.catchUpOwed.delete(task.id);
@@ -1494,6 +1791,7 @@ export class Scheduler extends EventEmitter {
       const rt = this.runtimes.get(task.id);
       if (!rt) continue;
       if (rt.children.length) this.pumpChildren(rt);
+      if (rt.runs.some((r) => r.chat)) this.idleChats(task, rt);
       // The schedule's end date, checked before the due-slot guard so it also
       // reaches a task that is paused or disabled but still scheduled.
       if (this.scheduleEnded(task, now)) {
@@ -2020,6 +2318,14 @@ export class Scheduler extends EventEmitter {
             );
           }
         }
+        const handled = rt.runs.find((r) => r.runId === runId)?.relatedId;
+        if (handled !== undefined) {
+          try {
+            writeText(path.join(runDir, RELATED_ID_FILE), handled);
+          } catch (e) {
+            this.d.log.error(`[${task.id}] cannot write the run's related id: ${errMsg(e)}`);
+          }
+        }
         this.record(task.id, runId, 'agent', 'started', { summary: checkSummary, body: agentPrompt(ctx) });
         if (task.notifications.agentStart) {
           this.notify(task, runId, 'agent-start', checkSummary ? `Agent started: ${checkSummary}` : 'Agent started');
@@ -2237,11 +2543,7 @@ export class Scheduler extends EventEmitter {
     const fresh = this.d.tasks.get(taskId);
     if (!fresh) {
       // The task was deleted mid-cycle; drop its runtime once nothing is left.
-      if (rt.runs.length === 0) {
-        this.runtimes.delete(taskId);
-        this.limitWaits.delete(taskId);
-        this.sleepOwed.delete(taskId);
-      }
+      if (rt.runs.length === 0) this.forget(taskId);
       this.persist();
       return;
     }
@@ -2262,51 +2564,8 @@ export class Scheduler extends EventEmitter {
       this.limitWaits.set(taskId, waitUntil);
       this.d.log.warn(`[${taskId}] usage limit reached; next attempt at ${new Date(waitUntil).toISOString()}`);
     }
-    if (rt.runs.length === 0) {
-      const owedSleep = this.sleepOwed.delete(taskId);
-      const waitUntil = this.limitWaits.get(taskId);
-      this.limitWaits.delete(taskId);
-      // Taken here and put back only when the retry is scheduled below.
-      const machineRetry = this.machineRetries.get(taskId);
-      this.machineRetries.delete(taskId);
-      if (!fresh.enabled) {
-        rt.state = parkedState(fresh);
-        rt.nextRunAt = null;
-      } else if (rt.pausedReason) {
-        rt.state = 'paused';
-        rt.nextRunAt = null;
-      } else if (waitUntil !== undefined && waitUntil > now) {
-        rt.state = 'idle';
-        rt.nextRunAt = waitUntil;
-      } else if (owedSleep) {
-        rt.state = 'idle';
-        // The sleep killed the run's work, so the task goes due again a grace
-        // from now. Reached at a suspend, that lands shortly after the wake:
-        // the timer only runs again once the machine is back up, and
-        // `onResume` re-defers whatever the sleep left overdue.
-        rt.nextRunAt = now + RESUME_GRACE_MS;
-      } else {
-        rt.state = 'idle';
-        // A slot that came due while the task was blocked by an environment or
-        // harness limit is still owed; anything else is the next cron slot.
-        const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && !!scheduleOf(fresh);
-        if (!owed) rt.nextRunAt = this.computeNext(fresh, now);
-        // The machine failed a scheduled run: retry it on a widening wait,
-        // as long as that comes before the next regular slot.
-        if (machineRetry) {
-          const at = now + MACHINE_RETRY_MS[Math.min(machineRetry.attempt, MACHINE_RETRY_MS.length) - 1];
-          if (rt.nextRunAt === null || at < rt.nextRunAt) {
-            this.machineRetries.set(taskId, machineRetry);
-            rt.nextRunAt = at;
-            const when = formatDateTime(at, detectSystemLocale());
-            rt.lastDetail = `${detail}; retrying at ${when}`;
-            this.d.log.info(`[${taskId}] the machine failed the run; retry ${machineRetry.attempt} at ${new Date(at).toISOString()}`);
-          }
-        }
-      }
-    } else if (limitWait && rt.nextRunAt !== null) {
-      rt.nextRunAt = Math.max(rt.nextRunAt, retryAtMs!);
-    }
+    if (rt.runs.length === 0) this.park(fresh, rt, detail);
+    else if (limitWait && rt.nextRunAt !== null) rt.nextRunAt = Math.max(rt.nextRunAt, retryAtMs!);
     this.notifyCycleEnd(fresh, runId, {
       outcome,
       detail,
@@ -2320,6 +2579,60 @@ export class Scheduler extends EventEmitter {
     });
     this.emitRuntime(rt);
     this.persist();
+  }
+
+  /** The task's last run ended: it rests (idle, paused, disabled) until its next run, and `detail` is that run's. */
+  private park(task: Task, rt: TaskRuntime, detail: string): void {
+    const taskId = task.id;
+    const now = this.now();
+    const owedSleep = this.sleepOwed.delete(taskId);
+    const waitUntil = this.limitWaits.get(taskId);
+    this.limitWaits.delete(taskId);
+    // Taken here and put back only when the retry is scheduled below.
+    const machineRetry = this.machineRetries.get(taskId);
+    this.machineRetries.delete(taskId);
+    if (!task.enabled) {
+      rt.state = parkedState(task);
+      rt.nextRunAt = null;
+    } else if (rt.pausedReason) {
+      rt.state = 'paused';
+      rt.nextRunAt = null;
+    } else if (waitUntil !== undefined && waitUntil > now) {
+      rt.state = 'idle';
+      rt.nextRunAt = waitUntil;
+    } else if (owedSleep) {
+      rt.state = 'idle';
+      // The sleep killed the run's work, so the task goes due again a grace
+      // from now. Reached at a suspend, that lands shortly after the wake:
+      // the timer only runs again once the machine is back up, and
+      // `onResume` re-defers whatever the sleep left overdue.
+      rt.nextRunAt = now + RESUME_GRACE_MS;
+    } else {
+      rt.state = 'idle';
+      // A slot that came due while the task was blocked by an environment or
+      // harness limit is still owed; anything else is the next cron slot.
+      const owed = rt.nextRunAt !== null && rt.nextRunAt <= now && !!scheduleOf(task);
+      if (!owed) rt.nextRunAt = this.computeNext(task, now);
+      // The machine failed a scheduled run: retry it on a widening wait,
+      // as long as that comes before the next regular slot.
+      if (machineRetry) {
+        const at = now + MACHINE_RETRY_MS[Math.min(machineRetry.attempt, MACHINE_RETRY_MS.length) - 1];
+        if (rt.nextRunAt === null || at < rt.nextRunAt) {
+          this.machineRetries.set(taskId, machineRetry);
+          rt.nextRunAt = at;
+          const when = formatDateTime(at, detectSystemLocale());
+          rt.lastDetail = `${detail}; retrying at ${when}`;
+          this.d.log.info(`[${taskId}] the machine failed the run; retry ${machineRetry.attempt} at ${new Date(at).toISOString()}`);
+        }
+      }
+    }
+  }
+
+  /** A deleted task's last run ended: its runtime goes. */
+  private forget(taskId: string): void {
+    this.runtimes.delete(taskId);
+    this.limitWaits.delete(taskId);
+    this.sleepOwed.delete(taskId);
   }
 
   /**

@@ -29,7 +29,13 @@ export interface RunFilter {
 
 const PRIORITY: string[] = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
 
-function bestResult(records: RunRecord[]): string {
+/** The record of a run opened in a chat starting its report: how the run went is decided from here on. */
+export function startsOver(r: RunRecord): boolean {
+  return r.phase === 'system' && r.result === 'started' && typeof r.detail?.chat === 'string';
+}
+
+function bestResult(all: RunRecord[]): string {
+  const records = all.slice(Math.max(0, all.findLastIndex(startsOver)));
   // A start means the run is in progress only until a later record ends a step, such as the classifier's noop.
   const lastEnd = records.findLastIndex((r) => r.result !== 'started' && PRIORITY.includes(r.result));
   const counted = records.filter((r, i) => r.phase !== 'result' && (r.result !== 'started' || i > lastEnd));
@@ -127,6 +133,7 @@ export class RunSummaries {
     if (isBy) a.by = { parentRunId: r.detail!.parentRunId as string, ...(typeof r.detail!.title === 'string' ? { title: r.detail!.title } : {}) };
     const step = r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question' && (r.phase !== 'delegate' || isBy);
     if (step) {
+      if (startsOver(r)) a.results.clear();
       if (r.result !== 'started' && PRIORITY.includes(r.result)) a.startedAfterEnd = false;
       else if (r.result === 'started' && r.phase !== 'result') a.startedAfterEnd = true;
       if (r.phase !== 'result' && r.result !== 'started') a.results.add(r.result);

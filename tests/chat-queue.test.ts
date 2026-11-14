@@ -92,7 +92,8 @@ async function turn() {
 async function setUp(): Promise<{ engine: Engine; dir: string; dataDir: string; chatId: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
   const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
-  const engine = createEngine({ dataDir });
+  // The fake logs every start: the login check's `claude auth status` would be one.
+  const engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) });
   engine.start();
   engine.updateSettings({
     environments: engine.settings.environments.map((e) =>
@@ -327,7 +328,7 @@ describe("a chat's harness", { timeout: 30_000 }, () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
     const ownDir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
     const otherDir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
-    engine = createEngine({ dataDir });
+    engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) });
     engine.start();
     engine.updateSettings({
       environments: engine.settings.environments.map((e) =>

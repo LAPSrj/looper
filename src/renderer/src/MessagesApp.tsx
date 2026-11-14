@@ -45,7 +45,8 @@ export function MessagesApp({
 
   const run = runtime?.runs.find((r) => r.runId === runId) ?? runtime?.children.find((r) => r.runId === runId);
   const running = run?.state === 'running' || run?.state === 'classifying';
-  const agentRunning = run?.state === 'running';
+  // A run open in a chat takes its messages in the chat.
+  const agentRunning = run?.state === 'running' && !run.chat;
 
   return (
     <div className="messages-app">

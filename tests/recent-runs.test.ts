@@ -59,6 +59,22 @@ describe('groupRuns', () => {
     ]);
     expect(run.result).toBe('started');
   });
+
+  it('names a run opened in a chat by the report it wrote after, not by how it went before', () => {
+    const before = [
+      rec('t1', 'a', '2026-10-20T10:00:00Z', 'agent', 'error'),
+      rec('t1', 'a', '2026-10-20T10:00:00Z', 'result', 'error', 'broke'),
+      { ...rec('t1', 'a', '2026-10-20T11:00:00Z', 'system', 'started', 'went on in chat c1; writing the report'), detail: { chat: 'c1' } },
+    ];
+    // Until the new report comes, the old headline stays.
+    expect(groupRuns(before)[0]).toMatchObject({ result: 'started', details: 'broke' });
+    const [run] = groupRuns([
+      ...before,
+      rec('t1', 'a', '2026-10-20T11:00:05Z', 'agent', 'success'),
+      rec('t1', 'a', '2026-10-20T11:00:05Z', 'result', 'success', 'fixed it'),
+    ]);
+    expect([run.result, run.details]).toEqual(['success', 'fixed it']);
+  });
 });
 
 /** Random records over a few runs, in time order (some sharing a second), with every phase and result a summary reads. */
@@ -79,6 +95,8 @@ function randomRecords(seed: number, count: number, shuffled = false): RunRecord
     if (rnd() < 0.3) r.durationMs = Math.floor(rnd() * 1000);
     if (rnd() < 0.3) r.detail = { costUsd: rnd() };
     if (r.phase === 'delegate' && rnd() < 0.6) r.detail = { parentRunId: `p${i}`, ...(rnd() < 0.5 ? { title: `t${i}` } : {}) };
+    // A run opened in a chat starting its report.
+    if (rnd() < 0.05) Object.assign(r, { phase: 'system', result: 'started', detail: { chat: `c${i}` } });
     out.push(r);
   }
   return shuffled ? out.sort(() => rnd() - 0.5) : out;

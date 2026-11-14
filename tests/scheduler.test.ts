@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Scheduler } from '../src/engine/scheduler';
+import { Scheduler, type ChatLink } from '../src/engine/scheduler';
 import { Logger } from '../src/engine/log';
 import { RunStore } from '../src/engine/store/runs';
 import { StateStore } from '../src/engine/store/state';
@@ -2170,6 +2170,335 @@ describe('related events', () => {
       expect(() => h.sched.receiveEvent('t1', line('t1'))).toThrow(/disabled/);
       expect(() => h.sched.receiveEvent('nope', line('t1'))).toThrow(/unknown task/);
     });
+  });
+
+  describe('a run opened in a chat', () => {
+    const manualTask = (maxConcurrentRuns = 1) => h.tasks.patch('t1', { maxConcurrentRuns, trigger: { mode: 'manual', sendRelatedEvents: true } });
+    /** A finished run that handled related id `t1` and ended with `end`. */
+    async function finishedRun(end = agentEnd('done', 'first')): Promise<string> {
+      manualTask();
+      h.checks.push(check('act'));
+      h.sched.receiveEvent('t1', line('t1'));
+      await flush();
+      const live = h.liveAgent!;
+      live.end(end);
+      await flush();
+      return live.runId;
+    }
+    /** The chat a run is open in, as the test drives it: what it was handed, and how it answers. */
+    interface FakeChat {
+      delivered: string[][];
+      takes: boolean;
+      /** When it went idle; null while busy. */
+      idle: number | null;
+      session: string | undefined;
+      stops: number;
+      holds: number;
+      /** A message came while the report was written. */
+      wroteMeanwhile: boolean;
+      closed: boolean;
+      link: ChatLink;
+    }
+    /** Open the run in chat `c1`, idle from now. A message to it (events too) reaches the scheduler as the chat's would. */
+    function open(runId: string, chatId = 'c1'): FakeChat {
+      const c = { delivered: [], takes: true, idle: h.clock.now, session: 'sess-chat', stops: 0, holds: 0, wroteMeanwhile: false, closed: false } as unknown as FakeChat;
+      c.link = {
+        deliver: (lines) => {
+          if (!c.takes) return false;
+          c.delivered.push(lines);
+          h.sched.chatTalked('t1', chatId);
+          return true;
+        },
+        idleSince: () => c.idle,
+        sessionId: () => c.session,
+        stop: async () => void c.stops++,
+        holdForReport: async () => {
+          c.holds++;
+          return true;
+        },
+        reportWritten: () => c.wroteMeanwhile,
+        close: async () => {
+          c.closed = true;
+          h.sched.releaseChat('t1', chatId, c.session);
+        },
+      };
+      h.sched.holdInChat('t1', runId, chatId, c.link);
+      return c;
+    }
+    const minutes = async (n: number) => {
+      h.clock.now += n * 60_000;
+      await h.tickN(1);
+    };
+
+    it('is running while the chat is open, gets its related events, and the others wait', async () => {
+      const runId = await finishedRun();
+      const { delivered } = open(runId);
+      expect(runs()).toMatchObject([{ runId, state: 'running', chat: 'c1', relatedId: 't1' }]);
+      expect(h.sched.get('t1')!.state).toBe('running');
+      h.sched.receiveEvent('t1', line('t1', 2));
+      expect(delivered).toEqual([[line('t1', 2)]]);
+      expect(eventRecords().at(-1)).toMatchObject({ runId, result: 'sent' });
+      h.sched.receiveEvent('t1', line('t2'));
+      await h.tickN(1);
+      expect(h.agentStarted).toBe(1);
+      expect(delivered).toHaveLength(1);
+      expect(h.sched.canGuideRun('t1', runId)).toBe(false);
+      expect(() => h.sched.sendGuidance('t1', runId, 'hi')).toThrow(/in a chat/);
+      expect(() => h.sched.continueRun('t1', runId, 'hi')).toThrow(/still active/);
+    });
+
+    it('closed with nothing said, ends as it was, and what waited starts its run', async () => {
+      const runId = await finishedRun();
+      open(runId);
+      h.sched.receiveEvent('t1', line('t2'));
+      const before = records().length;
+      h.sched.releaseChat('t1', 'c1', 'sess-chat');
+      expect(runs()).toEqual([]);
+      expect(h.sched.get('t1')).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'done', lastDetail: 'first' });
+      expect(records()).toHaveLength(before);
+      h.checks.push(check('act'));
+      await h.tickN(1);
+      expect(runs()[0].relatedId).toBe('t2');
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('closed after a message, writes the report in the background, and the run ends with it', async () => {
+      const runId = await finishedRun(agentEnd('error', 'broke'));
+      expect(h.runs.summaries('t1')[0].result).toBe('error');
+      open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      h.sched.releaseChat('t1', 'c1', 'sess-chat');
+      await flush();
+      expect(runs()).toMatchObject([{ runId, report: 'writing' }]);
+      expect(h.agentSessions.at(-1)).toEqual({ id: 'sess-chat', resume: true });
+      expect(agentStarts().at(-1)!.body).toContain(`went on with Looper's run ${runId}`);
+      h.liveAgent!.end({ ...agentEnd('done', 'fixed it', '# Report'), doneStatus: 'success' } as AgentEnd);
+      await flush();
+      expect(runs()).toEqual([]);
+      expect(h.sched.get('t1')).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'success', lastDetail: 'fixed it' });
+      expect(records().at(-1)).toMatchObject({ runId, phase: 'result', result: 'success', body: '# Report' });
+      // The report decides how the run went, not the error before it.
+      expect(h.runs.summaries('t1')[0]).toMatchObject({ runId, result: 'success', details: 'fixed it' });
+      expect(fs.existsSync(path.join(dirOf(runId), 'report', 'bin'))).toBe(true);
+    });
+
+    it('waits while the report is written: its events and Stop reach the report, not the chat', async () => {
+      const runId = await finishedRun();
+      const { delivered } = open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      h.sched.releaseChat('t1', 'c1', 'sess-chat');
+      await flush();
+      h.sched.receiveEvent('t1', line('t1', 2));
+      expect(delivered).toEqual([]);
+      await h.sched.stopTask('t1');
+      await flush();
+      expect(h.sched.get('t1')!.lastResult).toBe('stopped');
+      h.checks.push(check('act'));
+      await h.tickN(1);
+      expect(agentStarts().at(-1)!.body).toContain(line('t1', 2));
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it("Stop ends the chat's turn and keeps the chat; its end records the run as stopped, without a report", async () => {
+      const runId = await finishedRun(agentEnd('error', 'broke'));
+      const c = open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      expect(await h.sched.stopTask('t1')).toBe(true);
+      expect(c.stops).toBe(1);
+      expect(runs()).toMatchObject([{ runId, state: 'running', report: 'stopped' }]);
+      // A stopped run takes no more events: they wait for the next run.
+      h.sched.receiveEvent('t1', line('t1', 2));
+      expect(c.delivered).toEqual([]);
+      await c.link.close();
+      expect(runs()).toEqual([]);
+      expect(h.sched.get('t1')).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'stopped', lastDetail: 'stopped by user' });
+      expect(h.runs.summaries('t1')[0]).toMatchObject({ runId, result: 'stopped', details: 'stopped by user' });
+      expect(h.agentStarted).toBe(1);
+      h.checks.push(check('act'));
+      await h.tickN(1);
+      expect(agentStarts().at(-1)!.body).toContain(line('t1', 2));
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it('a message after Stop takes the run up again, and the chat’s end writes the report', async () => {
+      const runId = await finishedRun();
+      open(runId);
+      await h.sched.stopTask('t1');
+      h.sched.chatTalked('t1', 'c1');
+      expect(runs()[0].report).toBe('owed');
+      h.sched.releaseChat('t1', 'c1', 'sess-chat');
+      await flush();
+      expect(h.agentSessions.at(-1)).toEqual({ id: 'sess-chat', resume: true });
+      h.liveAgent!.end({ ...agentEnd('done', 'redone'), doneStatus: 'success' } as AgentEnd);
+      await flush();
+      expect(h.sched.get('t1')!.lastResult).toBe('success');
+    });
+
+    it("at the task's idle limit, the agent writes the report, then the chat closes", async () => {
+      const runId = await finishedRun();
+      const c = open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      await minutes(2);
+      expect(c.holds).toBe(0);
+      await minutes(1);
+      expect(c.holds).toBe(1);
+      expect(runs()).toMatchObject([{ runId, report: 'writing' }]);
+      expect(h.agentSessions.at(-1)).toEqual({ id: 'sess-chat', resume: true });
+      expect(c.closed).toBe(false);
+      h.liveAgent!.end({ ...agentEnd('done', 'reported', '# Report'), doneStatus: 'success' } as AgentEnd);
+      await flush();
+      expect(c.closed).toBe(true);
+      expect(runs()).toEqual([]);
+      expect(h.sched.get('t1')).toMatchObject({ state: 'idle', lastResult: 'success', lastDetail: 'reported' });
+    });
+
+    it('a message while the report is written keeps the chat open, and the run goes on in it', async () => {
+      const runId = await finishedRun();
+      const c = open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      await minutes(3);
+      c.wroteMeanwhile = true;
+      h.liveAgent!.end({ ...agentEnd('done', 'reported'), doneStatus: 'success' } as AgentEnd);
+      await flush();
+      expect(c.closed).toBe(false);
+      expect(h.sched.get('t1')!.lastResult).toBe('success');
+      expect(runs()).toMatchObject([{ runId, chat: 'c1', report: 'owed' }]);
+    });
+
+    it('after Stop, the idle limit closes the chat and the run ends as stopped', async () => {
+      const runId = await finishedRun();
+      const c = open(runId);
+      h.sched.chatTalked('t1', 'c1');
+      await h.sched.stopTask('t1');
+      await minutes(3);
+      expect(c.closed).toBe(true);
+      expect(c.holds).toBe(0);
+      expect(h.agentStarted).toBe(1);
+      expect(h.sched.get('t1')).toMatchObject({ lastRunId: runId, lastResult: 'stopped' });
+    });
+
+    it("Settings → Chats' idle limit for runs in a chat replaces the task's, and a busy chat never goes idle", async () => {
+      h.settings.chats.runIdle = { enabled: true, minutes: 45 };
+      const runId = await finishedRun();
+      const c = open(runId);
+      c.idle = null;
+      await minutes(60);
+      expect(c.closed).toBe(false);
+      c.idle = h.clock.now;
+      await minutes(44);
+      expect(c.closed).toBe(false);
+      await minutes(1);
+      // Nothing was said: the run ends as it was.
+      expect(c.closed).toBe(true);
+      expect(h.sched.get('t1')).toMatchObject({ lastRunId: runId, lastResult: 'done' });
+    });
+
+    it("a chat that can't take events leaves them waiting", async () => {
+      const runId = await finishedRun();
+      open(runId).takes = false;
+      h.sched.receiveEvent('t1', line('t1', 2));
+      expect(eventRecords().filter((r) => r.runId === runId && r.result === 'sent')).toEqual([]);
+      h.sched.releaseChat('t1', 'c1', undefined);
+      h.checks.push(check('act'));
+      await h.tickN(1);
+      expect(agentStarts().at(-1)!.body).toContain(line('t1', 2));
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+    });
+
+    it("leaves a run in flight, a chat's run and an unknown run alone", async () => {
+      manualTask();
+      h.checks.push(check('act'));
+      h.sched.receiveEvent('t1', line('t1'));
+      await flush();
+      const live = h.liveAgent!;
+      open(live.runId);
+      expect(runs()).toHaveLength(1);
+      expect(runs()[0].chat).toBeUndefined();
+      live.end(agentEnd('done'));
+      await flush();
+      h.runs.append({ ts: new Date(h.clock.now).toISOString(), taskId: 't1', runId: 'chat-run', phase: 'chat', result: 'chat' });
+      open('chat-run');
+      open('nope');
+      expect(runs()).toEqual([]);
+    });
+  });
+});
+
+describe('a run open in a chat when Looper restarts', () => {
+  async function restartWith(run: ActiveRun): Promise<{ dir: string; store: RunStore; sched: Scheduler }> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-test-'));
+    const tasks = new TaskStore(path.join(dir, 'tasks.json'));
+    tasks.load();
+    tasks.upsert({ ...baseTask, trigger: { mode: 'manual' } });
+    const store = new RunStore(dir);
+    store.append({ ts: new Date(1).toISOString(), taskId: 't1', runId: run.runId, phase: 'agent', result: 'success' });
+    const state = new StateStore(path.join(dir, 'state.json'));
+    state.save({
+      t1: {
+        taskId: 't1',
+        state: 'running',
+        held: false,
+        asking: false,
+        runs: [run],
+        children: [],
+        nextRunAt: null,
+        lastRunAt: 1,
+        lastRunId: run.runId,
+        lastResult: 'success',
+        lastDetail: null,
+        consecutiveErrors: 0,
+        currentRunId: run.runId,
+        pausedReason: null,
+        watcher: null,
+        lastEventAt: null,
+        session: null,
+      },
+    });
+    state.flush();
+    const sched = new Scheduler({ dataDir: dir, host: 'wsl', settings: SettingsSchema.parse({}), tasks, runs: store, state, log: new Logger() });
+    sched.start();
+    return { dir, store, sched };
+  }
+  const held = (report?: ActiveRun['report']): ActiveRun => ({
+    runId: 'old-run',
+    state: 'running',
+    held: false,
+    question: null,
+    startedAt: 1,
+    trigger: 'manual',
+    relatedId: 'x',
+    chat: 'c1',
+    ...(report ? { report } : {}),
+  });
+
+  it('waits for its chat to open again, and keeps the report it owes', async () => {
+    const { dir, store, sched } = await restartWith(held('owed'));
+    expect(store.list('t1').filter((r) => r.result === 'interrupted')).toEqual([]);
+    expect(sched.get('t1')!.runs).toEqual([]);
+    sched.holdInChat('t1', 'old-run', 'c1', {
+      deliver: () => true,
+      idleSince: () => null,
+      sessionId: () => undefined,
+      stop: async () => undefined,
+      holdForReport: async () => false,
+      reportWritten: () => false,
+      close: async () => undefined,
+    });
+    expect(sched.get('t1')!.runs).toMatchObject([{ runId: 'old-run', chat: 'c1', report: 'owed', relatedId: 'x', startedAt: 1 }]);
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('is interrupted when Looper quit while its report was being written', async () => {
+    const { dir, store, sched } = await restartWith(held('writing'));
+    expect(store.list('t1').at(-1)).toMatchObject({ runId: 'old-run', result: 'interrupted', summary: 'looper restarted while the agent wrote the report' });
+    expect(sched.get('t1')!.runs).toEqual([]);
+    await sched.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
