@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
-import { stopHookMessages, subagentGuardMessage } from '../src/engine/target/stop-hook';
+import { CRON_REFUSAL, stopHookMessages, subagentGuardMessage } from '../src/engine/target/stop-hook';
 import {
   DELEGATE_FILE,
   EVENTS_FILE,
@@ -21,11 +21,10 @@ import {
 import { delegateText, eventsText, guidanceText } from '../src/shared/messages';
 
 const MSGS = stopHookMessages('agent');
-const STOP_BLOCK_BACKGROUND = MSGS.blockBackground;
 const STOP_BLOCK_NO_DONE = MSGS.blockNoDone;
 
-// The Stop-hook gate, run for real (bash): block while background tasks run,
-// remind once about looper-done, otherwise record the payload in stop.json.
+// The Stop-hook gate, run for real (bash): remind once about looper-done,
+// otherwise record the payload in stop.json.
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -40,7 +39,7 @@ interface Gate {
   run(payload: unknown): string;
 }
 
-function makeGate(): Gate {
+function makeGate(msgs = MSGS): Gate {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-stophook-'));
   dirs.push(dir);
   const stopJson = path.join(dir, 'stop.json');
@@ -48,7 +47,7 @@ function makeGate(): Gate {
   const reminderFile = path.join(dir, 'stop-reminded');
   const script = path.join(dir, 'looper-stop-hook');
   const t = new BashTarget({ host: 'wsl' }, undefined);
-  fs.writeFileSync(script, t.renderStopHook({ stopJson, doneFile, reminderFile, ...MSGS }), { mode: 0o755 });
+  fs.writeFileSync(script, t.renderStopHook({ stopJson, doneFile, reminderFile, ...msgs }), { mode: 0o755 });
   return {
     dir,
     stopJson,
@@ -65,51 +64,6 @@ function makeGate(): Gate {
 const runningTask = { id: 'a1', type: 'shell', status: 'running', description: 'watch deploy', command: 'node watch.js --need 1' };
 
 describe('bash Stop-hook gate', () => {
-  it('blocks while a background task is running and leaves no signal files', () => {
-    const g = makeGate();
-    const out = g.run({ last_assistant_message: 'waiting', background_tasks: [runningTask] });
-    expect(JSON.parse(out)).toEqual(JSON.parse(STOP_BLOCK_BACKGROUND));
-    expect(fs.existsSync(g.stopJson)).toBe(false);
-    expect(fs.existsSync(g.reminderFile)).toBe(false);
-  });
-
-  it('blocks when a bracket inside an earlier string field precedes the status', () => {
-    const g = makeGate();
-    const task = {
-      id: 'a1',
-      type: 'shell',
-      description: 'kill leftovers: for p in /proc/[0-9]*; do echo "]"; done',
-      meta: { nested: [1, 2, { deep: ']' }] },
-      status: 'running',
-    };
-    const out = g.run({ background_tasks: [task] });
-    expect(JSON.parse(out)).toEqual(JSON.parse(STOP_BLOCK_BACKGROUND));
-    expect(fs.existsSync(g.stopJson)).toBe(false);
-  });
-
-  it('blocks on pretty-printed JSON with whitespace around the key and colon', () => {
-    const g = makeGate();
-    const spaced = JSON.stringify({ background_tasks: [runningTask] }, null, 2);
-    const script = path.join(g.dir, 'looper-stop-hook');
-    const r = spawnSync('bash', [script], { input: spaced, encoding: 'utf8' });
-    expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual(JSON.parse(STOP_BLOCK_BACKGROUND));
-    expect(fs.existsSync(g.stopJson)).toBe(false);
-  });
-
-  it('allows when the only running mention sits inside a finished task string', () => {
-    const g = makeGate();
-    fs.writeFileSync(g.reminderFile, '');
-    const payload = {
-      background_tasks: [
-        { id: 'a1', status: 'completed', description: 'was "status":"running" earlier, then ]' },
-      ],
-    };
-    const out = g.run(payload);
-    expect(out).toBe('');
-    expect(JSON.parse(fs.readFileSync(g.stopJson, 'utf8'))).toEqual(payload);
-  });
-
   it('reminds about looper-done exactly once, then lets the stop through', () => {
     const g = makeGate();
     const payload = { last_assistant_message: 'report', background_tasks: [] };
@@ -131,23 +85,11 @@ describe('bash Stop-hook gate', () => {
     expect(JSON.parse(fs.readFileSync(g.stopJson, 'utf8'))).toEqual(payload);
   });
 
-  it('ignores background_tasks text inside a message string (escaped quotes)', () => {
+  it('lets a stop with a running task through after the reminder, recording what it waits on', () => {
     const g = makeGate();
-    fs.writeFileSync(g.reminderFile, '');
-    const payload = {
-      last_assistant_message: 'the payload had "background_tasks":[{"status":"running"}] in it',
-      background_tasks: [],
-    };
-    const out = g.run(payload);
-    expect(out).toBe('');
-    expect(JSON.parse(fs.readFileSync(g.stopJson, 'utf8'))).toEqual(payload);
-  });
-
-  it('treats a missing background_tasks key as no tasks', () => {
-    const g = makeGate();
-    fs.writeFileSync(g.reminderFile, '');
-    const payload = { last_assistant_message: 'hi' };
-    g.run(payload);
+    const payload = { last_assistant_message: 'waiting', background_tasks: [runningTask], session_crons: [] };
+    expect(JSON.parse(g.run(payload))).toEqual(JSON.parse(STOP_BLOCK_NO_DONE));
+    expect(g.run(payload)).toBe('');
     expect(JSON.parse(fs.readFileSync(g.stopJson, 'utf8'))).toEqual(payload);
   });
 });
@@ -454,6 +396,17 @@ describe('subagent guard', () => {
     expect(run(own).status).toBe(0);
   });
 
+  it('bash: the tool refusal fails every call with its message', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-refuse-'));
+    dirs.push(dir);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
+    const script = path.join(dir, t.refusalHookFile);
+    fs.writeFileSync(script, t.renderRefusal(CRON_REFUSAL), { mode: 0o755 });
+    const r = spawnSync('bash', [script], { input: '{"tool_name":"CronCreate"}', encoding: 'utf8' });
+    expect(r.status).toBe(2);
+    expect(r.stderr.trim()).toBe(CRON_REFUSAL);
+  });
+
   it('windows: renders the same guard for PowerShell', () => {
     const t = new WindowsTarget({ host: 'windows' });
     const script = t.renderSubagentGuard(commands, message);
@@ -473,13 +426,18 @@ describe('windows Stop-hook gate', () => {
       ...MSGS,
     });
     expect(script).toContain("Test-Path -LiteralPath 'C:\\data\\r1\\done'");
-    expect(script).toContain('ConvertFrom-Json');
-    expect(script).toContain(`Write-Output '${STOP_BLOCK_BACKGROUND}'`);
+    expect(script).not.toContain('background_tasks');
     expect(script).toContain(`Write-Output '${STOP_BLOCK_NO_DONE}'`);
     expect(script).toContain("[IO.File]::WriteAllText('C:\\data\\r1\\stop.json', $payload)");
     expect(t.stopHookCommand('C:\\data\\r1\\bin\\looper-stop-hook.ps1')).toBe(
       'powershell -NoProfile -ExecutionPolicy Bypass -File "C:/data/r1/bin/looper-stop-hook.ps1"',
     );
+  });
+
+  it('renders the tool refusal for PowerShell', () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    expect(t.renderRefusal(CRON_REFUSAL)).toContain(`[Console]::Error.WriteLine('${CRON_REFUSAL}')`);
+    expect(t.renderRefusal(CRON_REFUSAL)).toContain('exit 2');
   });
 
   it('renders the guidance hooks for PowerShell', () => {

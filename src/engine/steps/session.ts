@@ -26,7 +26,7 @@ import { FileSignalWatcher } from '../signals';
 import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
-import { stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
+import { CRON_REFUSAL, stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
 import {
   ASK_DIR,
   childEnv,
@@ -208,6 +208,20 @@ export function parseDoneText(text: string, statuses: readonly string[]): { stat
     return { status: first, message: nl === -1 ? '' : t.slice(nl + 1).trim() };
   }
   return { message: t };
+}
+
+/**
+ * A claude Stop payload whose session still waits on something that starts its
+ * next turn: a running background task (a Monitor is one), or a scheduled
+ * prompt (a ScheduleWakeup is one).
+ */
+export function stopWaitsOn(payload: Record<string, unknown>): boolean {
+  const tasks = payload.background_tasks;
+  const crons = payload.session_crons;
+  return (
+    (Array.isArray(tasks) && tasks.some((t) => (t as { status?: unknown } | null)?.status === 'running')) ||
+    (Array.isArray(crons) && crons.length > 0)
+  );
 }
 
 /** Longest headline shown in lists; anything past it is cut. */
@@ -601,6 +615,10 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       // The SessionStart payload names the session's transcript file: the Messages view reads it live.
       SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('session.json'))) }] }],
     };
+    if (!headless) {
+      // A turn Claude Code starts by itself (a wake-up, a background task's notification) restarts the idle clock.
+      hooks.UserPromptSubmit = [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('turn.json'))) }] }];
+    }
     if (opts.guidance) {
       // Guidance the user sends mid-run (and related events, and Looper's own notice) reaches the agent with its next tool result.
       writeText(
@@ -618,12 +636,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       ];
     }
     if (opts.stopGate) {
-      // The Stop-hook gate: blocks the turn from ending while background tasks
-      // run (ending the session would kill them), reminds once when the done
-      // command was never called, and records allowed stops in stop.json — whose
-      // payload carries last_assistant_message (the session's report) and whose
-      // mtime doubles as the idle signal.
+      // The Stop-hook gate: reminds once when the done command was never called,
+      // and records allowed stops in stop.json — whose payload carries
+      // last_assistant_message (the session's report) and what the session still
+      // waits on, and whose mtime doubles as the idle signal.
       const stopHookFile = f(target.stopHookFile);
+      const { blockNoDone } = stopHookMessages(opts.step);
       writeText(
         path.join(ctx.runDir, 'bin', stopHookFile),
         target.renderStopHook({
@@ -635,7 +653,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           delegateFile: opts.guidance ? targetFile(ctx, DELEGATE_FILE) : undefined,
           delegateBusyFile: opts.delegate ? targetFile(ctx, DELEGATE_DIR, DELEGATE_BUSY_FILE) : undefined,
           noticeFile: opts.guidance ? targetFile(ctx, NOTICE_FILE) : undefined,
-          ...stopHookMessages(opts.step),
+          blockNoDone,
         }),
         0o755,
       );
@@ -648,12 +666,20 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       target.renderSubagentGuard(signalCommands, subagentGuardMessage(signalCommands)),
       0o755,
     );
-    hooks.PreToolUse = [
+    const preToolUse = [
       {
         matcher: 'Bash',
         hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', f(target.guardHookFile))) }],
       },
     ];
+    if (headless) {
+      writeText(path.join(ctx.runDir, 'bin', target.refusalHookFile), target.renderRefusal(CRON_REFUSAL), 0o755);
+      preToolUse.push({
+        matcher: 'CronCreate',
+        hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', target.refusalHookFile)) }],
+      });
+    }
+    hooks.PreToolUse = preToolUse;
     writeJsonAtomic(path.join(ctx.runDir, f('settings.json')), {
       // A helper command must never be blocked by a permission prompt, and the
       // Bash sandbox must never confine it: the run dir sits outside the
@@ -816,6 +842,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let exited = false;
   let lastInputAt = 0;
   let idleSince: number | null = null;
+  /** The turn that set idleSince left something that will start the next one: the idle limit doesn't count. */
+  let waiting = false;
   const stream = new HeadlessStream();
   let streamBuf = '';
   let prevEndedNewline = false;
@@ -887,6 +915,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     path.join(ctx.runDir, f('done')),
     path.join(ctx.runDir, f('stop.json')),
     ctx.settings.signalPollMs,
+    claude && !headless ? path.join(ctx.runDir, f('turn.json')) : undefined,
   );
 
   let trustHandled = headless || !autoTrustWorkspace(harness);
@@ -1166,9 +1195,20 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           return;
         }
         if (mtime <= lastInputAt) return;
-        if (idleSince === null || mtime > idleSince) idleSince = mtime;
+        if (idleSince === null || mtime > idleSince) {
+          idleSince = mtime;
+          waiting = stopWaitsOn(payload);
+        }
         // Guidance that missed the turn (no hook ran after it arrived) starts the next one.
         deliverIdleGuidance();
+      },
+      onTurn: (mtime) => {
+        if (ended || idleSince === null || mtime <= idleSince) return;
+        idleSince = null;
+        if (held) {
+          held = false;
+          cb.onResume?.();
+        }
       },
       onTick: (now) => {
         if (ended || doneMtime !== null) return;
@@ -1226,7 +1266,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           }
         }
         if (held || pendingAsk || opts.delegate?.busy()) return;
-        const since = idleSince ?? promptSince;
+        const since = (waiting ? null : idleSince) ?? promptSince;
         if (since === null) return;
         if (now - since < opts.idleGraceMs) return;
         if (opts.onIdleTimeout === 'finish') {

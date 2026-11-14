@@ -1486,6 +1486,7 @@ export class Scheduler extends EventEmitter {
     run.state = state;
     this.recompute(rt);
     this.emitRuntime(rt);
+    this.persist();
   }
 
   /** A run started/stopped holding for a human; the task is held while any run is. */

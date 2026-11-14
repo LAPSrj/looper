@@ -108,7 +108,11 @@ A run ends on the first of these:
   `onIdleTimeout` is set to `hold`, it's held for a human instead (see
   below). The same clock also starts the moment any interactive prompt (a
   permission request, a question) is on screen, since the agent is then
-  waiting on a human either way.
+  waiting on a human either way. A turn that ends while the session still
+  waits on something doesn't start the clock: a background task still
+  running (a Monitor is one), or a scheduled prompt such as a ScheduleWakeup
+  wake-up. A turn Claude Code starts by itself, with a task's result or a
+  wake-up, stops the clock.
 - **The agent process exits** on its own, with or without calling
   `looper-done` first. If it exits after signaling done but before its final
   message arrived, the run still ends as done, with the headline only (no
@@ -116,13 +120,20 @@ A run ends on the first of these:
 - **`maxRuntimeMin` is exceeded**, regardless of what the agent is doing.
 
 For Claude Code, the injected `Stop` hook also gates the end of a turn.
-A turn ending with background tasks still running is blocked — the session
-would close and kill them with no notification able to wake the agent — and
-the agent is told to wait for their results or stop them first. A turn ending
-without `looper-done` having been called gets one reminder to run it; if the
-agent ends its turn again without it, the stop goes through (in interactive
-mode, that's when the idle clock starts). Once `looper-done` has run, every
-stop is allowed.
+A turn ending without `looper-done` having been called gets one reminder to
+run it; if the agent ends its turn again without it, the stop goes through
+(in interactive mode, that's when the idle clock starts, unless the session
+waits on something). Once `looper-done` has run, every stop is allowed.
+
+The agent can end its turn to wait for a background task or a wake-up, in
+both modes: Claude Code keeps the session open and starts the agent's next
+turn with the task's result, the Monitor's event or the wake-up. A
+background task that never ends on its own (a dev server, a watcher) keeps
+the session open until `maxRuntimeMin`, so the agent is told to stop such a
+task before its final message. In `headless` mode Looper refuses
+CronCreate and tells the agent to use ScheduleWakeup instead: a CronCreate
+job lives in the session, which closes as soon as a turn ends with nothing
+left running, so it would never fire.
 
 A subagent the agent starts (Claude Code's Agent tool) can't run
 `looper-done`, `looper-complete`, or `looper-restart`. It shares the

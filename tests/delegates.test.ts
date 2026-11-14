@@ -248,7 +248,6 @@ describe('the bash helpers while an agent the session started is going', () => {
       reminderFile: path.join(dir, 'stop-reminded'),
       delegateFile: path.join(dir, DELEGATE_FILE),
       delegateBusyFile: path.join(dir, 'busy'),
-      blockBackground: '{"decision":"block","reason":"bg"}',
       blockNoDone: '{"decision":"block","reason":"done?"}',
     };
     const hook = path.join(dir, 'stop-hook');
@@ -263,9 +262,6 @@ describe('the bash helpers while an agent the session started is going', () => {
     const out = execFileSync('bash', [hook], { input: payload, encoding: 'utf8' });
     expect(JSON.parse(out).decision).toBe('block');
     expect(delegateText(JSON.parse(out).reason)).toBe('r2 ended');
-    // Background tasks still running: ending the turn could kill them, so it waits for them first.
-    const background = '{"background_tasks":[{"id":"b1","status":"running"}]}';
-    expect(JSON.parse(execFileSync('bash', [hook], { input: background, encoding: 'utf8' })).reason).toBe('bg');
   });
 });
 

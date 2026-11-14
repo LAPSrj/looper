@@ -67,6 +67,27 @@ describe('FileSignalWatcher', () => {
     }
   });
 
+  it('reports each write of the turn file once, with its mtime', async () => {
+    const turnFile = path.join(dir, 'turn.json');
+    const w = new FileSignalWatcher(path.join(dir, 'done'), path.join(dir, 'stop.json'), 10, turnFile);
+    const turns: number[] = [];
+    w.start({ onDone: () => undefined, onStop: () => undefined, onTurn: (mtime) => turns.push(mtime) });
+    try {
+      await sleep(40);
+      expect(turns).toEqual([]);
+      fs.writeFileSync(turnFile, '{"prompt":"WAKEUP-TEST"}');
+      await until(() => turns.length === 1);
+      expect(turns[0]).toBe(fs.statSync(turnFile).mtimeMs);
+      await sleep(40);
+      expect(turns.length).toBe(1);
+      const later = new Date(Date.now() + 5000);
+      fs.utimesSync(turnFile, later, later);
+      await until(() => turns.length === 2);
+    } finally {
+      w.stop();
+    }
+  });
+
   it('reports an empty done file as "done"', async () => {
     const w = new FileSignalWatcher(path.join(dir, 'done'), path.join(dir, 'stop.json'), 10);
     const dones: string[] = [];

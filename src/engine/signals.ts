@@ -5,11 +5,13 @@ export interface SignalCallbacks {
   onDone: (message: string, mtimeMs: number) => void;
   /** The claude Stop hook wrote its payload, i.e. a turn ended. Fires once per write. */
   onStop: (mtimeMs: number, payload: Record<string, unknown>) => void;
+  /** The claude UserPromptSubmit hook wrote the turn file, i.e. a turn started (a wake-up or a notification starts one too). */
+  onTurn?: (mtimeMs: number) => void;
   onTick?: (now: number) => void;
 }
 
 /**
- * Polls the run's `done` and `stop.json` signal files. Polling (not fs.watch)
+ * Polls the run's `done`, `stop.json` and turn signal files. Polling (not fs.watch)
  * because the files are written by another OS through a drvfs/9p mount.
  */
 export class FileSignalWatcher {
@@ -19,11 +21,13 @@ export class FileSignalWatcher {
   /** mtime:size of the done file at the last poll; it is read once two polls agree. */
   private doneSeen: string | null = null;
   private lastStopMtime = 0;
+  private lastTurnMtime = 0;
 
   constructor(
     private readonly doneFile: string,
     private readonly stopFile: string,
     private readonly intervalMs: number,
+    private readonly turnFile?: string,
   ) {}
 
   start(cb: SignalCallbacks): void {
@@ -64,6 +68,13 @@ export class FileSignalWatcher {
         if (payload) {
           this.lastStopMtime = stop.mtimeMs;
           cb.onStop(stop.mtimeMs, payload);
+        }
+      }
+      if (this.turnFile) {
+        const turn = await fs.stat(this.turnFile).catch(() => null);
+        if (turn && turn.mtimeMs !== this.lastTurnMtime) {
+          this.lastTurnMtime = turn.mtimeMs;
+          cb.onTurn?.(turn.mtimeMs);
         }
       }
       cb.onTick?.(Date.now());

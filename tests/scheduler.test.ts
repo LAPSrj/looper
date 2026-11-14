@@ -267,6 +267,18 @@ describe('Scheduler', () => {
     expect(h.sched.get('t1')!.state).toBe('idle');
   });
 
+  it('saves each step of a run, so state.json shows the agent running', async () => {
+    h.checks.push(check('act'));
+    await h.tickN(1);
+    // The state file is written 200 ms after a change.
+    await new Promise((r) => setTimeout(r, 300));
+    const saved = JSON.parse(fs.readFileSync(path.join(h.dir, 'state.json'), 'utf8'));
+    expect(saved.tasks.t1.state).toBe('running');
+    expect(saved.tasks.t1.runs.map((r: { state: string }) => r.state)).toEqual(['running']);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
   it('never overlaps: a tick while running is ignored, stopTask ends the run', async () => {
     h.checks.push(check('act'));
     await h.tickN(1);

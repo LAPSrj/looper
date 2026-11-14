@@ -301,9 +301,10 @@ classifier step on or off. When on, it runs after a check that returned
 - **Auto-pause after** — consecutive failed cycles before the task pauses
   itself with a visible reason. Default 5.
 - **Idle grace** — minutes the agent may sit idle (a turn finished, no
-  `looper-done` signal) before the run ends or is held. Default 3. Idle
-  detection is Claude Code only; other harnesses end a run only via
-  `looper-done`, process exit, or Max runtime.
+  `looper-done` signal) before the run ends or is held. Default 3. A Claude
+  Code session waiting on a background task or a scheduled wake-up isn't
+  idle. Idle detection is Claude Code only; other harnesses end a run only
+  via `looper-done`, process exit, or Max runtime.
 - **When idle too long** — End the run, or Hold and wait for me (the run
   pauses for you to continue it with guidance).
 - **Simultaneous runs** — cycles of this task that may be in flight at once.

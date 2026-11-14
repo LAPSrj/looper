@@ -351,6 +351,12 @@ describe('headless agent over pipes', () => {
     const gate = path.join(ctx.runDir, 'bin', 'looper-stop-hook');
     expect(settings.hooks.Stop[0].hooks[0].command).toBe(`bash '${gate}'`);
     expect(fs.existsSync(gate)).toBe(true);
+    // A CronCreate job would die with the session: the call is refused with what to use instead.
+    const refusal = path.join(ctx.runDir, 'bin', 'looper-refuse');
+    expect(settings.hooks.PreToolUse.find((h: { matcher: string }) => h.matcher === 'CronCreate').hooks[0].command).toBe(`bash '${refusal}'`);
+    expect(fs.readFileSync(refusal, 'utf8')).toContain('call ScheduleWakeup');
+    // The idle clock is interactive only, and so is the hook that restarts it.
+    expect(settings.hooks.UserPromptSubmit).toBeUndefined();
     // Looper trusts the folder for the user, so its project MCP servers need no dialog either.
     expect(settings.enableAllProjectMcpServers).toBe(true);
   });

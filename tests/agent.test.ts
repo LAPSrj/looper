@@ -89,6 +89,13 @@ describe('systemFooter', () => {
     // Only the interactive session is closed by Looper.
     expect(systemFooter('T', 'r1', false)).toContain('closes this session');
     expect(systemFooter('T', 'r1', true)).not.toContain('closes this session');
+    // A background task or a wake-up keeps the session waiting in both modes: one that never ends holds the run to its max runtime.
+    for (const headless of [false, true]) {
+      expect(systemFooter('T', 'r1', headless)).toContain('You can end your turn to wait');
+      expect(systemFooter('T', 'r1', headless)).toContain('Stop every background task that never ends on its own');
+    }
+    expect(systemFooter('T', 'r1', false)).toContain("doesn't count the session as idle");
+    expect(systemFooter('T', 'r1', true)).toContain('ends as timed out instead of with your report');
   });
 
   it('teaches looper-complete only to an agent whose task allows it', () => {

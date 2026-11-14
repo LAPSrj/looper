@@ -116,6 +116,10 @@ export interface Target {
    * `message` as the reason.
    */
   renderSubagentGuard(commands: readonly string[], message: string): string;
+  /** File name of the claude PreToolUse script that refuses every call of a tool. */
+  readonly refusalHookFile: string;
+  /** Script that refuses the tool call, with `message` as the reason the agent gets. */
+  renderRefusal(message: string): string;
   /**
    * Shell command a codex hook definition runs: the script at `targetPath`,
    * unquoted so it fits a TOML literal string. Null when the path would need

@@ -173,8 +173,16 @@ export function systemFooter(
   }
   if (ask?.allowed) lines.push(by ? askParentSection(ask) : askSection(ask));
   if (more.delegate) lines.push(delegateSection());
+  lines.push(
+    'You can end your turn to wait: a background task you start (a background shell command, a Monitor) or a wake-up you schedule (ScheduleWakeup) keeps this session open, and its result, event or wake-up starts your next turn.',
+  );
+  lines.push(
+    headless
+      ? 'Stop every background task that never ends on its own (a server, a watcher, a Monitor with no end) before your final message: one left running keeps the session open until the run hits its maximum runtime, and the run then ends as timed out instead of with your report.'
+      : "Looper doesn't count the session as idle while one is running or due. Stop every background task that never ends on its own (a server, a watcher, a Monitor with no end) and delete every recurring scheduled job once you no longer need them: while one is left, a turn that ends without looper-done keeps the session open until the run hits its maximum runtime.",
+  );
   if (!headless) {
-    lines.push('Looper closes this session when that message ends. Do not run anything after looper-done and do not wait for further input.');
+    lines.push('Looper closes this session when your final message ends. Do not run anything after looper-done and do not wait for further input.');
   }
   return lines.join('\n');
 }
