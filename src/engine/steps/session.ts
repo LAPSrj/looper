@@ -89,6 +89,14 @@ export interface SessionHandle {
    * has ended gets it typed in; otherwise the hooks hand it over mid-turn.
    */
   deliverGuidance(): void;
+  /**
+   * Interactive: end the agent's turn, as Esc pressed in it does, and type in
+   * the guidance waiting (Send Now). The session goes on, idle. Headless has
+   * no turn to end apart from its process: the scheduler ends it.
+   */
+  stopTurn(): void;
+  /** Interactive: the agent's turn is over (at its prompt, or held). */
+  readonly turnOver: boolean;
   /** The question the agent is waiting on an answer to, or null. */
   readonly question: string | null;
   /** Hand the user's answer to the waiting question; false when none waits. */
@@ -1490,6 +1498,20 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     },
     write: input,
     deliverGuidance: deliverIdleGuidance,
+    get turnOver() {
+      return !headless && !ended && (idleSince !== null || held);
+    },
+    stopTurn() {
+      if (headless || ended || doneMtime !== null) return;
+      if (idleSince === null && !held) {
+        // The turn is over from here, whether or not the harness runs its Stop hook for an interrupted turn.
+        proc.write('\x1b');
+        idleSince = Date.now();
+        waiting = false;
+      }
+      // The TUI takes the Esc in before a paste.
+      setTimeout(deliverIdleGuidance, 500);
+    },
     resize(cols: number, rows: number) {
       if (ended) return;
       try {

@@ -33,7 +33,21 @@ export function ContextRing({ frac }: { frac: number | null }) {
   );
 }
 
-const ORANGE = 'var(--pg-orange, var(--ios-orange, #ff9500))';
+/**
+ * A session's or subagent's icon: the context ring, and a dot in its middle whose
+ * class (`state`) colors it by what the agent is doing; `restored` draws it larger.
+ * Hidden from assistive technology: the row or tab says the state in words.
+ */
+export function StatusRing({ state, frac, size }: { state: string; frac: number | null; size: number }) {
+  return (
+    <svg className={`session-icon ${state}`} width={size} height={size} viewBox="0 0 18 18" aria-hidden="true">
+      <ContextRing frac={frac} />
+      <circle cx="9" cy="9" r={state === 'restored' ? 4.5 : 3} className="core" />
+    </svg>
+  );
+}
+
+const ORANGE ='var(--pg-orange, var(--ios-orange, #ff9500))';
 const RED = 'var(--pg-red, var(--ios-red, #ff383c))';
 const TRACK = 0.14;
 

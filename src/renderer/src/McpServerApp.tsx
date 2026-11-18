@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { MCP_SCOPE_LABELS, serverProblem, type McpServer, type McpServerRequest, type McpTransport } from '@shared/agent-config';
-import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { envToLine, joinTokens } from '@shared/cmdline';
 import { EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TextArea, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { parseArgsEnv } from './components/form-blocks';
+import { reportError } from './report-error';
 
 const TRANSPORTS: Record<'claude-code' | 'codex', [McpTransport, string][]> = {
   'claude-code': [
@@ -52,16 +54,14 @@ export function McpServerApp({ requestKey }: { requestKey: string }) {
   const patch = (p: Partial<McpServer>) => setDraft((d) => (d ? { ...d, ...p } : d));
 
   const confirm = () => {
-    const args = tokenize(argsText);
-    if (!args.ok) return void window.looper.showError(`Arguments: ${args.error}`);
-    const env = lineToEnv(envText);
-    if (typeof env === 'string') return void window.looper.showError(`Environment variables: ${env}`);
+    const parsed = parseArgsEnv({ label: 'Arguments', text: argsText }, { label: 'Environment variables', text: envText });
+    if ('problem' in parsed) return void window.looper.showError(parsed.problem);
     const headers = linesToHeaders(headersText);
     if (typeof headers === 'string') return void window.looper.showError(`Headers: ${headers}`);
-    const server: McpServer = { ...draft, name: draft.name.trim(), command: draft.command.trim(), url: draft.url.trim(), args: args.tokens, env, headers };
+    const server: McpServer = { ...draft, name: draft.name.trim(), command: draft.command.trim(), url: draft.url.trim(), args: parsed.args, env: parsed.env, headers };
     const problem = serverProblem(request.kind, server, request.taken[server.scope] ?? []);
     if (problem) return void window.looper.showError(problem);
-    void window.looper.agentSettings.serverDone(requestKey, server).catch((e: Error) => void window.looper.showError(e.message));
+    void window.looper.agentSettings.serverDone(requestKey, server).catch(reportError);
   };
 
   const stdio = draft.transport === 'stdio';

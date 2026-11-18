@@ -3047,8 +3047,8 @@ const HOST: Record<HostCommand, (w: AppWindow | null, ...args: string[]) => void
   'run-copy-folder': (_w, taskId, runId) => {
     if (engine) writeClipboard(engine.runDir(taskId, runId));
   },
-  'run-work-folder': (_w, taskId) => {
-    const cwd = engine?.findSessionTask(taskId)?.cwd;
+  'run-work-folder': (_w, taskId, runId) => {
+    const cwd = engine?.workFolder(taskId, runId);
     return cwd ? openHostPath(cwd) : undefined;
   },
   'messages-filter': (w, value) => {

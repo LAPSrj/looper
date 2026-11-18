@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { subscribe } from '../events';
+import { useState } from 'react';
 import { terminalOverlay } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
-import { usePhoneTerminal } from './phone/TerminalKeys';
 import { TERMINAL_STAGE, TerminalOverlay } from './phone/TerminalOverlay';
-import { openXterm } from './xterm';
+import { useXterm } from './xterm';
 
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
@@ -12,39 +10,22 @@ const ENDED = `\r\n${DIM}── session ended ──${RESET}\r\n`;
 /** Quitting Looper stopped the harness: the next key starts it again on the conversation (the key itself isn't sent). */
 const STOPPED = `\r\n${DIM}── stopped when Looper quit · press any key to go on ──${RESET}\r\n`;
 
-const reportError = (e: Error) => void window.looper.showError(e.message);
-
 /** A terminal session: its output so far, then live, with keys, files and size passed to it. */
 export function TerminalView({ id }: { id: string }) {
-  const ref = useRef<HTMLDivElement>(null);
   const [output, setOutput] = useState<'unknown' | 'none' | 'some'>('unknown');
-  const phone = usePhoneTerminal((d) => window.looper.terminalSession.write(id, d));
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { term, fit } = openXterm(el);
-    const refit = () => {
-      try {
-        fit.fit();
-        window.looper.terminalSession.resize(id, term.cols, term.rows);
-      } catch {
-        /* element hidden */
-      }
-    };
-    const detachPhone = phone.attach(term, el, refit);
-    let loaded = false;
-    setOutput('unknown');
-    void window.looper.terminalSession.output(id).then((out) => {
-      if (out?.data) term.write(out.data);
-      if (out?.stopped) term.write(out.note ? `\r\n${DIM}── ${out.note} ──${RESET}\r\n` : STOPPED);
-      else if (!out || out.ended) term.write(ENDED);
-      // An ended or stopped session has nothing more to wait for.
-      setOutput(out?.data || !out || out.ended || out.stopped ? 'some' : 'none');
-      loaded = true;
-      window.looper.terminalSession.resize(id, term.cols, term.rows);
-    });
-    const unsub = subscribe((e) => {
-      if (!loaded) return; // the replay above includes it
+  const session = window.looper.terminalSession;
+  const { ref, keys } = useXterm(id, {
+    replay: (term) => {
+      setOutput('unknown');
+      return session.output(id).then((out) => {
+        if (out?.data) term.write(out.data);
+        if (out?.stopped) term.write(out.note ? `\r\n${DIM}── ${out.note} ──${RESET}\r\n` : STOPPED);
+        else if (!out || out.ended) term.write(ENDED);
+        // An ended or stopped session has nothing more to wait for.
+        setOutput(out?.data || !out || out.ended || out.stopped ? 'some' : 'none');
+      });
+    },
+    live: (e, term) => {
       if (e.type === 'terminal:data' && e.id === id) {
         term.write(e.data);
         setOutput('some');
@@ -52,73 +33,12 @@ export function TerminalView({ id }: { id: string }) {
         term.write(ENDED);
         setOutput('some');
       }
-    });
-    const onData = term.onData((d) => window.looper.terminalSession.write(id, phone.typed(d)));
-
-    // Files go in as their paths, pasted the way a terminal pastes text: Claude
-    // Code and Codex turn a pasted image path into an image attachment.
-    const pastePaths = (text: string) => {
-      if (!text) return;
-      term.paste(text + ' ');
-      term.focus();
-    };
-    const attach = (files: File[]) => {
-      if (files.length === 0) return;
-      void window.looper.terminalSession.attachFiles(id, files).then(pastePaths).catch(reportError);
-    };
-    // Capture phase: xterm handles text pastes itself, but drops a copied image without a word.
-    const onPaste = (e: ClipboardEvent) => {
-      const files = [...(e.clipboardData?.files ?? [])];
-      if (files.length === 0 || e.clipboardData?.getData('text')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      attach(files);
-    };
-    const onDragOver = (e: DragEvent) => {
-      if (!e.dataTransfer?.types.includes('Files')) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      attach([...(e.dataTransfer?.files ?? [])]);
-    };
-    const onContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      window.looper.terminalSession.showContextMenu(id, term.hasSelection());
-    };
-    el.addEventListener('paste', onPaste, true);
-    el.addEventListener('dragover', onDragOver);
-    el.addEventListener('drop', onDrop);
-    el.addEventListener('contextmenu', onContextMenu);
-    const unsubUi = window.looper.onUi((e) => {
-      if (e.type === 'terminal-copy') {
-        void navigator.clipboard.writeText(term.getSelection());
-      } else if (e.type === 'terminal-paste') {
-        void navigator.clipboard.readText().then((t) => t && term.paste(t));
-      } else if (e.type === 'terminal-attached') {
-        pastePaths(e.text);
-      }
-    });
-
-    const ro = new ResizeObserver(refit);
-    ro.observe(el);
-    term.focus();
-    return () => {
-      detachPhone();
-      unsub();
-      unsubUi();
-      onData.dispose();
-      el.removeEventListener('paste', onPaste, true);
-      el.removeEventListener('dragover', onDragOver);
-      el.removeEventListener('drop', onDrop);
-      el.removeEventListener('contextmenu', onContextMenu);
-      ro.disconnect();
-      term.dispose();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+    },
+    write: (d) => session.write(id, d),
+    resize: (cols, rows) => session.resize(id, cols, rows),
+    attachFiles: (files) => session.attachFiles(id, files),
+    showMenu: (hasSelection) => session.showContextMenu(id, hasSelection),
+  });
   // A phone shows "Starting…" over the terminal until its session prints something.
   const overlay = isPhone && terminalOverlay({ loaded: output !== 'unknown', hasOutput: output === 'some' }) !== null;
   return (
@@ -127,7 +47,7 @@ export function TerminalView({ id }: { id: string }) {
         <div className="terminal" ref={ref} />
         {overlay && <TerminalOverlay />}
       </div>
-      {phone.row}
+      {keys}
     </div>
   );
 }

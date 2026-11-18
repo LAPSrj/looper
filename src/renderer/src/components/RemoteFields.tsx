@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from 'react';
 import type { Environment, Harness, RemoteHelper } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels, pathFlavor } from '@shared/environments';
 import { AGENT_LABELS, agentRows, type AgentField } from './agent-fields-model';
-import { Field, FieldRow, InputRow, SelectInput, TextInput } from './ui';
+import { Field, FieldRow, SelectInput, TextInput } from './ui';
+import { PathField } from './form-blocks';
 
 /** What a helper runs with. A helper has no permission mode. */
 export type RemoteFolderDraft = Pick<RemoteHelper, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort'> & {
@@ -132,14 +133,16 @@ export function AgentFields({
         );
       case 'cwd':
         return (
-          <Field key={f} label={label(f)}>
-            <InputRow>
-              <TextInput code autoFocus={firstInForm} disabled={lockCwd} value={draft.cwd} onChange={(e) => onChange({ cwd: e.target.value })} />
-              <button className="btn" disabled={lockCwd} onClick={() => void browse()}>
-                Browse…
-              </button>
-            </InputRow>
-          </Field>
+          <PathField
+            key={f}
+            label={label(f)}
+            code
+            autoFocus={firstInForm}
+            disabled={lockCwd}
+            value={draft.cwd}
+            onChange={(cwd) => onChange({ cwd })}
+            onBrowse={() => void browse()}
+          />
         );
       case 'environment':
         return (

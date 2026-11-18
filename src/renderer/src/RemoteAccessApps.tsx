@@ -15,14 +15,30 @@ import type { RemoteAccessSettings } from '@shared/types';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, NumberInput, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
+import { RenameWindow } from './components/RenameWindow';
+import { useSave, type ItemSource } from './components/hooks';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
-import { subscribe } from './events';
+import { reportError } from './report-error';
 
-const showError = (e: unknown) => void window.looper.showError((e as Error).message);
 
 /** The QR code library loads when a window first draws one, not with the app. */
 const toDataURL = (text: string, options: QRCodeToDataURLOptions) => import('qrcode').then((m) => m.toDataURL(text, options));
+
+/** A QR code of `text` as an image URL, `width` px square; null while there's none or it's being drawn. */
+function useQrCode(text: string | null | undefined, width: number): string | null {
+  const [qr, setQr] = useState<string | null>(null);
+  useEffect(() => {
+    setQr(null);
+    if (!text) return;
+    let current = true;
+    void toDataURL(text, { margin: 1, width, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), reportError);
+    return () => {
+      current = false;
+    };
+  }, [text, width]);
+  return qr;
+}
 
 function deviceSub(d: PairedDevice): string {
   const via = SOURCE_NAMES[d.provider];
@@ -66,7 +82,7 @@ function sourceLine(state: RemoteAccessState | null, id: RemoteAccessProviderId)
  */
 export function RemoteAccessSettingsApp() {
   const [draft, setDraft] = useState<RemoteAccessSettings | null>(null);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   const state = useRemoteAccessState();
 
   useEffect(() => {
@@ -76,7 +92,7 @@ export function RemoteAccessSettingsApp() {
       const port =
         saved.port ||
         (await window.looper.remoteAccess.suggestPort().catch((e: unknown) => {
-          showError(e);
+          reportError(e);
           return 0;
         }));
       setDraft((d) => d ?? { ...saved, port });
@@ -87,22 +103,10 @@ export function RemoteAccessSettingsApp() {
 
   const set = (patch: Partial<RemoteAccessSettings>) => setDraft({ ...draft, ...patch });
 
-  const doSave = async (): Promise<boolean> => {
-    setSaving(true);
-    try {
-      // On/off is the menu's (Turn On / Turn Off), not this window's: keep whatever it is now.
-      const { enabled } = (await window.looper.info()).settings.remoteAccess;
-      await window.looper.updateSettings({ remoteAccess: { ...draft, enabled, name: draft.name.trim() } });
-      return true;
-    } catch (e) {
-      showError(e);
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-  const save = async () => {
-    if (await doSave()) window.close();
+  const doSave = async () => {
+    // On/off is the menu's (Turn On / Turn Off), not this window's: keep whatever it is now.
+    const { enabled } = (await window.looper.info()).settings.remoteAccess;
+    await window.looper.updateSettings({ remoteAccess: { ...draft, enabled, name: draft.name.trim() } });
   };
 
   const setSource = (id: RemoteAccessProviderId, on: boolean) =>
@@ -134,22 +138,18 @@ export function RemoteAccessSettingsApp() {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void doSave() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }
 
 /** Advanced → Remote Access → Paired Devices: the devices that may connect, which change live. */
 export function RemoteAccessDevicesApp() {
-  const [state, setState] = useState<RemoteAccessState | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const state = useRemoteAccessState(reportError);
 
   useEffect(() => {
     document.title = 'Paired Devices';
-    void window.looper.remoteAccess.state().then(setState, showError);
-    return subscribe((e) => {
-      if (e.type === 'remote-access') setState(e.state);
-    });
   }, []);
 
   if (!state) return <EmptyWindow />;
@@ -164,7 +164,7 @@ export function RemoteAccessDevicesApp() {
       await window.looper.remoteAccess.removeDevice(target.id);
       setSelected(null);
     } catch (e) {
-      showError(e);
+      reportError(e);
     }
   };
 
@@ -222,9 +222,8 @@ export function RemoteAccessPairApp() {
   const [code, setCode] = useState<PairingCode | null>(null);
   /** How long the current code lives, for the progress bar. */
   const [lifetime, setLifetime] = useState(0);
-  const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [state, setState] = useState<RemoteAccessState | null>(null);
+  const state = useRemoteAccessState(reportError);
   const [copied, setCopied] = useState(false);
   const [addressIndex, setAddressIndex] = useState(0);
   const addresses = pairAddresses(state);
@@ -245,21 +244,9 @@ export function RemoteAccessPairApp() {
   useEffect(() => {
     document.title = 'Pair Device';
     void newCode();
-    void window.looper.remoteAccess.state().then(setState, showError);
-    return subscribe((e) => {
-      if (e.type === 'remote-access') setState(e.state);
-    });
   }, []);
 
-  useEffect(() => {
-    setQr(null);
-    if (!link) return;
-    let current = true;
-    void toDataURL(link, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), showError);
-    return () => {
-      current = false;
-    };
-  }, [link]);
+  const qr = useQrCode(link, 220);
 
   const paired = code && state?.pairedWith?.code === code.code ? state.pairedWith.device : null;
   const off = state && state.phase !== 'running';
@@ -285,7 +272,7 @@ export function RemoteAccessPairApp() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
-      showError(e);
+      reportError(e);
     }
   };
 
@@ -335,54 +322,23 @@ export function RemoteAccessPairApp() {
 }
 
 /** Rename Device, from the paired-devices list. */
+const DEVICES: ItemSource<PairedDevice> = {
+  list: () => window.looper.remoteAccess.state().then((s) => s.devices),
+  from: (e) => (e.type === 'remote-access' ? e.state.devices : null),
+  onError: reportError,
+};
+
 export function RemoteAccessRenameApp({ id }: { id: string }) {
-  const [name, setName] = useState('');
-  const [missing, setMissing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    document.title = 'Rename Device';
-    void window.looper.remoteAccess.state().then((s) => {
-      const d = s.devices.find((x) => x.id === id);
-      if (d) {
-        setName(d.name);
-        setLoaded(true);
-      } else setMissing(true);
-    }, showError);
-    // Keep the draft; only track the device itself (removal).
-    return subscribe((e) => {
-      if (e.type === 'remote-access' && !e.state.devices.some((d) => d.id === id)) setMissing(true);
-    });
-  }, [id]);
-
-  const save = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    try {
-      await window.looper.remoteAccess.renameDevice(id, name);
-      window.close();
-    } catch (e) {
-      showError(e);
-      setSaving(false);
-    }
-  };
-
-  if (missing) return <EmptyWindow gone="This device is no longer paired." />;
-
   return (
-    <div className="editor">
-      <div className="editor-body">
-        <div className="form">
-          <FormGroup>
-            <Field label="Name">
-              <TextInput selectWhen={loaded} autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
-            </Field>
-          </FormGroup>
-        </div>
-      </div>
-      <WindowActions confirm={{ label: 'Save', run: () => void save(), disabled: !name.trim() }} busy={saving} />
-    </div>
+    <RenameWindow
+      title="Rename Device"
+      source={DEVICES}
+      id={id}
+      nameOf={(d) => d.name}
+      rename={(name) => window.looper.remoteAccess.renameDevice(id, name)}
+      gone="This device is no longer paired."
+      maxLength={64}
+    />
   );
 }
 
@@ -406,8 +362,7 @@ export function RemoteAccessSetupApp() {
   const [hostname, setHostname] = useState('');
   const [step, setStep] = useState<SetupStep>('sources');
   const [pair, setPair] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [qr, setQr] = useState<string | null>(null);
+  const saver = useSave();
   const state = useRemoteAccessState();
 
   useEffect(() => {
@@ -416,7 +371,7 @@ export function RemoteAccessSetupApp() {
       const ra = info.settings.remoteAccess;
       setSources(ra.sources.length ? ra.sources : ['tailscale']);
       setHostname(ra.hostname);
-    }, showError);
+    }, reportError);
   }, []);
 
   const tailscale = !!sources?.includes('tailscale');
@@ -429,37 +384,21 @@ export function RemoteAccessSetupApp() {
 
   // The sign-in step runs Tailscale under the chosen machine name.
   useEffect(() => {
-    if (step === 'signin') void window.looper.remoteAccess.beginSignIn(hostname).catch(showError);
+    if (step === 'signin') void window.looper.remoteAccess.beginSignIn(hostname).catch(reportError);
   }, [step, hostname]);
 
-  useEffect(() => {
-    setQr(null);
-    if (!loginUrl) return;
-    let current = true;
-    void toDataURL(loginUrl, { margin: 1, width: 180, errorCorrectionLevel: 'M' }).then((url) => current && setQr(url), showError);
-    return () => {
-      current = false;
-    };
-  }, [loginUrl]);
+  const qr = useQrCode(loginUrl, 180);
 
   const canNext =
     step === 'sources' ? !!sources?.length : step === 'machine' ? HOSTNAME.test(hostname) : step === 'signin' ? signedIn : true;
 
-  const finish = async () => {
-    if (!sources) return;
-    setBusy(true);
-    try {
-      await window.looper.remoteAccess.finishSetup({ sources, ...(tailscale ? { hostname } : {}) }, pair);
-      window.close();
-    } catch (e) {
-      showError(e);
-      setBusy(false);
-    }
+  const finish = () => {
+    if (sources) saver.save(() => window.looper.remoteAccess.finishSetup({ sources, ...(tailscale ? { hostname } : {}) }, pair).then(() => true));
   };
 
   const next = () => {
-    if (busy || !canNext) return;
-    if (step === 'finish') void finish();
+    if (saver.busy || !canNext) return;
+    if (step === 'finish') finish();
     else setStep(steps[at + 1]);
   };
 
@@ -496,7 +435,7 @@ export function RemoteAccessSetupApp() {
       status = (
         <>
           <p className="error-text">{ts.message ?? "Tailscale isn't working."}</p>
-          <button className="btn" onClick={() => void window.looper.remoteAccess.beginSignIn(hostname).catch(showError)}>
+          <button className="btn" onClick={() => void window.looper.remoteAccess.beginSignIn(hostname).catch(reportError)}>
             Try Again
           </button>
         </>
@@ -545,7 +484,7 @@ export function RemoteAccessSetupApp() {
       </div>
       <WindowActions
         wizard={{ back: { run: () => setStep(steps[at - 1]), disabled: at === 0 }, next: { run: next, disabled: !canNext }, last: step === 'finish' }}
-        busy={busy}
+        busy={saver.busy}
       />
     </div>
   );

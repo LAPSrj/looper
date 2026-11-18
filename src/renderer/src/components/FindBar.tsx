@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import { perfSpan } from '../perf';
 import { AddonSearchBox } from './AddonPane';
 
@@ -126,6 +126,25 @@ export function useFindHighlights(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [find, changed, root]);
   return matches;
+}
+
+/**
+ * The find field's `inputRef`, and `focus`, which gives the field the focus and selects what it holds once it shows
+ * (the strip may open in the same render): Find asked again while it's open goes back to the field.
+ */
+export function useFindFocus(): { inputRef: (el: HTMLInputElement | null) => void; focus: () => void } {
+  const input = useRef<HTMLInputElement | null>(null);
+  const [asked, setAsked] = useState(0);
+  useEffect(() => {
+    if (!asked) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [asked]);
+  const inputRef = useCallback((el: HTMLInputElement | null) => {
+    input.current = el;
+  }, []);
+  const focus = useCallback(() => setAsked((n) => n + 1), []);
+  return { inputRef, focus };
 }
 
 /** The find bar over what is searched: the field (Enter and Shift+Enter step), "n of m", Previous, Next and Close. */

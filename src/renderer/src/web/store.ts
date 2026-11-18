@@ -5,7 +5,7 @@ import type { Session, ShellMessage } from './session';
 
 export interface WebWindow extends RemoteWindowSpec {
   menu: MenuItemSpec[] | null;
-  /** Changes when the iframe must load afresh (reload, a new route, a resumed connection). */
+  /** Changes when the iframe must load afresh (reload, a new route, a resume that couldn't send what the page missed). */
   nonce: number;
 }
 
@@ -132,8 +132,19 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
     }
     case 'reset':
       return { ...s, windows: [], order: [], focused: null, minimized: [], menus: [], dialogs: [], paths: [] };
-    case 'resumed':
-      return { ...s, windows: s.windows.map((x) => ({ ...x, nonce: x.nonce + 1 })) };
+    case 'resumed': {
+      const kept = new Set(a.windows);
+      const reload = new Set(a.reload);
+      return {
+        ...s,
+        windows: s.windows.filter((x) => kept.has(x.w)).map((x) => (reload.has(x.w) ? { ...x, nonce: x.nonce + 1 } : x)),
+        order: s.order.filter((w) => kept.has(w)),
+        minimized: s.minimized.filter((w) => kept.has(w)),
+        menus: s.menus.filter((m) => kept.has(m.w)),
+        dialogs: s.dialogs.filter((d) => kept.has(d.w)),
+        focused: s.focused !== null && kept.has(s.focused) ? s.focused : null,
+      };
+    }
     case 'menu': {
       const { t: _t, ...menu } = a;
       // One popup at a time, as the server keeps it.

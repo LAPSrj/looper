@@ -1,17 +1,32 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Icon } from './Icon';
 import { StatusMark } from './StatusMark';
 import { ctrlTabTarget, isClear, mostCommon, panelDomId, readableText, tabAria, tabDomId, tabKeyTarget, type TabItem } from './tabs-model';
 
 export type { TabItem, TabStatus } from './tabs-model';
 
-const CHEVRON_LEFT = <path d="M10 3.5 5.5 8l4.5 4.5" />;
-const CHEVRON_RIGHT = <path d="M6 3.5 10.5 8 6 12.5" />;
-
 const CLOSE = (
-  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+  <Icon size={8} box={8} stroke={1.2}>
     <path d="m1 1 6 6M7 1 1 7" />
-  </svg>
+  </Icon>
 );
+
+/** Ctrl+Tab and Ctrl+Shift+Tab select the next and previous of `ids` while the window has focus, when `on`. */
+export function useCtrlTab(ids: readonly string[], active: string, onSelect: (id: string) => void, on: boolean | undefined) {
+  const latest = useRef({ ids, active, onSelect });
+  latest.current = { ids, active, onSelect };
+  useEffect(() => {
+    if (!on) return;
+    const onKey = (e: KeyboardEvent) => {
+      const to = ctrlTabTarget(latest.current.ids, latest.current.active, e);
+      if (to === null) return;
+      e.preventDefault();
+      latest.current.onSelect(to);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [on]);
+}
 
 /**
  * One strip of tabs for every window: the ARIA tabs pattern (one Tab stop,
@@ -49,8 +64,7 @@ export function Tabs({
   // The selected tab's text color when the strip's own doesn't read on the color under it.
   const [underText, setUnderText] = useState<string | null>(null);
   const ids = tabs.map((t) => t.id);
-  const latest = useRef({ ids, active, onSelect });
-  latest.current = { ids, active, onSelect };
+  useCtrlTab(ids, active, onSelect, ctrlTab);
 
   const measure = useCallback(() => {
     const el = listRef.current;
@@ -121,20 +135,8 @@ export function Tabs({
     };
   }, [active, tabs.length, sampleUnder]);
 
-  useEffect(() => {
-    if (!ctrlTab) return;
-    const onKey = (e: KeyboardEvent) => {
-      const to = ctrlTabTarget(latest.current.ids, latest.current.active, e);
-      if (to === null) return;
-      e.preventDefault();
-      latest.current.onSelect(to);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [ctrlTab]);
-
   const focusTab = (id: string) => {
-    const at = latest.current.ids.indexOf(id);
+    const at = ids.indexOf(id);
     const el = listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[at];
     el?.focus();
   };
@@ -176,9 +178,7 @@ export function Tabs({
       onKeyDown={onKeyDown}
     >
       <button type="button" className="tabs-scroll-button start" tabIndex={-1} aria-hidden="true" onClick={() => scrollBy(-1)}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          {CHEVRON_LEFT}
-        </svg>
+        <Icon name="previous" size={12} stroke={1.6} />
       </button>
       {tabs.map((t) => (
         <span
@@ -208,9 +208,7 @@ export function Tabs({
         </span>
       ))}
       <button type="button" className="tabs-scroll-button end" tabIndex={-1} aria-hidden="true" onClick={() => scrollBy(1)}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          {CHEVRON_RIGHT}
-        </svg>
+        <Icon name="next" size={12} stroke={1.6} />
       </button>
     </div>
   );

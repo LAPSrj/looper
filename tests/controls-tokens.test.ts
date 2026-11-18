@@ -179,10 +179,10 @@ describe('group headers and chevrons', () => {
     expect(list).toContain("role={showFolders ? 'treeitem' : 'option'}");
     expect(list).toContain('aria-level={showFolders ? depth + 1 : undefined}');
     expect(list).toContain('level={depth + 1}');
-    // GroupHeader itself says treeitem, expanded and level.
+    // GroupHeader itself says treeitem, expanded and level; outside a tree (a phone's plain list) it is a button.
     const header = read('components/GroupHeader.tsx');
-    expect(header).toContain('role="treeitem"');
+    expect(header).toContain("role={inTree ? 'treeitem' : 'button'}");
     expect(header).toContain('aria-expanded={open}');
-    expect(header).toContain('aria-level={level}');
+    expect(header).toContain('aria-level={inTree ? level : undefined}');
   });
 });

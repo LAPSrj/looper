@@ -1,14 +1,15 @@
-import { useState } from 'react';
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 import type { SessionSummary } from '@shared/sessions';
 import { sessionGroupKey, waitingOf } from '@shared/sessions';
-import { ContextRing } from './ContextRing';
+import { StatusRing } from './ContextRing';
 import { GroupHeader } from './GroupHeader';
-import { useListNav } from './hooks';
-import { listContextMenu, parentIndex } from './list-nav';
-import { itemWindows, selectsOnMenu } from './ListDetail';
+import { useGroupedTree, type TreeRow } from './GroupedTree';
+import { itemWindows } from './ListDetail';
 import { WaitedFor } from './Live';
 import { contextFraction } from './usage';
+
+/** What the Chats window's list and dashboard say with no session open. */
+export const NO_CHATS = 'No chats are open.';
 
 /**
  * Status and context in one icon: the ring fills with the context, the dot says what the agent is doing.
@@ -24,12 +25,7 @@ export function SessionIcon({ s }: { s: SessionSummary }) {
         : s.waiting?.reason === 'turn'
           ? 'done'
           : s.status;
-  return (
-    <svg className={`session-icon ${state}`} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      <ContextRing frac={contextFraction(s.context)} />
-      <circle cx="9" cy="9" r={state === 'restored' ? 4.5 : 3} className="core" />
-    </svg>
-  );
+  return <StatusRing state={state} frac={contextFraction(s.context)} size={18} />;
 }
 
 /** A session's status as a few words. */
@@ -40,42 +36,58 @@ export function statusText(s: SessionSummary): string {
   return 'Ready';
 }
 
-function Row({
-  s,
-  id,
-  selected,
-  sub,
-  live,
-  onSelect,
-}: {
-  s: SessionSummary;
-  id: string;
-  selected: boolean;
-  sub: ReactNode;
-  /** The subtitle counts a live time. */
-  live?: boolean;
-  onSelect: (id: string) => void;
-}) {
+/** What kind of session it is, when it isn't a chat the user started: "Terminal", "Started by …", "Task run"; '' for a chat. */
+export function sessionKind(s: SessionSummary): string {
+  return s.kind === 'terminal' ? 'Terminal' : s.startedBy !== undefined ? `Started by ${s.startedBy}` : s.kind === 'run' ? 'Task run' : '';
+}
+
+/** A phone card's short words for why a session waits; the question itself shows in full below it. */
+const WAIT_LABELS: Record<NonNullable<SessionSummary['waiting']>['reason'], string | null> = {
+  permission: 'Needs permission',
+  notification: 'Waiting for you',
+  error: 'Needs a look',
+  turn: null,
+};
+
+/** Why a session waits and for how long ("Needs permission · 3 min"), or its status. `brief`: the reason's short words. */
+export function SessionStatus({ s, brief = false }: { s: SessionSummary; brief?: boolean }) {
+  if (!s.waiting) return <>{statusText(s)}</>;
   return (
-    <div
-      id={id}
-      role="treeitem"
-      aria-selected={selected}
-      aria-level={2}
-      className={`session-row${selected ? ' selected' : ''}${s.waiting?.reason === 'turn' ? ' unread' : ''}`}
-      onClick={() => onSelect(s.id)}
-      // A chat or a task run opens in a window of its own; terminal sessions stay in the Chats window.
-      onDoubleClick={!itemWindows || s.kind === 'terminal' ? undefined : () => window.looper.openItemWindow('chat', s.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        if (selectsOnMenu) onSelect(s.id);
-        window.looper.sessions.showContextMenu(s.id);
-      }}
-    >
-      <SessionIcon s={s} />
+    <>
+      {(brief && WAIT_LABELS[s.waiting.reason]) || s.waiting.text} · <WaitedFor since={s.waiting.since} />
+    </>
+  );
+}
+
+/** A conversation's row in a tree list (Chats, History): its icon, its title, and a second line. */
+export function SessionRow({
+  selected,
+  className = '',
+  icon,
+  title,
+  sub,
+  subClass = '',
+  subTitle,
+  ...rest
+}: {
+  selected: boolean;
+  className?: string;
+  icon?: ReactNode;
+  title: string;
+  sub: ReactNode;
+  subClass?: string;
+  subTitle?: string;
+} & Omit<HTMLAttributes<HTMLDivElement>, 'title'>) {
+  return (
+    <div {...rest} role="treeitem" aria-level={2} aria-selected={selected} className={`session-row${selected ? ' selected' : ''}${className}`}>
+      {icon}
       <div className="session-row-text">
-        <div className="session-title">{s.title}</div>
-        <div className={`session-sub${s.waiting?.reason === 'error' ? ' error-text' : ''}${live ? ' live-only' : ''}`}>{sub}</div>
+        <div className="session-title" title={title}>
+          {title}
+        </div>
+        <div className={`session-sub${subClass}`} title={subTitle}>
+          {sub}
+        </div>
       </div>
     </div>
   );
@@ -84,61 +96,20 @@ function Row({
 /** The key a group's collapsed state is saved under. */
 const WAITING_KEY = '@waiting';
 
-/**
- * A group: a header with a chevron and its name (a click opens or closes it),
- * then its rows, none when it's closed. The header and the rows are siblings
- * (the phone's list styles depend on it); the tree levels say which is which.
- */
-function Group({
-  id,
-  active,
-  name,
-  open,
-  count,
-  onToggle,
-  onMenu,
-  children,
-}: {
-  id: string;
-  /** The keyboard's active row. */
-  active: boolean;
+interface SessionGroup {
+  key: string;
   name: string;
-  open: boolean;
   count: number;
-  onToggle: () => void;
-  /** The header's right-click menu; Waiting for you has none. */
-  onMenu?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div role="group" aria-label={name}>
-      <GroupHeader
-        id={id}
-        name={name}
-        open={open}
-        count={count}
-        className={`session-group${active ? ' active' : ''}`}
-        onToggle={onToggle}
-        onContextMenu={
-          onMenu &&
-          ((e) => {
-            e.preventDefault();
-            onMenu();
-          })
-        }
-      />
-      {open && children}
-    </div>
-  );
 }
 
-/** One row the keyboard visits: a group's header, or a session in a group. */
-type NavRow = { kind: 'group'; key: string; id: string; open: boolean } | { kind: 'session'; s: SessionSummary; id: string };
+type GroupRow = Extract<TreeRow<SessionGroup, SessionSummary>, { kind: 'group' }>;
+type ItemRow = Extract<TreeRow<SessionGroup, SessionSummary>, { kind: 'item' }>;
 
 /**
  * The Chats window's list: Waiting for you (with `waitingFirst`), then each
  * project's or folder's sessions, each group closable. Up and Down move
  * through the sessions shown, and a click on the empty space below shows the dashboard.
+ * The header and the rows are siblings in each group (the phone's list styles depend on it).
  */
 export function SessionList({
   sessions,
@@ -157,7 +128,14 @@ export function SessionList({
   onToggle: (key: string) => void;
   onSelect: (id: string | null) => void;
 }) {
+  const isOpen = (key: string) => !collapsed.includes(key);
+  const sections: { head: GroupRow; items: ItemRow[]; waiting: boolean }[] = [];
+  const section = (g: SessionGroup, id: string, items: SessionSummary[], itemId: (s: SessionSummary) => string, waiting = false) => {
+    const head: GroupRow = { kind: 'group', key: g.key, id, depth: 0, open: isOpen(g.key), group: g };
+    sections.push({ head, waiting, items: head.open ? items.map((s) => ({ kind: 'item', key: s.id, id: itemId(s), depth: 1, item: s })) : [] });
+  };
   const waiting = waitingFirst ? waitingOf(sessions) : [];
+  if (waiting.length > 0) section({ key: WAITING_KEY, name: 'Waiting for you', count: waiting.length }, 'session-group-w', waiting, (s) => `session-w-${s.id}`, true);
   const groups: { key: string; name: string; items: SessionSummary[] }[] = [];
   for (const s of sessions) {
     const key = sessionGroupKey(s);
@@ -165,124 +143,60 @@ export function SessionList({
     if (last?.key === key) last.items.push(s);
     else groups.push({ key, name: s.groupName, items: [s] });
   }
-  const isOpen = (key: string) => !collapsed.includes(key);
-  const waitingId = (id: string) => `session-w-${id}`;
-  // The rows the keyboard visits, top to bottom: each group's header, then its sessions while it's open.
-  const rows: NavRow[] = [];
-  if (waiting.length > 0) {
-    rows.push({ kind: 'group', key: WAITING_KEY, id: 'session-group-w', open: isOpen(WAITING_KEY) });
-    if (isOpen(WAITING_KEY)) for (const s of waiting) rows.push({ kind: 'session', s, id: waitingId(s.id) });
-  }
-  groups.forEach((g, gi) => {
-    rows.push({ kind: 'group', key: g.key, id: `session-group-${gi}`, open: isOpen(g.key) });
-    if (isOpen(g.key)) for (const s of g.items) rows.push({ kind: 'session', s, id: `session-${s.id}` });
+  groups.forEach((g, gi) => section({ key: g.key, name: g.name, count: g.items.length }, `session-group-${gi}`, g.items, (s) => `session-${s.id}`));
+
+  // A chat or a task run opens in a window of its own; terminal sessions stay in the Chats window.
+  const opens = (s: SessionSummary) => itemWindows && s.kind !== 'terminal';
+  const t = useGroupedTree<SessionGroup, SessionSummary>({
+    rows: sections.flatMap((x) => [x.head, ...x.items]),
+    selected,
+    onSelect: (s) => onSelect(s.id),
+    onDeselect: () => onSelect(null),
+    toggle: (g) => onToggle(g.key),
+    onOpen: (s) => {
+      if (opens(s)) window.looper.openItemWindow('chat', s.id);
+    },
+    onDelete: (r) => {
+      if (r.kind === 'item') void window.looper.sessions.close(r.item.id);
+    },
+    onRename: (r) => {
+      if (r.kind === 'item' && r.item.kind !== 'run') window.looper.sessions.openRename(r.item.id);
+    },
+    itemMenu: (s) => window.looper.sessions.showContextMenu(s.id),
+    // Waiting for you has no menu.
+    groupMenu: (g) => {
+      if (g.key !== WAITING_KEY) window.looper.sessions.showGroupContextMenu(g.key);
+    },
   });
-  // The active row is the selected session (its row in Waiting for you when it has one), or the header the keyboard last stopped on.
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.key === activeGroup);
-  const at = groupAt >= 0 ? groupAt : rows.findIndex((r) => r.kind === 'session' && r.s.id === selected);
-  const depths = rows.map((r) => (r.kind === 'group' ? 0 : 1));
-  /** A click or key that selects a session (or none) ends the keyboard's stop on a header. */
-  const pick = (id: string | null) => {
-    setActiveGroup(null);
-    onSelect(id);
-  };
-  /** A row's right-click menu: a chat's, or a project group's (Waiting for you has none). */
-  const rowMenu = (r: NavRow) => {
-    if (r.kind === 'session') window.looper.sessions.showContextMenu(r.s.id);
-    else if (r.key !== WAITING_KEY) window.looper.sessions.showGroupContextMenu(r.key);
-  };
-  const onKeyDown = useListNav({
-    count: rows.length,
-    index: at,
-    onIndex: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') return setActiveGroup(r.key);
-      pick(r.s.id);
-    },
-    onActivate: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') onToggle(r.key);
-      else if (itemWindows && r.s.kind !== 'terminal') window.looper.openItemWindow('chat', r.s.id);
-    },
-    onDelete: (i) => {
-      const r = rows[i];
-      if (r.kind === 'session') void window.looper.sessions.close(r.s.id);
-    },
-    onMenu: (i) => rowMenu(rows[i]),
-    onRename: (i) => {
-      const r = rows[i];
-      if (r.kind === 'session' && r.s.kind !== 'run') window.looper.sessions.openRename(r.s.id);
-    },
-    tree: {
-      expanded: (i) => {
-        const r = rows[i];
-        return r.kind === 'group' ? r.open : undefined;
-      },
-      set: (i, open) => {
-        const r = rows[i];
-        if (r.kind === 'group' && r.open !== open) onToggle(r.key);
-      },
-      parent: (i) => parentIndex(depths, i),
-    },
-    scrollToId: at >= 0 ? rows[at].id : null,
-  });
-  const kindText = (s: SessionSummary) => (s.kind === 'terminal' ? 'Terminal · ' : s.kind === 'run' ? 'Task run · ' : '');
+
   return (
-    <div
-      className="session-list"
-      role="tree"
-      aria-label="Chats"
-      tabIndex={0}
-      aria-activedescendant={at >= 0 ? rows[at].id : undefined}
-      onKeyDown={onKeyDown}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) pick(null);
-      }}
-      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active row's menu.
-      onContextMenu={(e) => listContextMenu(e, at, (i) => rowMenu(rows[i]))}
-    >
-      {waiting.length > 0 && (
-        <Group id="session-group-w" active={groupAt >= 0 && activeGroup === WAITING_KEY} name="Waiting for you" open={isOpen(WAITING_KEY)} count={waiting.length} onToggle={() => { setActiveGroup(WAITING_KEY); onToggle(WAITING_KEY); }}>
-          {waiting.map((s) => (
-            <Row
-              key={`w-${s.id}`}
-              s={s}
-              id={`session-w-${s.id}`}
-              selected={selected === s.id}
-              sub={
-                <>
-                  {s.waiting!.text} · <WaitedFor since={s.waiting!.since} />
-                </>
-              }
-              live
-              onSelect={pick}
-            />
-          ))}
-        </Group>
-      )}
-      {groups.map((g, gi) => (
-        <Group
-          key={g.key}
-          id={`session-group-${gi}`}
-          active={groupAt >= 0 && activeGroup === g.key}
-          name={g.name}
-          open={isOpen(g.key)}
-          count={g.items.length}
-          onToggle={() => {
-            setActiveGroup(g.key);
-            onToggle(g.key);
-          }}
-          onMenu={() => window.looper.sessions.showGroupContextMenu(g.key)}
-        >
-          {g.items.map((s) => (
-            <Row key={s.id} s={s} id={`session-${s.id}`} selected={selected === s.id} sub={kindText(s) + (s.latest ?? statusText(s))} onSelect={pick} />
-          ))}
-        </Group>
+    <div className="session-list" role="tree" aria-label="Chats" {...t.listProps}>
+      {sections.map(({ head, items, waiting: inWaiting }) => (
+        <div role="group" aria-label={head.group.name} key={head.key}>
+          <GroupHeader {...t.groupProps(head)} name={head.group.name} count={head.group.count} className={`session-group${t.activeGroup === head.key ? ' active' : ''}`} />
+          {items.map((r) => {
+            const s = r.item;
+            const { onDoubleClick, ...props } = t.itemProps(r);
+            return (
+              <SessionRow
+                key={r.id}
+                {...props}
+                onDoubleClick={opens(s) ? onDoubleClick : undefined}
+                selected={r.key === selected}
+                className={s.waiting?.reason === 'turn' ? ' unread' : ''}
+                icon={<SessionIcon s={s} />}
+                title={s.title}
+                // The waiting rows count a live time.
+                subClass={`${s.waiting?.reason === 'error' ? ' error-text' : ''}${inWaiting ? ' live-only' : ''}`}
+                sub={inWaiting ? <SessionStatus s={s} /> : (sessionKind(s) ? `${sessionKind(s)} · ` : '') + (s.latest ?? statusText(s))}
+              />
+            );
+          })}
+        </div>
       ))}
       {sessions.length === 0 && (
         <div className="empty session-empty" role="treeitem" aria-disabled="true" aria-selected={false}>
-          No chats are open.
+          {NO_CHATS}
         </div>
       )}
     </div>

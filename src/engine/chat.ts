@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { agentArgs } from '../shared/projects';
 import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
-import { CommandStream } from './command-output';
+import { UserCommands } from './command-output';
 import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import {
   CONTINUE_TEXT,
@@ -44,7 +44,7 @@ import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, compactedFile, findCodexRollout, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
-import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
+import { childEnv, writeLauncher, type RunContext } from './steps/common';
 import { endingError, usageLimitOf } from './sessions';
 import { LOGIN_FAILED_RE } from '../shared/logins';
 import { recordCodexHome, usageLimitReset } from './steps/session';
@@ -423,11 +423,6 @@ export function historyRows(rows: MessageRow[]): MessageRow[] {
   return rows.map((r, i) => ({ ...r, id: `h${i}` }));
 }
 
-/** Where in a chat's folder the output of the user's "!" commands too long to send is saved. */
-const COMMANDS_DIR = 'commands';
-/** A running "!" command's output goes to the window at most this often. */
-const COMMAND_OUTPUT_MS = 100;
-
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
@@ -618,8 +613,7 @@ class ChatSession {
   private remoteName?: string;
   private commands: SlashCommand[] = [];
   /** The commands the user ran from the message box that are still running, by id. */
-  private readonly shellCommands = new Map<string, { child: OffThreadChild; marker: string; stopped: boolean }>();
-  private commandSeq = 0;
+  private readonly shellCommands: UserCommands;
   private turnEndedAt?: number;
   private readonly startedAt: number;
   /** Stop asked claude to end its turn: the process ends if the turn doesn't. */
@@ -731,6 +725,13 @@ class ChatSession {
       dataDir: d.dataDir,
       vars: {},
     };
+    this.shellCommands = new UserCommands(this.ctx, {
+      label: `chat ${this.id}`,
+      onChange: () => this.scheduleEmit(),
+      onOutput: (id, stdout, stderr) => {
+        if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, stdout, stderr });
+      },
+    });
   }
 
   // ---------- lifecycle ----------
@@ -870,91 +871,15 @@ class ChatSession {
 
   // ---------- commands the user runs from the message box ("!") ----------
 
-  /**
-   * Run `input` in the chat's working directory on its target (a WSL or
-   * remote chat runs it there), through a launcher as the agent's own
-   * processes start: its stdout and stderr once it ends. It runs whatever the
-   * agent is doing, and Stop ends it. Its processes carry a run marker of
-   * their own, so stopping it leaves the agent's alone.
-   */
+  /** Run `input` in the chat's working directory (UserCommands); Stop ends it. */
   runCommand(input: string, id: string): Promise<CommandOutput> {
-    const command = input.trim();
     if (this.closed) return Promise.reject(new Error('This chat is closed.'));
-    if (!command) return Promise.reject(new Error('There is no command to run.'));
-    // The window names it (its live output and its Stop find it by the name), within what a file name can hold.
-    if (!/^[\w-]{1,64}$/.test(id) || this.shellCommands.has(id)) return Promise.reject(new Error('The command has no usable id.'));
-    const n = ++this.commandSeq;
-    const marker = `${this.ctx.runId}-cmd${n}`;
-    const spec = writeLauncher({ ...this.ctx, runId: marker }, `command-${n}`, command).spec;
-    // Output too long to send goes whole to a file in the chat's folder, which the agent reads by its own path.
-    const stream = (name: 'stdout' | 'stderr', clean?: (s: string) => string) =>
-      new CommandStream(path.join(this.dir, COMMANDS_DIR, `${id}-${name}.txt`), this.targetFile(COMMANDS_DIR, `${id}-${name}.txt`), clean);
-    const stdout = stream('stdout');
-    // The launcher's interactive bash warns that it has no job control: that's the shell's, not the command's.
-    const stderr = stream('stderr', stripShellNoise);
-    return new Promise((resolve) => {
-      const child = spawnOffThread(spec.command, spec.args, { cwd: this.dir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-      const running = { child, marker, stopped: false };
-      this.shellCommands.set(id, running);
-      this.scheduleEmit();
-      // The window shows the output as it comes, a batch at most every COMMAND_OUTPUT_MS.
-      let timer: NodeJS.Timeout | null = null;
-      const show = () => {
-        timer = null;
-        if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, stdout: stdout.live(), stderr: stderr.live() });
-      };
-      const took = () => {
-        if (!timer) timer = setTimeout(show, COMMAND_OUTPUT_MS);
-      };
-      child.stdout?.setEncoding('utf8');
-      child.stderr?.setEncoding('utf8');
-      child.stdout?.on('data', (d: string) => {
-        stdout.push(d);
-        took();
-      });
-      child.stderr?.on('data', (d: string) => {
-        stderr.push(d);
-        took();
-      });
-      let done = false;
-      const end = async (exitCode: number | null, error?: string) => {
-        if (done) return;
-        done = true;
-        if (timer) clearTimeout(timer);
-        const [out, err] = await Promise.all([stdout.finish(), stderr.finish()]);
-        this.shellCommands.delete(id);
-        this.scheduleEmit();
-        const errText = error ? (err.text ? `${err.text}\n${error}` : error) : err.text;
-        const saved = out.saved || err.saved ? { ...(out.saved ? { stdout: out.saved } : {}), ...(err.saved ? { stderr: err.saved } : {}) } : undefined;
-        resolve({
-          id,
-          input: command,
-          stdout: out.text,
-          stderr: errText,
-          exitCode: running.stopped ? null : exitCode,
-          ...(running.stopped ? { stopped: true } : {}),
-          ...(saved ? { saved } : {}),
-        });
-      };
-      child.on('error', (e) => void end(null, `Couldn't run the command: ${e.message}`));
-      child.on('close', (code) => void end(code));
-      this.d.log.info(`[${this.taskId}] chat ${this.id}: running the user's command ${id}`);
-    });
+    return this.shellCommands.run(input, id);
   }
 
   /** Stop: the commands still running end (`id`: that one alone), with what they printed so far. */
-  async stopCommands(id?: string): Promise<void> {
-    await Promise.all(
-      [...this.shellCommands.entries()]
-        .filter(([key]) => id === undefined || key === id)
-        .map(async ([, c]) => {
-          c.stopped = true;
-          // The launcher's shell first, and for good: an interactive bash ignores SIGTERM, and would go on to the command's next line.
-          const pid = await c.child.spawned;
-          if (pid) await killHostTree(pid, 'SIGKILL').catch(() => undefined);
-          await this.target.killLeftovers(c.marker).catch(() => undefined);
-        }),
-    );
+  stopCommands(id?: string): Promise<void> {
+    return this.shellCommands.stop(id);
   }
 
   /**

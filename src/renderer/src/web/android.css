@@ -293,17 +293,24 @@
   font-family: 'Roboto Mono', ui-monospace, monospace;
   letter-spacing: 0.1em;
 }
-.md-check-row {
+/* A CheckboxField: its desktop look (styles.css .checkbox-field) gives way to Material's row. */
+.checkbox-field.md-check-row {
   display: flex;
+  width: auto;
   align-items: center;
   gap: 12px;
   min-height: 48px;
-  margin-top: 8px;
+  margin: 8px 0 0;
   font-size: 14px;
+  font-weight: inherit;
+  color: inherit;
+  cursor: auto;
 }
-.md-check-row input {
+.checkbox-field.md-check-row input[type='checkbox'] {
   width: 18px;
   height: 18px;
+  margin: 3px 3px 3px 4px;
+  top: 0;
   accent-color: var(--md-primary);
 }
 .md-dialog-actions {

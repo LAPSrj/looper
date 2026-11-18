@@ -3,7 +3,7 @@ import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
 import { EmptyWindow, Field, FormGroup, SelectInput, TextInput, ToggleButtons } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { subscribe } from './events';
+import { useLiveSettings, useSave } from './components/hooks';
 
 function findHarness(settings: Settings, envId: string, harnessId: string): Harness | undefined {
   return settings.environments.find((e) => e.id === envId)?.harnesses.find((h) => h.id === harnessId);
@@ -11,58 +11,52 @@ function findHarness(settings: Settings, envId: string, harnessId: string): Harn
 
 /** Standalone model editor window (Harness → Models → Add/Edit). No index = add. */
 export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: string; harnessId: string; index?: number; copyOf?: number }) {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { live: settings, missing } = useLiveSettings((s) => {
+    const harness = findHarness(s, envId, harnessId);
+    return !!harness && (index === undefined || index < harnessModels(harness).length);
+  });
+  const [loaded, setLoaded] = useState(false);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   // Effort levels the model offers ([] until the harness kind is known) and
   // the level a task's Default resolves to ('' = omit the flag, CLI decides).
   const [efforts, setEfforts] = useState<string[]>([]);
   const [defaultEffort, setDefaultEffort] = useState('');
-  const [missing, setMissing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   const isNew = index === undefined;
 
   useEffect(() => {
     document.title = isNew ? 'New Model' : 'Edit Model';
-    void window.looper.info().then((info) => {
-      setSettings(info.settings);
-      const harness = findHarness(info.settings, envId, harnessId);
-      if (!harness) {
-        setMissing(true);
-        return;
-      }
-      const kindLevels = harness.kind === 'custom' ? [] : EFFORT_LEVELS[harness.kind];
-      if (index !== undefined) {
-        const model = harnessModels(harness)[index];
-        if (!model) {
-          setMissing(true);
-          return;
-        }
-        setId(model.id);
-        setName(model.name);
-        setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
-        setDefaultEffort(model.defaultEffort ?? '');
-      } else if (copyOf !== undefined && harnessModels(harness)[copyOf]) {
-        // Duplicate: a new model that starts as a copy; its id must be changed before Create.
-        const model = harnessModels(harness)[copyOf];
-        setId(model.id);
-        setName(`${model.name} (copy)`);
-        setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
-        setDefaultEffort(model.defaultEffort ?? '');
-      } else {
-        // New entries start fully offered with an explicit Medium default, so
-        // runs are predictable out of the box; "CLI default" is a deliberate choice.
-        setEfforts(kindLevels.map(([v]) => v));
-        setDefaultEffort(kindLevels.some(([v]) => v === 'medium') ? 'medium' : '');
-      }
-    });
-    return subscribe((e) => {
-      if (e.type !== 'settings') return;
-      setSettings(e.settings);
-      const harness = findHarness(e.settings, envId, harnessId);
-      if (!harness || (index !== undefined && index >= harnessModels(harness).length)) setMissing(true);
-    });
-  }, [envId, harnessId, index, isNew, copyOf]);
+  }, [isNew]);
+
+  // The fields start from the settings as they first arrive.
+  useEffect(() => {
+    if (!settings || loaded) return;
+    setLoaded(true);
+    const harness = findHarness(settings, envId, harnessId);
+    if (!harness) return;
+    const kindLevels = harness.kind === 'custom' ? [] : EFFORT_LEVELS[harness.kind];
+    if (index !== undefined) {
+      const model = harnessModels(harness)[index];
+      if (!model) return;
+      setId(model.id);
+      setName(model.name);
+      setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
+      setDefaultEffort(model.defaultEffort ?? '');
+    } else if (copyOf !== undefined && harnessModels(harness)[copyOf]) {
+      // Duplicate: a new model that starts as a copy; its id must be changed before Create.
+      const model = harnessModels(harness)[copyOf];
+      setId(model.id);
+      setName(`${model.name} (copy)`);
+      setEfforts(model.efforts ?? kindLevels.map(([v]) => v));
+      setDefaultEffort(model.defaultEffort ?? '');
+    } else {
+      // New entries start fully offered with an explicit Medium default, so
+      // runs are predictable out of the box; "CLI default" is a deliberate choice.
+      setEfforts(kindLevels.map(([v]) => v));
+      setDefaultEffort(kindLevels.some(([v]) => v === 'medium') ? 'medium' : '');
+    }
+  }, [settings, loaded, envId, harnessId, index, copyOf]);
 
   if (missing || !settings) return <EmptyWindow gone={missing && 'This model no longer exists.'} />;
 
@@ -73,17 +67,15 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
     if (!next.includes(defaultEffort)) setDefaultEffort('');
   };
 
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     const trimmedId = id.trim();
     if (!trimmedId) {
       void window.looper.showError('Model id is required.');
       return false;
     }
+    // Gone: `missing` shows it.
     const harness = findHarness(settings, envId, harnessId);
-    if (!harness) {
-      setMissing(true);
-      return false;
-    }
+    if (!harness) return false;
     const list = harnessModels(harness).slice();
     // Task and project pickers find a model by its id, so each id appears once.
     if (list.some((m, i) => m.id === trimmedId && i !== index)) {
@@ -100,26 +92,13 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
     };
     if (index === undefined) list.push(entry);
     else if (index < list.length) list[index] = entry;
-    else {
-      setMissing(true);
-      return false;
-    }
+    else return false;
     const models = sameModels(list, DEFAULT_MODELS[harness.kind]) ? undefined : list;
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? { ...h, models } : h)) } : e,
     );
-    setSaving(true);
-    try {
-      await window.looper.updateSettings({ environments });
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    await window.looper.updateSettings({ environments });
   };
-  const save = async () => { if (await doSave()) window.close(); };
 
   return (
     <div className="editor">
@@ -154,7 +133,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
           )}
         </div>
       </div>
-      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => void save() }} busy={saving} />
+      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => saver.save(doSave) }} busy={saver.busy} />
     </div>
   );
 }

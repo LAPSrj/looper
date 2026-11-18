@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { isLooperFileName } from '../../../shared/files';
+import { appleDevice } from './device-name';
 import { OPEN_PARAM, REMOTE_CHANNELS, type DialogResult, type HostFileView, type MeResponse, type MenuItemSpec, type MessageBoxSpec, type OpenTarget } from '../../../shared/remote-access';
 import { ClipboardBridge } from './clipboard';
 import { fileType } from './dialog-flows';
@@ -49,7 +50,7 @@ export class ShellController {
 
   constructor(readonly session: Session) {
     this.store = new ShellStore(session);
-    this.isMac = /Macintosh|iPhone|iPad|iPod/.test(navigator.userAgent);
+    this.isMac = /Macintosh/.test(navigator.userAgent) || appleDevice(navigator.userAgent, navigator.maxTouchPoints) !== null;
     this.clipboard = new ClipboardBridge((text) => this.frameOf(this.front()?.w)?.contentWindow?.navigator.clipboard.writeText(text) ?? Promise.reject());
   }
 
@@ -466,4 +467,13 @@ function takeOpenParam(): OpenTarget | null {
 /** One controller per session, for the frame's lifetime. */
 export function useShellController(session: Session): ShellController {
   return useMemo(() => new ShellController(session), [session]);
+}
+
+/** While `on`, the frame has something of its own open over the windows (a menu, a sheet). */
+export function useOverlay(controller: ShellController, on: boolean): void {
+  useEffect(() => {
+    if (!on) return;
+    controller.setOverlay(true);
+    return () => controller.setOverlay(false);
+  }, [on, controller]);
 }

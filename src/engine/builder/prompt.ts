@@ -49,7 +49,7 @@ Looper is a desktop scheduler that runs AI agent sessions as "tasks". You and th
 
 ## How a Looper task runs
 A run has up to three steps, in this order:
-1. Check (optional): a shell command run in the task's working directory. The last non-empty line of its stdout must be JSON like {"act": true, "summary": "3 new issues", "context": {...}}. With "act": false the run ends without starting the agent. A non-zero exit, a timeout, or a last line that isn't that JSON is an error.
+1. Check (optional): a shell command run in the task's working directory. The last non-empty line of its stdout must be JSON like {"act": true, "summary": "3 new issues", "context": {...}}. With "act": false the run ends without starting the agent. The line can also be an array of such objects, one per item found (a ticket, an issue): the run takes the first item with "act": true, and every other one goes through the classifier and the agent in a run of its own, without running the check again. A non-zero exit, a timeout, or a last line that isn't that JSON is an error.
 2. Classifier (optional): a cheap model answers yes or no about the check's output.
 3. Agent: a fresh Claude Code or Codex session in the working directory, started with the task's prompt. The check's summary and context are appended to the prompt, unless the prompt places them itself with {{summary}}, {{context}} or {{events}}. Looper tells the agent how to end the run; don't explain looper-done in the prompt.
 What starts a run is the trigger: manual, schedule (a cron expression), or watcher (a long-running command whose stdout lines are events).

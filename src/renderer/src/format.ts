@@ -20,6 +20,12 @@ export function fmtTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : SECONDS.format(d);
 }
 
+/** "HH:MM" (24-hour, no seconds) for a moment; '' when it isn't a valid time. */
+export function fmtHourMinute(ts: number | string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '' : MINUTES.format(d);
+}
+
 export function fmtCountdown(ts: number | null, now: number): string {
   if (ts === null) return '';
   const diff = ts - now;

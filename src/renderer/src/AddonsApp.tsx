@@ -1,31 +1,29 @@
 import { useEffect, useState } from 'react';
 import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonSide } from '@shared/addons';
-import type { Environment } from '@shared/types';
-import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { envToLine, joinTokens } from '@shared/cmdline';
 import { PropertyList } from './components/PropertyList';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { EmptyWindow, Field, FormGroup, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { parseArgsEnv } from './components/form-blocks';
+import { useLiveSettings, useSave } from './components/hooks';
+import { keptSelection } from './components/selection';
+import { useAddonList } from './live-state';
 
 const STATUS: Record<AddonInfo['status'], string> = { starting: 'Starting', running: 'Running', stopped: 'Stopped' };
 
 /** Advanced → Addons…: the installed addons. Install, Start/Stop, Restart and Remove apply at once. */
 export function AddonsApp() {
-  const [addons, setAddons] = useState<AddonInfo[]>([]);
+  const { addons } = useAddonList();
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = 'Addons';
-    void window.looper.addons.list().then((list) => {
-      setAddons(list);
-      setSelected((s) => s ?? list[0]?.id ?? null);
-    });
-    return window.looper.addons.onEvent((e) => {
-      if (e.type !== 'addons') return;
-      setAddons(e.addons);
-      setSelected((s) => (s && e.addons.some((a) => a.id === s) ? s : (e.addons[0]?.id ?? null)));
-    });
   }, []);
+
+  useEffect(() => {
+    setSelected((s) => keptSelection(s, addons, (a) => a.id));
+  }, [addons]);
 
   const addon = addons.find((a) => a.id === selected);
   // Stop shows while it runs; Start otherwise, which also brings back one that stopped on its own.
@@ -109,66 +107,49 @@ const toDraft = (environmentId: string | undefined, r: { command: string[]; cwd?
 /** The draft as this user's run settings, or why it can't be one. */
 function fromDraft(d: RunDraft, side: AddonSide): AddonLocalRun | string {
   if (!d.environmentId) return `Environment: add one that runs ${sideName(side)} programs in Settings → Environments.`;
-  const cmd = tokenize(d.command);
-  if (!cmd.ok) return `Command: ${cmd.error}`;
-  if (!cmd.tokens.length) return 'Command: enter the program to run.';
-  const env = lineToEnv(d.env);
-  if (typeof env === 'string') return `Environment variables: ${env}`;
+  const parsed = parseArgsEnv({ label: 'Command', text: d.command }, { label: 'Environment variables', text: d.env });
+  if ('problem' in parsed) return parsed.problem;
+  if (!parsed.args.length) return 'Command: enter the program to run.';
   return {
     environmentId: d.environmentId,
-    command: cmd.tokens,
+    command: parsed.args,
     ...(d.cwd.trim() ? { cwd: d.cwd.trim() } : {}),
-    ...(Object.keys(env).length ? { env } : {}),
+    ...(Object.keys(parsed.env).length ? { env: parsed.env } : {}),
   };
 }
 
 /** Advanced → Addons… → Edit…: where and how this user's Looper runs the addon. */
 export function AddonEditApp({ addonId }: { addonId: string }) {
-  const [addon, setAddon] = useState<AddonInfo | null | undefined>(undefined);
+  const { addons, loaded } = useAddonList();
+  const addon = loaded ? (addons.find((x) => x.id === addonId) ?? null) : undefined;
   const [draft, setDraft] = useState<RunDraft | null>(null);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
-  const [saving, setSaving] = useState(false);
+  const { live, host } = useLiveSettings();
+  const saver = useSave();
 
+  // The draft starts from the addon as first found; later list changes don't reset it.
   useEffect(() => {
-    void Promise.all([window.looper.addons.list(), window.looper.info()]).then(([list, info]) => {
-      const a = list.find((x) => x.id === addonId) ?? null;
-      setAddon(a);
-      if (!a) return;
-      setEnvironments(environmentsFor(a.ownRun.on, info.settings.environments, info.host));
-      setDraft(toDraft(a.environmentId, a.localRun ?? a.ownRun));
-    });
-  }, [addonId]);
+    if (addon) setDraft((d) => d ?? toDraft(addon.environmentId, addon.localRun ?? addon.ownRun));
+  }, [addon]);
 
   useEffect(() => {
     document.title = 'Edit Addon';
   }, []);
 
-  if (!addon || !draft) return <EmptyWindow gone={addon === null && 'This addon is no longer installed.'} />;
+  if (!addon || !draft || !live || host === undefined) return <EmptyWindow gone={addon === null && 'This addon is no longer installed.'} />;
 
+  const environments = environmentsFor(addon.ownRun.on, live.environments, host);
   const patch = (p: Partial<RunDraft>) => setDraft((d) => (d ? { ...d, ...p } : d));
   const run = fromDraft(draft, addon.ownRun.on);
   const defaults = toDraft(addon.defaultEnvironmentId, addon.ownRun);
   const isDefault = JSON.stringify(draft) === JSON.stringify(defaults);
 
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     if (typeof run === 'string') {
       void window.looper.showError(run);
       return false;
     }
-    setSaving(true);
-    try {
-      // The addon's own settings are saved as no change, so a new version's settings apply.
-      await window.looper.addons.setRun(addon.id, isDefault ? null : run);
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-  const save = async () => {
-    if (await doSave()) window.close();
+    // The addon's own settings are saved as no change, so a new version's settings apply.
+    await window.looper.addons.setRun(addon.id, isDefault ? null : run);
   };
   return (
     <div className="editor">
@@ -196,14 +177,14 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
               <TextInput code value={draft.env} placeholder="NAME=value" onChange={(e) => patch({ env: e.target.value })} />
             </Field>
           </FormGroup>
-          <ListActions>
-            <ListButton disabled={isDefault} onClick={() => setDraft(defaults)}>
-              Restore Defaults
-            </ListButton>
-          </ListActions>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void doSave() }} busy={saving} />
+      <WindowActions
+        confirm={{ label: 'Save', run: () => saver.save(doSave) }}
+        apply={{ run: () => void saver.apply(doSave) }}
+        extras={[{ id: 'restore-defaults', label: 'Restore Defaults', disabled: isDefault, run: () => setDraft(defaults) }]}
+        busy={saver.busy}
+      />
     </div>
   );
 }

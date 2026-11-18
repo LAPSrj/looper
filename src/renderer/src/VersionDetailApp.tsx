@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Environment } from '@shared/types';
-import { definitionFields, fileName, lineDiff, type DiffLine, type VersionDetail } from '@shared/versions';
+import { plural } from '@shared/format';
+import { baseName } from '@shared/paths';
+import { definitionFields, lineDiff, type DiffLine, type VersionDetail } from '@shared/versions';
 import { DataTable, type DataCol } from './components/DataTable';
 import { ListDetail, selectsFirstRow } from './components/ListDetail';
 import { CodeBlock, TextDiff } from './components/ToolContent';
@@ -8,6 +10,7 @@ import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { settingGroup, settingLabel, settingValue } from './taskSettings';
 import { subscribe } from './events';
+import { restoreVersion, useBuilderOpen } from './version-restore';
 
 /** A text's lines: a file's final newline ends its last line, it isn't one more empty line. */
 const linesOf = (text: string) => text.replace(/\n$/, '').split('\n');
@@ -46,8 +49,7 @@ function summary(path: string, v: unknown, def: Rec, environments: Environment[]
 
 function fileSummary(text: string | null): string {
   if (text === null) return 'No file';
-  const lines = text.replace(/\n$/, '').split('\n').length;
-  return lines === 1 ? '1 line' : `${lines} lines`;
+  return plural(text.replace(/\n$/, '').split('\n').length, 'line');
 }
 
 /** A value in full for the pane below the list: one-line values in words, the rest as they are. */
@@ -71,7 +73,7 @@ function differencesOf(detail: VersionDetail, environments: Environment[]): Diff
   }));
   const files: Difference[] = (detail.fileDiff ?? []).map((f) => ({
     key: `file:${f.path}`,
-    name: fileName(f.path),
+    name: baseName(f.path),
     title: f.path,
     a: fileSummary(f.a),
     b: fileSummary(f.b),
@@ -88,42 +90,78 @@ function DifferenceView({ d, n }: { d: Difference; n: number }) {
   return <TextDiff lines={lines} titles={[`Version ${n}`, 'Current']} missing={[d.textA === null, d.textB === null]} placeholder={file ? 'No file' : 'Not set'} file={file} />;
 }
 
+/**
+ * A list of rows with the selected one in full underneath (the first, where the
+ * columns show side by side); `none` when there are no rows.
+ */
+function RowsView<T extends { key: string; name: string }>({
+  rows,
+  none,
+  cols,
+  idPrefix,
+  initial,
+  empty,
+  groupOf,
+  phoneRow,
+  detail,
+}: {
+  rows: T[];
+  none: string;
+  cols: readonly DataCol<T>[];
+  idPrefix: string;
+  /** The list's share of the height, in %. */
+  initial: number;
+  empty: string;
+  groupOf?: (row: T) => string;
+  phoneRow: (row: T) => { title: string; sub: string };
+  detail: (row: T) => ReactNode;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const current = rows.find((r) => r.key === selected) ?? (selectsFirstRow ? rows[0] : undefined);
+  if (rows.length === 0) return <div className="compare-same">{none}</div>;
+  return (
+    <ListDetail
+      panes={{ axis: 'y', initial, unit: '%', min: 15, max: 85 }}
+      open={selected !== null}
+      onClose={() => setSelected(null)}
+      detailTitle={current?.name}
+      empty={empty}
+      list={
+        <DataTable
+          wrapClass="runlog-table-wrap compare-list"
+          cols={cols}
+          rows={rows}
+          rowKey={(r) => r.key}
+          idPrefix={idPrefix}
+          selected={current?.key}
+          onSelect={(r) => setSelected(r.key)}
+          empty={null}
+          groupOf={groupOf}
+          phoneRow={phoneRow}
+        />
+      }
+      detail={current && <div className="compare-pane">{detail(current)}</div>}
+    />
+  );
+}
+
 /** Compare: the differences from the current version as a list, the selected one side by side underneath. */
 function CompareView({ detail, n, environments }: { detail: VersionDetail; n: number; environments: Environment[] }) {
-  const diffs = differencesOf(detail, environments);
-  const [selected, setSelected] = useState<string | null>(null);
-  const current = diffs.find((d) => d.key === selected) ?? (selectsFirstRow ? diffs[0] : undefined);
-
-  if (diffs.length === 0) {
-    return <div className="compare-same">Version {n} is the same as the current version.</div>;
-  }
-  type Diff = (typeof diffs)[number];
-  const cols: DataCol<Diff>[] = [
+  const cols: DataCol<Difference>[] = [
     { label: 'Name', percent: 28, cell: (d) => d.name, title: (d) => d.title },
     { label: `Version ${n}`, cell: (d) => d.a, title: (d) => d.a },
     { label: 'Current', cell: (d) => d.b, title: (d) => d.b },
   ];
   return (
-    <ListDetail
-      panes={{ axis: 'y', initial: 34, unit: '%', min: 15, max: 85 }}
-      open={selected !== null}
-      onClose={() => setSelected(null)}
-      detailTitle={current?.name}
+    <RowsView
+      rows={differencesOf(detail, environments)}
+      none={`Version ${n} is the same as the current version.`}
+      cols={cols}
+      idPrefix="compare"
+      initial={34}
       empty="Select a difference"
-      list={
-        <DataTable
-          wrapClass="runlog-table-wrap compare-list"
-          cols={cols}
-          rows={diffs}
-          rowKey={(d) => d.key}
-          idPrefix="compare"
-          selected={current?.key}
-          onSelect={(d) => setSelected(d.key)}
-          empty={null}
-          phoneRow={(d) => ({ title: d.name, sub: `${d.a} → ${d.b}` })}
-        />
-      }
-      detail={<div className="compare-pane">{current && <DifferenceView d={current} n={n} />}</div>}
+      phoneRow={(d) => ({ title: d.name, sub: `${d.a} → ${d.b}` })}
+      detail={(d) => <DifferenceView d={d} n={n} />}
     />
   );
 }
@@ -163,7 +201,7 @@ function itemsOf(detail: VersionDetail, environments: Environment[]): Item[] {
     .map((f) => ({
       key: `file:${f.path}`,
       group: 'Files',
-      name: fileName(f.path),
+      name: baseName(f.path),
       title: f.path,
       value: fileSummary(f.content) + (f.matchesDisk === false ? ' · the file on disk is different now' : ''),
       text: f.content,
@@ -180,32 +218,17 @@ function TextView({ item }: { item: Item }) {
 
 /** View: the version's settings and files as a list, the selected one in full underneath. */
 function VersionView({ detail, environments }: { detail: VersionDetail; environments: Environment[] }) {
-  const items = itemsOf(detail, environments);
-  const [selected, setSelected] = useState<string | null>(null);
-  const current = items.find((i) => i.key === selected) ?? (selectsFirstRow ? items[0] : undefined);
-  if (items.length === 0) return <div className="compare-same">This version has no settings.</div>;
   return (
-    <ListDetail
-      panes={{ axis: 'y', initial: 50, unit: '%', min: 15, max: 85 }}
-      open={selected !== null}
-      onClose={() => setSelected(null)}
-      detailTitle={current?.name}
+    <RowsView
+      rows={itemsOf(detail, environments)}
+      none="This version has no settings."
+      cols={VIEW_COLS}
+      idPrefix="setting"
+      initial={50}
       empty="Select a setting"
-      list={
-        <DataTable
-          wrapClass="runlog-table-wrap compare-list"
-          cols={VIEW_COLS}
-          rows={items}
-          rowKey={(i) => i.key}
-          idPrefix="setting"
-          selected={current?.key}
-          onSelect={(i) => setSelected(i.key)}
-          empty={null}
-          groupOf={(i) => i.group}
-          phoneRow={(i) => ({ title: i.name, sub: i.value })}
-        />
-      }
-      detail={<div className="compare-pane">{current && <TextView item={current} />}</div>}
+      groupOf={(i) => i.group}
+      phoneRow={(i) => ({ title: i.name, sub: i.value })}
+      detail={(i) => <TextView item={i} />}
     />
   );
 }
@@ -234,14 +257,10 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
     });
   }, [taskId, n, compare]);
 
+  // With a task builder open on the task, Restore loads the version into it, as Version History's does.
+  const builderOpen = useBuilderOpen(taskId);
   const restore = async () => {
-    if (!(await window.looper.confirm(`Restore version ${n}? Its definition and recorded files replace the current ones, and the restore is saved as a new version.`))) return;
-    try {
-      await window.looper.versions.restore(taskId, n);
-      window.close();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    }
+    if (detail && (await restoreVersion(taskId, detail.version))) window.close();
   };
 
   if (error || !detail) return <EmptyWindow gone={error} />;
@@ -254,7 +273,10 @@ export function VersionDetailApp({ taskId, n, compare }: { taskId: string; n: nu
           <VersionView detail={detail} environments={environments} />
         )}
       </div>
-      <WindowActions close extras={[{ id: 'restore', label: 'Restore', disabled: detail.isCurrent, run: () => void restore() }]} />
+      <WindowActions
+        close
+        extras={[{ id: 'restore', label: builderOpen ? 'Edit with Agent' : 'Restore', disabled: !builderOpen && detail.isCurrent, run: () => void restore() }]}
+      />
     </div>
   );
 }

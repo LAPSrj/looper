@@ -1,7 +1,7 @@
 import type { LooperApi } from './api';
 import type { ChatSettingMenu, ChatState } from './chat';
 import { menuText, type Entry } from './commands/command';
-import { EFFORT_LEVELS, PERMISSION_MODES } from './environments';
+import { EFFORT_LEVELS, PERMISSION_MODES, effortLabel } from './environments';
 
 /** Menu items are in title case, like the rest of the menus ("Extra high" reads "Extra High"). */
 const titled = (options: readonly (readonly [string, string])[]): [string, string][] => options.map(([value, label]) => [value, label.replace(/(^|\s)[a-z]/g, (m) => m.toUpperCase())]);
@@ -26,7 +26,7 @@ export function chatSettingEntries(s: ChatState, looper: LooperApi): Record<Chat
   const entry = s.models.find((m) => m.id === s.settings.model);
   const levels = EFFORT_LEVELS[s.harnessKind];
   const offered = entry?.efforts ? levels.filter(([v]) => entry.efforts!.includes(v)) : levels;
-  const defaultEffort = entry?.defaultEffort ? (levels.find(([v]) => v === entry.defaultEffort)?.[1] ?? entry.defaultEffort) : undefined;
+  const defaultEffort = entry?.defaultEffort ? effortLabel(s.harnessKind, entry.defaultEffort) : undefined;
   const bypassLive = s.settings.permissionMode === 'bypassPermissions';
   const failed = (e: unknown) => void looper.showError((e as Error).message);
   const configure = (patch: Parameters<LooperApi['chat']['configure']>[1]) => void looper.chat.configure(s.id, patch).catch(failed);

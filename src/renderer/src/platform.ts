@@ -1,3 +1,5 @@
+import { appleDevice } from './web/device-name';
+
 export type Platform = 'electron' | 'web' | 'ios' | 'android';
 
 const OVERRIDE_KEY = 'looper.platform';
@@ -17,10 +19,8 @@ function detect(): Platform {
   if (fromQuery && OVERRIDES.includes(fromQuery)) sessionStorage.setItem(OVERRIDE_KEY, fromQuery);
   const override = sessionStorage.getItem(OVERRIDE_KEY);
   if (override && OVERRIDES.includes(override)) return override as Platform;
-  const ua = navigator.userAgent;
-  // iPadOS reports itself as a Mac, but only it has a touch screen.
-  if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
-  if (/Android/.test(ua)) return 'android';
+  if (appleDevice(navigator.userAgent, navigator.maxTouchPoints)) return 'ios';
+  if (/Android/.test(navigator.userAgent)) return 'android';
   return 'web';
 }
 

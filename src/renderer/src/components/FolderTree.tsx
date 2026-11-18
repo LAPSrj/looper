@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import { folderParents, folderSubtree, siblingOrder, type Filed, type FolderLayout } from '@shared/folders';
+import { folderParents, folderSubtree, itemsInside, itemsInTreeOrder, siblingOrder, type Filed, type FolderLayout } from '@shared/folders';
 import type { TaskFolder } from '@shared/types';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
-import { useListNav } from './hooks';
-import { listContextMenu, parentIndex } from './list-nav';
-import { selectsOnMenu } from './ListDetail';
+import { useGroupedTree, type TreeRow } from './GroupedTree';
 
 /** What a list's drag and drop sends its store: the new order, items' new folders (null: the top level), the layout and folders' new parents. */
 export type FolderReorder = (
@@ -70,10 +68,8 @@ type DropTarget =
   | { kind: 'folder'; folderId: string; pos: 'before' | 'into' | 'after' }
   | { kind: 'root' };
 
-/** One rendered row, flattened out of the folder tree. */
-type Row<T> =
-  | { kind: 'folder'; folder: TaskFolder; depth: number; open: boolean; showChildren: boolean; count: number }
-  | { kind: 'item'; item: T; depth: number; container: string; popOut: boolean };
+/** One rendered row, flattened out of the folder tree. An item row marks whether it closes its container's subtree. */
+type Row<T> = TreeRow<{ f: TaskFolder; showChildren: boolean; count: number }, { t: T; container: string; popOut: boolean }>;
 
 const INDENT = GROUP_INDENT;
 
@@ -118,99 +114,58 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
     });
   };
 
-  // Flatten the tree into rows. An item row marks whether it closes its
-  // container's subtree (its bottom edge doubles as "after that folder").
+  // Flatten the tree into rows. A closing row's bottom edge doubles as "after that folder".
   const rows: Row<T>[] = [];
-  const inside = (id: string): T[] => {
-    const ids = folderSubtree(folders, id);
-    return items.filter((t) => t.folderId && ids.has(t.folderId));
-  };
-  /** Folders off: every item the list shows, in tree order (folders open or not), at the top level. */
-  const buildFlat = () => {
-    const inOrder: T[] = [];
-    const walk = (container: string) => {
-      for (const entry of entriesOf.get(container) ?? []) {
-        if (entry.startsWith('folder:')) walk(entry.slice(7));
-        else inOrder.push(...items.filter((t) => t.id === entry && passes(t)));
-      }
-    };
-    walk('');
-    if (p.sortItems) inOrder.sort(p.sortItems);
-    for (const t of inOrder) rows.push({ kind: 'item', item: t, depth: 0, container: containerOf(t), popOut: false });
-  };
+  const itemById = new Map(items.map((t) => [t.id, t]));
+  const itemRowOf = (t: T, depth: number, container: string, popOut: boolean): Row<T> => ({ kind: 'item', key: t.id, id: rowId(t.id), depth, item: { t, container, popOut } });
   const build = (container: string, depth: number) => {
     let entries = entriesOf.get(container) ?? [];
     if (p.sortItems) {
       // Folders keep their order, ahead of the sorted items.
-      const inOrder = entries.flatMap((e) => (e.startsWith('folder:') ? [] : items.filter((t) => t.id === e)));
+      const inOrder = entries.flatMap((e) => (e.startsWith('folder:') ? [] : (itemById.get(e) ?? [])));
       entries = [...entries.filter((e) => e.startsWith('folder:')), ...inOrder.sort(p.sortItems).map((t) => t.id)];
     }
     entries.forEach((entry, i) => {
       const lastHere = i === entries.length - 1;
       if (entry.startsWith('folder:')) {
         const f = folderById.get(entry.slice(7));
-        if (!f || !p.folderShown(inside(f.id))) return;
+        if (!f) return;
+        const inside = itemsInside(items, folders, f.id);
+        if (!p.folderShown(inside)) return;
         const open = isOpen(f.id);
         const children = entriesOf.get(f.id) ?? [];
-        rows.push({ kind: 'folder', folder: f, depth, open, showChildren: open && children.length > 0, count: inside(f.id).filter(passes).length });
+        rows.push({ kind: 'group', key: f.id, id: rowId(`folder-${f.id}`), depth, open, group: { f, showChildren: open && children.length > 0, count: inside.filter(passes).length } });
         if (open) build(f.id, depth + 1);
       } else {
-        const t = items.find((x) => x.id === entry);
-        if (!t || !passes(t)) return;
-        rows.push({ kind: 'item', item: t, depth, container, popOut: container !== '' && lastHere });
+        const t = itemById.get(entry);
+        if (t && passes(t)) rows.push(itemRowOf(t, depth, container, container !== '' && lastHere));
       }
     });
   };
   if (showFolders) build('', 0);
-  else buildFlat();
+  else {
+    // Folders off: every item the list shows, in tree order (folders open or not), at the top level.
+    const inOrder = itemsInTreeOrder(items, entriesOf).filter(passes);
+    if (p.sortItems) inOrder.sort(p.sortItems);
+    for (const t of inOrder) rows.push(itemRowOf(t, 0, containerOf(t), false));
+  }
 
-  // The keyboard walks every row, folder headers included. The active row is the selected item, or the folder the
-  // keyboard last stopped on (the selected item stays selected while it does).
-  const folderRowId = (id: string) => rowId(`folder-${id}`);
-  const [activeFolder, setActiveFolder] = useState<string | null>(null);
-  const folderAt = activeFolder ? rows.findIndex((r) => r.kind === 'folder' && r.folder.id === activeFolder) : -1;
-  const idx = folderAt >= 0 ? folderAt : rows.findIndex((r) => r.kind === 'item' && r.item.id === selected);
-  const rowIdAt = (r: Row<T>) => (r.kind === 'item' ? rowId(r.item.id) : folderRowId(r.folder.id));
-  const depths = rows.map((r) => r.depth);
-  const showRowMenu = (r: Row<T>) => (r.kind === 'item' ? p.onItemMenu(r.item) : p.onFolderMenu(r.folder.id));
-  const onKeyDown = useListNav({
-    count: rows.length,
-    index: idx,
-    onIndex: (i) => {
-      const r = rows[i];
-      if (r.kind === 'folder') return setActiveFolder(r.folder.id);
-      setActiveFolder(null);
-      if (r.item.id !== selected) onSelect(r.item.id);
+  // The keyboard walks every row, folder headers included.
+  const tree = useGroupedTree({
+    rows,
+    selected,
+    onSelect: ({ t }) => onSelect(t.id),
+    onDeselect: () => onSelect(null),
+    tree: showFolders,
+    toggle: ({ f }) => toggleFolder(f.id),
+    onOpen: ({ t }) => p.onActivate(t),
+    onDelete: (r) => (r.kind === 'group' ? p.onFolderCommand(r.group.f.id, 'delete') : p.onDelete(r.item.t)),
+    onRename: (r) => {
+      if (r.kind === 'group') p.onFolderCommand(r.group.f.id, 'rename');
     },
-    onActivate: (i) => {
-      const r = rows[i];
-      if (r.kind === 'folder') toggleFolder(r.folder.id);
-      else p.onActivate(r.item);
-    },
-    onDelete: (i) => {
-      const r = rows[i];
-      if (r.kind === 'folder') p.onFolderCommand(r.folder.id, 'delete');
-      else p.onDelete(r.item);
-    },
-    onRename: (i) => {
-      const r = rows[i];
-      if (r.kind === 'folder') p.onFolderCommand(r.folder.id, 'rename');
-    },
-    onMenu: (i) => showRowMenu(rows[i]),
-    tree: showFolders
-      ? {
-          expanded: (i) => {
-            const r = rows[i];
-            return r.kind === 'folder' ? r.open : undefined;
-          },
-          set: (i, open) => {
-            const r = rows[i];
-            if (r.kind === 'folder' && r.open !== open) toggleFolder(r.folder.id);
-          },
-          parent: (i) => parentIndex(depths, i),
-        }
-      : undefined,
-    scrollToId: idx >= 0 ? rowIdAt(rows[idx]) : null,
+    itemMenu: ({ t }) => p.onItemMenu(t),
+    groupMenu: ({ f }) => p.onFolderMenu(f.id),
+    emptyMenu: p.onEmptyMenu,
   });
 
   const [drag, setDrag] = useState<DragItem | null>(null);
@@ -319,7 +274,8 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
   };
 
   const itemRow = (r: Extract<Row<T>, { kind: 'item' }>) => {
-    const { item: t, depth, container, popOut } = r;
+    const { depth } = r;
+    const { t, container, popOut } = r.item;
     // "After the folder" on its closing row shows a line one indent step out.
     const dropClass =
       drop?.kind === 'item' && drop.itemId === t.id
@@ -330,10 +286,9 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
     return (
       <li
         key={t.id}
-        id={rowId(t.id)}
+        {...tree.itemProps(r)}
         role={showFolders ? 'treeitem' : 'option'}
         aria-level={showFolders ? depth + 1 : undefined}
-        aria-selected={selected === t.id}
         className={`task-item${selected === t.id ? ' selected' : ''}${p.itemClass ? ` ${p.itemClass(t)}` : ''}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
         // A flat list that sorts itself has nowhere to drop an item.
@@ -363,25 +318,15 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
           e.stopPropagation();
           if (drop) completeDrop(drop);
         }}
-        onClick={() => {
-          setActiveFolder(null);
-          onSelect(t.id);
-        }}
-        onDoubleClick={() => p.onActivate(t)}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (selectsOnMenu) onSelect(t.id);
-          p.onItemMenu(t);
-        }}
       >
         {p.renderItem(t)}
       </li>
     );
   };
 
-  const folderRow = (r: Extract<Row<T>, { kind: 'folder' }>) => {
-    const { folder: f, depth, open, showChildren, count } = r;
+  const folderRow = (r: Extract<Row<T>, { kind: 'group' }>) => {
+    const { depth } = r;
+    const { f, showChildren, count } = r.group;
     const dropHere = drop?.kind === 'folder' && drop.folderId === f.id ? drop.pos : null;
     // With children visible, the "after the folder" line renders on its closing row instead.
     const dropClass =
@@ -389,13 +334,12 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
     return (
       <GroupHeader
         key={`folder-${f.id}`}
-        id={folderRowId(f.id)}
+        {...tree.groupProps(r)}
         as="li"
         name={f.name}
-        open={open}
         count={count}
         level={depth + 1}
-        className={`task-folder${activeFolder === f.id ? ' active' : ''}${dropClass}`}
+        className={`task-folder${tree.activeGroup === f.id ? ' active' : ''}${dropClass}`}
         style={depth > 0 ? { marginLeft: depth * INDENT } : undefined}
         draggable
         onDragStart={(e) => {
@@ -404,10 +348,6 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
           e.dataTransfer.setData('text/plain', `folder:${f.id}`);
         }}
         onDragEnd={clearDrag}
-        onToggle={() => {
-          setActiveFolder(f.id);
-          toggleFolder(f.id);
-        }}
         onDragOver={(e) => {
           if (!drag) return;
           const rect = e.currentTarget.getBoundingClientRect();
@@ -422,11 +362,6 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
           e.stopPropagation();
           if (drop) completeDrop(drop);
         }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          p.onFolderMenu(f.id);
-        }}
       />
     );
   };
@@ -436,13 +371,7 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
       className={`task-list${p.compact ? ' compact' : ''}`}
       role={showFolders ? 'tree' : 'listbox'}
       aria-label={p.label}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      aria-activedescendant={idx >= 0 ? rowIdAt(rows[idx]) : undefined}
-      // A click on the empty space below the rows clears the selection.
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onSelect(null);
-      }}
+      {...tree.listProps}
       onDragOver={(e) => {
         if (e.target === e.currentTarget) allowDrop(e, { kind: 'root' });
       }}
@@ -451,8 +380,6 @@ export function FolderTree<T extends Filed>(p: FolderTreeProps<T>) {
         e.preventDefault();
         completeDrop({ kind: 'root' });
       }}
-      // The keyboard's menu request (Shift+F10, the Menu key) lands here: it opens the active row's menu.
-      onContextMenu={(e) => listContextMenu(e, idx, (i) => showRowMenu(rows[i]), p.onEmptyMenu)}
     >
       {rows.map((r) => (r.kind === 'item' ? itemRow(r) : folderRow(r)))}
     </ul>

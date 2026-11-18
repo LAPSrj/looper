@@ -15,26 +15,25 @@ import { ViewSchema, type Project, type View } from '@shared/types';
 import { HISTORY_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { ActivityPanel } from './components/ActivityPanel';
-import { FindStrip } from './components/FindBar';
+import { FindStrip, useFindFocus } from './components/FindBar';
 import { commandToolbar, phoneNav } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { HistoryList } from './components/HistoryList';
-import { CONVERSATION_TAB, subagentTab } from './components/SubagentIcon';
+import { SubagentTabs } from './components/SubagentIcon';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
 import { NavBar } from './components/NavBar';
 import { TreeListSection } from './components/phone/PhoneList';
 import { useSplit } from './components/phone/PhoneSplit';
-import { Tabs, type TabItem } from './components/Tabs';
 import { Toolbar } from './components/Toolbar';
 import { TranscriptView } from './components/Transcript';
 import { subscribe } from './events';
 import { isPhone } from './web/page-nav';
+import { reportError } from './report-error';
 
 const WIDTHS_KEY = 'history.widths';
 const DEFAULT_VIEW: View['history'] = ViewSchema.parse({}).history;
 
-const fail = (e: Error) => void window.looper.showError(e.message);
 
 /**
  * The History window: the conversations on this computer on the left, newest
@@ -55,8 +54,7 @@ export function HistoryApp() {
   /** F5: each one reads the folders again. */
   const [refreshes, setRefreshes] = useState(1);
   const [finding, setFinding] = useState(false);
-  /** Edit → Find counts up: the find box takes the focus and selects what it holds, once it shows. */
-  const [findFocus, setFindFocus] = useState(0);
+  const findField = useFindFocus();
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<ReadonlySet<string> | null>(null);
   const [searching, setSearching] = useState(false);
@@ -70,7 +68,6 @@ export function HistoryApp() {
   // A phone or tablet: its own Activity, as its bar's button; the desktop's follows View → Activity Pane (`activity`).
   const split = useSplit();
   const panel = useInspector<'now'>('now', !!split?.inspector);
-  const searchRef = useRef<HTMLInputElement | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const loads = useRef(0);
@@ -93,13 +90,8 @@ export function HistoryApp() {
 
   const openFind = () => {
     setFinding(true);
-    setFindFocus((n) => n + 1);
+    findField.focus();
   };
-  useEffect(() => {
-    if (!findFocus) return;
-    searchRef.current?.focus();
-    searchRef.current?.select();
-  }, [findFocus]);
 
   useEffect(() => {
     document.title = 'History';
@@ -158,7 +150,7 @@ export function HistoryApp() {
     });
     const quick = window.looper.history.list({ ...o, fresh: false, request: quickReq }).then((l) => {
       if (!freshIn && l.items.length >= shown) take(l, false);
-    }, fail);
+    }, reportError);
     if (!fresh) {
       void quick.finally(() => n === loads.current && setLoadingMore(false));
       return;
@@ -169,7 +161,7 @@ export function HistoryApp() {
       .then((l) => {
         freshIn = true;
         take(l, false);
-      }, fail)
+      }, reportError)
       .finally(() => {
         scanning.current = false;
         if (n === loads.current) setLoadingMore(false);
@@ -212,7 +204,7 @@ export function HistoryApp() {
         q,
         items.map((i) => i.id),
       )
-      .then((ids) => setFound(new Set(ids)), fail)
+      .then((ids) => setFound(new Set(ids)), reportError)
       .finally(() => setSearching(false));
   };
   const closeFind = () => {
@@ -257,7 +249,6 @@ export function HistoryApp() {
   const rows = conv?.rows ?? [];
   const watched = follow ? subRows : rows;
   const ctx = { taskId: item?.taskId ?? '', runId: item?.runId ?? '' };
-  const tabs: TabItem[] = [CONVERSATION_TAB, ...subagents.map(subagentTab)];
   const emptyText =
     items === null ? 'Loading…' : found ? `No conversation’s messages contain “${query.trim()}”.` : query.trim() ? 'No conversation’s title contains that.' : 'No conversations.';
   const findStatus = searching ? 'Searching…' : found ? (found.size === 1 ? '1 conversation' : `${found.size} conversations`) : '';
@@ -266,7 +257,7 @@ export function HistoryApp() {
     <div className="sessions-app history-app">
       <Toolbar groups={toolbar} className="sessions-toolbar" />
       {finding && (
-        <FindStrip query={query} onQuery={typed} status={findStatus} onEnter={searchMessages} onClose={closeFind} inputRef={(el) => (searchRef.current = el)}>
+        <FindStrip query={query} onQuery={typed} status={findStatus} onEnter={searchMessages} onClose={closeFind} inputRef={findField.inputRef}>
           <button className="btn small" disabled={!query.trim() || searching} onClick={searchMessages}>
             Search Messages
           </button>
@@ -313,16 +304,7 @@ export function HistoryApp() {
               <div className="empty">Loading…</div>
             ) : (
               <>
-                {subagents.length > 0 && (
-                  <Tabs
-                    tabs={tabs}
-                    active={follow ? `agent:${follow}` : 'conversation'}
-                    onSelect={(id) => setFollow(id === 'conversation' ? null : id.slice('agent:'.length))}
-                    label="Conversation and agents"
-                    className="subagent-tabs"
-                    ctrlTab
-                  />
-                )}
+                {subagents.length > 0 && <SubagentTabs agents={subagents} follow={follow} onFollow={setFollow} />}
                 {follow && followed ? (
                   <TranscriptView key={`${item.id}:${follow}`} taskId={ctx.taskId} runId={ctx.runId} rows={subRows} waitingText="The subagent has no messages." rowMenu={false} />
                 ) : (
@@ -330,7 +312,7 @@ export function HistoryApp() {
                 )}
                 {commands.chat && (
                   <div className="history-continue">
-                    <button className="btn primary" onClick={() => void window.looper.history.run(item.id, 'chat').catch(fail)}>
+                    <button className="btn primary" onClick={() => void window.looper.history.run(item.id, 'chat').catch(reportError)}>
                       Continue in Chat
                     </button>
                   </div>

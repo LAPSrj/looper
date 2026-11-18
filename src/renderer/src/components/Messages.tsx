@@ -6,16 +6,17 @@ import { messagesToMarkdown } from '@shared/messages-md';
 import { groupRuns } from '@shared/runs';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
-import { capFirst, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
-import { clockTime, resultTone } from '../phone-lists';
+import { capFirst, fmtHourMinute, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
+import { resultTone } from '../phone-lists';
 import { initialRow, rowMatches, runTableRows, type ConversationRow, type RunTableRow, type StepRow } from '../run-rows';
 import { phoneNav } from './command-surfaces';
 import { DataTable, type DataCol } from './DataTable';
-import { FindBar, useFindHighlights, type FindState } from './FindBar';
+import { FindBar, useFindFocus, useFindHighlights, type FindState } from './FindBar';
 import { useCommandMenu, useCommandState } from './useCommands';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
 import { Markdown } from './Markdown';
+import { atEnd } from './newest-first';
 import { Group } from './phone/PhoneList';
 import { TranscriptView } from './Transcript';
 
@@ -183,7 +184,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const [find, setFind] = useState<FindState | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
-  const findInput = useRef<HTMLInputElement | null>(null);
+  const findField = useFindFocus();
   const atBottomRef = useRef(true);
 
   // The filter window sends its value.
@@ -225,7 +226,13 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       filter,
       tab: hasResult && showResult ? 'result' : 'details',
       message: !selectsFirstRow && selected !== null,
-      findInMessage: selected === null ? undefined : () => setFind((f) => f ?? { query: '', index: 0 }),
+      findInMessage:
+        selected === null
+          ? undefined
+          : () => {
+              setFind((f) => f ?? { query: '', index: 0 });
+              findField.focus();
+            },
       set: (patch) => {
         if (patch.raw !== undefined) setRaw(patch.raw);
         if (patch.rawOutput !== undefined) setRawOutput(patch.rawOutput);
@@ -337,12 +344,9 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const idx = selected === null ? -1 : visible.findIndex((r) => r.id === selected);
   const current = idx >= 0 ? visible[idx] : null;
 
-  // Find in Message searches the open row; another row closes it.
-  useEffect(() => setFind(null), [selected]);
-  const findOpen = find !== null;
-  useEffect(() => {
-    if (findOpen) findInput.current?.focus();
-  }, [findOpen]);
+  // Find in Message searches the open row; another row closes it, and so does the filter hiding it, which takes its pane away.
+  const shown = current !== null;
+  useEffect(() => setFind(null), [selected, shown]);
   const matches = useFindHighlights(detailRef, find, setFind);
 
   // A run record's content; the agent's end record reads the captured terminal output.
@@ -467,7 +471,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
             tableRef={wrapRef}
             onTableScroll={(e) => {
               const w = e.currentTarget;
-              atBottomRef.current = w.scrollHeight - w.scrollTop - w.clientHeight < 40;
+              atBottomRef.current = atEnd(w);
             }}
             note={raw && dropped > 0 ? `${dropped} earlier messages not shown` : undefined}
             empty={rows.length > 0 ? 'No rows match the filter.' : emptyText()}
@@ -476,28 +480,20 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
             sectionTitle={(day, days) => (days > 1 ? `Run, ${day}` : 'Run')}
             phoneRow={(r) => ({
               title: r.preview,
-              sub: [r.ts ? clockTime(r.ts) : '', typeLabel(r)].filter(Boolean).join(' · '),
+              sub: [r.ts ? fmtHourMinute(r.ts) : '', typeLabel(r)].filter(Boolean).join(' · '),
               tone: r.kind === 'step' ? resultTone(r.record.result) : undefined,
             })}
           />
         }
         detail={
-          <div className={`messages-detail${current?.kind === 'conversation' ? ' messages-detail-chat' : ''}`}>
-            {find && current !== null && (
-              <FindBar
-                find={find}
-                matches={matches}
-                onChange={setFind}
-                onClose={() => setFind(null)}
-                inputRef={(el) => {
-                  findInput.current = el;
-                }}
-              />
-            )}
-            <div className="messages-detail-body" ref={detailRef}>
-              {current === null ? <div className="messages-detail-empty muted">Select a row</div> : detail(current)}
+          current && (
+            <div className={`messages-detail${current.kind === 'conversation' ? ' messages-detail-chat' : ''}`}>
+              {find && <FindBar find={find} matches={matches} onChange={setFind} onClose={() => setFind(null)} inputRef={findField.inputRef} />}
+              <div className="messages-detail-body" ref={detailRef}>
+                {detail(current)}
+              </div>
             </div>
-          </div>
+          )
         }
       />
     </div>

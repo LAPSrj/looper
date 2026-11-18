@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { groupRuns, runShown, type RunFilter, type RunGroup } from '@shared/runs';
 import type { RunRecord, TaskRuntime } from '@shared/types';
-import { fmtDate, fmtTime, formatDuration, resultLabel } from '../format';
+import { fmtDate, fmtHourMinute, fmtTime, formatDuration, resultLabel } from '../format';
 import { resultTone, timeAndDuration } from '../phone-lists';
 import { DataTable, type DataCol } from './DataTable';
 import { ListDetail } from './ListDetail';
@@ -101,16 +101,19 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
             dayOf={(g) => Date.parse(g.startTs)}
             phoneRow={(g) => ({
               title: detailsOf(g) || (sessions ? 'Session' : resultLabel(g.result)),
-              sub: timeAndDuration(g.startTs, duration(g)),
+              sub: timeAndDuration(fmtHourMinute(g.startTs), duration(g)),
               value: sessions ? undefined : liveLabel(g),
               valueTone: resultTone(g.result),
             })}
           />
         }
+        empty="Select a run"
         detail={
-          <div className="runlog-result">
-            {selectedGroup?.resultText ? <Markdown text={selectedGroup.resultText} /> : <div className="runlog-result-empty muted">{selectedGroup ? 'No result' : 'Select a run'}</div>}
-          </div>
+          selectedGroup && (
+            <div className="runlog-result">
+              {selectedGroup.resultText ? <Markdown text={selectedGroup.resultText} /> : <div className="runlog-result-empty muted">No result</div>}
+            </div>
+          )
         }
       />
     </div>

@@ -4,6 +4,7 @@ import { watcherOf } from '../shared/types';
 import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import { taskEnv } from '../shared/projects';
 import type { HostKind } from './host';
+import { relatedIdOfLine } from './guidance';
 import { errMsg, type Logger } from './log';
 import { looksLikeEnvironmentError } from './network';
 import { createTarget, type Target } from './target';
@@ -37,7 +38,7 @@ export interface WatcherPoolDeps {
   now?: () => number;
 }
 
-/** Event lines held for a task before the scheduler takes them; past it the oldest are dropped. */
+/** Event lines held in one batch before the scheduler takes them; past it the oldest are dropped. */
 const MAX_PENDING = 1000;
 /** A debounce of 0 still coalesces the lines of one burst, which arrive across several chunks. */
 const MIN_DEBOUNCE_MS = 10;
@@ -48,14 +49,29 @@ const BACKOFF_MAX_MS = 300_000;
 /** Rolling stderr kept per watcher, for the exit message only. */
 const STDERR_TAIL_BYTES = 4096;
 
+/** Lines waiting for their quiet: all of a task's, or with sendRelatedEvents one related id's. */
+interface Batch {
+  lines: string[];
+  firstAt: number;
+  timer: NodeJS.Timeout | null;
+  /** Lines were dropped at the cap; logged once per overflow episode. */
+  overflowed: boolean;
+}
+
+/** How long a batch waits: for `debounceMs` of quiet, at most `maxWaitMs` after its first line. Live-updatable. */
+interface Timing {
+  debounceMs: number;
+  maxWaitMs: number | null;
+  byRelatedId: boolean;
+}
+
 interface Entry {
   taskId: string;
   /** The task as of the last sync; respawns use it. */
   task: Task;
   /** Spawn-relevant configuration; a change means stop and start, not a live update. */
   key: string;
-  /** Live-updatable: a debounce change never respawns the watcher. */
-  debounceMs: number;
+  timing: Timing;
   target: Target | null;
   child: OffThreadChild | null;
   /** Each spawn gets a number so a stale exit event cannot restart the current child. */
@@ -64,10 +80,8 @@ interface Entry {
   /** Trailing partial line of the stdout stream. */
   stdoutBuf: string;
   stderrTail: string;
-  pending: string[];
-  /** Lines were dropped at the cap; logged once per overflow episode. */
-  overflowed: boolean;
-  debounce: NodeJS.Timeout | null;
+  /** Keyed by related id; undefined holds the lines without one, or every line when ids don't split batches. */
+  batches: Map<string | undefined, Batch>;
   restart: NodeJS.Timeout | null;
   crashes: number;
   /** Exits the machine's environment caused in a row: they back off the respawn but never count as crashes. */
@@ -82,6 +96,15 @@ interface Entry {
 /** Run id of a watcher process: what its launcher stamps on the target, for killLeftovers. */
 function watchRunId(taskId: string): string {
   return 'watch-' + taskId;
+}
+
+function timingOf(task: Task): Timing {
+  const watcher = watcherOf(task)!;
+  return {
+    debounceMs: Math.max(MIN_DEBOUNCE_MS, Math.round(watcher.debounceSec * 1000)),
+    maxWaitMs: watcher.maxWaitSec === undefined ? null : Math.round(watcher.maxWaitSec * 1000),
+    byRelatedId: task.trigger.sendRelatedEvents,
+  };
 }
 
 function lastLine(text: string): string {
@@ -117,13 +140,12 @@ export class WatcherPool {
       return;
     }
     const key = spawnKey(task);
-    const debounceMs = Math.max(MIN_DEBOUNCE_MS, Math.round(watcher.debounceSec * 1000));
     if (!entry) {
-      this.start(task, key, debounceMs);
+      this.start(task, key);
       return;
     }
     entry.task = task;
-    entry.debounceMs = debounceMs;
+    entry.timing = timingOf(task);
     if (entry.key === key) return;
     this.d.log.info(`[${task.id}] watcher configuration changed; restarting it`);
     // The kill is awaited, so the restart is booked against a token: a stop
@@ -134,7 +156,7 @@ export class WatcherPool {
     void stopped.then(() => {
       if (this.pendingRestart.get(task.id) !== token) return;
       this.pendingRestart.delete(task.id);
-      this.start(task, key, debounceMs);
+      this.start(task, key);
     });
   }
 
@@ -188,22 +210,20 @@ export class WatcherPool {
 
   // ---------- internals ----------
 
-  private start(task: Task, key: string, debounceMs: number): void {
+  private start(task: Task, key: string): void {
     if (this.entries.has(task.id)) return;
     const entry: Entry = {
       taskId: task.id,
       task,
       key,
-      debounceMs,
+      timing: timingOf(task),
       target: null,
       child: null,
       gen: 0,
       startedAt: 0,
       stdoutBuf: '',
       stderrTail: '',
-      pending: [],
-      overflowed: false,
-      debounce: null,
+      batches: new Map(),
       restart: null,
       crashes: 0,
       envFailures: 0,
@@ -271,8 +291,8 @@ export class WatcherPool {
 
   /**
    * Split the chunk into lines, keeping the trailing partial for the next one.
-   * Every line (re)arms the debounce, so a burst becomes one batch and a
-   * steady trickle keeps waiting for the quiet the debounce asks for.
+   * Every line (re)arms its batch's debounce, so a burst becomes one batch; a
+   * steady trickle keeps waiting for the quiet, up to the max wait if set.
    */
   private onStdout(entry: Entry, chunk: string): void {
     entry.stdoutBuf += chunk;
@@ -285,40 +305,52 @@ export class WatcherPool {
       this.dropPending(entry);
       return;
     }
-    let got = false;
+    const touched = new Set<string | undefined>();
     for (const part of parts) {
       const line = part.trim();
       if (!line) continue;
-      entry.pending.push(line);
-      got = true;
-      if (entry.pending.length > MAX_PENDING) {
-        entry.pending.splice(0, entry.pending.length - MAX_PENDING);
-        if (!entry.overflowed) {
-          entry.overflowed = true;
+      const id = entry.timing.byRelatedId ? relatedIdOfLine(line) : undefined;
+      let batch = entry.batches.get(id);
+      if (!batch) {
+        batch = { lines: [], firstAt: this.now(), timer: null, overflowed: false };
+        entry.batches.set(id, batch);
+      }
+      batch.lines.push(line);
+      touched.add(id);
+      if (batch.lines.length > MAX_PENDING) {
+        batch.lines.splice(0, batch.lines.length - MAX_PENDING);
+        if (!batch.overflowed) {
+          batch.overflowed = true;
           this.d.log.warn(
             `[${entry.taskId}] watcher events dropped: more than ${MAX_PENDING} lines are waiting to be delivered`,
           );
         }
       }
     }
-    if (!got) return;
-    if (entry.debounce) clearTimeout(entry.debounce);
-    entry.debounce = setTimeout(() => this.flush(entry), entry.debounceMs);
+    for (const id of touched) {
+      const batch = entry.batches.get(id)!;
+      const { debounceMs, maxWaitMs } = entry.timing;
+      const wait = maxWaitMs === null ? debounceMs : Math.min(debounceMs, batch.firstAt + maxWaitMs - this.now());
+      if (batch.timer) clearTimeout(batch.timer);
+      batch.timer = setTimeout(() => this.flush(entry, id), Math.max(0, wait));
+    }
+  }
+
+  private pendingLines(entry: Entry): string[] {
+    return [...entry.batches.values()].flatMap((b) => b.lines);
   }
 
   private dropPending(entry: Entry): void {
-    if (entry.debounce) clearTimeout(entry.debounce);
-    entry.debounce = null;
-    entry.pending = [];
+    for (const batch of entry.batches.values()) if (batch.timer) clearTimeout(batch.timer);
+    entry.batches.clear();
   }
 
-  private flush(entry: Entry): void {
-    entry.debounce = null;
-    if (entry.stopping || !entry.pending.length) return;
-    const lines = entry.pending;
-    entry.pending = [];
-    entry.overflowed = false;
-    this.safe(entry.taskId, () => this.d.onEvents(entry.taskId, lines));
+  private flush(entry: Entry, id: string | undefined): void {
+    const batch = entry.batches.get(id);
+    if (!batch) return;
+    entry.batches.delete(id);
+    if (entry.stopping || !batch.lines.length) return;
+    this.safe(entry.taskId, () => this.d.onEvents(entry.taskId, batch.lines));
   }
 
   /**
@@ -338,7 +370,7 @@ export class WatcherPool {
       looksLikeEnvironmentError(error) ||
       (!healthy &&
         (entry.envOutput ||
-          looksLikeEnvironmentError(`${entry.stderrTail}\n${entry.pending.join('\n')}\n${entry.stdoutBuf}`)));
+          looksLikeEnvironmentError(`${entry.stderrTail}\n${this.pendingLines(entry).join('\n')}\n${entry.stdoutBuf}`)));
     // Whatever is still held came from wsl.exe, not from a watcher that ran.
     if (environment) this.dropPending(entry);
     const last = error ?? lastLine(entry.stderrTail);
@@ -380,13 +412,10 @@ export class WatcherPool {
 
   private async teardown(entry: Entry): Promise<void> {
     entry.stopping = true;
-    if (entry.debounce) clearTimeout(entry.debounce);
     if (entry.restart) clearTimeout(entry.restart);
-    entry.debounce = null;
     entry.restart = null;
-    entry.pending = [];
+    this.dropPending(entry);
     entry.stdoutBuf = '';
-    entry.overflowed = false;
     entry.gen += 1;
     const child = entry.child;
     entry.child = null;

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { platform } from '../../platform';
 import { AxisDrag } from '../../web/gestures';
 import { isPhone } from '../../web/page-nav';
+import { useCtrlTab } from '../Tabs';
 import { tabKeyTarget, tabStop } from '../tabs-model';
 
 /**
@@ -56,6 +57,7 @@ export function Row({
   selected,
   checked,
   disabled,
+  tabIndex = 0,
   onOpen,
   onMenu,
 }: {
@@ -76,6 +78,8 @@ export function Row({
   /** One option of a choice of one: true shows the check at its end (HIG: Lists and tables). */
   checked?: boolean;
   disabled?: boolean;
+  /** A row that opens: -1 leaves it out of the Tab order (one Tab stop for a radio group). */
+  tabIndex?: number;
   /** `row` is the row's element, which a menu it opens anchors to. */
   onOpen?: (row: HTMLElement) => void;
   onMenu?: () => void;
@@ -91,12 +95,15 @@ export function Row({
       aria-haspopup={(popUp && onOpen && 'menu') || undefined}
       aria-disabled={disabled || undefined}
       aria-current={selected || undefined}
-      tabIndex={open ? 0 : undefined}
+      tabIndex={open ? tabIndex : undefined}
       onClick={open && ((e) => open(e.currentTarget))}
       onKeyDown={
         open &&
         ((e) => {
-          if (e.key === 'Enter') open(e.currentTarget);
+          // Space presses a button or a radio (ARIA), only on the row itself, not on a control inside it.
+          if (e.key === ' ' && e.target === e.currentTarget) e.preventDefault();
+          else if (e.key !== 'Enter') return;
+          open(e.currentTarget);
         })
       }
       onContextMenu={
@@ -164,7 +171,7 @@ const SWIPE_OPEN_EXTENT = 120;
 const SWIPE_FULL = 0.6;
 
 /** A row a swipe to the left slides aside to show its destructive command; a full swipe runs it. */
-export function SwipeRow({ action, children }: { action?: { label: string; run: () => void }; children: ReactNode }) {
+export function SwipeRow({ action, className, children }: { action?: { label: string; run: () => void }; className?: string; children: ReactNode }) {
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const host = useRef<HTMLDivElement>(null);
@@ -180,15 +187,16 @@ export function SwipeRow({ action, children }: { action?: { label: string; run: 
     document.addEventListener('pointerdown', close, true);
     return () => document.removeEventListener('pointerdown', close, true);
   }, [open]);
+  const swipeClass = `pg-swipe${className ? ` ${className}` : ''}`;
   if (!action) {
     return (
-      <div className="pg-swipe">
+      <div className={swipeClass}>
         <div className="pg-swipe-content">{children}</div>
       </div>
     );
   }
   return (
-    <div className="pg-swipe" ref={host}>
+    <div className={swipeClass} ref={host}>
       {offset > 0 && (
         <button
           type="button"
@@ -280,16 +288,24 @@ export function Segmented<T extends string>({
   value,
   onChange,
   label,
+  className = 'pg-segmented',
+  activeClass = 'active',
+  ctrlTab,
 }: {
   items: readonly (readonly [T, string])[];
   value: T;
   onChange: (v: T) => void;
   label: string;
+  className?: string;
+  activeClass?: string;
+  /** Ctrl+Tab and Ctrl+Shift+Tab cycle the segments while the window has focus, as Tabs' `ctrlTab`. */
+  ctrlTab?: boolean;
 }) {
   const ids = items.map(([id]) => id);
+  useCtrlTab(ids, value, onChange as (id: string) => void, ctrlTab);
   return (
     <div
-      className="pg-segmented"
+      className={className}
       role="tablist"
       aria-label={label}
       // The ARIA tabs pattern as in Tabs.tsx: one Tab stop, the arrow keys, Home and End move to a segment and select it.
@@ -304,13 +320,14 @@ export function Segmented<T extends string>({
       {items.map(([id, text]) => (
         <button
           key={id}
+          type="button"
           role="tab"
           aria-selected={value === id}
           tabIndex={tabStop(ids, value) === id ? 0 : -1}
-          className={value === id ? 'active' : undefined}
+          className={value === id ? activeClass : undefined}
           onClick={() => onChange(id)}
         >
-          {text}
+          <span className="pg-segment-label">{text}</span>
         </button>
       ))}
     </div>

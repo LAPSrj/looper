@@ -59,6 +59,8 @@
     "src/renderer/src/components/code-languages.ts",
     "src/renderer/src/components/markdown-render.ts",
     "src/renderer/src/components/kept-place.ts",
+    "src/renderer/src/components/multi-select.ts",
+    "src/renderer/src/web/zoom.ts",
     "src/renderer/src/web/nav-stack.ts",
     "src/renderer/src/web/nav-bar-model.ts",
     "src/renderer/src/web/gestures.ts",

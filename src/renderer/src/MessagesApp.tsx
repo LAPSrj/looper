@@ -3,6 +3,7 @@ import type { TaskRuntime } from '@shared/types';
 import { MessagesView } from './components/Messages';
 import { RunGuidance } from './components/Transcript';
 import { subscribe } from './events';
+import { reportError } from './report-error';
 import { taskNameOf } from './phone-lists';
 
 /**
@@ -60,7 +61,14 @@ export function MessagesApp({
         phoneTitle={phoneTitle}
       />
       {!agentId && agentRunning && (
-        <RunGuidance taskId={taskId} runId={runId} question={run?.question ?? null} recheck={run?.state} onSent={() => setSent((n) => n + 1)} />
+        <RunGuidance
+          taskId={taskId}
+          runId={runId}
+          question={run?.question ?? null}
+          recheck={run?.state}
+          onSent={() => setSent((n) => n + 1)}
+          stop={{ enabled: true, run: () => void window.looper.sessions.stop(runId).catch(reportError) }}
+        />
       )}
     </div>
   );

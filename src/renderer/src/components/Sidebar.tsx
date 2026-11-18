@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { Chevron } from './icons';
-import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { Environment, Project, ProjectFolder, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
-import { ALL_FILTERS, PANES, passesFilter, type PaneId } from '@shared/panes';
+import { ALL_FILTERS, PANES, passesFilter } from '@shared/panes';
+import { pressKeys } from './list-nav';
 import { ProjectList } from './ProjectList';
 import { showPaneMenu, showProjectsListMenu } from './row-menus';
+import { Splitter } from './SplitPane';
 import { TaskList } from './TaskList';
-import { useDragResize } from './hooks';
 
 interface Props {
   tasks: Task[];
@@ -26,23 +27,12 @@ const SASH_STEP_PX = 24;
 
 /** The pair of panes a splitter drag resizes, measured when the drag starts. */
 interface SashDrag {
-  above: PaneId;
-  below: PaneId;
+  above: string;
+  below: string;
   startY: number;
   heightAbove: number;
   heightBelow: number;
   weightSum: number;
-}
-
-interface PaneEntry {
-  key: PaneId;
-  title: string;
-  count: number;
-  open: boolean;
-  weight: number;
-  onToggle: () => void;
-  onMenu: () => void;
-  body: ReactNode;
 }
 
 /** A sidebar pane's header: its title and count, and a right-click shows its menu. With `onToggle` it is a button that opens and closes the pane. */
@@ -54,14 +44,7 @@ export function PaneHeader({ title, count, onMenu, open, onToggle }: { title: st
       role={onToggle && 'button'}
       tabIndex={onToggle && 0}
       aria-expanded={onToggle && open}
-      onKeyDown={
-        onToggle &&
-        ((e) => {
-          if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-          e.preventDefault();
-          onToggle();
-        })
-      }
+      onKeyDown={onToggle && pressKeys(onToggle)}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu();
@@ -71,6 +54,120 @@ export function PaneHeader({ title, count, onMenu, open, onToggle }: { title: st
       <span className="pane-title">{title}</span>
       {count !== undefined && <span className="pane-count">{count}</span>}
     </div>
+  );
+}
+
+/** One pane of a PaneStack. */
+export interface StackPane {
+  key: string;
+  title: string;
+  count?: number;
+  onMenu: () => void;
+  body: ReactNode;
+  /** With `onToggle` the header opens and closes the pane. */
+  open?: boolean;
+  onToggle?: () => void;
+  /** Its share of the height the open panes have (1 when unset). */
+  weight?: number;
+}
+
+/**
+ * A sidebar's panes, stacked, each under its header. With `onWeights` a
+ * splitter between two open panes resizes them, and their new weights are
+ * passed to it once the drag or key press is done.
+ */
+export function PaneStack({ panes, onWeights }: { panes: StackPane[]; onWeights?: (weights: Record<string, number>) => void }) {
+  const asideRef = useRef<HTMLElement>(null);
+  const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sash = useRef<SashDrag | null>(null);
+  // Weights while a splitter is dragged; passed on when it is released.
+  const [dragWeights, setDragWeights] = useState<Record<string, number> | null>(null);
+
+  if (panes.length === 1 && !panes[0].onToggle) {
+    const [p] = panes;
+    return (
+      <aside className="sidebar">
+        <PaneHeader title={p.title} count={p.count} onMenu={p.onMenu} />
+        {p.body}
+      </aside>
+    );
+  }
+
+  const isOpen = (p: StackPane) => p.open ?? true;
+  const weight = (p: StackPane) => dragWeights?.[p.key] ?? p.weight ?? 1;
+  const paneStyle = (p: StackPane): React.CSSProperties => (isOpen(p) ? { flex: `${weight(p)} 1 0px` } : { flex: '0 0 auto' });
+  const heights = ([above, below]: [StackPane, StackPane]) => {
+    const a = paneRefs.current[above.key]?.getBoundingClientRect().height;
+    const b = paneRefs.current[below.key]?.getBoundingClientRect().height;
+    return a === undefined || b === undefined ? null : [a, b];
+  };
+
+  /** The splitter above pane `i` resizes the nearest open pane above it and the nearest open one from `i` down. */
+  const sashPair = (i: number): [StackPane, StackPane] | null => {
+    const above = panes.slice(0, i).reverse().find(isOpen);
+    const below = panes.slice(i).find(isOpen);
+    return above && below ? [above, below] : null;
+  };
+
+  /** The pair's weights (adding up to `sum`) that give the upper pane `upper` px of their `total`. */
+  const split = ([above, below]: [StackPane, StackPane], sum: number, upper: number, total: number) => ({
+    [above.key]: (sum * upper) / total,
+    [below.key]: (sum * (total - upper)) / total,
+  });
+  const fit = (above: number, total: number) => Math.max(MIN_PANE_PX, Math.min(total - MIN_PANE_PX, above));
+
+  return (
+    <aside className="sidebar" ref={asideRef}>
+      {panes.map((p, i) => {
+        const pair = onWeights && i > 0 ? sashPair(i) : null;
+        return (
+          <div
+            key={p.key}
+            ref={(el) => {
+              paneRefs.current[p.key] = el;
+            }}
+            className={`sidebar-pane${i > 0 ? ' follows' : ''}`}
+            style={paneStyle(p)}
+          >
+            {pair && (
+              <Splitter
+                className="pane-sash"
+                axis="y"
+                label={`Resize ${pair[0].title} and ${pair[1].title}`}
+                // It reports the upper pane's share of the pair.
+                value={{ now: (weight(pair[0]) / (weight(pair[0]) + weight(pair[1]))) * 100, min: 0, max: 100 }}
+                containerRef={asideRef}
+                onDragStart={(e) => {
+                  const h = heights(pair);
+                  const rect = asideRef.current?.getBoundingClientRect();
+                  if (!h || !rect) return false;
+                  sash.current = { above: pair[0].key, below: pair[1].key, startY: e.clientY - rect.top, heightAbove: h[0], heightBelow: h[1], weightSum: weight(pair[0]) + weight(pair[1]) };
+                }}
+                onDrag={(y) => {
+                  const s = sash.current;
+                  if (!s) return;
+                  const total = s.heightAbove + s.heightBelow;
+                  setDragWeights(split(pair, s.weightSum, fit(s.heightAbove + y - s.startY, total), total));
+                }}
+                onDragEnd={() => {
+                  sash.current = null;
+                  if (dragWeights) onWeights?.(dragWeights);
+                  setDragWeights(null);
+                }}
+                onStep={(dir) => {
+                  const h = heights(pair);
+                  if (!h) return;
+                  const total = h[0] + h[1];
+                  onWeights?.(split(pair, weight(pair[0]) + weight(pair[1]), fit(h[0] + dir * SASH_STEP_PX, total), total));
+                }}
+              />
+            )}
+            <PaneHeader title={p.title} count={p.count} onMenu={p.onMenu} open={isOpen(p)} onToggle={p.onToggle} />
+            {isOpen(p) && p.body}
+          </div>
+        );
+      })}
+    </aside>
   );
 }
 
@@ -93,66 +190,33 @@ export function ProjectsSidebar({
   view: View;
 }) {
   return (
-    <aside className="sidebar">
-      <PaneHeader title="Projects" count={projects.length} onMenu={showProjectsListMenu} />
-      <ProjectList
-        projects={projects}
-        folders={folders}
-        layout={layout}
-        groupBy={view.projectsPane.groupBy}
-        environments={environments}
-        selected={selected}
-        compact={view.taskList === 'compact'}
-        onSelect={onSelect}
-      />
-    </aside>
+    <PaneStack
+      panes={[
+        {
+          key: 'projects',
+          title: 'Projects',
+          count: projects.length,
+          onMenu: showProjectsListMenu,
+          body: (
+            <ProjectList
+              projects={projects}
+              folders={folders}
+              layout={layout}
+              groupBy={view.projectsPane.groupBy}
+              environments={environments}
+              selected={selected}
+              compact={view.taskList === 'compact'}
+              onSelect={onSelect}
+            />
+          ),
+        },
+      ]}
+    />
   );
 }
 
 /** The Tasks tab's task list: one list of every task, or the Tasks, Goals and Watchers panes stacked. */
-export function Sidebar({
-  tasks,
-  folders,
-  layout,
-  runtimes,
-  selected,
-  onSelect,
-  view,
-  onView,
-}: Props) {
-  const asideRef = useRef<HTMLElement>(null);
-  const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const sash = useRef<SashDrag | null>(null);
-  // Weights while a splitter is dragged; saved to the view when it is released.
-  const [dragWeights, setDragWeights] = useState<Partial<Record<PaneId, number>> | null>(null);
-
-  /** The view patch that stores these pane weights. */
-  const weightPatch = (weights: Partial<Record<PaneId, number>>): Partial<View> => {
-    const panes = { ...view.panes };
-    for (const p of PANES) {
-      const weight = weights[p.id];
-      if (weight !== undefined) panes[p.id] = { ...panes[p.id], weight };
-    }
-    return { panes };
-  };
-
-  const onSashDown = useDragResize({
-    axis: 'y',
-    containerRef: asideRef,
-    onDrag: (y) => {
-      const s = sash.current;
-      if (!s) return;
-      const total = s.heightAbove + s.heightBelow;
-      const above = Math.max(MIN_PANE_PX, Math.min(total - MIN_PANE_PX, s.heightAbove + y - s.startY));
-      setDragWeights({ [s.above]: (s.weightSum * above) / total, [s.below]: (s.weightSum * (total - above)) / total });
-    },
-    onEnd: () => {
-      sash.current = null;
-      if (dragWeights) onView(weightPatch(dragWeights));
-      setDragWeights(null);
-    },
-  });
-
+export function Sidebar({ tasks, folders, layout, runtimes, selected, onSelect, view, onView }: Props) {
   const listProps = {
     tasks,
     folders,
@@ -167,14 +231,13 @@ export function Sidebar({
   if (view.sidebar === 'single') {
     const singleCount = tasks.filter((t) => passesFilter(t, view.single, ALL_FILTERS)).length;
     return (
-      <aside className="sidebar">
-        <PaneHeader title="Tasks" count={singleCount} onMenu={showPaneMenu} />
-        <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders />
-      </aside>
+      <PaneStack
+        panes={[{ key: 'single', title: 'Tasks', count: singleCount, onMenu: () => showPaneMenu(), body: <TaskList {...listProps} pane={null} options={view.single} showEmptyFolders /> }]}
+      />
     );
   }
 
-  const shown: PaneEntry[] = PANES.filter((p) => view.panes[p.id].visible).map((p, i) => {
+  const shown: StackPane[] = PANES.filter((p) => view.panes[p.id].visible).map((p, i) => {
     const options = view.panes[p.id];
     return {
       key: p.id,
@@ -189,80 +252,15 @@ export function Sidebar({
     };
   });
 
-  const weight = (e: PaneEntry) => dragWeights?.[e.key] ?? e.weight;
-  const paneStyle = (e: PaneEntry): React.CSSProperties => (e.open ? { flex: `${weight(e)} 1 0px` } : { flex: '0 0 auto' });
-
-  /** The splitter above pane `i` resizes the nearest open pane above it and the nearest open one from `i` down. */
-  const sashPair = (i: number): [PaneEntry, PaneEntry] | null => {
-    const above = shown.slice(0, i).reverse().find((p) => p.open);
-    const below = shown.slice(i).find((p) => p.open);
-    return above && below ? [above, below] : null;
+  /** Stores the pane weights in the view. */
+  const onWeights = (weights: Record<string, number>) => {
+    const panes = { ...view.panes };
+    for (const p of PANES) {
+      const weight = weights[p.id];
+      if (weight !== undefined) panes[p.id] = { ...panes[p.id], weight };
+    }
+    onView({ panes });
   };
 
-  const startSash = (e: ReactMouseEvent, [above, below]: [PaneEntry, PaneEntry]) => {
-    const a = paneRefs.current[above.key]?.getBoundingClientRect().height;
-    const b = paneRefs.current[below.key]?.getBoundingClientRect().height;
-    const rect = asideRef.current?.getBoundingClientRect();
-    if (a === undefined || b === undefined || !rect) return;
-    sash.current = {
-      above: above.key,
-      below: below.key,
-      startY: e.clientY - rect.top,
-      heightAbove: a,
-      heightBelow: b,
-      weightSum: weight(above) + weight(below),
-    };
-    onSashDown(e);
-  };
-
-  /** The sash's arrow keys: the same split a drag makes, moved `delta` px. */
-  const nudgeSash = ([above, below]: [PaneEntry, PaneEntry], delta: number) => {
-    const a = paneRefs.current[above.key]?.getBoundingClientRect().height;
-    const b = paneRefs.current[below.key]?.getBoundingClientRect().height;
-    if (a === undefined || b === undefined) return;
-    const total = a + b;
-    const next = Math.max(MIN_PANE_PX, Math.min(total - MIN_PANE_PX, a + delta));
-    const sum = weight(above) + weight(below);
-    onView(weightPatch({ [above.key]: (sum * next) / total, [below.key]: (sum * (total - next)) / total }));
-  };
-
-  return (
-    <aside className="sidebar" ref={asideRef}>
-      {shown.map((p, i) => {
-        const pair = i > 0 ? sashPair(i) : null;
-        return (
-          <div
-            key={p.key}
-            ref={(el) => {
-              paneRefs.current[p.key] = el;
-            }}
-            className={`sidebar-pane${i > 0 ? ' follows' : ''}`}
-            style={paneStyle(p)}
-          >
-            {pair && (
-              <div
-                className="pane-sash"
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label={`Resize ${pair[0].title} and ${pair[1].title}`}
-                // A focusable separator is a window splitter: it reports the upper pane's share of the pair.
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round((weight(pair[0]) / (weight(pair[0]) + weight(pair[1]))) * 100)}
-                tabIndex={0}
-                onMouseDown={(e) => startSash(e, pair)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-                  e.preventDefault();
-                  nudgeSash(pair, e.key === 'ArrowUp' ? -SASH_STEP_PX : SASH_STEP_PX);
-                }}
-              />
-            )}
-            <PaneHeader title={p.title} count={p.count} onMenu={p.onMenu} open={p.open} onToggle={p.onToggle} />
-            {p.open && p.body}
-          </div>
-        );
-      })}
-    </aside>
-  );
+  return <PaneStack panes={shown} onWeights={onWeights} />;
 }

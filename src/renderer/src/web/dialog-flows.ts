@@ -1,9 +1,35 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, HostPlace } from '../../../shared/remote-access';
+import type { DialogResult, FileDialogSpec, FileFilterSpec, HostDirEntry, HostPlace, MessageBoxSpec } from '../../../shared/remote-access';
+import { noMnemonic } from '../../../shared/commands/command';
 
 // ---------- message boxes ----------
 
 export const messageResult = (response: number, checkboxChecked: boolean): DialogResult => ({ kind: 'message', response, checkboxChecked });
+
+/**
+ * iOS's alert buttons (UIAlertController): two side by side with Cancel on the left while both labels
+ * fit in half the alert's width, else stacked with Cancel last. The default, when it isn't Cancel, is bold.
+ */
+export function iosAlertButtons(spec: MessageBoxSpec): { order: number[]; row: boolean; bold: number | null } {
+  const cancel = spec.cancelId;
+  const others = spec.buttons.map((_, i) => i).filter((i) => i !== cancel);
+  const row = spec.buttons.length === 2 && spec.buttons.every((b) => noMnemonic(b).length <= 11);
+  const order = row ? [cancel, ...others] : [...others, ...(spec.buttons.length > cancel ? [cancel] : [])];
+  return { order, row, bold: spec.defaultId !== cancel || spec.buttons.length === 1 ? spec.defaultId : null };
+}
+
+/**
+ * A Material 3 dialog's buttons, as drawn left to right: the dismissing one, the others, then the
+ * confirming one (the default) at the end; stacked top to bottom, the confirming one first, when they don't fit.
+ */
+export function materialDialogButtons(spec: MessageBoxSpec): { order: number[]; stacked: boolean; confirm: number | undefined } {
+  const cancel = spec.cancelId;
+  const idx = spec.buttons.map((_, i) => i);
+  const confirm = spec.defaultId !== cancel ? spec.defaultId : idx.find((i) => i !== cancel);
+  const order = [cancel, ...idx.filter((i) => i !== cancel && i !== confirm), ...(confirm !== undefined ? [confirm] : [])].filter((i) => i < spec.buttons.length);
+  const stacked = spec.buttons.length > 2 || spec.buttons.join('').length > 24;
+  return { order: stacked ? order.reverse() : order, stacked, confirm };
+}
 
 // ---------- file dialogs ----------
 

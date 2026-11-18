@@ -1,27 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import type { SubagentInfo } from '@shared/sessions';
-import { Measured } from '../perf';
-import { ChatRow, ToolGroup, useSelectText, type RowCtx } from './ChatRows';
+import type { RunAgent, SlashCommand, SubagentInfo } from '@shared/sessions';
+import { commandAttachment, parseCommands } from '@shared/bash-mode';
+import { showRowContextMenu, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
+import { Composer, takeIntoBox } from './Composer';
+import { Conversation, type ConversationPart } from './Conversation';
 import { useChatsSettings } from './hooks';
-import { PromptBody } from './Markdown';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
-import { CARD_ITEMS, FIRST_ITEMS, useNewestFirst, useStayAtEnd } from './newest-first';
+import { reportError } from '../report-error';
 import { InfoBar } from './ui';
 
-/** Right-click on a row of a run's conversation: copy it, open its file, or (a Task or Agent call) its subagent's conversation. */
-function showRowMenu(taskId: string, runId: string, r: MessageRow, selectText: string | undefined): void {
-  window.looper.showMessageContextMenu({
-    taskId,
-    runId,
-    selectText,
-    agentId: r.agentId,
-    label: r.preview,
-    file: r.file,
-    text: (r.kind === 'tool' ? (r.result ?? r.text) : r.text) || undefined,
-  });
+/** A message waiting for the agent, at the conversation's end like a chat's queued one; the commands the user ran show as its attachments. */
+function PendingMessage({ text, status, taskId, runId }: { text: string; status: React.ReactNode; taskId: string; runId: string }) {
+  const { commands, text: rest } = useMemo(() => parseCommands(text, 'pending'), [text]);
+  return (
+    <div className="chat-queued">
+      <UserMessage text={rest} attachments={commands.length ? commands.map(commandAttachment) : undefined} files={{ taskId, runId }} />
+      <div className="chat-queued-actions muted">{status}</div>
+    </div>
+  );
+}
+
+/** Under a task run's guidance that waits for its agent: Edit puts it back in the run's message box, Cancel takes it back. */
+export function QueuedGuidanceActions({ taskId, runId }: { taskId: string; runId: string }) {
+  const unqueue = () => window.looper.runs.unqueue(taskId, runId);
+  return (
+    <>
+      <button className="link" onClick={() => void unqueue().then((m) => m && takeIntoBox(runId, m.text, m.attachments), reportError)}>
+        Edit
+      </button>
+      <button className="link" onClick={() => void unqueue().catch(reportError)}>
+        Cancel
+      </button>
+    </>
+  );
 }
 
 /**
@@ -29,7 +43,8 @@ function showRowMenu(taskId: string, runId: string, r: MessageRow, selectText: s
  * a workflow agent's), as a chat, read again while it runs: the Chats tab's
  * task runs and the run window show it. `pendingGuidance`: guidance the agent
  * hasn't picked up yet, at the end like a queued message, with `pendingStatus`
- * under it. `footer`: what goes under it (a task run's guidance box).
+ * under it. `footer`: what goes under it (a task run's guidance box). `quote`:
+ * that box takes text, so the rows' menu has Quote and Edit as New Message.
  */
 export function TranscriptView({
   taskId,
@@ -42,6 +57,7 @@ export function TranscriptView({
   drawAll = false,
   embedded = false,
   rowMenu = true,
+  quote = false,
 }: {
   taskId: string;
   runId: string;
@@ -56,50 +72,33 @@ export function TranscriptView({
   embedded?: boolean;
   /** A right-click on a row shows its menu (Copy, Open File, the subagent's conversation). */
   rowMenu?: boolean;
+  quote?: boolean;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
   const { expandThinking } = useChatsSettings();
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [rows.length, pendingGuidance]);
-  // Also when the guidance box (or the question) showing under it makes the view shorter.
-  useStayAtEnd(scrollRef, atBottom);
   const selectText = useSelectText(`${taskId}/${runId}`);
   const ctx = useMemo<RowCtx>(
-    () => (rowMenu ? { taskId, runId, onContextMenu: (e, row) => showRowMenu(taskId, runId, row, selectText(e)) } : { taskId, runId }),
-    [taskId, runId, selectText, rowMenu],
+    () =>
+      rowMenu
+        ? { taskId, runId, onContextMenu: (e, row) => showRowContextMenu({ chatId: runId, taskId, quote, selectText: selectText(e) }, row) }
+        : { taskId, runId },
+    [taskId, runId, selectText, rowMenu, quote],
   );
-  const allItems = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
-  const { hidden, onScroll: showOlder } = useNewestFirst(scrollRef, `${taskId}/${runId}`, allItems.length, drawAll, embedded ? CARD_ITEMS : FIRST_ITEMS);
-  const items = useMemo(() => allItems.slice(hidden), [allItems, hidden]);
+  const items = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
+  const parts = useMemo<ConversationPart[]>(() => [{ key: '', items }], [items]);
   return (
     <div className="chat-app">
-      <div
-        className="chat-scroll"
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-          showOlder(el);
-        }}
+      <Conversation
+        id={`${taskId}/${runId}`}
+        parts={parts}
+        ctx={ctx}
+        endKey={`${rows.length}/${pendingGuidance ?? ''}`}
+        drawAll={drawAll}
+        card={embedded}
+        measure="Transcript rows"
       >
-        <Measured id="Transcript rows">
-          {items.map((item) =>
-            item.kind === 'tools' ? <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} /> : <ChatRow key={item.row.id} row={item.row} ctx={ctx} />,
-          )}
-        </Measured>
         {rows.length === 0 && !pendingGuidance && <div className="muted">{waitingText}</div>}
-        {pendingGuidance && (
-          <div className="chat-queued">
-            <div className="chat-msg chat-user">
-              <PromptBody text={pendingGuidance} />
-            </div>
-            <div className="chat-queued-actions muted">{pendingStatus}</div>
-          </div>
-        )}
-      </div>
+        {pendingGuidance && <PendingMessage text={pendingGuidance} status={pendingStatus} taskId={taskId} runId={runId} />}
+      </Conversation>
       {footer}
     </div>
   );
@@ -159,14 +158,19 @@ function SubagentMessageBox({ chat, agent }: { chat: ChatState; agent: SubagentI
   return <MessageBox text={text} onText={setText} placeholder={`Message ${agent.description || agent.type}`} canSend={!!text.trim()} onSend={send} />;
 }
 
+const NO_ROWS: readonly MessageRow[] = [];
+
 /**
  * Under a task run's conversation: its agent's question, when it asks one, and
- * a box that sends the agent guidance (or the answer). It shows while the
- * run's agent takes guidance (Claude Code or Codex); `recheck` changing asks
- * again (the run going on: its session starting, its turns), since it may not
- * take guidance at first. On the desktop it's a chat's message box (Send above
- * `stop`, when given): Enter sends and Shift+Enter breaks the line; on a phone
- * Enter breaks the line, as in a chat's message box.
+ * the message box (Composer) that sends the agent guidance (or the answer). It
+ * shows while the run's agent takes guidance (Claude Code or Codex);
+ * `recheck` changing asks again (the run going on: its session starting, its
+ * turns), since it may not take guidance at first. Files go with the guidance
+ * as their paths, a skill picked from `commands` goes as its name for the
+ * agent to run, and `agent` shows the run's harness and settings, which can't
+ * change. `working`: the agent is in a turn, so guidance waits for it (Queue);
+ * `queued`: guidance waits (Send Now); `rows`: the conversation, whose sent
+ * messages Up brings back.
  */
 export function RunGuidance({
   taskId,
@@ -175,6 +179,11 @@ export function RunGuidance({
   recheck,
   onSent,
   stop,
+  commands = [],
+  agent,
+  working = false,
+  queued = false,
+  rows = NO_ROWS,
 }: {
   taskId: string;
   runId: string;
@@ -182,10 +191,13 @@ export function RunGuidance({
   recheck?: string;
   onSent?: () => void;
   stop?: MessageBoxStop;
+  commands?: SlashCommand[];
+  agent?: RunAgent;
+  working?: boolean;
+  queued?: boolean;
+  rows?: readonly MessageRow[];
 }) {
   const [canGuide, setCanGuide] = useState(false);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
   useEffect(() => {
     let live = true;
     void window.looper.canGuideRun(taskId, runId).then((ok) => live && setCanGuide(ok));
@@ -194,25 +206,11 @@ export function RunGuidance({
     };
   }, [taskId, runId, question, recheck]);
   if (!canGuide) return null;
-  const send = async () => {
-    const t = text.trim();
-    if (!t || sending) return;
-    setSending(true);
-    try {
-      await window.looper.sendGuidance(taskId, runId, t);
-      setText('');
-      onSent?.();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    } finally {
-      setSending(false);
-    }
-  };
   const placeholder = question !== null ? 'Your answer' : 'Guidance for the agent';
   return (
     <>
       {question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
-      <MessageBox text={text} onText={setText} placeholder={placeholder} canSend={!sending && !!text.trim()} onSend={() => void send()} stop={stop} />
+      <Composer key={runId} run={{ taskId, runId, placeholder, commands, agent, working, queued, rows, stop, onSent }} />
     </>
   );
 }

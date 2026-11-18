@@ -48,6 +48,29 @@ export function siblingOrder(items: Filed[], folders: TaskFolder[], layout: Fold
   return out;
 }
 
+/** Every item in tree order: each folder's items where the folder sits, open or not. `order` is `siblingOrder`'s. */
+export function itemsInTreeOrder<T extends Filed>(items: T[], order: Map<string, string[]>): T[] {
+  const byId = new Map(items.map((t) => [t.id, t]));
+  const out: T[] = [];
+  const walk = (container: string) => {
+    for (const entry of order.get(container) ?? []) {
+      if (entry.startsWith('folder:')) walk(entry.slice(7));
+      else {
+        const t = byId.get(entry);
+        if (t) out.push(t);
+      }
+    }
+  };
+  walk('');
+  return out;
+}
+
+/** The items filed in the folder or in any folder under it. */
+export function itemsInside<T extends Filed>(items: T[], folders: TaskFolder[], id: string): T[] {
+  const ids = folderSubtree(folders, id);
+  return items.filter((t) => t.folderId && ids.has(t.folderId));
+}
+
 /** A stored layout: string lists by container, anything else dropped. */
 export function sanitizeLayout(raw: unknown): FolderLayout {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};

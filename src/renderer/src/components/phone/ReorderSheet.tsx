@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { moveKey } from '@shared/folders';
-import { Group, Row } from './PhoneList';
+import { Group, Row, SwipeRow } from './PhoneList';
 import { PhoneSheet } from './PhoneSheet';
 
 export interface ReorderItem {
@@ -48,7 +48,7 @@ export function ReorderSheet({ title, sections, onReorder, onClose }: { title: s
       if (y < box.top + EDGE) scroller.scrollTop -= EDGE_STEP;
       else if (y > box.bottom - EDGE) scroller.scrollTop += EDGE_STEP;
     }
-    const rows = [...list.querySelectorAll('[data-reorder]')];
+    const rows = [...list.querySelectorAll('.pg-swipe')];
     const below = rows.findIndex((r) => {
       const b = r.getBoundingClientRect();
       return y < b.top + b.height / 2;
@@ -67,47 +67,45 @@ export function ReorderSheet({ title, sections, onReorder, onClose }: { title: s
                 const item = byKey(s, key);
                 if (!item) return null;
                 return (
-                  <div key={key} data-reorder="" className={`pg-swipe${dragging === key ? ' pg-reordering' : ''}`}>
-                    <div className="pg-swipe-content">
-                      <Row
-                        title={item.title}
-                        sub={item.sub}
-                        value={
-                          <span
-                            className="pg-reorder-handle"
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Move ${typeof item.title === 'string' ? item.title : 'row'}`}
-                            onPointerDown={(e) => {
-                              e.preventDefault();
-                              e.currentTarget.setPointerCapture(e.pointerId);
-                              moved.current = false;
-                              setDragging(key);
-                            }}
-                            onPointerMove={(e) => {
-                              if (dragging === key) dragOver(s.key, key, e.clientY);
-                            }}
-                            onPointerUp={() => {
-                              setDragging(null);
-                              if (moved.current) onReorder(s.key, orders[s.key]);
-                            }}
-                            onPointerCancel={() => setDragging(null)}
-                            onContextMenu={(e) => e.preventDefault()}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-                              e.preventDefault();
-                              const next = moveTo(s.key, key, i + (e.key === 'ArrowUp' ? -1 : 1));
-                              if (next) onReorder(s.key, next);
-                            }}
-                          >
-                            <svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-                              <path d="M2 2h16M2 7h16M2 12h16" />
-                            </svg>
-                          </span>
-                        }
-                      />
-                    </div>
-                  </div>
+                  <SwipeRow key={key} className={dragging === key ? 'pg-reordering' : undefined}>
+                    <Row
+                      title={item.title}
+                      sub={item.sub}
+                      value={
+                        <span
+                          className="pg-reorder-handle"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Move ${typeof item.title === 'string' ? item.title : 'row'}`}
+                          onPointerDown={(e) => {
+                            e.preventDefault();
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            moved.current = false;
+                            setDragging(key);
+                          }}
+                          onPointerMove={(e) => {
+                            if (dragging === key) dragOver(s.key, key, e.clientY);
+                          }}
+                          onPointerUp={() => {
+                            setDragging(null);
+                            if (moved.current) onReorder(s.key, orders[s.key]);
+                          }}
+                          onPointerCancel={() => setDragging(null)}
+                          onContextMenu={(e) => e.preventDefault()}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                            e.preventDefault();
+                            const next = moveTo(s.key, key, i + (e.key === 'ArrowUp' ? -1 : 1));
+                            if (next) onReorder(s.key, next);
+                          }}
+                        >
+                          <svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                            <path d="M2 2h16M2 7h16M2 12h16" />
+                          </svg>
+                        </span>
+                      }
+                    />
+                  </SwipeRow>
                 );
               })}
             </Group>

@@ -17,6 +17,7 @@ import type { Session } from './web/session';
 import { preloadFrame, Shell } from './web/Shell';
 import { attachFrame, startSession } from './web/start';
 import { Waiting } from './web/Waiting';
+import { reportError } from './report-error';
 
 // Every window is a chunk of its own, the main one too: a window loads only the code its route needs.
 // A new window app is added here as a lazy import, never as a static one (tests/code-splitting.test.ts).
@@ -293,7 +294,7 @@ if (platform === 'electron' || window !== window.top) {
     if (!file || !isLooperFileName(file.name)) return;
     const opening = window.looper.openLooperFile(file);
     // In a browser the file is sent to the computer first, which can fail (too large, connection lost).
-    if (platform !== 'electron') opening.catch((err: Error) => void window.looper.showError(err.message));
+    if (platform !== 'electron') opening.catch(reportError);
   });
 }
 

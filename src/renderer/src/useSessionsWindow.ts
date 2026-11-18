@@ -286,6 +286,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     sessionId,
     sessions: state.sessions,
     stoppable,
+    runQueued: summary?.kind === 'run' && !!activity?.pendingGuidance,
     shown,
     setShown,
     setSelected,

@@ -3,6 +3,7 @@ import type { Task } from '@shared/types';
 import { SelectList } from './components/SelectList';
 import { Field } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { keptSelection } from './components/selection';
 import { subscribe } from './events';
 
 export function TemplatePickerApp() {
@@ -13,15 +14,13 @@ export function TemplatePickerApp() {
 
   useEffect(() => {
     document.title = 'New Task from Template';
-    void window.looper.templates.list().then((t) => {
-      setTemplates(t);
-      if (t.length > 0) setSelected(t[0].id);
-    });
+    const apply = (list: Task[]) => {
+      setTemplates(list);
+      setSelected((s) => keptSelection(s, list, (t) => t.id));
+    };
+    void window.looper.templates.list().then(apply);
     return subscribe((e) => {
-      if (e.type === 'templates') {
-        setTemplates(e.templates);
-        setSelected((s) => (s && e.templates.some((t) => t.id === s) ? s : e.templates[0]?.id ?? null));
-      }
+      if (e.type === 'templates') apply(e.templates);
     });
   }, []);
 
@@ -37,21 +36,18 @@ export function TemplatePickerApp() {
       <div className="editor-body">
         <div className="picker-body">
           <Field label="Template">
-            {templates.length === 0 ? (
-              <div className="empty">No templates yet.</div>
-            ) : (
-              <SelectList
-                items={templates}
-                label="Templates"
-                idPrefix="tpl"
-                selectedKey={selected}
-                itemKey={(t) => t.id}
-                itemName={(t) => t.name}
-                onSelect={(t) => setSelected(t.id)}
-                onOpen={create}
-                autoFocus
-              />
-            )}
+            <SelectList
+              items={templates}
+              label="Templates"
+              idPrefix="tpl"
+              selectedKey={selected}
+              itemKey={(t) => t.id}
+              itemName={(t) => t.name}
+              empty="No templates yet."
+              onSelect={(t) => setSelected(t.id)}
+              onOpen={create}
+              autoFocus
+            />
           </Field>
         </div>
       </div>

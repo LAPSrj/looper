@@ -45,6 +45,30 @@ describe('CodexAccumulator skills', () => {
     );
     expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([['prompt', '$hello world']]);
   });
+
+  it('lists the skills its instructions offer the agent, without their files', () => {
+    // As codex-cli 0.163.0 records them, in a developer record of its own.
+    const acc = new CodexAccumulator();
+    const text = [
+      '<skills_instructions>',
+      '## Skills',
+      'A skill is a set of local instructions to follow that is stored in a `SKILL.md` file.',
+      '### Skill roots',
+      '- `r0` = `/home/u/.codex/skills`',
+      '### Available skills',
+      '- imagegen: Generate or edit raster images. (file: r1/imagegen/SKILL.md)',
+      '- skill-creator: Create or update a Codex skill. (file: r1/skill-creator/SKILL.md)',
+      '### How to use skills',
+      '- Discovery: the list above is the skills available in this session.',
+      '</skills_instructions>',
+    ].join('\n');
+    acc.addLine(rec('response_item', { type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }));
+    expect(acc.commands).toEqual([
+      { name: 'imagegen', description: 'Generate or edit raster images.' },
+      { name: 'skill-creator', description: 'Create or update a Codex skill.' },
+    ]);
+    expect(acc.rows).toEqual([]);
+  });
 });
 
 describe('CodexAccumulator', () => {

@@ -30,6 +30,11 @@ export function capFirst(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+/** "1 task", "3 tasks": the count and the word, its plural `many` (the word and an s unless given). */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${n === 1 ? word : many}`;
+}
+
 /**
  * A date and time in the computer's own format: the short date and time
  * patterns of `locale` — the machine's regional format, which the caller

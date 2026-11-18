@@ -6,8 +6,8 @@ import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
 import { NavBar } from './NavBar';
 import { bindField, textOptions, type TextOptions } from './field-model';
-import { ICON_STROKE_BOLD, StatusGlyph } from './icons';
-import { Group, Row } from './phone/PhoneList';
+import { StatusGlyph } from './icons';
+import { Group, Row, Segmented } from './phone/PhoneList';
 import { Tabs } from './Tabs';
 import { WindowActions } from './WindowActions';
 
@@ -104,31 +104,22 @@ function CheckRows<T extends string>({
   options: [T, string][];
   onChange: (value: T) => void;
 }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const chosen = Math.max(0, options.findIndex(([v]) => v === value));
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
     const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
     if (!step) return;
     e.preventDefault();
     const to = (chosen + step + options.length) % options.length;
     onChange(options[to][0]);
-    refs.current[to]?.focus();
+    e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[to]?.focus();
   };
   return (
-    <div className="radio-field radio-rows">
-      {!hideLabel && <span className="field-label">{label}</span>}
-      <div className="radio-rows-list" role="radiogroup" aria-label={label} onKeyDown={onKeyDown}>
+    <div className="radio-rows" role="radiogroup" aria-label={label} onKeyDown={onKeyDown}>
+      <Group title={hideLabel ? undefined : label}>
         {options.map(([v, text], i) => (
-          <button key={v} type="button" role="radio" aria-checked={value === v} tabIndex={i === chosen ? 0 : -1} className="radio-row" ref={(el) => void (refs.current[i] = el)} onClick={() => onChange(v)}>
-            <span>{text}</span>
-            {value === v && (
-              <svg className="radio-row-check" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={ICON_STROKE_BOLD} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="m2 7.5 3.2 3.2L12 3.5" />
-              </svg>
-            )}
-          </button>
+          <Row key={v} title={text} checked={value === v} tabIndex={i === chosen ? 0 : -1} onOpen={() => onChange(v)} />
         ))}
-      </div>
+      </Group>
     </div>
   );
 }
@@ -573,17 +564,13 @@ export function TabBar<T extends string>({
       </div>
     );
   }
-  const segmented = onIos && !sections && tabs.length <= SEGMENTS;
   return (
     <>
-      <Tabs
-        tabs={tabs.map(([id, text]) => ({ id, label: text }))}
-        active={active}
-        onSelect={(id) => onSelect(id as T)}
-        label={label}
-        ctrlTab={ctrlTab}
-        className={`${segmented ? 'tabs-segmented ' : ''}${className ?? ''}`.trim() || undefined}
-      />
+      {onIos && !sections && tabs.length <= SEGMENTS ? (
+        <Segmented items={tabs} value={active} onChange={onSelect} label={label} ctrlTab={ctrlTab} className={`pg-segmented tabs-segmented${className ? ` ${className}` : ''}`} />
+      ) : (
+        <Tabs tabs={tabs.map(([id, text]) => ({ id, label: text }))} active={active} onSelect={(id) => onSelect(id as T)} label={label} ctrlTab={ctrlTab} className={className} />
+      )}
       {panels ? <div className="editor-body">{panels(active)}</div> : children}
     </>
   );

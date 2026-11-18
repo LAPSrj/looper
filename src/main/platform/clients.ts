@@ -9,7 +9,10 @@ export interface ConnectionLike {
   readonly platform: string;
   readonly clientId?: string;
   readonly pageId?: string;
-  send(msg: ServerMessage): boolean;
+  /** The hello's last page message (see ClientMessage). */
+  readonly seq?: number;
+  /** A string is a message already serialized. */
+  send(msg: ServerMessage | string): boolean;
   onMessage(cb: (msg: ClientMessage) => void): () => void;
   onClose(cb: () => void): () => void;
   /** Closes the socket; a takeover uses it on the old connection of a page that reconnected. */
@@ -94,9 +97,21 @@ export class RemoteClients {
       resume.platform = conn.platform;
     } else this.clients.set(client.id, client);
     client.setConnection((msg) => conn.send(msg));
-    conn.send({ t: 'welcome', device: conn.device, version: this.opts.version, clientId: client.id, resumed: !!resume });
-    if (resume) client.resend();
-    else {
+    const replayFrom = resume && conn.seq !== undefined && resume.canReplay(conn.seq) ? conn.seq : null;
+    conn.send({
+      t: 'welcome',
+      device: conn.device,
+      version: this.opts.version,
+      clientId: client.id,
+      resumed: !!resume,
+      windows: resume ? resume.windowList().map((w) => w.w) : [],
+      replayed: replayFrom !== null,
+      seq: client.lastPageSeq,
+    });
+    if (resume) {
+      client.resend();
+      if (replayFrom !== null) client.replay(replayFrom);
+    } else {
       client.main = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
       for (const cb of this.mainCbs) {
         try {

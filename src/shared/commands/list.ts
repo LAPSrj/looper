@@ -1,7 +1,7 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
 import { chatCanCompact } from '../chat';
 import { chatSettingEntries } from '../chat-settings';
-import { folderTree } from '../folders';
+import { folderTree, siblingOrder } from '../folders';
 import { mainTabs } from '../main-tabs';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../panes';
 import type { ProjectGroupBy } from '../projects';
@@ -53,16 +53,39 @@ const IN_RUN_FOLDERS: Hide = { on: ON_PHONE, why: 'The Folders submenu has it.' 
 
 // ---------- submenus built from state ----------
 
-/** The projects grouped as the Projects tab groups them: the ungrouped ones in the list, each group a submenu. */
+/**
+ * The projects as the Projects tab shows them: grouped, each group a submenu; or in their folders, each folder a
+ * submenu of its own folders and projects in the list's order (a folder with no project anywhere inside is left out).
+ */
 const projectChoices = (c: CommandContext, kind: 'chat' | 'terminal'): Entry[] => {
   const choice = (p: Project): Entry => ({
     id: p.id,
     label: menuText(p.name),
     run: () => void (kind === 'chat' ? c.looper.projects.newChat(p.id) : c.looper.projects.newTerminal(p.id)),
   });
-  const groups = groupProjects(c.projects, viewOf(c)?.projectsPane.groupBy ?? 'none', c.settings?.environments ?? [], c.projectFolders).filter((g) => g.projects.length);
+  const groupBy = viewOf(c)?.projectsPane.groupBy ?? 'none';
+  let choices: Entry[];
+  if (groupBy === 'none') {
+    const order = siblingOrder(c.projects, c.projectFolders, c.projectLayout);
+    const byId = new Map(c.projects.map((p) => [p.id, p]));
+    const folders = new Map(c.projectFolders.map((f) => [f.id, f]));
+    const level = (container: string): Entry[] =>
+      (order.get(container) ?? []).flatMap((key): Entry[] => {
+        if (!key.startsWith('folder:')) {
+          const p = byId.get(key);
+          return p ? [choice(p)] : [];
+        }
+        const id = key.slice('folder:'.length);
+        const inside = level(id);
+        return inside.length ? [{ id: `folder-${id}`, label: menuText(folders.get(id)!.name), entries: inside }] : [];
+      });
+    choices = level('');
+  } else {
+    const groups = groupProjects(c.projects, groupBy, c.settings?.environments ?? []).filter((g) => g.projects.length);
+    choices = groups.flatMap((g): Entry[] => (g.title ? [{ id: `group-${g.key}`, label: menuText(g.title), entries: g.projects.map(choice) }] : g.projects.map(choice)));
+  }
   return [
-    ...groups.flatMap((g): Entry[] => (g.title ? [{ id: `group-${g.key}`, label: menuText(g.title), entries: g.projects.map(choice) }] : g.projects.map(choice))),
+    ...choices,
     ...(c.projects.length ? [{ separator: true } as const] : []),
     { id: 'other', label: 'Other &Folder…', run: () => c.host('other-folder', kind) },
   ];
@@ -782,8 +805,8 @@ export const COMMANDS: readonly Command[] = [
     label: '&Stop',
     group: 'turn',
     icon: 'stop',
-    // Esc is a chat's: a terminal's goes to its agent, so its tooltip names none.
-    accelerator: (c) => (isChat(c) ? 'Esc' : undefined),
+    // Esc is a chat's and a task run's: a terminal's goes to its agent, so its tooltip names none.
+    accelerator: (c) => (isChat(c) || isRun(c) ? 'Esc' : undefined),
     pageKey: true,
     destructive: true,
     enabled: (c) => !!c.chats?.stoppable,
@@ -797,10 +820,14 @@ export const COMMANDS: readonly Command[] = [
     group: 'turn',
     icon: 'sendNow',
     accelerator: 'CmdOrCtrl+Enter',
-    enabled: (c) => (c.chats?.chat?.queued.length ?? 0) > 0,
-    run: (c) => c.chats?.chat && void c.looper.chat.sendNow(c.chats.chat.id).catch(failed(c)),
+    enabled: (c) => (c.chats?.chat?.queued.length ?? 0) > 0 || !!c.chats?.runQueued,
+    run: (c) => {
+      const s = summaryOf(c);
+      if (c.chats?.chat) void c.looper.chat.sendNow(c.chats.chat.id).catch(failed(c));
+      else if (s?.kind === 'run') void c.looper.runs.sendNow(s.taskId, s.id).catch(failed(c));
+    },
     // The desktop's toolbar keeps it, off, so its buttons don't move.
-    hide: [NOT_IN_CHAT_MENU, { on: ON_PHONE, if: (c) => !isChat(c), why: 'Only a chat queues messages.' }],
+    hide: [NOT_IN_CHAT_MENU, { on: ON_PHONE, if: (c) => !isChat(c) && !isRun(c), why: 'Only a chat and a task run queue messages.' }],
     in: { conversation: { menu: 'chat', toolbar: true, box: true } },
   },
   {
@@ -1390,7 +1417,7 @@ export const COMMANDS: readonly Command[] = [
     group: 'run-folders',
     hide: [IN_RUN_FOLDERS],
     enabled: (c) => !!c.run?.workFolder,
-    run: (c) => c.run && c.host('run-work-folder', c.run.taskId),
+    run: (c) => c.run && c.host('run-work-folder', c.run.taskId, c.run.runId),
     in: { run: { menu: 'file' } },
   },
   {
@@ -1405,7 +1432,7 @@ export const COMMANDS: readonly Command[] = [
       return [
         { id: 'run', label: 'Open &Run Folder', run: () => c.host('run-folder', run.taskId, run.runId) },
         { id: 'copy', label: 'Copy Run Folder &Path', run: () => c.host('run-copy-folder', run.taskId, run.runId) },
-        { id: 'work', label: 'Open &Working Directory', enabled: run.workFolder, run: () => c.host('run-work-folder', run.taskId) },
+        { id: 'work', label: 'Open &Working Directory', enabled: run.workFolder, run: () => c.host('run-work-folder', run.taskId, run.runId) },
       ];
     },
     in: { run: { menu: 'file' } },

@@ -1,96 +1,73 @@
 import { useEffect, useState } from 'react';
-import type { Environment, Project } from '@shared/types';
+import type { Project } from '@shared/types';
 import { folderName } from '@shared/projects';
 import { windowTitle } from '@shared/window-title';
-import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { defaultEnvironment } from '@shared/environments';
+import { envToLine, joinTokens } from '@shared/cmdline';
 import { AgentFields } from './components/RemoteFields';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { subscribe } from './events';
+import { parseArgsEnv } from './components/form-blocks';
+import { PROJECTS, useLiveItem, useLiveSettings, useSave } from './components/hooks';
 
 type Draft = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'mode' | 'remote'>;
 
 /** File → New Project, and a project's Edit Project…: modeless, like the task editor. */
 export function ProjectEditorApp({ id }: { id?: string }) {
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [host, setHost] = useState<string | undefined>(undefined);
-  const [project, setProject] = useState<Project | null>(null);
+  const { live, host } = useLiveSettings();
   const [draft, setDraft] = useState<Draft | null>(null);
   // The arguments and variables as typed, parsed on save like the task editor's.
   const [argsText, setArgsText] = useState('');
   const [envText, setEnvText] = useState('');
-  const [missing, setMissing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
+  const { item: project, missing } = useLiveItem(PROJECTS, id, (p) => {
+    document.title = windowTitle('Edit Project', p.name);
+    const { name, environmentId, harnessId, cwd, model, effort, permissionMode, mode, remote } = p;
+    setDraft({ name, environmentId, harnessId, cwd, model, effort, permissionMode, mode, remote });
+    setArgsText(joinTokens(p.extraArgs));
+    setEnvText(envToLine(p.env));
+  });
 
   useEffect(() => {
-    void Promise.all([window.looper.info(), window.looper.projects.list()]).then(([info, list]) => {
-      setEnvironments(info.settings.environments);
-      setHost(info.host);
-      document.title = id ? windowTitle('Edit Project', list.find((x) => x.id === id)?.name) : 'New Project';
-      if (!id) {
-        const env = info.settings.environments.find((e) => e.id === info.settings.defaultEnvironmentId) ?? info.settings.environments[0];
-        setDraft({ name: '', environmentId: env?.id ?? '', harnessId: env?.harnesses[0]?.id, cwd: '', permissionMode: 'auto', mode: 'interactive', remote: false });
-        return;
-      }
-      const p = list.find((x) => x.id === id);
-      if (!p) {
-        setMissing(true);
-        return;
-      }
-      setProject(p);
-      const { name, environmentId, harnessId, cwd, model, effort, permissionMode, mode, remote } = p;
-      setDraft({ name, environmentId, harnessId, cwd, model, effort, permissionMode, mode, remote });
-      setArgsText(joinTokens(p.extraArgs));
-      setEnvText(envToLine(p.env));
-    });
-    return subscribe((e) => {
-      if (e.type === 'settings') setEnvironments(e.settings.environments);
-      else if (e.type === 'projects' && id && !e.projects.some((p) => p.id === id)) setMissing(true);
-    });
+    document.title = id ? 'Edit Project' : 'New Project';
   }, [id]);
 
-  if (missing || !environments || !draft) return <EmptyWindow gone={missing && 'This project no longer exists.'} />;
+  // A new project starts in the default environment.
+  useEffect(() => {
+    if (id || draft || !live) return;
+    const env = defaultEnvironment(live);
+    setDraft({ name: '', environmentId: env?.id ?? '', harnessId: env?.harnesses[0]?.id, cwd: '', permissionMode: 'auto', mode: 'interactive', remote: false });
+  }, [id, draft, live]);
 
+  if (missing || !live || !draft) return <EmptyWindow gone={missing && 'This project no longer exists.'} />;
+
+  const environments = live.environments;
   const set = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const env = environments.find((e) => e.id === draft.environmentId);
   const harnesses = env?.harnesses ?? [];
   const harness = harnesses.find((h) => h.id === draft.harnessId) ?? harnesses[0];
 
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     const cwd = draft.cwd.trim();
     const name = draft.name.trim() || (cwd ? folderName(cwd) : '');
     if (!cwd) {
       void window.looper.showError('Choose the working directory.');
       return false;
     }
-    const args = tokenize(argsText);
-    const vars = lineToEnv(envText);
-    if (!args.ok || typeof vars === 'string') {
-      void window.looper.showError(!args.ok ? `Extra command-line arguments: ${args.error}` : `Extra environment variables: ${vars}`);
+    const parsed = parseArgsEnv({ label: 'Extra command-line arguments', text: argsText }, { label: 'Extra environment variables', text: envText });
+    if ('problem' in parsed) {
+      void window.looper.showError(parsed.problem);
       return false;
     }
-    setSaving(true);
-    try {
-      const saved = await window.looper.projects.save({
-        ...(project ?? {}),
-        ...draft,
-        name,
-        cwd,
-        harnessId: harness?.id,
-        extraArgs: args.tokens,
-        env: vars,
-      });
-      setProject(saved);
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-  const save = async () => {
-    if (await doSave()) window.close();
+    await window.looper.projects.save({
+      ...(project ?? {}),
+      ...draft,
+      name,
+      cwd,
+      harnessId: harness?.id,
+      extraArgs: parsed.args,
+      env: parsed.env,
+    });
   };
 
   return (
@@ -123,7 +100,11 @@ export function ProjectEditorApp({ id }: { id?: string }) {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: id ? 'Save' : 'Create', run: () => void save() }} apply={id ? { run: () => void doSave() } : undefined} busy={saving} />
+      <WindowActions
+        confirm={{ label: id ? 'Save' : 'Create', run: () => saver.save(doSave) }}
+        apply={id ? { run: () => void saver.apply(doSave) } : undefined}
+        busy={saver.busy}
+      />
     </div>
   );
 }

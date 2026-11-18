@@ -121,10 +121,12 @@ export interface RemoteConnection {
   readonly clientId?: string;
   /** The hello's per-page-load id, if any. */
   readonly pageId?: string;
+  /** The hello's last page message, if any. */
+  readonly seq?: number;
   /** The tab is on screen (its last hello or visibility message). */
   readonly visible: boolean;
-  /** False when it wasn't sent: the socket is closed, or the message is too large. */
-  send(msg: ServerMessage): boolean;
+  /** False when it wasn't sent: the socket is closed, or the message is too large. A string is a message already serialized. */
+  send(msg: ServerMessage | string): boolean;
   onMessage(cb: (msg: ClientMessage) => void): () => void;
   onClose(cb: () => void): () => void;
   /** Cut the socket off at once (a new connection took this one's place); a dead one doesn't linger until the next ping. */
@@ -182,7 +184,11 @@ export function parseClientMessage(data: RawData, isBinary: boolean): ClientMess
   }
   switch (m.t) {
     case 'hello':
-      return PLATFORMS.has(m.platform) && (m.clientId === undefined || isStr(m.clientId)) && (m.pageId === undefined || isStr(m.pageId)) && (m.visible === undefined || typeof m.visible === 'boolean')
+      return PLATFORMS.has(m.platform) &&
+        (m.clientId === undefined || isStr(m.clientId)) &&
+        (m.pageId === undefined || isStr(m.pageId)) &&
+        (m.visible === undefined || typeof m.visible === 'boolean') &&
+        (m.seq === undefined || (Number.isSafeInteger(m.seq) && (m.seq as number) >= 0))
         ? (m as ClientMessage)
         : null;
     case 'visibility':
@@ -266,21 +272,23 @@ class Connection implements RemoteConnection {
     readonly platform: Platform,
     readonly clientId: string | undefined,
     readonly pageId: string | undefined,
+    readonly seq: number | undefined,
     private readonly log: Logger,
     public visible: boolean,
   ) {}
 
-  send(msg: ServerMessage): boolean {
+  send(msg: ServerMessage | string): boolean {
     if (this.ws.readyState !== this.ws.OPEN) return false;
+    const kind = typeof msg === 'string' ? 'page' : msg.t;
     let text: string;
     try {
-      text = JSON.stringify(msg);
+      text = typeof msg === 'string' ? msg : JSON.stringify(msg);
     } catch (err) {
-      this.log.warn(`remote access: can't send a ${msg.t} message to ${this.device.name}: ${String(err)}`);
+      this.log.warn(`remote access: can't send a ${kind} message to ${this.device.name}: ${String(err)}`);
       return false;
     }
     if (Buffer.byteLength(text) > MAX_WS_MESSAGE_BYTES) {
-      this.log.warn(`remote access: dropped a ${msg.t} message to ${this.device.name}: larger than ${MAX_WS_MESSAGE_BYTES} bytes`);
+      this.log.warn(`remote access: dropped a ${kind} message to ${this.device.name}: larger than ${MAX_WS_MESSAGE_BYTES} bytes`);
       return false;
     }
     this.ws.send(text);
@@ -936,7 +944,7 @@ export class RemoteServer {
         // The device may have been renamed or removed since the upgrade.
         const current = this.opts.devices.get(device.id);
         if (!current) return ws.close(1008, 'device removed');
-        conn = new Connection(ws, { id: current.id, name: current.name }, msg.platform, msg.clientId, msg.pageId, this.opts.log, msg.visible ?? true);
+        conn = new Connection(ws, { id: current.id, name: current.name }, msg.platform, msg.clientId, msg.pageId, msg.seq, this.opts.log, msg.visible ?? true);
         this.conns.add(conn);
         this.opts.devices.touch(device.id, true);
         for (const cb of this.connectionCbs) {

@@ -39,6 +39,38 @@ describe('parseCheckOutput', () => {
   it('rejects missing act', () => {
     expect(parseCheckOutput('{"summary": "x"}').ok).toBe(false);
   });
+  it('takes the first acting item of an array and keeps the other acting ones', () => {
+    const r = parseCheckOutput(
+      JSON.stringify([
+        { act: false, summary: 'old' },
+        { act: true, summary: 'a', looper_related_id: 1 },
+        { act: true, summary: 'b', context: { n: 2 } },
+        { act: true, summary: 'c' },
+      ]),
+    );
+    expect(r).toEqual({
+      ok: true,
+      value: { act: true, summary: 'a', relatedId: '1' },
+      more: [
+        { act: true, summary: 'b', context: { n: 2 } },
+        { act: true, summary: 'c' },
+      ],
+    });
+  });
+  it('reads an array with one acting item as that item', () => {
+    expect(parseCheckOutput('[{"act": true, "summary": "a"}]')).toEqual({ ok: true, value: { act: true, summary: 'a' } });
+  });
+  it('reads an array without an acting item as nothing to do', () => {
+    expect(parseCheckOutput('[]')).toEqual({ ok: true, value: { act: false } });
+    expect(parseCheckOutput('[{"act": false, "summary": "x"}, {"act": false, "summary": "y"}]')).toEqual({
+      ok: true,
+      value: { act: false, summary: 'x; y' },
+    });
+  });
+  it('rejects an array with an item that is not a check object', () => {
+    const r = parseCheckOutput('[{"act": true}, {"summary": "x"}]');
+    expect(r).toEqual({ ok: false, error: `item 2 of the check's JSON array needs boolean "act"` });
+  });
   it('rejects non-JSON', () => {
     expect(parseCheckOutput('nothing to do').ok).toBe(false);
     expect(parseCheckOutput('').ok).toBe(false);

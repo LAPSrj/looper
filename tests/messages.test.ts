@@ -13,6 +13,7 @@ import {
 import { Logger } from '../src/engine/log';
 import { endAgentSession } from '../src/engine/steps/agent';
 import { eventsMessage, guidanceMessage, toolImageKey } from '../src/shared/messages';
+import { commandAttachment, withCommands } from '../src/shared/bash-mode';
 import { SettingsSchema } from '../src/shared/types';
 
 const rec = (obj: Record<string, unknown>) => JSON.stringify(obj);
@@ -53,6 +54,23 @@ describe('TranscriptAccumulator', () => {
     expect(acc.rows[0].resultError).toBeUndefined();
   });
 
+  it('lists the skills Claude Code offers the agent, a plugin skill by its full name, and the ones a later listing adds', () => {
+    // As Claude Code 2.1.327 records the list, in an attachment record.
+    const acc = new TranscriptAccumulator();
+    const listing = (content: string) => rec({ type: 'attachment', isSidechain: false, attachment: { type: 'skill_listing', content } });
+    acc.addLine(listing('- review: Review the diff.\n- docs:pdf: Read or write PDF files: forms, OCR.\n- bare'));
+    acc.addLine(listing('- review: Review the current diff.\n- loop: Run a prompt on an interval.'));
+    expect(acc.commands).toEqual([
+      { name: 'review', description: 'Review the current diff.' },
+      { name: 'docs:pdf', description: 'Read or write PDF files: forms, OCR.' },
+      { name: 'bare', description: '' },
+      { name: 'loop', description: 'Run a prompt on an interval.' },
+    ]);
+    expect(acc.rows).toEqual([]);
+    acc.reset();
+    expect(acc.commands).toEqual([]);
+  });
+
   it('marks failed tool results', () => {
     const acc = new TranscriptAccumulator();
     acc.addLine(assistantBlock({ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'false' } }));
@@ -87,6 +105,19 @@ describe('TranscriptAccumulator', () => {
       ['guidance', 'and stop after'],
       ['guidance', 'one more\nthing'],
     ]);
+  });
+
+  it('shows the commands the user ran from a run\'s message box as the guidance\'s attachments', () => {
+    const acc = new TranscriptAccumulator();
+    const command = { id: 'k', input: 'git status', stdout: 'clean\n', stderr: '', exitCode: 0 };
+    acc.addLine(userPrompt(guidanceMessage(withCommands('fix it', [commandAttachment(command)]))));
+    acc.addLine(userPrompt(guidanceMessage(withCommands('', [commandAttachment(command)]))));
+    expect(acc.rows.map((r) => [r.kind, r.text, r.attachments?.map((a) => a.command?.input)])).toEqual([
+      ['guidance', 'fix it', ['git status']],
+      ['guidance', '', ['git status']],
+    ]);
+    expect(acc.rows[0].attachments![0].command!.stdout).toBe('clean');
+    expect(acc.rows[1].preview).toBe('! git status');
   });
 
   it('shows related trigger events in rows of their own, however they reached the agent', () => {

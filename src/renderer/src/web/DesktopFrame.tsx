@@ -1,35 +1,36 @@
 import {
-  Fragment,
-  lazy,
-  Suspense,
   useEffect,
+  useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
-import type { HostDirEntry, MenuItemSpec, MessageBoxSpec } from '../../../shared/remote-access';
+import type { HostDirEntry, MessageBoxSpec } from '../../../shared/remote-access';
+import { DataTable, type DataCol } from '../components/DataTable';
 import { Icon } from '../components/Icon';
-import { Chevron, ICONS } from '../components/icons';
-import { MenuBar, MenuList } from '../components/MenuBar';
-import { fmtDateTime } from '../format';
-import type { ShellController } from './controller';
-import { useThisDevice } from './device-flows';
+import { ICONS } from '../components/icons';
+import { MenuBar } from '../components/MenuBar';
+import { fmtDateTime, fmtSize } from '../format';
+import { ComputerMenu } from './ComputerMenu';
+import { useOverlay, type ShellController } from './controller';
+import { useDeviceForm } from './device-form';
 import './desktop-device.css';
-import { filterLabel, groupPlaces, HOST_COMPUTER, messageResult } from './dialog-flows';
-import { useFileDialog, usePathRequest, type FileView, type HostBrowser, type LocalMessage } from './file-flows';
-import { Markdown } from '../components/Markdown';
+import { DevicePick } from './DevicePick';
+import { filterLabel, HOST_COMPUTER, messageResult, placeGroup } from './dialog-flows';
+import { useFileDialog, usePathRequest, type HostBrowser } from './file-flows';
+import { FileViewContent, viewerLayout } from './file-view';
+import { LocalMessageBox, useMessageAnswer, type MessageBoxProps } from './message-box';
+import { Notifications } from './Notifications';
+import { PathBar } from './PathBar';
+import { CloseButton, TitleBar } from './ws-titlebar';
 import { Tabs } from '../components/Tabs';
-import { CodeBlock } from '../components/ToolContent';
 import { CheckboxField, Field } from '../components/ui';
 import { WindowActions } from '../components/WindowActions';
 import { PLACE_ICONS } from './places';
-import { useMenuState } from './menu-state';
-import { childStack, frontWindow, isBlocked, mainWindow, topModal, useShellState, windowSrc, type OpenDialog, type OpenMenu, type PathRequest, type WebWindow } from './store';
+import { childStack, frontWindow, isBlocked, mainWindow, topModal, useShellState, windowSrc, type OpenDialog, type PathRequest, type WebWindow } from './store';
 
 // ---------- window geometry (desktop only) ----------
 
@@ -131,11 +132,7 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
   const [dragging, setDragging] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [device, setDevice] = useState(false);
-  useEffect(() => {
-    if (!device) return;
-    controller.setOverlay(true);
-    return () => controller.setOverlay(false);
-  }, [device, controller]);
+  useOverlay(controller, device);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -254,7 +251,7 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
       {device && <ThisDeviceWindow controller={controller} onClose={() => setDevice(false)} />}
       {!s.connected && <div className="ws-connection" role="status">{s.everConnected ? 'Reconnecting…' : 'Connecting…'}</div>}
       {s.menus.map((m) => (
-        <PopupMenu key={m.menuId} controller={controller} menu={m} />
+        <ComputerMenu key={m.menuId} controller={controller} menu={m} />
       ))}
       {s.dialogs.map((d) =>
         d.kind === 'message' ? (
@@ -266,23 +263,7 @@ export function DesktopFrame({ controller }: { controller: ShellController }) {
       {s.paths.map((p) => (
         <PathDialog key={p.id} controller={controller} req={p} />
       ))}
-      {s.toasts.length > 0 && (
-        <div className="ws-toasts" aria-live="polite">
-          {s.toasts.map((t) => (
-            <div key={t.id} className="ws-toast" role="status" onClick={() => controller.openToast(t)}>
-              <div className="ws-toast-title">{t.title}</div>
-              {t.body && <div className="ws-toast-body">{t.body}</div>}
-              <CloseButton
-                className="ws-toast-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  controller.closeToast(t.id);
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <Notifications controller={controller} toasts={s.toasts} />
     </div>
   );
 }
@@ -297,16 +278,6 @@ function WindowFrame({ controller, win }: { controller: ShellController; win: We
       src={windowSrc(win)}
       allow="clipboard-read; clipboard-write"
     />
-  );
-}
-
-function CloseButton({ onClick, className = 'ws-close' }: { onClick: (e: React.MouseEvent) => void; className?: string }) {
-  return (
-    <button className={className} aria-label="Close" onPointerDown={(e) => e.stopPropagation()} onClick={onClick}>
-      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.1" />
-      </svg>
-    </button>
   );
 }
 
@@ -407,45 +378,6 @@ function ChildWindow({ controller, win, rect, area, z, active, blocked, minimize
   );
 }
 
-// ---------- menus ----------
-
-/** A context menu the computer popped up over a window. */
-function PopupMenu({ controller, menu: m }: { controller: ShellController; menu: OpenMenu }) {
-  const at = useMemo(() => controller.popupPoint(m), [controller, m]);
-  const box = useRef<HTMLDivElement>(null);
-  const menu = useMenuState({
-    pick: (item: MenuItemSpec) => controller.pick(m.menuId, m.w, item),
-    close: () => controller.dismissMenu(m.menuId),
-  });
-  useLayoutEffect(() => menu.open(m.items, false), [m.items]);
-  useEffect(() => box.current?.focus(), []);
-  return createPortal(
-    <div
-      className="ws-catcher"
-      onPointerDown={() => controller.dismissMenu(m.menuId)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        controller.dismissMenu(m.menuId);
-      }}
-    >
-      <div
-        ref={box}
-        tabIndex={-1}
-        className="ws-menu-focus"
-        onKeyDown={(e) => {
-          if (menu.key(e.key)) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }}
-      >
-        <MenuList nav={menu.nav} depth={0} isMac={controller.isMac} onHover={menu.hover} onChoose={menu.choose} at={at} />
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 // ---------- dialogs ----------
 
 function ShellDialog({ title, width, height, onClose, className, children }: { title: string; width: number; height?: number; onClose: () => void; className?: string; children: ReactNode }) {
@@ -464,10 +396,7 @@ function ShellDialog({ title, width, height, onClose, className, children }: { t
           onClose();
         }}
       >
-        <div className="ws-titlebar">
-          <span className="ws-title">{title}</span>
-          <CloseButton onClick={onClose} />
-        </div>
+        <TitleBar title={title} onClose={onClose} />
         {children}
       </div>
     </div>
@@ -486,11 +415,11 @@ function MessageIcon({ type }: { type: MessageBoxSpec['type'] }) {
 }
 
 /** A message box: the computer's (showMessageBox) or the shell's own. */
-function MessageBox({ spec, onAnswer }: { spec: MessageBoxSpec; onAnswer: (response: number, checkboxChecked: boolean) => void }) {
-  const [checked, setChecked] = useState(!!spec.checkboxChecked);
+function MessageBox({ spec, onAnswer }: MessageBoxProps) {
+  const { checked, setChecked, answer } = useMessageAnswer(spec, onAnswer);
   const def = spec.defaultId;
   return (
-    <ShellDialog title={spec.title || 'Looper'} width={460} className="ws-msgbox" onClose={() => onAnswer(spec.cancelId, checked)}>
+    <ShellDialog title={spec.title || 'Looper'} width={460} className="ws-msgbox" onClose={() => answer(spec.cancelId)}>
       <div className="ws-msgbox-body">
         <MessageIcon type={spec.type} />
         <div className="ws-msgbox-text">
@@ -503,7 +432,7 @@ function MessageBox({ spec, onAnswer }: { spec: MessageBoxSpec; onAnswer: (respo
       </div>
       <div className="editor-footer">
         {spec.buttons.map((label, i) => (
-          <button key={i} className={`btn${i === def ? ' primary' : ''}`} autoFocus={i === def} onClick={() => onAnswer(i, checked)}>
+          <button key={i} className={`btn${i === def ? ' primary' : ''}`} autoFocus={i === def} onClick={() => answer(i)}>
             {label}
           </button>
         ))}
@@ -512,11 +441,6 @@ function MessageBox({ spec, onAnswer }: { spec: MessageBoxSpec; onAnswer: (respo
   );
 }
 
-function LocalMessageBox({ msg }: { msg: LocalMessage | null }) {
-  return msg ? <MessageBox spec={msg.spec} onAnswer={(r) => msg.onAnswer(r)} /> : null;
-}
-
-const fmtSize = (n: number | undefined): string => (n === undefined ? '' : `${Math.max(1, Math.ceil(n / 1024)).toLocaleString()} KB`);
 
 const FILE_ICON = <path d="M4 1.5h5l3 3v10H4Z M9 1.5v3h3" />;
 const UP_ICON = <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" />;
@@ -532,7 +456,31 @@ function BarButton({ label, icon, disabled, onClick }: { label: string; icon: Re
   );
 }
 
-/** The host computer's folders: Back, Forward, Up, Home, the path, New Folder, and the list. */
+/** A row's key: its path, made fit for an element's id. */
+const rowId = (path: string): string => encodeURIComponent(path);
+const pathOf = (id: string): string => decodeURIComponent(id);
+
+const FILE_COLS: readonly DataCol<HostDirEntry>[] = [
+  {
+    label: 'Name',
+    min: 120,
+    title: (e) => e.name,
+    cell: (e) => (
+      <span className="ws-file-name">
+        <Icon>{e.place ? PLACE_ICONS[e.place] : e.dir ? ICONS.folder : FILE_ICON}</Icon>
+        {e.name}
+      </span>
+    ),
+  },
+  { label: 'Date modified', width: 150, cellClass: 'muted', cell: (e) => (e.modifiedAt ? fmtDateTime(e.modifiedAt) : '') },
+  { label: 'Size', width: 80, num: true, cellClass: 'muted', cell: (e) => (e.dir || e.size === undefined ? '' : fmtSize(e.size)) },
+];
+
+/**
+ * The host computer's folders: Back, Forward, Up, Home, the path, New Folder, and the list (a DataTable, several
+ * rows selectable when the dialog picks several). Alt+Left, Alt+Right and Alt+Up go Back, Forward and Up, and
+ * Backspace in the list goes Up, as in File Explorer.
+ */
 function HostBrowserView({
   browser,
   multi,
@@ -547,36 +495,26 @@ function HostBrowserView({
   autoFocus: boolean;
 }) {
   const [naming, setNaming] = useState<string | null>(null);
+  /** The row the keyboard is on among several selected; the last one selected otherwise. */
+  const [lead, setLead] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
+  const idPrefix = useId();
   useEffect(() => {
     if (autoFocus) list.current?.focus();
   }, [autoFocus]);
-  const last = browser.selected[browser.selected.length - 1];
-  const index = browser.entries.findIndex((e) => e.path === last);
-  useEffect(() => setNaming(null), [browser.path]);
   useEffect(() => {
-    if (last) list.current?.querySelector(`[data-path="${CSS.escape(last)}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [last]);
+    setNaming(null);
+    setLead(null);
+  }, [browser.path]);
+  const focus = lead !== null && browser.selected.includes(lead) ? lead : browser.selected[browser.selected.length - 1];
   const onKey = (e: ReactKeyboardEvent) => {
-    const n = browser.entries.length;
-    const go = (i: number) => {
-      e.preventDefault();
-      if (n) browser.select(browser.entries[clamp(i, 0, n - 1)]);
-    };
-    // Alt+Left, Alt+Right and Alt+Up: Back, Forward and Up, as in File Explorer.
-    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp')) {
+    if (e.defaultPrevented) return;
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp')) {
       e.preventDefault();
       if (e.key === 'ArrowLeft') browser.back();
       else if (e.key === 'ArrowRight') browser.forward();
       else browser.up();
-    } else if (e.key === 'ArrowDown') go(index + 1);
-    else if (e.key === 'ArrowUp') go(index < 0 ? 0 : index - 1);
-    else if (e.key === 'Home') go(0);
-    else if (e.key === 'End') go(n - 1);
-    else if (e.key === 'Enter' && index >= 0) {
-      e.preventDefault();
-      onActivate(browser.entries[index]);
-    } else if (e.key === 'Backspace') {
+    } else if (e.key === 'Backspace' && e.target === list.current) {
       e.preventDefault();
       browser.up();
     }
@@ -588,88 +526,71 @@ function HostBrowserView({
       list.current?.focus();
     }
   };
+  const places = browser.path === null;
   return (
-    <div className="ws-browser">
+    <div className="ws-browser" onKeyDown={onKey}>
       <div className="ws-browser-bar">
         <BarButton label="Back" icon={BACK_ICON} disabled={!browser.canBack} onClick={browser.back} />
         <BarButton label="Forward" icon={FORWARD_ICON} disabled={!browser.canForward} onClick={browser.forward} />
         <BarButton label="Up" icon={UP_ICON} disabled={browser.path === null} onClick={browser.up} />
         <BarButton label="Home" icon={PLACE_ICONS.home} disabled={browser.home === null || browser.path === browser.home} onClick={() => browser.go(browser.home)} />
-        <nav className="ws-crumbs" aria-label="Path">
-          {browser.crumbs.map((c, i) => (
-            <span key={c.path ?? ''} className="ws-crumb-part">
-              {i > 0 && (
-                <span className="ws-crumb-sep">
-                  <Chevron />
-                </span>
-              )}
-              <button className="ws-crumb" onClick={() => browser.go(c.path)}>
-                {c.label}
-              </button>
-            </span>
-          ))}
-        </nav>
+        <PathBar browser={browser} />
         {newFolder && <BarButton label="New Folder" icon={ICONS.newProject} disabled={browser.path === null || naming !== null} onClick={() => setNaming('New folder')} />}
       </div>
-      <div ref={list} className="ws-files" role="listbox" aria-label="Files" aria-multiselectable={multi || undefined} tabIndex={0} onKeyDown={onKey}>
-        {browser.path !== null && (
-          <div className="ws-file ws-file-head" aria-hidden="true">
-            <span />
-            <span>Name</span>
-            <span>Date modified</span>
-            <span>Size</span>
-          </div>
-        )}
-        {naming !== null && (
-          <div className="ws-file editing">
-            <Icon>{ICONS.folder}</Icon>
-            <input
-              autoFocus
-              value={naming}
-              onFocus={(e) => e.target.select()}
-              onChange={(e) => setNaming(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') void create();
-                else if (e.key === 'Escape') {
-                  setNaming(null);
-                  list.current?.focus();
-                }
-              }}
-            />
-          </div>
-        )}
-        {(browser.path === null ? groupPlaces(browser.entries) : browser.entries.map((entry) => ({ heading: null, entry }))).map(({ heading, entry }) => (
-          <Fragment key={entry.path}>
-            {heading && (
-              <div className="ws-files-group" role="presentation">
-                {heading}
-              </div>
-            )}
-            <div
-              data-path={entry.path}
-              role="option"
-              aria-selected={browser.selected.includes(entry.path)}
-              className={`ws-file${browser.selected.includes(entry.path) ? ' selected' : ''}`}
-              onClick={(e) => browser.select(entry, { toggle: e.ctrlKey || e.metaKey })}
-              onDoubleClick={() => onActivate(entry)}
-            >
-              <Icon>{entry.place ? PLACE_ICONS[entry.place] : entry.dir ? ICONS.folder : FILE_ICON}</Icon>
-              <span className="ws-file-name">{entry.name}</span>
-              <span className="muted">{entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : ''}</span>
-              <span className="muted ws-file-size">{entry.dir ? '' : fmtSize(entry.size)}</span>
-            </div>
-          </Fragment>
-        ))}
-        {!browser.loading && browser.entries.length === 0 && naming === null && <div className="ws-files-empty muted">This folder is empty.</div>}
-      </div>
+      <DataTable
+        cols={FILE_COLS}
+        rows={browser.entries}
+        rowKey={(e) => rowId(e.path)}
+        idPrefix={idPrefix}
+        selected={focus ? rowId(focus) : null}
+        onSelect={(e) => browser.select(e)}
+        multiSelect={
+          multi
+            ? {
+                keys: browser.selected.map(rowId),
+                onChange: (keys, at) => {
+                  setLead(pathOf(at));
+                  browser.setSelection(keys.map(pathOf));
+                },
+              }
+            : undefined
+        }
+        onOpen={onActivate}
+        label="Files"
+        groupOf={places ? (e) => placeGroup(e.place) : undefined}
+        storageKey="host-files"
+        wrapClass={`ws-files${places ? ' places' : ''}`}
+        tableRef={list}
+        empty={browser.loading || naming !== null ? null : <span className="ws-files-empty">This folder is empty.</span>}
+        note={
+          naming !== null && (
+            <span className="ws-file-new">
+              <Icon>{ICONS.folder}</Icon>
+              <input
+                autoFocus
+                aria-label="New folder name"
+                value={naming}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setNaming(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') void create();
+                  else if (e.key === 'Escape') {
+                    setNaming(null);
+                    list.current?.focus();
+                  }
+                }}
+              />
+            </span>
+          )
+        }
+      />
     </div>
   );
 }
 
 function FileDialog({ controller, dialog }: { controller: ShellController; dialog: Extract<OpenDialog, { kind: 'open' | 'save' }> }) {
   const f = useFileDialog(controller, dialog);
-  const input = useRef<HTMLInputElement>(null);
   const onDevice = f.source === 'device';
   return (
     <ShellDialog title={f.title} width={760} height={onDevice ? undefined : 540} className="ws-filedialog" onClose={f.cancel}>
@@ -685,23 +606,7 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
       {onDevice ? (
         // Save to This Device needs only the file name below.
         f.kind === 'open' && (
-          <div className="ws-device">
-            <button className="btn primary" autoFocus disabled={!!f.busy} onClick={() => input.current?.click()}>
-              {f.multi ? 'Choose Files…' : 'Choose File…'}
-            </button>
-            <input
-              ref={input}
-              type="file"
-              hidden
-              multiple={f.multi}
-              accept={f.extensions ? f.extensions.map((x) => `.${x}`).join(',') : undefined}
-              onChange={(e) => {
-                f.fromDevice([...(e.target.files ?? [])]);
-                e.target.value = '';
-              }}
-            />
-            {f.busy && <div className="muted">{f.busy}</div>}
-          </div>
+          <DevicePick f={f} filters={dialog.spec.filters} label={['Choose File…', 'Choose Files…']} className="ws-device" buttonClass="btn primary" busyClass="muted" autoFocus />
         )
       ) : (
         <HostBrowserView browser={f.browser} multi={f.multi} onActivate={f.activate} newFolder autoFocus={f.kind === 'open'} />
@@ -732,7 +637,7 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
       ) : (
         <WindowActions confirm={{ label: f.confirmLabel, run: f.confirm, disabled: !f.canConfirm }} cancel={f.cancel} />
       )}
-      <LocalMessageBox msg={f.message} />
+      <LocalMessageBox msg={f.message} box={MessageBox} />
     </ShellDialog>
   );
 }
@@ -742,18 +647,17 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
  * it's paired with, and Unpair, a command of its own apart from the commit buttons.
  */
 function ThisDeviceWindow({ controller, onClose }: { controller: ShellController; onClose: () => void }) {
-  const d = useThisDevice(controller);
-  const [name, setName] = useState<string | null>(null);
+  const d = useDeviceForm(controller);
   const [notify, setNotify] = useState<boolean | null>(null);
-  const usable = d.push === 'on' || d.push === 'off';
-  const nameValue = name ?? d.name;
+  const named = !!d.nameText.trim();
   const save = () => {
-    if (!nameValue.trim() || d.busy) return;
+    if (!named || d.busy) return;
     // Notifications first, still inside the click: turning them on asks for permission.
     const pushing = notify !== null && notify !== (d.push === 'on') ? d.setNotifications(notify) : Promise.resolve(true);
+    const next = d.newName();
     void (async () => {
       if (!(await pushing)) return;
-      if (nameValue.trim() !== d.name && !(await d.rename(nameValue))) return;
+      if (next && !(await d.rename(next))) return;
       onClose();
     })();
   };
@@ -769,46 +673,24 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
       >
         <div className="ws-thisdevice-body">
           <Field label="Name">
-            <input autoFocus value={nameValue} maxLength={64} onChange={(e) => setName(e.target.value)} />
+            <input autoFocus value={d.nameText} maxLength={64} onChange={(e) => d.setNameText(e.target.value)} />
           </Field>
           <div className="field">
             <span className="field-label">{HOST_COMPUTER}</span>
             <span className="ws-thisdevice-value">{d.computer || '\u00a0'}</span>
           </div>
-          <CheckboxField label="Notifications" checked={notify ?? d.push === 'on'} disabled={!usable || d.busy} onChange={setNotify} />
+          <CheckboxField label="Notifications" note={d.hint} checked={notify ?? d.push === 'on'} disabled={!d.usable || d.busy} onChange={setNotify} />
           <div className="ws-thisdevice-commands">
             <button type="button" className="btn" onClick={d.unpair}>
               Unpair This Device
             </button>
           </div>
         </div>
-        <WindowActions confirm={{ label: 'Save', run: save, disabled: !nameValue.trim() || d.busy }} cancel={onClose} />
+        <WindowActions confirm={{ label: 'Save', run: save, disabled: !named || d.busy }} cancel={onClose} />
       </form>
-      <LocalMessageBox msg={d.message} />
+      <LocalMessageBox msg={d.message} box={MessageBox} />
     </ShellDialog>
   );
-}
-
-/** pdf.js is over a megabyte, so it loads the first time a PDF is shown. */
-const PdfPages = lazy(() => import('./PdfPages'));
-
-/** A file shown before it's downloaded, as the activity panel shows it: an image, a PDF's pages, code in its syntax colors, Markdown formatted, or text. */
-function FileViewBody({ view, name }: { view: FileView; name: string }) {
-  const loading = <div className="muted ws-viewer-note">Loading…</div>;
-  if (view.error) return <div className="muted ws-viewer-note">{view.error}</div>;
-  if (view.kind === 'image') return view.url ? <img className="ws-viewer-image" src={view.url} alt={name} /> : loading;
-  if (view.kind === 'pdf')
-    return view.pdf ? (
-      <Suspense fallback={loading}>
-        <PdfPages data={view.pdf} name={name} />
-      </Suspense>
-    ) : (
-      loading
-    );
-  if (view.text === null) return loading;
-  if (view.kind === 'markdown') return <Markdown text={view.text} breaks={false} />;
-  if (view.kind === 'code') return <CodeBlock text={view.text} file={name} />;
-  return <pre className="ws-viewer-text">{view.text}</pre>;
 }
 
 /** A folder or file on the host computer the user asked to see (Open Working Directory, an attachment clicked…). */
@@ -824,8 +706,8 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
     const steps = p.steps;
     return (
       <ShellDialog title={p.name} width={900} height={680} className="ws-viewer" onClose={p.close}>
-        <div ref={viewer} className={`ws-viewer-body${['image', 'pdf', 'code'].includes(p.view.kind) ? ` ${p.view.kind}` : ''}`} tabIndex={0}>
-          <FileViewBody view={p.view} name={p.name} />
+        <div ref={viewer} className={`ws-viewer-body${viewerLayout(p.view)}`} tabIndex={0}>
+          <FileViewContent view={p.view} name={p.name} classes={{ note: 'muted ws-viewer-note', text: 'ws-viewer-text' }} image={(url) => <img className="ws-viewer-image" src={url} alt={p.name} />} />
         </div>
         <WindowActions
           confirm={{ label: 'Download to This Device', run: p.view.toDevice }}
@@ -840,11 +722,11 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
             { id: 'download-to-host', label: `Download to ${HOST_COMPUTER}`, run: p.view.toHost },
           ]}
         />
-        <LocalMessageBox msg={p.message} />
+        <LocalMessageBox msg={p.message} box={MessageBox} />
       </ShellDialog>
     );
   }
-  if (!p.browser) return <LocalMessageBox msg={p.message} />;
+  if (!p.browser) return <LocalMessageBox msg={p.message} box={MessageBox} />;
   return (
     <ShellDialog title={p.name} width={760} height={540} className="ws-filedialog" onClose={p.close}>
       <HostBrowserView browser={p.browser} multi={false} onActivate={p.activate} newFolder={false} autoFocus />
@@ -853,7 +735,7 @@ function PathDialog({ controller, req }: { controller: ShellController; req: Pat
         cancel={p.close}
         extras={[{ id: 'open-on-host', label: `Open on ${HOST_COMPUTER}`, run: p.openOnComputer }]}
       />
-      <LocalMessageBox msg={p.message} />
+      <LocalMessageBox msg={p.message} box={MessageBox} />
     </ShellDialog>
   );
 }

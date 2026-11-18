@@ -5,12 +5,14 @@ import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
 import type { DetailTab } from './TaskDetail';
 import { DataTable, type DataCol } from './DataTable';
+import { DetailView } from './DetailView';
 import type { LoginRow } from '@shared/logins';
 import { showLoginMenu, showTaskMenu } from './row-menus';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
 import { Section } from './Section';
 import { statusText } from './SessionList';
+import { reportError } from '../report-error';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
 export interface DashboardPick {
@@ -77,7 +79,7 @@ interface Props {
 /** What opening a dashboard row does (double-click or Enter; a tap on a phone). */
 /** Log In: Claude Code's own login, in a terminal window. */
 export const logIn = (r: LoginRow): void =>
-  void window.looper.logins.logIn(r.login.environmentId, r.login.harnessIds[0]).catch((e) => void window.looper.showError((e as Error).message));
+  void window.looper.logins.logIn(r.login.environmentId, r.login.harnessIds[0]).catch(reportError);
 
 export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => void) {
   // A waiting or failed run opens in its run window, where its question is answered and guidance sent.
@@ -173,10 +175,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
   ];
 
   return (
-    <div className="detail">
-      <div className="detail-bar">
-        <span className="pane-title">Dashboard</span>
-      </div>
+    <DetailView title="Dashboard">
       <div className="dashboard">
         <Section className="dashboard-section" title="Running now" empty={running.length === 0 && 'Nothing is running.'}>
           <DataTable
@@ -271,6 +270,6 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
           </Section>
         )}
       </div>
-    </div>
+    </DetailView>
   );
 }

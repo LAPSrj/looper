@@ -7,6 +7,8 @@ export interface RunGroup {
   parentRunId?: string;
   /** A delegated agent's run: the title its parent gave it. */
   title?: string;
+  /** A delegated agent's run: the folder it works in, in its environment's path form. */
+  folder?: string;
   startTs: string;
   endTs: string;
   result: string;
@@ -60,6 +62,16 @@ function resultText(records: RunRecord[]): string {
   return r?.body ?? r?.summary ?? '';
 }
 
+/** What a delegated agent's run's first delegate record says about it. */
+function delegatedBy(r: RunRecord): { parentRunId: string; title?: string; folder?: string } {
+  const d = r.detail!;
+  return {
+    parentRunId: d.parentRunId as string,
+    ...(typeof d.title === 'string' ? { title: d.title } : {}),
+    ...(typeof d.folder === 'string' ? { folder: d.folder } : {}),
+  };
+}
+
 /** Records gathered into runs, newest first. */
 export function groupRuns(records: RunRecord[]): RunGroup[] {
   const map = new Map<string, RunRecord[]>();
@@ -82,7 +94,7 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
     const durations = sorted.filter((r) => r.durationMs !== undefined).map((r) => r.durationMs!);
     result.push({
       runId,
-      ...(by ? { parentRunId: by.detail!.parentRunId as string, ...(typeof by.detail!.title === 'string' ? { title: by.detail!.title } : {}) } : {}),
+      ...(by ? delegatedBy(by) : {}),
       startTs: sorted[0].ts,
       endTs: sorted[sorted.length - 1].ts,
       result: bestResult(steps),
@@ -98,7 +110,7 @@ export function groupRuns(records: RunRecord[]): RunGroup[] {
 /** What a run's summary needs of its records so far, kept as they come in time order. */
 interface RunAcc {
   runId: string;
-  by?: { parentRunId: string; title?: string };
+  by?: ReturnType<typeof delegatedBy>;
   startTs: string;
   endTs: string;
   totalDurationMs: number;
@@ -130,7 +142,7 @@ export class RunSummaries {
     a.endTs = r.ts;
     if (r.durationMs !== undefined) a.totalDurationMs += r.durationMs;
     const isBy = !a.by && r.phase === 'delegate' && typeof r.detail?.parentRunId === 'string';
-    if (isBy) a.by = { parentRunId: r.detail!.parentRunId as string, ...(typeof r.detail!.title === 'string' ? { title: r.detail!.title } : {}) };
+    if (isBy) a.by = delegatedBy(r);
     const step = r.phase !== 'guidance' && r.phase !== 'events' && r.phase !== 'question' && (r.phase !== 'delegate' || isBy);
     if (step) {
       if (startsOver(r)) a.results.clear();

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { parseSvgIcon } from './addon-icons';
+import { noMnemonic } from './commands/command';
 import { REPORT_INPUT, issueLines } from './issues';
 import { LOOPER_KEYS, hint, keyId } from './shortcuts';
 import { UI_PLATFORMS } from './ui-platform';
@@ -430,8 +431,6 @@ function listText(items: string[]): string {
 /** The places of Looper's own windows a command can be in; the others are the addon's own panes and screens. */
 const LOOPER_PLACES = ['new', 'app', 'dashboard', 'projects', 'tasks', 'chats'] as const;
 const MENU_TITLES: Record<AddonMenuName, string> = { file: 'File', edit: 'Edit', view: 'View', tools: 'Tools', help: 'Help' };
-/** A label without its "&" access keys. */
-const plainLabel = (label: string): string => label.replace(/&(&?)/g, '$1');
 
 /** What installing the addon adds to Looper, one line per place, for the install confirmation. */
 export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { tabs?: AddonTab[]; toolCalls?: AddonToolCall[] }): string[] {
@@ -446,7 +445,7 @@ export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { 
   for (const c of m.commands) {
     const places = LOOPER_PLACES.filter((p) => c.in[p]);
     if (!places.length) continue;
-    const label = plainLabel(c.label);
+    const label = noMnemonic(c.label);
     const menu = commandMenu(c);
     inMenu.set(menu, [...(inMenu.get(menu) ?? []), label]);
     if (places.some((p) => c.in[p]!.toolbar)) buttons.push(label.replace(/…$/, ''));

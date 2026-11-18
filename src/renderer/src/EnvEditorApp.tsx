@@ -1,20 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { Environment, Harness } from '@shared/types';
-import { SettingsSchema } from '@shared/types';
-import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
 import { EmptyWindow, Field, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { ConcurrencyLimit } from './components/form-blocks';
-import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
+import { ConcurrencyLimit, newHarness } from './components/form-blocks';
+import { saveSettings, useDialogKeys, useDiscardUnsaved, useLiveSettings, useSave } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
 import { rid } from './rid';
+import { reportError } from './report-error';
 
 type EnvTab = 'general' | 'harnesses' | 'advanced';
-
-function newHarness(): Harness {
-  return { id: `h-${rid()}`, name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
-}
 
 /** The environment's own fields; harnesses are managed live through their own editor window. */
 type EnvDraft = Pick<Environment, 'name' | 'kind' | 'distro' | 'shell' | 'mountPrefix' | 'maxConcurrentTasks'>;
@@ -27,7 +22,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
   const [selected, setSelected] = useState<string | null>(null);
   const [distros, setDistros] = useState<string[]>([]);
   const [detectedPrefix, setDetectedPrefix] = useState<string | undefined>(undefined);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   /** "Custom" chosen in the Shell dropdown; the free-text field shows regardless of its value. */
   const [customShell, setCustomShell] = useState(false);
 
@@ -95,7 +90,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     try {
       await window.looper.updateSettings({ environments });
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -119,7 +114,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     setSelected(harnesses.find((h) => h.id !== target.id)?.id ?? null);
   };
 
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     const folded: Environment = {
       ...env,
       name: draft.name.trim(),
@@ -129,26 +124,9 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
       mountPrefix: isBridge ? draft.mountPrefix?.trim() || undefined : undefined,
       maxConcurrentTasks: draft.maxConcurrentTasks,
     };
-    const environments = live.environments.map((e) => (e.id === envId ? folded : e));
-    const parsed = SettingsSchema.safeParse({ ...live, environments }, REPORT_INPUT);
-    if (!parsed.success) {
-      void window.looper.showError(issueLines(parsed.error));
-      return false;
-    }
-    setSaving(true);
-    try {
-      await window.looper.updateSettings({ environments: parsed.data.environments });
-      savedRef.current = true;
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    await saveSettings(live, { environments: live.environments.map((e) => (e.id === envId ? folded : e)) });
+    savedRef.current = true;
   };
-  const save = async () => { if (await doSave()) window.close(); };
-  const apply = async () => { await doSave(); };
 
   return (
     <div className="editor">
@@ -275,7 +253,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
           </div>
         )}
       />
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

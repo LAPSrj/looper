@@ -4,18 +4,20 @@ import { chatTitle, type ChatContext, type ChatState, type TitleBy, type UsageLi
 import type { MessageRow, MessagesResult } from '../shared/messages';
 import { stripMarkdown } from '../shared/messages-md';
 import { bareId } from '../shared/model-update';
-import { projectIdOf } from '../shared/projects';
+import { projectIdOf, sameFolder } from '../shared/projects';
 import {
   limitsKey,
   type BackgroundTask,
+  type RunAgent,
   type SessionActivity,
+  type SlashCommand,
   type SessionSummary,
   type SessionsState,
   type SubagentInfo,
   type UsageLimits,
   type WaitReason,
 } from '../shared/sessions';
-import type { EngineEvent, Project, Task } from '../shared/types';
+import type { EngineEvent, HarnessModel, Project, Task } from '../shared/types';
 import type { SubagentStats } from './context';
 import type { Logger } from './log';
 import type { SubagentMeta } from './messages';
@@ -38,7 +40,7 @@ export interface TerminalEntry {
   stopped?: boolean;
 }
 
-/** A task run whose agent step is in flight: the Chats window lists it while Show Task Runs is on. */
+/** A task run whose agent step is in flight: the Chats window lists it while Show Task Runs is on, and a delegated agent's always. */
 export interface RunEntry {
   /** The run id. */
   id: string;
@@ -48,17 +50,21 @@ export interface RunEntry {
   held: boolean;
   /** The question the agent asked with looper-ask, while it waits for the answer. */
   question: string | null;
+  /** The agent isn't in a turn: its next guidance starts one (Scheduler.turnOver). */
+  turnOver?: boolean;
+  /** A delegated agent's run (looper-delegate): the title its parent gave it, and the task it runs as in its own folder. */
+  delegate?: { title: string; task: Task };
 }
 
 export interface SessionHubDeps {
   chats: () => ChatState[];
   /** Terminal sessions shown in the Chats window (Remote Control's aren't). */
   terminals: () => TerminalEntry[];
-  /** Task runs whose agent is running; empty while Show Task Runs is off. */
+  /** Task runs whose agent is running (only delegated agents' while Show Task Runs is off). */
   runs: () => RunEntry[];
   findTask: (taskId: string) => Task | undefined;
   projects: () => Project[];
-  harnessOf: (task: Task) => { kind: 'claude-code' | 'codex' | 'custom'; name: string; limitsKey?: string };
+  harnessOf: (task: Task) => { kind: 'claude-code' | 'codex' | 'custom'; name: string; limitsKey?: string; models?: HarnessModel[] };
   runDir: (taskId: string, runId: string) => string;
   readRows: (taskId: string, runId: string) => Promise<MessagesResult>;
   subagents: (taskId: string, runId: string) => Promise<SubagentMeta[]>;
@@ -98,6 +104,10 @@ interface Track {
   rows: MessageRow[];
   /** A task run's guidance its agent hasn't picked up yet. */
   pendingGuidance?: string;
+  /** A task run's skills, from its transcript. */
+  commands?: SlashCommand[];
+  /** Claude: the model the session's newest response came from. */
+  activeModel?: string;
   subagentMetas: SubagentMeta[];
   /** What each subagent's transcript says, read while the window shows the session; a finished one's isn't read again. */
   subagentStats: Map<string, SubagentStats>;
@@ -301,8 +311,9 @@ function permissionText(tool: string): string {
 }
 
 /**
- * The Chats window's model: every open chat and Looper terminal session (and,
- * with Show Task Runs on, each task run's agent) as a list row (status, why it
+ * The Chats window's model: every open chat and Looper terminal session (and
+ * each delegated agent's run, and with Show Task Runs on every task run's
+ * agent) as a list row (status, why it
  * waits for the user, its latest line, context), and for the session the
  * window shows, its background work and subagents. Chats report their state
  * themselves; terminal sessions are read from the files their hooks write and
@@ -334,6 +345,11 @@ export class SessionHub {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     this.timer = null;
     this.emitTimer = null;
+  }
+
+  /** Guidance went to a run or came back from it: its conversation and what waits are read again now, not at the next read. */
+  reread(id: string): void {
+    void this.readSession(id, true);
   }
 
   /** A chat changed, or a session opened or closed: the list follows shortly. */
@@ -393,14 +409,39 @@ export class SessionHub {
     const t = this.tracks.get(id);
     const entry = this.entries().find((e) => e.id === id);
     if (!t || !entry) return null;
+    const agent = entry.kind === 'run' ? this.runAgent(entry, t) : undefined;
     return {
       id,
       ...(entry.kind !== 'chat' ? { rows: t.rows } : {}),
       ...(t.pendingGuidance ? { pendingGuidance: t.pendingGuidance } : {}),
+      ...(entry.kind !== 'chat' && t.commands?.length ? { commands: t.commands } : {}),
+      ...(agent ? { agent } : {}),
       background: backgroundOf(t.rows),
       subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats, entry.kind === 'chat' ? entry.chat.modelWindows : undefined),
       workflows: t.workflows,
     };
+  }
+
+  /** A task run's agent as the task (a delegated agent's own) runs it; undefined on a custom harness. */
+  private runAgent(e: RunEntry, t: Track): RunAgent | undefined {
+    const task = e.delegate?.task ?? this.d.findTask(e.taskId);
+    if (!task) return undefined;
+    const h = this.d.harnessOf(task);
+    if (h.kind === 'custom') return undefined;
+    const a = task.agent;
+    return {
+      harnessName: h.name,
+      harnessKind: h.kind,
+      models: h.models ?? [],
+      settings: { ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}), permissionMode: a.permissionMode ?? '' },
+      ...(t.activeModel ? { activeModel: t.activeModel } : {}),
+      commandPrefix: h.kind === 'codex' ? '$' : '/',
+    };
+  }
+
+  /** A terminal session's or task run's skills, from its transcript, without the rest of its activity. */
+  commands(id: string): SlashCommand[] {
+    return this.tracks.get(id)?.commands ?? [];
   }
 
   /** A background command's output file, in the session's own path form. */
@@ -409,7 +450,7 @@ export class SessionHub {
     return t ? backgroundOf(t.rows).find((b) => b.id === taskId)?.outputFile : undefined;
   }
 
-  /** A listed task run's task; undefined when the list has no such run (Show Task Runs off, or the run is over). */
+  /** A listed task run's task (a delegated agent's parent's); undefined when the list has no such run (Show Task Runs off, or the run is over). */
   runTask(id: string): string | undefined {
     return this.d.runs().find((r) => r.id === id)?.taskId;
   }
@@ -480,7 +521,7 @@ export class SessionHub {
     if (!e) return;
     const t = this.track(e.id, e.startedAt);
     if (t.reading) return;
-    const task = this.d.findTask(e.taskId);
+    const task = (e.kind === 'run' ? e.delegate?.task : undefined) ?? this.d.findTask(e.taskId);
     const kind = task ? this.d.harnessOf(task).kind : 'custom';
     if (kind === 'custom') return;
     t.reading = true;
@@ -488,6 +529,7 @@ export class SessionHub {
       const r = await this.d.readRows(e.taskId, e.id);
       if (r.status === 'ok') t.rows = r.rows.filter((row) => row.kind !== 'raw');
       t.pendingGuidance = e.kind === 'run' ? r.pendingGuidance : undefined;
+      if (e.kind !== 'chat' && r.commands) t.commands = r.commands;
       if (kind === 'claude-code') t.subagentMetas = await this.d.subagents(e.taskId, e.id);
       if (kind === 'claude-code' && (force || this.watched.has(id))) {
         for (const a of subagentsOf(t.subagentMetas, t.rows)) {
@@ -505,6 +547,7 @@ export class SessionHub {
         const tokens = await this.d.contextTokens(e.taskId, e.id);
         const model = tokens !== null && kind === 'claude-code' ? await this.d.contextModel?.(e.taskId, e.id) : null;
         t.context = tokens === null ? undefined : { tokens, window: (model ? modelWindows.pick(model, tokens) : undefined) ?? t.context?.window };
+        if (model) t.activeModel = model;
       }
       if (e.kind === 'terminal' && this.d.sessionName) t.harnessTitle = await this.d.sessionName(e.taskId, e.id);
     } catch (err) {
@@ -525,7 +568,16 @@ export class SessionHub {
     for (const id of this.watched) {
       const activity = this.activity(id);
       if (!activity) continue;
-      const aKey = JSON.stringify([activity.rows?.length, activity.rows?.at(-1), activity.pendingGuidance, activity.background, activity.subagents, activity.workflows]);
+      const aKey = JSON.stringify([
+        activity.rows?.length,
+        activity.rows?.at(-1),
+        activity.pendingGuidance,
+        activity.commands?.length,
+        activity.agent,
+        activity.background,
+        activity.subagents,
+        activity.workflows,
+      ]);
       if (aKey === this.lastActivity.get(id)) continue;
       this.lastActivity.set(id, aKey);
       this.d.emit({ type: 'session:activity', activity });
@@ -547,6 +599,12 @@ export class SessionHub {
     const projectId = projectIdOf(taskId) ?? task?.projectId;
     const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
     return { task, projectId: project?.id, groupName: project?.name ?? task?.name ?? taskId };
+  }
+
+  /** The group of what works in `folder`: its project's, else the folder's own, as a chat opened there with Other Folder… is. */
+  private folderPlace(folder: string, projects: Project[]): { projectId?: string; groupName: string } {
+    const project = projects.find((p) => sameFolder(p.cwd, folder));
+    return project ? { projectId: project.id, groupName: project.name } : { groupName: folder };
   }
 
   /** A notification newer than both the user's last look and the agent's last turn. */
@@ -661,15 +719,22 @@ export class SessionHub {
     };
   }
 
-  /** A task run's agent: working until it holds for the user or asks a question, which waits until the run goes on. */
+  /**
+   * A task run's agent: working until its turn is over, it holds for the user or asks a question, which waits until the run goes on.
+   * A delegated agent's is listed under the project or folder it works in, and its questions are its parent agent's to answer.
+   */
   private runSummary(e: RunEntry, projects: Project[]): SessionSummary {
     const t = this.track(e.id, e.startedAt);
-    const { task, projectId, groupName } = this.place(e.taskId, projects);
-    const harness = task ? this.d.harnessOf(task) : { kind: 'custom' as const, name: 'Agent' };
-    const waits = e.question !== null || e.held;
+    const placed = this.place(e.taskId, projects);
+    const { task } = placed;
+    const own = e.delegate?.task ?? task;
+    const { projectId, groupName } = e.delegate ? this.folderPlace(e.delegate.task.cwd, projects) : placed;
+    const harness = own ? this.d.harnessOf(own) : { kind: 'custom' as const, name: 'Agent' };
+    const asksUser = e.question !== null && !e.delegate;
+    const waits = asksUser || e.held;
     t.permissionAt = waits ? (t.permissionAt ?? this.now()) : undefined;
     const waiting: SessionSummary['waiting'] = waits
-      ? { reason: 'notification', text: e.question !== null ? 'Waiting for your answer' : 'Waiting for you', since: t.permissionAt! }
+      ? { reason: 'notification', text: asksUser ? 'Waiting for your answer' : 'Waiting for you', since: t.permissionAt! }
       : undefined;
     const latest = latestLine(t.rows);
     const recent = recentMessages(t.rows);
@@ -679,11 +744,12 @@ export class SessionHub {
       taskId: e.taskId,
       ...(projectId ? { projectId } : {}),
       groupName,
-      title: task?.name ?? e.taskId,
+      title: e.delegate?.title ?? task?.name ?? e.taskId,
+      ...(e.delegate ? { startedBy: task?.name ?? e.taskId } : {}),
       harnessKind: harness.kind,
       harnessName: harness.name,
       ...(harness.limitsKey ? { limitsKey: harness.limitsKey } : {}),
-      status: waits ? 'ready' : 'working',
+      status: waits || e.turnOver ? 'ready' : 'working',
       ...(waiting ? { waiting } : {}),
       ...(e.question !== null ? { question: e.question } : {}),
       ...(latest ? { latest } : {}),

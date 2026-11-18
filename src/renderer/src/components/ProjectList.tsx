@@ -1,26 +1,15 @@
 import { useState } from 'react';
 import type { Environment, Project, ProjectFolder } from '@shared/types';
-import { groupProjects, type ProjectGroupBy } from '@shared/projects';
+import { groupProjects, type ProjectGroup, type ProjectGroupBy } from '@shared/projects';
 import { FolderTree } from './FolderTree';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
-import { useListNav } from './hooks';
+import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
 import { showProjectMenu, showProjectsListMenu } from './row-menus';
-import { listContextMenu, parentIndex } from './list-nav';
+import { reportError } from '../report-error';
 
 /** A project's row: its name, then its folder unless the list is compact. */
 function ProjectRow({ p, compact }: { p: Project; compact: boolean }) {
-  return (
-    <>
-      <div className="task-item-row">
-        <span className="task-name">{p.name}</span>
-      </div>
-      {!compact && (
-        <div className="task-item-sub mono" title={p.cwd}>
-          {p.cwd}
-        </div>
-      )}
-    </>
-  );
+  return <ItemText name={p.name} sub={compact ? undefined : p.cwd} subClass="mono" />;
 }
 
 /**
@@ -87,14 +76,11 @@ export function ProjectList({
       onFolderMenu={(id) => window.looper.projects.showFolderMenu(id)}
       onEmptyMenu={paneMenu}
       onReorder={(ids, folderById, nextLayout, parentById) =>
-        void window.looper.projects.reorder(ids, folderById, nextLayout, parentById).catch((e) => void window.looper.showError((e as Error).message))
+        void window.looper.projects.reorder(ids, folderById, nextLayout, parentById).catch(reportError)
       }
     />
   );
 }
-
-/** A row the keyboard visits in the grouped list: a group's header or a project. */
-type NavRow = { kind: 'group'; key: string } | { kind: 'project'; p: Project };
 
 /** The projects under a header per group (parent folder or harness), in the user's order within each. */
 function GroupedProjects({
@@ -115,112 +101,59 @@ function GroupedProjects({
   const groups = groupProjects(projects, groupBy, environments);
   // The keys of the groups the user closed (per session, like the task folders).
   const [closed, setClosed] = useState<Set<string>>(new Set());
-  const toggleGroup = (key: string) =>
+  const toggleGroup = (g: ProjectGroup) =>
     setClosed((prev) => {
       const next = new Set(prev);
-      if (!next.delete(key)) next.add(key);
+      if (!next.delete(g.key)) next.add(g.key);
       return next;
     });
-  const rowId = (id: string) => `project-${id}`;
-  const groupRowId = (key: string) => `project-group-${groups.findIndex((g) => g.key === key)}`;
-  const rows: NavRow[] = groups.flatMap((g): NavRow[] => [{ kind: 'group', key: g.key }, ...(closed.has(g.key) ? [] : g.projects.map((p) => ({ kind: 'project' as const, p })))]);
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.key === activeGroup);
-  const index = groupAt >= 0 ? groupAt : selected === null ? -1 : rows.findIndex((r) => r.kind === 'project' && r.p.id === selected);
-  const idAt = (r: NavRow) => (r.kind === 'group' ? groupRowId(r.key) : rowId(r.p.id));
-  const pick = (id: string) => {
-    setActiveGroup(null);
-    onSelect(id);
-  };
-  const showRowMenu = (r: NavRow) => (r.kind === 'project' ? showProjectMenu(r.p) : showProjectsListMenu());
-  const nav = useListNav({
-    count: rows.length,
-    index,
-    onIndex: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') return setActiveGroup(r.key);
-      pick(r.p.id);
+  const rows = groups.flatMap((g, gi): TreeRow<ProjectGroup, Project>[] => {
+    const open = !closed.has(g.key);
+    return [
+      { kind: 'group', key: g.key, id: `project-group-${gi}`, depth: 0, open, group: g },
+      ...(open ? g.projects.map((p) => ({ kind: 'item' as const, key: p.id, id: `project-${p.id}`, depth: 1, item: p })) : []),
+    ];
+  });
+  const t = useGroupedTree({
+    rows,
+    selected,
+    onSelect: (p) => onSelect(p.id),
+    onDeselect: () => onSelect(null),
+    toggle: toggleGroup,
+    onOpen: (p) => window.looper.openItemWindow('project', p.id),
+    onDelete: (r) => {
+      if (r.kind === 'item') void window.looper.projects.remove(r.item.id);
     },
-    onActivate: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') toggleGroup(r.key);
-      else window.looper.openItemWindow('project', r.p.id);
-    },
-    onDelete: (i) => {
-      const r = rows[i];
-      if (r.kind === 'project') void window.looper.projects.remove(r.p.id);
-    },
-    onMenu: (i) => showRowMenu(rows[i]),
-    tree: {
-      expanded: (i) => {
-        const r = rows[i];
-        return r.kind === 'group' ? !closed.has(r.key) : undefined;
-      },
-      set: (i, open) => {
-        const r = rows[i];
-        if (r.kind === 'group' && closed.has(r.key) === open) toggleGroup(r.key);
-      },
-      parent: (i) => parentIndex(rows.map((r) => (r.kind === 'group' ? 0 : 1)), i),
-    },
-    scrollToId: index >= 0 ? idAt(rows[index]) : null,
+    itemMenu: showProjectMenu,
+    groupMenu: () => showProjectsListMenu(),
+    emptyMenu: showProjectsListMenu,
   });
   return (
-    <ul
-      className={`task-list${compact ? ' compact' : ''}`}
-      role="tree"
-      aria-label="Projects"
-      tabIndex={0}
-      onKeyDown={nav}
-      aria-activedescendant={index >= 0 ? idAt(rows[index]) : undefined}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onSelect(null);
-      }}
-      onContextMenu={(e) => listContextMenu(e, index, (i) => showRowMenu(rows[i]), showProjectsListMenu)}
-    >
-      {groups.map((g) => [
-        <GroupHeader
-          key={`group-${g.key}`}
-          id={groupRowId(g.key)}
-          as="li"
-          name={g.title}
-          open={!closed.has(g.key)}
-          count={g.projects.length}
-          title={g.title}
-          className={activeGroup === g.key ? 'active' : undefined}
-          onToggle={() => {
-            setActiveGroup(g.key);
-            toggleGroup(g.key);
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            showProjectsListMenu();
-          }}
-        />,
-        ...(closed.has(g.key)
-          ? []
-          : g.projects.map((p) => (
-              <li
-                key={p.id}
-                id={rowId(p.id)}
-                role="treeitem"
-                aria-level={2}
-                aria-selected={p.id === selected}
-                className={`task-item${p.id === selected ? ' selected' : ''}`}
-                style={{ marginLeft: GROUP_INDENT }}
-                onClick={() => pick(p.id)}
-                onDoubleClick={() => window.looper.openItemWindow('project', p.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  pick(p.id);
-                  showProjectMenu(p);
-                }}
-              >
-                <ProjectRow p={p} compact={compact} />
-              </li>
-            ))),
-      ])}
+    <ul className={`task-list${compact ? ' compact' : ''}`} role="tree" aria-label="Projects" {...t.listProps}>
+      {rows.map((r) =>
+        r.kind === 'group' ? (
+          <GroupHeader
+            key={`group-${r.key}`}
+            {...t.groupProps(r)}
+            as="li"
+            name={r.group.title}
+            count={r.group.projects.length}
+            title={r.group.title}
+            className={t.activeGroup === r.key ? 'active' : undefined}
+          />
+        ) : (
+          <li
+            key={r.key}
+            {...t.itemProps(r)}
+            role="treeitem"
+            aria-level={2}
+            className={`task-item${r.key === selected ? ' selected' : ''}`}
+            style={{ marginLeft: GROUP_INDENT }}
+          >
+            <ProjectRow p={r.item} compact={compact} />
+          </li>
+        ),
+      )}
     </ul>
   );
 }

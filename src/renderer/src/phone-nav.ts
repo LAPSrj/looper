@@ -16,7 +16,9 @@ export const PHONE_TABS: readonly PhoneTabEntry[] = [
 export const EXPANDED_WIDTH = 840;
 
 /** How the main window shows its tabs: a bar at the bottom, iPad's in the frame's bar, or Android's rail beside the content. */
-export function phoneTabForm(os: 'ios' | 'android', width: number, top: boolean): 'bar' | 'top' | 'rail' {
+export type PhoneTabForm = 'bar' | 'top' | 'rail';
+
+export function phoneTabForm(os: 'ios' | 'android', width: number, top: boolean): PhoneTabForm {
   if (os === 'ios') return top ? 'top' : 'bar';
   return width >= EXPANDED_WIDTH ? 'rail' : 'bar';
 }

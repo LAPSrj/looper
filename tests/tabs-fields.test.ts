@@ -62,6 +62,14 @@ describe('tabKeyTarget', () => {
   it('starts from the first tab when none is active', () => {
     expect(tabKeyTarget(ids, 'gone', { key: 'ArrowRight' })).toBe('agent:a');
   });
+
+  it('moves with Up and Down, not Left and Right, down a vertical column', () => {
+    expect(tabKeyTarget(ids, 'agent:a', { key: 'ArrowDown' }, 'vertical')).toBe('agent:b');
+    expect(tabKeyTarget(ids, 'conversation', { key: 'ArrowUp' }, 'vertical')).toBe('run:r');
+    expect(tabKeyTarget(ids, 'agent:a', { key: 'End' }, 'vertical')).toBe('run:r');
+    expect(tabKeyTarget(ids, 'agent:a', { key: 'ArrowRight' }, 'vertical')).toBeNull();
+    expect(tabKeyTarget(ids, 'agent:a', { key: 'ArrowDown', ctrlKey: true }, 'vertical')).toBeNull();
+  });
 });
 
 describe('ctrlTabTarget', () => {

@@ -120,7 +120,16 @@ class FakeSocket implements SocketLike {
   }
 }
 
-const welcome = (clientId = 'c1', resumed = false): ServerMessage => ({ t: 'welcome', device: { id: 'd', name: 'Phone' }, version: '1', clientId, resumed });
+const welcome = (clientId = 'c1', resumed = false, over: { windows?: string[]; replayed?: boolean; seq?: number } = {}): ServerMessage => ({
+  t: 'welcome',
+  device: { id: 'd', name: 'Phone' },
+  version: '1',
+  clientId,
+  resumed,
+  windows: over.windows ?? [],
+  replayed: over.replayed ?? false,
+  seq: over.seq ?? 0,
+});
 
 describe('Session', () => {
   let store: Record<string, string>;
@@ -161,7 +170,7 @@ describe('Session', () => {
     last().drop();
     vi.advanceTimersByTime(1000);
     last().open();
-    expect(last().sent[0]).toEqual({ t: 'hello', platform: 'ios', clientId: 'abc', pageId: expect.any(String) });
+    expect(last().sent[0]).toEqual({ t: 'hello', platform: 'ios', clientId: 'abc', pageId: expect.any(String), seq: 0 });
   });
 
   it('keeps one pageId for the page load, in memory only, and sends X-Looper-Request with an upload', async () => {
@@ -212,14 +221,14 @@ describe('Session', () => {
     const two = vi.fn();
     const off = session.transportFor('w1').on('engine:event', one);
     session.transportFor('w2').on('engine:event', two);
-    last().receive({ t: 'event', w: 'w1', channel: 'engine:event', args: [{ k: { $bytes: 'AQ==' } }] });
+    last().receive({ t: 'event', seq: 1, w: 'w1', channel: 'engine:event', args: [{ k: { $bytes: 'AQ==' } }] });
     expect(one).toHaveBeenCalledWith({ k: new Uint8Array([1]) });
     expect(two).not.toHaveBeenCalled();
     off();
-    last().receive({ t: 'event', w: 'w1', channel: 'engine:event', args: [1] });
+    last().receive({ t: 'event', seq: 2, w: 'w1', channel: 'engine:event', args: [1] });
     expect(one).toHaveBeenCalledTimes(1);
     session.releaseWindow('w2');
-    last().receive({ t: 'event', w: 'w2', channel: 'engine:event', args: [1] });
+    last().receive({ t: 'event', seq: 3, w: 'w2', channel: 'engine:event', args: [1] });
     expect(two).not.toHaveBeenCalled();
   });
 
@@ -275,6 +284,37 @@ describe('Session', () => {
     connect('c2', true);
     expect(seen).toEqual(['welcome', 'welcome', 'reset', 'welcome', 'resumed']);
     expect(store['looper.clientId']).toBe('c2');
+  });
+
+  it('resumes from the last event it got; after a replay only the windows whose calls went unanswered load again', async () => {
+    const shell: ShellMessage[] = [];
+    session.onShell((m) => shell.push(m));
+    session.start();
+    last().open();
+    expect(last().sent[0]).not.toHaveProperty('seq');
+    last().receive(welcome('c1', false, { seq: 4 }));
+    last().receive({ t: 'event', seq: 5, w: 'w1', channel: 'engine:event', args: [1] });
+    last().drop();
+    await expect(session.invoke('w2', 'tasks:save', [{}])).rejects.toThrow(NOT_CONNECTED);
+    vi.advanceTimersByTime(1000);
+    last().open();
+    expect(last().sent[0]).toMatchObject({ t: 'hello', clientId: 'c1', seq: 5 });
+    last().receive(welcome('c1', true, { windows: ['w1', 'w2'], replayed: true, seq: 7 }));
+    expect(shell.at(-1)).toEqual({ t: 'resumed', windows: ['w1', 'w2'], reload: ['w2'] });
+    last().receive({ t: 'event', seq: 6, w: 'w1', channel: 'engine:event', args: [2] });
+    last().receive({ t: 'reload', seq: 7, w: 'w1' });
+    expect(shell.at(-1)).toEqual({ t: 'reload', w: 'w1' });
+    last().drop();
+    vi.advanceTimersByTime(1000);
+    last().open();
+    expect(last().sent[0]).toMatchObject({ seq: 7 });
+    // The computer no longer had all of it: every page loads again.
+    last().receive(welcome('c1', true, { windows: ['w1'], replayed: false, seq: 9 }));
+    expect(shell.at(-1)).toEqual({ t: 'resumed', windows: ['w1'], reload: ['w1'] });
+    last().drop();
+    vi.advanceTimersByTime(1000);
+    last().open();
+    expect(last().sent[0]).toMatchObject({ seq: 9 });
   });
 
   it('emits shell messages, reports connection changes, and pings every 25 s', () => {
@@ -359,11 +399,22 @@ describe('reduceShell', () => {
     s = reduceShell(s, { t: 'window-close', w: 'w2' });
     expect(s.windows.map((x) => x.w)).toEqual(['w1']);
     expect(s.dialogs).toHaveLength(0);
-    s = reduceShell(s, { t: 'resumed' });
+    s = reduceShell(s, { t: 'resumed', windows: ['w1'], reload: ['w1'] });
     expect(s.windows[0].nonce).toBe(1);
     s = reduceShell(s, { t: 'reset' });
     expect(s.windows).toEqual([]);
     expect(s.menus).toEqual([]);
+  });
+
+  it('a resume closes the windows the computer closed meanwhile and loads again only the pages it names', () => {
+    let s = initialShellState;
+    for (const w of ['w1', 'w2', 'w3']) s = reduceShell(s, open(w) as ShellMessage);
+    s = reduceShell(s, { t: 'dialog', dialogId: 'd', w: 'w3', kind: 'message', spec: { message: 'm', buttons: ['OK'], defaultId: 0, cancelId: 0 } });
+    const w1 = s.windows[0];
+    s = reduceShell(s, { t: 'resumed', windows: ['w1', 'w2'], reload: ['w2'] });
+    expect(s.windows.map((x) => [x.w, x.nonce])).toEqual([['w1', 0], ['w2', 1]]);
+    expect(s.windows[0]).toBe(w1);
+    expect([s.order, s.focused, s.dialogs]).toEqual([['w1', 'w2'], null, []]);
   });
 
   it('addresses a window by id with its route in the hash', () => {

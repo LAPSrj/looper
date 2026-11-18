@@ -56,6 +56,8 @@ function fakeAgent(starts: RunContext[], ends: (AgentEnd & { doneStatus?: string
       write: () => undefined,
       resize: () => undefined,
       deliverGuidance: () => undefined,
+      stopTurn: () => undefined,
+      turnOver: false,
       stop: async () => undefined,
       finished: new Promise((r) => setTimeout(() => r(end), 10)),
     };

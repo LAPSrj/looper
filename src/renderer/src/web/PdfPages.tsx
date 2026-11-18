@@ -1,24 +1,92 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { useZoomLayer } from '../components/zoom-layer';
+import { clampScale, DOUBLE_TAP_MS, isDoubleTap, pageDraw, pagesTransform, PDF_MAX_SCALE, pinch, scrollAfterZoom, TAP_SLOP, tapScale, type Point, type Tap } from './zoom';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
-const MAX_ZOOM = 4;
-const TAP_ZOOM = 2.5;
-const DOUBLE_TAP_MS = 300;
-const TAP_SLOP = 12;
 const GAP = 12;
 /** iOS refuses a canvas bigger than about 16.7 million pixels and draws nothing. */
 const MAX_CANVAS_PIXELS = 16_000_000;
 
-const clampZoom = (z: number): number => Math.max(1, Math.min(MAX_ZOOM, z));
+/** What the pages share: whether each is near the screen or in view, and whether a gesture holds back their drawing. */
+interface Pages {
+  watch: (el: Element, on: (seen: { near: boolean; visible: boolean }) => void) => () => void;
+  /** Resolves once no gesture is going on: a page isn't drawn under the fingers. */
+  idle: () => Promise<void>;
+}
+
+const PagesContext = createContext<Pages | null>(null);
+
+/** One observer for every page's nearness and one for what's in view, rather than one per page. */
+function usePages(root: React.RefObject<HTMLDivElement | null>, ready: boolean): Pages & { hold: (on: boolean) => void } {
+  const [pages] = useState(() => {
+    const seen = new Map<Element, { near: boolean; visible: boolean; on: (s: { near: boolean; visible: boolean }) => void }>();
+    let near: IntersectionObserver | null = null;
+    let visible: IntersectionObserver | null = null;
+    let held = false;
+    let waiting: (() => void)[] = [];
+    const update = (kind: 'near' | 'visible') => (entries: IntersectionObserverEntry[]) => {
+      for (const e of entries) {
+        const s = seen.get(e.target);
+        if (!s || s[kind] === e.isIntersecting) continue;
+        s[kind] = e.isIntersecting;
+        s.on({ near: s.near, visible: s.visible });
+      }
+    };
+    return {
+      start: (el: HTMLElement) => {
+        near = new IntersectionObserver(update('near'), { root: el, rootMargin: '150% 50%' });
+        visible = new IntersectionObserver(update('visible'), { root: el });
+        for (const t of seen.keys()) {
+          near.observe(t);
+          visible.observe(t);
+        }
+      },
+      stop: () => {
+        near?.disconnect();
+        visible?.disconnect();
+        near = visible = null;
+      },
+      watch: (el: Element, on: (s: { near: boolean; visible: boolean }) => void) => {
+        seen.set(el, { near: false, visible: false, on });
+        near?.observe(el);
+        visible?.observe(el);
+        return () => {
+          seen.delete(el);
+          near?.unobserve(el);
+          visible?.unobserve(el);
+        };
+      },
+      idle: () => (held ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve()),
+      hold: (on: boolean) => {
+        held = on;
+        if (on) return;
+        const go = waiting;
+        waiting = [];
+        for (const resolve of go) resolve();
+      },
+    };
+  });
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!ready || !el) return;
+    pages.start(el);
+    return pages.stop;
+  }, [pages, root, ready]);
+  return pages;
+}
 
 /**
- * A PDF's pages one under another, fit to the width, drawn by pdf.js only
- * while near the screen (a page far away gives its pixels back). Pinch and
- * double-tap zoom; the pages are drawn again sharp at the new size. Styled
- * inline because the phone frames and the desktop shell have different stylesheets.
+ * A PDF's pages one under another, fit to the width, scrolled natively, and
+ * drawn by pdf.js only while near the screen (a page far away gives its pixels
+ * back). Pinch and double-tap zoom (web/zoom.ts, the image viewer's zoom too):
+ * while the fingers move, the pages follow as one transform on the GPU and
+ * nothing is drawn; once they lift (or the double-tap's glide ends), the pages
+ * take their new size and the ones in view are drawn again sharp at it. The
+ * others keep their old drawing until they come into view. Styled inline
+ * because the phone frames and the desktop shell have different stylesheets.
  */
 export default function PdfPages({ data, name }: { data: ArrayBuffer; name: string }) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -28,8 +96,12 @@ export default function PdfPages({ data, name }: { data: ArrayBuffer; name: stri
   const [zoom, setZoom] = useState(1);
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
+  const layer = useZoomLayer(inner);
+  const pages = usePages(scroller, !!doc);
   /** The scroll position to set once the pages have their new size. */
-  const pendingScroll = useRef<{ left: number; top: number } | null>(null);
+  const pendingScroll = useRef<Point | null>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   useEffect(() => {
     let live = true;
@@ -58,74 +130,109 @@ export default function PdfPages({ data, name }: { data: ArrayBuffer; name: stri
     return () => ro.disconnect();
   }, [doc]);
 
+  // The pages have their new size: the transform that showed it goes, in the same frame, and the scroll keeps the place.
   useLayoutEffect(() => {
     const s = pendingScroll.current;
     const el = scroller.current;
     if (!s || !el) return;
     pendingScroll.current = null;
-    el.scrollLeft = s.left;
-    el.scrollTop = s.top;
-  }, [zoom]);
-
-  /** Zoom to `to`, keeping what's under (x, y) (relative to the scroller's box) where it is. */
-  const zoomAt = (to: number, x: number, y: number) => {
-    const el = scroller.current;
-    if (!el) return;
-    const next = clampZoom(to);
-    const k = next / zoom;
-    pendingScroll.current = { left: (el.scrollLeft + x) * k - x, top: (el.scrollTop + y) * k - y };
-    setZoom(next);
-  };
+    layer.rest(null);
+    el.scrollLeft = s.x;
+    el.scrollTop = s.y;
+    pages.hold(false);
+  }, [zoom, layer, pages]);
 
   // Pinch and double-tap by touch events: touch-action leaves scrolling to the browser and pinching to this.
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    let pinch: { dist: number; x: number; y: number; scale: number } | null = null;
+    /** The two fingers' start, and the scroll then. */
+    let start: { points: [Point, Point]; scroll: Point } | null = null;
+    let k = 1;
+    let to: Point = { x: 0, y: 0 };
+    let at: Point = { x: 0, y: 0 };
     let tap: { t: number; x: number; y: number; moved: boolean } | null = null;
-    let lastTap = { t: 0, x: 0, y: 0 };
-    const local = (t: Touch) => {
+    let lastTap: Tap | null = null;
+    /** A zoom being carried out (a glide, then the new layout): no new gesture until it lands. */
+    let busy = false;
+    const local = (t: Touch): Point => {
       const r = el.getBoundingClientRect();
       return { x: t.clientX - r.left, y: t.clientY - r.top };
     };
+    const scrollNow = (): Point => ({ x: el.scrollLeft, y: el.scrollTop });
+    const content = () => ({ width: inner.current?.offsetWidth ?? 0, height: inner.current?.offsetHeight ?? 0 });
+    const view = () => ({ width: el.clientWidth, height: el.clientHeight });
+    /** Lays the pages out at `zoom × k`, scrolled to `next`, once the transform shows just that. */
+    const commit = (kk: number, next: Point) => {
+      const z = zoomRef.current;
+      const nz = clampScale(z * kk, PDF_MAX_SCALE);
+      if (Math.abs(nz - z) < 0.001) {
+        layer.rest(null);
+        el.scrollLeft = next.x;
+        el.scrollTop = next.y;
+        pages.hold(false);
+        busy = false;
+        return;
+      }
+      pendingScroll.current = next;
+      busy = false;
+      setZoom(nz);
+    };
+    /** Glides from where the transform is to how the pages will be laid out, then lays them out. */
+    const land = (scroll: Point, kk: number, from: Point, onto: Point) => {
+      busy = true;
+      const next = scrollAfterZoom(scroll, kk, from, onto, content(), view());
+      void layer.glide(pagesTransform(scroll, kk, next)).then(() => commit(kk, next));
+    };
     const onStart = (e: TouchEvent) => {
+      if (busy) return;
       if (e.touches.length === 2) {
-        const [a, b] = [local(e.touches[0]), local(e.touches[1])];
-        pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, scale: 1 };
-        if (inner.current) inner.current.style.transformOrigin = `${el.scrollLeft + pinch.x}px ${el.scrollTop + pinch.y}px`;
+        const points: [Point, Point] = [local(e.touches[0]), local(e.touches[1])];
+        start = { points, scroll: scrollNow() };
+        k = 1;
+        at = to = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 };
+        if (inner.current) inner.current.style.transformOrigin = '0 0';
+        pages.hold(true);
         tap = null;
       } else if (e.touches.length === 1) {
-        const p = local(e.touches[0]);
-        tap = { t: e.timeStamp, ...p, moved: false };
+        tap = { t: e.timeStamp, ...local(e.touches[0]), moved: false };
       }
     };
     const onMove = (e: TouchEvent) => {
-      if (pinch && e.touches.length === 2) {
+      if (start && e.touches.length === 2) {
         e.preventDefault();
-        const [a, b] = [local(e.touches[0]), local(e.touches[1])];
-        pinch.scale = clampZoom((zoom * Math.hypot(a.x - b.x, a.y - b.y)) / pinch.dist) / zoom;
-        if (inner.current) inner.current.style.transform = `scale(${pinch.scale})`;
+        const p = pinch(start.points, [local(e.touches[0]), local(e.touches[1])]);
+        const z = zoomRef.current;
+        k = clampScale(z * p.spread, PDF_MAX_SCALE) / z;
+        at = p.at;
+        to = p.to;
+        // What was under the fingers' first midpoint follows their midpoint now.
+        const s = start.scroll;
+        layer.move({ scale: k, x: to.x + s.x - k * (s.x + at.x), y: to.y + s.y - k * (s.y + at.y) });
       } else if (tap && e.touches.length === 1) {
         const p = local(e.touches[0]);
         if (Math.hypot(p.x - tap.x, p.y - tap.y) > TAP_SLOP) tap.moved = true;
       }
     };
     const onEnd = (e: TouchEvent) => {
-      if (pinch && e.touches.length < 2) {
-        const { scale, x, y } = pinch;
-        pinch = null;
-        if (inner.current) inner.current.style.transform = '';
-        if (scale !== 1) zoomAt(zoom * scale, x, y);
+      if (start && e.touches.length < 2) {
+        const s = start.scroll;
+        start = null;
+        // Let go past an edge, it glides back in before the pages are laid out again.
+        land(s, k, at, to);
         return;
       }
-      if (!tap || tap.moved || e.touches.length > 0 || e.timeStamp - tap.t > DOUBLE_TAP_MS) return;
-      const twice = tap.t - lastTap.t < DOUBLE_TAP_MS && Math.hypot(tap.x - lastTap.x, tap.y - lastTap.y) < TAP_SLOP * 2;
-      lastTap = twice ? { t: 0, x: 0, y: 0 } : { t: tap.t, x: tap.x, y: tap.y };
-      if (twice) {
-        e.preventDefault();
-        zoomAt(zoom > 1 ? 1 : TAP_ZOOM, tap.x, tap.y);
-      }
+      if (!tap || tap.moved || e.touches.length > 0 || e.timeStamp - tap.t > DOUBLE_TAP_MS || busy) return;
+      const now: Tap = { t: tap.t, x: tap.x, y: tap.y };
+      const twice = isDoubleTap(lastTap, now);
+      lastTap = twice ? null : now;
       tap = null;
+      if (!twice) return;
+      e.preventDefault();
+      const z = zoomRef.current;
+      if (inner.current) inner.current.style.transformOrigin = '0 0';
+      pages.hold(true);
+      land(scrollNow(), tapScale(z, PDF_MAX_SCALE) / z, now, now);
     };
     el.addEventListener('touchstart', onStart, { passive: true });
     el.addEventListener('touchmove', onMove, { passive: false });
@@ -137,9 +244,9 @@ export default function PdfPages({ data, name }: { data: ArrayBuffer; name: stri
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };
-    // zoomAt reads the current zoom; the listeners are set again with it.
-  }, [zoom, doc]);
+  }, [doc, layer, pages]);
 
+  const shared = useMemo<Pages>(() => ({ watch: pages.watch, idle: pages.idle }), [pages]);
   if (error) return <div style={{ margin: 'auto', padding: 24, textAlign: 'center', opacity: 0.6 }}>{error}</div>;
   if (!doc) return <div style={{ margin: 'auto', padding: 24, opacity: 0.6 }}>Loading…</div>;
   const pageWidth = Math.max(0, width * zoom - GAP * 2);
@@ -151,61 +258,58 @@ export default function PdfPages({ data, name }: { data: ArrayBuffer; name: stri
       aria-label={name}
       style={{ flex: 1, alignSelf: 'stretch', minHeight: 0, overflow: 'auto', touchAction: 'pan-x pan-y', background: 'rgba(118, 118, 128, 0.12)' }}
     >
-      <div ref={inner} style={{ width: width * zoom, padding: GAP, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: GAP }}>
-        {width > 0 &&
-          aspects.map((aspect, i) => (
-            <PdfPage
-              key={i}
-              doc={doc}
-              number={i + 1}
-              width={pageWidth}
-              aspect={aspect}
-              root={scroller}
-              onAspect={(a) => setAspects((list) => (list[i] === a ? list : list.map((x, j) => (j === i ? a : x))))}
-            />
-          ))}
+      {/* Holds the pages' laid-out size, so a pinch out (a smaller transform) doesn't shorten the scroll under the fingers. */}
+      <div style={{ width: width * zoom }}>
+        <div ref={inner} style={{ width: width * zoom, padding: GAP, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: GAP }}>
+          <PagesContext.Provider value={shared}>
+            {width > 0 &&
+              aspects.map((aspect, i) => (
+                <PdfPage
+                  key={i}
+                  doc={doc}
+                  number={i + 1}
+                  width={pageWidth}
+                  aspect={aspect}
+                  onAspect={(a) => setAspects((list) => (list[i] === a ? list : list.map((x, j) => (j === i ? a : x))))}
+                />
+              ))}
+          </PagesContext.Provider>
+        </div>
       </div>
     </div>
   );
 }
 
-function PdfPage({
-  doc,
-  number,
-  width,
-  aspect,
-  root,
-  onAspect,
-}: {
-  doc: PDFDocumentProxy;
-  number: number;
-  width: number;
-  aspect: number;
-  root: RefObject<HTMLDivElement | null>;
-  onAspect: (aspect: number) => void;
-}) {
+function PdfPage({ doc, number, width, aspect, onAspect }: { doc: PDFDocumentProxy; number: number; width: number; aspect: number; onAspect: (aspect: number) => void }) {
+  const pages = useContext(PagesContext)!;
   const holder = useRef<HTMLDivElement>(null);
-  const [near, setNear] = useState(false);
+  const [seen, setSeen] = useState({ near: false, visible: false });
+  /** The width its canvas was drawn for; null without one. */
+  const drawnAt = useRef<number | null>(null);
 
   useEffect(() => {
     const el = holder.current;
     if (!el) return;
-    const io = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), { root: root.current, rootMargin: '150% 50%' });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [root]);
+    return pages.watch(el, setSeen);
+  }, [pages]);
 
   useEffect(() => {
     const el = holder.current;
     if (!el) return;
-    if (!near || width <= 0) {
+    const what = pageDraw({ ...seen, drawnAt: drawnAt.current, width });
+    if (what === 'free') {
       for (const c of el.querySelectorAll('canvas')) c.width = c.height = 0;
       el.replaceChildren();
+      drawnAt.current = null;
       return;
     }
+    if (what === 'keep') return;
     let live = true;
     let task: RenderTask | null = null;
     void (async () => {
+      // Never under the fingers: a pinch or a double-tap's glide is drawn when it lands.
+      await pages.idle();
+      if (!live) return;
       const page = await doc.getPage(number);
       if (!live) return;
       const base = page.getViewport({ scale: 1 });
@@ -229,13 +333,14 @@ function PdfPage({
       // The old drawing stays until the new one is ready, so a zoom doesn't blank the page.
       for (const c of el.querySelectorAll('canvas')) c.width = c.height = 0;
       el.replaceChildren(canvas);
+      drawnAt.current = width;
     })();
     return () => {
       live = false;
       task?.cancel();
     };
-    // onAspect changes every render; the page's size is what matters.
-  }, [doc, number, width, near]);
+    // onAspect changes every render; the page's size and where it is are what matter.
+  }, [doc, number, width, seen, pages]);
 
   return (
     <div

@@ -2,6 +2,7 @@ import { useContext, useState, type ReactNode } from 'react';
 import { isPhone } from '../web/page-nav';
 import { InPanel, InspectorHost } from './ListDetail';
 import { PhoneSheet } from './phone/PhoneSheet';
+import { Splitter } from './SplitPane';
 
 /**
  * What a supporting panel shows, and whether it does. Beside the content (`beside`) it's
@@ -40,12 +41,12 @@ export interface InspectorProps {
  * (scratch/platforms.md, Supporting panel).
  */
 export function Inspector({ title, open, onClose, children }: InspectorProps) {
-  const { split, drag } = useContext(InspectorHost);
+  const { split, splitter } = useContext(InspectorHost);
   if (!open) return null;
   if (!isPhone) {
     return (
       <>
-        <div className="sidebar-divider" onMouseDown={drag} />
+        {splitter && <Splitter className="sidebar-divider" axis="x" label={`Resize ${title}`} {...splitter} />}
         {children}
       </>
     );

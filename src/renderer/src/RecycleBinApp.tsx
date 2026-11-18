@@ -4,6 +4,8 @@ import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { fmtDateTime } from './format';
 import { subscribe } from './events';
+import { keptSelection } from './components/selection';
+import { reportError } from './report-error';
 
 /** Recycle Bin window (File → Recycle Bin…): deleted tasks to restore or delete for good. */
 export function RecycleBinApp() {
@@ -14,7 +16,7 @@ export function RecycleBinApp() {
     document.title = 'Recycle Bin';
     const apply = (list: RecycleBinEntry[]) => {
       setEntries(list);
-      setSelected((s) => (s && list.some((e) => e.task.id === s) ? s : list[0]?.task.id ?? null));
+      setSelected((s) => keptSelection(s, list, (e) => e.task.id));
     };
     void window.looper.recycleBin.list().then(apply);
     return subscribe((e) => {
@@ -29,7 +31,7 @@ export function RecycleBinApp() {
     try {
       await window.looper.recycleBin.restore(target.task.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -39,7 +41,7 @@ export function RecycleBinApp() {
     try {
       await window.looper.recycleBin.delete(target.task.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 

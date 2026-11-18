@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
-import { SettingsSchema, type Settings } from '@shared/types';
+import { SettingsSchema, type EngineEvent, type Project, type Settings, type Task, type TaskFolder } from '@shared/types';
+import type { SessionSummary } from '@shared/sessions';
+import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { subscribe } from '../events';
 import { enterPressesDefault, listNavKey, type ListNavModel } from './list-nav';
+import { reportError } from '../report-error';
 
 /** Settings → Chats, shared by every row of a conversation in the window: read once, then kept current. */
 let chatsSettings: Settings['chats'] = SettingsSchema.shape.chats.parse(undefined);
@@ -64,7 +67,7 @@ export function useDiscardUnsaved(isNew: boolean | undefined, discard: () => voi
 }
 
 /** The settings and host kind, kept current; `missing` once the entry the window edits (`found`) is gone from them. */
-export function useLiveSettings(found: (s: Settings) => boolean): { live: Settings | null; host: string | undefined; missing: boolean } {
+export function useLiveSettings(found: (s: Settings) => boolean = () => true): { live: Settings | null; host: string | undefined; missing: boolean } {
   const [live, setLive] = useState<Settings | null>(null);
   const [host, setHost] = useState<string | undefined>(undefined);
   const [missing, setMissing] = useState(false);
@@ -83,6 +86,112 @@ export function useLiveSettings(found: (s: Settings) => boolean): { live: Settin
     });
   }, []);
   return { live, host, missing };
+}
+
+/**
+ * Saves the settings with `patch` applied, checked against the full schema first
+ * so a bad value is reported before anything is written. Throws what's wrong.
+ */
+export async function saveSettings(live: Settings, patch: Partial<Settings>): Promise<void> {
+  const parsed = SettingsSchema.safeParse({ ...live, ...patch }, REPORT_INPUT);
+  if (!parsed.success) throw new Error(issueLines(parsed.error));
+  const keys = Object.keys(patch) as (keyof Settings)[];
+  await window.looper.updateSettings(Object.fromEntries(keys.map((k) => [k, parsed.data[k]])) as Partial<Settings>);
+}
+
+/** Where a window's items come from: the list now, and the list an event carries when it's about them. Keep one as a module constant. */
+export interface ItemSource<T> {
+  list: () => Promise<T[]>;
+  from: (e: EngineEvent) => T[] | null;
+  /** A list that can't be read; without it the window stays loading. */
+  onError?: (e: unknown) => void;
+}
+
+export const TASKS: ItemSource<Task> = { list: () => window.looper.tasks.list(), from: (e) => (e.type === 'tasks' ? e.tasks : null) };
+export const TEMPLATES: ItemSource<Task> = { list: () => window.looper.templates.list(), from: (e) => (e.type === 'templates' ? e.templates : null) };
+export const FOLDERS: ItemSource<TaskFolder> = { list: () => window.looper.folders.list(), from: (e) => (e.type === 'folders' ? e.folders : null) };
+export const PROJECTS: ItemSource<Project> = { list: () => window.looper.projects.list(), from: (e) => (e.type === 'projects' ? e.projects : null) };
+export const SESSIONS: ItemSource<SessionSummary> = {
+  list: () => window.looper.sessions.state().then((st) => st.sessions),
+  from: (e) => (e.type === 'sessions' ? e.state.sessions : null),
+};
+
+/**
+ * One item of a live list (`id`; none: only the list), kept current, and
+ * `missing` once it's gone, at the first load or later. `onLoad` gets the item
+ * as it first loads, for the window's draft and title; a draft is the window's
+ * own, so later changes to the item don't touch it.
+ */
+export function useLiveItem<T extends { id: string }>(
+  source: ItemSource<T>,
+  id: string | undefined,
+  onLoad?: (item: T) => void,
+): { item: T | null; items: T[] | null; missing: boolean } {
+  const [items, setItems] = useState<T[] | null>(null);
+  const [missing, setMissing] = useState(false);
+  const onLoadRef = useRef(onLoad);
+  onLoadRef.current = onLoad;
+  useEffect(() => {
+    let live = true;
+    const take = (list: T[], first: boolean) => {
+      setItems(list);
+      if (id === undefined) return;
+      const found = list.find((x) => x.id === id);
+      if (!found) setMissing(true);
+      else if (first) onLoadRef.current?.(found);
+    };
+    void source.list().then(
+      (list) => live && take(list, true),
+      (e: unknown) => live && source.onError?.(e),
+    );
+    const off = subscribe((e) => {
+      const list = source.from(e);
+      if (list) take(list, false);
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [source, id]);
+  return { item: (id !== undefined && items?.find((x) => x.id === id)) || null, items, missing };
+}
+
+/**
+ * A window's Save or Apply: `busy` while it runs (a second one waits for it),
+ * and an error it throws in a message box. The task returns false when it
+ * stopped short, having said why itself.
+ */
+export function useSave(): {
+  busy: boolean;
+  /** Runs the task; true when it went through. */
+  apply: (task: () => Promise<boolean | void>) => Promise<boolean>;
+  /** Runs the task, then `then` (default: close the window), busy until the window is gone. */
+  save: (task: () => Promise<boolean | void>, then?: () => void) => void;
+} {
+  const [busy, setBusy] = useState(false);
+  const running = useRef(false);
+  const attempt = async (task: () => Promise<boolean | void>, keepBusy: boolean): Promise<boolean> => {
+    if (running.current) return false;
+    running.current = true;
+    setBusy(true);
+    let ok = false;
+    try {
+      ok = (await task()) !== false;
+    } catch (e) {
+      reportError(e);
+    } finally {
+      if (!ok || !keepBusy) {
+        running.current = false;
+        setBusy(false);
+      }
+    }
+    return ok;
+  };
+  return {
+    busy,
+    apply: (task) => attempt(task, false),
+    save: (task, then = () => window.close()) => void attempt(task, true).then((ok) => ok && then()),
+  };
 }
 
 interface DialogKeysOpts<T extends string> {

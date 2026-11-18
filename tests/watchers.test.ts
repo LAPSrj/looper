@@ -18,7 +18,11 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 }, 30_000);
 
-function setup(command: (root: string) => string) {
+function setup(
+  command: (root: string) => string,
+  watcher: { debounceSec?: number; maxWaitSec?: number } = {},
+  sendRelatedEvents = false,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-watch-'));
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const settings = SettingsSchema.parse({
@@ -37,7 +41,7 @@ function setup(command: (root: string) => string) {
     cwd: root,
     // One crash is already a crash loop: anything that counts pauses the task at once.
     backoff: { maxConsecutiveErrors: 1 },
-    trigger: { mode: 'watcher', watcher: { command: command(root), debounceSec: 0.05 } },
+    trigger: { mode: 'watcher', sendRelatedEvents, watcher: { command: command(root), debounceSec: 0.05, ...watcher } },
   });
   const events: string[][] = [];
   const crashLoops: string[] = [];
@@ -76,5 +80,32 @@ describe('WatcherPool environment errors', () => {
     const w = setup(() => `echo 'boom' >&2; exit 1`);
     await w.restarting;
     expect(w.crashLoops).toEqual(['watcher failed 1 times in a row: boom']);
+  });
+});
+
+describe('WatcherPool batches', () => {
+  const ev = (id: string, n: number) => JSON.stringify({ looper_related_id: id, n });
+  // a1 and b1 at once, a2 0.3 s later: with a 0.6 s quiet, b's batch goes out alone before a's.
+  const interleaved = () => `echo '${ev('a', 1)}'; echo '${ev('b', 1)}'; sleep 0.3; echo '${ev('a', 2)}'; sleep 60`;
+
+  it('with related events, each id waits for its own quiet', async () => {
+    const w = setup(interleaved, { debounceSec: 0.6 }, true);
+    await settle(2500);
+    expect(w.events).toEqual([[ev('b', 1)], [ev('a', 1), ev('a', 2)]]);
+  });
+
+  it('without them, every line waits in one batch', async () => {
+    const w = setup(interleaved, { debounceSec: 0.6 });
+    await settle(2500);
+    expect(w.events).toEqual([[ev('a', 1), ev('b', 1), ev('a', 2)]]);
+  });
+
+  it('sends a batch at the max wait while events keep coming', async () => {
+    const w = setup(() => `for i in $(seq 1 20); do echo "line $i"; sleep 0.1; done; sleep 60`, { debounceSec: 1, maxWaitSec: 0.5 });
+    await settle(1500);
+    // Without the max wait nothing goes out until a second after the last line, about 3 s in.
+    expect(w.events.length).toBeGreaterThan(0);
+    expect(w.events[0][0]).toBe('line 1');
+    expect(w.events[0].length).toBeLessThan(20);
   });
 });

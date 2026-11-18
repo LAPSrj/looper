@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { isPhone } from '../web/page-nav';
+import { FIT, IMAGE_MAX_SCALE, isDoubleTap, keepInside, pinch, TAP_SLOP, tapScale, zoomAround, type Point, type Tap, type View } from '../web/zoom';
+import { transformOf, useZoomLayer } from './zoom-layer';
 
 /**
  * An image in a viewer window: on a phone it fits the screen and zooms by touch (ZoomImage); on the desktop
@@ -29,23 +31,11 @@ export function ImageViewer({
   );
 }
 
-const MAX_SCALE = 8;
-const TAP_SCALE = 2.5;
-const DOUBLE_TAP_MS = 300;
-const TAP_SLOP = 12;
 /** The space between images side by side while swiping. */
 const GAP = 20;
 /** Faster than this (px/ms) at release, a swipe goes on to the image it's moving toward. */
 const FLICK = 0.3;
 const SETTLE_MS = 380;
-
-interface View {
-  scale: number;
-  x: number;
-  y: number;
-}
-
-const FIT: View = { scale: 1, x: 0, y: 0 };
 
 /** The images either side, for a swipe: -1 is the previous one, 1 the next. */
 export interface ZoomSwipe {
@@ -60,20 +50,25 @@ const offsetOf = (el: HTMLElement): number => new DOMMatrixReadOnly(getComputedS
 
 /**
  * An image that fits its place and zooms by touch: pinch, drag once zoomed, double-tap to zoom in
- * and back. With `swipe`, the images either side wait beside it, and a sideways drag while it fits
- * moves all of them with the finger, as in Photos. Styled inline because the phone frame and the
- * pages have different stylesheets.
+ * and back (web/zoom.ts, the PDF viewer's zoom too). While the fingers move, the image follows on a
+ * layer of its own without rendering; once they lift it leaves the layer, so the browser draws it
+ * again sharp at its new size. With `swipe`, the images either side wait beside it, and a sideways
+ * drag while it fits moves all of them with the finger, as in Photos. Styled inline because the
+ * phone frame and the pages have different stylesheets.
  */
 export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe?: ZoomSwipe }) {
+  /** The view the image rests at; `live` is where the fingers have it meanwhile. */
   const [view, setView] = useState(FIT);
+  const live = useRef(FIT);
   const box = useRef<HTMLDivElement>(null);
   /** The images side by side; moved by hand, so a drag doesn't render. */
   const strip = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
-  const points = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef<{ from: View; x: number; y: number; dist: number; moved: boolean; swiping: boolean; base: number; lastX: number; lastT: number; speed: number } | null>(null);
+  const layer = useZoomLayer(image);
+  const points = useRef(new Map<number, Point>());
+  const gesture = useRef<{ from: View; x: number; y: number; start: [Point, Point] | null; moved: boolean; swiping: boolean; base: number; lastX: number; lastT: number; speed: number } | null>(null);
   const settling = useRef<(() => void) | null>(null);
-  const lastTap = useRef({ t: 0, x: 0, y: 0 });
+  const lastTap = useRef<Tap | null>(null);
 
   // A new image (swiped to, or Previous and Next) is already in the middle slot: the strip goes back under it.
   useLayoutEffect(() => {
@@ -82,29 +77,34 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
       el.style.transition = 'none';
       el.style.transform = 'translate3d(0, 0, 0)';
     }
+    live.current = FIT;
     setView(FIT);
   }, [src]);
 
+  /** Where the image is now: moved by the fingers, it rests there. */
+  const show = (v: View) => {
+    live.current = v;
+    layer.move(v);
+  };
+  const rest = (v: View) => {
+    live.current = v;
+    layer.rest(v);
+    setView(v);
+  };
   /** The image's edges don't come inside the box's while it's bigger than the box. */
   const kept = (v: View): View => {
     const b = box.current;
     const i = image.current;
     if (!b || !i) return v;
-    const scale = Math.max(1, Math.min(MAX_SCALE, v.scale));
-    const maxX = Math.max(0, (i.offsetWidth * scale - b.clientWidth) / 2);
-    const maxY = Math.max(0, (i.offsetHeight * scale - b.clientHeight) / 2);
-    return { scale, x: Math.max(-maxX, Math.min(maxX, v.x)), y: Math.max(-maxY, Math.min(maxY, v.y)) };
+    return keepInside(v, { width: i.offsetWidth, height: i.offsetHeight }, { width: b.clientWidth, height: b.clientHeight }, IMAGE_MAX_SCALE);
   };
   /** From the box's center, where the image's transform starts. */
-  const fromCenter = (x: number, y: number) => {
+  const fromCenter = (x: number, y: number): Point => {
     const r = box.current!.getBoundingClientRect();
     return { x: x - r.left - r.width / 2, y: y - r.top - r.height / 2 };
   };
   /** `from` scaled to `scale`, with what was under `at` still under `to`. */
-  const zoomed = (from: View, scale: number, at: { x: number; y: number }, to = at): View => {
-    const s = Math.max(1, Math.min(MAX_SCALE, scale)) / from.scale;
-    return kept({ scale: from.scale * s, x: to.x - (at.x - from.x) * s, y: to.y - (at.y - from.y) * s });
-  };
+  const zoomed = (from: View, scale: number, at: Point, to = at): View => kept(zoomAround(from, scale, IMAGE_MAX_SCALE, at, to));
   const page = () => (box.current?.clientWidth ?? 1) + GAP;
   /** Held back past an end, where there's no image that side. */
   const shown = (offset: number) => (swipe && ((offset > 0 && !swipe.can(-1)) || (offset < 0 && !swipe.can(1))) ? offset / 3 : offset);
@@ -123,9 +123,14 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
       strip.current.style.transition = 'none';
       moveStrip(base);
     }
+    const from = live.current;
     gesture.current = b
-      ? { from: view, ...fromCenter((a.x + b.x) / 2, (a.y + b.y) / 2), dist: Math.hypot(a.x - b.x, a.y - b.y), moved, swiping: false, base, lastX: 0, lastT: t, speed: 0 }
-      : { from: view, x: a.x, y: a.y, dist: 0, moved, swiping: base !== 0, base, lastX: a.x, lastT: t, speed: 0 };
+      ? { from, x: 0, y: 0, start: [fromCenter(a.x, a.y), fromCenter(b.x, b.y)], moved, swiping: false, base, lastX: 0, lastT: t, speed: 0 }
+      : { from, x: a.x, y: a.y, start: null, moved, swiping: base !== 0, base, lastX: a.x, lastT: t, speed: 0 };
+  };
+  /** The last finger lifted after a pinch or a drag: the image rests where it is. */
+  const settleView = () => {
+    if (points.current.size === 0 && live.current !== view) rest(live.current);
   };
   /**
    * The strip let go at `offset`, moving at `speed` (px/ms): it settles on the nearest image, or the
@@ -195,9 +200,9 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
         const g = gesture.current;
         if (!g) return;
         const [a, b] = [...points.current.values()];
-        if (b) {
-          const mid = fromCenter((a.x + b.x) / 2, (a.y + b.y) / 2);
-          setView(zoomed(g.from, (g.from.scale * Math.hypot(a.x - b.x, a.y - b.y)) / (g.dist || 1), { x: g.x, y: g.y }, mid));
+        if (b && g.start) {
+          const p = pinch(g.start, [fromCenter(a.x, a.y), fromCenter(b.x, b.y)]);
+          show(zoomed(g.from, g.from.scale * p.spread, p.at, p.to));
           return;
         }
         if (Math.hypot(a.x - g.x, a.y - g.y) > TAP_SLOP) g.moved = true;
@@ -210,7 +215,7 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
           g.lastT = e.timeStamp;
           return;
         }
-        setView(kept({ ...g.from, x: g.from.x + a.x - g.x, y: g.from.y + a.y - g.y }));
+        if (g.from.scale > 1) show(kept({ ...g.from, x: g.from.x + a.x - g.x, y: g.from.y + a.y - g.y }));
       }}
       onPointerUp={(e) => {
         const g = gesture.current;
@@ -219,17 +224,24 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
         if (g?.swiping && points.current.size === 1) settle(shown(g.base + e.clientX - g.x), e.timeStamp - g.lastT < 100 ? g.speed : 0);
         points.current.delete(e.pointerId);
         start(e.timeStamp);
+        settleView();
         if (!wasTap) return;
-        const last = lastTap.current;
-        const twice = e.timeStamp - last.t < DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) < TAP_SLOP * 2;
-        lastTap.current = twice ? { t: 0, x: 0, y: 0 } : { t: e.timeStamp, x: e.clientX, y: e.clientY };
-        if (twice) setView(view.scale > 1 ? FIT : zoomed(view, TAP_SCALE, fromCenter(e.clientX, e.clientY)));
+        const tap = { t: e.timeStamp, x: e.clientX, y: e.clientY };
+        const twice = isDoubleTap(lastTap.current, tap);
+        lastTap.current = twice ? null : tap;
+        if (!twice) return;
+        // The double-tap's zoom glides there, then the image rests at it.
+        const from = live.current;
+        const to = from.scale > 1 ? FIT : zoomed(from, tapScale(from.scale, IMAGE_MAX_SCALE), fromCenter(e.clientX, e.clientY));
+        live.current = to;
+        void layer.glide(to).then(() => live.current === to && rest(to));
       }}
       onPointerCancel={(e) => {
         const g = gesture.current;
         if (g?.swiping && strip.current) settle(offsetOf(strip.current), 0);
         points.current.delete(e.pointerId);
         start(e.timeStamp);
+        settleView();
       }}
     >
       <div ref={strip} style={{ position: 'absolute', inset: 0, willChange: swipe ? 'transform' : undefined }}>
@@ -245,7 +257,7 @@ export function ZoomImage({ src, alt, swipe }: { src: string; alt: string; swipe
                 alt={s.at === 0 ? alt : ''}
                 draggable={false}
                 decoding="async"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', transform: s.at === 0 ? `translate(${view.x}px, ${view.y}px) scale(${view.scale})` : undefined }}
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', transform: s.at === 0 ? transformOf(view) : undefined }}
               />
             )}
           </div>

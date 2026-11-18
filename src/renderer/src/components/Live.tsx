@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { RestState, Task, TaskRuntime } from '@shared/types';
 import { waitedText } from '@shared/sessions';
-import { formatDuration } from '../format';
+import { fmtHourMinute, formatDuration } from '../format';
 import { SECOND, MINUTE, tickFor, useNow } from '../useNow';
 import { taskSubline } from './task-status';
 
@@ -11,22 +11,31 @@ function restStatus(rest: RestState, now: number): string {
   }
   if (rest.phase === 'sleeping') {
     const wake = rest.wakeAt !== null
-      ? ` until ${new Date(rest.wakeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      ? ` until ${fmtHourMinute(rest.wakeAt)}`
       : '';
     return `Rest Mode — sleeping${wake}`;
   }
   return 'Rest Mode — waiting for tasks to finish';
 }
 
-/** How long ago `since` was, as "0s" or "1m5s". Seconds show below an hour, so it ticks each second, then each minute. */
-export function Elapsed({ since }: { since: number }) {
-  const now = useNow(tickFor(Date.now() - since));
-  return <>{now - since < 1000 ? '0s' : formatDuration(now - since)}</>;
+/**
+ * How long ago `since` was, or with `until` how long it ran, as "0s" or "1m5s". Seconds show below an hour, so it
+ * ticks each second, then each minute; with `until` it's still.
+ */
+export function Elapsed({ since, until }: { since: number; until?: number }) {
+  const now = useNow(until === undefined ? tickFor(Date.now() - since) : null);
+  const ms = (until ?? now) - since;
+  return <>{ms < 1000 ? '0s' : formatDuration(ms)}</>;
 }
 
-/** How long a session has waited, in minutes ("now" under one). */
-export function WaitedFor({ since }: { since: number }) {
-  return <>{waitedText(useNow(MINUTE) - since)}</>;
+/**
+ * How long a session has waited, in minutes ("now" under one). With `label` it follows the label from a minute on,
+ * and under one the label shows alone ("Running", then "Running for 3 min").
+ */
+export function WaitedFor({ since, label }: { since: number; label?: string }) {
+  const ms = useNow(MINUTE) - since;
+  if (label === undefined) return <>{waitedText(ms)}</>;
+  return <>{ms < 60_000 ? label : `${label} for ${waitedText(ms)}`}</>;
 }
 
 /** The status bar's Rest Mode text: a countdown to sleep ticks each second, every other phase is still. */

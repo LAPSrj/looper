@@ -10,7 +10,7 @@ import { SaveDelivery } from '../src/main/platform/deliver';
 import { fromHostPath, joinFlavor, listDir, parentFlavor, toHostPath, type HostFilesDeps } from '../src/main/platform/host-files';
 import { IpcTable, type IpcMainLike } from '../src/main/platform/ipc-table';
 import { pickItem, serializeMenu, stripMnemonic, type MenuItemLike } from '../src/main/platform/menus';
-import { RemoteClient, RemoteWindow } from '../src/main/platform/remote-window';
+import { PAGE_BACKLOG_BYTES, RemoteClient, RemoteWindow } from '../src/main/platform/remote-window';
 import { WindowSlots } from '../src/main/platform/slots';
 import { decodeBytes as webDecode, encodeBytes as webEncode } from '../src/renderer/src/web/session';
 
@@ -29,7 +29,7 @@ function tmp(): string {
 const log = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
 /** A Remote Access connection after its hello; what it sends goes through JSON, as on the wire. */
-function fakeConn(clientId?: string, device = { id: 'dev1', name: 'Phone' }, pageId?: string) {
+function fakeConn(clientId?: string, device = { id: 'dev1', name: 'Phone' }, pageId?: string, seq?: number) {
   const sent: ServerMessage[] = [];
   let onMsg: (m: ClientMessage) => void = () => undefined;
   const closeCbs: (() => void)[] = [];
@@ -38,10 +38,11 @@ function fakeConn(clientId?: string, device = { id: 'dev1', name: 'Phone' }, pag
     platform: 'web',
     clientId,
     pageId,
+    seq,
     closes: 0,
     sent,
     send(m) {
-      sent.push(JSON.parse(JSON.stringify(m)));
+      sent.push(JSON.parse(typeof m === 'string' ? m : JSON.stringify(m)));
       return true;
     },
     onMessage(cb) {
@@ -86,7 +87,7 @@ function lone(): { client: RemoteClient; win: RemoteWindow; sent: ServerMessage[
   const sent: ServerMessage[] = [];
   const client = new RemoteClient(`c${++loneCount}`, { id: 'd', name: 'Phone' }, 'web', { dir: tmp(), offerDownload: () => 't', log });
   client.setConnection((m) => {
-    sent.push(JSON.parse(JSON.stringify(m)));
+    sent.push(JSON.parse(typeof m === 'string' ? m : JSON.stringify(m)));
     return true;
   });
   const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
@@ -356,7 +357,7 @@ describe('remote windows', () => {
   it('webContents.send becomes an event with encoded bytes; window-ready fires ready-to-show once and did-finish-load each time', () => {
     const { win, sent } = lone();
     win.webContents.send('ui:event', { type: 'x', data: new Uint8Array([9]) });
-    expect(sent.at(-1)).toEqual({ t: 'event', w: win.w, channel: 'ui:event', args: [{ type: 'x', data: { $bytes: 'CQ==' } }] });
+    expect(sent.at(-1)).toEqual({ t: 'event', seq: 1, w: win.w, channel: 'ui:event', args: [{ type: 'x', data: { $bytes: 'CQ==' } }] });
     const fired: string[] = [];
     win.on('ready-to-show', () => fired.push('ready'));
     win.webContents.on('did-finish-load', () => fired.push('load'));
@@ -561,6 +562,57 @@ describe('dispatcher', () => {
     clients.attach(next);
     expect(next.sent[0]).toMatchObject({ clientId: id, resumed: true });
     expect(old.closes).toBe(0);
+  });
+
+  it('a resume sends the events and reloads the page missed after the last one it got, and lists the windows still open', () => {
+    const { clients } = setup();
+    const first = fakeConn(undefined, undefined, 'page1');
+    clients.attach(first);
+    const client = clients.list()[0];
+    const id = (first.sent[0] as Extract<ServerMessage, { t: 'welcome' }>).clientId;
+    const main = client.main!;
+    const editor = client.openWindow({ role: 'editor', hash: 'editor/x', title: 'Edit Task', width: 700, height: 600, resizable: true, modal: false, parent: null });
+    main.webContents.send('engine:event', { n: 1 });
+    expect(first.of('event')).toEqual([{ t: 'event', seq: 1, w: main.w, channel: 'engine:event', args: [{ n: 1 }] }]);
+    // The socket looked open while the phone was away: the next one never reached it.
+    main.webContents.send('engine:event', { n: 2 });
+    first.drop();
+    editor.close();
+    main.webContents.send('engine:event', { n: 3 });
+    main.webContents.reload();
+    const second = fakeConn(id, undefined, 'page1', 1);
+    clients.attach(second);
+    expect(second.sent[0]).toMatchObject({ t: 'welcome', resumed: true, replayed: true, windows: [main.w], seq: 4 });
+    expect(second.sent.slice(1).map((m) => m.t)).toEqual(['window-open', 'event', 'event', 'reload']);
+    expect(second.of('event').map((m) => [m.seq, m.args])).toEqual([[2, [{ n: 2 }]], [3, [{ n: 3 }]]]);
+    expect(second.of('reload')).toEqual([{ t: 'reload', seq: 4, w: main.w }]);
+    // A page that asks for nothing to replay from (a fresh page load) loads its windows again.
+    second.drop();
+    const third = fakeConn(id, undefined, 'page2');
+    clients.attach(third);
+    expect(third.sent[0]).toMatchObject({ resumed: true, replayed: false, seq: 4 });
+    expect(third.of('event')).toEqual([]);
+  });
+
+  it('keeps about 2 MB of page messages, and stops keeping them for a tab away that already missed more', () => {
+    const { clients } = setup();
+    const conn = fakeConn();
+    clients.attach(conn);
+    const client = clients.list()[0];
+    const big = 'x'.repeat(PAGE_BACKLOG_BYTES / 4);
+    client.main!.webContents.send('data', big);
+    expect(client.canReplay(0)).toBe(true);
+    conn.drop();
+    for (let i = 0; i < 4; i++) client.main!.webContents.send('data', big);
+    expect(client.lastPageSeq).toBe(5);
+    expect(client.canReplay(1)).toBe(false);
+    client.main!.webContents.send('data', 'small');
+    // Nothing after the drop is kept now: only a page that had everything could be caught up.
+    expect(client.canReplay(5)).toBe(false);
+    expect(client.canReplay(6)).toBe(true);
+    const back = fakeConn((conn.sent[0] as Extract<ServerMessage, { t: 'welcome' }>).clientId, undefined, undefined, 1);
+    clients.attach(back);
+    expect(back.sent[0]).toMatchObject({ resumed: true, replayed: false, seq: 6 });
   });
 
   it('a duplicated tab (same clientId, another pageId) is told apart from a reconnect', () => {

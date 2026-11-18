@@ -4,6 +4,8 @@ import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
 import { subscribe } from './events';
+import { keptSelection } from './components/selection';
+import { reportError } from './report-error';
 
 /** Standalone template manager window (Tools → Templates). All actions apply immediately. */
 export function TemplatesApp() {
@@ -12,15 +14,13 @@ export function TemplatesApp() {
 
   useEffect(() => {
     document.title = 'Templates';
-    void window.looper.templates.list().then((t) => {
-      setTemplates(t);
-      setSelected((s) => s ?? t[0]?.id ?? null);
-    });
+    const apply = (list: Task[]) => {
+      setTemplates(list);
+      setSelected((s) => keptSelection(s, list, (t) => t.id));
+    };
+    void window.looper.templates.list().then(apply);
     return subscribe((e) => {
-      if (e.type === 'templates') {
-        setTemplates(e.templates);
-        setSelected((s) => (s && e.templates.some((t) => t.id === s) ? s : e.templates[0]?.id ?? null));
-      }
+      if (e.type === 'templates') apply(e.templates);
     });
   }, []);
 
@@ -40,7 +40,7 @@ export function TemplatesApp() {
       await window.looper.templates.save(copy);
       setSelected(copy.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -50,7 +50,7 @@ export function TemplatesApp() {
     try {
       await window.looper.templates.remove(target.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -98,8 +98,7 @@ export function TemplatesApp() {
             duplicateDisabled={!tpl}
             onRemove={() => void remove()}
             removeDisabled={!tpl}
-          />
-          <ListActions>
+          >
             <ListButton onClick={() => void window.looper.templates.import()}>Import…</ListButton>
             <ListButton row disabled={!tpl} onClick={() => tpl && void window.looper.templates.export(tpl.id)}>
               Export…

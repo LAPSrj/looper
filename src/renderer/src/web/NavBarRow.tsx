@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { UsageGlyph } from '../components/ContextRing';
-import { iconNode } from '../components/icons';
+import { Icon } from '../components/Icon';
 import type { BarModel, PageNavAction } from './nav-bar-model';
 
 /*
@@ -54,13 +54,7 @@ export const MORE_VERT = (
 
 /** An icon as a 22 px glyph for a bar button. */
 export function NavIcon({ name, size = 22 }: { name: string; size?: number }) {
-  const icon = iconNode(name);
-  if (!icon) return null;
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {icon}
-    </svg>
-  );
+  return <Icon name={name} size={size} stroke={1.3} />;
 }
 
 /** A bar button's glyph: the usage glyph, or its icon. */
@@ -186,21 +180,19 @@ const FORWARD = (
     <path d="M2 1.5L9.5 9.5 2 17.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const CHEVRON_DOWN = (
+export const CHEVRON_DOWN = (
   <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
     <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
 export interface IosBrowserBarRowProps {
-  /** The folder's name. */
-  title: string;
+  /** The folder's path in the title's place: PathBar, the folder's name opening a menu of the folders above it. */
+  title: ReactNode;
   canBack: boolean;
   canForward: boolean;
   onBack: () => void;
   onForward: () => void;
-  /** The title opens a menu of the folders above (unset: there are none). */
-  onTitleMenu?: (button: HTMLElement) => void;
   actions: { id: string; label: string; icon: string; run: () => void }[];
   confirm?: { label: string; disabled: boolean; run: () => void };
   onClose: () => void;
@@ -212,7 +204,7 @@ export interface IosBrowserBarRowProps {
  * folders above it, then the browser's buttons and the xmark each in a circle
  * of its own, and Confirm, tinted, last.
  */
-export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward, onTitleMenu, actions, confirm, onClose }: IosBrowserBarRowProps) {
+export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward, actions, confirm, onClose }: IosBrowserBarRowProps) {
   return (
     <div className="ios-bar-row ios-files-bar">
       <div className="ios-bar-lead">
@@ -225,10 +217,7 @@ export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward
           </button>
         </div>
       </div>
-      <button className="ios-bar-title ios-title-menu" aria-haspopup={onTitleMenu ? 'menu' : undefined} disabled={!onTitleMenu} onClick={(e) => onTitleMenu?.(e.currentTarget)}>
-        <span className="ios-title-menu-label">{title}</span>
-        {onTitleMenu && <span className="ios-title-menu-chevron">{CHEVRON_DOWN}</span>}
-      </button>
+      {title}
       <div className="ios-bar-trail">
         {actions.map((a) => (
           <button key={a.id} className="ios-icon-btn" aria-label={a.label} onClick={a.run}>

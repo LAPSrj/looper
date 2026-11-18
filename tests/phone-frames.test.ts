@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WindowRole } from '../src/shared/remote-access';
+import { iosAlertButtons, materialDialogButtons } from '../src/renderer/src/web/dialog-flows';
 import { AxisDrag, LongPress, LONG_PRESS_MS } from '../src/renderer/src/web/gestures';
 import { BACK_SETTLE_MS, BackStack, coversScreen, darkColor, INSPECTOR_WIDTH, presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
 
@@ -225,7 +226,34 @@ describe('LongPress', () => {
   });
 });
 
+describe('message box buttons', () => {
+  const spec = (buttons: string[], cancelId: number, defaultId: number) => ({ message: 'm', buttons, cancelId, defaultId });
+
+  it('iOS: two short ones side by side with Cancel first, else stacked with Cancel last', () => {
+    expect(iosAlertButtons(spec(['Delete', 'Cancel'], 1, 0))).toEqual({ order: [1, 0], row: true, bold: 0 });
+    expect(iosAlertButtons(spec(['Save', "Don't Save", 'Cancel'], 2, 0))).toEqual({ order: [0, 1, 2], row: false, bold: 0 });
+    expect(iosAlertButtons(spec(['OK'], 0, 0))).toEqual({ order: [0], row: false, bold: 0 });
+    expect(iosAlertButtons(spec(['Unpair', 'Cancel'], 1, 1)).bold).toBeNull();
+  });
+
+  it('Material: dismissing, others, confirming; stacked reversed when they don’t fit', () => {
+    expect(materialDialogButtons(spec(['Cancel', 'Create'], 0, 1))).toEqual({ order: [0, 1], stacked: false, confirm: 1 });
+    expect(materialDialogButtons(spec(['Unpair', 'Cancel'], 1, 1))).toEqual({ order: [1, 0], stacked: false, confirm: 0 });
+    expect(materialDialogButtons(spec(['Save', "Don't Save", 'Cancel'], 2, 0))).toEqual({ order: [0, 1, 2], stacked: true, confirm: 0 });
+  });
+});
+
 describe('AxisDrag', () => {
+  it('follows both ways when two-way (a sheet between its heights), with a signed speed at release', () => {
+    const d = new AxisDrag('y', 1, true);
+    d.begin(100, 500, 0);
+    expect(d.move(100, 495, 10)).toBeNull();
+    expect(d.move(100, 480, 20)).toEqual({ offset: -20 });
+    d.move(100, 440, 40);
+    expect(d.release()).toEqual({ offset: -60, speed: -2 });
+    expect(d.release()).toBeNull();
+  });
+
   it('completes past a third of the screen, or on a flick', () => {
     const d = new AxisDrag('x');
     d.begin(5, 100, 0);

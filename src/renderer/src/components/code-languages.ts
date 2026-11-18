@@ -1,3 +1,5 @@
+import { baseName } from '../../../shared/paths';
+
 /** The bundled highlighter's language for each file extension; kept apart from highlight.ts so knowing a file is code doesn't load highlight.js. */
 export const LANGUAGE_BY_EXT = {
   sh: 'bash', bash: 'bash', zsh: 'bash',
@@ -25,7 +27,7 @@ export type CodeLanguage = (typeof LANGUAGE_BY_EXT)[keyof typeof LANGUAGE_BY_EXT
 
 /** The language to color a file in, by its extension; undefined leaves it plain. */
 export function languageOf(file: string | undefined): CodeLanguage | undefined {
-  const name = file?.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  const name = file ? baseName(file).toLowerCase() : '';
   if (name === 'dockerfile' || name === 'makefile') return undefined;
   const dot = name.lastIndexOf('.');
   return dot === -1 ? undefined : (LANGUAGE_BY_EXT as Record<string, CodeLanguage>)[name.slice(dot + 1)];

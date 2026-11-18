@@ -52,3 +52,29 @@ export function placeSubmenu(row: Box, height: number, floor: number, bottom: nu
   const top = Math.max(floor, Math.min(row.top - pad, bottom - height));
   return { top, maxHeight: bottom - top };
 }
+
+export interface AxisPlace {
+  /** It runs from `start` toward `max`; else back from `back` toward `min`. */
+  forward: boolean;
+  /** Where its near edge goes: `start`, or as far back as it needs, never past `min`. */
+  pos: number;
+  /** The room on its side (a longer menu scrolls). */
+  room: number;
+}
+
+/**
+ * Where a menu `size` long goes along one axis of the screen, kept between
+ * `min` and `max`: from `start` when it fits before `max`, else back from
+ * `back` (the far edge of what opened it; `start` for a point, `max` to shift
+ * it in from the screen's edge). `roomier`: it also stays forward while that
+ * side has at least as much room as the other.
+ */
+export function placeOnAxis({ start, back = start, size, min, max, roomier = false }: { start: number; back?: number; size: number; min: number; max: number; roomier?: boolean }): AxisPlace {
+  const ahead = max - start;
+  const behind = back - min;
+  if (start + size <= max || (roomier && ahead >= behind)) return { forward: true, pos: start, room: ahead };
+  return { forward: false, pos: Math.max(min, back - size), room: behind };
+}
+
+/** How far a menu lined up with `end` (a button's trailing edge) sits from the screen's trailing edge, at least `margin`. */
+export const trailingInset = (end: number, screen: number, margin = 8): number => Math.max(margin, screen - end);

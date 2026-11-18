@@ -18,7 +18,7 @@ import { PhoneMain } from './components/phone/PhoneMain';
 import { ProjectCollection } from './components/ProjectCollection';
 import { ProjectDetail } from './components/ProjectDetail';
 import { ListDetail } from './components/ListDetail';
-import { PaneHeader } from './components/Sidebar';
+import { PaneStack } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TaskCollection } from './components/TaskCollection';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
@@ -279,29 +279,32 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     // An addon with only panes: its panes as the list, the item picked beside them.
     const addon = addons.find((a) => a.id === tabDef.addon!.id);
     const { addonShown } = m;
+    // Equal panes: the view has no place to keep an addon pane's height.
     const panes = (
-      <aside className="sidebar">
-        {addon?.panes.map((p) => {
-            const state = m.addonPanes[addonPaneKey(addon.id, p.id)];
-            return (
-              <div key={p.id} className="sidebar-pane" style={{ flex: '1 1 0px' }}>
-                <PaneHeader title={p.title} onMenu={() => showPaneMenu(commands, addon.id, p.id, state)} />
-                <AddonPaneList
-                  addon={addon}
-                  pane={p.id}
-                  state={state}
-                  selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === p.id ? m.addonSel.item : null}
-                  compact={view?.taskList === 'compact'}
-                  query={addonQueries[p.id] ?? ''}
-                  onQuery={(q) => setAddonQueries((all) => ({ ...all, [p.id]: q }))}
-                  onSelect={(it) => m.selectAddon({ addonId: addon.id, pane: p.id, item: it.id })}
-                  onMenu={(it) => showPaneItemMenu(commands, addon.id, p.id, state, it)}
-                  onRetry={() => m.reloadAddon(addon.id)}
-                />
-              </div>
-            );
-          })}
-      </aside>
+      <PaneStack
+        panes={(addon?.panes ?? []).map((p) => {
+          const state = m.addonPanes[addonPaneKey(addon!.id, p.id)];
+          return {
+            key: p.id,
+            title: p.title,
+            onMenu: () => showPaneMenu(commands, addon!.id, p.id, state),
+            body: (
+              <AddonPaneList
+                addon={addon!}
+                pane={p.id}
+                state={state}
+                selected={m.addonSel?.addonId === addon!.id && m.addonSel.pane === p.id ? m.addonSel.item : null}
+                compact={view?.taskList === 'compact'}
+                query={addonQueries[p.id] ?? ''}
+                onQuery={(q) => setAddonQueries((all) => ({ ...all, [p.id]: q }))}
+                onSelect={(it) => m.selectAddon({ addonId: addon!.id, pane: p.id, item: it.id })}
+                onMenu={(it) => showPaneItemMenu(commands, addon!.id, p.id, state, it)}
+                onRetry={() => m.reloadAddon(addon!.id)}
+              />
+            ),
+          };
+        })}
+      />
     );
     body = (
       <WithSidebar sidebar={panes}>

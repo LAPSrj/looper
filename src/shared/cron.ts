@@ -259,6 +259,13 @@ function daysPlural(days: number[] | undefined): string | undefined {
   return andList(days.map((d) => `${DAY_NAMES[d]}s`));
 }
 
+/** A run window's hours and days in describeCron's words, each after a comma: ", between 7:00 and 22:59, weekdays only"; "" for none. */
+export function describeRunWindow(w: Pick<RunWindow, 'activeHours' | 'days'>): string {
+  const h = w.activeHours;
+  const d = daysPlural(w.days && [...w.days].sort((a, b) => a - b));
+  return `${h ? `, between ${clock(h.from, 0)} and ${clock(h.to, 59)}` : ''}${d ? `, ${d.toLowerCase()} only` : ''}`;
+}
+
 /**
  * A schedule in words, the way the Trigger tab's Frequency would put it:
  * "Weekdays at 9:00", "Every 2 hours at :15, between 8:00 and 18:59".
@@ -266,17 +273,12 @@ function daysPlural(days: number[] | undefined): string | undefined {
  */
 export function describeCron(cron: string): string {
   const f = cronToForm(cron);
-  const daysSuffix = (days: number[] | undefined): string => {
-    const d = daysPlural(days);
-    return d ? `, ${d.toLowerCase()} only` : '';
-  };
-  const windowText = (from?: number, to?: number): string =>
-    from !== undefined && to !== undefined ? `, between ${clock(from, 0)} and ${clock(to, 59)}` : '';
+  const within = (from?: number, to?: number, days?: number[]) => describeRunWindow({ activeHours: from !== undefined && to !== undefined ? { from, to } : undefined, days });
   switch (f.mode) {
     case 'minutes':
-      return `Every ${f.step === 1 ? 'minute' : `${f.step} minutes`}${windowText(f.from, f.to)}${daysSuffix(f.days)}`;
+      return `Every ${f.step === 1 ? 'minute' : `${f.step} minutes`}${within(f.from, f.to, f.days)}`;
     case 'hours':
-      return `Every ${f.step === 1 ? 'hour' : `${f.step} hours`} at :${String(f.minute).padStart(2, '0')}${windowText(f.from, f.to)}${daysSuffix(f.days)}`;
+      return `Every ${f.step === 1 ? 'hour' : `${f.step} hours`} at :${String(f.minute).padStart(2, '0')}${within(f.from, f.to, f.days)}`;
     case 'daily':
       return `Every day at ${andList(f.times.map((t) => clock(t.hour, t.minute)))}`;
     case 'weekly': {

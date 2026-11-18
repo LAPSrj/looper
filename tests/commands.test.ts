@@ -298,18 +298,24 @@ describe('the menu bar', () => {
 
   describe('New Chat’s list of projects', () => {
     const projects = [
-      { id: 'a', name: 'Alpha', cwd: '/w/a', folderId: 'f' },
+      { id: 'a', name: 'Alpha', cwd: '/w/a', folderId: 'g' },
       { id: 'b', name: 'Beta', cwd: '/w/b' },
       { id: 'c', name: 'Gamma', cwd: '/x/c' },
     ] as never;
+    const projectFolders = [
+      { id: 'f', name: 'Clients' },
+      { id: 'g', name: 'Acme', parentId: 'f' },
+      { id: 'e', name: 'Empty' },
+    ] as never;
+    const projectLayout = { '': ['b', 'folder:f', 'c', 'folder:e'], f: ['folder:g'], g: ['a'] };
     const at = (groupBy: string, here: CommandContext['here'] = 'desktop') =>
-      context({ tab: 'tasks', projects, projectFolders: [{ id: 'f', name: 'Clients' }] as never, settings: SettingsSchema.parse({ view: { projectsPane: { groupBy } } }) }, here);
+      context({ tab: 'tasks', projects, projectFolders, projectLayout, settings: SettingsSchema.parse({ view: { projectsPane: { groupBy } } }) }, here);
     const entries = (c: CommandContext) => COMMANDS.find((x) => x.id === 'newChat')!.entries!(c);
     const shape = (list: ReturnType<typeof entries>): unknown[] =>
       list.map((e) => ('separator' in e ? '-' : e.entries ? { [noMnemonic(e.label)]: shape(e.entries) } : noMnemonic(e.label)));
 
-    it('groups them as the Projects tab does, the ungrouped ones first, and has no New Project', () => {
-      expect(shape(entries(at('none')))).toEqual(['Beta', 'Gamma', { Clients: ['Alpha'] }, '-', 'Other Folder…']);
+    it('lists them as the Projects tab does, each folder a submenu inside its parent and empty ones left out, and has no New Project', () => {
+      expect(shape(entries(at('none')))).toEqual(['Beta', { Clients: [{ Acme: ['Alpha'] }] }, 'Gamma', '-', 'Other Folder…']);
       expect(shape(entries(at('folder')))).toEqual([{ '/w': ['Alpha', 'Beta'] }, { '/x': ['Gamma'] }, '-', 'Other Folder…']);
     });
 
@@ -320,7 +326,8 @@ describe('the menu bar', () => {
       const chats = { single: false, tab: true, selected: null, summary: undefined, chat: null, sessions: [], shown: {} } as never;
       const phone = context({ ...at('none', 'mobile'), chats });
       const group = phoneActions(['chats'], phone).find((a) => a.id === 'newChat')!.menu!.find((e) => e.label === 'Clients')!;
-      expect(group.submenu!.map((e) => e.label)).toEqual(['Alpha']);
+      expect(group.submenu!.map((e) => e.label)).toEqual(['Acme']);
+      expect(group.submenu![0].submenu!.map((e) => e.label)).toEqual(['Alpha']);
     });
 
     it('keeps File → New Chat’s chat and terminal picks apart inside the groups', () => {

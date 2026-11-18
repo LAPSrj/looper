@@ -5,6 +5,25 @@ export function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+/**
+ * Copy a file (bytes, or a host file) into `dir` as `<prefix>-<its own name>`,
+ * off the main thread, and return the copy's path. The name loses its folder
+ * and the characters Windows refuses.
+ */
+export async function copyAttachment(
+  dir: string,
+  prefix: string,
+  name: string,
+  from: { data: Uint8Array } | { file: string },
+): Promise<string> {
+  await fs.promises.mkdir(dir, { recursive: true });
+  const safe = path.basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'attachment';
+  const file = path.join(dir, `${prefix}-${safe}`);
+  if ('data' in from) await fs.promises.writeFile(file, from.data);
+  else await fs.promises.copyFile(from.file, file);
+  return file;
+}
+
 export function readJson<T>(file: string, fallback: T): T {
   try {
     const text = fs.readFileSync(file, 'utf8');

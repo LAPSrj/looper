@@ -3,7 +3,7 @@ import path from 'node:path';
 import { attachmentName, type ChatInfo, type TerminalInfo } from '../../shared/chat';
 import { RunSummaries, type RunSummary } from '../../shared/runs';
 import type { RunRecord } from '../../shared/types';
-import { ensureDir, writeJsonAtomic } from './fsutil';
+import { copyAttachment, ensureDir, writeJsonAtomic } from './fsutil';
 
 /** The files in a run folder that make the run a chat, or a terminal session. */
 const CHAT_FILE = 'chat.json';
@@ -57,14 +57,8 @@ export class RunStore {
    * and return the copy's host path. The stamp in front keeps names apart
    * and dates the file for pruning; the rest is the file's own name.
    */
-  saveAttachment(taskId: string, name: string, from: { data: Buffer } | { file: string }): string {
-    const dir = this.attachmentsDir(taskId);
-    ensureDir(dir);
-    const safe = path.basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'attachment';
-    const file = path.join(dir, `${newRunId()}-${safe}`);
-    if ('data' in from) fs.writeFileSync(file, from.data);
-    else fs.copyFileSync(from.file, file);
-    return file;
+  saveAttachment(taskId: string, name: string, from: { data: Buffer } | { file: string }): Promise<string> {
+    return copyAttachment(this.attachmentsDir(taskId), newRunId(), name, from);
   }
 
   /** The file's own name, without the stamp saveAttachment put in front. */

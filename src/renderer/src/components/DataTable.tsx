@@ -1,172 +1,18 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
 import { Measured } from '../perf';
-import { dayGroups } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
 import { AddonSearchBox } from './AddonPane';
-import { useListNav } from './hooks';
-import { EmptyRow, Group, Row } from './phone/PhoneList';
+import { clickSelect, moveSelect, stepIndex, type MultiSelection } from './multi-select';
+import { PhoneRows, useRowKeys, type PhoneRowModel, type Rows } from './RowList';
 import { ResizableColumns, type TableCol } from './ui';
+
+export { RowList, type PhoneRowModel, type RowListProps } from './RowList';
 
 export interface DataCol<T> extends TableCol {
   cell: (row: T) => ReactNode;
   /** The cell's hover text. */
   title?: (row: T) => string | undefined;
   cellClass?: string;
-}
-
-/** A row on a phone or tablet: what PhoneList's Row shows of it. */
-export interface PhoneRowModel {
-  title: ReactNode;
-  /** A string stays on one line, cut with an ellipsis. */
-  sub?: ReactNode;
-  value?: ReactNode;
-  lead?: ReactNode;
-  tone?: 'error' | 'warning' | 'muted';
-  valueTone?: 'error' | 'warning';
-  /** Under the row, across the list's width (a command's output while it's open). */
-  detail?: ReactNode;
-  /** Whether a tap pushes another screen; unset: whenever the row can be tapped. */
-  chevron?: boolean;
-}
-
-interface Rows<T> {
-  rows: readonly T[];
-  rowKey: (row: T, index: number) => string;
-  /** The rows' DOM ids start with this, for the keyboard to scroll them into view. */
-  idPrefix: string;
-  /** The selected row's key. */
-  selected?: string | null;
-  /** A click on the desktop. On a phone or tablet a tap does this when the row has no onOpen. */
-  onSelect?: (row: T, index: number) => void;
-  /** A double-click or Enter on the desktop, a tap on a phone or tablet. */
-  onOpen?: (row: T) => void;
-  /** A right-click (it selects the row first) or a long press (it doesn't). */
-  onMenu?: (row: T) => void;
-  /** What Ctrl+C copies. */
-  copyText?: (row: T) => string;
-  /** The list has nothing to show. */
-  empty: ReactNode;
-  /** A line above the rows. */
-  note?: ReactNode;
-  /** On a phone or tablet, list sections above the rows (a repository's state). */
-  head?: ReactNode;
-  /** Its name, for assistive technology. */
-  label?: string;
-  phoneRow: (row: T) => PhoneRowModel;
-  /** A section title for each row (rows of one title are next to each other). */
-  groupOf?: (row: T) => string;
-  /** On a phone or tablet, sections by day. */
-  dayOf?: (row: T) => number;
-  /** A section's title from its day's name and how many days there are; 0 when there are no rows. */
-  sectionTitle?: (day: string, days: number) => string;
-}
-
-function useRowKeys<T>({ rows, rowKey, idPrefix, selected, onSelect, onOpen, onMenu, copyText }: Pick<Rows<T>, 'rows' | 'rowKey' | 'idPrefix' | 'selected' | 'onSelect' | 'onOpen' | 'onMenu' | 'copyText'>) {
-  const index = selected == null ? -1 : rows.findIndex((r, i) => rowKey(r, i) === selected);
-  const nav = useListNav({
-    count: rows.length,
-    index,
-    onIndex: (i) => onSelect?.(rows[i], i),
-    onActivate: onOpen && ((i) => onOpen(rows[i])),
-    onMenu: onMenu && ((i) => onMenu(rows[i])),
-    scrollToId: index >= 0 ? `${idPrefix}-${selected}` : null,
-  });
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 'c' && copyText && index >= 0) {
-      void navigator.clipboard.writeText(copyText(rows[index]));
-      e.preventDefault();
-      return;
-    }
-    nav(e);
-  };
-  return { index, onKeyDown };
-}
-
-/** A scrolling list of PhoneList rows in sections, for a phone or tablet: a tap opens, a long press shows the menu. */
-function PhoneRows<T>({
-  rows,
-  rowKey,
-  selected,
-  onSelect,
-  onOpen,
-  onMenu,
-  empty,
-  note,
-  head,
-  phoneRow,
-  groupOf,
-  dayOf,
-  sectionTitle,
-  onRowsScroll,
-  rowsRef,
-}: Rows<T> & { onRowsScroll?: (e: UIEvent<HTMLDivElement>) => void; rowsRef?: Ref<HTMLDivElement> }) {
-  const keyed = rows.map((row, index) => ({ row, index }));
-  const sections: { key: string; title: string; items: typeof keyed }[] = dayOf
-    ? dayGroups(keyed, (k) => dayOf(k.row), Date.now())
-    : groupOf
-      ? keyed.reduce<{ key: string; title: string; items: typeof keyed }[]>((all, k) => {
-          const title = groupOf(k.row);
-          const last = all[all.length - 1];
-          if (last?.title === title) last.items.push(k);
-          else all.push({ key: title, title, items: [k] });
-          return all;
-        }, [])
-      : [{ key: 'all', title: '', items: keyed }];
-  return (
-    <div className="pg-rows" onScroll={onRowsScroll} ref={rowsRef}>
-      {head}
-      {note && <p className="pg-group-footer">{note}</p>}
-      {rows.length === 0 ? (
-        <Group title={sectionTitle?.('', 0)}>
-          <EmptyRow>{empty}</EmptyRow>
-        </Group>
-      ) : (
-        sections.map((s) => (
-          <Group key={s.key} title={sectionTitle ? sectionTitle(s.title, sections.length) : s.title || undefined}>
-            <PhoneRowItems items={s.items} rowKey={rowKey} selected={selected} onSelect={onSelect} onOpen={onOpen} onMenu={onMenu} phoneRow={phoneRow} />
-          </Group>
-        ))
-      )}
-    </div>
-  );
-}
-
-/** The Rows of a phone list, without a section around them. */
-function PhoneRowItems<T>({
-  items,
-  rowKey,
-  selected,
-  onSelect,
-  onOpen,
-  onMenu,
-  phoneRow,
-}: Pick<Rows<T>, 'rowKey' | 'selected' | 'onSelect' | 'onOpen' | 'onMenu' | 'phoneRow'> & { items: { row: T; index: number }[] }) {
-  const tappable = !!(onOpen || onSelect);
-  return (
-    <>
-      {items.map(({ row, index }) => {
-        const m = phoneRow(row);
-        const key = rowKey(row, index);
-        return (
-          <Fragment key={key}>
-            <Row
-              title={m.title}
-              sub={typeof m.sub === 'string' ? <span className="pg-oneline">{m.sub}</span> : m.sub}
-              value={m.value}
-              lead={m.lead}
-              tone={m.tone}
-              valueTone={m.valueTone}
-              chevron={m.chevron ?? tappable}
-              selected={key === selected}
-              onOpen={tappable ? () => (onOpen ? onOpen(row) : onSelect!(row, index)) : undefined}
-              onMenu={onMenu && (() => onMenu(row))}
-            />
-            {m.detail && <div className="pg-row-detail">{m.detail}</div>}
-          </Fragment>
-        );
-      })}
-    </>
-  );
 }
 
 export interface DataTableProps<T> extends Omit<Rows<T>, 'phoneRow'> {
@@ -183,6 +29,12 @@ export interface DataTableProps<T> extends Omit<Rows<T>, 'phoneRow'> {
   onTableScroll?: (e: UIEvent<HTMLDivElement>) => void;
   /** Text that narrows the rows. A phone or tablet types it in a search field under the rows; the desktop sets it through its own Filter command. */
   search?: { value: string; onChange: (value: string) => void };
+  /**
+   * The desktop: several rows can be selected, as in a Windows list view. Ctrl+click adds or takes out a row,
+   * Shift+click and Shift with an arrow key, Home or End select the range from the last row clicked. `selected` is
+   * then the row the keyboard is on, and `onSelect` isn't called.
+   */
+  multiSelect?: { keys: readonly string[]; onChange: (keys: string[], lead: string) => void };
 }
 
 /**
@@ -277,8 +129,14 @@ function useRowWindow(wrap: RefObject<HTMLDivElement | null>, spacer: RefObject<
 }
 
 function DesktopTable<T>(props: DataTableProps<T>) {
-  const { cols, rows, rowKey, idPrefix, selected, onSelect, onOpen, onMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll } = props;
-  const { index, onKeyDown } = useRowKeys(props);
+  const { cols, rows, rowKey, idPrefix, selected, onOpen, onMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll, multiSelect } = props;
+  const multi = useMultiSelect(props);
+  const onSelect = multi?.select ?? props.onSelect;
+  const { index, onKeyDown: listKeys } = useRowKeys({ ...props, onSelect });
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!multi?.key(e, index)) listKeys(e);
+  };
+  const isSelected = (key: string) => (multiSelect ? multiSelect.keys.includes(key) : key === selected);
   const wrap = useRef<HTMLDivElement | null>(null);
   const spacer = useRef<HTMLTableRowElement | null>(null);
   const windowed = !groupOf && rows.length > WINDOW_FROM;
@@ -300,6 +158,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
       tabIndex={0}
       role="grid"
       aria-label={label}
+      aria-multiselectable={multiSelect ? true : undefined}
       aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined}
       onKeyDown={onKeyDown}
       onScroll={(e) => {
@@ -332,9 +191,9 @@ function DesktopTable<T>(props: DataTableProps<T>) {
                 <tr
                   data-row
                   id={`${idPrefix}-${key}`}
-                  aria-selected={key === selected}
-                  className={`run-row${rowClass ? ` ${rowClass(row)}` : ''}${key === selected ? ' selected' : ''}`}
-                  onClick={onSelect && (() => onSelect(row, i))}
+                  aria-selected={isSelected(key)}
+                  className={`run-row${rowClass ? ` ${rowClass(row)}` : ''}${isSelected(key) ? ' selected' : ''}`}
+                  onClick={multi ? (e) => multi.click(key, e) : onSelect && (() => onSelect(row, i))}
                   onDoubleClick={onOpen && (() => onOpen(row))}
                   onContextMenu={
                     onMenu &&
@@ -368,64 +227,35 @@ function DesktopTable<T>(props: DataTableProps<T>) {
   );
 }
 
-export interface RowListProps<T> extends Omit<Rows<T>, 'copyText'> {
-  /** A desktop row's content. */
-  row: (row: T) => ReactNode;
-  /** The list's and a row's classes on the desktop. */
-  listClass: string;
-  rowClass: string;
-  onListScroll?: (e: UIEvent<HTMLDivElement>) => void;
-  /** Only the rows, for a Section around them: on a phone, its section's rows; the desktop's listbox is the same. Its `empty` shows nothing. */
-  bare?: boolean;
-  /** A click on the desktop opens the row (a list to pick from); the arrow keys still only select. */
-  activateOnClick?: boolean;
-  /** The desktop's list takes the focus when it shows. */
-  autoFocus?: boolean;
-}
-
-/** A list of selectable multi-line rows: a listbox on the desktop, list rows on a phone or tablet. */
-export function RowList<T>(props: RowListProps<T>) {
-  if (!isPhone) return <DesktopRowList {...props} />;
-  if (props.bare) return <PhoneRowItems {...props} items={props.rows.map((row, index) => ({ row, index }))} />;
-  return <PhoneRows {...props} onRowsScroll={props.onListScroll} />;
-}
-
-function DesktopRowList<T>(props: RowListProps<T>) {
-  const { rows, rowKey, idPrefix, selected, onSelect, onOpen, onMenu, label, row, listClass, rowClass, onListScroll, activateOnClick, autoFocus } = props;
-  const { index, onKeyDown } = useRowKeys(props);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (autoFocus) ref.current?.focus({ preventScroll: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  if (props.bare && rows.length === 0) return null;
-  return (
-    <div ref={ref} className={listClass} role="listbox" tabIndex={0} aria-label={label} aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined} onKeyDown={onKeyDown} onScroll={onListScroll}>
-      {rows.map((r, i) => {
-        const key = rowKey(r, i);
-        const click = activateOnClick && onOpen ? () => onOpen(r) : onSelect && (() => onSelect(r, i));
-        return (
-          <div
-            key={key}
-            id={`${idPrefix}-${key}`}
-            role="option"
-            aria-selected={key === selected}
-            className={`${rowClass}${key === selected ? ' selected' : ''}`}
-            onClick={click}
-            onDoubleClick={activateOnClick || !onOpen ? undefined : () => onOpen(r)}
-            onContextMenu={
-              onMenu &&
-              ((e) => {
-                e.preventDefault();
-                onSelect?.(r, i);
-                onMenu(r);
-              })
-            }
-          >
-            {row(r)}
-          </div>
-        );
-      })}
-    </div>
-  );
+/**
+ * A desktop table's several selected rows: clicks with Ctrl and Shift, and Shift with the list's moving keys. The
+ * other keys stay the list's (useRowKeys), whose moves select only the row moved to.
+ */
+function useMultiSelect<T>({ rows, rowKey, selected, multiSelect }: DataTableProps<T>) {
+  const anchor = useRef<string | null>(null);
+  if (!multiSelect) return null;
+  const order = () => rows.map((r, i) => rowKey(r, i));
+  const current = (): MultiSelection => ({ keys: [...multiSelect.keys], lead: selected ?? null, anchor: anchor.current ?? selected ?? null });
+  const apply = (next: MultiSelection) => {
+    anchor.current = next.anchor;
+    if (next.lead !== null) multiSelect.onChange(next.keys, next.lead);
+  };
+  return {
+    /** A move of the list's keys (no Shift): only that row. */
+    select: (row: T, i: number) => apply(moveSelect(order(), current(), rowKey(row, i), false)),
+    click: (key: string, e: React.MouseEvent) => {
+      // Shift+click selects rows, not the text between them.
+      if (e.shiftKey) window.getSelection()?.removeAllRanges();
+      apply(clickSelect(order(), current(), key, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }));
+    },
+    /** Shift with Up, Down, Home or End; true when it took the key. */
+    key: (e: React.KeyboardEvent, index: number): boolean => {
+      if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return false;
+      const to = stepIndex(e.key, index, rows.length);
+      if (to === null) return false;
+      e.preventDefault();
+      apply(moveSelect(order(), current(), rowKey(rows[to], to), true));
+      return true;
+    },
+  };
 }

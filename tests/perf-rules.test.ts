@@ -33,6 +33,20 @@ describe('performance rules (CLAUDE.md, Performance)', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('copying an attachment never waits on the disk in the main process', () => {
+    // A large pasted or dropped file held the main process's thread while it copied.
+    const SRC = path.join(__dirname, '..', 'src', 'engine');
+    const fsutil = fs.readFileSync(path.join(SRC, 'store', 'fsutil.ts'), 'utf8');
+    const body = fsutil.slice(fsutil.indexOf('export async function copyAttachment'), fsutil.indexOf('export function readJson'));
+    expect(body).toContain('fs.promises.copyFile');
+    expect(body).not.toMatch(/\w+Sync\(/);
+    const runs = fs.readFileSync(path.join(SRC, 'store', 'runs.ts'), 'utf8');
+    const save = runs.slice(runs.indexOf('saveAttachment('), runs.indexOf('static attachmentName'));
+    expect(save).not.toMatch(/\w+Sync\(/);
+    const builder = fs.readFileSync(path.join(SRC, 'builder', 'index.ts'), 'utf8');
+    expect(builder).toContain('copyAttachment(');
+  });
+
   it('no stylesheet puts :has() on the whole document', () => {
     // html:has(…) made every inserted element recheck the whole document's style.
     const offenders = files(RENDERER, /\.css$/).flatMap((f) =>

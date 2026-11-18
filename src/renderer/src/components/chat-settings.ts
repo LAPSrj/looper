@@ -2,13 +2,16 @@ import type { ChatSettingMenu, ChatState } from '@shared/chat';
 import { chatSettingEntries } from '@shared/chat-settings';
 import { entriesMenu } from '@shared/commands/build';
 import type { Entry } from '@shared/commands/command';
-import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/environments';
+import { effortLabel, permissionLabel as permissionModeLabel } from '@shared/environments';
 
-export const permissionLabel = (state: ChatState): string =>
-  PERMISSION_MODES[state.harnessKind].find(([v]) => v === state.settings.permissionMode)?.[1] ?? state.settings.permissionMode;
+/** What the command bar names: a chat's settings, or a task run's (RunAgent). */
+export type SettingsView = Pick<ChatState, 'harnessName' | 'harnessKind' | 'models' | 'settings' | 'activeModel'>;
 
-/** The chat's harness, model, effort and permission mode as the command bar names them. */
-export function settingLabels(state: ChatState): Record<ChatSettingMenu, string> {
+export const permissionLabel = (state: SettingsView): string =>
+  permissionModeLabel(state.harnessKind, state.settings.permissionMode);
+
+/** The harness, model, effort and permission mode as the command bar names them. */
+export function settingLabels(state: SettingsView): Record<ChatSettingMenu, string> {
   const s = state.settings;
   const entry = state.models.find((m) => m.id === s.model);
   // As resolveEffort: the chat's own, else the model entry's default.
@@ -16,7 +19,7 @@ export function settingLabels(state: ChatState): Record<ChatSettingMenu, string>
   return {
     harness: state.harnessName,
     model: entry?.name ?? s.model ?? state.activeModel ?? 'Default model',
-    effort: effort ? (EFFORT_LEVELS[state.harnessKind].find(([v]) => v === effort)?.[1] ?? effort) : 'Default effort',
+    effort: effort ? effortLabel(state.harnessKind, effort) :'Default effort',
     permission: permissionLabel(state) || 'Default',
   };
 }

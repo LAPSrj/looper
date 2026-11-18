@@ -6,7 +6,6 @@ import type { SessionSummary } from '../src/shared/sessions';
 import type { Task } from '../src/shared/types';
 import { phoneMore } from '../src/renderer/src/components/command-surfaces';
 import {
-  clockTime,
   dayGroups,
   dayTitle,
   resultTone,
@@ -60,9 +59,8 @@ describe('lists by day', () => {
   });
 
   it('writes a row: its time, and its duration when it has one', () => {
-    expect(clockTime(at(2026, 10, 31, 22, 40))).toMatch(/^22[:.]40$/);
-    expect(timeAndDuration(at(2026, 10, 31, 22, 40), '3s')).toMatch(/^22[:.]40 · 3s$/);
-    expect(timeAndDuration(at(2026, 10, 31, 22, 40), '')).toMatch(/^22[:.]40$/);
+    expect(timeAndDuration('22:40', '3s')).toBe('22:40 · 3s');
+    expect(timeAndDuration('22:40', '')).toBe('22:40');
   });
 
   it('colors a result as text: errors red, warnings orange, the rest the ordinary gray', () => {

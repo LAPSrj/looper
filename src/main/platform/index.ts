@@ -101,7 +101,8 @@ export function newWindow(options: WindowOptions, hash: string, opts: { role: Wi
 export function popupMenu(menu: Menu, { button, ...options }: Omit<Electron.PopupOptions, 'window'> & { window: AppWindow; button?: PopupButton }): void {
   const w = options.window;
   if (w instanceof RemoteWindow) {
-    if (!w.isDestroyed()) w.client.popup(w, menu, options.x, options.y, button);
+    if (!w.isDestroyed()) w.client.popup(w, menu, options.x, options.y, button, options.callback);
+    else options.callback?.();
     return;
   }
   hideOffPlatform(menu, 'desktop');

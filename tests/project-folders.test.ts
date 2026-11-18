@@ -58,17 +58,10 @@ describe('project folders', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).folders).toEqual([]);
   });
 
-  it('gives a phone the projects in no folder first, then each folder by its path; grouping hides the folders', () => {
+  it('groups by harness without regard to the user’s folders', () => {
     const { s } = store();
     const z = s.addFolder('Zed');
-    const inner = s.addFolder('Inner', z.id);
-    s.reorder(ids(s), { c: inner.id });
-    const groups = groupProjects(s.list(), 'none', envs, s.listFolders());
-    expect(groups.map((g) => [g.title, g.projects.map((p) => p.id)])).toEqual([
-      ['', ['a', 'b', 'd']],
-      ['Zed', []],
-      ['Zed / Inner', ['c']],
-    ]);
-    expect(groupProjects(s.list(), 'harness', envs, s.listFolders()).map((g) => g.title)).toEqual(['Claude Code']);
+    s.reorder(ids(s), { c: z.id });
+    expect(groupProjects(s.list(), 'harness', envs).map((g) => g.title)).toEqual(['Claude Code']);
   });
 });

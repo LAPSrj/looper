@@ -50,12 +50,15 @@ export function SendToSessionsApp({ group }: { group?: string }) {
     };
   }, [group]);
 
-  const groups: { name: string; items: SessionSummary[] }[] = [];
+  // By the Chats list's groups: two projects of the same name are two groups.
+  const byKey = new Map<string, { key: string; name: string; items: SessionSummary[] }>();
   for (const s of sessions) {
-    const last = groups[groups.length - 1];
-    if (last?.name === s.groupName) last.items.push(s);
-    else groups.push({ name: s.groupName, items: [s] });
+    const key = sessionGroupKey(s);
+    const group = byKey.get(key);
+    if (group) group.items.push(s);
+    else byKey.set(key, { key, name: s.groupName, items: [s] });
   }
+  const groups = [...byKey.values()];
   const harnesses = [...new Set(sessions.map((s) => s.harnessName))];
   const setAll = (ids: string[], on: boolean) =>
     setPicked((p) => {
@@ -101,7 +104,7 @@ export function SendToSessionsApp({ group }: { group?: string }) {
       </div>
       <div className="send-sessions-list">
         {groups.map((g) => (
-          <FormGroup key={g.name}>
+          <FormGroup key={g.key}>
             {groupBox(g.name, g.items, 'send-sessions-group')}
             {g.items.map((s) => (
               <CheckboxField

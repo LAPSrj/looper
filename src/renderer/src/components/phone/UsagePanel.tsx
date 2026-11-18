@@ -43,7 +43,7 @@ export function UsagePanel({ summary, chat, limits }: { summary: SessionSummary;
       {facts.length > 0 && (
         <Group title="Session">
           {facts.map((f) => (
-            <Row key={f.label} title={f.label} value={f.value} />
+            <Row key={f.label} title={f.label} value={f.live ? <span className="live-only">{f.value}</span> : f.value} />
           ))}
         </Group>
       )}

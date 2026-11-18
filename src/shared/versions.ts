@@ -1,3 +1,4 @@
+import { baseName } from './paths';
 import type { Task } from './types';
 import { fieldLabel } from './validate';
 
@@ -180,17 +181,12 @@ export function changeLabel(path: string): string {
   return path === 'trigger.schedule.cron' ? 'Schedule' : fieldLabel(path.split('.'));
 }
 
-/** A file path's last segment, for lists that name a task's files. */
-export function fileName(p: string): string {
-  return p.split(/[\\/]/).pop() || p;
-}
-
 /** Changed paths as the editor's field labels (files by name), each once. */
 export function changeLabels(changed: string[]): string[] {
   const out: string[] = [];
   for (const c of changed) {
     // A summary line: the notification settings count as one change.
-    const label = c.startsWith('file:') ? fileName(c.slice(5)) : c.startsWith('notifications.') ? 'Notifications' : changeLabel(c);
+    const label = c.startsWith('file:') ? baseName(c.slice(5)) : c.startsWith('notifications.') ? 'Notifications' : changeLabel(c);
     if (!out.includes(label)) out.push(label);
   }
   return out;

@@ -140,7 +140,13 @@ export function EngineLogApp() {
             })}
           />
         }
-        detail={<div className="runlog-result">{current ? <pre className="output">{current.message}</pre> : <div className="runlog-result-empty muted">Select a line</div>}</div>}
+        detail={
+          current && (
+            <div className="runlog-result">
+              <pre className="output">{current.message}</pre>
+            </div>
+          )
+        }
       />
     </div>
   );

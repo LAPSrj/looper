@@ -42,6 +42,15 @@ export function resolveClassifierHarness(task: Task, env: Environment): Harness 
   return capable;
 }
 
+/** The environment a new item starts in: the default one, else the first, of those `fits` accepts (any, by default). */
+export function defaultEnvironment(
+  settings: Pick<Settings, 'environments' | 'defaultEnvironmentId'>,
+  fits: (env: Environment) => boolean = () => true,
+): Environment | undefined {
+  const envs = settings.environments.filter(fits);
+  return envs.find((e) => e.id === settings.defaultEnvironmentId) ?? envs[0];
+}
+
 export function describeEnvironment(env: Environment): string {
   switch (env.kind) {
     case 'local':
@@ -204,6 +213,14 @@ export const EFFORT_LEVELS: Record<Exclude<Harness['kind'], 'custom'>, [string, 
     ['xhigh', 'Extra high'],
   ],
 };
+
+/** An effort level's label; the value itself for a custom harness or one the kind doesn't list. */
+export const effortLabel = (kind: Harness['kind'] | undefined, value: string): string =>
+  (kind && kind !== 'custom' ? EFFORT_LEVELS[kind].find(([v]) => v === value)?.[1] : undefined) ?? value;
+
+/** A permission mode's label; the value itself for a custom harness or one the kind doesn't list. */
+export const permissionLabel = (kind: Harness['kind'] | undefined, value: string): string =>
+  (kind && kind !== 'custom' ? PERMISSION_MODES[kind].find(([v]) => v === value)?.[1] : undefined) ?? value;
 
 /**
  * The codex flags for a task's permission mode. 'auto' routes approvals

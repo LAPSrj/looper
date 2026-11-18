@@ -1,40 +1,41 @@
 import { useEffect, useState } from 'react';
 import type { Environment } from '@shared/types';
-import { AgentFields } from './components/RemoteFields';
+import { defaultEnvironment } from '@shared/environments';
+import { AgentFields, offeredHarnesses } from './components/RemoteFields';
 import { EmptyWindow, FormGroup } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { useLiveSettings, useSave } from './components/hooks';
 
 /** New Task with Agent: what the task builder runs with. Start turns this window into the conversation. */
 export function BuilderSetupApp() {
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [host, setHost] = useState<string | undefined>(undefined);
-  const [envId, setEnvId] = useState('');
+  const { live, host } = useLiveSettings();
+  const [envId, setEnvId] = useState<string | null>(null);
   const [harnessId, setHarnessId] = useState('');
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [cwd, setCwd] = useState('');
-  const [starting, setStarting] = useState(false);
+  const saver = useSave();
 
   useEffect(() => {
     document.title = 'New Task with Agent';
-    void window.looper.info().then((i) => {
-      setEnvironments(i.settings.environments);
-      setHost(i.host);
-      const env =
-        i.settings.environments.find((e) => e.id === i.settings.defaultEnvironmentId && e.harnesses.some((h) => h.kind !== 'custom')) ??
-        i.settings.environments.find((e) => e.harnesses.some((h) => h.kind !== 'custom'));
-      if (env) pickEnvironment(env);
-    });
   }, []);
 
+  // It starts in the default environment, or the first with a Claude Code or Codex harness.
+  useEffect(() => {
+    if (!live || envId !== null) return;
+    const env = defaultEnvironment(live, (e) => offeredHarnesses(e, 'agents').length > 0);
+    if (env) pickEnvironment(env);
+    else setEnvId('');
+  }, [live, envId]);
+
+  const environments = live?.environments;
   const env = environments?.find((e) => e.id === envId);
-  const harnesses = env?.harnesses.filter((h) => h.kind !== 'custom') ?? [];
+  const harnesses = offeredHarnesses(env, 'agents');
   const harness = harnesses.find((h) => h.id === harnessId);
 
   function pickEnvironment(next: Environment) {
     setEnvId(next.id);
-    const h = next.harnesses.find((x) => x.kind !== 'custom');
-    pickHarness(h?.id ?? '');
+    pickHarness(offeredHarnesses(next, 'agents')[0]?.id ?? '');
   }
 
   function pickHarness(id: string) {
@@ -43,8 +44,7 @@ export function BuilderSetupApp() {
     setEffort('');
   }
 
-  const start = async () => {
-    if (starting) return;
+  const start = () => {
     if (!env || !harness) {
       void window.looper.showError('Choose an environment with a Claude Code or Codex harness.');
       return;
@@ -53,19 +53,20 @@ export function BuilderSetupApp() {
       void window.looper.showError('Choose the working directory.');
       return;
     }
-    setStarting(true);
-    try {
-      await window.looper.builder.start({
-        environmentId: env.id,
-        harnessId: harness.id,
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
-        cwd: cwd.trim(),
-      });
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      setStarting(false);
-    }
+    // Start turns the window into the conversation, so it stays busy.
+    saver.save(
+      () =>
+        window.looper.builder
+          .start({
+            environmentId: env.id,
+            harnessId: harness.id,
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            cwd: cwd.trim(),
+          })
+          .then(() => true),
+      () => undefined,
+    );
   };
 
   if (!environments) return <EmptyWindow />;
@@ -75,7 +76,7 @@ export function BuilderSetupApp() {
         <div className="form setup-form">
           <FormGroup>
             <AgentFields
-              draft={{ environmentId: envId, harnessId, model: model || undefined, effort: effort || undefined, cwd }}
+              draft={{ environmentId: envId ?? '', harnessId, model: model || undefined, effort: effort || undefined, cwd }}
               environments={environments}
               host={host}
               harnesses="agents"
@@ -90,7 +91,7 @@ export function BuilderSetupApp() {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Start', run: () => void start() }} busy={starting} />
+      <WindowActions confirm={{ label: 'Start', run: start }} busy={saver.busy} />
     </div>
   );
 }

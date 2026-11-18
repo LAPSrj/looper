@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { attachmentName } from '../../../shared/chat';
+import { baseName } from '../../../shared/paths';
 import { REMOTE_CHANNELS, type HostDirEntry, type HostDirListing, type MessageBoxSpec } from '../../../shared/remote-access';
 import { languageOf } from '../components/code-languages';
 import type { ShellController } from './controller';
@@ -105,6 +106,8 @@ export interface HostBrowser {
   loading: boolean;
   selected: string[];
   select: (entry: HostDirEntry, opts?: { toggle?: boolean }) => void;
+  /** These entries selected (only the last one when the browser picks one). */
+  setSelection: (paths: string[]) => void;
   clearSelection: () => void;
   go: (path: string | null) => void;
   up: () => void;
@@ -177,6 +180,7 @@ export function useHostBrowser(controller: ShellController, o: HostBrowserOption
     selected,
     select: (entry, opts) =>
       setSelected((cur) => (o.multi && opts?.toggle ? (cur.includes(entry.path) ? cur.filter((p) => p !== entry.path) : [...cur, entry.path]) : [entry.path])),
+    setSelection: (paths) => setSelected(o.multi ? paths : paths.slice(-1)),
     clearSelection: () => setSelected([]),
     go: (p) => load(p),
     up: () => {
@@ -407,7 +411,6 @@ export interface PathFlow {
   close: () => void;
 }
 
-const baseName = (p: string): string => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 
 function dataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

@@ -2,6 +2,7 @@
 import type { AddonCommandStates, AddonInfo } from '../addons';
 import type { LooperApi, UiEvent } from '../api';
 import type { ChatState } from '../chat';
+import type { FolderLayout } from '../folders';
 import type { HistoryCommands, HistoryFolderFilter } from '../history';
 import type { RemoteAccessState } from '../remote-access';
 import type { SessionSummary, UsageRing } from '../sessions';
@@ -64,6 +65,8 @@ export interface ChatsContext {
   sessionId: string | null;
   sessions: SessionSummary[];
   stoppable: boolean;
+  /** The task run shown has guidance waiting for its agent: Send Now applies. */
+  runQueued?: boolean;
   shown: View['sessions'];
   setShown(patch: Partial<View['sessions']>): void;
   setSelected(id: string | null): void;
@@ -174,6 +177,8 @@ export interface CommandContext {
   projects: Project[];
   taskFolders: TaskFolder[];
   projectFolders: ProjectFolder[];
+  /** The Projects list's order of folders and projects in each folder. */
+  projectLayout: FolderLayout;
   addons: AddonInfo[];
   rest: RestState | null;
   preventSleep: PreventSleepState | null;
@@ -207,6 +212,7 @@ export const EMPTY_CONTEXT: CommandContext = {
   projects: [],
   taskFolders: [],
   projectFolders: [],
+  projectLayout: {},
   addons: [],
   rest: null,
   preventSleep: null,

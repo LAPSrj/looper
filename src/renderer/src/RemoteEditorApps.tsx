@@ -1,36 +1,15 @@
 import { useEffect, useState } from 'react';
-import type { RemoteHelper, Settings } from '@shared/types';
-import { SettingsSchema } from '@shared/types';
-import { REPORT_INPUT, issueLines } from '@shared/issues';
+import type { RemoteHelper } from '@shared/types';
 import { EmptyWindow, Field, FormGroup, NumberField, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { useDiscardUnsaved, useLiveSettings } from './components/hooks';
+import { saveSettings, useDiscardUnsaved, useLiveSettings, useSave } from './components/hooks';
 import { AgentFields, draftProblem, foldDraft, type RemoteFolderDraft } from './components/RemoteFields';
-
-/**
- * Save a changed Remote Control helper list through the full settings
- * schema, so a bad value is reported before anything is written. True when saved.
- */
-async function saveRemote(live: Settings, remote: Settings['remote']): Promise<boolean> {
-  const parsed = SettingsSchema.safeParse({ ...live, remote }, REPORT_INPUT);
-  if (!parsed.success) {
-    void window.looper.showError(issueLines(parsed.error));
-    return false;
-  }
-  try {
-    await window.looper.updateSettings({ remote: parsed.data.remote });
-    return true;
-  } catch (e) {
-    void window.looper.showError((e as Error).message);
-    return false;
-  }
-}
 
 /** Advanced → Remote Control → Helpers → Add/Edit. */
 export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boolean }) {
   const { live, host, missing } = useLiveSettings((s) => s.remote.helpers.some((h) => h.id === id));
   const [draft, setDraft] = useState<(RemoteFolderDraft & Pick<RemoteHelper, 'idleRestartMin' | 'instructions'>) | null>(null);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   const savedRef = useDiscardUnsaved(isNew, () => window.looper.remote.discard(id));
 
   useEffect(() => {
@@ -47,7 +26,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
 
   if (missing || !live || !draft) return <EmptyWindow gone={missing && 'This helper no longer exists.'} />;
 
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     const problem = draftProblem(draft, live.environments);
     if (problem) {
       void window.looper.showError(problem);
@@ -55,14 +34,8 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
     }
     const { idleRestartMin, instructions, ...fields } = draft;
     const helpers = live.remote.helpers.map((h) => (h.id === id ? { ...h, ...foldDraft(fields, live.environments), idleRestartMin, instructions } : h));
-    setSaving(true);
-    const ok = await saveRemote(live, { ...live.remote, helpers });
-    setSaving(false);
-    if (ok) savedRef.current = true;
-    return ok;
-  };
-  const save = async () => {
-    if (await doSave()) window.close();
+    await saveSettings(live, { remote: { ...live.remote, helpers } });
+    savedRef.current = true;
   };
 
   return (
@@ -92,7 +65,11 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => void save() }} apply={isNew ? undefined : { run: () => void doSave() }} busy={saving} />
+      <WindowActions
+        confirm={{ label: isNew ? 'Create' : 'Save', run: () => saver.save(doSave) }}
+        apply={isNew ? undefined : { run: () => void saver.apply(doSave) }}
+        busy={saver.busy}
+      />
     </div>
   );
 }

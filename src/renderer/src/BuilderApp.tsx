@@ -1,11 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BuilderState, BuilderTest } from '@shared/builder';
 import { describeCron } from '@shared/cron';
-import { EFFORT_LEVELS, PERMISSION_MODES, harnessKindLabel, harnessModels } from '@shared/environments';
+import { effortLabel, harnessModels, permissionLabel } from '@shared/environments';
+import type { MessageRow } from '@shared/messages';
 import type { Environment, Harness, Task } from '@shared/types';
-import { definitionOf, diffDefinitions, fileName } from '@shared/versions';
-import { ChatRow, ToolGroup } from './components/ChatRows';
+import { baseName } from '@shared/paths';
+import { definitionOf, diffDefinitions } from '@shared/versions';
+import { useSelectText, type RowCtx } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
+import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './components/Conversation';
+import { FindBar, useFindFocus, useFindHighlights, type FindState } from './components/FindBar';
 import { useChatsSettings } from './components/hooks';
 import { Inspector, useInspector } from './components/Inspector';
 import { InspectorHost } from './components/ListDetail';
@@ -14,12 +18,13 @@ import { MessageBox } from './components/MessageBox';
 import { PropertyList, type Property } from './components/PropertyList';
 import { useSplit } from './components/phone/PhoneSplit';
 import { EmptyWindow, TabBar } from './components/ui';
-import { openXterm } from './components/xterm';
+import { useXterm } from './components/xterm';
 import { subscribe } from './events';
 import { fmtDateTime } from './format';
 import { settingLabel, settingValue } from './taskSettings';
 import { INSPECTOR_WIDTH } from './web/nav-stack';
 import { isPhone } from './web/page-nav';
+import { reportError } from './report-error';
 
 type Rec = Record<string, unknown>;
 
@@ -54,20 +59,17 @@ function agentFields(raw: Rec, environments: Environment[]): [string, string][] 
   const kind = harness?.kind;
   const model = str(a.model);
   const entry = harness && model ? harnessModels(harness).find((m) => m.id === model) : undefined;
-  const efforts = kind && kind !== 'custom' ? EFFORT_LEVELS[kind] : [];
-  const effortLabel = (v: string | undefined) => (v ? (efforts.find(([x]) => x === v)?.[1] ?? v) : undefined);
   const effort = str(a.effort)
-    ? effortLabel(a.effort as string)!
+    ? effortLabel(kind, a.effort as string)
     : entry?.defaultEffort
-      ? `Default (${effortLabel(entry.defaultEffort)})`
+      ? `Default (${effortLabel(kind, entry.defaultEffort)})`
       : 'Default';
-  const modes = kind && kind !== 'custom' ? PERMISSION_MODES[kind] : [];
   const permission = typeof a.permissionMode === 'string' ? a.permissionMode : 'auto';
   return [
     ['Harness', harness?.name ?? String(a.harnessId ?? '')],
     ['Model', model ? (entry?.name ?? model) : 'Default'],
     ['Effort', effort],
-    ['Permission mode', modes.find(([v]) => v === permission)?.[1] ?? permission],
+    ['Permission mode', permissionLabel(kind, permission)],
     ['Session type', a.mode === 'headless' ? 'Headless' : 'Interactive terminal'],
   ];
 }
@@ -154,7 +156,7 @@ function DraftPanel({ state, environments, stored }: { state: BuilderState; envi
           (state.files.length === 0 ? (
             <div className="muted">The agent hasn't written any files yet.</div>
           ) : (
-            list(state.files.map((f) => prop(fileName(f), f, 'mono muted')))
+            list(state.files.map((f) => prop(baseName(f), f, 'mono muted')))
           ))}
         {tab === 'changes' &&
           (changeCount === 0 ? (
@@ -166,7 +168,7 @@ function DraftPanel({ state, environments, stored }: { state: BuilderState; envi
                 const b = settingValue(d.path, d.b, raw, environments);
                 return prop(settingLabel(d.path), a !== undefined && b !== undefined ? `${a} → ${b}` : 'Changed');
               }),
-              ...state.changedFiles.map((f) => prop(fileName(f), 'File changed')),
+              ...state.changedFiles.map((f) => prop(baseName(f), 'File changed')),
             ])
           ))}
       </div>
@@ -176,7 +178,6 @@ function DraftPanel({ state, environments, stored }: { state: BuilderState; envi
 
 const draftValid = (state: BuilderState) => state.draft.errors.length === 0 && !!state.draft.task;
 
-const reportError = (e: Error) => window.looper.showError(e.message);
 
 /** Shown under the agent's reply once the draft is valid and unsaved: Create… or Update… opens the editor on it. */
 function DraftCard({ state }: { state: BuilderState }) {
@@ -234,7 +235,7 @@ function useBuilderCommands(state: BuilderState) {
  * The builder's commands: on the desktop a toolbar of Save, Undo and Redo, and Version History; on a phone or
  * tablet Save is the bar's confirming action, the draft has its button, and the rest is in More.
  */
-function BuilderBar({ state, onDraft, modal, beside }: { state: BuilderState; onDraft: () => void; modal: boolean; beside: boolean }) {
+function BuilderBar({ state, onDraft, onFind, modal, beside }: { state: BuilderState; onDraft: () => void; onFind?: () => void; modal: boolean; beside: boolean }) {
   const c = useBuilderCommands(state);
   return (
     <Toolbar
@@ -262,6 +263,7 @@ function BuilderBar({ state, onDraft, modal, beside }: { state: BuilderState; on
               { id: 'versions', label: 'Version History', icon: 'history', enabled: !!state.taskId, run: c.versions },
             ],
           },
+          ...(onFind ? [{ id: 'find', items: [{ id: 'find', label: 'Find', icon: 'search' as const, run: onFind }] }] : []),
         ],
         modal,
       }}
@@ -269,63 +271,77 @@ function BuilderBar({ state, onDraft, modal, beside }: { state: BuilderState; on
   );
 }
 
-/** One line above the input: what the session is doing, or why it ended. */
-function ChatStatus({ state }: { state: BuilderState }) {
-  if (state.status === 'working') return <div className="chat-status muted">{harnessKindLabel(state.harnessKind)} is working…</div>;
-  if (state.status === 'starting') return <div className="chat-status muted">Starting {harnessKindLabel(state.harnessKind)}…</div>;
-  if (state.status === 'ended') return <div className="chat-status error-text">{state.error ?? 'The session ended.'}</div>;
-  return null;
+/** Right-click on a row: copy it, or select its text. */
+function showRowMenu(row: MessageRow, selectText: string | undefined): void {
+  window.looper.showMessageContextMenu({ taskId: '', runId: '', selectText, text: (row.kind === 'tool' ? (row.result ?? row.text) : row.text) || undefined });
 }
 
-function Chat({ state }: { state: BuilderState }) {
+function Chat({ state, findAsked }: { state: BuilderState; findAsked: number }) {
   const [text, setText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
-  const ctx = { taskId: state.taskId ?? '', runId: '' };
+  const conversation = useRef<ConversationHandle>(null);
+  const selectText = useSelectText(state.id);
+  const taskId = state.taskId ?? '';
+  const ctx = useMemo<RowCtx>(() => ({ taskId, runId: '', onContextMenu: (e, row) => showRowMenu(row, selectText(e)) }), [taskId, selectText]);
   const { expandThinking } = useChatsSettings();
+  const items = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
+  const parts = useMemo<ConversationPart[]>(() => [{ key: '', items }], [items]);
 
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [state.rows.length, state.status, state.unsaved]);
+  const [find, setFind] = useState<FindState | null>(null);
+  const findField = useFindFocus();
+  const matches = useFindHighlights(scrollRef, find, setFind, () => conversation.current?.leaveEnd());
+  const openFind = () => {
+    setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
+    findField.focus();
+  };
+  // The phone's More → Find, asked after this view showed.
+  const asked = useRef(findAsked);
+  useEffect(() => {
+    if (findAsked === asked.current) return;
+    asked.current = findAsked;
+    openFind();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findAsked]);
+  // Ctrl+F opens the find bar, Esc closes it, F3 and Shift+F3 step through the matches.
+  const finding = find !== null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key.toLowerCase() === 'f' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) openFind();
+      else if (e.key === 'Escape' && finding) setFind(null);
+      else if (e.key === 'F3' && finding) setFind((f) => (f ? { ...f, index: f.index + (e.shiftKey ? -1 : 1) } : f));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finding]);
 
   const send = () => {
     const t = text.trim();
     if (!t || state.status === 'ended') return;
     window.looper.builder.send(state.id, t);
+    // A phone without its computer (web/start.ts marks it) shows its own alert; the message stays to send later.
+    if ('stale' in document.documentElement.dataset) return;
     setText('');
-    atBottom.current = true;
+    conversation.current?.toEnd();
   };
 
-  const items = groupRows(state.rows, expandThinking);
   const showCard = state.status === 'ready' && state.unsaved && draftValid(state);
-  const last = items.at(-1);
-  const cardUnder = showCard && last?.kind === 'row' && last.row.kind === 'agent';
   return (
     <section className="builder-chat">
-      <div
-        className="chat-scroll"
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-      >
-        {items.map((item, i) =>
-          item.kind === 'tools' ? (
-            <ToolGroup key={item.rows[0].id} rows={item.rows} ctx={ctx} />
-          ) : cardUnder && i === items.length - 1 ? (
-            // The card takes the reply's width: both stretch to the wider of the two.
-            <div className="chat-agent-group" key={item.row.id}>
-              <ChatRow row={item.row} ctx={ctx} />
-              <DraftCard state={state} />
-            </div>
-          ) : (
-            <ChatRow key={item.row.id} row={item.row} ctx={ctx} />
-          ),
-        )}
-        {showCard && !cardUnder && <DraftCard state={state} />}
-      </div>
+      {find && <FindBar find={find} matches={matches} onChange={setFind} onClose={() => setFind(null)} inputRef={findField.inputRef} />}
+      <Conversation
+        ref={conversation}
+        id={state.id}
+        parts={parts}
+        ctx={ctx}
+        endKey={`${state.rows.length}/${state.status}/${state.unsaved}`}
+        scrollRef={scrollRef}
+        drawAll={finding}
+        replyCard={showCard && <DraftCard state={state} />}
+      />
       <ChatStatus state={state} />
       <MessageBox
         text={text}
@@ -343,42 +359,25 @@ function Chat({ state }: { state: BuilderState }) {
 
 /** Terminal view: the harness's own interactive session. */
 function BuilderTerminal({ state }: { state: BuilderState }) {
-  const ref = useRef<HTMLDivElement>(null);
   const id = state.id;
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { term, fit } = openXterm(el);
-    let loaded = false;
-    void window.looper.builder.output(id).then((data) => {
-      if (data) term.write(data);
-      loaded = true;
-      window.looper.builder.resize(id, term.cols, term.rows);
-    });
-    const unsub = subscribe((e) => {
-      if (loaded && e.type === 'builder:data' && e.id === id) term.write(e.data);
-    });
-    const onData = term.onData((d) => window.looper.builder.write(id, d));
-    const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        window.looper.builder.resize(id, term.cols, term.rows);
-      } catch {
-        /* element hidden */
-      }
-    });
-    ro.observe(el);
-    term.focus();
-    return () => {
-      unsub();
-      onData.dispose();
-      ro.disconnect();
-      term.dispose();
-    };
-  }, [id]);
+  const builder = window.looper.builder;
+  const { ref, keys } = useXterm(id, {
+    replay: (term) =>
+      builder.output(id).then((data) => {
+        if (data) term.write(data);
+      }),
+    live: (e, term) => {
+      if (e.type === 'builder:data' && e.id === id) term.write(e.data);
+    },
+    write: (d) => builder.write(id, d),
+    resize: (cols, rows) => builder.resize(id, cols, rows),
+    attachFiles: (files) => builder.attachFiles(id, files),
+    showMenu: (hasSelection) => builder.showContextMenu(id, hasSelection),
+  });
   return (
     <section className="builder-chat">
       <div className="terminal builder-terminal" ref={ref} />
+      {keys}
       {state.status === 'ended' && <ChatStatus state={state} />}
     </section>
   );
@@ -392,6 +391,7 @@ export function BuilderApp({ id }: { id: string }) {
   const taskId = state?.taskId;
   const beside = !!useSplit(isPhone);
   const panel = useInspector('draft', beside);
+  const [findAsked, setFindAsked] = useState(0);
 
   useEffect(() => {
     void window.looper.info().then((i) => setEnvironments(i.settings.environments));
@@ -421,9 +421,15 @@ export function BuilderApp({ id }: { id: string }) {
   if (!state) return <EmptyWindow gone={state === null && 'This conversation with the agent was closed.'} />;
   return (
     <div className="builder-app">
-      <BuilderBar state={state} onDraft={panel.toggle} modal={panel.sheetOpen} beside={beside} />
+      <BuilderBar
+        state={state}
+        onDraft={panel.toggle}
+        onFind={state.view === 'chat' ? () => setFindAsked((n) => n + 1) : undefined}
+        modal={panel.sheetOpen}
+        beside={beside}
+      />
       <div className="builder" style={{ '--split-inspector': `${INSPECTOR_WIDTH}px` } as React.CSSProperties}>
-        {state.view === 'terminal' ? <BuilderTerminal state={state} /> : <Chat state={state} />}
+        {state.view === 'terminal' ? <BuilderTerminal state={state} /> : <Chat state={state} findAsked={findAsked} />}
         {isPhone ? (
           <InspectorHost.Provider value={{ split: beside ? { lead: 0, inspector: INSPECTOR_WIDTH } : null }}>
             <Inspector title="Draft" open={panel.open} onClose={panel.dismiss}>

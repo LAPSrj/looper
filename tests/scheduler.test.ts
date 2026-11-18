@@ -171,6 +171,8 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           write: () => undefined,
           resize: () => undefined,
           deliverGuidance: () => undefined,
+          stopTurn: () => undefined,
+          turnOver: false,
           stop: async (reason = 'stopped', headline) => resolve(agentEnd(reason, headline)),
           finished,
         };
@@ -2511,6 +2513,70 @@ describe('a run open in a chat when Looper restarts', () => {
     expect(sched.get('t1')!.runs).toEqual([]);
     await sched.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('a check that lists items', () => {
+  const runs = () => h.sched.get('t1')!.runs;
+  const agentStarts = () => records().filter((r) => r.phase === 'agent' && r.result === 'started');
+  const phaseCount = (phase: string, result?: string) =>
+    records().filter((r) => r.phase === phase && (result === undefined || r.result === result)).length;
+  const item = (summary: string, relatedId?: string) => ({ act: true, summary, context: { summary }, ...(relatedId ? { relatedId } : {}) });
+
+  it('runs each acting item through the classifier and the agent in a run of its own, checking once', async () => {
+    h.tasks.patch('t1', { maxConcurrentRuns: 3, classifier: { enabled: true, model: 'haiku', prompt: 'p', timeoutSec: 10 } });
+    for (let i = 0; i < 3; i++) h.classifies.push({ status: 'act', durationMs: 1, exitCode: 0 });
+    h.checks.push(check('act', { summary: 'a', context: { summary: 'a' }, more: [item('b'), item('c')] }));
+    await h.tickN(1);
+    await flush();
+    expect(h.agentStarted).toBe(3);
+    expect(phaseCount('check')).toBe(1);
+    expect(phaseCount('classify', 'started')).toBe(3);
+    // The other items' runs skip the check, so they can reach their agents before the first run does.
+    expect(agentStarts().map((r) => r.summary).sort()).toEqual(['a', 'b', 'c']);
+    expect(agentStarts().find((r) => r.summary === 'c')!.body).toContain('Summary: c');
+    expect(runs().map((r) => r.trigger)).toEqual(['timer', 'timer', 'timer']);
+    expect(records().find((r) => r.phase === 'system' && r.result === 'act')!.summary).toBe(
+      'the check listed 2 more item(s), each in a run of its own',
+    );
+    for (const live of h.liveAgents) live.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('past the cap the items wait, and run one after another without checking again', async () => {
+    h.tasks.patch('t1', { maxConcurrentRuns: 1 });
+    h.checks.push(check('act', { summary: 'a', more: [item('b'), item('c')] }));
+    await h.tickN(1);
+    expect(h.agentStarted).toBe(1);
+    for (const next of ['b', 'c']) {
+      h.liveAgent!.end(agentEnd('done'));
+      await flush();
+      await h.tickN(1);
+      expect(agentStarts().at(-1)!.summary).toBe(next);
+    }
+    expect(h.agentStarted).toBe(3);
+    expect(phaseCount('check')).toBe(1);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('with related events, sends an item to the run handling its id and keeps items with one id together', async () => {
+    h.tasks.patch('t1', { maxConcurrentRuns: 3, trigger: { mode: 'schedule', sendRelatedEvents: true, schedule: { cron: '*/1 * * * *' } } });
+    h.checks.push(check('act', { relatedId: 't1', summary: 'first' }));
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    const first = h.liveAgent!;
+    h.checks.push(check('act', { relatedId: 't2', summary: 'new', more: [item('reply', 't1'), item('new again', 't2')] }));
+    h.clock.now += 60_000;
+    await h.tickN(2);
+    expect(h.agentStarted).toBe(2);
+    expect(runs().map((r) => r.relatedId)).toEqual(['t1', 't2']);
+    const second = h.liveAgents[1];
+    const sent = (live: typeof first) => takeEvents(h.runs.runDir('t1', live.runId))!.map((l) => JSON.parse(l).summary);
+    expect(sent(first)).toEqual(['reply']);
+    expect(sent(second)).toEqual(['new again']);
+    for (const live of h.liveAgents) live.end(agentEnd('done'));
+    await flush();
   });
 });
 

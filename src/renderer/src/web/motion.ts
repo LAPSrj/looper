@@ -31,7 +31,7 @@ const GLASS = '.ios-back, .ios-text-btn, .ios-icon-btn, .ios-bar-group, .phone-p
 const LIST_ROWS: [list: string, row: string][] = [
   ['.pg-list', '.pg-row, .pg-swipe'],
   ['.pg-sessions', '.session-row, .session-group'],
-  ['.pg-addon-pane', '.task-item, .task-folder'],
+  ['.pg-addon-pane', '.pg-row, .task-folder'],
 ];
 const isListRow = (n: Element, parent: Node | null): boolean => parent instanceof Element && LIST_ROWS.some(([list, row]) => n.matches(row) && !!parent.closest(list));
 const SCREEN = 'phone-screen';

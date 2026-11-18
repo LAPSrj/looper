@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MenuItemSpec } from '../../../shared/remote-access';
-import type { ShellController } from './controller';
+import { appleDevice } from './device-name';
+import { useOverlay, type ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
 import { editingIn, keyboardUp, tallestTracker } from './keyboard-up';
-import { composeMore, type MoreMenu } from './more-menu';
+import { actionMenu, composeMore, type MoreMenu } from './more-menu';
 import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
-import { plainLabel } from './nav-bar-model';
+import { noMnemonic } from '../../../shared/commands/command';
+import { barModel, dismissFor, type BarModel, type PageNavAction } from './nav-bar-model';
+import { slideCard, useDragToDismiss } from './sheet-drag';
 import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
@@ -393,7 +396,20 @@ function PhoneIframe({ controller, win, os, hooks, safeBottom }: { controller: S
 
 // ---------- the frame's model ----------
 
+/** The More menu (or a bar button's own menu) open over a screen. */
+export interface MoreState<P extends MenuPlace> {
+  more: (OpenMore & P) | null;
+  setMore: React.Dispatch<React.SetStateAction<(OpenMore & P) | null>>;
+}
+
 export interface PhoneShell {
+  /** Opens a screen's More menu from its bar's button. */
+  openMore: (sc: Screen, button: HTMLElement) => void;
+  /** Opens a bar button's menu of choices. */
+  openActionMenu: (sc: Screen, action: PageNavAction, button: HTMLElement) => void;
+  /** The This Device sheet is open (the More view's This Device row opens it). */
+  device: boolean;
+  setDevice: (open: boolean) => void;
   s: ShellState;
   os: PhoneOs;
   vp: Viewport;
@@ -512,21 +528,8 @@ export function setDrag(root: HTMLElement | null, w: string, axis: 'x' | 'y', of
   const card = root?.querySelector<HTMLElement>(`.ph-win[data-w="${CSS.escape(w)}"] > .ph-card`);
   if (!card) return;
   const under = axis === 'x' ? root?.querySelector<HTMLElement>(`.ph-win[data-under="${CSS.escape(w)}"] > .ph-card`) : null;
-  if (offset === null) {
-    card.style.transition = '';
-    card.style.transform = '';
-    if (under) {
-      under.style.transition = '';
-      under.style.transform = '';
-    }
-    return;
-  }
-  card.style.transition = 'none';
-  card.style.transform = axis === 'x' ? `translateX(${offset}px)` : `translateY(${offset}px)`;
-  if (under) {
-    under.style.transition = 'none';
-    under.style.transform = `translateX(${(offset - card.clientWidth) * 0.3}px)`;
-  }
+  slideCard(card, offset, axis);
+  slideCard(under, offset === null ? null : (offset - card.clientWidth) * 0.3, 'x');
 }
 
 const SWIPE_FINISH_MS = 300;
@@ -570,7 +573,24 @@ function finishBackSwipe(root: HTMLElement | null, w: string, speed: number): vo
   }, LEAVE_MS + 1000);
 }
 
-export function usePhoneShell(controller: ShellController, os: PhoneOs, localLayers: BackLayer[]): PhoneShell {
+/** Where a menu opened from a bar button goes: `anchor`, what it lines up with, and anything else the frame needs. */
+export interface MenuPlace {
+  anchor: DOMRect;
+}
+
+const placeAtButton = (button: HTMLElement): MenuPlace => ({ anchor: button.getBoundingClientRect() });
+
+/** The frame's model; `place` sets where a bar button's menu goes (by default at the button). */
+export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: ShellController, os: PhoneOs, place?: (button: HTMLElement) => P): PhoneShell & MoreState<P> {
+  const [more, setMore] = useState<(OpenMore & P) | null>(null);
+  const [device, setDevice] = useState(false);
+  const placed = (button: HTMLElement) => (place ?? (placeAtButton as (b: HTMLElement) => P))(button);
+  const openMore = (sc: Screen, button: HTMLElement) => setMore({ ...moreFor(sc), w: sc.win.w, ...placed(button) });
+  const openActionMenu = (sc: Screen, action: PageNavAction, button: HTMLElement) => setMore({ ...actionMenu(action), w: sc.win.w, ...placed(button) });
+  const localLayers: BackLayer[] = [];
+  if (device) localLayers.push(() => setDevice(false));
+  if (more) localLayers.push(() => setMore(null));
+
   const s = useShellState(controller.store);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
@@ -699,7 +719,13 @@ export function usePhoneShell(controller: ShellController, os: PhoneOs, localLay
     return () => el.removeEventListener('touchmove', onMove);
   }, []);
 
-  return { s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast, edges };
+  useOverlay(controller, !!more || device);
+  // The More view's This Device row asks for the sheet (after usePageNavs has set up __looperFrame).
+  useEffect(() => {
+    if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
+  }, []);
+
+  return { more, setMore, openMore, openActionMenu, device, setDevice, s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast, edges };
 }
 
 // ---------- the windows ----------
@@ -755,40 +781,64 @@ export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: Wi
           </div>
         );
       })}
+      {!s.connected && !s.everConnected && (
+        <div className="ph-connection" role="status">
+          Connecting…
+        </div>
+      )}
     </>
   );
 }
 
 /** A sheet's bar: drag it down to close the sheet. */
 function DragArea({ enabled, root, w, onDismiss, children }: { enabled: boolean; root: React.RefObject<HTMLDivElement | null>; w: string; onDismiss: () => void; children: ReactNode }) {
-  const drag = useRef(new AxisDrag('y'));
+  const drag = useDragToDismiss({
+    skip: 'button, input, a',
+    extent: (bar) => (bar.closest('.ph-card') as HTMLElement | null)?.clientHeight ?? 600,
+    onMove: (offset) => setDrag(root.current, w, 'y', offset),
+    onDismiss,
+  });
   if (!enabled) return <>{children}</>;
   return (
-    <div
-      className="ph-drag"
-      onPointerDown={(e) => {
-        if ((e.target as Element).closest('button, input, a')) return;
-        drag.current.begin(e.clientX, e.clientY, e.timeStamp);
-        e.currentTarget.setPointerCapture(e.pointerId);
-      }}
-      onPointerMove={(e) => {
-        const r = drag.current.move(e.clientX, e.clientY, e.timeStamp);
-        if (r) setDrag(root.current, w, 'y', r.offset);
-      }}
-      onPointerUp={(e) => {
-        const card = (e.currentTarget.closest('.ph-card') as HTMLElement | null)?.clientHeight ?? 600;
-        const done = drag.current.end(card);
-        setDrag(root.current, w, 'y', null);
-        if (done) onDismiss();
-      }}
-      onPointerCancel={() => {
-        drag.current.end(0);
-        setDrag(root.current, w, 'y', null);
-      }}
-    >
+    <div className="ph-drag" {...drag}>
       {children}
     </div>
   );
+}
+
+/**
+ * A screen's bars, as both phone frames draw them: one bar, or on a tablet's split page one over each column
+ * (the list's with the window's own Back, `listBack`; the detail's with the page's; the inspector's title).
+ */
+export function screenBars(
+  sc: Screen,
+  tablet: boolean,
+  run: { goBack: () => void; listBack: () => void; close: () => void },
+): { kind: 'single'; bar: BarModel } | { kind: 'split'; split: NonNullable<PageNav['split']>; list: BarModel; detail: BarModel; inspector: BarModel | null } {
+  const nav = sc.nav;
+  const back = nav?.back ? run.goBack : undefined;
+  const split = tablet ? nav?.split : undefined;
+  if (split) {
+    return {
+      kind: 'split',
+      split,
+      list: barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: run.listBack } : null }),
+      detail: barModel({ title: nav?.title ?? '', subtitle: nav?.subtitle, back, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null }),
+      inspector: split.inspector ? barModel({ title: split.inspector.title, dismiss: null }) : null,
+    };
+  }
+  return {
+    kind: 'single',
+    bar: barModel({
+      title: nav?.title ?? sc.win.title,
+      subtitle: nav?.subtitle,
+      back,
+      cancel: nav?.cancel,
+      confirm: nav?.confirm,
+      actions: nav?.actions,
+      dismiss: dismissFor(sc.pres, { back: run.goBack, close: run.close }),
+    }),
+  };
 }
 
 // ---------- small shared pieces ----------
@@ -852,7 +902,7 @@ export const isLongMenu = (items: MenuItemSpec[], width: number, height: number)
 
 /** The device's own name for itself in "This iPhone" / "This Phone". */
 export function deviceNoun(os: PhoneOs, tablet: boolean): string {
-  if (os === 'ios') return /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && tablet) || tablet ? 'iPad' : 'iPhone';
+  if (os === 'ios') return tablet || appleDevice(navigator.userAgent, navigator.maxTouchPoints) === 'iPad' ? 'iPad' : 'iPhone';
   return tablet ? 'Tablet' : 'Phone';
 }
 
@@ -863,7 +913,7 @@ export function useSubmenus(items: MenuItemSpec[]): { level: MenuItemSpec[]; tit
   const last = path[path.length - 1];
   return {
     level: last?.submenu ?? items,
-    title: last ? plainLabel(last.label) : null,
+    title: last ? noMnemonic(last.label ?? '') : null,
     open: (it) => setPath((p) => [...p, it]),
     up: () => setPath((p) => p.slice(0, -1)),
   };

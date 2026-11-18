@@ -16,6 +16,8 @@ interface GroupHeaderProps extends Omit<HTMLAttributes<HTMLElement>, 'onToggle' 
   onToggle?: () => void;
   /** The element to draw: a list item inside a `ul`, a div elsewhere. */
   as?: 'li' | 'div';
+  /** False where the container isn't a tree (a phone's plain list): the header is then a button that says whether it is expanded. */
+  inTree?: boolean;
   /** Extra classes beside `group-header` (a phone's list styles select on `task-folder` and `session-group`). */
   className?: string;
 }
@@ -26,10 +28,10 @@ interface GroupHeaderProps extends Omit<HTMLAttributes<HTMLElement>, 'onToggle' 
  * groups all draw it, so they look and collapse the same way. It is a tree item
  * that says whether it is expanded; the rows under it are its children.
  */
-export function GroupHeader({ name, open, count, level = 1, onToggle, as = 'div', className, children, ...rest }: GroupHeaderProps) {
+export function GroupHeader({ name, open, count, level = 1, onToggle, as = 'div', inTree = true, className, children, ...rest }: GroupHeaderProps) {
   const Tag = as as ElementType;
   return (
-    <Tag {...rest} role="treeitem" aria-level={level} aria-expanded={open} className={`group-header${className ? ` ${className}` : ''}`} onClick={onToggle}>
+    <Tag {...rest} role={inTree ? 'treeitem' : 'button'} aria-level={inTree ? level : undefined} aria-expanded={open} className={`group-header${className ? ` ${className}` : ''}`} onClick={onToggle}>
       <Chevron open={open} />
       <span className="group-header-name">{name}</span>
       {!open && count !== undefined && count > 0 && <span className="group-header-count">{count}</span>}

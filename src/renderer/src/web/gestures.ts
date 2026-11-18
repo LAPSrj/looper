@@ -81,15 +81,24 @@ export class LongPress<T> {
 export const EDGE_WIDTH = 24;
 
 export interface DragResult {
-  /** Distance along the drag's axis, never negative. */
+  /** Distance along the drag's axis, never negative (a two-way drag's is negative back the other way). */
   offset: number;
 }
+
+/** A drag let go: how far it went and how fast it was moving (px/ms), both along its direction. */
+export interface DragRelease {
+  offset: number;
+  speed: number;
+}
+
+/** Whether a drag to dismiss or go back completes: past a third of `extent`, or on a quick flick. */
+export const dragCompletes = (r: DragRelease, extent: number): boolean => r.offset > extent / 3 || r.speed > 0.5;
 
 /**
  * A one-axis drag that decides early whether it's ours: it must start where
  * `accept` allows and move mostly along the axis, in `direction` (-1: toward
- * the start of the axis, a swipe to the left). On release it commits past a
- * third of `extent`, or on a quick flick.
+ * the start of the axis, a swipe to the left), or either way when `twoWay`.
+ * On release it commits past a third of `extent`, or on a quick flick.
  */
 export class AxisDrag {
   private s: { x: number; y: number; t: number } | null = null;
@@ -97,7 +106,11 @@ export class AxisDrag {
   private velocity = 0;
   private claimed = false;
 
-  constructor(private readonly axis: 'x' | 'y', private readonly direction: 1 | -1 = 1) {}
+  constructor(
+    private readonly axis: 'x' | 'y',
+    private readonly direction: 1 | -1 = 1,
+    private readonly twoWay = false,
+  ) {}
 
   get active(): boolean {
     return this.claimed;
@@ -126,20 +139,26 @@ export class AxisDrag {
         this.s = null;
         return null;
       }
-      if (along < 8) return null;
+      if ((this.twoWay ? Math.abs(along) : along) < 8) return null;
       this.claimed = true;
     }
-    const v = Math.max(0, along);
+    const v = this.twoWay ? along : Math.max(0, along);
     if (this.last && t > this.last.t) this.velocity = (v - this.last.v) / (t - this.last.t);
     this.last = { v, t };
     return { offset: v };
   }
 
-  /** Whether the drag should complete (back, dismiss). */
-  end(extent: number): boolean {
-    const done = this.claimed && !!this.last && (this.last.v > extent / 3 || this.velocity > 0.5);
+  /** The finger lifted: where the drag got to, or null when it never was ours. */
+  release(): DragRelease | null {
+    const r = this.claimed && this.last ? { offset: this.last.v, speed: this.velocity } : null;
     this.s = null;
     this.claimed = false;
-    return done;
+    return r;
+  }
+
+  /** Whether the drag should complete (back, dismiss). */
+  end(extent: number): boolean {
+    const r = this.release();
+    return !!r && dragCompletes(r, extent);
   }
 }

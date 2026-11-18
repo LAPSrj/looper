@@ -1,4 +1,5 @@
 import type { Attachment } from './chat';
+import type { SlashCommand } from './sessions';
 
 /** One row of the Messages view: a prompt, an agent reply, a thought, a tool call, or (raw mode) a record. */
 export interface MessageRow {
@@ -142,6 +143,8 @@ export interface MessagesResult {
   dropped: number;
   /** Guidance sent to the run that the agent has not picked up yet. */
   pendingGuidance?: string;
+  /** The skills the agent's session was offered, from its transcript: a task run's "/" list. */
+  commands?: SlashCommand[];
 }
 
 /** Opens every guidance message Looper hands a running agent; the Messages view keys its Guidance rows on it. */

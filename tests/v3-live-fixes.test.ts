@@ -15,8 +15,11 @@ describe('V3 live check fixes', () => {
   });
 
   it('a pane splitter reports its position (a focusable separator needs aria-valuenow)', () => {
-    const sidebar = read('components/Sidebar.tsx');
-    expect(sidebar).toMatch(/role="separator"[\s\S]{0,400}aria-valuenow=/);
+    // Every splitter is SplitPane's Splitter: the sidebar's sash passes it a position.
+    const splitter = read('components/SplitPane.tsx');
+    expect(splitter).toMatch(/role="separator"[\s\S]{0,400}aria-valuenow=/);
+    expect(splitter).toMatch(/onKeyDown=[\s\S]{0,200}'ArrowUp', 'ArrowDown'/);
+    expect(read('components/Sidebar.tsx')).toMatch(/<Splitter[\s\S]{0,300}value=\{\{ now:/);
   });
 
   it('the empty Chats list holds a treeitem (a tree must own one)', () => {

@@ -1,49 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { formatTokens } from '@shared/chat';
-import { formatDuration } from '@shared/duration';
-import {
-  WORKFLOW_STATUS_TEXT,
-  elapsedMs,
-  tabStatus,
-  workflowCounts,
-  workflowPhaseStatus,
-  type WorkflowAgent,
-  type WorkflowRun,
-} from '@shared/workflows';
-import { tickFor, useNow } from '../useNow';
+import { WORKFLOW_STATUS_TEXT, tabStatus, workflowCounts, workflowPhaseStatus, type WorkflowAgent, type WorkflowRun } from '@shared/workflows';
 import { isPhone } from '../web/page-nav';
-import { RowList } from './DataTable';
+import { WorkflowAgentList } from './AgentRows';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
+import { Elapsed } from './Live';
 import { MessageBody } from './Markdown';
 import { Group, Row } from './phone/PhoneList';
-import { PropertyList } from './PropertyList';
 import { Section } from './Section';
 import { StatusMark } from './StatusMark';
 import { ParamTable } from './ToolContent';
-import { resultParts, resultSummary } from './workflow-summary';
+import { resultParts } from './workflow-summary';
 
-type Timed = { startedAt?: number; endedAt?: number };
-
-const elapsedText = (item: Timed, now: number): string | undefined => {
-  const ms = elapsedMs(item, now);
-  return ms === undefined ? undefined : formatDuration(ms);
-};
-
-/** A time that runs while the item does: it ticks each second below an hour, then each minute, and stops when the item ends. */
-function useElapsed(item: Timed): string | undefined {
-  const running = item.startedAt !== undefined && item.endedAt === undefined;
-  const now = useNow(running ? tickFor(Date.now() - item.startedAt!) : null);
-  return elapsedText(item, now);
-}
-
-/** An item's time, or `fallback` before it has started. */
-function ElapsedText({ item, fallback }: { item: Timed; fallback?: string }) {
-  const text = useElapsed(item);
-  return <>{text ?? fallback}</>;
-}
-
-const elapsedNode = (item: Timed) => (item.startedAt === undefined ? undefined : <ElapsedText item={item} />);
+/** How long the run ran, or has run; nothing before it started. */
+const elapsedNode = (run: WorkflowRun) => (run.startedAt === undefined ? undefined : <Elapsed since={run.startedAt} until={run.endedAt} />);
 
 /** "4 of 9 agents done · 1 failed". */
 function countsLine(run: WorkflowRun): string {
@@ -53,13 +23,13 @@ function countsLine(run: WorkflowRun): string {
 
 /** "Running · 4 of 9 agents done · 12m3s". */
 function RunLine({ run }: { run: WorkflowRun }) {
-  const parts = [WORKFLOW_STATUS_TEXT[run.status], countsLine(run)];
-  const t = useElapsed(run);
-  if (t) parts.push(t);
-  return <>{parts.join(' · ')}</>;
+  return (
+    <>
+      {WORKFLOW_STATUS_TEXT[run.status]} · {countsLine(run)}
+      {run.startedAt !== undefined && <> · {elapsedNode(run)}</>}
+    </>
+  );
 }
-
-const agentModel = (a: WorkflowAgent): string | undefined => a.modelId ?? a.model;
 
 const isTextField = (el: EventTarget | null): boolean => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
@@ -133,9 +103,6 @@ export function WorkflowView({
   );
 }
 
-/** Right-click on an agent: the subagent menu (Open Subagent Conversation). */
-const agentMenu = (taskId: string, sessionId: string, a: WorkflowAgent) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.label });
-
 /** What a run returned: its summary as Markdown, its other fields in a table, the raw JSON on demand. */
 function ResultSection({ text }: { text: string }) {
   const parts = resultParts(text);
@@ -171,7 +138,6 @@ function WorkflowOverview({
   onAgent: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const lastTool = (a: WorkflowAgent) => a.lastTool && `${a.lastTool.name}${a.lastTool.preview ? `: ${a.lastTool.preview}` : ''}`;
   return (
     <div className={isPhone ? 'pg-scroll' : 'workflow-overview'}>
       {isPhone ? (
@@ -201,48 +167,17 @@ function WorkflowOverview({
             detail={p.detail}
             empty={p.agents.length === 0 && 'No agents yet.'}
           >
-            <RowList
-              bare
-              rows={p.agents}
-              rowKey={(a) => a.agentId}
-              idPrefix="workflow-overview-agent"
+            <WorkflowAgentList
+              agents={p.agents}
               label={p.title || 'Other agents'}
+              idPrefix="workflow-overview-agent"
               listClass="subagent-list pane-rows"
-              rowClass="subagent-item"
               selected={selected}
-              onSelect={(a) => setSelected(a.agentId)}
-              onOpen={(a) => onAgent(a.agentId)}
-              activateOnClick
-              onMenu={(a) => agentMenu(taskId, sessionId, a)}
-              empty={null}
-              row={(a) => (
-                <>
-                  <div className="subagent-head">
-                    <StatusMark status={tabStatus(a.status)} />
-                    <span className="subagent-desc">{a.label}</span>
-                    <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[a.status]}</span>
-                  </div>
-                  <PropertyList
-                    className="subagent-facts"
-                    items={[
-                      { label: 'Model', value: agentModel(a) ?? 'Not known yet', className: 'mono' },
-                      { label: 'Time', value: <ElapsedText item={a} fallback="Not known yet" /> },
-                      a.status === 'running' && !!a.lastTool && { label: 'Now', value: lastTool(a), className: 'workflow-tool' },
-                      a.contextTokens !== undefined && a.status === 'running' && { label: 'Context', value: `${formatTokens(a.contextTokens)} tokens` },
-                      a.tokens !== undefined && { label: 'Used', value: `${formatTokens(a.tokens)} tokens${a.toolCalls !== undefined ? `, ${a.toolCalls} tool calls` : ''}` },
-                      !!a.result && { label: 'Result', value: resultSummary(a.result), className: 'workflow-result-line' },
-                      !!a.error && { label: 'Error', value: a.error, className: 'error-text' },
-                    ]}
-                  />
-                </>
-              )}
-              phoneRow={(a) => ({
-                lead: <StatusMark status={tabStatus(a.status)} />,
-                title: a.label,
-                sub: a.status === 'running' ? (lastTool(a) ?? agentModel(a)) : (a.error ?? (a.result ? resultSummary(a.result) : agentModel(a))),
-                value: elapsedNode(a),
-                tone: a.status === 'failed' ? 'error' : undefined,
-              })}
+              onSelect={setSelected}
+              onOpen={onAgent}
+              taskId={taskId}
+              sessionId={sessionId}
+              detailed
             />
           </Section>
         );

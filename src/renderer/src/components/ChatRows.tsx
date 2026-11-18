@@ -6,7 +6,9 @@ import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type S
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
 import { MessageBody, PromptBody } from './Markdown';
+import { atEnd } from './newest-first';
 import { ToolInputView, ToolResultView } from './ToolContent';
+import { reportError } from '../report-error';
 
 export type RowCtx = {
   taskId: string;
@@ -15,8 +17,34 @@ export type RowCtx = {
   onContextMenu?: (e: React.MouseEvent, row: MessageRow) => void;
 };
 
+/**
+ * A row's right-click menu in a chat or a task run's conversation (`chatId`:
+ * the run's id): the copy items, its file, a Task or Agent call's subagent,
+ * and while the message box takes text (`quote`), Quote the selection and
+ * Edit as New Message on the user's own message. `fork`: the chat's Fork from Here.
+ */
+export function showRowContextMenu(base: { chatId: string; taskId: string; quote: boolean; fork?: number; selectText?: string }, row: MessageRow): void {
+  const selection = window.getSelection()?.toString() || undefined;
+  const info = { ...base, selection, ...(row.agentId ? { agentId: row.agentId, label: row.preview } : {}) };
+  switch (row.kind) {
+    case 'prompt':
+    case 'guidance':
+      window.looper.chat.showContextMenu({
+        ...info,
+        text: row.text || undefined,
+        resend: base.quote ? { text: row.text, attachments: row.attachments ?? [] } : undefined,
+      });
+      return;
+    case 'tool':
+      window.looper.chat.showContextMenu({ ...info, text: row.text || undefined, textLabel: 'Copy Input', result: row.result || undefined, file: row.file });
+      return;
+    default:
+      window.looper.chat.showContextMenu({ ...info, text: row.text || undefined });
+  }
+}
+
 const openAttachment = (a: Attachment) =>
-  void window.looper.attachment.open(a.path).catch((e) => void window.looper.showError((e as Error).message));
+  void window.looper.attachment.open(a.path).catch(reportError);
 
 /** An image as a thumbnail button; `src` is null until it has loaded (the name shows meanwhile). */
 function ThumbButton({ name, src, onOpen }: { name: string; src: string | null; onOpen: () => void }) {
@@ -55,7 +83,7 @@ export type FileCtx = { taskId: string; runId: string };
 /** A stream saved whole to a file: "Full output (363.5KB) saved to a file", and Open. */
 function SavedLine({ what, saved, files }: { what: string; saved: SavedOutput; files?: FileCtx }) {
   const open = () =>
-    files && void window.looper.sessions.openFile(files.taskId, files.runId, saved.path, false).catch((e) => void window.looper.showError((e as Error).message));
+    files && void window.looper.sessions.openFile(files.taskId, files.runId, saved.path, false).catch(reportError);
   return (
     <div className="chat-command-saved" title={saved.path}>
       Full {what} ({sizeText(saved.bytes)}) saved to a file.{' '}
@@ -107,7 +135,7 @@ function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemov
             ref={outRef}
             onScroll={(e) => {
               const el = e.currentTarget;
-              atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+              atBottom.current = atEnd(el, 8);
             }}
           >
             {output || '(no output)'}
@@ -221,7 +249,7 @@ function SentFileItem({ f, ctx, images }: { f: SentFile; ctx: RowCtx; images?: s
     );
   }
   const open = (image: boolean) =>
-    void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image, image ? images : undefined).catch((e) => void window.looper.showError((e as Error).message));
+    void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image, image ? images : undefined).catch(reportError);
   if (f.inline && (info === undefined || info.thumbnail)) {
     return <ThumbButton name={f.name} src={info?.thumbnail ?? null} onOpen={() => open(true)} />;
   }

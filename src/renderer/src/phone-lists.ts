@@ -66,14 +66,9 @@ export function taskNameOf(windowTitle: string, runId: string): string {
   return windowTitle.endsWith(suffix) && windowTitle.length > suffix.length ? windowTitle.slice(0, -suffix.length) : windowTitle;
 }
 
-/** "22:40" (24-hour, no seconds) for a row's subtitle. */
-export function clockTime(ts: number | string): string {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-/** A row's metadata line: its time, then its duration when it has one. */
-export function timeAndDuration(ts: number | string, durationText: string): string {
-  return durationText ? `${clockTime(ts)} · ${durationText}` : clockTime(ts);
+/** A row's metadata line: its time of day (fmtHourMinute), then its duration when it has one. */
+export function timeAndDuration(time: string, durationText: string): string {
+  return durationText ? `${time} · ${durationText}` : time;
 }
 
 // ---------- the Dashboard ----------

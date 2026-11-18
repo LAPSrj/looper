@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { Harness } from '@shared/types';
-import { SettingsSchema } from '@shared/types';
-import { REPORT_INPUT, issueLines } from '@shared/issues';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
-import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { envToLine, joinTokens } from '@shared/cmdline';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { ConcurrencyLimit } from './components/form-blocks';
-import { useDialogKeys, useDiscardUnsaved, useLiveSettings } from './components/hooks';
+import { ConcurrencyLimit, parseArgsEnv } from './components/form-blocks';
+import { saveSettings, useDialogKeys, useDiscardUnsaved, useLiveSettings, useSave } from './components/hooks';
 import { SelectList, ListActions, ListButton } from './components/SelectList';
+import { reportError } from './report-error';
 
 const DEFAULT_COMMANDS: Record<Harness['kind'], string> = {
   'claude-code': 'claude',
@@ -31,7 +30,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
   const [envText, setEnvText] = useState('');
   const [tab, setTab] = useState<HarnessTab>('general');
   const [selectedModel, setSelectedModel] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
 
   const savedRef = useDiscardUnsaved(isNew, () => window.looper.discardHarness(envId, harnessId));
 
@@ -79,27 +78,22 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
       await window.looper.updateSettings({ environments });
       setSelectedModel(next.length ? Math.min(at, next.length - 1) : null);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
-  const doSave = async (): Promise<boolean> => {
-    const parsedArgs = tokenize(argsText);
-    if (!parsedArgs.ok) {
-      void window.looper.showError(`Arguments: ${parsedArgs.error}`);
-      return false;
-    }
-    const parsedEnv = lineToEnv(envText);
-    if (typeof parsedEnv === 'string') {
-      void window.looper.showError(`Environment variables: ${parsedEnv}`);
+  const doSave = async () => {
+    const parsed = parseArgsEnv({ label: 'Arguments', text: argsText }, { label: 'Environment variables', text: envText });
+    if ('problem' in parsed) {
+      void window.looper.showError(parsed.problem);
       return false;
     }
     const folded: Harness = {
       ...draft,
       name: draft.name.trim(),
       command: draft.command.trim(),
-      args: parsedArgs.tokens,
-      env: parsedEnv,
+      args: parsed.args,
+      env: parsed.env,
       models: live?.models,
     };
     folded.options = harnessOptions(folded);
@@ -108,25 +102,9 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
     const environments = settings.environments.map((e) =>
       e.id === envId ? { ...e, harnesses: e.harnesses.map((h) => (h.id === harnessId ? folded : h)) } : e,
     );
-    const parsed = SettingsSchema.safeParse({ ...settings, environments }, REPORT_INPUT);
-    if (!parsed.success) {
-      void window.looper.showError(issueLines(parsed.error));
-      return false;
-    }
-    setSaving(true);
-    try {
-      await window.looper.updateSettings({ environments: parsed.data.environments });
-      savedRef.current = true;
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    await saveSettings(settings, { environments });
+    savedRef.current = true;
   };
-  const save = async () => { if (await doSave()) window.close(); };
-  const apply = async () => { await doSave(); };
 
   return (
     <div className="editor">
@@ -240,7 +218,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           </div>
         )}
       />
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

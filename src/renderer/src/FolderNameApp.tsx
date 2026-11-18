@@ -1,26 +1,27 @@
 import { useEffect, useState } from 'react';
-import type { EngineEvent, TaskFolder } from '@shared/types';
-import { EmptyWindow, Field, FormGroup, SelectInput, TextInput } from './components/ui';
+import type { TaskFolder } from '@shared/types';
+import { Field, FormGroup, SelectInput, TextInput } from './components/ui';
 import { FolderOptions } from './components/form-blocks';
 import { WindowActions } from './components/WindowActions';
-import { subscribe } from './events';
+import { RenameWindow } from './components/RenameWindow';
+import { FOLDERS, useLiveItem, useSave, type ItemSource } from './components/hooks';
 
 /** The task list's folders or the Projects tab's: the calls and event each one's folders come with. */
-const SCOPES = {
+const SCOPES: Record<'tasks' | 'projects', ItemSource<TaskFolder> & { add: (name: string, parentId?: string) => Promise<TaskFolder>; rename: (id: string, name: string) => Promise<unknown> }> = {
   tasks: {
-    list: () => window.looper.folders.list(),
-    add: (name: string, parentId?: string) => window.looper.folders.add(name, parentId),
-    rename: (id: string, name: string) => window.looper.folders.rename(id, name),
-    /** The folders an event carries, when it's about these. */
-    foldersIn: (e: EngineEvent): TaskFolder[] | null => (e.type === 'folders' ? e.folders : null),
+    ...FOLDERS,
+    add: (name, parentId) => window.looper.folders.add(name, parentId),
+    rename: (id, name) => window.looper.folders.rename(id, name),
   },
   projects: {
     list: () => window.looper.projects.folders(),
-    add: (name: string, parentId?: string) => window.looper.projects.addFolder(name, parentId),
-    rename: (id: string, name: string) => window.looper.projects.renameFolder(id, name),
-    foldersIn: (e: EngineEvent): TaskFolder[] | null => (e.type === 'project-folders' ? e.folders : null),
+    from: (e) => (e.type === 'project-folders' ? e.folders : null),
+    add: (name, parentId) => window.looper.projects.addFolder(name, parentId),
+    rename: (id, name) => window.looper.projects.renameFolder(id, name),
   },
-} as const;
+};
+
+type Scope = keyof typeof SCOPES;
 
 /**
  * Standalone folder-name window, for the task list's folders or the Projects
@@ -34,67 +35,50 @@ export function FolderNameApp({
   parentId,
   moveProject,
 }: {
-  scope?: keyof typeof SCOPES;
+  scope?: Scope;
   folderId?: string;
   parentId?: string;
   moveProject?: string;
 }) {
   const api = SCOPES[scope];
+  if (folderId) {
+    return (
+      <RenameWindow
+        title="Rename Folder"
+        source={api}
+        id={folderId}
+        nameOf={(f) => f.name}
+        rename={(name) => api.rename(folderId, name)}
+        gone="This folder no longer exists."
+      />
+    );
+  }
+  return <NewFolder scope={scope} parentId={parentId} moveProject={moveProject} />;
+}
+
+function NewFolder({ scope, parentId, moveProject }: { scope: Scope; parentId?: string; moveProject?: string }) {
+  const api = SCOPES[scope];
   const [name, setName] = useState('');
-  const [folders, setFolders] = useState<TaskFolder[]>([]);
-  const [parent, setParent] = useState(parentId ?? '');
-  const [missing, setMissing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [chosen, setChosen] = useState(parentId ?? '');
+  const { items: folders } = useLiveItem(api, undefined);
+  const saver = useSave();
+  // A deleted parent falls back to the top level.
+  const parent = chosen && folders && !folders.some((x) => x.id === chosen) ? '' : chosen;
 
   useEffect(() => {
-    document.title = folderId ? 'Rename Folder' : 'New Folder';
-    if (!folderId) {
-      void api.list().then(setFolders);
-      return subscribe((e) => {
-        const list = api.foldersIn(e);
-        if (!list) return;
-        setFolders(list);
-        // A deleted parent falls back to the top level.
-        setParent((p) => (p && !list.some((x) => x.id === p) ? '' : p));
-      });
-    }
-    void api.list().then((all) => {
-      const f = all.find((x) => x.id === folderId);
-      if (!f) {
-        setMissing(true);
-        return;
-      }
-      setName(f.name);
-      setLoaded(true);
-    });
-    // Keep the draft; only track the folder itself (deletion).
-    return subscribe((e) => {
-      const list = api.foldersIn(e);
-      if (list && !list.some((x) => x.id === folderId)) setMissing(true);
-    });
-  }, [folderId, api]);
+    document.title = 'New Folder';
+  }, []);
 
-  const save = async () => {
+  const save = () => {
     if (!name.trim()) return;
-    setSaving(true);
-    try {
-      if (folderId) await api.rename(folderId, name);
-      else {
-        const folder = await api.add(name, parent || undefined);
-        if (moveProject) {
-          const projects = await window.looper.projects.list();
-          await window.looper.projects.reorder(projects.map((p) => p.id), { [moveProject]: folder.id });
-        }
+    saver.save(async () => {
+      const folder = await api.add(name, parent || undefined);
+      if (moveProject) {
+        const projects = await window.looper.projects.list();
+        await window.looper.projects.reorder(projects.map((p) => p.id), { [moveProject]: folder.id });
       }
-      window.close();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      setSaving(false);
-    }
+    });
   };
-
-  if (missing) return <EmptyWindow gone="This folder no longer exists." />;
 
   return (
     <div className="editor">
@@ -102,20 +86,18 @@ export function FolderNameApp({
         <div className="form">
           <FormGroup>
             <Field label="Name">
-              <TextInput selectWhen={loaded} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+              <TextInput autoFocus value={name} onChange={(e) => setName(e.target.value)} />
             </Field>
-            {!folderId && (
-              <Field label="Parent folder">
-                <SelectInput value={parent} onChange={(e) => setParent(e.target.value)}>
-                  <option value="">Top level</option>
-                  <FolderOptions folders={folders} />
-                </SelectInput>
-              </Field>
-            )}
+            <Field label="Parent folder">
+              <SelectInput value={parent} onChange={(e) => setChosen(e.target.value)}>
+                <option value="">Top level</option>
+                <FolderOptions folders={folders ?? []} />
+              </SelectInput>
+            </Field>
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: folderId ? 'Save' : 'Create', run: () => void save(), disabled: !name.trim() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Create', run: save, disabled: !name.trim() }} busy={saver.busy} />
     </div>
   );
 }

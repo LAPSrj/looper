@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { HostPlace } from '../../../shared/remote-access';
+import { Icon } from '../components/Icon';
 import { ICONS } from '../components/icons';
 
 /** The starting places' icons, as 16 px line paths (drawn by Icon on the desktop, larger on phones). */
@@ -46,8 +47,8 @@ export const PLACE_ICONS: Record<HostPlace, ReactNode> = {
 /** A starting place's icon at phone size: the same line paths, drawn 28 px. */
 export function PlaceGlyph({ place }: { place: HostPlace }) {
   return (
-    <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <Icon size={28} stroke={1.1}>
       {PLACE_ICONS[place]}
-    </svg>
+    </Icon>
   );
 }

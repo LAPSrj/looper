@@ -142,11 +142,15 @@ interface Pending {
 
 /** What the shell hears: server messages about windows, menus and dialogs, plus the two reconnect outcomes. */
 export type ShellMessage =
-  | Exclude<ServerMessage, { t: 'result' } | { t: 'event' } | { t: 'pong' }>
+  | Exclude<ServerMessage, { t: 'result' } | { t: 'event' } | { t: 'pong' } | { t: 'reload' }>
+  | { t: 'reload'; w: string }
   /** Reconnected, but the server no longer has this client's windows: start over. */
   | { t: 'reset' }
-  /** Reconnected and the windows are still there: reload each iframe so it reads fresh state. */
-  | { t: 'resumed' };
+  /**
+   * Reconnected and the server still has `windows` (the others closed meanwhile).
+   * The pages in `reload` load again to read what they missed; the others got it all.
+   */
+  | { t: 'resumed'; windows: string[]; reload: string[] };
 
 const SOCKET_OPEN = 1;
 
@@ -177,6 +181,10 @@ export class Session {
   private lastW = '';
   private readonly openWindows = new Set<string>();
   private readonly closedOffline = new Set<string>();
+  /** The last event or reload this page load got (the server numbers them): a reconnect asks for the ones after it. */
+  private lastSeq: number | null = null;
+  /** Windows whose calls were answered without the computer since it was last reached: their pages load again on its return. */
+  private readonly answeredOffline = new Set<string>();
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Map<string, Map<string, Set<(...args: any[]) => void>>>();
   private readonly shellListeners = new Set<(m: ShellMessage) => void>();
@@ -263,6 +271,7 @@ export class Session {
    * may swallow the error (Run Now does: on the desktop the main process shows its own dialog).
    */
   private invokeOffline(w: string, channel: string, args: unknown[]): Promise<any> {
+    this.answeredOffline.add(w);
     const offline = this.env.offline;
     if (offline?.reads(channel)) {
       const hit = offline.get(channel, args, w);
@@ -429,7 +438,14 @@ export class Session {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       const visible = this.env.visible?.();
-      this.post({ t: 'hello', platform: this.platform, ...(this.clientId ? { clientId: this.clientId } : {}), pageId: this.pageId, ...(visible === undefined ? {} : { visible }) });
+      this.post({
+        t: 'hello',
+        platform: this.platform,
+        ...(this.clientId ? { clientId: this.clientId } : {}),
+        pageId: this.pageId,
+        ...(visible === undefined ? {} : { visible }),
+        ...(this.clientId && this.lastSeq !== null ? { seq: this.lastSeq } : {}),
+      });
     };
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return;
@@ -483,6 +499,7 @@ export class Session {
     const pending = [...this.pending.values()];
     this.pending.clear();
     for (const p of pending) {
+      this.answeredOffline.add(p.w);
       const hit = this.env.offline?.reads(p.channel) ? this.env.offline.get(p.channel, p.args, p.w) : undefined;
       if (hit) p.resolve(hit.value);
       else p.reject(new Error(NOT_CONNECTED));
@@ -551,6 +568,7 @@ export class Session {
         return;
       }
       case 'event': {
+        this.lastSeq = msg.seq;
         const args = (msg.args as unknown[]).map(decodeBytes);
         if (msg.channel === 'engine:event') {
           const ev = args[0] as EngineEvent;
@@ -562,8 +580,14 @@ export class Session {
       }
       case 'pong':
         return;
+      case 'reload':
+        this.lastSeq = msg.seq;
+        this.emit({ t: 'reload', w: msg.w });
+        return;
       case 'welcome': {
         if (this.env.version && msg.version !== this.env.version && this.reloadForVersion(msg.version)) return;
+        // Replayed: what this page missed follows, numbered from its own last one.
+        if (!msg.replayed) this.lastSeq = msg.seq;
         this.clientId = msg.clientId;
         this.env.storage.setItem(CLIENT_ID_KEY, msg.clientId);
         const reconnect = this.everConnected;
@@ -578,7 +602,11 @@ export class Session {
         }, PING_MS);
         for (const cb of this.connectionListeners) cb(true);
         this.emit(msg);
-        if (reconnect) this.emit({ t: msg.resumed ? 'resumed' : 'reset' });
+        if (reconnect && msg.resumed) {
+          const reload = msg.replayed ? msg.windows.filter((w) => this.answeredOffline.has(w)) : msg.windows;
+          this.emit({ t: 'resumed', windows: msg.windows, reload });
+        } else if (reconnect) this.emit({ t: 'reset' });
+        this.answeredOffline.clear();
         for (const w of this.closedOffline) this.post({ t: 'window-close', w });
         this.closedOffline.clear();
         return;

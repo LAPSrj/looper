@@ -1,7 +1,7 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { FindBar, useFindHighlights, type FindState } from './FindBar';
-import { CARD_ITEMS, FIRST_ITEMS, readPlace, useKeepPlace, useNewestFirst, useStayAtEnd } from './newest-first';
-import { firstBelow } from './kept-place';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { FindBar, useFindFocus, useFindHighlights, type FindState } from './FindBar';
+import { atEnd } from './newest-first';
+import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './Conversation';
 import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import { LOGIN_FAILED_RE } from '@shared/logins';
@@ -9,35 +9,14 @@ import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
 import { useSessionsState } from './phone/useSessionsState';
-import { ChatRow, systemSelecting, ToolGroup, UserMessage, useSelectText, type RowCtx } from './ChatRows';
-import { groupRows, type ChatItem } from './chat-groups';
+import { showRowContextMenu, systemSelecting, UserMessage, useSelectText, type RowCtx } from './ChatRows';
+import { groupRows } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
 import { onUi } from '../events';
-import { Measured } from '../perf';
 import { useChatsSettings } from './hooks';
 import { ToolInputView } from './ToolContent';
-
-const Items = memo(function Items({ items, ctx, prefix }: { items: ChatItem[]; ctx: RowCtx; prefix: string }) {
-  return (
-    <>
-      {items.map((item) =>
-        item.kind === 'tools' ? (
-          <ToolGroup key={prefix + item.rows[0].id} rows={item.rows} ctx={ctx} />
-        ) : (
-          <ChatRow key={prefix + item.row.id} row={item.row} ctx={ctx} />
-        ),
-      )}
-    </>
-  );
-});
-
-/** The first `count` items' elements: each item draws one, and the dividers between the earlier sessions and this chat are the only others among them. */
-const itemEls = (el: HTMLElement, count: number): Element[] =>
-  [...el.children].filter((c) => !c.classList.contains('chat-divider')).slice(0, Math.max(0, count));
-
-/** Where the scroller's view starts on the screen. */
-const viewTop = (el: HTMLElement): number => el.getBoundingClientRect().top + el.clientTop;
+import { reportError } from '../report-error';
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
 
@@ -97,15 +76,6 @@ export function PermissionButtons({ chatId, permissionId }: { chatId: string; pe
   );
 }
 
-/** One line above the input: what the agent is doing, or why the chat ended. */
-function ChatStatus({ state }: { state: ChatState }) {
-  if (state.permissions.length > 0) return <div className="chat-status chat-working muted">{harnessKindLabel(state.harnessKind)} is waiting for your answer.</div>;
-  if (state.status === 'working') return <div className="chat-status chat-working muted">{harnessKindLabel(state.harnessKind)} is working…</div>;
-  if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {harnessKindLabel(state.harnessKind)}…</div>;
-  if (state.status === 'ended') return <div className="chat-status chat-working error-text">{state.error ?? 'The session ended.'}</div>;
-  return null;
-}
-
 /** Under the usage limit's message: whether Looper continues the chat at the reset, and the button that changes it. */
 function LimitNotice({ state }: { state: ChatState }) {
   const sessions = useSessionsState();
@@ -156,7 +126,7 @@ function endsOnLogin(rows: readonly MessageRow[]): boolean {
 
 /** Under Claude Code's error for a missing login: Log In, in a terminal window. */
 function LoginNotice({ state }: { state: ChatState }) {
-  const logIn = () => void window.looper.logins.logIn(state.environmentId, state.harnessId).catch((e) => void window.looper.showError((e as Error).message));
+  const logIn = () => void window.looper.logins.logIn(state.environmentId, state.harnessId).catch(reportError);
   return (
     <div className="chat-limit-notice">
       Claude Code needs you to log in again.
@@ -169,32 +139,10 @@ function LoginNotice({ state }: { state: ChatState }) {
 
 /** Right-click on a message or tool call: the chat's menu for that row. */
 function showRowMenu(state: ChatState, row: MessageRow, selectText: string | undefined): void {
-  const ended = state.status === 'ended';
   const all = [...state.history, ...state.rows];
-  const selection = window.getSelection()?.toString() || undefined;
   const index = all.indexOf(row);
   const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
-  const base = { chatId: state.id, taskId: state.taskId, selection, quote: !ended, fork, selectText };
-  switch (row.kind) {
-    case 'prompt':
-      window.looper.chat.showContextMenu({
-        ...base,
-        text: row.text || undefined,
-        resend: ended ? undefined : { text: row.text, attachments: row.attachments ?? [] },
-      });
-      return;
-    case 'tool':
-      window.looper.chat.showContextMenu({
-        ...base,
-        text: row.text || undefined,
-        textLabel: 'Copy Input',
-        result: row.result || undefined,
-        file: row.file,
-      });
-      return;
-    default:
-      window.looper.chat.showContextMenu({ ...base, text: row.text || undefined });
-  }
+  showRowContextMenu({ chatId: state.id, taskId: state.taskId, quote: state.status !== 'ended', fork, selectText }, row);
 }
 
 /**
@@ -213,9 +161,9 @@ function useDockHeight(sectionRef: RefObject<HTMLElement | null>, on: boolean): 
         else h += (el as HTMLElement).offsetHeight;
       }
       // A reader at the end stays there as the box takes more or less room.
-      const atEnd = !!scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+      const stays = !!scroll && atEnd(scroll);
       section.style.setProperty('--chat-dock-h', `${h}px`);
-      if (scroll && atEnd) scroll.scrollTop = scroll.scrollHeight;
+      if (scroll && stays) scroll.scrollTop = scroll.scrollHeight;
     };
     const ro = new ResizeObserver(measure);
     const watch = () => {
@@ -243,13 +191,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const id = state.id;
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
-  /** Ctrl+F counts up: the find box takes the focus and selects what it holds, once it shows. */
-  const [findFocus, setFindFocus] = useState(0);
-  useEffect(() => {
-    if (!findFocus) return;
-    findRef.current?.focus();
-    findRef.current?.select();
-  }, [findFocus]);
+  const findField = useFindFocus();
   // A drag that ends anywhere else (dropped outside, cancelled, left the window) clears the border.
   useEffect(() => {
     const end = () => {
@@ -271,31 +213,14 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   }, []);
   const [find, setFind] = useState<FindState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const conversation = useRef<ConversationHandle>(null);
   const composer = useRef<ComposerHandle>(null);
-  const findRef = useRef<HTMLInputElement | null>(null);
-  // A page coming back (a phone back from another app) puts the reader where they were; one opened anew starts at its end.
-  const [place] = useState(() => (embedded ? null : readPlace(id)));
-  const atBottom = useRef(!place || place.atEnd);
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const kept = el && place && !place.atEnd ? itemEls(el, 1)[0] : undefined;
-    if (el && kept) el.scrollTop += kept.getBoundingClientRect().top - viewTop(el) + place!.offset;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [state.rows.length, state.history.length, state.permissions.length, state.status, state.queued.length]);
-  useStayAtEnd(scrollRef, atBottom);
   const sectionRef = useRef<HTMLElement>(null);
   // On iOS the message box floats over the conversation, and what the agent is doing is the conversation's last row.
   const floatingBox = !embedded && document.documentElement.dataset.platform === 'ios';
   useDockHeight(sectionRef, floatingBox);
 
-  const matches = useFindHighlights(scrollRef, find, setFind, () => {
-    atBottom.current = false;
-  });
+  const matches = useFindHighlights(scrollRef, find, setFind, () => conversation.current?.leaveEnd());
 
   const stepFind = (dir: 1 | -1) => setFind((f) => (f ? { ...f, index: f.index + dir } : f));
   const closeFind = () => {
@@ -307,9 +232,9 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
     return onUi((e) => {
       if (e.type !== 'chat-find') return;
       setFind((f) => f ?? { query: window.getSelection()?.toString().trim() ?? '', index: 0 });
-      setFindFocus((n) => n + 1);
+      findField.focus();
     });
-  }, []);
+  }, [findField]);
 
   // Esc closes the find bar, else stops the agent's turn (the Chat menu shows it as Stop's key);
   // F3 and Shift+F3 step through the matches; Ctrl+Shift+Q quotes the text selected in the messages.
@@ -353,35 +278,12 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const allHistory = useMemo(() => groupRows(state.history, expandThinking), [state.history, expandThinking]);
   const allItems = useMemo(() => groupRows(state.rows, expandThinking), [state.rows, expandThinking]);
 
-  // Find draws every item, so it searches the whole chat.
-  const total = allHistory.length + allItems.length;
-  const { hidden, newer, onScroll: showMore, toEnd } = useNewestFirst(
-    scrollRef,
-    id,
-    total,
-    find !== null,
-    embedded ? CARD_ITEMS : FIRST_ITEMS,
-    place && !place.atEnd ? place.item : undefined,
-  );
-  const end = total - newer;
-  const keepPlace = useKeepPlace(
-    id,
-    () => {
-      const el = scrollRef.current;
-      if (!el) return null;
-      const els = itemEls(el, end - hidden);
-      if (els.length === 0) return { item: hidden, offset: 0 };
-      const top = viewTop(el);
-      const i = firstBelow(els.length, (n) => els[n].getBoundingClientRect().bottom, top);
-      return { item: hidden + i, offset: Math.round(top - els[i].getBoundingClientRect().top) };
-    },
-    atBottom,
-    embedded,
-  );
-  const history = useMemo(() => allHistory.slice(Math.min(hidden, allHistory.length), Math.min(end, allHistory.length)), [allHistory, hidden, end]);
-  const items = useMemo(
-    () => allItems.slice(Math.max(0, hidden - allHistory.length), Math.max(0, end - allHistory.length)),
-    [allItems, allHistory.length, hidden, end],
+  const parts = useMemo<ConversationPart[]>(
+    () => [
+      { key: 'h', items: allHistory, heading: state.historyLabel },
+      { key: 'r', items: allItems, heading: state.history.length > 0 && state.historyLabel ? 'This chat' : undefined },
+    ],
+    [allHistory, allItems, state.history.length, state.historyLabel],
   );
 
   const editQueued = (messageId: string) =>
@@ -430,22 +332,21 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           matches={matches}
           onChange={setFind}
           onClose={closeFind}
-          inputRef={(el) => {
-            findRef.current = el;
-          }}
+          inputRef={findField.inputRef}
         />
       )}
       <section className="builder-chat" ref={sectionRef}>
-        <div
-          className="chat-scroll"
-          ref={scrollRef}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            // The end of what's drawn is the chat's end only once its newest item is drawn.
-            atBottom.current = newer === 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-            showMore(el);
-            keepPlace();
-          }}
+        <Conversation
+          ref={conversation}
+          id={id}
+          parts={parts}
+          ctx={ctx}
+          endKey={`${state.rows.length}/${state.history.length}/${state.permissions.length}/${state.status}/${state.queued.length}`}
+          scrollRef={scrollRef}
+          // Find draws every item, so it searches the whole chat.
+          drawAll={find !== null}
+          card={embedded}
+          keepPlace={!embedded}
           onContextMenu={(e) => {
             const selection = window.getSelection()?.toString();
             if (!selection || systemSelecting(e)) return;
@@ -453,46 +354,35 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
             window.looper.chat.showContextMenu({ chatId: id, taskId: state.taskId, selection, quote: !ended });
           }}
         >
-          {history.length > 0 && state.historyLabel && <div className="pane-title chat-divider">{state.historyLabel}</div>}
-          <Measured id="Chat rows">
-            <Items items={history} ctx={ctx} prefix="h" />
-            {state.history.length > 0 && hidden <= allHistory.length && end >= allHistory.length && state.historyLabel && (
-              <div className="pane-title chat-divider">This chat</div>
-            )}
-            <Items items={items} ctx={ctx} prefix="r" />
-          </Measured>
-          {/* What follows the newest item waits until it's drawn. */}
-          {newer === 0 && state.limit && state.status === 'ready' && <LimitNotice state={state} />}
-          {newer === 0 && state.harnessKind === 'claude-code' && state.status !== 'working' && endsOnLogin(state.rows) && <LoginNotice state={state} />}
-          {newer === 0 && state.permissions.map((p) => <PermissionCard key={p.id} state={state} p={p} />)}
+          {state.limit && state.status === 'ready' && <LimitNotice state={state} />}
+          {state.harnessKind === 'claude-code' && state.status !== 'working' && endsOnLogin(state.rows) && <LoginNotice state={state} />}
+          {state.permissions.map((p) => (
+            <PermissionCard key={p.id} state={state} p={p} />
+          ))}
           {/* Queued messages close the conversation, outlined until the agent reads them; Edit and Cancel until they've gone to it. */}
-          {newer === 0 &&
-            state.queued.map((m) => (
-              <div key={m.id} className="chat-queued">
-                <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
-                {!m.sent && (
-                  <div className="chat-queued-actions">
-                    <button className="link" onClick={() => editQueued(m.id)}>
-                      Edit
-                    </button>
-                    <button className="link" onClick={() => void window.looper.chat.unqueue(id, m.id)}>
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          {floatingBox && newer === 0 && <ChatStatus state={state} />}
-        </div>
+          {state.queued.map((m) => (
+            <div key={m.id} className="chat-queued">
+              <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
+              {!m.sent && (
+                <div className="chat-queued-actions">
+                  <button className="link" onClick={() => editQueued(m.id)}>
+                    Edit
+                  </button>
+                  <button className="link" onClick={() => void window.looper.chat.unqueue(id, m.id)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+          {floatingBox && <ChatStatus state={state} />}
+        </Conversation>
         {!floatingBox && <ChatStatus state={state} />}
         <Composer
           ref={composer}
           state={state}
           embedded={embedded}
-          onSent={() => {
-            if (newer > 0) toEnd();
-            atBottom.current = true;
-          }}
+          onSent={() => conversation.current?.toEnd()}
         />
       </section>
     </div>

@@ -1,6 +1,7 @@
 import type { CommandOutput } from './bash-mode';
 import type { MessageRow } from './messages';
 import { stripMarkdown } from './messages-md';
+import { baseName } from './paths';
 import type { SlashCommand, UsageLimits } from './sessions';
 import type { HarnessModel } from './types';
 
@@ -22,8 +23,7 @@ export interface Attachment {
 
 /** A file's own name: its base name without the stamp Looper puts in front of an attachment copy's. */
 export function attachmentName(file: string): string {
-  const base = file.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || file;
-  return base.replace(/^\d{8}-\d{6}-[a-z0-9]{4}-/, '');
+  return baseName(file).replace(/^\d{8}-\d{6}-[a-z0-9]{4}-/, '');
 }
 
 /** A file handed to Looper to attach: a pasted image's bytes, or a dropped or picked file's host path. */

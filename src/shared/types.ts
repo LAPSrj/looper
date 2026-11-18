@@ -29,8 +29,13 @@ export const WatcherConfigSchema = z
      * means "restart me" (with backoff); stderr is diagnostics.
      */
     command: z.string().min(1),
-    /** Collect events this long before starting the run, so a burst becomes one run. */
+    /**
+     * Collect events until none came for this long, so a burst becomes one run.
+     * With sendRelatedEvents each related id waits for its own quiet.
+     */
     debounceSec: z.number().nonnegative().default(5),
+    /** The longest an event waits for that quiet, from the first event of its batch. Unset = no limit. */
+    maxWaitSec: z.number().nonnegative().optional(),
     /**
      * Start one catch-up run when watching starts cold (app launch, task
      * enabled, pause lifted, system wake, run window opening) — the check

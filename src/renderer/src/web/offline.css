@@ -1,9 +1,12 @@
 /* The screens of a phone without its computer: the first screen (Waiting) and the banner under the top bar. */
+/* Waiting shows before any frame has loaded its stylesheet, so the system palettes come in with this file. */
+@import './android-palette.css';
+@import './ios-palette.css';
 
 /* ---------- Waiting ---------- */
 
 html.offline-waiting-ios {
-  background: #f2f2f7;
+  background: var(--ios-grouped);
 }
 
 .offline-waiting {
@@ -38,8 +41,8 @@ html.offline-waiting-ios {
 }
 
 .offline-waiting.ios {
-  background: #f2f2f7;
-  color: #000;
+  background: var(--ios-grouped);
+  color: var(--ios-label);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
 }
 
@@ -53,7 +56,7 @@ html.offline-waiting-ios {
 .offline-waiting.ios p {
   margin-bottom: 18px;
   font-size: 15px;
-  color: rgba(60, 60, 67, 0.6);
+  color: var(--ios-label2);
 }
 
 .offline-waiting.ios button {
@@ -61,7 +64,7 @@ html.offline-waiting-ios {
   border: 0;
   background: none;
   font-size: 17px;
-  color: #0088ff;
+  color: var(--ios-tint);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -70,8 +73,8 @@ html.offline-waiting-ios {
 }
 
 .offline-waiting.android {
-  background: #f8f9ff;
-  color: #191c20;
+  background: var(--md-surface);
+  color: var(--md-on-surface);
   font-family: Roboto, system-ui, sans-serif;
 }
 
@@ -84,7 +87,7 @@ html.offline-waiting-ios {
 .offline-waiting.android p {
   margin-bottom: 20px;
   font-size: 14px;
-  color: #43474e;
+  color: var(--md-on-surface-variant);
 }
 
 .offline-waiting.android button {
@@ -92,37 +95,10 @@ html.offline-waiting-ios {
   padding: 0 24px;
   border: 0;
   border-radius: 20px;
-  background: #0061a4;
+  background: var(--md-primary);
   font-size: 14px;
   font-weight: 500;
-  color: #fff;
-}
-
-@media (prefers-color-scheme: dark) {
-  html.offline-waiting-ios {
-    background: #000;
-  }
-  .offline-waiting.ios {
-    background: #000;
-    color: #fff;
-  }
-  .offline-waiting.ios p {
-    color: rgba(235, 235, 245, 0.6);
-  }
-  .offline-waiting.ios button {
-    color: #0091ff;
-  }
-  .offline-waiting.android {
-    background: #111418;
-    color: #e1e2e8;
-  }
-  .offline-waiting.android p {
-    color: #c3c7cf;
-  }
-  .offline-waiting.android button {
-    background: #9ecaff;
-    color: #003258;
-  }
+  color: var(--md-on-primary);
 }
 
 /* ---------- the banner ---------- */
@@ -162,18 +138,19 @@ html.offline-waiting-ios {
   cursor: pointer;
 }
 
+/* The banner shows only in a frame: the bar's color is the frame's (ios.css). */
 .offline-banner.ios {
-  background: var(--ios-bar, #f9f9f9);
-  border-bottom: 0.5px solid var(--ios-sep, rgba(0, 0, 0, 0.12));
+  background: var(--ios-bar);
+  border-bottom: 0.5px solid var(--ios-sep);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   font-size: 13px;
-  color: var(--ios-label2, rgba(60, 60, 67, 0.6));
+  color: var(--ios-label2);
 }
 
 .offline-banner.ios .offline-banner-retry {
   font: inherit;
   font-size: 15px;
-  color: var(--ios-tint, #0088ff);
+  color: var(--ios-tint);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -182,34 +159,21 @@ html.offline-waiting-ios {
 }
 
 .offline-banner.android {
-  background: #eceef4;
+  background: var(--md-surface-container);
   border-bottom: 0;
   font-family: Roboto, system-ui, sans-serif;
-  color: #43474e;
+  color: var(--md-on-surface-variant);
 }
 
 .offline-banner.android .offline-banner-retry {
   font-weight: 500;
-  color: #0061a4;
+  color: var(--md-primary);
 }
 
 @media (prefers-color-scheme: dark) {
-  .offline-banner.ios {
-    --offline-mark: #000;
-    background: var(--ios-bar, #161617);
-    border-bottom-color: var(--ios-sep, rgba(255, 255, 255, 0.12));
-    color: var(--ios-label2, rgba(235, 235, 245, 0.6));
-  }
-  .offline-banner.ios .offline-banner-retry {
-    color: var(--ios-tint, #0091ff);
-  }
+  .offline-banner.ios,
   .offline-banner.android {
     --offline-mark: #000;
-    background: #1d2024;
-    color: #c3c7cf;
-  }
-  .offline-banner.android .offline-banner-retry {
-    color: #9ecaff;
   }
 }
 

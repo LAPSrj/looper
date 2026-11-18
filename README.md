@@ -50,7 +50,8 @@ CHECKING ──act:true──▶ [CLASSIFYING ──no──▶ IDLE] ──yes�
 ```
 
 1. **Check** (optional) — your script runs in the task's directory and prints
-   one JSON line: `{"act": true, "summary": "3 new issues", "context": {…}}`.
+   one JSON line: `{"act": true, "summary": "3 new issues", "context": {…}}`,
+   or an array of those, one per item found, and each item gets a run of its own.
 2. **Classify** (optional) — a cheap model gets the summary and answers
    `{act, reason}` under a strict schema; its cost is recorded in the run log.
 3. **Agent** — a fresh session of the task's harness starts in the task's

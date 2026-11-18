@@ -7,6 +7,7 @@ import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { REMOTE_STATUS_LABELS, fmtDate, fmtTime } from './format';
 import { subscribe } from './events';
+import { keptSelection } from './components/selection';
 
 const lastLine = (c: RemoteConversation) => c.lastMessage ?? (c.status === 'waiting' ? 'No message yet' : '');
 
@@ -33,7 +34,7 @@ export function RemoteConversationsApp() {
     document.title = 'Remote Control Conversations';
     const apply = (s: RemoteState) => {
       setState(s);
-      setSelected((id) => (id && s.conversations.some((c) => c.id === id) ? id : (s.conversations[0]?.id ?? null)));
+      setSelected((id) => keptSelection(id, s.conversations, (c) => c.id));
     };
     void window.looper.remote.state().then(apply);
     return subscribe((e) => {
@@ -86,17 +87,20 @@ export function RemoteConversationsApp() {
               })}
             />
           }
+          empty="Select a conversation"
           detail={
-            <div className="runlog-result">
-              {message ? (
-                <>
-                  {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
-                  <Markdown text={message.text} />
-                </>
-              ) : (
-                <div className="runlog-result-empty muted">{conv ? 'No message yet' : 'Select a conversation'}</div>
-              )}
-            </div>
+            conv && (
+              <div className="runlog-result">
+                {message ? (
+                  <>
+                    {message.from === 'user' && <div className="runlog-result-from muted">You</div>}
+                    <Markdown text={message.text} />
+                  </>
+                ) : (
+                  <div className="runlog-result-empty muted">No message yet</div>
+                )}
+              </div>
+            )
           }
         />
       </div>

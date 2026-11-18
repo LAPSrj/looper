@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { RemoteState } from '@shared/remote';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, describeEnvironment, harnessKindLabel, harnessModels, withKind } from '@shared/environments';
+import { describeEnvironment, effortLabel, harnessKindLabel, harnessModels, permissionLabel, withKind } from '@shared/environments';
 import { projectTaskId } from '@shared/projects';
 import { isSessionRun } from '@shared/runs';
 import { envToLine, joinTokens } from '@shared/cmdline';
@@ -10,22 +10,20 @@ import { resultTone } from '../phone-lists';
 import { gitTabLabel } from '@shared/git';
 import { DataTable, type DataCol } from './DataTable';
 import { GitView, useGitStatus } from './GitView';
-import { useGitRepo } from './hooks';
+import { DetailStatus, DetailView } from './DetailView';
+import { useDialogKeys, useGitRepo } from './hooks';
 import { useSessionsState } from './phone/useSessionsState';
-import { PropertyList } from './PropertyList';
 import { RunLog } from './RunLog';
-import { TabBar } from './ui';
-import { subscribe } from '../events';
+import { useRunRecords } from '../useRunRecords';
 
 type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
 
-const TABS: [ProjectTab, string][] = [
+/** A project's tabs, in order (Ctrl+Tab steps through them), before Git, which a project in a repository adds. */
+export const PROJECT_TABS: readonly (readonly [ProjectTab, string])[] = [
   ['status', 'Status'],
   ['tasks', 'Tasks'],
   ['sessions', 'Chats'],
 ];
-
-const MAX_RECORDS = 500;
 
 /** The main window's view of a project: its settings, its tasks, its chats and terminal sessions, and its git repository. */
 export function ProjectDetail({
@@ -52,34 +50,24 @@ export function ProjectDetail({
   const sessions = useSessionsState();
   const git = useGitStatus(gitRepo ? project.id : undefined, !!sessions?.sessions.some((s) => s.projectId === project.id && s.status === 'working'));
   const [picked, setPicked] = useState<string | null>(null);
-  const [records, setRecords] = useState<RunRecord[]>([]);
   const standIn = projectTaskId(project.id);
   const mine = tasks.filter((t) => t.projectId === project.id);
   // The Chats tab lists the project's own sessions and the ones that went on from its tasks' runs.
-  const taskKey = mine.map((t) => t.id).join('\n');
+  const idKey = [standIn, ...mine.map((t) => t.id)].join('\n');
+  const ids = useMemo(() => idKey.split('\n'), [idKey]);
+  const { records: byTask } = useRunRecords(ids);
+  const records = useMemo(() => ids.flatMap((id) => (byTask[id] ?? []).filter((r: RunRecord) => id === standIn || isSessionRun(r))), [ids, byTask, standIn]);
 
-  useEffect(() => {
-    const taskIds = new Set(taskKey ? taskKey.split('\n') : []);
-    const mineRecord = (r: RunRecord) => r.taskId === standIn || (taskIds.has(r.taskId) && isSessionRun(r));
-    let live = true;
-    void Promise.all([standIn, ...taskIds].map((id) => window.looper.runs.list(id, MAX_RECORDS))).then((lists) => {
-      if (live) setRecords(lists.flat().filter(mineRecord));
-    });
-    const off = subscribe((e) => {
-      if (e.type === 'record' && mineRecord(e.record)) setRecords((list) => [...list, e.record].slice(-MAX_RECORDS));
-    });
-    return () => {
-      live = false;
-      off();
-    };
-  }, [standIn, taskKey]);
+  const tabs = gitRepo ? [...PROJECT_TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)] as const] : PROJECT_TABS;
+  // Ctrl+Tab and Ctrl+PageUp/PageDown step through the tabs, as they do a task's.
+  useDialogKeys<ProjectTab>({ tabs: tabs.map(([id]) => id), tab, onTab: setTab });
 
   const env = environments.find((e) => e.id === project.environmentId);
   const harness = env ? (project.harnessId ? env.harnesses.find((h) => h.id === project.harnessId) : env.harnesses[0]) : undefined;
   const kind = harness && harness.kind !== 'custom' ? harness.kind : undefined;
   const model = project.model ? (harness ? harnessModels(harness).find((m) => m.id === project.model)?.name : undefined) ?? project.model : 'Default';
-  const effort = project.effort && kind ? (EFFORT_LEVELS[kind].find(([v]) => v === project.effort)?.[1] ?? project.effort) : project.effort;
-  const mode = kind ? (PERMISSION_MODES[kind].find(([v]) => v === project.permissionMode)?.[1] ?? project.permissionMode) : project.permissionMode;
+  const effort = project.effort ? effortLabel(kind, project.effort) : project.effort;
+  const mode = permissionLabel(kind, project.permissionMode);
   const problem = remote?.problems[`project:${project.id}`];
   const remoteText = !project.remote
     ? 'Off'
@@ -99,74 +87,59 @@ export function ProjectDetail({
   ];
 
   return (
-    <div className="detail">
-      {!untitled && (
-        <div className="detail-bar">
-          <span className="pane-title">{project.name}</span>
+    <DetailView title={project.name} untitled={untitled} tabs={{ items: tabs, active: tab, onSelect: setTab }}>
+      {tab === 'status' && (
+        <DetailStatus
+          items={[
+            { label: 'Working directory', value: project.cwd, className: 'mono' },
+            { label: 'Environment', value: env ? withKind(env.name, describeEnvironment(env)) : <span className="warn">Unknown environment "{project.environmentId}"</span> },
+            { label: 'Harness', value: harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None' },
+            {
+              label: 'Model',
+              value: (
+                <>
+                  {model}
+                  {effort ? `, ${effort.toLowerCase()} effort` : ''}
+                </>
+              ),
+            },
+            { label: 'Session type', value: project.mode === 'headless' ? 'Headless' : 'Interactive' },
+            { label: 'Permission mode', value: mode || 'None' },
+            { label: 'Extra command-line arguments', value: project.extraArgs.length ? joinTokens(project.extraArgs) : 'None', className: project.extraArgs.length ? 'mono' : undefined },
+            { label: 'Extra environment variables', value: Object.keys(project.env).length ? envToLine(project.env) : 'None', className: Object.keys(project.env).length ? 'mono' : undefined },
+            { label: 'Remote Control', value: remoteText },
+          ]}
+        />
+      )}
+      {tab === 'tasks' && (
+        <div className="runlog">
+          <DataTable
+            cols={taskCols}
+            rows={mine}
+            rowKey={(t) => t.id}
+            idPrefix="project-task"
+            label="Tasks"
+            storageKey="project-tasks"
+            rowClass={(t) => `${runtimes[t.id]?.lastResult ? `result-${runtimes[t.id].lastResult}` : ''}${!t.enabled ? ' muted' : ''}`}
+            selected={picked}
+            onSelect={(t) => setPicked(t.id)}
+            onOpen={(t) => onSelectTask(t.id)}
+            empty="No tasks run in this project."
+            phoneRow={(t) => {
+              const rt = runtimes[t.id];
+              return {
+                title: t.name,
+                sub: [statusOf(t), rt?.lastRunAt ? fmtClock(rt.lastRunAt, Date.now()) : 'Never', rt?.lastDetail].filter(Boolean).join(' · '),
+                value: rt?.lastResult ? resultLabel(rt.lastResult) : undefined,
+                valueTone: rt?.lastResult ? resultTone(rt.lastResult) : undefined,
+                tone: t.enabled ? undefined : 'muted',
+              };
+            }}
+          />
         </div>
       )}
-      <TabBar
-        tabs={gitRepo ? [...TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] : TABS}
-        active={tab}
-        onSelect={setTab}
-        ctrlTab
-      />
-      <section className="tab-body">
-        {tab === 'status' && (
-          <div className="status-pane">
-            <PropertyList
-              items={[
-                { label: 'Working directory', value: project.cwd, className: 'mono' },
-                { label: 'Environment', value: env ? withKind(env.name, describeEnvironment(env)) : <span className="warn">Unknown environment "{project.environmentId}"</span> },
-                { label: 'Harness', value: harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None' },
-                {
-                  label: 'Model',
-                  value: (
-                    <>
-                      {model}
-                      {effort ? `, ${effort.toLowerCase()} effort` : ''}
-                    </>
-                  ),
-                },
-                { label: 'Session type', value: project.mode === 'headless' ? 'Headless' : 'Interactive' },
-                { label: 'Permission mode', value: mode || 'None' },
-                { label: 'Extra command-line arguments', value: project.extraArgs.length ? joinTokens(project.extraArgs) : 'None', className: project.extraArgs.length ? 'mono' : undefined },
-                { label: 'Extra environment variables', value: Object.keys(project.env).length ? envToLine(project.env) : 'None', className: Object.keys(project.env).length ? 'mono' : undefined },
-                { label: 'Remote Control', value: remoteText },
-              ]}
-            />
-          </div>
-        )}
-        {tab === 'tasks' && (
-          <div className="runlog">
-            <DataTable
-              cols={taskCols}
-              rows={mine}
-              rowKey={(t) => t.id}
-              idPrefix="project-task"
-              label="Tasks"
-              storageKey="project-tasks"
-              rowClass={(t) => `${runtimes[t.id]?.lastResult ? `result-${runtimes[t.id].lastResult}` : ''}${!t.enabled ? ' muted' : ''}`}
-              selected={picked}
-              onSelect={(t) => setPicked(t.id)}
-              onOpen={(t) => onSelectTask(t.id)}
-              empty="No tasks run in this project."
-              phoneRow={(t) => {
-                const rt = runtimes[t.id];
-                return {
-                  title: t.name,
-                  sub: [statusOf(t), rt?.lastRunAt ? fmtClock(rt.lastRunAt, Date.now()) : 'Never', rt?.lastDetail].filter(Boolean).join(' · '),
-                  value: rt?.lastResult ? resultLabel(rt.lastResult) : undefined,
-                  valueTone: rt?.lastResult ? resultTone(rt.lastResult) : undefined,
-                  tone: t.enabled ? undefined : 'muted',
-                };
-              }}
-            />
-          </div>
-        )}
-        {tab === 'sessions' && <RunLog records={records} sessions />}
-        {tab === 'git' && <GitView projectId={project.id} watch={git} />}
-      </section>
-    </div>
+      {tab === 'sessions' && <RunLog records={records} sessions />}
+      {tab === 'git' && <GitView projectId={project.id} watch={git} />}
+    </DetailView>
   );
 }

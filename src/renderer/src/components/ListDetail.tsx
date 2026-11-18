@@ -3,7 +3,8 @@ import type { SplitLayout } from '../web/nav-stack';
 import { isPhone } from '../web/page-nav';
 import { NavBar } from './NavBar';
 import { SplitEmpty, SplitView, useContainerSplit } from './phone/PhoneSplit';
-import { SplitPane, useSideWidths, type PaneSize, type SideWidth } from './SplitPane';
+import { Segmented } from './phone/PhoneList';
+import { SplitPane, Splitter, useSideWidths, type PaneSize, type SideSplitter, type SideWidth } from './SplitPane';
 import { TabBar } from './ui';
 
 /** The desktop always has a row selected, and it shows; on a phone or tablet a selection opens the row, so nothing starts selected. */
@@ -22,9 +23,9 @@ export interface ListDetailTabs {
 
 export interface ListDetailProps {
   list: ReactNode;
-  /** What the selected row shows. The desktop always draws it, so it has to handle "nothing selected" itself. */
+  /** What the selected row shows; null when no row is selected, where the desktop's pane draws `empty`. */
   detail: ReactNode;
-  /** A row is opened. Only phones and tablets read this: on the desktop the pane is always there. */
+  /** A row is opened. Only phones and tablets read this: on the desktop the pane is always there, and `detail` says what's in it. */
   open?: boolean;
   /** Back, where the detail is a screen of its own. */
   onClose?: () => void;
@@ -32,7 +33,7 @@ export interface ListDetailProps {
   detailTitle?: string;
   /** What the list is called, for Back inside a panel, where the bar is out of reach. */
   backLabel?: string;
-  /** The detail column with no row open (an Overview, or a sentence). */
+  /** The detail column with no row open (an Overview, or a sentence): a phone's or tablet's while `open` is off, the desktop's while `detail` is null. */
   empty?: ReactNode;
   /** The detail is only a preview of what a row opens: on a phone or tablet a tap opens that, so there's only the list. */
   preview?: boolean;
@@ -70,8 +71,8 @@ export interface ListSummary {
 const Depth = createContext(0);
 /** Inside a sheet or an inspector the frame's bar isn't this content's, so Back is drawn in place. */
 export const InPanel = createContext(false);
-/** What the ListDetail around an Inspector tells it: its columns on a phone or tablet, its splitter's drag on the desktop. */
-export const InspectorHost = createContext<{ split?: SplitLayout | null; drag?: (e: React.MouseEvent) => void }>({});
+/** What the ListDetail around an Inspector tells it: its columns on a phone or tablet, its splitter on the desktop. */
+export const InspectorHost = createContext<{ split?: SplitLayout | null; splitter?: SideSplitter }>({});
 
 /**
  * A list and what its selected row shows, by role. The desktop draws two panes
@@ -87,7 +88,14 @@ export function ListDetail(props: ListDetailProps) {
 function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed, summary }: ListDetailProps) {
   const list = summary ? (
     <div className="list-summary">
-      <TabBar tabs={[['summary', summary.label], ['list', summary.listLabel]] as const} active={summary.shown ? 'summary' : 'list'} onSelect={(id) => summary.onShown(id === 'summary')} />
+      <div className="pg-segmented-wrap">
+        <Segmented
+          items={[['summary', summary.label], ['list', summary.listLabel]] as const}
+          value={summary.shown ? 'summary' : 'list'}
+          onChange={(id) => summary.onShown(id === 'summary')}
+          label="Show"
+        />
+      </div>
       {summary.shown ? <div className="list-summary-body">{summary.body}</div> : rows}
     </div>
   ) : (
@@ -136,13 +144,28 @@ function InlineBack({ label, onBack }: { label: string; onBack: () => void }) {
 const SHORT = 260;
 
 function Desktop(props: ListDetailProps) {
-  return props.sides ? <DesktopSides {...props} sides={props.sides} /> : <DesktopPanes {...props} />;
+  const { detail, empty } = props;
+  const p =
+    detail === null || detail === undefined || detail === false
+      ? {
+          ...props,
+          detail:
+            typeof empty === 'string' ? (
+              <div className="runlog-result">
+                <div className="runlog-result-empty muted">{empty}</div>
+              </div>
+            ) : (
+              empty
+            ),
+        }
+      : props;
+  return p.sides ? <DesktopSides {...p} sides={p.sides} /> : <DesktopPanes {...p} />;
 }
 
 /** The list, the detail and the inspector as one window's body. */
 function DesktopSides({ list, detail, inspector, inspectorOpen, sides }: ListDetailProps & { sides: NonNullable<ListDetailProps['sides']> }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { widths, dragLeft, dragRight } = useSideWidths(sides.storageKey, sides.left, sides.right, ref);
+  const { widths, left, right } = useSideWidths(sides.storageKey, sides.left, sides.right, ref);
   // The list and the inspector shrink to their smallest widths before the detail drops under its least.
   const listTrack = list ? `minmax(${sides.left.min}px, ${widths.left}px) 5px ` : '';
   const columns = inspectorOpen ? `${listTrack}minmax(${sides.minDetail}px, 1fr) 5px minmax(${sides.right.min}px, ${widths.right}px)` : `${listTrack}1fr`;
@@ -151,11 +174,11 @@ function DesktopSides({ list, detail, inspector, inspectorOpen, sides }: ListDet
       {list && (
         <>
           {list}
-          <div className="sidebar-divider" onMouseDown={dragLeft} />
+          <Splitter className="sidebar-divider" axis="x" {...left} />
         </>
       )}
       {detail}
-      <InspectorHost.Provider value={{ drag: dragRight }}>{inspector}</InspectorHost.Provider>
+      <InspectorHost.Provider value={{ splitter: right }}>{inspector}</InspectorHost.Provider>
     </div>
   );
 }

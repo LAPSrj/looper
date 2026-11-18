@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AddonInfo } from '@shared/addons';
+import { useEffect, useMemo, useRef } from 'react';
 import { menuBar, runCommand } from '@shared/commands/build';
 import type { CommandView } from '@shared/commands/command';
 import type { CommandContext, HostCommand } from '@shared/commands/context';
-import type { PreventSleepState, Project, ProjectFolder, RestState, Settings, TaskFolder, View } from '@shared/types';
-import { emitUi, subscribe } from '../events';
+import { emitUi } from '../events';
+import { setView, useAddonList, useLiveState } from '../live-state';
 import { useRemoteAccessState } from '../useRemoteAccess';
 import { isPhone, uiHere } from '../web/page-nav';
 
@@ -13,51 +12,16 @@ const host = (name: HostCommand, ...args: string[]) => window.looper.commands.ho
 /**
  * What every window's commands read, kept current: the settings, the projects
  * and folders, the addons, and the computer's Rest Mode, Prevent Sleep and
- * Remote Access state.
+ * Remote Access state. The page's live state (live-state.ts) is shared with
+ * the main window's own, so each is read once a page.
  */
 export function useCommandState(): CommandContext {
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [windowsHost, setWindowsHost] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
-  const [taskFolders, setTaskFolders] = useState<TaskFolder[]>([]);
-  const [addons, setAddons] = useState<AddonInfo[]>([]);
-  const [rest, setRest] = useState<RestState | null>(null);
-  const [preventSleep, setPreventSleep] = useState<PreventSleepState | null>(null);
+  const { info, projects, projectFolders, projectLayout, taskFolders, rest, preventSleep, remote } = useLiveState();
+  const { addons } = useAddonList();
   const remoteAccess = useRemoteAccessState();
-  const [remoteRunning, setRemoteRunning] = useState(false);
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-
-  useEffect(() => {
-    void window.looper.info().then((i) => {
-      setSettings(i.settings);
-      setWindowsHost(i.host === 'windows');
-    });
-    void window.looper.projects.list().then(setProjects);
-    void window.looper.projects.folders().then(setProjectFolders);
-    void window.looper.folders.list().then(setTaskFolders);
-    void window.looper.addons.list().then(setAddons);
-    void window.looper.restState().then(setRest);
-    void window.looper.preventSleepState().then(setPreventSleep);
-    void window.looper.remote.state().then((s) => setRemoteRunning(s.running));
-    const unsubAddons = window.looper.addons.onEvent((e) => {
-      if (e.type === 'addons') setAddons(e.addons);
-    });
-    const unsub = subscribe((e) => {
-      if (e.type === 'settings') setSettings(e.settings);
-      else if (e.type === 'projects') setProjects(e.projects);
-      else if (e.type === 'project-folders') setProjectFolders(e.folders);
-      else if (e.type === 'folders') setTaskFolders(e.folders);
-      else if (e.type === 'rest') setRest(e.rest);
-      else if (e.type === 'prevent-sleep') setPreventSleep(e.state);
-      else if (e.type === 'remote') setRemoteRunning(e.state.running);
-    });
-    return () => {
-      unsub();
-      unsubAddons();
-    };
-  }, []);
+  const settings = info?.settings ?? null;
+  const windowsHost = info?.host === 'windows';
+  const remoteRunning = remote?.running ?? false;
 
   return useMemo(
     () => ({
@@ -65,13 +29,7 @@ export function useCommandState(): CommandContext {
       here: uiHere,
       windowsHost,
       settings,
-      setView: (patch: Partial<View>) => {
-        const s = settingsRef.current;
-        if (!s) return;
-        const view = { ...s.view, ...patch };
-        setSettings({ ...s, view });
-        void window.looper.updateSettings({ view }).catch((e) => void window.looper.showError((e as Error).message));
-      },
+      setView,
       ui: emitUi,
       host,
       closeWindow: () => window.close(),
@@ -79,6 +37,7 @@ export function useCommandState(): CommandContext {
       project: null,
       projects,
       projectFolders,
+      projectLayout,
       taskFolders,
       addons,
       rest,
@@ -86,7 +45,7 @@ export function useCommandState(): CommandContext {
       remoteAccess,
       remoteRunning,
     }),
-    [windowsHost, settings, projects, projectFolders, taskFolders, addons, rest, preventSleep, remoteAccess, remoteRunning],
+    [windowsHost, settings, projects, projectFolders, projectLayout, taskFolders, addons, rest, preventSleep, remoteAccess, remoteRunning],
   );
 }
 

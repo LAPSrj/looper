@@ -19,7 +19,7 @@ import {
 import { ProjectStore } from './store/projects';
 import { SettingsSchema } from '../shared/types';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
-import { resolveEnvironment, resolveHarness, startsWithRemoteControl } from '../shared/environments';
+import { harnessModels, resolveEnvironment, resolveHarness, startsWithRemoteControl } from '../shared/environments';
 import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind } from './host';
 import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
@@ -31,12 +31,15 @@ import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions
 import { CODEX_CACHE_MS } from './context';
 import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
-import { ChatManager, imageMediaType, kindMismatchText } from './chat';
+import { ChatManager, imageMediaType, kindMismatchText, withFileList } from './chat';
 import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
 import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
-import type { CommandOutput } from '../shared/bash-mode';
+import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
+import { UserCommands } from './command-output';
+import { readPendingGuidance } from './guidance';
+import type { RunContext } from './steps/common';
 import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
-import { limitsKey, type SessionActivity, type SessionKind, type SessionsState } from '../shared/sessions';
+import { limitsKey, type SessionActivity, type SessionKind, type SessionsState, type SlashCommand } from '../shared/sessions';
 import { SessionHub } from './sessions';
 import { GitService } from './git';
 import { createWindowsPowerOps } from './power-win';
@@ -52,7 +55,7 @@ import { StateStore, type OpenConversation } from './store/state';
 import { expiredBinEntries, TaskStore } from './store/tasks';
 import { TemplateStore } from './store/templates';
 import { VersionStore, type FileContent } from './store/versions';
-import { createTarget } from './target';
+import { createTarget, type Target } from './target';
 import { referencedPaths, taskHostPath } from './task-files';
 import { BuilderManager } from './builder';
 import type { BuilderSetup, BuilderState } from '../shared/builder';
@@ -126,6 +129,8 @@ export interface Engine {
   getTask(id: string): Task | undefined;
   /** A task, or the stand-in a project's, a folder's or a Remote Control helper's sessions run as, by its stand-in id. */
   findSessionTask(id: string): Task | undefined;
+  /** The folder a run or session works in: a delegated agent's own, else its task's; undefined for an unknown task. */
+  workFolder(taskId: string, runId: string): string | undefined;
   /**
    * Other Folder…: the stand-in id a chat or terminal in a folder (a host path)
    * starts under, in the folder's environment (see folderEnvironment) with the
@@ -178,6 +183,8 @@ export interface Engine {
   writeBuilder(id: string, data: string): void;
   resizeBuilder(id: string, cols: number, rows: number): void;
   builderOutput(id: string): string;
+  /** Terminal view: copy pasted or dropped files where its harness reads them; returns their paths as the terminal pastes them. */
+  attachToBuilder(id: string, files: AttachmentInput[]): Promise<string>;
   /** Delete a task: it stops and moves to the Recycle Bin. */
   removeTask(id: string): boolean;
   // recycle bin
@@ -259,7 +266,7 @@ export interface Engine {
   /** A task's name, or the name of the folder project or helper whose conversations a stand-in id records. */
   taskName(id: string): string | undefined;
   /** Terminal window: copy the files into the task's attachments; returns their paths as the terminal pastes them. */
-  attachToTerminal(sessionId: string, files: AttachmentInput[]): string;
+  attachToTerminal(sessionId: string, files: AttachmentInput[]): Promise<string>;
   /**
    * Open Project in Chat, or Continue in Chat with a run id: the task's
    * harness in a chat. Continue gives the open chat holding the run's
@@ -326,7 +333,7 @@ export interface Engine {
   /** Chats in a turn or waiting on a permission answer. */
   busyChats(): number;
   /** Copy the files into the chat's task attachments, ready to send. */
-  attachToChat(chatId: string, files: AttachmentInput[]): Attachment[];
+  attachToChat(chatId: string, files: AttachmentInput[]): Promise<Attachment[]>;
   /** Send Now: the chat's queued messages go at once, ending the agent's turn if it's working. */
   sendNowChat(chatId: string): Promise<void>;
   /** Take a queued message out of the chat's queue (Cancel, or Edit). */
@@ -341,6 +348,8 @@ export interface Engine {
   sessionsState(): SessionsState;
   /** The background work, subagents and (terminal session) conversation of a session. */
   sessionActivity(id: string): SessionActivity | null;
+  /** A terminal session's or task run's skills, from its transcript: its message box's "/" list. */
+  sessionCommands(id: string): SlashCommand[];
   /** The sessions the Sessions windows show (their activity is sent as it changes). */
   watchSessions(ids: Iterable<string>): void;
   /** The user looked at a session: a finished turn or notification stops waiting for them. */
@@ -350,9 +359,10 @@ export interface Engine {
   /** The harness's own id for a listed session's conversation (Claude Code's session id, Codex's thread id); null before it has one. */
   harnessSessionId(id: string): string | null;
   /**
-   * Stop: end the agent's turn in a chat or terminal session. A chat asks
-   * Claude to stop, or ends Codex's turn; a terminal session gets Esc, as if
-   * pressed in it.
+   * Stop: end the agent's turn in a chat, terminal session or task run, and
+   * the "!" commands from its message box. A chat asks Claude to stop, or
+   * ends Codex's turn; a terminal session gets Esc, as if pressed in it; a
+   * task run goes on with its next guidance (Scheduler.stopTurn).
    */
   stopSession(id: string): Promise<void>;
   /**
@@ -369,8 +379,8 @@ export interface Engine {
   closeAllSessions(): Promise<void>;
   /** The end of a background command's output; null when it can't be read. */
   backgroundOutput(sessionId: string, taskId: string): Promise<string | null>;
-  /** Send to Sessions: the message to each chat (queued while it works) and typed into each terminal session. */
-  sendToSessions(ids: string[], text: string): void;
+  /** Send to Sessions: the message to each chat (queued while it works) and typed into each terminal session, with its files' paths. */
+  sendToSessions(ids: string[], text: string, attachments?: Attachment[]): void;
   /** Whether a host path is one of Looper's attachment copies (the only files a click on an attachment opens). */
   isAttachment(hostPath: string): boolean;
   /**
@@ -384,8 +394,22 @@ export interface Engine {
   continueRun(id: string, runId: string, guidance: string): boolean;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
   canGuideRun(id: string, runId: string): boolean;
-  /** Send guidance to a run in flight; the agent gets it mid-run. Throws when the run cannot take it. */
-  sendGuidance(id: string, runId: string, text: string): void;
+  /** Send guidance to a run in flight, with the paths of the attached files; the agent gets it mid-run. Throws when the run cannot take it. */
+  sendGuidance(id: string, runId: string, text: string, attachments?: Attachment[]): void;
+  /** Copies of the given files in the task's attachments, ready to go with guidance to one of its runs. */
+  attachToRun(id: string, files: AttachmentInput[]): Promise<Attachment[]>;
+  /**
+   * A "!" command from a task run's message box, run in the run's working
+   * directory (a delegated agent's own folder): its output once it ends or is
+   * stopped (`chat:command` events under the run's id show it as it comes).
+   */
+  runRunCommand(id: string, runId: string, command: string, commandId: string): Promise<CommandOutput>;
+  /** Stop under a run's running "!" command: that one alone ends. */
+  stopRunCommand(id: string, runId: string, commandId: string): Promise<void>;
+  /** Send Now in a run's message box: the guidance waiting goes in at once, ending the agent's turn. */
+  sendNowRun(id: string, runId: string): Promise<void>;
+  /** Take back the guidance waiting for a run's agent (Edit, Cancel), as it was sent; null once the agent has it. */
+  unqueueGuidance(id: string, runId: string): { text: string; attachments: Attachment[] } | null;
   // rest mode
   /** Throws when Rest Mode is unavailable (non-Windows host, or no power adapter) or a Prevent Sleep timer is on. */
   armRest(): void;
@@ -870,21 +894,37 @@ export function createEngine(opts: EngineOptions): Engine {
     chats: () => chats.list(),
     terminals: () => terminals.list().filter((t) => !remote.owns(t.id)),
     runs: () =>
-      settings.view.sessions.showRuns
-        ? scheduler.list().flatMap((rt) =>
-            rt.runs
+      scheduler.list().flatMap((rt) => [
+        ...(settings.view.sessions.showRuns
+          ? rt.runs
               // A run open in a chat is listed as its chat.
               .filter((r) => r.state === 'running' && !r.chat)
-              .map((r) => ({ id: r.runId, taskId: rt.taskId, startedAt: r.startedAt, held: r.held, question: r.question })),
-          )
-        : [],
+              .map((r) => ({ id: r.runId, taskId: rt.taskId, startedAt: r.startedAt, held: r.held, question: r.question, turnOver: scheduler.turnOver(r.runId) }))
+          : []),
+        // A delegated agent's run is listed with Show Task Runs off too, once it has started: nobody else watches its conversation.
+        ...rt.children.flatMap((r) => {
+          const task = r.state === 'running' ? scheduler.childTask(r.runId) : undefined;
+          if (!task) return [];
+          return [
+            {
+              id: r.runId,
+              taskId: rt.taskId,
+              startedAt: r.startedAt,
+              held: r.held,
+              question: r.question,
+              turnOver: scheduler.turnOver(r.runId),
+              delegate: { title: r.title ?? task.name, task },
+            },
+          ];
+        }),
+      ]),
     findTask: lookup,
     projects: () => projects.list(),
     harnessOf(task) {
       try {
         const env = resolveEnvironment(task, settings);
         const h = resolveHarness(task, env);
-        return { kind: h.kind, name: h.name, limitsKey: limitsKey(env.id, h.id) };
+        return { kind: h.kind, name: h.name, limitsKey: limitsKey(env.id, h.id), ...(h.kind === 'custom' ? {} : { models: harnessModels(h) }) };
       } catch {
         return { kind: 'custom', name: 'Terminal' };
       }
@@ -1246,12 +1286,21 @@ export function createEngine(opts: EngineOptions): Engine {
     await chats.suspendAll();
   };
 
+  /** Files a terminal was given, by their host paths, as it pastes them: as `target` sees them, quoted when they hold a space. */
+  const pastedPaths = (target: Target, hostPaths: string[]): string =>
+    hostPaths
+      .map((p) => target.toTargetPath(p))
+      .map((p) => (/\s/.test(p) ? target.quote(p) : p))
+      .join(' ');
+
   /** Copies of the given files (bytes, or a host file) in the task's attachments. */
-  const saveAttachments = (taskId: string, files: AttachmentInput[]): Attachment[] =>
-    files.map((f) => {
-      const file = runs.saveAttachment(taskId, f.name, 'data' in f ? { data: Buffer.from(f.data) } : { file: f.path });
-      return { name: path.basename(f.name), path: file, image: !!imageMediaType(file) };
-    });
+  const saveAttachments = (taskId: string, files: AttachmentInput[]): Promise<Attachment[]> =>
+    Promise.all(
+      files.map(async (f) => {
+        const file = await runs.saveAttachment(taskId, f.name, 'data' in f ? { data: Buffer.from(f.data) } : { file: f.path });
+        return { name: path.basename(f.name), path: file, image: !!imageMediaType(file) };
+      }),
+    );
 
   /**
    * The files that differ between version `n` and the newest version, as each
@@ -1341,7 +1390,47 @@ export function createEngine(opts: EngineOptions): Engine {
     if (e.type !== 'runtime') return;
     rest?.poke();
     preventSleep?.poke();
+    // The "!" commands of a run's message box end with the run.
+    for (const [runId, c] of runCommands) {
+      if (scheduler.list().some((rt) => [...rt.runs, ...rt.children].some((r) => r.runId === runId))) continue;
+      runCommands.delete(runId);
+      void c.stop();
+    }
   });
+
+  /** The "!" commands from each running task run's message box, by run id. */
+  const runCommands = new Map<string, UserCommands>();
+  /** A run's: run in its working directory (a delegated agent's own folder), with long output saved in its run folder. */
+  const runCommandsOf = (taskId: string, runId: string): UserCommands => {
+    const known = runCommands.get(runId);
+    if (known) return known;
+    const task = scheduler.childTask(runId) ?? lookup(taskId);
+    if (!task || !scheduler.canGuideRun(taskId, runId)) throw new Error('This run has ended, or its agent takes no messages now.');
+    const ctx: RunContext = {
+      task,
+      runId,
+      runDir: runs.runDir(taskId, runId),
+      target: createTarget(task, { host, settings }),
+      settings,
+      host,
+      log,
+      dataDir,
+      vars: {},
+    };
+    const commands = new UserCommands(ctx, {
+      label: `run ${runId}`,
+      onChange: () => undefined,
+      onOutput: (id, stdout, stderr) => emit({ type: 'chat:command', chatId: runId, id, stdout, stderr }),
+    });
+    runCommands.set(runId, commands);
+    return commands;
+  };
+  /**
+   * The guidance waiting for each run's agent as the user sent it (text and
+   * attachments), so Edit puts it back in the box as it was; the run folder's
+   * file holds it merged and formatted for the agent.
+   */
+  const queuedGuidance = new Map<string, { text: string; attachments: Attachment[]; body: string }[]>();
 
   /**
    * Completed-task retention: a task that has been finished for good long
@@ -1685,6 +1774,8 @@ export function createEngine(opts: EngineOptions): Engine {
     listTasks: () => tasks.list(),
     getTask: (id) => tasks.get(id),
     findSessionTask: lookup,
+    workFolder: (taskId, runId) =>
+      scheduler.childTask(runId)?.cwd ?? (tasks.get(taskId) && runs.summaries(taskId).find((s) => s.runId === runId)?.folder) ?? lookup(taskId)?.cwd,
     folderTaskId,
     saveTask(input: unknown, saveOpts?: { builderId?: string }): Task {
       const files = saveOpts?.builderId ? builders.filesOf(saveOpts.builderId) : undefined;
@@ -1729,6 +1820,10 @@ export function createEngine(opts: EngineOptions): Engine {
     writeBuilder: (id, data) => builders.write(id, data),
     resizeBuilder: (id, cols, rows) => builders.resize(id, cols, rows),
     builderOutput: (id) => builders.terminalOutput(id),
+    async attachToBuilder(id: string, files: AttachmentInput[]): Promise<string> {
+      const { target, paths } = await builders.saveFiles(id, files);
+      return pastedPaths(target, paths);
+    },
     listVersions: (id) => versions.list(id).map(summaryOf),
     async versionDetail(id: string, n: number, compare = false): Promise<VersionDetail> {
       const version = versions.get(id, n);
@@ -1885,15 +1980,14 @@ export function createEngine(opts: EngineOptions): Engine {
     isRemoteSession: (id) => remote.owns(id),
     usedRemoteConversations: () => remote.usedCount(),
     taskName: (id) => lookup(id)?.name,
-    attachToTerminal(sessionId: string, files: AttachmentInput[]): string {
+    async attachToTerminal(sessionId: string, files: AttachmentInput[]): Promise<string> {
       const taskId = terminals.taskOf(sessionId);
       const task = taskId ? lookup(taskId) : undefined;
       if (!task) throw new Error('This terminal session is closed.');
-      const target = createTarget(task, { host, settings });
-      return saveAttachments(task.id, files)
-        .map((a) => target.toTargetPath(a.path))
-        .map((p) => (/\s/.test(p) ? target.quote(p) : p))
-        .join(' ');
+      return pastedPaths(
+        createTarget(task, { host, settings }),
+        (await saveAttachments(task.id, files)).map((a) => a.path),
+      );
     },
     startChat(id: string, runId?: string): ChatState {
       const task = taskOrProject(id);
@@ -2008,7 +2102,7 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     closeChat: (chatId) => chats.close(chatId),
     busyChats: () => chats.busy(),
-    attachToChat(chatId: string, files: AttachmentInput[]): Attachment[] {
+    async attachToChat(chatId: string, files: AttachmentInput[]): Promise<Attachment[]> {
       const taskId = chats.taskOf(chatId);
       if (!taskId) throw new Error('This chat is closed.');
       return saveAttachments(taskId, files);
@@ -2023,6 +2117,7 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     sessionsState: () => sessionHub.state(),
     sessionActivity: (id) => sessionHub.activity(id),
+    sessionCommands: (id) => sessionHub.commands(id),
     watchSessions: (ids) => sessionHub.watch(ids),
     seenSession: (id) => sessionHub.seen(id),
     sessionKind(id: string): SessionKind | undefined {
@@ -2035,7 +2130,8 @@ export function createEngine(opts: EngineOptions): Engine {
       const chat = chats.get(id);
       if (chat) return readRunSessionId(runs.runDir(chat.taskId, id), chat.harnessKind);
       const taskId = chats.taskOf(id) ?? (remote.owns(id) ? undefined : terminals.taskOf(id)) ?? sessionHub.runTask(id);
-      const task = taskId ? lookup(taskId) : undefined;
+      // A delegated agent may run on another harness than its parent's task.
+      const task = taskId ? (scheduler.childTask(id) ?? lookup(taskId)) : undefined;
       if (!taskId || !task) return null;
       try {
         const kind = recordedKind(task);
@@ -2050,6 +2146,11 @@ export function createEngine(opts: EngineOptions): Engine {
       else if (terminals.taskOf(id) && !remote.owns(id) && !terminals.isStopped(id)) {
         terminals.write(id, '\x1b');
         sessionHub.stopped(id);
+      } else {
+        // A run's own window stops it too, listed in the Chats window or not.
+        const taskId = scheduler.list().find((rt) => [...rt.runs, ...rt.children].some((r) => r.runId === id))?.taskId;
+        if (!taskId) return;
+        await Promise.all([runCommands.get(id)?.stop(), scheduler.stopTurn(taskId, id)]);
       }
     },
     async restartSession(id: string): Promise<void> {
@@ -2080,14 +2181,20 @@ export function createEngine(opts: EngineOptions): Engine {
       const file = owner ? sessionHub.backgroundFile(sessionId, taskId) : undefined;
       return owner && file ? messages.readTail(owner, file) : null;
     },
-    sendToSessions(ids: string[], text: string): void {
+    sendToSessions(ids: string[], text: string, attachments: Attachment[] = []): void {
       const t = text.trim();
-      if (!t) return;
+      if (!t && !attachments.length) return;
       for (const id of ids) {
-        if (chats.taskOf(id)) chats.send(id, t, []);
+        if (chats.taskOf(id)) chats.send(id, t, attachments);
         // Pasted the way a terminal pastes, so a line break doesn't send it early, then Enter. A terminal
         // that quitting stopped isn't listed: the text would only start its harness, not reach it.
-        else if (terminals.taskOf(id) && !remote.owns(id) && !terminals.isStopped(id)) terminals.write(id, `\x1b[200~${t}\x1b[201~\r`);
+        else if (terminals.taskOf(id) && !remote.owns(id) && !terminals.isStopped(id)) {
+          const task = lookup(terminals.taskOf(id)!);
+          const target = task ? createTarget(task, { host, settings }) : undefined;
+          // The agent reads the files from their paths; a terminal has no "!" results to send (its own bash mode runs them).
+          const body = withFileList(t, target ? fileAttachments(attachments).map((a) => target.toTargetPath(a.path)) : []);
+          if (body) terminals.write(id, `\x1b[200~${body}\x1b[201~\r`);
+        }
       }
     },
     isAttachment(hostPath: string): boolean {
@@ -2126,7 +2233,40 @@ export function createEngine(opts: EngineOptions): Engine {
       return scheduler.continueRun(id, runId, guidance);
     },
     canGuideRun: (id, runId) => scheduler.canGuideRun(id, runId),
-    sendGuidance: (id, runId, text) => scheduler.sendGuidance(id, runId, text),
+    sendGuidance(id: string, runId: string, text: string, attachments: Attachment[] = []): void {
+      // The paths as the run's agent sees them: a delegated agent's environment may not be its parent's.
+      const task = scheduler.childTask(runId) ?? lookup(id);
+      if (!task) throw new Error(`unknown task ${id}`);
+      const target = createTarget(task, { host, settings });
+      // The commands the user ran go first, as in a chat's message.
+      const files = fileAttachments(attachments).map((a) => target.toTargetPath(a.path));
+      const runDir = runs.runDir(id, runId);
+      const earlier = readPendingGuidance(runDir) !== null ? (queuedGuidance.get(runId) ?? []) : [];
+      const body = withFileList(withCommands(text.trim(), attachments), files);
+      scheduler.sendGuidance(id, runId, body);
+      // An answer to the agent's question goes at once: only guidance waits.
+      if (readPendingGuidance(runDir) !== null) queuedGuidance.set(runId, [...earlier, { text: text.trim(), attachments, body }]);
+      else queuedGuidance.delete(runId);
+      sessionHub.reread(runId);
+    },
+    async attachToRun(id: string, files: AttachmentInput[]): Promise<Attachment[]> {
+      // A project's or folder's terminal session attaches files too.
+      if (!lookup(id)) throw new Error(`unknown task ${id}`);
+      return saveAttachments(id, files);
+    },
+    runRunCommand: (id, runId, command, commandId) => runCommandsOf(id, runId).run(command, commandId),
+    stopRunCommand: async (_id, runId, commandId) => runCommands.get(runId)?.stop(commandId),
+    sendNowRun: (id, runId) => scheduler.stopTurn(id, runId),
+    unqueueGuidance(id: string, runId: string) {
+      const text = scheduler.unqueueGuidance(id, runId);
+      const sent = queuedGuidance.get(runId);
+      queuedGuidance.delete(runId);
+      sessionHub.reread(runId);
+      if (text === null) return null;
+      // Guidance sent from elsewhere too (looper guide, Send Guidance…) comes back as the agent would have read it.
+      if (!sent?.length || sent.map((s) => s.body).join('\n\n') !== text) return { text, attachments: [] };
+      return { text: sent.map((s) => s.text).filter(Boolean).join('\n\n'), attachments: sent.flatMap((s) => s.attachments) };
+    },
     armRest(): void {
       if (!rest) throw new Error('Rest Mode is only available in the Looper app on Windows.');
       if (remote.isRunning()) throw new Error('Turn off Remote Control first: a sleeping computer drops its sessions.');

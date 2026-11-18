@@ -166,6 +166,8 @@ interface PendingEvents {
   lines: string[];
   /** They came out of a check, which told only once: the run that takes them doesn't run it again. */
   checked?: boolean;
+  /** One item of a check's list without a related id: it never joins another batch, so it gets a run of its own. */
+  own?: boolean;
 }
 
 /** What the scheduler needs of the chat a run is open in (Continue in Chat). */
@@ -269,6 +271,8 @@ export class Scheduler extends EventEmitter {
    * and the next session takes them.
    */
   private readonly waitingRuns = new Set<string>();
+  /** Headless runs whose turn Stop in their message box ended: their session's end isn't the run's. */
+  private readonly turnStops = new Set<string>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
   private readonly sleepOwed = new Set<string>();
   /** Per task: the retry a machine-failed scheduled run is owed (see MachineRetry). */
@@ -491,6 +495,46 @@ export class Scheduler extends EventEmitter {
     this.record(taskId, run.runId, 'guidance', 'sent', { summary: headlineOf(trimmed), body: trimmed });
     this.watchGuidance(taskId, run.runId, runDir);
     handle?.deliverGuidance();
+  }
+
+  /** The run's agent isn't in a turn: an interactive session at its prompt, or a headless run waiting for its next message. */
+  turnOver(runId: string): boolean {
+    return this.waitingRuns.has(runId) || !!this.agents.get(runId)?.turnOver;
+  }
+
+  /**
+   * Stop in a run's message box: the agent's turn ends and the run goes on,
+   * as a chat's does; the guidance waiting goes in at once (Send Now). An
+   * interactive session gets Esc. A headless one's turn is its process, so
+   * the session ends, and the run waits for the next guidance to resume the
+   * conversation with (`runAgent`). Stop Task still ends the whole run.
+   */
+  async stopTurn(taskId: string, runId: string): Promise<void> {
+    const rt = this.runtimes.get(taskId);
+    const run = rt?.runs.find((r) => r.runId === runId) ?? rt?.children.find((r) => r.runId === runId);
+    const handle = this.agents.get(runId);
+    const task = this.children.get(runId)?.task ?? this.d.tasks.get(taskId);
+    if (!run || run.state !== 'running' || run.chat || !handle || !task) return;
+    if (task.agent.mode !== 'headless') {
+      handle.stopTurn();
+      return;
+    }
+    this.turnStops.add(runId);
+    await handle.stop('stopped', 'the user stopped the turn');
+  }
+
+  /** Take back the guidance still waiting for the run's agent (Edit, Cancel); null when the agent has it already. */
+  unqueueGuidance(taskId: string, runId: string): string | null {
+    const runDir = this.d.runs.runDir(taskId, runId);
+    const text = takePendingGuidance(runDir);
+    const watch = this.guidanceWatches.get(runId);
+    if (text === null) return null;
+    if (watch) {
+      clearInterval(watch);
+      this.guidanceWatches.delete(runId);
+    }
+    this.record(taskId, runId, 'guidance', 'undelivered', { summary: 'taken back before the agent read it', body: text });
+    return text;
   }
 
   private takesGuidance(task: Task): boolean {
@@ -833,6 +877,11 @@ export class Scheduler extends EventEmitter {
   }
 
   // ---------- delegated agents (looper-delegate) ----------
+
+  /** The task a delegated agent in flight or waiting to start runs as (see delegateTask). */
+  childTask(runId: string): Task | undefined {
+    return this.children.get(runId)?.task;
+  }
 
   /** The delegated agents a run's agent started that are in flight or waiting to start, oldest first. */
   private childrenOf(taskId: string, parentRunId: string): ActiveRun[] {
@@ -1254,6 +1303,34 @@ export class Scheduler extends EventEmitter {
    * result or question, the user's guidance, a related event), its delegated
    * agents are all over, the time is up, or the run is stopped.
    */
+  /** A resumed session's prompt: whatever waits for the agent, in the order its hooks would hand it over; null when nothing does. */
+  private takeWaiting(runDir: string): string | null {
+    const guidance = takePendingGuidance(runDir);
+    const events = takeEvents(runDir);
+    const messages = takeDelegateMessages(runDir);
+    const parts = [
+      ...(guidance !== null ? [guidanceMessage(guidance)] : []),
+      ...(events !== null ? [eventsMessage(events)] : []),
+      ...(messages !== null ? [delegateMessage([messages])] : []),
+    ];
+    return parts.length ? parts.join('\n\n') : null;
+  }
+
+  /** Wait for guidance, events or a delegated agent's message for a run without a session: true once one waits. */
+  private waitForMessage(runDir: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    const until = Date.now() + Math.max(0, timeoutMs);
+    const waiting = [DELEGATE_FILE, GUIDANCE_FILE, EVENTS_FILE].map((f) => path.join(runDir, f));
+    return new Promise((resolve) => {
+      const timer = setInterval(() => {
+        const came = waiting.some(fileExists);
+        if (came || signal?.aborted || this.stopping || Date.now() >= until) {
+          clearInterval(timer);
+          resolve(came);
+        }
+      }, this.d.settings.signalPollMs);
+    });
+  }
+
   private waitForChildren(taskId: string, runId: string, runDir: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     const until = Date.now() + Math.max(0, timeoutMs);
     const waiting = [DELEGATE_FILE, GUIDANCE_FILE, EVENTS_FILE].map((f) => path.join(runDir, f));
@@ -1940,14 +2017,19 @@ export class Scheduler extends EventEmitter {
    * Keep event lines until `flushEvents` can place them: all in one batch, or
    * with sendRelatedEvents one batch per related id (`relatedId`, or each line's own).
    */
-  private holdEvents(task: Task, lines: readonly string[], from: Pick<PendingEvents, 'relatedId' | 'trigger' | 'checked'>): void {
+  private holdEvents(
+    task: Task,
+    lines: readonly string[],
+    from: Pick<PendingEvents, 'relatedId' | 'trigger' | 'checked' | 'own'>,
+  ): void {
     if (!this.d.tasks.get(task.id)) return;
     const groups = this.pendingEvents.get(task.id) ?? [];
     for (const line of lines) {
       const relatedId = task.trigger.sendRelatedEvents ? (from.relatedId ?? relatedIdOfLine(line)) : undefined;
-      let group = groups.find((g) => g.relatedId === relatedId);
+      const own = relatedId === undefined && from.own;
+      let group = own ? undefined : groups.find((g) => g.relatedId === relatedId && !g.own);
       if (!group) {
-        group = { relatedId, trigger: from.trigger, lines: [] };
+        group = { relatedId, trigger: from.trigger, lines: [], ...(own ? { own } : {}) };
         groups.push(group);
       }
       if (from.checked) group.checked = true;
@@ -2244,6 +2326,20 @@ export class Scheduler extends EventEmitter {
                 passedCheck.relatedId = checkId;
                 this.emitRuntime(rt);
               }
+            }
+            if (check.more) {
+              const trig = triggerOf(task);
+              for (const item of check.more) {
+                this.holdEvents(task, [checkEventLine(item.relatedId, item.summary, item.context)], {
+                  trigger: trig,
+                  checked: true,
+                  own: true,
+                });
+              }
+              this.record(task.id, runId, 'system', 'act', {
+                summary: `the check listed ${check.more.length} more item(s), each in a run of its own`,
+              });
+              this.flushEvents(task);
             }
           }
         }
@@ -2780,6 +2876,43 @@ export class Scheduler extends EventEmitter {
       this.setQuestion(rt, ctx.runId, null);
       elapsedMs += end.durationMs;
       wasHeld ||= end.wasHeld;
+      // Stop in the message box ended a headless agent's turn: the run waits for the next message, which resumes the conversation.
+      if (this.turnStops.delete(ctx.runId) && !ctx.signal?.aborted && !this.stopping) {
+        const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+        const sessionId = end.sessionId ?? readRunSessionId(ctx.runDir, kind);
+        if (sessionId) {
+          this.record(task.id, ctx.runId, 'agent', 'sent', { summary: 'the user stopped the turn; the run waits for the next message' });
+          const limitMs = task.agent.maxRuntimeMin * 60_000;
+          const idleMs = task.agent.idleGraceMin * 60_000;
+          const waitStart = Date.now();
+          this.agents.delete(ctx.runId);
+          this.waitingRuns.add(ctx.runId);
+          let came = false;
+          try {
+            came = await this.waitForMessage(ctx.runDir, Math.min(idleMs, limitMs - elapsedMs), ctx.signal);
+            if (!came && task.agent.onIdleTimeout === 'hold' && !ctx.signal?.aborted && !this.stopping) {
+              this.setHeld(rt, ctx.runId, true);
+              this.record(task.id, ctx.runId, 'agent', 'held', { summary: `idle for ${task.agent.idleGraceMin} min after the user stopped the turn; holding for a human` });
+              if (task.notifications.held) this.notify(task, ctx.runId, 'held', 'The agent is waiting for your input');
+              came = await this.waitForMessage(ctx.runDir, limitMs - elapsedMs - (Date.now() - waitStart), ctx.signal);
+              this.setHeld(rt, ctx.runId, false);
+            }
+          } finally {
+            this.waitingRuns.delete(ctx.runId);
+          }
+          elapsedMs += Date.now() - waitStart;
+          const whole = { durationMs: elapsedMs, wasHeld, doneStatus: undefined };
+          if (ctx.signal?.aborted || this.stopping) return { ...end, ...whole, reason: 'stopped', headline: stopReason() };
+          const prompt = came ? this.takeWaiting(ctx.runDir) : null;
+          if (prompt) {
+            ctx.agentSession = { id: sessionId, resume: true };
+            ctx.resume = { prompt, usedMs: elapsedMs };
+            continue;
+          }
+          if (elapsedMs >= limitMs) return { ...end, ...whole, reason: 'max-runtime', headline: `exceeded ${task.agent.maxRuntimeMin} min` };
+          return { ...end, ...whole, reason: 'idle-timeout', headline: `idle for ${task.agent.idleGraceMin} min after the user stopped the turn` };
+        }
+      }
       // A headless agent ends its turn to wait for the agents it started: once
       // one of them leaves it a message (a result, or a question), the next
       // session resumes its conversation with their messages. (An interactive
@@ -2809,18 +2942,10 @@ export class Scheduler extends EventEmitter {
         const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
         const sessionId = end.sessionId ?? readRunSessionId(ctx.runDir, kind);
         if (sessionId) {
-          // Whatever waits for the agent, in the order its hooks would hand it over.
-          const guidance = takePendingGuidance(ctx.runDir);
-          const events = takeEvents(ctx.runDir);
-          const messages = takeDelegateMessages(ctx.runDir);
-          const parts = [
-            ...(guidance !== null ? [guidanceMessage(guidance)] : []),
-            ...(events !== null ? [eventsMessage(events)] : []),
-            ...(messages !== null ? [delegateMessage([messages])] : []),
-          ];
-          if (parts.length) {
+          const prompt = this.takeWaiting(ctx.runDir);
+          if (prompt) {
             ctx.agentSession = { id: sessionId, resume: true };
-            ctx.resume = { prompt: parts.join('\n\n'), usedMs: elapsedMs };
+            ctx.resume = { prompt, usedMs: elapsedMs };
             continue;
           }
         } else if (fileExists(path.join(ctx.runDir, DELEGATE_FILE))) {

@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { historySourceText, type HistoryGroup, type HistoryItem } from '@shared/history';
+import { baseName } from '@shared/paths';
 import type { Project } from '@shared/types';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
 import { GroupHeader } from './GroupHeader';
-import { useListNav } from './hooks';
-import { listContextMenu, parentIndex } from './list-nav';
-import { selectsOnMenu } from './ListDetail';
+import { useGroupedTree, type TreeRow } from './GroupedTree';
+import { SessionRow } from './SessionList';
+import { reportError } from '../report-error';
 
-type NavRow = { kind: 'group'; key: string; id: string; open: boolean } | { kind: 'item'; item: HistoryItem; id: string };
-
-const fail = (e: Error) => void window.looper.showError(e.message);
+type GroupRow = Extract<TreeRow<HistoryGroup, HistoryItem>, { kind: 'group' }>;
+type ItemRow = Extract<TreeRow<HistoryGroup, HistoryItem>, { kind: 'item' }>;
 
 /**
  * The History window's list: the conversations in their groups (by date or
@@ -45,110 +45,42 @@ export function HistoryList({
   // Its second line counts minutes.
   const now = useNow(MINUTE);
   const [closed, setClosed] = useState<string[]>([]);
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const isOpen = (key: string) => !closed.includes(key);
-  const toggle = (key: string) => setClosed((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]));
-  const rows: NavRow[] = [];
-  groups.forEach((g, gi) => {
-    rows.push({ kind: 'group', key: g.key, id: `history-group-${gi}`, open: isOpen(g.key) });
-    if (isOpen(g.key)) for (const item of g.items) rows.push({ kind: 'item', item, id: `history-${item.id}` });
+  const toggle = (g: HistoryGroup) => setClosed((c) => (c.includes(g.key) ? c.filter((k) => k !== g.key) : [...c, g.key]));
+  const sections = groups.map((g, gi) => {
+    const head: GroupRow = { kind: 'group', key: g.key, id: `history-group-${gi}`, depth: 0, open: !closed.includes(g.key), group: g };
+    const items: ItemRow[] = head.open ? g.items.map((item) => ({ kind: 'item', key: item.id, id: `history-${item.id}`, depth: 1, item })) : [];
+    return { head, items };
   });
-  const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.key === activeGroup);
-  const at = groupAt >= 0 ? groupAt : rows.findIndex((r) => r.kind === 'item' && r.item.id === selected);
-  const depths = rows.map((r) => (r.kind === 'group' ? 0 : 1));
-  const pick = (id: string) => {
-    setActiveGroup(null);
-    onSelect(id);
-  };
-  const menu = (id: string) => window.looper.history.showContextMenu(id);
-  const onKeyDown = useListNav({
-    count: rows.length,
-    index: at,
-    onIndex: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') setActiveGroup(r.key);
-      else pick(r.item.id);
-    },
-    onActivate: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') toggle(r.key);
-      else void window.looper.history.run(r.item.id, 'chat').catch(fail);
-    },
-    onMenu: (i) => {
-      const r = rows[i];
-      if (r.kind === 'item') menu(r.item.id);
-    },
-    tree: {
-      expanded: (i) => {
-        const r = rows[i];
-        return r.kind === 'group' ? r.open : undefined;
-      },
-      set: (i, open) => {
-        const r = rows[i];
-        if (r.kind === 'group' && r.open !== open) toggle(r.key);
-      },
-      parent: (i) => parentIndex(depths, i),
-    },
-    scrollToId: at >= 0 ? rows[at].id : null,
+  const t = useGroupedTree({
+    rows: sections.flatMap((s) => [s.head, ...s.items]),
+    selected,
+    onSelect: (item) => onSelect(item.id),
+    toggle,
+    onOpen: (item) => void window.looper.history.run(item.id, 'chat').catch(reportError),
+    itemMenu: (item) => window.looper.history.showContextMenu(item.id),
   });
   const place = (item: HistoryItem) =>
-    !showPlace ? '' : ((item.projectId ? projects.find((p) => p.id === item.projectId)?.name : undefined) ?? item.folder.split(/[\\/]/).filter(Boolean).pop() ?? '');
+    !showPlace ? '' : ((item.projectId ? projects.find((p) => p.id === item.projectId)?.name : undefined) ?? baseName(item.folder));
   return (
-    <div
-      className="session-list history-list"
-      role="tree"
-      aria-label="Conversations"
-      tabIndex={0}
-      aria-activedescendant={at >= 0 ? rows[at].id : undefined}
-      onKeyDown={onKeyDown}
-      onContextMenu={(e) =>
-        listContextMenu(e, at, (i) => {
-          const r = rows[i];
-          if (r.kind === 'item') menu(r.item.id);
-        })
-      }
-    >
-      {groups.map((g, gi) => (
-        <div role="group" aria-label={g.title} key={g.key}>
+    <div className="session-list history-list" role="tree" aria-label="Conversations" {...t.listProps}>
+      {sections.map(({ head, items }) => (
+        <div role="group" aria-label={head.group.title} key={head.key}>
           <GroupHeader
-            id={`history-group-${gi}`}
-            name={g.title}
-            open={isOpen(g.key)}
-            count={g.items.length}
-            className={`session-group${groupAt >= 0 && activeGroup === g.key ? ' active' : ''}`}
-            onToggle={() => {
-              setActiveGroup(g.key);
-              toggle(g.key);
-            }}
+            {...t.groupProps(head)}
+            name={head.group.title}
+            count={head.group.items.length}
+            className={`session-group${t.activeGroup === head.key ? ' active' : ''}`}
           />
-          {isOpen(g.key) &&
-            g.items.map((item) => (
-              <div
-                key={item.id}
-                id={`history-${item.id}`}
-                role="treeitem"
-                aria-selected={selected === item.id}
-                aria-level={2}
-                className={`session-row${selected === item.id ? ' selected' : ''}`}
-                onClick={() => pick(item.id)}
-                onDoubleClick={() => void window.looper.history.run(item.id, 'chat').catch(fail)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (selectsOnMenu) pick(item.id);
-                  menu(item.id);
-                }}
-              >
-                <div className="session-row-text">
-                  <div className="session-title" title={item.title}>
-                    {item.title}
-                  </div>
-                  <div className="session-sub" title={item.folder || undefined}>
-                    {[place(item), fmtClock(item.lastActive, now), historySourceText(item)].filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-              </div>
-            ))}
+          {items.map((r) => (
+            <SessionRow
+              key={r.key}
+              {...t.itemProps(r)}
+              selected={r.key === selected}
+              title={r.item.title}
+              sub={[place(r.item), fmtClock(r.item.lastActive, now), historySourceText(r.item)].filter(Boolean).join(' · ')}
+              subTitle={r.item.folder || undefined}
+            />
+          ))}
         </div>
       ))}
       {groups.length === 0 && (

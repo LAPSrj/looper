@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { Project, Settings } from '@shared/types';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { Project } from '@shared/types';
+import { defaultEnvironment } from '@shared/environments';
 import {
   MCP_SCOPE_LABELS,
   claudeEffective,
@@ -34,7 +35,11 @@ import {
 import { EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ListActions, SelectList } from './components/SelectList';
-import { useDialogKeys } from './components/hooks';
+import { GroupHeader } from './components/GroupHeader';
+import { groupKeys } from './components/group-keys';
+import { offeredHarnesses } from './components/RemoteFields';
+import { useDialogKeys, useLiveSettings, useSave } from './components/hooks';
+import { reportError } from './report-error';
 
 type Tab = 'settings' | 'servers' | 'permissions';
 const TABS: [Tab, string][] = [
@@ -88,7 +93,7 @@ function draftsOf(data: AgentSettingsData): Drafts {
 
 /** Tools → Agent Settings: an environment harness's Claude Code or Codex settings files, MCP servers and MCP permissions, and a project's. */
 export function AgentSettingsApp() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { live: settings } = useLiveSettings();
   const [projects, setProjects] = useState<Project[]>([]);
   const [scope, setScope] = useState<AgentSettingsScope | null>(null);
   const [data, setData] = useState<AgentSettingsData | null>(null);
@@ -100,20 +105,24 @@ export function AgentSettingsApp() {
   const [selected, setSelected] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<Record<string, McpTool[] | string>>({});
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
+  const started = useRef(false);
 
   useDialogKeys({ tabs: TABS.map(([id]) => id), tab, onTab: setTab });
 
   useEffect(() => {
     document.title = 'Agent Settings';
-    void window.looper.info().then((info) => {
-      setSettings(info.settings);
-      const env = info.settings.environments.find((e) => e.id === info.settings.defaultEnvironmentId) ?? info.settings.environments[0];
-      const harness = env?.harnesses.find((h) => h.kind !== 'custom');
-      if (env && harness) setScope({ envId: env.id, harnessId: harness.id });
-    });
     void window.looper.projects.list().then(setProjects);
   }, []);
+
+  // It opens on the default environment, or the first with a Claude Code or Codex harness.
+  useEffect(() => {
+    if (!settings || started.current) return;
+    started.current = true;
+    const env = defaultEnvironment(settings, (e) => offeredHarnesses(e, 'agents').length > 0);
+    const harness = offeredHarnesses(env, 'agents')[0];
+    if (env && harness) setScope({ envId: env.id, harnessId: harness.id });
+  }, [settings]);
 
   const load = async (s: AgentSettingsScope) => {
     setData(null);
@@ -148,11 +157,12 @@ export function AgentSettingsApp() {
     setScope(next);
   };
 
-  if (!settings || !scope) return <EmptyWindow />;
-  const envs = settings.environments.filter((e) => e.harnesses.some((h) => h.kind !== 'custom'));
+  if (!settings) return <EmptyWindow />;
+  const envs = settings.environments.filter((e) => offeredHarnesses(e, 'agents').length > 0);
   if (envs.length === 0) return <EmptyWindow gone="No environment has a Claude Code or Codex harness." />;
+  if (!scope) return <EmptyWindow />;
   const env = envs.find((e) => e.id === scope.envId) ?? envs[0];
-  const harnesses = env.harnesses.filter((h) => h.kind !== 'custom');
+  const harnesses = offeredHarnesses(env, 'agents');
   const envProjects = projects.filter((p) => p.cwd);
   const kind = data?.kind ?? 'claude-code';
 
@@ -217,7 +227,7 @@ export function AgentSettingsApp() {
       }
       if (next) setSelected(serverKey(next));
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -233,7 +243,7 @@ export function AgentSettingsApp() {
       const result = await window.looper.agentSettings.editServer({ kind, server: base, isNew, scopes, taken });
       if (result) putServerDraft(isNew ? null : server, result);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
   const selectedServer = servers.find((s) => serverKey(s) === selected) ?? null;
@@ -255,7 +265,7 @@ export function AgentSettingsApp() {
         setFile(key, putTomlServer(drafts.files[key] ?? '', server.name, server.name, setCodexPermission(server.raw, tool, perm)));
       }
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
   const permissionOf = (server: McpServer, tool?: string): McpPermission =>
@@ -283,7 +293,7 @@ export function AgentSettingsApp() {
   };
 
   // ---------- saving ----------
-  const doSave = async (): Promise<boolean> => {
+  const doSave = async () => {
     if (!data) return false;
     for (const f of dirtyFiles) {
       const problem = fileProblem(f.key, drafts.files[f.key] ?? '');
@@ -302,19 +312,10 @@ export function AgentSettingsApp() {
       };
     }
     if (!save.files.length && !save.claudeJson) return true;
-    setSaving(true);
-    try {
-      if (!(await window.looper.agentSettings.save(scope, save))) return false;
-      const d = await window.looper.agentSettings.load(scope);
-      setData(d);
-      setDrafts(draftsOf(d));
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    if (!(await window.looper.agentSettings.save(scope, save))) return false;
+    const d = await window.looper.agentSettings.load(scope);
+    setData(d);
+    setDrafts(draftsOf(d));
   };
 
   const current = fileKey ? fileOf(fileKey) : undefined;
@@ -332,7 +333,8 @@ export function AgentSettingsApp() {
                   if (!p) return void changeScope({ envId: env.id, harnessId: scope.harnessId });
                   const pEnv = envs.find((x) => x.id === p.environmentId);
                   if (!pEnv) return void window.looper.showError(`The project "${p.name}" is in an environment without a Claude Code or Codex harness.`);
-                  const h = pEnv.harnesses.find((x) => x.id === p.harnessId && x.kind !== 'custom') ?? pEnv.harnesses.find((x) => x.kind !== 'custom')!;
+                  const offered = offeredHarnesses(pEnv, 'agents');
+                  const h = offered.find((x) => x.id === p.harnessId) ?? offered[0];
                   void changeScope({ envId: pEnv.id, harnessId: h.id, projectId: p.id });
                 }}
               >
@@ -350,7 +352,7 @@ export function AgentSettingsApp() {
                 disabled={!!scope.projectId}
                 onChange={(e) => {
                   const next = envs.find((x) => x.id === e.target.value);
-                  const h = next?.harnesses.find((x) => x.kind !== 'custom');
+                  const h = offeredHarnesses(next, 'agents')[0];
                   if (next && h) void changeScope({ envId: next.id, harnessId: h.id });
                 }}
               >
@@ -466,17 +468,23 @@ export function AgentSettingsApp() {
                 const key = serverKey(s);
                 const open = expanded.has(key);
                 const list = tools[key];
+                const setOpen = (next: boolean) => next !== open && toggle(s);
                 return (
-                  <div key={key} role="treeitem" aria-expanded={open}>
-                    <div className="agent-perm-row">
-                      <button type="button" className="btn small agent-perm-toggle" aria-label={open ? `Hide ${s.name}'s tools` : `Show ${s.name}'s tools`} onClick={() => toggle(s)}>
-                        {open ? '−' : '+'}
-                      </button>
-                      <span className="agent-perm-name">
-                        {s.name}
-                        {kind === 'codex' && <span className="muted"> ({MCP_SCOPE_LABELS[kind][s.scope]})</span>}
-                      </span>
-                      <SelectInput aria-label={`${s.name}: permission`} value={permissionOf(s)} onChange={(e) => setPermission(s, undefined, e.target.value as McpPermission)}>
+                  <Fragment key={key}>
+                    <GroupHeader
+                      name={kind === 'codex' ? `${s.name} (${MCP_SCOPE_LABELS[kind][s.scope]})` : s.name}
+                      open={open}
+                      className="mu-group agent-perm-row"
+                      tabIndex={0}
+                      onToggle={() => toggle(s)}
+                      onKeyDown={groupKeys(open, setOpen)}
+                    >
+                      <SelectInput
+                        aria-label={`${s.name}: permission`}
+                        value={permissionOf(s)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setPermission(s, undefined, e.target.value as McpPermission)}
+                      >
                         {options.map(([v, label]) => (
                           <option key={v} value={v}>
                             {label}
@@ -484,7 +492,7 @@ export function AgentSettingsApp() {
                         ))}
                       </SelectInput>
                       <span className="agent-perm-result">{resultText(effectiveOf(s))}</span>
-                    </div>
+                    </GroupHeader>
                     {open && (
                       <div role="group">
                         {typeof list === 'string' || !list ? (
@@ -509,7 +517,7 @@ export function AgentSettingsApp() {
                         )}
                       </div>
                     )}
-                  </div>
+                  </Fragment>
                 );
               })}
             </div>
@@ -517,9 +525,9 @@ export function AgentSettingsApp() {
         )}
       </div>
       <WindowActions
-        confirm={{ label: 'Save', disabled: !data, run: () => void doSave().then((ok) => ok && window.close()) }}
-        apply={{ disabled: !data || !dirty, run: () => void doSave() }}
-        busy={saving}
+        confirm={{ label: 'Save', disabled: !data, run: () => saver.save(doSave) }}
+        apply={{ disabled: !data || !dirty, run: () => void saver.apply(doSave) }}
+        busy={saver.busy}
       />
     </div>
   );

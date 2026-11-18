@@ -13,7 +13,7 @@ import type { CommandOutput } from './bash-mode';
 import type { Attachment, ChatSettings, ChatState, QueuedMessage } from './chat';
 import type { HostCommand } from './commands/context';
 import type { ClaudeLogin } from './logins';
-import type { SessionActivity, SessionsState } from './sessions';
+import type { SessionActivity, SessionsState, SlashCommand } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
 import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
@@ -120,6 +120,10 @@ export interface LooperApi {
     output(id: string): Promise<string>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
+    /** Terminal view: copy dropped or pasted files where the harness reads them; returns their paths as the terminal pastes them. */
+    attachFiles(id: string, files: File[]): Promise<string>;
+    /** Terminal view: the right-click menu, as terminalSession.showContextMenu. */
+    showContextMenu(id: string, hasSelection: boolean): void;
   };
   recycleBin: {
     /** Most recently deleted first. */
@@ -177,6 +181,18 @@ export interface LooperApi {
     messages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
+    /** A run's message box's Attach Files: the open dialog, then the picked files copied into the task's attachments. */
+    pickFiles(id: string): Promise<Attachment[]>;
+    /** Copy pasted or dropped files into the task's attachments, ready to go with guidance. */
+    attachFiles(id: string, files: File[]): Promise<Attachment[]>;
+    /** A run's message box's "!" command, run in the run's working directory (chat.runCommand's, for a run). */
+    runCommand(id: string, runId: string, command: string, commandId: string): Promise<CommandOutput>;
+    /** Stop under one of the run's running "!" commands. */
+    stopCommand(id: string, runId: string, commandId: string): Promise<void>;
+    /** Send Now: the guidance waiting goes in at once, ending the agent's turn. */
+    sendNow(id: string, runId: string): Promise<void>;
+    /** Take back the guidance waiting for the run's agent (Edit, Cancel), as it was sent; null once the agent has it. */
+    unqueue(id: string, runId: string): Promise<{ text: string; attachments: Attachment[] } | null>;
   };
   /** Current Rest Mode state; live updates arrive as `rest` engine events. */
   restState(): Promise<RestState>;
@@ -249,11 +265,13 @@ export interface LooperApi {
     /** Copy pasted or dropped files into the task's attachments, ready to send. */
     attachFiles(id: string, files: File[]): Promise<Attachment[]>;
     /**
-     * A message's right-click menu: Copy and Quote (the selection; Quote
-     * comes back as a chat-quote ui event), the copy items for the message,
-     * Open File and Copy Path for a file, Edit as New Message for the user's
-     * own message (it comes back as a chat-edit ui event), and Fork from Here
-     * when `fork` gives the message's index in the chat's history and rows.
+     * A message's right-click menu, in a chat or a task run's conversation
+     * (`chatId` the run's id): Copy and Quote (the selection; Quote comes back
+     * as a chat-quote ui event), the copy items for the message, Open File and
+     * Copy Path for a file, a Task or Agent call's subagent conversation, Edit
+     * as New Message for the user's own message (it comes back as a chat-edit
+     * ui event), and Fork from Here when `fork` gives the message's index in
+     * the chat's history and rows.
      */
     showContextMenu(info: {
       chatId: string;
@@ -270,12 +288,17 @@ export interface LooperApi {
       fork?: number;
       /** The message has text to select: Select Text, which comes back as a message-select-text ui event with this key. */
       selectText?: string;
+      /** A Task or Agent call's subagent: Open Subagent Conversation (`label` names it). */
+      agentId?: string;
+      label?: string;
     }): void;
   };
   /** The Sessions window: every chat and terminal session, and the one it shows. */
   sessions: {
     state(): Promise<SessionsState>;
     activity(id: string): Promise<SessionActivity | null>;
+    /** A terminal session's or task run's skills, from its transcript: its message box's "/" list. */
+    commands(id: string): Promise<SlashCommand[]>;
     /** The window shows this session now (null: the Overview): its conversation and activity come as events. */
     show(id: string | null): void;
     /** The chats and task runs whose cards on the window's dashboard show their conversation now (none once it leaves the dashboard): their conversations and activity come as events too. */
@@ -304,7 +327,8 @@ export interface LooperApi {
     harnessSessionId(id: string): Promise<string | null>;
     /** The History button's drop-down at (x, y): the recent conversations to continue in chat, then More… for the History window. */
     showHistoryMenu(x: number, y: number): void;
-    send(ids: string[], text: string): void;
+    /** The message to each chat (queued while it works), typed into each terminal session; files go as their paths. */
+    send(ids: string[], text: string, attachments?: Attachment[]): void;
     /** The end of a background command's output; null when it can't be read. */
     backgroundOutput(id: string, taskId: string): Promise<string | null>;
     /** A thumbnail of an image file the agent read or wrote (a path in the session's own form); null for any other file. */
@@ -420,8 +444,8 @@ export interface LooperApi {
   continueRun(taskId: string, runId: string, guidance: string): Promise<boolean>;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
   canGuideRun(taskId: string, runId: string): Promise<boolean>;
-  /** Send guidance to a run in flight; the agent gets it mid-run. Rejects with the reason when the run cannot take it. */
-  sendGuidance(taskId: string, runId: string, text: string): Promise<void>;
+  /** Send guidance to a run in flight, with the paths of `attachments`; the agent gets it mid-run. Rejects with the reason when the run cannot take it. */
+  sendGuidance(taskId: string, runId: string, text: string, attachments?: Attachment[]): Promise<void>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open a run's window (its step records and conversation), or a subagent's conversation when agentId is set. */
@@ -515,8 +539,6 @@ export interface LooperApi {
   showTaskInMain(taskId: string, view: 'status' | 'runs'): void;
   /** Context menu of a task-list folder header. */
   showFolderContextMenu(info: { folderId: string }): void;
-  /** A list window's row menu with these items; a pick comes back as a `list-menu` event with the same token. */
-  showListContextMenu(token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   /** `selectText`: as in chat.showContextMenu. */
   showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }): void;
@@ -584,8 +606,6 @@ export type UiEvent =
   | { type: 'chat-find' }
   /** A message's Select Text: the page selects the text of the message whose menu it was (`key`: its chat or run). */
   | { type: 'message-select-text'; key: string }
-  /** A list window's row menu (showListContextMenu): the item picked. */
-  | { type: 'list-menu'; token: string; id: string }
   /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */
   | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'runs' }
   /** The filter window applied a filter (empty = cleared). */

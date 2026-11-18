@@ -8,6 +8,7 @@ import {
   cachePassed,
   cacheText,
   contextValue,
+  factLine,
   limitFacts,
   sessionFacts,
   sessionLimits,
@@ -75,16 +76,17 @@ describe('sessionFacts', () => {
       clock,
     );
     expect(facts).toEqual([
-      { label: 'Harness', value: 'Claude Code' },
+      { label: 'Harness', value: 'Claude Code', line: 'Claude Code' },
       { label: 'Model', value: 'Opus' },
-      { label: 'Context', value: '58k of 1M (6%)' },
+      { label: 'Context', value: '58k of 1M (6%)', line: '58k of 1M context (6%)' },
       { label: 'Last reply', value: 'at 5' },
-      { label: 'Prompt cache', value: 'Cached for 3 min' },
+      { label: 'Prompt cache', value: 'Cached for 3 min', line: 'Cached for 3 min', live: true },
     ]);
+    expect(facts.map(factLine)).toEqual(['Claude Code', 'Model Opus', '58k of 1M context (6%)', 'Last reply at 5', 'Cached for 3 min']);
   });
 
   it('leaves out what doesn\'t apply yet', () => {
-    expect(sessionFacts({ harness: 'Codex' }, NOW, clock)).toEqual([{ label: 'Harness', value: 'Codex' }]);
+    expect(sessionFacts({ harness: 'Codex' }, NOW, clock)).toEqual([{ label: 'Harness', value: 'Codex', line: 'Codex' }]);
     expect(sessionFacts({ lastReplyAt: 5 }, NOW, clock)).toEqual([{ label: 'Last reply', value: 'at 5' }]);
   });
 

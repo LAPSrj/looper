@@ -289,7 +289,17 @@ const memoryStorage = () => {
   return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
 };
 
-const welcome = (over: Partial<Extract<ServerMessage, { t: 'welcome' }>> = {}): ServerMessage => ({ t: 'welcome', device: { id: 'd1', name: 'Phone' }, version: '1.0.0', clientId: 'c1', resumed: false, ...over });
+const welcome = (over: Partial<Extract<ServerMessage, { t: 'welcome' }>> = {}): ServerMessage => ({
+  t: 'welcome',
+  device: { id: 'd1', name: 'Phone' },
+  version: '1.0.0',
+  clientId: 'c1',
+  resumed: false,
+  windows: [],
+  replayed: false,
+  seq: 0,
+  ...over,
+});
 
 async function start(env: Partial<SessionEnv> = {}, backend: OfflineBackend | null = memoryBackend()) {
   const offline = await open(backend);
@@ -362,7 +372,7 @@ describe('a session while the computer is out of reach', () => {
     answer(socket, [{ id: 'a' }]);
     await p;
     session.on('w1', 'engine:event', () => undefined);
-    socket.receive({ t: 'event', w: 'w1', channel: 'engine:event', args: [{ type: 'tasks', tasks: [{ id: 'a' }, { id: 'b' }] as never } satisfies EngineEvent] });
+    socket.receive({ t: 'event', seq: 1, w: 'w1', channel: 'engine:event', args: [{ type: 'tasks', tasks: [{ id: 'a' }, { id: 'b' }] as never } satisfies EngineEvent] });
     socket.drop();
     expect(await session.invoke('w1', 'tasks:list', [])).toEqual([{ id: 'a' }, { id: 'b' }]);
   });
@@ -458,8 +468,8 @@ describe('a session while the computer is out of reach', () => {
     const p = session.invoke('w1', 'sessions:state', []);
     answer(socket, { sessions: [{ id: 'a', waiting }, { id: 'b' }], limits: {} });
     await p;
-    socket.receive({ t: 'event', w: 'w1', channel: 'engine:event', args: [{ type: 'sessions', state: { sessions: [{ id: 'a', waiting }, { id: 'b', waiting }], limits: {} } }] });
-    socket.receive({ t: 'event', w: 'w1', channel: 'engine:event', args: [{ type: 'sessions', state: { sessions: [{ id: 'a' }], limits: {} } }] });
+    socket.receive({ t: 'event', seq: 1, w: 'w1', channel: 'engine:event', args: [{ type: 'sessions', state: { sessions: [{ id: 'a', waiting }, { id: 'b', waiting }], limits: {} } }] });
+    socket.receive({ t: 'event', seq: 2, w: 'w1', channel: 'engine:event', args: [{ type: 'sessions', state: { sessions: [{ id: 'a' }], limits: {} } }] });
     expect(badges).toEqual([1, 2, 0]);
   });
 
@@ -628,7 +638,9 @@ describe('the shell restored from a stored stack', () => {
     expect(session.isStale()).toBe(true);
     const socket = sockets[0];
     socket.open();
-    socket.receive(welcome({ resumed: true }));
+    // Its pages read what the phone kept, and it got no events yet: nothing to replay from, so they load again.
+    expect(socket.ofType('hello')[0]).not.toHaveProperty('seq');
+    socket.receive(welcome({ resumed: true, windows: ['main', 'chat1'] }));
     expect(shell.map((m) => m.t)).toContain('resumed');
     expect(store.getState().windows.map((w) => w.nonce)).toEqual([1, 1]);
     expect(session.isStale()).toBe(false);

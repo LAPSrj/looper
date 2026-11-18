@@ -3,10 +3,9 @@ import { ALL_FILTERS, PANES, passesFilter } from '@shared/panes';
 import { taskEntries } from '../task-tree';
 import type { MainWindow } from '../useMainWindow';
 import { isPhone } from '../web/page-nav';
-import { Icon } from './Icon';
-import { ICONS } from './icons';
 import { TaskSubText } from './Live';
-import { EmptyRow, Group, LargeTitle, Row } from './phone/PhoneList';
+import { LargeTitle, Row } from './phone/PhoneList';
+import { PhoneFolderRows, PhoneListScreen } from './PhoneFolders';
 import { OverviewSwitch, type OverviewChoice } from './phone/OverviewSwitch';
 import { TasksOverview } from './phone/TasksOverview';
 import { showTaskMenu, showTasksListMenu } from './row-menus';
@@ -39,13 +38,6 @@ export function TaskCollection({ m, phone }: { m: MainWindow; phone?: PhoneTasks
   if (!m.view) return <aside className="sidebar" />;
   return <Sidebar tasks={m.tasks} folders={m.folders} layout={m.layout} runtimes={m.runtimes} selected={m.selected} onSelect={m.select} view={m.view} onView={m.changeView} />;
 }
-
-/** A folder row's symbol on a phone. */
-export const FOLDER_ICON = (
-  <span className="pg-folder-icon">
-    <Icon>{ICONS.folder}</Icon>
-  </span>
-);
 
 /**
  * The Tasks tab: a container's folders (a row with the folder's symbol, the
@@ -80,65 +72,38 @@ function PhoneTasks({
     // A filter's folders are the ones with something it shows.
     hideEmptyFolders: view.single.hideEmptyFolders || !!pane,
   });
-  const emptyMenu = showTasksListMenu;
-  const entryRows = entries.map((e) => {
-    if (e.kind === 'folder') {
-      return (
-        <Row
-          key={`folder-${e.folder.id}`}
-          lead={FOLDER_ICON}
-          title={e.folder.name}
-          value={e.count}
-          chevron
-          selected={e.folder.id === current}
-          onOpen={() => onOpenFolder(e.folder.id)}
-          onMenu={() => window.looper.showFolderContextMenu({ folderId: e.folder.id })}
-        />
-      );
-    }
-    const t = e.task;
-    const rt = m.runtimes[t.id];
-    return (
-      <Row
-        key={t.id}
-        title={t.name}
-        sub={<TaskSubText task={t} runtime={rt} />}
-        tone={rt?.held || rt?.asking ? 'warning' : t.enabled ? undefined : 'muted'}
-        chevron
-        selected={t.id === current}
-        onOpen={() => m.select(t.id)}
-        // The press must not open the task: its menu acts on this row's task, not the selected one.
-        onMenu={() => showTaskMenu(t, rt)}
-      />
-    );
-  });
+  const top = container === '';
   const listBody = (
-    <>
-      <Group>
-        {entryRows.length === 0 ? (
-          <EmptyRow onMenu={container === '' ? emptyMenu : undefined}>{container === '' ? NO_KIND_TEXT[kind] : 'This folder is empty.'}</EmptyRow>
-        ) : (
-          entryRows
-        )}
-      </Group>
-    </>
+    <PhoneFolderRows
+      entries={entries}
+      current={current}
+      onOpenFolder={onOpenFolder}
+      onFolderMenu={(id) => window.looper.showFolderContextMenu({ folderId: id })}
+      empty={top ? NO_KIND_TEXT[kind] : undefined}
+      onEmptyMenu={top ? showTasksListMenu : undefined}
+      item={(t) => {
+        const rt = m.runtimes[t.id];
+        return (
+          <Row
+            key={t.id}
+            title={t.name}
+            sub={<TaskSubText task={t} runtime={rt} />}
+            tone={rt?.held || rt?.asking ? 'warning' : t.enabled ? undefined : 'muted'}
+            chevron
+            selected={t.id === current}
+            onOpen={() => m.select(t.id)}
+            // The press must not open the task: its menu acts on this row's task, not the selected one.
+            onMenu={() => showTaskMenu(t, rt)}
+          />
+        );
+      }}
+    />
   );
   return (
-    <div
-      className="pg-scroll"
-      // A long press between the rows: the list's menu (New Folder…), at the top level.
-      onContextMenu={(e) => {
-        if (container !== '' || (e.target as HTMLElement).closest('.pg-row, .pg-group-title, .pg-segmented, .pg-overview')) return;
-        e.preventDefault();
-        emptyMenu();
-      }}
-    >
-      {container === '' && <LargeTitle>Tasks</LargeTitle>}
-      {container === '' ? (
-        <OverviewSwitch listLabel="Tasks" show={show} {...tasksSwitch} list={listBody} overview={<TasksOverview m={m} />} />
-      ) : (
-        listBody
-      )}
-    </div>
+    // A long press between the rows: the list's menu (New Folder…).
+    <PhoneListScreen top={top} onMenu={showTasksListMenu}>
+      {top && <LargeTitle>Tasks</LargeTitle>}
+      {top ? <OverviewSwitch listLabel="Tasks" show={show} {...tasksSwitch} list={listBody} overview={<TasksOverview m={m} />} /> : listBody}
+    </PhoneListScreen>
   );
 }

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { agentArgs } from '../../shared/projects';
 import type { BuilderDraft, BuilderSetup, BuilderState, BuilderTest, ProbeOperation } from '../../shared/builder';
+import type { AttachmentInput } from '../../shared/chat';
 import { EXAMPLE_TASK } from '../../shared/example-task';
 import { stripAnsi } from '../../shared/ansi';
 import { autoTrustWorkspace, resolveEffort, resolveHarness, codexPermissionArgs } from '../../shared/environments';
@@ -16,7 +17,7 @@ import { errMsg, type Logger } from '../log';
 import { runCheck } from '../steps/check';
 import { AGENT_DONE, childEnv, writeLauncher, type RunContext } from '../steps/common';
 import { spawnPty, startSession, type SessionHandle, type SessionProc } from '../steps/session';
-import { writeJsonAtomic, writeText } from '../store/fsutil';
+import { copyAttachment, writeJsonAtomic, writeText } from '../store/fsutil';
 import type { FileContent, VersionStore } from '../store/versions';
 import { createTarget, type Target } from '../target';
 import { killHostTree } from '../target/kill';
@@ -710,6 +711,19 @@ class BuilderSession {
 
   terminalOutput(): string {
     return this.terminalBuffer;
+  }
+
+  /**
+   * Pasted or dropped files (terminal view): copies in the builder's folder,
+   * which the harness may read and which goes when the window closes, by
+   * their host paths, with the target that reads them.
+   */
+  async saveFiles(files: AttachmentInput[]): Promise<{ target: Target; paths: string[] }> {
+    const dir = path.join(this.dir, 'attachments');
+    const paths = await Promise.all(
+      files.map((f) => copyAttachment(dir, randomUUID().slice(0, 8), f.name, 'data' in f ? { data: f.data } : { file: f.path })),
+    );
+    return { target: this.target, paths };
   }
 
   // ---------- the draft ----------
@@ -1467,6 +1481,13 @@ export class BuilderManager {
 
   terminalOutput(id: string): string {
     return this.sessions.get(id)?.terminalOutput() ?? '';
+  }
+
+  /** Terminal view: see BuilderSession.saveFiles. */
+  async saveFiles(id: string, files: AttachmentInput[]): Promise<{ target: Target; paths: string[] }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error('The conversation with the agent was closed.');
+    return s.saveFiles(files);
   }
 
   async close(id: string): Promise<void> {

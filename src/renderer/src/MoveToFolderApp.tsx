@@ -1,58 +1,36 @@
 import { useEffect, useState } from 'react';
-import type { Task, TaskFolder } from '@shared/types';
 import { SelectList } from './components/SelectList';
 import { EmptyWindow, Field, FormGroup, InputRow, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { folderChoices } from './components/form-blocks';
-import { subscribe } from './events';
+import { FOLDERS, TASKS, useLiveItem, useSave } from './components/hooks';
+import { keptSelection } from './components/selection';
+import { reportError } from './report-error';
 
 /** Root pseudo-folder: moving here clears the task's folderId. */
 const TOP_LEVEL = '';
 
 /** Standalone move-to-folder window (Task → Move to Folder…). */
 export function MoveToFolderApp({ taskId }: { taskId: string }) {
-  const [task, setTask] = useState<Task | null>(null);
-  const [folders, setFolders] = useState<TaskFolder[]>([]);
-  const [selected, setSelected] = useState<string>(TOP_LEVEL);
+  const [chosen, setChosen] = useState<string>(TOP_LEVEL);
   const [newName, setNewName] = useState('');
-  const [missing, setMissing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
+  const { item: task, missing } = useLiveItem(TASKS, taskId, (t) => {
+    setChosen(t.folderId ?? TOP_LEVEL);
+    document.title = `Move "${t.name}" to Folder`;
+  });
+  const folders = useLiveItem(FOLDERS, undefined).items;
 
   useEffect(() => {
     document.title = 'Move to Folder';
-    void window.looper.tasks.list().then((tasks) => {
-      const t = tasks.find((x) => x.id === taskId);
-      if (!t) {
-        setMissing(true);
-        return;
-      }
-      setTask(t);
-      setSelected(t.folderId ?? TOP_LEVEL);
-      document.title = `Move "${t.name}" to Folder`;
-    });
-    void window.looper.folders.list().then(setFolders);
-    return subscribe((e) => {
-      if (e.type === 'tasks') {
-        const t = e.tasks.find((x) => x.id === taskId);
-        if (t) setTask(t);
-        else setMissing(true);
-      } else if (e.type === 'folders') {
-        setFolders(e.folders);
-        setSelected((s) => (s === TOP_LEVEL || e.folders.some((f) => f.id === s) ? s : TOP_LEVEL));
-      }
-    });
-  }, [taskId]);
+  }, []);
 
-  const move = async () => {
-    if (!task) return;
-    setSaving(true);
-    try {
-      await window.looper.tasks.save({ ...task, folderId: selected || undefined });
-      window.close();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      setSaving(false);
-    }
+  const items: { id: string; name: string }[] = [{ id: TOP_LEVEL, name: 'Top level' }, ...folderChoices(folders ?? [])];
+  // A deleted folder falls back to the top level.
+  const selected = folders ? (keptSelection(chosen, items, (f) => f.id) ?? TOP_LEVEL) : chosen;
+
+  const move = () => {
+    if (task) saver.save(() => window.looper.tasks.save({ ...task, folderId: selected || undefined }).then(() => true));
   };
 
   const createFolder = async () => {
@@ -61,18 +39,13 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
     try {
       const folder = await window.looper.folders.add(name);
       setNewName('');
-      setSelected(folder.id);
+      setChosen(folder.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
   if (missing) return <EmptyWindow gone="This task no longer exists." />;
-
-  const items: { id: string; name: string }[] = [
-    { id: TOP_LEVEL, name: 'Top level' },
-    ...folderChoices(folders),
-  ];
 
   return (
     <div className="editor">
@@ -86,8 +59,8 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
               selectedKey={selected}
               itemKey={(f) => f.id}
               itemName={(f) => f.name}
-              onSelect={(f) => setSelected(f.id)}
-              onOpen={() => void move()}
+              onSelect={(f) => setChosen(f.id)}
+              onOpen={move}
               autoFocus
             />
           </Field>
@@ -113,7 +86,7 @@ export function MoveToFolderApp({ taskId }: { taskId: string }) {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Move', run: () => void move(), disabled: !task }} busy={saving} />
+      <WindowActions confirm={{ label: 'Move', run: move, disabled: !task }} busy={saver.busy} />
     </div>
   );
 }

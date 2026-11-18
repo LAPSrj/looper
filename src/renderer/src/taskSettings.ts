@@ -1,5 +1,5 @@
 import { describeCron } from '@shared/cron';
-import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels } from '@shared/environments';
+import { effortLabel, harnessModels, permissionLabel } from '@shared/environments';
 import type { Environment, Harness } from '@shared/types';
 import { changeLabel } from '@shared/versions';
 import { fmtDateTime } from './format';
@@ -75,8 +75,8 @@ export function settingValue(path: string, v: unknown, def: Rec, environments: E
   const kind = harness?.kind;
   if (path.endsWith('.harnessId')) return harness?.name ?? String(v);
   if (path.endsWith('.model') && harness) return harnessModels(harness).find((m) => m.id === v)?.name ?? String(v);
-  if (path === 'agent.effort' && kind && kind !== 'custom') return EFFORT_LEVELS[kind].find(([x]) => x === v)?.[1] ?? String(v);
-  if (path === 'agent.permissionMode' && kind && kind !== 'custom') return PERMISSION_MODES[kind].find(([x]) => x === v)?.[1] ?? String(v);
+  if (path === 'agent.effort') return effortLabel(kind, String(v));
+  if (path === 'agent.permissionMode') return permissionLabel(kind, String(v));
   if (typeof v === 'number') {
     if (path.endsWith('Sec')) return `${v} s`;
     if (path.endsWith('Min')) return `${v} min`;

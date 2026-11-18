@@ -45,6 +45,7 @@ const FIELD_LABELS: Record<string, string> = {
   'trigger.watcher': 'Watcher',
   'trigger.watcher.command': 'Watcher command',
   'trigger.watcher.debounceSec': 'Batch events for',
+  'trigger.watcher.maxWaitSec': 'Don’t hold an event longer than',
   'trigger.watcher.runOnStart': 'Run once when watching starts',
   'trigger.watcher.activeHours': 'Active hours',
   'trigger.watcher.days': 'On days',

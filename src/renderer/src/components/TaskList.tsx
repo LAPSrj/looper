@@ -1,8 +1,10 @@
 import type { Task, TaskFolder, TaskListOptions, TaskRuntime } from '@shared/types';
 import { ALL_FILTERS, passesFilter, type PaneDef } from '@shared/panes';
 import { FolderTree } from './FolderTree';
+import { ItemText } from './GroupedTree';
 import { TaskSubline } from './Live';
 import { deleteTask, showTaskMenu, showTasksListMenu } from './row-menus';
+import { reportError } from '../report-error';
 
 interface Props {
   tasks: Task[];
@@ -62,14 +64,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, onSelect,
       folderShown={folderShown}
       autoOpenFolders={autoOpenFolders}
       itemClass={(t) => `${runtimes[t.id]?.held || runtimes[t.id]?.asking ? 'held' : ''}${t.enabled ? '' : ' disabled'}`}
-      renderItem={(t) => (
-        <>
-          <div className="task-item-row">
-            <span className="task-name">{t.name}</span>
-          </div>
-          {!compact && <TaskSubline task={t} runtime={runtimes[t.id]} sorted={sorted} />}
-        </>
-      )}
+      renderItem={(t) => <ItemText name={t.name}>{!compact && <TaskSubline task={t} runtime={runtimes[t.id]} sorted={sorted} />}</ItemText>}
       onActivate={(t) => window.looper.openItemWindow('task', t.id)}
       onDelete={(t) => deleteTask(t, runtimes[t.id])}
       onItemMenu={(t) => showTaskMenu(t, runtimes[t.id])}
@@ -77,7 +72,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, onSelect,
       onFolderMenu={(id) => window.looper.showFolderContextMenu({ folderId: id })}
       onEmptyMenu={showTasksListMenu}
       onReorder={(ids, folderById, nextLayout, parentById) =>
-        void window.looper.tasks.reorder(ids, folderById, nextLayout, parentById).catch((e) => void window.looper.showError((e as Error).message))
+        void window.looper.tasks.reorder(ids, folderById, nextLayout, parentById).catch(reportError)
       }
     />
   );

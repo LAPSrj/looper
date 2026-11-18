@@ -1,4 +1,5 @@
-import { ICON_STROKE, ICONS } from '../icons';
+import { Icon } from '../Icon';
+import { ICONS } from '../icons';
 
 /** The desktop's tab icons, which a phone's tab bar and rail draw in place of the systems' own symbols (Leandro's choice). */
 const DESKTOP_TABS: Record<string, keyof typeof ICONS> = { dashboard: 'dashboardTab', projects: 'projectsTab', tasks: 'tasksTab', sessions: 'chatsTab' };
@@ -15,16 +16,10 @@ const MORE = (
 /** A view's 24 px icon: the desktop's own tab icon, scaled, or More's dots. */
 export function TabIcon({ id }: { id: string }) {
   const desktop = DESKTOP_TABS[id];
-  if (desktop) {
-    return (
-      <svg className="desktop-tab-icon" width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={ICON_STROKE} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        {ICONS[desktop]}
-      </svg>
-    );
-  }
+  if (desktop) return <Icon name={desktop} size={24} className="desktop-tab-icon" />;
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <Icon size={24} box={24} stroke={1.6}>
       {MORE}
-    </svg>
+    </Icon>
   );
 }

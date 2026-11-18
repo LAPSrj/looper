@@ -1,27 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppInfo } from '@shared/api';
 import type { AddonContext, CommandContext } from '@shared/commands/context';
 import { mainTabs } from '@shared/main-tabs';
-import type { RemoteState } from '@shared/remote';
 import { isStandInTaskId } from '@shared/projects';
-import type { PreventSleepState, Project, ProjectFolder, RestState, RunRecord, Task, TaskFolder, TaskRuntime, View } from '@shared/types';
+import type { PreventSleepState, Task, TaskRuntime } from '@shared/types';
 import { attentionKey, attentionRows, runningRows, type AttentionRow, type RecentRun } from '@shared/dashboard';
 import { addonPaneKey } from '@shared/addons';
 import { loginRowKey, loginRows, type ClaudeLogin, type LoginRow } from '@shared/logins';
 import { subscribe } from './events';
+import { fmtHourMinute } from './format';
 import { useAddons, type AddonSelection } from './components/AddonPane';
 import type { DashboardPick } from './components/Dashboard';
-import type { DetailTab } from './components/TaskDetail';
+import { TASK_TABS, type DetailTab } from './components/TaskDetail';
 import { useDialogKeys } from './components/hooks';
+import { setView as changeView, useLiveState } from './live-state';
+import { useRunRecords } from './useRunRecords';
 
-const MAX_RECORDS = 500;
 const RECENT_RUNS = 10;
 
 /** The status bar's Prevent Sleep text while its timer is on; null while it's off. */
 export function preventSleepStatus(state: PreventSleepState): string | null {
   if (state.timer === 'off') return null;
   if (state.until === null) return 'Preventing sleep';
-  return `Preventing sleep until ${new Date(state.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return `Preventing sleep until ${fmtHourMinute(state.until)}`;
 }
 
 /**
@@ -31,19 +31,13 @@ export function preventSleepStatus(state: PreventSleepState): string | null {
  * the commands follow.
  */
 export function useMainWindow(menuTab?: string) {
-  const [info, setInfo] = useState<AppInfo | null>(null);
+  const { info, projects, projectFolders, projectLayout, taskFolders: folders, taskLayout: layout, rest, preventSleep, remote } = useLiveState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   // False until the tasks and the runtimes have both answered: the counts before that are placeholders.
   const [loaded, setLoaded] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
-  const [projectLayout, setProjectLayout] = useState<Record<string, string[]>>({});
   // The project whose view shows; picking a task or an addon item clears it.
   const [projectSel, setProjectSel] = useState<string | null>(null);
-  const [folders, setFolders] = useState<TaskFolder[]>([]);
-  const [layout, setLayout] = useState<Record<string, string[]>>({});
   const [runtimes, setRuntimes] = useState<Record<string, TaskRuntime>>({});
-  const [records, setRecords] = useState<Record<string, RunRecord[]>>({});
   // null = no task selected: the dashboard shows.
   const [selected, setSelected] = useState<string | null>(null);
   // The dashboard row picked while it shows.
@@ -51,9 +45,6 @@ export function useMainWindow(menuTab?: string) {
   const [tab, setTab] = useState<DetailTab>('status');
   // Run to select in the run log (notification click); a fresh object per click re-triggers.
   const [focusRun, setFocusRun] = useState<{ runId: string } | null>(null);
-  const [rest, setRest] = useState<RestState | null>(null);
-  const [preventSleep, setPreventSleep] = useState<PreventSleepState | null>(null);
-  const [remote, setRemote] = useState<RemoteState | null>(null);
   // null until the dashboard first loads them.
   const [recent, setRecent] = useState<RecentRun[] | null>(null);
   // Counts run records and task changes, so the dashboard reads the recent runs again.
@@ -122,7 +113,6 @@ export function useMainWindow(menuTab?: string) {
   }, []);
 
   useEffect(() => {
-    void window.looper.info().then(setInfo);
     void Promise.all([
       window.looper.tasks.list().then(setTasks),
       window.looper.runtime.list().then((list) => {
@@ -131,58 +121,21 @@ export function useMainWindow(menuTab?: string) {
         setRuntimes(map);
       }),
     ]).finally(() => setLoaded(true));
-    void window.looper.projects.list().then(setProjects);
-    void window.looper.projects.folders().then(setProjectFolders);
-    void window.looper.projects.layout().then(setProjectLayout);
-    void window.looper.folders.list().then(setFolders);
-    void window.looper.folders.layout().then(setLayout);
-    void window.looper.restState().then(setRest);
-    void window.looper.preventSleepState().then(setPreventSleep);
-    void window.looper.remote.state().then(setRemote);
     void window.looper.logins.list().then(setLogins);
     const unsub = subscribe((e) => {
       switch (e.type) {
         case 'logins':
           setLogins(e.logins);
           break;
-        case 'remote':
-          setRemote(e.state);
-          break;
         case 'tasks':
           setTasks(e.tasks);
           setRunsChanged((n) => n + 1);
           break;
-        case 'projects':
-          setProjects(e.projects);
-          break;
-        case 'project-folders':
-          setProjectFolders(e.folders);
-          setProjectLayout(e.layout);
-          break;
-        case 'folders':
-          setFolders(e.folders);
-          setLayout(e.layout);
-          break;
         case 'runtime':
           setRuntimes((m) => ({ ...m, [e.runtime.taskId]: e.runtime }));
           break;
-        case 'settings':
-          setInfo((i) => (i ? { ...i, settings: e.settings } : i));
-          break;
-        case 'rest':
-          setRest(e.rest);
-          break;
-        case 'prevent-sleep':
-          setPreventSleep(e.state);
-          break;
         case 'record':
           setRunsChanged((n) => n + 1);
-          setRecords((m) => {
-            const list = m[e.record.taskId];
-            if (!list) return m; // not loaded yet: will be fetched on select
-            const next = [...list, e.record];
-            return { ...m, [e.record.taskId]: next.slice(Math.max(0, next.length - MAX_RECORDS)) };
-          });
           break;
       }
     });
@@ -213,14 +166,9 @@ export function useMainWindow(menuTab?: string) {
   }, [projects, projectSel]);
 
   // Ctrl+Tab and Ctrl+PageUp/PageDown step through a task's tabs where the task shows.
-  useDialogKeys<DetailTab>({ tabs: ['status', 'runs'], tab, onTab: menuTab === undefined || menuTab === 'tasks' ? setTab : undefined });
+  useDialogKeys<DetailTab>({ tabs: TASK_TABS.map(([id]) => id), tab, onTab: menuTab === undefined || menuTab === 'tasks' ? setTab : undefined });
 
-  useEffect(() => {
-    if (!selected || records[selected]) return;
-    void window.looper.runs.list(selected, MAX_RECORDS).then((list) =>
-      setRecords((m) => ({ ...m, [selected]: list })),
-    );
-  }, [selected, records]);
+  const { records, cleared } = useRunRecords(selected ? [selected] : []);
 
   useEffect(() => {
     if (selected && !tasks.some((t) => t.id === selected)) setSelected(null);
@@ -277,14 +225,6 @@ export function useMainWindow(menuTab?: string) {
   const sessionProject = project ?? (selected ? (projects.find((p) => p.id === targetTask?.projectId) ?? null) : null);
   const view = info?.settings.view;
 
-  // Shown at once; the settings event that follows carries the same view back.
-  const changeView = (patch: Partial<View>) => {
-    if (!view) return;
-    const next = { ...view, ...patch };
-    setInfo((i) => (i ? { ...i, settings: { ...i.settings, view: next } } : i));
-    void window.looper.updateSettings({ view: next }).catch((e) => void window.looper.showError((e as Error).message));
-  };
-
   /** Clear: these Needs attention rows leave the dashboards, and their runs show in Recent runs. */
   const clearAttention = (rows: AttentionRow[], logins: LoginRow[] = []) =>
     changeView({ attentionCleared: [...(attentionCleared ?? []), ...rows.map(attentionKey), ...logins.map(loginRowKey)] });
@@ -305,11 +245,13 @@ export function useMainWindow(menuTab?: string) {
     setProjectSel(null);
     setDashboardShown((n) => n + 1);
   }, []);
-  const runsCleared = useCallback((taskId: string) => {
-    setRecords((m) => ({ ...m, [taskId]: [] }));
-    setRunsChanged((n) => n + 1);
-  }, []);
-  /** What the commands read, on `base` (useCommandState). */
+  const runsCleared = useCallback(
+    (taskId: string) => {
+      cleared(taskId);
+      setRunsChanged((n) => n + 1);
+    },
+    [cleared],
+  );
   /**
    * The addon a tab of the window is (its panes tab, or one its screen fills),
    * for the commands it placed there: the pane picked from (or its first), the
@@ -328,9 +270,9 @@ export function useMainWindow(menuTab?: string) {
     return { ...own, panes: { pane, state: content?.status === 'ready' ? content.content.commands : undefined }, item: picked };
   };
 
+  /** What the commands read, on `base` (useCommandState), which shares this window's live state. */
   const commandContext = (base: CommandContext): CommandContext => ({
     ...base,
-    settings: info?.settings ?? base.settings,
     tab: menuTab,
     task: targetTask,
     runtime: targetTask ? runtimes[targetTask.id] : undefined,
@@ -339,13 +281,7 @@ export function useMainWindow(menuTab?: string) {
     projectSelected: !!projectSel && !selected,
     taskSelected: !!selected,
     selectTask: select,
-    projects,
-    taskFolders: folders,
-    projectFolders,
     addons,
-    rest,
-    preventSleep,
-    setView: changeView,
     runsCleared,
     showDashboard,
   });

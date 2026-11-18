@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { windowTitle } from '@shared/window-title';
 import { Field, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { useSave } from './components/hooks';
 
 /**
  * Guidance window for one run. Continue mode (run context menu → Continue
@@ -11,30 +13,24 @@ import { WindowActions } from './components/WindowActions';
  */
 export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId: string; mode: 'continue' | 'send' }) {
   const [text, setText] = useState('');
-  const [starting, setStarting] = useState(false);
+  const saver = useSave();
   const name = mode === 'send' ? 'Send Guidance' : 'Continue Run';
 
   useEffect(() => {
     document.title = `${name} ${runId}`;
     void window.looper.tasks.list().then((tasks) => {
       const t = tasks.find((x) => x.id === taskId);
-      if (t) document.title = `${t.name} – ${name}`;
+      if (t) document.title = windowTitle(name, t.name);
     });
   }, [taskId, runId, name]);
 
-  const start = async () => {
+  const start = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setStarting(true);
-    try {
+    saver.save(async () => {
       if (mode === 'send') await window.looper.sendGuidance(taskId, runId, trimmed);
       else await window.looper.continueRun(taskId, runId, trimmed);
-      window.close();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    } finally {
-      setStarting(false);
-    }
+    });
   };
 
   return (
@@ -48,7 +44,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: () => void start(), disabled: !text.trim() }} busy={starting} />
+      <WindowActions confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: start, disabled: !text.trim() }} busy={saver.busy} />
     </div>
   );
 }

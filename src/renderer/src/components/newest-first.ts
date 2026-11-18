@@ -23,6 +23,9 @@ const whenIdle = (fn: () => void): (() => void) => {
 
 const placeKey = (): string => keyOf(location.search, location.hash);
 
+/** The scroller shows its end, give or take `slack` px. */
+export const atEnd = (el: HTMLElement, slack = 40): boolean => el.scrollHeight - el.scrollTop - el.clientHeight < slack;
+
 /** The page put its kept place back already: a later conversation is one the reader opened. */
 let placeRead = false;
 
@@ -85,9 +88,9 @@ const OWN_CHANGE_MS = 500;
 /**
  * Keeps a reader who is at the end there while anything changes size: a reply growing as it streams, an image or
  * a highlighted block drawn late, the keyboard or the message box taking room. What the reader opens themselves
- * stays where they opened it. `atEnd` is the conversation's own flag, which its scroll handler keeps.
+ * stays where they opened it. `stays` is the conversation's own at-the-end flag, which its scroll handler keeps.
  */
-export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, atEnd: RefObject<boolean>): void {
+export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, stays: RefObject<boolean>): void {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -96,8 +99,8 @@ export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, atEnd: Re
       input = performance.now();
     };
     const ro = new ResizeObserver(() => {
-      if (performance.now() - input < OWN_CHANGE_MS) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      else if (atEnd.current) el.scrollTop = el.scrollHeight;
+      if (performance.now() - input < OWN_CHANGE_MS) stays.current = atEnd(el);
+      else if (stays.current) el.scrollTop = el.scrollHeight;
     });
     // The border box: on iOS the message box sets the scroller's padding from a ResizeObserver of its own, which
     // keeps the reader at the end itself, and a content box seen here would be a loop the browser reports as an error.
@@ -118,7 +121,7 @@ export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, atEnd: Re
       el.removeEventListener('pointerdown', own);
       el.removeEventListener('keydown', own);
     };
-  }, [scrollRef, atEnd]);
+  }, [scrollRef, stays]);
 }
 
 /**

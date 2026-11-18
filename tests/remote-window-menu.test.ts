@@ -19,7 +19,7 @@ function lone() {
   const sent: ServerMessage[] = [];
   const client = new RemoteClient('c1', { id: 'd', name: 'Phone' }, 'web', { dir, offerDownload: () => 't', log: quiet });
   client.setConnection((m) => {
-    sent.push(JSON.parse(JSON.stringify(m)));
+    sent.push(JSON.parse(typeof m === 'string' ? m : JSON.stringify(m)));
     return true;
   });
   const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 1400, height: 900, resizable: true, modal: false, parent: null });
@@ -51,6 +51,26 @@ it('a skipped setMenu still points picks at the new menu items', () => {
   expect(menus()).toHaveLength(1);
   client.pick(win.w, '0.0', undefined);
   expect(clicks).toEqual(['new']);
+});
+
+it('tells a popup\'s caller it closed: after a pick, on dismiss, when a newer one replaces it, and when the phone leaves', () => {
+  const { client, win } = lone();
+  const item = (label: string, click?: Function): MenuItemLike => ({ label, type: 'normal', enabled: true, visible: true, click });
+  const closed: string[] = [];
+  const open = (name: string, click?: Function) => client.popup(win, { items: [item('Copy', click)] }, undefined, undefined, undefined, () => closed.push(name));
+  const lastMenuId = () => `m${(client as unknown as { seq: number }).seq}`;
+
+  const picks: string[] = [];
+  open('picked', () => picks.push('copy'));
+  client.pick(lastMenuId(), '0', undefined);
+  expect([picks, closed]).toEqual([['copy'], ['picked']]);
+
+  open('dismissed');
+  client.dismiss(lastMenuId());
+  open('replaced');
+  open('left');
+  client.setConnection(null);
+  expect(closed).toEqual(['picked', 'dismissed', 'replaced', 'left']);
 });
 
 it('serializes where each label\'s access key is, after its && pairs are made single', () => {

@@ -13,7 +13,7 @@ import { folderSubtree } from '../shared/folders';
 import { NOT_MOBILE } from '../shared/ui-platform';
 import { perfLine } from '../shared/perf';
 import { projectTaskId } from '../shared/projects';
-import { sessionGroupKey } from '../shared/sessions';
+import { canStop, sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
 import type { AppInfo, UiEvent } from '../shared/api';
@@ -256,6 +256,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('builder:output', (_e, id: string) => engine.builderOutput(id));
   ipc.on('builder:write', (_e, id: string, data: string) => engine.writeBuilder(id, data));
   ipc.on('builder:resize', (_e, id: string, cols: number, rows: number) => engine.resizeBuilder(id, cols, rows));
+  ipc.handle('builder:attach', (_e, id: string, files: unknown) => engine.attachToBuilder(id, attachmentInputs(files)));
+  ipc.on('context-menu:builderTerminal', (e, id: string, hasSelection: boolean) => showTerminalMenu(e, hasSelection, (files) => engine.attachToBuilder(id, files)));
   ipc.handle('tasks:remove', (_e, id: string) => engine.removeTask(id));
   ipc.handle('recycleBin:list', () => engine.listRecycleBin());
   ipc.handle('recycleBin:restore', (_e, id: string) => engine.restoreTask(id));
@@ -383,7 +385,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.resizeTerminalSession(id, cols, rows),
   );
   ipc.handle('terminalSession:attach', (_e, id: string, files: unknown) => engine.attachToTerminal(id, attachmentInputs(files)));
-  ipc.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => {
+  /** A terminal's right-click menu (a terminal session's, the task builder's): `attach` copies the files and gives their paths as it pastes them. */
+  const showTerminalMenu = (e: Electron.IpcMainEvent, hasSelection: boolean, attach: (files: AttachmentInput[]) => string | Promise<string>) => {
     const sender = windowOf(e);
     if (!sender) return;
     const send = (payload: unknown) => {
@@ -393,7 +396,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const r = await showOpenDialog(sender, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
       if (r.canceled || r.filePaths.length === 0) return;
       const files = r.filePaths.map((p) => ({ name: p.split(/[\\/]/).pop() ?? p, path: p }));
-      send({ type: 'terminal-attached', text: engine.attachToTerminal(id, files) });
+      send({ type: 'terminal-attached', text: await attach(files) });
     };
     popupMenu(Menu.buildFromTemplate([
       { label: 'Copy', enabled: !!hasSelection, click: () => send({ type: 'terminal-copy' }) },
@@ -407,7 +410,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
           }),
       },
     ]), { window: sender });
-  });
+  };
+  ipc.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => showTerminalMenu(e, hasSelection, (files) => engine.attachToTerminal(id, files)));
 
   ipc.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
   ipc.handle('chat:get', (_e, id: string) => {
@@ -457,6 +461,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         resend?: { text: string; attachments: Attachment[] };
         fork?: number;
         selectText?: string;
+        /** A Task or Agent call's subagent, whose conversation the menu opens (`label` names it). */
+        agentId?: string;
+        label?: string;
       },
     ) => {
       const sender = windowOf(e);
@@ -501,6 +508,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
           },
           { label: 'Copy Path', click: () => writeClipboard(file) },
         ]);
+      }
+      if (info.agentId) {
+        const agentId = info.agentId;
+        groups.push([{ label: 'Open Subagent Conversation', click: () => host.openMessages(info.taskId, String(info.chatId), agentId, info.label) }]);
       }
       const again: Electron.MenuItemConstructorOptions[] = [];
       if (info.resend) {
@@ -554,10 +565,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.handle('sessions:state', () => engine.sessionsState());
   ipc.handle('sessions:activity', (_e, id: string) => engine.sessionActivity(String(id)));
+  ipc.handle('sessions:commands', (_e, id: string) => engine.sessionCommands(String(id)));
   ipc.on('sessions:show', (e, id: string | null) => host.showSession(windowOf(e), typeof id === 'string' ? id : null));
   ipc.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
   ipc.handle('sessions:close', (e, id: string) => host.closeSession(String(id), windowOf(e)));
-  ipc.handle('sessions:stop', (e, id: string) => stopSession(String(id), windowOf(e)));
+  ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
   ipc.handle('sessions:restart', (e, id: string) => host.restartSession(String(id), windowOf(e)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
   ipc.on('sessions:openRename', (e, id: string) => {
@@ -605,8 +617,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:setHarness', (_e, id: string, harnessId: string) => engine.setChatHarness(String(id), String(harnessId)));
   ipc.handle('sessions:harnessSessionId', (_e, id: string) => engine.harnessSessionId(String(id)) ?? null);
   ipc.handle('runs:canContinue', (_e, id: string, runId: string) => engine.canContinueRun(String(id), String(runId)));
-  ipc.on('sessions:send', (_e, ids: unknown, text: string) => {
-    engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''));
+  ipc.on('sessions:send', (_e, ids: unknown, text: string, attachments?: unknown) => {
+    engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''), takeAttachments(attachments));
   });
   ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
   ipc.on('sessions:cards', (e, ids: unknown) => host.showCards(windowOf(e), Array.isArray(ids) ? ids.map(String) : []));
@@ -631,7 +643,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       ...(run
         ? [
             { label: 'Send Guidance…', enabled: engine.canGuideRun(s.taskId, s.id), click: () => host.openSendGuidance(s.taskId, s.id) },
-            { label: 'Stop', destructive: true as const, click: () => void stopSession(id, sender).catch((err) => fail(sender, err)) },
+            { label: 'Stop', destructive: true as const, enabled: canStop(s), click: () => void engine.stopSession(id).catch((err) => fail(sender, err)) },
+            { label: s.startedBy !== undefined ? 'Stop Agent…' : 'Stop Run…', destructive: true as const, click: () => void stopRun(id, sender).catch((err) => fail(sender, err)) },
             { type: 'separator' } as const,
           ]
         : [
@@ -654,7 +667,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             { type: 'separator' } as const,
           ]),
       ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),
-      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.findSessionTask(s.taskId)?.cwd ?? '').catch(() => undefined) },
+      { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.workFolder(s.taskId, s.id) ?? '').catch(() => undefined) },
       { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
       ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
     ];
@@ -745,7 +758,22 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.continueRun(id, runId, guidance),
   );
   ipc.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
-  ipc.handle('run:guide', (_e, id: string, runId: string, text: string) => engine.sendGuidance(id, runId, text));
+  ipc.handle('run:guide', (_e, id: string, runId: string, text: string, attachments?: unknown) =>
+    engine.sendGuidance(String(id), String(runId), String(text ?? ''), takeAttachments(attachments)),
+  );
+  ipc.handle('runs:runCommand', (_e, id: string, runId: string, command: string, commandId: string) =>
+    engine.runRunCommand(String(id), String(runId), String(command ?? ''), String(commandId ?? '')),
+  );
+  ipc.handle('runs:stopCommand', (_e, id: string, runId: string, commandId: string) => engine.stopRunCommand(String(id), String(runId), String(commandId ?? '')));
+  ipc.handle('runs:sendNow', (_e, id: string, runId: string) => engine.sendNowRun(String(id), String(runId)));
+  ipc.handle('runs:unqueue', (_e, id: string, runId: string) => engine.unqueueGuidance(String(id), String(runId)));
+  ipc.handle('runs:attach', (_e, id: string, files: unknown) => engine.attachToRun(String(id), attachmentInputs(files)));
+  /** A run's message box's Attach Files: pick files, then copy them in like dropped ones. */
+  ipc.handle('runs:pickFiles', async (e, id: string) => {
+    const r = await showOpenDialog(windowOf(e), { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
+    if (r.canceled || r.filePaths.length === 0) return [];
+    return engine.attachToRun(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+  });
 
   /** A target-native path (in the task's environment) as the host opens it, translated across the WSL boundary. */
   const targetToHost = async (taskId: string, p: string): Promise<string> => {
@@ -823,16 +851,19 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const opts = { type: 'error' as const, title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 };
     void showMessageBox(sender, opts);
   };
-  /** A session's Stop; on a task run it stops the whole run, as the Tasks tab's Stop does, once the user agrees. */
-  const stopSession = async (id: string, sender: AppWindow | null): Promise<void> => {
+  /** Stop Run… on a task run in the Chats list: the whole run stops, as the Tasks tab's Stop does, once the user agrees. */
+  const stopRun = async (id: string, sender: AppWindow | null): Promise<void> => {
     const s = engine.sessionsState().sessions.find((x) => x.id === id);
-    if (s?.kind !== 'run') return engine.stopSession(id);
+    if (s?.kind !== 'run') return;
+    const delegated = s.startedBy !== undefined;
     const msg = {
       type: 'question' as const,
       title: 'Looper',
-      message: `Stop the run of "${s.title}"?`,
-      detail: 'This stops the whole task run, the same as Stop on the Tasks tab, not only its conversation.',
-      buttons: ['Stop Run', 'Cancel'],
+      message: delegated ? `Stop "${s.title}"?` : `Stop the run of "${s.title}"?`,
+      detail: delegated
+        ? `This stops the agent, and the agent of "${s.startedBy}" that started it gets its result.`
+        : 'This stops the whole task run, the same as Stop on the Tasks tab, not only its conversation.',
+      buttons: [delegated ? 'Stop Agent' : 'Stop Run', 'Cancel'],
       noLink: true,
       defaultId: 1,
       cancelId: 1,
@@ -1402,26 +1433,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     else if (command === 'delete') deleteFolder(sender, folderId);
   });
 
-  // A list window's row menu: the window names the items; a pick comes back as a 'list-menu' event carrying the same token.
-  ipc.on('context-menu:list', (e, token: string, items: { id: string; label: string; enabled?: boolean; destructive?: true; separator?: true }[]) => {
-    const sender = windowOf(e);
-    if (!sender || !Array.isArray(items)) return;
-    popupMenu(
-      Menu.buildFromTemplate(
-        items.flatMap((it) => [
-          ...(it.separator === true ? [{ type: 'separator' as const }] : []),
-          {
-            label: String(it.label),
-            enabled: it.enabled !== false,
-            ...(it.destructive === true ? { destructive: true as const } : {}),
-            click: () => sender.webContents.send('ui:event', { type: 'list-menu', token: String(token), id: String(it.id) }),
-          },
-        ]),
-      ),
-      { window: sender },
-    );
-  });
-
   ipc.on(
     'context-menu:message',
     (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }) => {
@@ -1547,8 +1558,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const open = new Set(event.state.sessions.map((s) => s.id));
       for (const id of chatEncoders.keys()) if (!open.has(id)) chatEncoders.delete(id);
     }
-    // Likewise a running "!" command's output: the windows showing its chat.
-    if (event.type === 'chat:command') return sendTo(host.sessionWindow(event.chatId), event);
+    // Likewise a running "!" command's output: the windows showing its chat. A task run's box shows in its run window too.
+    if (event.type === 'chat:command') return sendTo(engine.getChat(event.chatId) ? host.sessionWindow(event.chatId) : allWindows(), event);
     // Likewise a terminal session's output: only the windows showing it.
     if (event.type === 'terminal:data' || event.type === 'terminal:end') return sendTo(host.terminalWindow(event.id), event);
     // A task run's raw output is for `looper serve` to print: no window shows it.

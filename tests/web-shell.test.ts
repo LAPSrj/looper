@@ -229,7 +229,7 @@ describe('dialog results', () => {
     const sent: ServerMessage[] = [];
     const client = new RemoteClient('c', { id: 'd', name: 'Phone' }, 'web', { dir: tmp(), offerDownload: () => 't', log: { error: () => undefined, warn: () => undefined } });
     client.setConnection((m) => {
-      sent.push(m);
+      sent.push(typeof m === 'string' ? (JSON.parse(m) as ServerMessage) : m);
       return true;
     });
     const win = client.openWindow({ role: 'workspace', hash: '', title: 'Looper', width: 100, height: 100, resizable: true, modal: false, parent: null });

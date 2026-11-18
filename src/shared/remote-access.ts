@@ -361,8 +361,11 @@ export type ClientMessage =
    * client over and the old one is closed. Same clientId, different pageId,
    * old socket open: a duplicated tab, which gets a client of its own. Old
    * socket gone: resume, whatever the pageId (a reloaded page).
+   *
+   * `seq`: the last numbered message (event or reload) this page load got,
+   * so a resume sends it what it missed instead of loading its windows again.
    */
-  | { t: 'hello'; platform: 'web' | 'ios' | 'android'; clientId?: string; pageId?: string; visible?: boolean }
+  | { t: 'hello'; platform: 'web' | 'ios' | 'android'; clientId?: string; pageId?: string; visible?: boolean; seq?: number }
   /** The tab became visible or hidden (document.visibilityState): push notifications go only to devices not looking. */
   | { t: 'visibility'; visible: boolean }
   /** The window's page loaded: the server emits ready-to-show / did-finish-load for it. */
@@ -390,11 +393,25 @@ export interface PopupButton {
 
 export type ServerMessage =
   /**
-   * `resumed`: the windows of `clientId` are still there and follow as
-   * window-open messages (parents first), each with its window-menu, then
-   * the dialogs still waiting for an answer. Popup menus don't come back.
+   * `resumed`: the windows of `clientId` are still there (`windows`, which
+   * the tab keeps and closes the others) and follow as window-open messages
+   * (parents first), each with its window-menu, then the dialogs still
+   * waiting for an answer. Popup menus don't come back.
+   *
+   * `replayed`: the events and reloads sent after the hello's `seq` follow
+   * too, so the pages are current without loading again. `seq` is the last
+   * one numbered before this welcome.
    */
-  | { t: 'welcome'; device: { id: string; name: string }; version: string; clientId: string; resumed: boolean }
+  | {
+      t: 'welcome';
+      device: { id: string; name: string };
+      version: string;
+      clientId: string;
+      resumed: boolean;
+      windows: string[];
+      replayed: boolean;
+      seq: number;
+    }
   /** shell.openPath / showItemInFolder from this device: a folder opens in the host computer's file browser, an image or text file in the viewer, any other file asks Open on Host Computer or Download. */
   | { t: 'show-path'; path: string; isDir: boolean; siblings?: string[] }
   | { t: 'result'; id: number; ok: true; value: unknown }
@@ -407,8 +424,8 @@ export type ServerMessage =
   | { t: 'window-menu'; w: string; menu: MenuItemSpec[] | null }
   /** The window's page moves to another route (the setup window becoming its builder): load index.html#<hash> afresh; a window-ready follows. */
   | { t: 'window-load'; w: string; hash: string }
-  /** webContents.send to that window. */
-  | { t: 'event'; w: string; channel: string; args: unknown[] }
+  /** webContents.send to that window. `seq` numbers it with the client's reloads. */
+  | { t: 'event'; seq: number; w: string; channel: string; args: unknown[] }
   | { t: 'menu'; menuId: string; w: string; items: MenuItemSpec[]; x?: number; y?: number; button?: PopupButton }
   | { t: 'dialog'; dialogId: string; w: string; kind: 'message'; spec: MessageBoxSpec }
   | { t: 'dialog'; dialogId: string; w: string; kind: 'open' | 'save'; spec: FileDialogSpec }
@@ -420,7 +437,7 @@ export type ServerMessage =
   | { t: 'notify'; title: string; body: string; taskId?: string; runId?: string }
   /** The computer's name changed (Remote Access's Name setting); a new connection reads it from /api/me. */
   | { t: 'computer'; name: string }
-  | { t: 'reload'; w: string }
+  | { t: 'reload'; seq: number; w: string }
   | { t: 'pong' };
 
 /**

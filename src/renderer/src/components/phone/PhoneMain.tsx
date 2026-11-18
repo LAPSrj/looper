@@ -16,7 +16,6 @@ import {
   followSelection,
   initialPhoneNav,
   keptNav,
-  phoneTabForm,
   popScreen,
   pruneNav,
   pushScreen,
@@ -53,12 +52,16 @@ import type { TasksSwitch } from '../TaskCollection';
 import { ReorderSheet } from './ReorderSheet';
 import { Group, LargeTitle, Row } from './PhoneList';
 import { usePageWidth, useSplit } from './PhoneSplit';
-import { TabIcon } from './tab-icons';
 import { TaskCollection } from '../TaskCollection';
+import { ViewTabs, phoneViewTabsForm, type ViewTab } from '../ViewTabs';
 import { TasksOverview } from './TasksOverview';
 import { useSessionsState } from './useSessionsState';
+import { reportError } from '../../report-error';
 
 const KEPT_NAV_KEY = 'looper.phone-nav';
+
+/** The views the tabs switch between: Looper's own and More, which lists the addons' tabs. */
+const VIEW_TABS: readonly ViewTab[] = PHONE_TABS.map(([id, label]) => ({ id, label }));
 
 function readKeptNav(): PhoneNav | null {
   try {
@@ -161,7 +164,7 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   const sessions = useSessionsState();
   const chatsTab: ChatsTab = { sessions, show: chatsShow, onShow: setChatsShow, reordering: reorderingCards, onReordered: () => setReorderingCards(false) };
   const addonTabs = mainTabs(m.addons).filter((t) => t.addon);
-  const tabForm = phoneTabForm(platform === 'android' ? 'android' : 'ios', width, !!split);
+  const tabForm = phoneViewTabsForm(width, !!split);
   const openTab = (id: PhoneTab) => setNav((n) => selectTab(n, id));
   // An addon's tab goes when its addon stops.
   const tabGone = nav.tab.startsWith('addon/') && m.addonsLoaded && !addonTabs.some((t) => t.id === nav.tab);
@@ -230,9 +233,8 @@ export function PhoneMain({ m }: { m: MainWindow }) {
   // With nothing opened, the detail column of the Chats and Tasks tabs is their Overview (a chat opens in a Chats window of its own).
   const overview = nav.tab === 'sessions' ? <PhoneSessionsTab m={m} tab={chatsTab} show="overview" /> : nav.tab === 'tasks' ? <div className="pg-scroll phone-sessions"><TasksOverview m={m} /></div> : null;
   const detail: ShownScreen | null = !split || top ? shown : overview ? { title: 'Overview', actions: [], body: overview } : null;
-  const select = (id: string) => openTab(id as PhoneTab);
   const currentTab: PhoneTab = nav.tab.startsWith('addon/') ? 'more' : nav.tab;
-  const topTabs = tabForm === 'top' ? { items: PHONE_TABS, value: currentTab, select } : undefined;
+  const viewTabs = <ViewTabs tabs={VIEW_TABS} active={currentTab} onSelect={(id) => openTab(id as PhoneTab)} layout={tabForm} />;
   const bar = (
     <NavBar
       {...(list
@@ -246,25 +248,11 @@ export function PhoneMain({ m }: { m: MainWindow }) {
           toolbar,
           largeTitle: false,
           split: { width: split!.lead, title: list.title, actions: list.actions, largeTitle: true },
-          tabs: topTabs,
         }
-      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, ownsBottom: tabForm === 'bar', largeTitle: !top, tabs: topTabs })}
+      : { title: shown.title, back, actions: shown.actions, more: shown.more, toolbar, largeTitle: !top })}
     />
   );
 
-  const tabButtons = PHONE_TABS.map(([id, label]) => (
-    <button
-      key={id}
-      className={`phone-tab${currentTab === id ? ' active' : ''}`}
-      aria-current={currentTab === id ? 'page' : undefined}
-      onClick={() => openTab(id)}
-    >
-      <span className="phone-tab-icon">
-        <TabIcon id={id} />
-      </span>
-      <span className="phone-tab-label">{label}</span>
-    </button>
-  ));
   const sheets = reordering && reorderable && <ReorderSheet {...reorderable} onClose={() => setReordering(false)} />;
   const tabClass = `tab-${nav.tab.startsWith('addon/') ? 'addon' : nav.tab}${top ? ' pushed' : ''}`;
 
@@ -273,11 +261,8 @@ export function PhoneMain({ m }: { m: MainWindow }) {
       <div className={`phone-main phone-page${split ? ' split' : ''} ${tabClass}`}>
         {bar}
         <div className="phone-main-row">
-          {tabForm === 'rail' && (
-            <nav className="phone-tabbar rail" aria-label="Looper">
-              {tabButtons}
-            </nav>
-          )}
+          {/* A rail beside the content; iPad's tabs go to the frame's bar and draw nothing here. */}
+          {tabForm !== 'bar' && viewTabs}
           {list ? (
             <ListDetail split={split!} list={list.body} open={!!detail} detail={detail?.body} empty={EMPTY_DETAIL[nav.tab]} />
           ) : (
@@ -296,16 +281,11 @@ export function PhoneMain({ m }: { m: MainWindow }) {
         {shown.body}
       </div>
       {sheets}
-      {tabForm === 'bar' && (
-        <nav className="phone-tabbar" aria-label="Looper">
-          {tabButtons}
-        </nav>
-      )}
+      {tabForm === 'bar' && viewTabs}
     </div>
   );
 }
 
-const failed = (e: unknown) => void window.looper.showError((e as Error).message);
 
 /** What a tab's Reorder moves and how it saves, through the same calls as the desktop's drags; null: nothing to order there. */
 function reorderSheet(m: MainWindow, tab: PhoneTab, folderId: string): Omit<React.ComponentProps<typeof ReorderSheet>, 'onClose'> | null {
@@ -318,7 +298,7 @@ function reorderSheet(m: MainWindow, tab: PhoneTab, folderId: string): Omit<Reac
       sections: [{ key: folderId, items: entries.map((e) => (e.kind === 'folder' ? { key: `folder:${e.folder.id}`, title: e.folder.name } : { key: e.task.id, title: e.task.name })) }],
       onReorder: (container, keys) => {
         const nextLayout = withSiblingsOrdered(siblingOrder(m.tasks, m.folders, m.layout), container, keys);
-        void window.looper.tasks.reorder(m.tasks.map((t) => t.id), undefined, nextLayout).catch(failed);
+        void window.looper.tasks.reorder(m.tasks.map((t) => t.id), undefined, nextLayout).catch(reportError);
       },
     };
   }
@@ -331,7 +311,7 @@ function reorderSheet(m: MainWindow, tab: PhoneTab, folderId: string): Omit<Reac
       sections: [{ key: folderId, items: entries.map((e) => (e.kind === 'folder' ? { key: `folder:${e.folder.id}`, title: e.folder.name } : { key: e.task.id, title: e.task.name })) }],
       onReorder: (container, keys) => {
         const nextLayout = withSiblingsOrdered(siblingOrder(m.projects, m.projectFolders, m.projectLayout), container, keys);
-        void window.looper.projects.reorder(m.projects.map((p) => p.id), undefined, nextLayout).catch(failed);
+        void window.looper.projects.reorder(m.projects.map((p) => p.id), undefined, nextLayout).catch(reportError);
       },
     };
   }

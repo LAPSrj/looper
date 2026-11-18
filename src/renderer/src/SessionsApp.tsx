@@ -14,14 +14,14 @@ import {
 } from '@shared/card-grid';
 import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
-import { contextText, type ChatState } from '@shared/chat';
-import type { SessionSummary, UsageLimits } from '@shared/sessions';
+import type { ChatState } from '@shared/chat';
+import type { MessageRow } from '@shared/messages';
+import type { SessionActivity, SessionSummary, SlashCommand, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
 import { canStop, dashboardOrder, liveCards, showsConversation } from '@shared/sessions';
 import type { EngineEvent } from '@shared/types';
 import { ActivityPanel, type ActivityTab } from './components/ActivityPanel';
 import { fmtClock } from './format';
-import { WaitedFor } from './components/Live';
 import { MINUTE, useNow } from './useNow';
 import { StatusBar } from './components/StatusBar';
 import { Toolbar } from './components/Toolbar';
@@ -31,8 +31,10 @@ import { ChatView, PermissionButtons } from './components/ChatView';
 import { useDragResize } from './components/hooks';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
-import { MessageBox, type MessageBoxStop } from './components/MessageBox';
-import { RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
+import { Composer } from './components/Composer';
+import type { MessageBoxStop } from './components/MessageBox';
+import { QueuedGuidanceActions, RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
+import { reportError } from './report-error';
 import { OverviewSwitch, type OverviewChoice } from './components/phone/OverviewSwitch';
 import { LargeTitle } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
@@ -40,11 +42,10 @@ import { ReorderSheet } from './components/phone/ReorderSheet';
 import { useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
-import { SessionIcon, SessionList, statusText } from './components/SessionList';
+import { NO_CHATS, SessionIcon, SessionList, SessionStatus, sessionKind } from './components/SessionList';
 import { runningText, subagentTabs } from './components/subagents';
-import { CONVERSATION_TAB, subagentTab } from './components/SubagentIcon';
-import { cacheText, contextFraction, limitFacts, sessionLimits, usageLabel } from './components/usage';
-import { Tabs, type TabItem } from './components/Tabs';
+import { SubagentTabs } from './components/SubagentIcon';
+import { contextFraction, factLine, limitFacts, sessionFacts, sessionLimits, usageLabel, type Fact } from './components/usage';
 import { WorkflowView } from './components/WorkflowView';
 import { terminalTitle } from './phone-lists';
 import { getChat, subscribe } from './events';
@@ -61,15 +62,12 @@ const TerminalView = lazy(() => import('./components/TerminalView').then((m) => 
 const WIDTHS_KEY = 'sessions.widths';
 const WINDOW_WIDTHS_KEY = 'sessions.window.widths';
 
-/** When the agent last replied and whether its prompt cache still lasts. */
-function replyParts(s: SessionSummary | undefined, now: number): string[] {
-  if (!s?.lastReplyAt) return [];
-  const parts = [`Last reply ${fmtClock(s.lastReplyAt, now)}`];
-  if (s.cacheUntil !== undefined) parts.push(cacheText(s.cacheUntil, now));
-  return parts;
-}
-
-const limitParts = (limits: UsageLimits, now: number): string[] => limitFacts(limits, now).map((f) => `${f.label} ${f.value}`);
+const factSpans = (facts: Fact[]) =>
+  facts.map((f) => (
+    <span key={f.label} className={f.live ? 'live-only' : undefined}>
+      {factLine(f)}
+    </span>
+  ));
 
 /**
  * The window's bottom line: the session's harness and its context, then the usage limits of the account its harness runs on.
@@ -78,78 +76,37 @@ const limitParts = (limits: UsageLimits, now: number): string[] => limitFacts(li
 export function SessionsStatusBar({ summary, chat, limits, children }: { summary?: SessionSummary; chat: ChatState | null; limits: UsageLimits; children?: React.ReactNode }) {
   // Every time on it counts minutes.
   const now = useNow(MINUTE);
-  const left = chat ? [chat.harnessName] : summary ? [summary.harnessName] : [];
-  const context = chat?.context ?? summary?.context;
+  const facts = sessionFacts(
+    {
+      harness: chat?.harnessName ?? summary?.harnessName,
+      context: chat?.context ?? summary?.context,
+      lastReplyAt: summary?.lastReplyAt,
+      cacheUntil: summary?.cacheUntil,
+    },
+    now,
+    fmtClock,
+  );
   return (
     <StatusBar
       end={
         <>
-          {limitParts(limits, now).map((p) => (
-            <span key={p}>{p}</span>
-          ))}
+          {factSpans(limitFacts(limits, now))}
           {children}
         </>
       }
     >
-      {left.map((p) => (
-        <span key={p}>{p}</span>
-      ))}
-      {context && <span>{contextText(context)}</span>}
-      {replyParts(summary, now).map((p) => (
-        <span key={p} className={p.startsWith('Cache') ? 'live-only' : undefined}>
-          {p}
-        </span>
-      ))}
+      {factSpans(facts)}
     </StatusBar>
   );
 }
 
-/** A phone card's meta line names why a session waits; the question itself is shown in full below it. */
-const WAIT_LABELS: Record<NonNullable<SessionSummary['waiting']>['reason'], string | null> = {
-  permission: 'Needs permission',
-  notification: 'Waiting for you',
-  error: 'Needs a look',
-  turn: null,
-};
-
-/** What a waiting or working session is about, in a line. */
-function CardStatus({ s }: { s: SessionSummary }) {
-  if (s.waiting) {
-    return (
-      <>
-        {(isPhone && WAIT_LABELS[s.waiting.reason]) || s.waiting.text} · <WaitedFor since={s.waiting.since} />
-      </>
-    );
-  }
-  return <>{statusText(s)}</>;
-}
-
-/**
- * A card's messages. The desktop shows those since the user's last one, scrolled
- * to the newest. A phone shows the question a waiting session asks in full, then the
- * agent's last message as whole lines, at most four, with an ellipsis after them.
- */
-function CardMessages({ s, big }: { s: SessionSummary; big?: boolean }) {
+/** A card's messages: those since the user's last one, scrolled to the newest, on a phone as on the desktop. */
+function CardMessages({ s }: { s: SessionSummary }) {
   const ref = useRef<HTMLDivElement>(null);
   const key = s.recent?.join('\n') ?? s.latest ?? '';
   useLayoutEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [key]);
-  if (isPhone) {
-    // Cards don't scroll inside on a phone or tablet (Material: Cards), so Double Size shows more of the chat in place.
-    const shown = big && s.recent?.length ? s.recent : [s.recent?.length ? s.recent[s.recent.length - 1] : s.latest].filter(Boolean);
-    const question = s.waiting && s.waiting.reason !== 'turn' ? s.waiting.text : null;
-    return (
-      <div className="overview-messages">
-        {question && <div className="overview-question">{question}</div>}
-        {shown.map((m, i) => (
-          <div key={i} className="overview-msg overview-last">
-            {m}
-          </div>
-        ))}
-      </div>
-    );
-  }
   return (
     <div className="overview-messages" ref={ref}>
       {s.recent?.length ? (
@@ -197,7 +154,10 @@ function CardTitle({ s, size, drag }: { s: SessionSummary; size?: CardSize; drag
       </div>
       <div className="muted overview-meta">
         {s.groupName} · {s.harnessName}
-        {s.kind === 'terminal' ? ' · Terminal' : s.kind === 'run' ? ' · Task run' : ''} · <span className={s.waiting ? 'warn live-only' : ''}><CardStatus s={s} /></span>
+        {sessionKind(s) && ` · ${sessionKind(s)}`} ·{' '}
+        <span className={s.waiting ? 'warn live-only' : ''}>
+          <SessionStatus s={s} brief={isPhone} />
+        </span>
       </div>
     </>
   );
@@ -208,31 +168,24 @@ const backgroundText = (n: number) => (n === 1 ? '1 running in the background' :
 const cardClass = (s: SessionSummary, extra = '') =>
   `overview-card${extra}${s.waiting && s.waiting.reason !== 'turn' ? ' waiting' : ''}`;
 
-const fail = (e: Error) => void window.looper.showError(e.message);
-
 /** A session's Stop beside its message box, by the toolbar's rule. */
-const stopOf = (s: SessionSummary): MessageBoxStop => ({ enabled: canStop(s), run: () => void window.looper.sessions.stop(s.id).catch(fail) });
+const stopOf = (s: SessionSummary): MessageBoxStop => ({ enabled: canStop(s), run: () => void window.looper.sessions.stop(s.id).catch(reportError) });
 
 /**
- * One session on the dashboard as a summary: its state, the agent's messages since the
- * user's last one, and Allow/Deny or a reply box at the bottom: on the desktop a chat's
- * message box, Send above Stop. A terminal session's card on the desktop, and every
- * card on a phone.
+ * A terminal session on the dashboard as a summary: its state, the agent's
+ * messages since the user's last one, and Allow/Deny or the message box at the
+ * bottom (a chat's, Send above Stop), whose message is typed into the terminal.
  */
-export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag }) {
-  const [reply, setReply] = useState('');
-  const run = s.kind === 'run';
-  const send = () => {
-    const text = reply.trim();
-    if (!text) return;
-    // A task run's agent takes the reply as guidance, the answer to its question while it asks one.
-    if (run) void sendRunGuidance(s, text).then(() => setReply(''), fail);
-    else {
-      window.looper.sessions.send([s.id], reply);
-      setReply('');
-    }
-  };
-  const placeholder = run ? (s.question !== undefined ? 'Answer' : 'Guidance') : 'Reply';
+function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag }) {
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  // The skills come with the transcript's first read: asked again as the session goes on.
+  useEffect(() => {
+    let live = true;
+    void window.looper.sessions.commands(s.id).then((list) => live && setCommands(list));
+    return () => {
+      live = false;
+    };
+  }, [s.id, s.status]);
   const keep = (e: React.MouseEvent) => e.stopPropagation();
   let bottom: React.ReactNode = null;
   if (s.permissionId) {
@@ -245,14 +198,14 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
     // A click in the box stays in the box; anywhere else on the card opens it.
     bottom = (
       <div className="overview-composer" onClick={keep}>
-        <MessageBox text={reply} onText={setReply} placeholder={placeholder} canSend={!!reply.trim()} onSend={send} stop={stopOf(s)} />
+        <Composer terminal={{ summary: s, commands, stop: stopOf(s) }} />
       </div>
     );
   }
   return (
     <div
       data-id={s.id}
-      className={cardClass(s, isPhone ? '' : ' overview-reply') + (drag?.mark ?? '') + (size?.big ? ' big' : '')}
+      className={cardClass(s, ' overview-reply') + (drag?.mark ?? '') + (size?.big ? ' big' : '')}
       style={size?.area}
       onClick={() => onOpen(s.id)}
       onContextMenu={(e) => {
@@ -261,7 +214,7 @@ export function DashboardCard({ s, onOpen, size, drag }: { s: SessionSummary; on
       }}
     >
       <CardTitle s={s} size={size} drag={drag} />
-      <CardMessages s={s} big={size?.big} />
+      <CardMessages s={s} />
       {s.background > 0 && <div className="muted">{backgroundText(s.background)}</div>}
       {bottom}
     </div>
@@ -288,7 +241,7 @@ export function PhoneOverview({
   // Only the cards near the screen show their conversation, as on the desktop's dashboard.
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const [inView, track] = useCardsInView(root);
-  if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
+  if (sessions.length === 0) return <div className="empty">{NO_CHATS}</div>;
   const big = shown.bigCards;
   const toggleBig = (id: string) => {
     const others = big.filter((x) => x !== id && sessions.some((c) => c.id === x));
@@ -302,7 +255,7 @@ export function PhoneOverview({
           return showsConversation(x) ? (
             <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} track={track} onOpen={onOpen} />
           ) : (
-            <DashboardCard key={x.id} s={x} onOpen={onOpen} size={size} />
+            <TerminalCard key={x.id} s={x} onOpen={onOpen} size={size} />
           );
         })}
       </div>
@@ -412,16 +365,53 @@ const chatEvent = (e: EngineEvent, id: string) => (e.type === 'chat' && e.state.
 const readActivity = (id: string) => window.looper.sessions.activity(id);
 const activityEvent = (e: EngineEvent, id: string) => (e.type === 'session:activity' && e.activity.id === id ? e.activity : undefined);
 
+const NO_ROWS: MessageRow[] = [];
+
+/**
+ * A task run's conversation and its message box, in the Chats view or on a
+ * dashboard card (`embedded`): guidance waiting for the agent shows at its end
+ * with Edit and Cancel, the rows' menu quotes into the box, and the box shows
+ * Queue while the agent is in a turn.
+ */
+function RunConversation({ s, activity, embedded = false }: { s: SessionSummary; activity: SessionActivity | null; embedded?: boolean }) {
+  const rows = activity?.rows ?? NO_ROWS;
+  return (
+    <TranscriptView
+      taskId={s.taskId}
+      runId={s.id}
+      rows={rows}
+      pendingGuidance={activity?.pendingGuidance}
+      pendingStatus={<QueuedGuidanceActions taskId={s.taskId} runId={s.id} />}
+      waitingText="Waiting for the agent's first message…"
+      quote
+      embedded={embedded}
+      footer={
+        <RunGuidance
+          key={s.id}
+          taskId={s.taskId}
+          runId={s.id}
+          question={s.question ?? null}
+          recheck={`${s.status}\n${s.latest ?? ''}`}
+          stop={stopOf(s)}
+          commands={activity?.commands}
+          agent={activity?.agent}
+          working={s.status === 'working'}
+          queued={!!activity?.pendingGuidance}
+          rows={rows}
+        />
+      }
+    />
+  );
+}
+
 /**
  * A chat or task run on the dashboard: its title bar (a click opens it, a
  * right-click its menu), then the conversation itself, as in the window's middle
  * without the activity pane: a chat with its message box, a task run with its
  * guidance box. Out of view, the card shows the agent's latest messages instead.
- * On a phone the conversation is cut to the card's height at its newest end, so
- * the card doesn't scroll inside the scrolling Overview (HIG: Scroll views, "Avoid
- * putting a scroll view inside another scroll view with the same orientation";
- * Material: Cards); the title opens the chat.
- * `drag` only on the desktop, where cards are dragged to another place.
+ * A phone's card is the desktop's: its conversation scrolls inside it, and the
+ * title opens the chat. `drag` only on the desktop, where cards are dragged to
+ * another place.
  */
 function LiveCard({
   s,
@@ -446,19 +436,8 @@ function LiveCard({
   const recheck = `${s.status}\n${s.latest ?? ''}`;
   const stoppable = canStop(s);
   const runView = useMemo(
-    () =>
-      activity && (
-        <TranscriptView
-          taskId={s.taskId}
-          runId={s.id}
-          rows={activity.rows ?? []}
-          pendingGuidance={activity.pendingGuidance}
-          waitingText="Waiting for the agent's first message…"
-          footer={<RunGuidance taskId={s.taskId} runId={s.id} question={question} recheck={recheck} stop={stopOf(s)} />}
-          embedded
-        />
-      ),
-    // stopOf(s) reads only the id and `stoppable`.
+    () => activity && <RunConversation s={s} activity={activity} embedded />,
+    // The card's run reads only these of the summary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activity, s.taskId, s.id, question, recheck, stoppable],
   );
@@ -621,7 +600,7 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   // A layout effect, so the window takes the chats' and runs' events before the cards read them.
   useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
-  if (sessions.length === 0) return <div className="empty">No chats are open.</div>;
+  if (sessions.length === 0) return <div className="empty">{NO_CHATS}</div>;
   const big = s.shown.bigCards;
   const cards = dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst);
   const widths = columnWidths(grid.sizes.columns, box.width);
@@ -682,7 +661,7 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
         return showsConversation(x) ? (
           <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={s.setSelected} />
         ) : (
-          <DashboardCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={s.setSelected} />
+          <TerminalCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={s.setSelected} />
         );
       })}
       {bars.map((bar) => (
@@ -704,29 +683,22 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
  * (running first), then one per workflow run. The open finished subagent's tab
  * has a close button; the rest are in the Activity pane's Subagents list.
  */
-function SubagentTabs({ s }: { s: SessionsWindow }) {
-  const { workflows, follow } = s;
-  const subagents = subagentTabs(s.subagents, follow);
-  const openRun = s.workflow?.run.runId ?? null;
-  const active = openRun ? `run:${openRun}` : follow ? `agent:${follow}` : 'conversation';
-  const tabs: TabItem[] = [
-    CONVERSATION_TAB,
-    ...subagents.map((a) => ({ ...subagentTab(a), onClose: follow === a.agentId && a.status !== 'running' ? () => s.setFollow(null) : undefined })),
-    ...workflows.map((run) => ({ id: `run:${run.runId}`, label: run.name, title: `${run.name} (workflow)`, status: tabStatus(run.status) })),
-  ];
-  const select = (id: string) => {
-    if (id === 'conversation') s.setFollow(null);
-    else if (id.startsWith('agent:')) s.setFollow(id.slice('agent:'.length));
-    else s.showWorkflow(id.slice('run:'.length));
-  };
-  return <Tabs tabs={tabs} active={active} onSelect={select} label="Conversation and agents" className="subagent-tabs" ctrlTab />;
+function ConversationTabs({ s }: { s: SessionsWindow }) {
+  return (
+    <SubagentTabs
+      agents={subagentTabs(s.subagents, s.follow)}
+      follow={s.follow}
+      onFollow={s.setFollow}
+      closable
+      workflows={s.workflows}
+      openRun={s.workflow?.run.runId ?? null}
+      onWorkflow={s.showWorkflow}
+    />
+  );
 }
 
 /** The conversation's tab strip, once there's more than the conversation to show. */
 const hasTabs = (s: SessionsWindow): boolean => subagentTabs(s.subagents, s.follow).length + s.workflows.length > 0;
-
-/** Send guidance to a task run's agent, which it gets mid-run; rejects with the reason it can't take it. */
-const sendRunGuidance = (s: SessionSummary, text: string): Promise<void> => window.looper.sendGuidance(s.taskId, s.id, text);
 
 /** The Chats window's toolbar; a single chat's window has only its conversation's buttons. */
 function SessionsToolbar({ c, single }: { c: CommandContext; single: boolean }) {
@@ -948,21 +920,7 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
       </Suspense>
     );
   }
-  if (summary.kind === 'run') {
-    return (
-      <TranscriptView
-        key={summary.id}
-        taskId={summary.taskId}
-        runId={summary.id}
-        rows={s.activity?.rows ?? []}
-        pendingGuidance={s.activity?.pendingGuidance}
-        waitingText="Waiting for the agent's first message…"
-        footer={
-          <RunGuidance taskId={summary.taskId} runId={summary.id} question={summary.question ?? null} recheck={`${summary.status}\n${summary.latest ?? ''}`} stop={stopOf(summary)} />
-        }
-      />
-    );
-  }
+  if (summary.kind === 'run') return <RunConversation key={summary.id} s={summary} activity={s.activity} />;
   return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
 }
 
@@ -980,7 +938,7 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
   const dismiss = () => phone?.panel.dismiss();
   const center = (
     <main className="sessions-center">
-      {!phone && summary && hasTabs(s) && <SubagentTabs s={s} />}
+      {!phone && summary && hasTabs(s) && <ConversationTabs s={s} />}
       <SessionCenter s={s} />
     </main>
   );

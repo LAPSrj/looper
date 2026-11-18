@@ -1,34 +1,16 @@
 /* iOS and iPadOS 26/27: system font and colors, Liquid Glass controls floating over the content, 44 pt
    targets, sheets and alerts as UIKit draws them. */
+/* The system colors and the glass are the pages' too (ios-palette.css); the frame's own tokens follow. */
+@import './ios-palette.css';
 @import './ios-bar.css';
 
 html[data-platform='ios'] {
-  --ios-tint: #0088ff;
-  --ios-red: #ff383c;
-  --ios-green: #34c759;
   --ios-bg: #ffffff;
-  --ios-grouped: #f2f2f7;
-  --ios-cell: #ffffff;
-  --ios-label: #000000;
-  --ios-label2: rgba(60, 60, 67, 0.6); /* secondaryLabel */
-  --ios-label3: rgba(60, 60, 67, 0.3);
-  --ios-sep: rgba(0, 0, 0, 0.12);
   /* The hard scroll edge (iOS 27's uniform bar): the kit's white at 85% over the page, which nothing scrolls
      behind here, so it's drawn opaque; and its faint edge line. */
   --ios-bar: #fdfdfd;
   --ios-bar-line: rgba(0, 0, 0, 0.05);
-  --ios-grabber: #cccccc;
-  --ios-fill: rgba(118, 118, 128, 0.12);
   --ios-fill2: rgba(120, 120, 128, 0.16);
-  /* Liquid Glass as near as CSS gets (WebKit has no refraction for a backdrop): the small controls (bar
-     buttons) and the larger, denser surfaces with text on them (menus, alerts). The rim catches the light
-     at two opposite corners. */
-  --ios-glass: rgba(255, 255, 255, 0.6);
-  --ios-glass-dense: rgba(250, 250, 250, 0.9);
-  --ios-glass-filter: blur(12px) saturate(200%) brightness(1.06);
-  --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.95), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.7),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px #e8e8e8;
-  --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.02);
   /* The larger glass surfaces' shadow (alerts, menus, a medium sheet). */
   --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.25);
   /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
@@ -39,8 +21,6 @@ html[data-platform='ios'] {
   --ios-menu-sep: rgba(0, 0, 0, 0.1);
   --ios-menu-press: rgba(0, 0, 0, 0.07);
   --ios-folder: #1a9cf0;
-  --ios-seg-on: #ffffff;
-  --ios-switch-off: rgba(60, 60, 67, 0.3);
   /* A sheet's own background and its groups' (dark mode raises both, so a sheet stands off what's under it). */
   --ios-sheet: #f2f2f7;
   --ios-sheet-cell: #ffffff;
@@ -56,35 +36,16 @@ html[data-platform='ios'] {
 }
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
-    --ios-tint: #0091ff;
-    --ios-red: #ff4245;
-    --ios-green: #30d158;
     --ios-bg: #000000;
-    --ios-grouped: #000000;
-    --ios-cell: #1c1c1e;
-    --ios-label: #ffffff;
-    --ios-label2: rgba(235, 235, 245, 0.6);
-    --ios-label3: rgba(235, 235, 245, 0.3);
-    --ios-sep: rgba(255, 255, 255, 0.12);
     --ios-bar: #050505;
     --ios-bar-line: rgba(0, 0, 0, 0.1);
-    --ios-grabber: #333333;
-    --ios-fill: rgba(118, 118, 128, 0.24);
     --ios-fill2: rgba(120, 120, 128, 0.32);
-    /* iOS 27 draws dark glass lighter than 26 did. The dense glass (menus, alerts) is the kit's #1A1A1A. */
-    --ios-glass: rgba(64, 64, 68, 0.6);
-    --ios-glass-dense: rgba(26, 26, 26, 0.9);
-    --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
-      inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
-    --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.04);
     --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.45);
     --ios-glass-label2: #8a8a8a;
     --ios-glass-placeholder: #404040;
     --ios-menu-sep: rgba(255, 255, 255, 0.11);
     --ios-menu-press: rgba(255, 255, 255, 0.08);
     --ios-folder: #39a8f0;
-    --ios-seg-on: rgba(255, 255, 255, 0.27);
-    --ios-switch-off: rgba(235, 235, 245, 0.3);
     --ios-sheet: #1c1c1e;
     --ios-sheet-cell: #2c2c2e;
   }
@@ -179,7 +140,7 @@ html[data-platform='ios'] {
 .ios-tab.active {
   font-weight: 700;
   background: var(--ios-fill2);
-  color: var(--ios-tab-label, #0062cc);
+  color: var(--ios-tab-label);
 }
 .ios-bar-split {
   display: flex;
@@ -213,17 +174,6 @@ html[data-platform='ios'] {
 .ios-bar-split > .ios-bar-list.edge {
   box-shadow: 0 1px 0 var(--ios-bar-line), inset -0.5px 0 0 var(--ios-sep);
 }
-@media (prefers-color-scheme: dark) {
-  html[data-platform='ios'] {
-    --ios-tab-label: #0091ff;
-  }
-}
-@media (prefers-contrast: more) {
-  html[data-platform='ios'] {
-    --ios-tab-label: #1e6ef4;
-  }
-}
-
 /* Over the sheet's top edge, 6 down, above the bar's buttons (16 down). */
 .ios-grabber {
   position: absolute;
@@ -1082,42 +1032,6 @@ html[data-platform='ios'] {
   font-size: calc(34 * var(--u));
   font-weight: 700;
   letter-spacing: 0.01em;
-}
-
-/* Increase Contrast: the same high-contrast colors the pages use (phone.css). */
-@media (prefers-contrast: more) {
-  html[data-platform='ios'] {
-    --ios-tint: #1e6ef4;
-    --ios-red: #e9152d;
-    --ios-label2: rgba(60, 60, 67, 0.86);
-    --ios-label3: rgba(60, 60, 67, 0.55);
-    --ios-sep: rgba(60, 60, 67, 0.6);
-  }
-}
-@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
-  html[data-platform='ios'] {
-    --ios-tint: #5cb8ff;
-    --ios-red: #ff6165;
-    --ios-label2: rgba(235, 235, 245, 0.78);
-    --ios-label3: rgba(235, 235, 245, 0.5);
-    --ios-sep: rgba(142, 142, 147, 0.8);
-  }
-}
-
-/* Without backdrop blur (some WebKit builds), the materials go nearly opaque so text over content stays legible. */
-@supports not (backdrop-filter: blur(1px)) {
-  html[data-platform='ios'] {
-    --ios-glass: rgba(246, 246, 246, 0.97);
-    --ios-glass-dense: rgba(245, 245, 245, 1);
-  }
-}
-@media (prefers-color-scheme: dark) {
-  @supports not (backdrop-filter: blur(1px)) {
-    html[data-platform='ios'] {
-      --ios-glass: rgba(58, 58, 60, 0.97);
-      --ios-glass-dense: rgba(44, 44, 46, 1);
-    }
-  }
 }
 
 /* Reduce Motion: screens, sheets, alerts and banners fade instead of sliding or scaling, nothing bounces or swells,

@@ -1,8 +1,8 @@
-import type { ChatContext } from './chat';
+import type { ChatContext, ChatState } from './chat';
 import type { MessageRow } from './messages';
 import type { WorkflowRun } from './workflows';
 
-/** A chat, a terminal session, or (with Show Task Runs on) a task run's agent, in the Chats window. */
+/** A chat, a terminal session, or a task run's agent (a delegated agent's always, the others with Show Task Runs on), in the Chats window. */
 export type SessionKind = 'chat' | 'terminal' | 'run';
 
 /** Why a session waits for the user: a tool call to allow, a finished turn not looked at, the agent's notification, or an error. */
@@ -19,6 +19,8 @@ export interface SessionSummary {
   /** The group's name: the project's, or the task's when it has none. */
   groupName: string;
   title: string;
+  /** A delegated agent's run (looper-delegate): the name of the task whose agent started it. */
+  startedBy?: string;
   harnessKind: 'claude-code' | 'codex' | 'custom';
   harnessName: string;
   /** Its harness's entry in SessionsState.limits; unset when the task's harness can't be resolved. */
@@ -126,11 +128,18 @@ export interface SessionActivity {
   rows?: MessageRow[];
   /** A task run's guidance its agent hasn't picked up yet. */
   pendingGuidance?: string;
+  /** A task run's or terminal session's skills, from its transcript: its message box's "/" list. */
+  commands?: SlashCommand[];
+  /** A task run's agent as its message box shows it; unset on a custom harness. */
+  agent?: RunAgent;
   background: BackgroundTask[];
   subagents: SubagentInfo[];
   /** The workflow runs the session started (Claude Code's Workflow tool), newest first. */
   workflows: WorkflowRun[];
 }
+
+/** A task run's harness, model, effort and permission mode, which its message box shows and can't change, and how it writes a skill. */
+export type RunAgent = Pick<ChatState, 'harnessName' | 'harnessKind' | 'models' | 'settings' | 'activeModel' | 'commandPrefix'>;
 
 /** A slash command or skill the message box offers after "/". */
 export interface SlashCommand {
@@ -206,11 +215,11 @@ export function watchedSessions(views: Iterable<{ shown: string | null; cards: s
 
 /**
  * Whether Stop applies to a session: it ends the agent's turn while the agent works or
- * waits for a permission, and a chat's "!" commands (`runningCommands`). A task run is
- * listed only while it runs, and its Stop stops the whole run, after asking.
+ * waits for a permission, and the "!" commands from its message box (`runningCommands`).
+ * A task run goes on with its next guidance: Stop Run… (or the Tasks tab's Stop) ends it.
  */
 export const canStop = (s: SessionSummary | undefined, runningCommands = 0): boolean =>
-  !!s && (s.kind === 'run' || s.status === 'working' || s.waiting?.reason === 'permission' || runningCommands > 0);
+  !!s && (s.status === 'working' || s.waiting?.reason === 'permission' || runningCommands > 0);
 
 /** "3 min", "1 h 5 min": how long something has waited. */
 export function waitedText(ms: number): string {

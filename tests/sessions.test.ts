@@ -11,7 +11,7 @@ import { backgroundOf, latestLine, recentMessages, SessionHub, subagentsOf, type
 import { Logger } from '../src/engine/log';
 import { slashCommandsOf, usageLimitsOf, type ChatState } from '../src/shared/chat';
 import type { MessageRow } from '../src/shared/messages';
-import { parseTaskNotification, waitedText } from '../src/shared/sessions';
+import { parseTaskNotification, waitedText, type SlashCommand } from '../src/shared/sessions';
 import { TaskSchema, type EngineEvent, type Project, type Task } from '../src/shared/types';
 import type { WorkflowLaunch } from '../src/engine/workflows';
 import type { WorkflowRun } from '../src/shared/workflows';
@@ -260,7 +260,7 @@ describe("Codex's skills", () => {
 describe('the session hub', () => {
   const task = (id: string, projectId: string): Task =>
     ({ ...TaskSchema.parse({ id, name: id, environmentId: 'e', cwd: '/w', trigger: { mode: 'manual' }, agent: { prompt: 'x' } }), projectId }) as Task;
-  const project = (id: string, name: string): Project => ({ id, name }) as Project;
+  const project = (id: string, name: string, cwd = '/w'): Project => ({ id, name, cwd }) as Project;
   const chat = (over: Partial<ChatState>): ChatState => ({
     id: 'c1',
     taskId: 't1',
@@ -295,6 +295,7 @@ describe('the session hub', () => {
     rows?: MessageRow[];
     /** A task run's guidance its agent hasn't picked up yet, as its transcript is read. */
     guidance?: () => string | undefined;
+    commands?: SlashCommand[];
     cache?: { at?: number; ttlMs?: number };
     workflows?: (opts: { launches?: WorkflowLaunch[]; detail?: boolean; sessionEnded?: boolean }) => WorkflowRun[];
   }) {
@@ -304,10 +305,11 @@ describe('the session hub', () => {
       terminals: () => opts.terminals ?? [],
       runs: () => opts.runs ?? [],
       findTask: (id) => task(id, 'p1'),
-      projects: () => [project('p1', 'Website')],
-      harnessOf: () => ({ kind: 'claude-code', name: 'Claude Code', limitsKey: 'e/claude' }),
+      projects: () => [project('p1', 'Website'), project('p2', 'Site', '/site/')],
+      harnessOf: (t) =>
+        t.agent.harnessId === 'codex' ? { kind: 'codex', name: 'Codex', limitsKey: 'e/codex' } : { kind: 'claude-code', name: 'Claude Code', limitsKey: 'e/claude' },
       runDir: () => opts.dir ?? '/nowhere',
-      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0, pendingGuidance: opts.guidance?.() }),
+      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0, pendingGuidance: opts.guidance?.(), commands: opts.commands }),
       subagents: async () => [],
       subagentStats: async () => null,
       workflows: async (_taskId, _runId, o) => opts.workflows?.(o) ?? [],
@@ -471,6 +473,67 @@ describe('the session hub', () => {
     expect(h.activity('r9')?.rows).toHaveLength(3);
     run.question = 'Which branch?';
     expect(h.state().sessions[0]).toMatchObject({ status: 'ready', waiting: { reason: 'notification', text: 'Waiting for your answer', since: 5000 } });
+    // Its turn over (Stop in its message box, or at its prompt): ready for the next guidance, nobody waited on.
+    run.question = null;
+    run.turnOver = true;
+    expect(h.state().sessions[0].status).toBe('ready');
+    expect(h.state().sessions[0].waiting).toBeUndefined();
+  });
+
+  it('gives a session’s skills on their own, without the rest of its activity (a terminal card’s message box)', async () => {
+    const commands: SlashCommand[] = [{ name: 'review', description: 'Review the diff.' }];
+    const run: RunEntry = { id: 'r9', taskId: 't1', startedAt: 1000, held: false, question: null };
+    const { h } = hub({ runs: [run], commands });
+    expect(h.commands('r9')).toEqual([]);
+    await (h as unknown as { readSession: (id: string, force: boolean) => Promise<void> }).readSession('r9', true);
+    expect(h.commands('r9')).toEqual(commands);
+  });
+
+  it("gives a task run's message box its skills and its agent's harness and settings, a delegated agent's own", async () => {
+    const commands: SlashCommand[] = [{ name: 'review', description: 'Review the diff.' }];
+    const t1 = task('t1', 'p1');
+    const run: RunEntry = { id: 'r9', taskId: 't1', startedAt: 1000, held: false, question: null };
+    const { h } = hub({ runs: [run], commands });
+    await (h as unknown as { readSession: (id: string, force: boolean) => Promise<void> }).readSession('r9', true);
+    expect(h.activity('r9')).toMatchObject({
+      commands,
+      agent: { harnessName: 'Claude Code', harnessKind: 'claude-code', commandPrefix: '/', settings: { permissionMode: t1.agent.permissionMode ?? '' } },
+    });
+    const own = { ...t1, agent: { ...t1.agent, harnessId: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'auto' } } as Task;
+    run.delegate = { title: 'Fix the form', task: own };
+    expect(h.activity('r9')?.agent).toMatchObject({
+      harnessName: 'Codex',
+      harnessKind: 'codex',
+      commandPrefix: '$',
+      settings: { model: 'gpt-5.5', effort: 'high', permissionMode: 'auto' },
+    });
+  });
+
+  it("lists a delegated agent's run by its title, on its own harness, under the project or folder it works in, and its parent's questions aren't the user's", async () => {
+    const own = { ...task('t1', 'p1'), cwd: '/site', agent: { ...task('t1', 'p1').agent, harnessId: 'codex' } } as Task;
+    const run: RunEntry = { id: 'r7', taskId: 't1', startedAt: 1000, held: false, question: null, delegate: { title: 'Fix the form', task: own } };
+    const { h } = hub({ runs: [run], now: () => 5000 });
+    expect(h.state().sessions[0]).toMatchObject({
+      kind: 'run',
+      title: 'Fix the form',
+      startedBy: 't1',
+      projectId: 'p2',
+      groupName: 'Site',
+      harnessName: 'Codex',
+      limitsKey: 'e/codex',
+      status: 'working',
+    });
+    expect(h.runTask('r7')).toBe('t1');
+    run.question = 'Which branch?';
+    expect(h.state().sessions[0]).toMatchObject({ status: 'working', question: 'Which branch?' });
+    expect(h.state().sessions[0].waiting).toBeUndefined();
+    run.held = true;
+    expect(h.state().sessions[0]).toMatchObject({ status: 'ready', waiting: { reason: 'notification', text: 'Waiting for you' } });
+    // A folder that's no project's: under the folder, as a chat opened there with Other Folder… is.
+    run.delegate = { title: 'Fix the form', task: { ...own, cwd: '/elsewhere' } };
+    const elsewhere = h.state().sessions[0];
+    expect(elsewhere.groupName).toBe('/elsewhere');
+    expect(elsewhere.projectId).toBeUndefined();
   });
 
   it("sends a watched task run's conversation as its activity, kept current while it runs (a dashboard card's)", async () => {

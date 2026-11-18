@@ -1,9 +1,6 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import { folderParents, folderSubtree, siblingOrder } from '../../shared/folders';
+import { folderParents, itemsInTreeOrder, itemsInside, siblingOrder, type Filed } from '../../shared/folders';
 import type { Task, TaskFolder } from '../../shared/types';
-
-/** An item a folder can hold: a task, or a project in the Projects tab's folders. */
-type Filed = { id: string; folderId?: string };
 
 /** One row of a phone's Tasks or Projects screen: a folder (it opens its own screen) or an item. */
 export type TaskEntry<T extends Filed = Task> =
@@ -35,37 +32,23 @@ export interface TaskTree<T extends Filed = Task> {
  */
 export function taskEntries<T extends Filed>(container: string, tree: TaskTree<T>): TaskEntry<T>[] {
   const { tasks, folders, layout, passes } = tree;
-  const parents = folderParents(folders);
-  const order = siblingOrder(tasks, folders, layout, parents);
-  const folderById = new Map(folders.map((f) => [f.id, f]));
-  const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const count = (id: string): number => {
-    const ids = folderSubtree(folders, id);
-    return tasks.filter((t) => t.folderId && ids.has(t.folderId) && passes(t)).length;
-  };
+  const order = siblingOrder(tasks, folders, layout, folderParents(folders));
 
   if (!tree.showFolders) {
     if (container !== '') return [];
-    const out: TaskEntry<T>[] = [];
-    const walk = (c: string) => {
-      for (const entry of order.get(c) ?? []) {
-        if (entry.startsWith('folder:')) walk(entry.slice(7));
-        else {
-          const t = taskById.get(entry);
-          if (t && passes(t)) out.push({ kind: 'task', task: t });
-        }
-      }
-    };
-    walk('');
-    return out;
+    return itemsInTreeOrder(tasks, order)
+      .filter(passes)
+      .map((task) => ({ kind: 'task' as const, task }));
   }
 
+  const folderById = new Map(folders.map((f) => [f.id, f]));
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
   const out: TaskEntry<T>[] = [];
   for (const entry of order.get(container) ?? []) {
     if (entry.startsWith('folder:')) {
       const folder = folderById.get(entry.slice(7));
       if (!folder) continue;
-      const n = count(folder.id);
+      const n = itemsInside(tasks, folders, folder.id).filter(passes).length;
       if (tree.hideEmptyFolders && n === 0) continue;
       out.push({ kind: 'folder', folder, count: n });
     } else {

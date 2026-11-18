@@ -1,14 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
-import { formatTokens, type Attachment } from '@shared/chat';
-import { EFFORT_LEVELS } from '@shared/environments';
+import type { Attachment } from '@shared/chat';
+import { effortLabel } from '@shared/environments';
 import type { MessageRow, SentFile } from '@shared/messages';
+import { baseName, dirName } from '@shared/paths';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
-import { waitedText } from '@shared/sessions';
-import { WORKFLOW_STATUS_TEXT, tabStatus, workflowAgents, type WorkflowRun } from '@shared/workflows';
+import { WORKFLOW_STATUS_TEXT, workflowAgents, type WorkflowRun } from '@shared/workflows';
 import { stripAnsi } from '../format';
-import { MINUTE, useNow } from '../useNow';
+import { useAddonList } from '../live-state';
+import { AgentRow, tokensText, WorkflowAgentList } from './AgentRows';
 import { AttachmentList, SentFileList } from './ChatRows';
+import { WaitedFor } from './Live';
 import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
@@ -16,9 +18,7 @@ import { AddonScreenView } from './AddonScreen';
 import { RowList } from './DataTable';
 import { Markdown, MessageBody } from './Markdown';
 import { Section } from './Section';
-import { StatusMark } from './StatusMark';
 import { newestFirst } from './subagents';
-import { PropertyList } from './PropertyList';
 import { Toolbar } from './Toolbar';
 import { CodeBlock, CodeText, DiffRows, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
@@ -31,9 +31,6 @@ const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete',
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const MARKDOWN_RE = /\.(md|markdown)$/i;
-
-const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
-const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length)).replace(/[\\/]$/, '');
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 const inputOf = (row: MessageRow): Record<string, unknown> =>
@@ -446,9 +443,8 @@ function FileThumb({ path, taskId }: { path: string; taskId: string }) {
 /** A background command's or workflow's state: "Running for 3 min" counts whole minutes, from a minute on. */
 function BackgroundStatus({ b }: { b: BackgroundTask }) {
   const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
-  const now = useNow(b.status === 'running' && !Number.isNaN(started) ? MINUTE : null);
-  if (b.status !== 'running') return <>{b.status === 'completed' ? 'Completed' : b.status === 'failed' ? 'Failed' : 'Stopped'}</>;
-  return <>Running{Number.isNaN(started) || now - started < 60_000 ? '' : ` for ${waitedText(now - started)}`}</>;
+  const status = WORKFLOW_STATUS_TEXT[b.status];
+  return b.status !== 'running' || Number.isNaN(started) ? <>{status}</> : <WaitedFor since={started} label={status} />;
 }
 
 /** The end of a background command's output, read again every few seconds while it runs. */
@@ -470,24 +466,8 @@ function BackgroundOutput({ b, sessionId }: { b: BackgroundTask; sessionId: stri
   return <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>;
 }
 
-/** The installed addons, kept current: their toolCalls say how some tool calls show on Now. */
-function useAddonList(): AddonInfo[] {
-  const [addons, setAddons] = useState<AddonInfo[]>([]);
-  useEffect(() => {
-    void window.looper.addons
-      .list()
-      .then(setAddons)
-      .catch(() => undefined);
-    return window.looper.addons.onEvent((e) => {
-      if (e.type === 'addons') setAddons(e.addons);
-    });
-  }, []);
-  return addons;
-}
-
-const subagentStatus = (a: SubagentInfo) => (a.status === 'running' ? 'Running' : a.status === 'done' ? 'Done' : 'Failed');
-const effortText = (a: SubagentInfo) => (a.effort ? (EFFORT_LEVELS['claude-code'].find(([v]) => v === a.effort)?.[1] ?? a.effort) : undefined);
-const contextText = (a: SubagentInfo) => (a.contextTokens !== undefined ? `${formatTokens(a.contextTokens)} tokens` : undefined);
+const effortText = (a: SubagentInfo) => (a.effort ? effortLabel('claude-code', a.effort) : undefined);
+const contextText = (a: SubagentInfo) => (a.contextTokens !== undefined ? tokensText(a.contextTokens) : undefined);
 
 /** The tool call Now shows: the one at `pos`, or the latest when it's null. */
 export function nowIndex(count: number, pos: number | null): number {
@@ -554,7 +534,7 @@ export function ActivityPanel({
   const [picked, setTab] = useState<Tab>(initialTab);
   const tab = picked === 'git' && !gitProject ? 'now' : picked;
   const git = useGitStatus(gitProject, !!working || background.some((b) => b.status === 'running') || subagents.some((a) => a.status === 'running'));
-  const addons = useAddonList();
+  const { addons } = useAddonList();
   const tools = rows.filter((r) => r.kind === 'tool');
   const i = nowIndex(tools.length, pos);
   const row = tools[i];
@@ -764,26 +744,21 @@ export function ActivityPanel({
                   onMenu={(a) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.description })}
                   empty={null}
                   row={(a) => (
-                    <>
-                      <div className="subagent-head">
-                        <span className="subagent-desc">{a.description || a.type}</span>
-                        <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{subagentStatus(a)}</span>
-                      </div>
-                      <PropertyList
-                        className="subagent-facts"
-                        items={[
-                          { label: 'Agent', value: a.type },
-                          { label: 'Model', value: a.modelId ?? a.model ?? 'Not known yet', className: 'mono' },
-                          { label: 'Effort', value: effortText(a) ?? 'Not known yet' },
-                          { label: 'Context', value: contextText(a) ?? 'Not known yet' },
-                        ]}
-                      />
-                    </>
+                    <AgentRow
+                      label={a.description || a.type}
+                      status={a.status}
+                      facts={[
+                        { label: 'Agent', value: a.type },
+                        { label: 'Model', value: a.modelId ?? a.model ?? 'Not known yet', className: 'mono' },
+                        { label: 'Effort', value: effortText(a) ?? 'Not known yet' },
+                        { label: 'Context', value: contextText(a) ?? 'Not known yet' },
+                      ]}
+                    />
                   )}
                   phoneRow={(a) => ({
                     title: a.description || a.type,
                     sub: [a.type, a.modelId ?? a.model, effortText(a), contextText(a)].filter(Boolean).join(' · '),
-                    value: subagentStatus(a),
+                    value: WORKFLOW_STATUS_TEXT[a.status],
                     valueTone: a.status === 'failed' ? 'error' : undefined,
                     chevron: false,
                   })}
@@ -792,32 +767,16 @@ export function ActivityPanel({
             )}
             {workflowRun && workflowAgents(workflowRun).length > 0 && (
               <Section className="activity-section" title="Workflow">
-                <RowList
-                  bare
-                  rows={workflowAgents(workflowRun)}
-                  rowKey={(a) => a.agentId}
-                  idPrefix="workflow-agent"
+                <WorkflowAgentList
+                  agents={workflowAgents(workflowRun)}
                   label="Workflow"
+                  idPrefix="workflow-agent"
                   listClass="pane-rows"
-                  rowClass="subagent-item"
                   selected={sel.agent}
-                  onSelect={(a) => setSel((p) => ({ ...p, agent: a.agentId }))}
-                  onOpen={(a) => onOpenWorkflowAgent?.(workflowRun.runId, a.agentId)}
-                  activateOnClick
-                  empty={null}
-                  row={(a) => (
-                    <div className="subagent-head">
-                      <StatusMark status={tabStatus(a.status)} />
-                      <span className="subagent-desc">{a.label}</span>
-                      <span className={a.status === 'failed' ? 'error-text' : 'muted'}>{WORKFLOW_STATUS_TEXT[a.status]}</span>
-                    </div>
-                  )}
-                  phoneRow={(a) => ({
-                    lead: <StatusMark status={tabStatus(a.status)} />,
-                    title: a.label,
-                    value: WORKFLOW_STATUS_TEXT[a.status],
-                    valueTone: a.status === 'failed' ? 'error' : undefined,
-                  })}
+                  onSelect={(agent) => setSel((p) => ({ ...p, agent }))}
+                  onOpen={(agentId) => onOpenWorkflowAgent?.(workflowRun.runId, agentId)}
+                  taskId={taskId}
+                  sessionId={sessionId}
                 />
               </Section>
             )}

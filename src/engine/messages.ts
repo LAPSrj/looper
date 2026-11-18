@@ -13,7 +13,7 @@ import {
   type SentFiles,
 } from '../shared/messages';
 import { commandAttachment, parseCommands, parseOutputOnly, withOutput } from '../shared/bash-mode';
-import { parseTaskNotification } from '../shared/sessions';
+import { parseTaskNotification, type SlashCommand } from '../shared/sessions';
 import { compactRow, compactRows, proseRows, slimCall, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
@@ -331,6 +331,20 @@ export function endedSessions(runDir: string): number[] {
 }
 
 /**
+ * The skills in a harness's list for the agent, a "- name: description" line
+ * each: Claude's skill_listing (a plugin's skill is "plugin:name"), Codex's
+ * "### Available skills", whose lines end with "(file: …)".
+ */
+export function skillsListed(text: string): SlashCommand[] {
+  const out: SlashCommand[] = [];
+  for (const line of text.split('\n')) {
+    const m = /^- (\S+?)(?:: (.*))?$/.exec(line.trimEnd());
+    if (m) out.push({ name: m[1], description: (m[2] ?? '').replace(/\s*\(file: [^)]*\)$/, '').trim() });
+  }
+  return out;
+}
+
+/**
  * Folds transcript records into display rows. Only `user`/`assistant` records
  * count; sidechain and meta records, and the transcript's bookkeeping types
  * (attachment, queue-operation, ai-title…) are skipped, except where they carry
@@ -356,8 +370,19 @@ export class TranscriptAccumulator {
   aiTitle = '';
   /** The name the user gave it in Claude Code (/rename, or a host's rename_session), the latest; '' takes it away. */
   customTitle = '';
+  /** The skills the harness lists for the agent (Claude's skill_listing records, Codex's skills instructions), by name. */
+  private skills = new Map<string, SlashCommand>();
 
   constructor(protected readonly opts: AccumulatorOpts = {}) {}
+
+  /** The skills the session offers the agent, in the order they were first listed. */
+  get commands(): SlashCommand[] {
+    return [...this.skills.values()];
+  }
+
+  protected takeSkills(list: SlashCommand[]): void {
+    for (const s of list) this.skills.set(s.name, s);
+  }
 
   /** The session's name in Claude Code: the user's, else Claude's own; '' before it has one. */
   get sessionName(): string {
@@ -369,6 +394,7 @@ export class TranscriptAccumulator {
     this.dropped = 0;
     this.aiTitle = '';
     this.customTitle = '';
+    this.skills.clear();
     this.evicted = [];
     this.nextId = 0;
     this.byToolId.clear();
@@ -453,6 +479,7 @@ export class TranscriptAccumulator {
       if (att?.type === 'queued_command' && att.commandMode === 'task-notification' && typeof att.prompt === 'string') {
         this.takeNotification(att.prompt);
       }
+      if (att?.type === 'skill_listing' && typeof att.content === 'string') this.takeSkills(skillsListed(att.content));
       return;
     }
     if (rec.type !== 'user' && rec.type !== 'assistant') return;
@@ -677,7 +704,10 @@ export class TranscriptAccumulator {
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
     if (g !== null) {
-      this.push({ kind: 'guidance', ts, text: g });
+      // The commands the user ran from the run's message box show as the guidance's attachments, as a prompt's do.
+      const { commands, text: rest } = parseCommands(g, `cmd${this.nextId}`);
+      const row = this.push({ kind: 'guidance', ts, text: rest, preview: rest || !commands.length ? undefined : previewOf(commands.map((c) => `! ${c.input}`).join(', ')) });
+      if (commands.length) row.attachments = commands.map(commandAttachment);
       return true;
     }
     const events = eventsText(text);
@@ -768,7 +798,11 @@ export class CodexAccumulator extends TranscriptAccumulator {
         const text = typeof block?.text === 'string' ? block.text : '';
         if (!text.trim()) continue;
         if (p.role !== 'assistant' && this.pushGuidance(text, ts)) continue;
-        if (p.role === 'developer') continue;
+        if (p.role === 'developer') {
+          const skills = /### Available skills\n([\s\S]*?)(?:\n#|\n<\/skills_instructions>|$)/.exec(text);
+          if (skills) this.takeSkills(skillsListed(skills[1]));
+          continue;
+        }
         if (block.type === 'input_text' && p.role === 'user') {
           // Injected context is one <tag>…</tag> block, after a heading line for the AGENTS.md
           // instructions ("# AGENTS.md instructions", seen live in codex-cli 0.163.0).
@@ -1192,6 +1226,7 @@ export class MessagesService {
     let dropped = 0;
     let refs = 0;
     let readable = 0;
+    let commands: SlashCommand[] = [];
     // The classifier first, then the agent sessions in the order they ran.
     const sources: ('classifier' | 'agent' | number)[] = [
       'classifier',
@@ -1210,10 +1245,12 @@ export class MessagesService {
       }
       rows.push(...reader.acc.rows);
       dropped += reader.acc.dropped;
+      // The classifier's session isn't the one guidance goes to; the newest agent session's list counts.
+      if (source !== 'classifier' && reader.acc.commands.length) commands = reader.acc.commands;
     }
     if (refs === 0) return { ...none('no-session'), pendingGuidance };
     if (readable === 0) return { ...none('no-transcript'), pendingGuidance };
-    return { status: 'ok', rows, dropped, pendingGuidance };
+    return { status: 'ok', rows, dropped, pendingGuidance, ...(commands.length ? { commands } : {}) };
   }
 
   /**

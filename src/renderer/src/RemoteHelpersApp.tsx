@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { RemoteHelper, Settings } from '@shared/types';
+import { defaultEnvironment } from '@shared/environments';
 import { ListActions, SelectList } from './components/SelectList';
 import { claudeHarnesses } from './components/RemoteFields';
 import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { useLiveSettings } from './components/hooks';
+import { keptSelection } from './components/selection';
 import { rid } from './rid';
 import { subscribe } from './events';
+import { reportError } from './report-error';
 
 /**
  * Advanced → Remote Control → Helpers. The list is managed live through the
@@ -13,20 +17,15 @@ import { subscribe } from './events';
  * conversations open through their own Edit Project window.
  */
 export function RemoteHelpersApp() {
-  const [live, setLive] = useState<Settings | null>(null);
+  const { live } = useLiveSettings();
   const [problems, setProblems] = useState<Record<string, string>>({});
-  const [helper, setHelper] = useState<string | null>(null);
+  const [chosen, setHelper] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = 'Helpers';
-    void window.looper.info().then((info) => {
-      setLive(info.settings);
-      setHelper((s) => s ?? info.settings.remote.helpers[0]?.id ?? null);
-    });
     void window.looper.remote.state().then((s) => setProblems(s.problems));
     return subscribe((e) => {
-      if (e.type === 'settings') setLive(e.settings);
-      else if (e.type === 'remote') setProblems(e.state.problems);
+      if (e.type === 'remote') setProblems(e.state.problems);
     });
   }, []);
 
@@ -34,6 +33,7 @@ export function RemoteHelpersApp() {
 
   const r = live.remote;
   const helpers = r.helpers;
+  const helper = keptSelection(chosen, helpers, (h) => h.id);
   const selHelper = helpers.find((h) => h.id === helper);
   const envName = (id: string) => live.environments.find((e) => e.id === id)?.name ?? id;
 
@@ -41,15 +41,12 @@ export function RemoteHelpersApp() {
     try {
       await window.looper.updateSettings({ remote });
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
   /** Where a new helper starts: the default environment, or the first with a Claude Code harness. */
-  const defaultEnvId = () => {
-    const def = live.environments.find((e) => e.id === live.defaultEnvironmentId);
-    return (claudeHarnesses(def).length ? def : live.environments.find((e) => claudeHarnesses(e).length))?.id ?? live.defaultEnvironmentId;
-  };
+  const defaultEnvId = () => defaultEnvironment(live, (e) => claudeHarnesses(e).length > 0)?.id ?? live.defaultEnvironmentId;
 
   const addHelper = async () => {
     const h: RemoteHelper = { id: `h-${rid()}`, name: 'Helper', environmentId: defaultEnvId(), cwd: '', instructions: '', idleRestartMin: 10 };

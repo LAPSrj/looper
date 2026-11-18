@@ -1,21 +1,10 @@
-import { Children, isValidElement, useEffect, useId, useRef, useState } from 'react';
-import type { DragEvent, LiHTMLAttributes, ReactNode } from 'react';
+import { Children, isValidElement } from 'react';
+import type { ReactNode } from 'react';
 import { isPhone } from '../web/page-nav';
-import { useListNav } from './hooks';
-import { listContextMenu } from './list-nav';
-import { EmptyRow, Group, Row, SwipeRow } from './phone/PhoneList';
-import { ReorderSheet } from './phone/ReorderSheet';
+import { Group, Row } from './phone/PhoneList';
+import { RowList, type ListMenuItem } from './RowList';
 
-/** One command of a row's context menu: the same as the button of that name under the list. */
-export interface ListMenuItem {
-  label: string;
-  enabled?: boolean;
-  /** It destroys or cuts something off (Remove): a phone draws it red, last, and a swipe on the row offers it. */
-  destructive?: true;
-  /** A separator above it. */
-  separator?: true;
-  run: () => void;
-}
+export type { ListMenuItem };
 
 interface SelectListProps<T> {
   /** The row's right-click menu (and Shift+F10, the Menu key): its commands, in the order of the buttons under the list. */
@@ -44,196 +33,47 @@ interface SelectListProps<T> {
   empty?: ReactNode;
 }
 
-/** Opens a row's menu: the main process's, whose pick comes back as an event carrying this list's token. */
-function useRowMenu() {
-  const token = useId();
-  const shown = useRef<ListMenuItem[]>([]);
-  useEffect(
-    () =>
-      window.looper.onUi((e) => {
-        if (e.type === 'list-menu' && e.token === token) shown.current[Number(e.id)]?.run();
-      }),
-    [token],
-  );
-  return (items: ListMenuItem[]) => {
-    shown.current = items;
-    window.looper.showListContextMenu(
-      token,
-      items.map((m, n) => ({
-        id: String(n),
-        label: m.label,
-        enabled: m.enabled,
-        ...(m.destructive ? { destructive: true as const } : {}),
-        ...(m.separator ? { separator: true as const } : {}),
-      })),
-    );
-  };
-}
+const EMPTY_ROW = { className: 'env-item muted', style: { textAlign: 'center', cursor: 'default' } as const };
 
 /**
- * A list of items, adapted to the platform from the same props. On a desktop, the classic
- * list-then-window listbox: click selects, double-click/Enter opens. On a phone, a list section:
- * a list with a `menu` has rows a tap opens (or shows the menu of, with no `onOpen`), a long press
- * shows the menu of, and a swipe offers the menu's destructive command; one without is a choice of
- * one, with a check on the chosen row.
+ * A list of items, adapted to the platform from the same props: a RowList of a name and a line under it. On a
+ * desktop, the classic list-then-window listbox: click selects, double-click/Enter opens. On a phone, a list
+ * section: a list with a `menu` has rows a tap opens (or shows the menu of, with no `onOpen`), a long press
+ * shows the menu of, and a swipe offers the menu's destructive command; one without is a choice of one, with a
+ * check on the chosen row.
  */
-export function SelectList<T>(props: SelectListProps<T>) {
-  return isPhone ? <PhoneSelectList {...props} /> : <DesktopSelectList {...props} />;
-}
-
-function PhoneSelectList<T>({ items, label, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, empty }: SelectListProps<T>) {
-  const openMenu = useRowMenu();
-  const [reordering, setReordering] = useState(false);
+export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
+  const rows = items.map((item, i) => ({ item, i }));
   return (
-    <div role={menu ? undefined : 'radiogroup'} aria-label={label}>
-      <Group>
-        {items.length === 0 && empty !== undefined && <EmptyRow>{empty}</EmptyRow>}
-        {items.map((item, i) => {
-          const key = itemKey(item, i);
-          const commands = menu?.(item, i);
-          const destroy = commands?.find((m) => m.destructive && m.enabled !== false);
-          const showMenu = commands && (() => {
-            onSelect(item, i);
-            openMenu(commands);
-          });
-          return (
-            <SwipeRow key={key} action={destroy && { label: destroy.label, run: destroy.run }}>
-              <Row
-                title={itemName(item, i)}
-                sub={itemSub?.(item, i) || undefined}
-                chevron={!!commands && !!onOpen}
-                checked={commands ? undefined : key === selectedKey}
-                onMenu={showMenu}
-                onOpen={() => {
-                  if (!commands) onSelect(item, i);
-                  else if (onOpen) {
-                    onSelect(item, i);
-                    onOpen(item, i);
-                  } else showMenu?.();
-                }}
-              />
-            </SwipeRow>
-          );
-        })}
-        {onReorder && items.length > 1 && <Row title="Reorder" tone="action" onOpen={() => setReordering(true)} />}
-      </Group>
-      {reordering && onReorder && (
-        <ReorderSheet
-          title={`Reorder ${label}`}
-          sections={[{ key: 'list', items: items.map((item, i) => ({ key: itemKey(item, i), title: itemName(item, i), sub: itemSub?.(item, i) || undefined })) }]}
-          onReorder={(_section, keys) => onReorder(keys)}
-          onClose={() => setReordering(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function DesktopSelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
-  const index = selectedKey === null ? -1 : items.findIndex((it, i) => itemKey(it, i) === selectedKey);
-
-  const showMenu = useRowMenu();
-  const openMenu = (item: T, i: number) => {
-    if (menu) showMenu(menu(item, i));
-  };
-  const hasMenu = !!menu;
-
-  const nav = useListNav({
-    count: items.length,
-    index,
-    onIndex: (i) => onSelect(items[i], i),
-    onActivate: onOpen ? (i) => onOpen(items[i], i) : undefined,
-    onDelete: onDelete ? (i) => onDelete(items[i], i) : undefined,
-    onRename: onRename ? (i) => onRename(items[i], i) : undefined,
-    onMenu: hasMenu ? (i) => openMenu(items[i], i) : undefined,
-  });
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [dropAt, setDropAt] = useState<{ key: string; pos: 'before' | 'after' } | null>(null);
-  // React's autoFocus focuses only form controls, so a listbox is focused here.
-  const list = useRef<HTMLUListElement>(null);
-  useEffect(() => {
-    if (autoFocus) list.current?.focus({ preventScroll: true });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const dragProps = (key: string): LiHTMLAttributes<HTMLLIElement> => {
-    if (!onReorder) return {};
-    return {
-      draggable: true,
-      onDragStart: (e: DragEvent<HTMLLIElement>) => {
-        setDragKey(key);
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', key);
-      },
-      onDragEnd: () => {
-        setDragKey(null);
-        setDropAt(null);
-      },
-      onDragOver: (e: DragEvent<HTMLLIElement>) => {
-        if (!dragKey || dragKey === key) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        const rect = e.currentTarget.getBoundingClientRect();
-        setDropAt({ key, pos: e.clientY < rect.top + rect.height / 2 ? 'before' : 'after' });
-      },
-      onDrop: (e: DragEvent<HTMLLIElement>) => {
-        e.preventDefault();
-        if (!dragKey || !dropAt) return;
-        const keys = items.map((it, i) => itemKey(it, i)).filter((k) => k !== dragKey);
-        keys.splice(keys.indexOf(dropAt.key) + (dropAt.pos === 'after' ? 1 : 0), 0, dragKey);
-        setDragKey(null);
-        setDropAt(null);
-        onReorder(keys);
-      },
-    };
-  };
-
-  return (
-    <ul
-      ref={list}
-      className="env-list boxed"
-      role="listbox"
-      aria-label={label}
-      tabIndex={0}
-      onKeyDown={nav}
-      onContextMenu={hasMenu ? (e) => listContextMenu(e, index, (i) => openMenu(items[i], i)) : undefined}
-      aria-activedescendant={index >= 0 ? `${idPrefix}-${selectedKey}` : undefined}
-    >
-      {items.length === 0 && empty !== undefined && (
-        <li role="option" aria-disabled="true" aria-selected={false} className="env-item muted" style={{ textAlign: 'center', cursor: 'default' }}>
-          {empty}
-        </li>
-      )}
-      {items.map((item, i) => {
-        const key = itemKey(item, i);
+    <RowList
+      section
+      rows={rows}
+      rowKey={({ item, i }) => itemKey(item, i)}
+      idPrefix={idPrefix}
+      label={label}
+      selected={selectedKey}
+      onSelect={({ item, i }) => onSelect(item, i)}
+      onOpen={onOpen && (({ item, i }) => onOpen(item, i))}
+      menu={menu && (({ item, i }) => menu(item, i))}
+      onDelete={onDelete && (({ item, i }) => onDelete(item, i))}
+      onRename={onRename && (({ item, i }) => onRename(item, i))}
+      onReorder={onReorder}
+      autoFocus={autoFocus}
+      empty={empty}
+      emptyRow={EMPTY_ROW}
+      listClass="env-list boxed"
+      rowClass="env-item"
+      row={({ item, i }) => {
         const sub = itemSub?.(item, i);
-        const drop = dropAt?.key === key ? ` drop-${dropAt.pos}` : '';
         return (
-          <li
-            key={key}
-            id={`${idPrefix}-${key}`}
-            role="option"
-            aria-selected={key === selectedKey}
-            className={`env-item ${key === selectedKey ? 'selected' : ''}${drop}`}
-            onClick={() => onSelect(item, i)}
-            onDoubleClick={onOpen ? () => onOpen(item, i) : undefined}
-            onContextMenu={
-              hasMenu
-                ? (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onSelect(item, i);
-                    openMenu(item, i);
-                  }
-                : undefined
-            }
-            {...dragProps(key)}
-          >
+          <>
             <div className="env-item-name">{itemName(item, i)}</div>
             {sub !== undefined && sub !== null && sub !== '' && <div className="env-item-sub">{sub}</div>}
-          </li>
+          </>
         );
-      })}
-    </ul>
+      }}
+      phoneRow={({ item, i }) => ({ title: itemName(item, i), sub: itemSub?.(item, i) || undefined, chevron: !!menu && !!onOpen })}
+    />
   );
 }
 

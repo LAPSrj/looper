@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import type { PairRequest } from '../../../shared/remote-access';
 import { platform } from '../platform';
 import { requestHeaders } from './request';
@@ -8,6 +8,7 @@ import { canScan } from './pair-scan';
 import { QrScanner } from './QrScanner';
 import { Field } from '../components/ui';
 import { IosField } from './IosField';
+import { TitleBar } from './ws-titlebar';
 import './phone.css';
 import './ios.css';
 import './android.css';
@@ -89,99 +90,125 @@ export function PairPage() {
       />
     );
 
-  if (platform === 'ios') {
+  const look = platform === 'ios' ? IOS : platform === 'android' ? ANDROID : DESKTOP;
+  const body = (
+    <>
+      <PairLogo />
+      {look.heading}
+      {look.fields(look.field(look.labels.code, codeInput('mono')), look.field(look.labels.name, nameInput()))}
+      {scan && look.scan(() => setScanning(true))}
+      {error && (
+        <div className={look.error} role="alert">
+          {error}
+        </div>
+      )}
+    </>
+  );
+  const pairButton = (
+    <button type="submit" className={look.submit} disabled={busy || !code.trim()}>
+      Pair
+    </button>
+  );
+
+  if (look !== DESKTOP) {
     return (
       <>
-        <form className="ph-pair ios" onSubmit={submit}>
-          <PairLogo />
-          <h1 className="ios-large-title">Pair This Device</h1>
-          <div className="ios-group">
-            <IosField label="Code">{codeInput('mono')}</IosField>
-            <IosField label="Name">{nameInput()}</IosField>
-          </div>
-          {scan && (
-            <div className="ios-group">
-              <button type="button" className="ios-cell ios-cell-button" onClick={() => setScanning(true)}>
-                Scan QR Code
-              </button>
-            </div>
-          )}
-          {error && (
-            <div className="ios-group-footer error" role="alert">
-              {error}
-            </div>
-          )}
-          <button type="submit" className="ios-filled-btn wide" disabled={busy || !code.trim()}>
-            Pair
-          </button>
+        <form className={look.form} onSubmit={submit}>
+          {body}
+          {pairButton}
         </form>
-        {scanner('ios-filled-btn')}
+        {scanner(look.scanner)}
       </>
     );
   }
-
-  if (platform === 'android') {
-    return (
-      <>
-        <form className="ph-pair android" onSubmit={submit}>
-          <PairLogo />
-          <h1 className="md-headline">Pair this device</h1>
-          <label className="md-field">
-            <span className="md-field-label">Pairing code</span>
-            {codeInput('mono')}
-          </label>
-          <label className="md-field">
-            <span className="md-field-label">Device name</span>
-            {nameInput()}
-          </label>
-          {scan && (
-            <button type="button" className="md-text-btn" onClick={() => setScanning(true)}>
-              Scan QR Code
-            </button>
-          )}
-          {error && (
-            <div className="md-error-text" role="alert">
-              {error}
-            </div>
-          )}
-          <button type="submit" className="md-filled-btn wide" disabled={busy || !code.trim()}>
-            Pair
-          </button>
-        </form>
-        {scanner('md-filled-btn')}
-      </>
-    );
-  }
-
+  // The pairing page shows before any window: Pair is its one button, with nothing to cancel back to.
   return (
     <div className="pair-page">
-      <form className="pair-card" onSubmit={submit}>
-        <div className="ws-titlebar">
-          <span className="ws-title">Looper</span>
-        </div>
-        <div className="pair-page-body">
-          <PairLogo />
-          <h1>Pair this device</h1>
-          <Field label="Pairing code">{codeInput('mono')}</Field>
-          <Field label="Device name">{nameInput()}</Field>
-          {scan && (
-            <button type="button" className="btn" onClick={() => setScanning(true)}>
-              Scan QR Code
-            </button>
-          )}
-          {error && (
-            <div className="pair-page-error" role="alert">
-              {error}
-            </div>
-          )}
-        </div>
-        <div className="editor-footer">
-          <button type="submit" className="btn primary" disabled={busy || !code.trim()}>
-            Pair
-          </button>
-        </div>
+      <form className={look.form} onSubmit={submit}>
+        <TitleBar title="Looper" />
+        <div className="pair-page-body">{body}</div>
+        <div className="editor-footer">{pairButton}</div>
       </form>
-      {scanner('btn primary')}
+      {scanner(look.scanner)}
     </div>
   );
 }
+
+/** How each platform draws the pairing form. */
+interface PairLook {
+  form: string;
+  heading: ReactNode;
+  labels: { code: string; name: string };
+  field: (label: string, input: ReactNode) => ReactNode;
+  fields: (code: ReactNode, name: ReactNode) => ReactNode;
+  scan: (onClick: () => void) => ReactNode;
+  error: string;
+  submit: string;
+  /** The scanner's Cancel button. */
+  scanner: string;
+}
+
+const IOS: PairLook = {
+  form: 'ph-pair ios',
+  heading: <h1 className="ios-large-title">Pair This Device</h1>,
+  labels: { code: 'Code', name: 'Name' },
+  field: (label, input) => <IosField label={label}>{input}</IosField>,
+  fields: (code, name) => (
+    <div className="ios-group">
+      {code}
+      {name}
+    </div>
+  ),
+  scan: (onClick) => (
+    <div className="ios-group">
+      <button type="button" className="ios-cell ios-cell-button" onClick={onClick}>
+        Scan QR Code
+      </button>
+    </div>
+  ),
+  error: 'ios-group-footer error',
+  submit: 'ios-filled-btn wide',
+  scanner: 'ios-filled-btn',
+};
+
+const ANDROID: PairLook = {
+  form: 'ph-pair android',
+  heading: <h1 className="md-headline">Pair this device</h1>,
+  labels: { code: 'Pairing code', name: 'Device name' },
+  field: (label, input) => (
+    <label className="md-field">
+      <span className="md-field-label">{label}</span>
+      {input}
+    </label>
+  ),
+  fields: (code, name) => (
+    <>
+      {code}
+      {name}
+    </>
+  ),
+  scan: (onClick) => (
+    <button type="button" className="md-text-btn" onClick={onClick}>
+      Scan QR Code
+    </button>
+  ),
+  error: 'md-error-text',
+  submit: 'md-filled-btn wide',
+  scanner: 'md-filled-btn',
+};
+
+const DESKTOP: PairLook = {
+  form: 'pair-card',
+  heading: <h1>Pair this device</h1>,
+  labels: { code: 'Pairing code', name: 'Device name' },
+  field: (label, input) => <Field label={label}>{input}</Field>,
+  fields: ANDROID.fields,
+  scan: (onClick) => (
+    <button type="button" className="btn" onClick={onClick}>
+      Scan QR Code
+    </button>
+  ),
+  error: 'pair-page-error',
+  submit: 'btn primary',
+  scanner: 'btn primary',
+};

@@ -113,7 +113,7 @@ describe("the dashboard's live cards", () => {
     expect(watchedSessions([], (id) => runs.has(id))).toEqual([]);
   });
 
-  it("enables Stop as the toolbar does: a working agent, a permission waiting, a chat's commands, and always a task run (listed only while it runs)", () => {
+  it("enables Stop as the toolbar does: a working agent, a permission waiting, and the commands run from the box; a task run's too, whose Stop ends only the turn", () => {
     expect(canStop(undefined)).toBe(false);
     expect(canStop(s('c1', 'chat'))).toBe(false);
     expect(canStop(s('c1', 'chat', { status: 'working' }))).toBe(true);
@@ -121,6 +121,7 @@ describe("the dashboard's live cards", () => {
     expect(canStop(s('t1', 'terminal', { waiting: { reason: 'permission', text: 'Asks', since: 1 } }))).toBe(true);
     expect(canStop(s('t1', 'terminal', { waiting: { reason: 'turn', text: 'Done', since: 1 } }))).toBe(false);
     expect(canStop(s('r1', 'run', { status: 'working' }))).toBe(true);
-    expect(canStop(s('r1', 'run', { status: 'ready' }))).toBe(true);
+    expect(canStop(s('r1', 'run', { status: 'ready' }))).toBe(false);
+    expect(canStop(s('r1', 'run', { status: 'ready' }), 1)).toBe(true);
   });
 });

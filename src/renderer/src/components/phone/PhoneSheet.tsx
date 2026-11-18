@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { platform } from '../../platform';
+import { useSheetDrag } from '../../web/sheet-drag';
 import { BarHostContext, NavBar, type BarHost } from '../NavBar';
 import { DETENT_HEIGHT, draggedHeight, settleSheet, type Detent } from './sheet-detents';
 
@@ -24,7 +25,6 @@ export function PhoneSheet({
   const [detent, setDetent] = useState<Detent>(initial);
   const [closing, setClosing] = useState(false);
   const card = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ y0: number; y: number; t: number; v: number } | null>(null);
 
   const close = () => {
     setClosing(true);
@@ -46,33 +46,23 @@ export function PhoneSheet({
   }, []);
 
   const page = () => card.current?.parentElement?.clientHeight ?? 800;
-  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as Element).closest('button')) return;
-    drag.current = { y0: e.clientY, y: e.clientY, t: e.timeStamp, v: 0 };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    const el = card.current;
-    if (!d || !el) return;
-    const dt = e.timeStamp - d.t;
-    if (dt > 0) d.v = (e.clientY - d.y) / dt;
-    d.y = e.clientY;
-    d.t = e.timeStamp;
-    el.style.transition = 'none';
-    el.style.height = `${draggedHeight(detent, e.clientY - d.y0, page())}px`;
-  };
-  const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    drag.current = null;
-    const el = card.current;
-    if (!d || !el) return;
-    el.style.transition = '';
-    el.style.height = '';
-    const to = settleSheet(detent, e.clientY - d.y0, d.v, page());
-    if (to === 'dismiss') close();
-    else setDetent(to);
-  };
+  // Up and down: between the detents, or down to close.
+  const drag = useSheetDrag({
+    twoWay: true,
+    skip: 'button',
+    onMove: (dy) => {
+      const el = card.current;
+      if (!el) return;
+      el.style.transition = dy === null ? '' : 'none';
+      el.style.height = dy === null ? '' : `${draggedHeight(detent, dy, page())}px`;
+    },
+    onEnd: (r) => {
+      if (!r) return;
+      const to = settleSheet(detent, r.offset, r.speed, page());
+      if (to === 'dismiss') close();
+      else setDetent(to);
+    },
+  });
 
   return (
     <div className="pg-sheet-scrim" onClick={close}>
@@ -86,19 +76,7 @@ export function PhoneSheet({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div
-          className="pg-sheet-handle"
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={() => {
-            drag.current = null;
-            if (card.current) {
-              card.current.style.transition = '';
-              card.current.style.height = '';
-            }
-          }}
-        >
+        <div className="pg-sheet-handle" {...drag}>
           <div className="pg-sheet-grabber" aria-hidden="true" />
           <BarHostContext.Provider value={host}>
             <NavBar title={title} />

@@ -84,8 +84,12 @@ fields.
   default) follows the machine's own timezone.
 - **On events** (`trigger.watcher`) — a long-running **Watcher command** and a
   **Batch events for** (`debounceSec`, default 5s) window. See "Watcher
-  contract" below for what the command must do. Three more options shape
+  contract" below for what the command must do. Four more options shape
   when runs may start:
+  - **Don't hold an event longer than** (`maxWaitSec`, off by default; 60s
+    when you turn it on) — the longest a batch waits for its quiet, counted
+    from its first event. Without it, a watcher whose events keep coming
+    less than **Batch events for** apart delivers nothing until they stop.
   - **Run once when watching starts, to catch up on missed events**
     (`runOnStart`) — one catch-up run
     whenever watching starts cold: app launch, the task being enabled, a
@@ -106,6 +110,14 @@ fields.
   - **Timezone** (`timezone`) — the zone the hours/days are evaluated in;
     unset = the computer's. The field appears once active hours or days are
     restricted.
+
+**Send new related events to the running agent** (`trigger.sendRelatedEvents`,
+off by default) groups events by their `looper_related_id`, a field of a
+watcher's JSON line or of the check's JSON (a Slack thread, an issue number).
+An event whose id matches a run in flight goes to that run's agent instead of
+starting a run, and an event with a new id starts a run of its own, up to
+**Simultaneous runs**. Events without an id, and every event while the option
+is off, go into one batch for the next run.
 
 A checkbox, "Stop on a date", turns on **Stop running on**
 (`trigger.stopOn.enabled` / `.at`) — the date and time the trigger ends. Once
@@ -144,9 +156,13 @@ is not re-run per event.
 - **Start quiet**: emit only events that happen after launch. Looper does
   not replay history on startup, so a script that dumps its backlog on start
   would trigger a run for everything that already happened.
-- Events are collected for **Batch events for** (`debounceSec`) and delivered
-  as a single batch: a burst within that window becomes one run, not one per
-  line. A batch that arrives while the task is already at its concurrency cap
+- Events are collected until none has come for **Batch events for**
+  (`debounceSec`) and delivered as a single batch: a burst within that window
+  becomes one run, not one per line. **Don't hold an event longer than**
+  (`maxWaitSec`) sends a batch at that limit even while events keep coming.
+  With **Send new related events to the running agent** on, each
+  `looper_related_id` waits for its own quiet, so a busy thread doesn't hold
+  back the events of another. A batch that arrives while the task is already at its concurrency cap
   (Settings tab, **Simultaneous runs**) waits and keeps growing until a slot
   frees up, still landing in a single follow-up run.
 - The batch reaches the run as `<runDir>/events.jsonl` (env var
@@ -175,9 +191,13 @@ classifier/agent.
   `{"act": true, "summary": "3 new issues", "context": {"...": "..."}}`.
   `act` is required and boolean; `summary` and `context` are optional and
   are what the classifier and agent prompts see. If `act` is `false`, the
-  cycle ends there — no classifier, no agent. A non-zero exit code, a
-  timeout, or a last line that isn't valid JSON with a boolean `act` is
-  always an **error** — never a trigger, and never "nothing to do".
+  cycle ends there — no classifier, no agent. The line can also be an array
+  of these objects, one per item found: the run takes the first item with
+  `act: true`, and every other acting item gets a run of its own, through the
+  classifier and the agent, without running the check again (see [how a run
+  works](how-a-run-works.md#checking)). A non-zero exit code, a timeout, or a
+  last line that isn't valid JSON with a boolean `act` (in every item, for an
+  array) is always an **error** — never a trigger, and never "nothing to do".
 - **Timeout** — seconds before the command is killed and the cycle recorded
   as an error. Default 60s.
 

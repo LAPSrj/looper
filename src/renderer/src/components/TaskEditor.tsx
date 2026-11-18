@@ -5,12 +5,12 @@ import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, formToCron, timesExpressible, t
 import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
 import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
-import { envToLine, joinTokens, lineToEnv, tokenize } from '@shared/cmdline';
+import { envToLine, joinTokens } from '@shared/cmdline';
 import { EXAMPLE_TASK } from '@shared/example-task';
-import { CheckboxField, Field, FieldRow, FormGroup, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons } from './ui';
 import { WindowActions } from './WindowActions';
-import { useDialogKeys } from './hooks';
-import { blankDraft, type Draft } from './blank-draft';
+import { useDialogKeys, useSave } from './hooks';
+import { parseArgsEnv } from './form-blocks';import { blankDraft, type Draft } from './blank-draft';
 import { AgentFields, type AgentDraft } from './RemoteFields';
 
 interface Props {
@@ -30,12 +30,13 @@ interface Props {
   mode?: 'task' | 'template';
   /** The definition came from a task builder: saving records the agent's version. */
   builderId?: string;
-  onSaved: (task: Task) => void;
+  onSaved: () => void;
   onCancel: () => void;
 }
 
 /** The context limit a task gets when the restart option is turned on. */
 const DEFAULT_CONTEXT_LIMIT_K = 400;
+const DEFAULT_MAX_WAIT_SEC = 60;
 
 type NotifEndLevel =Exclude<NonNullable<NonNullable<TaskInput['notifications']>['end']>, 'off'>;
 type EditorTab = 'general' | 'trigger' | 'check' | 'classifier' | 'agent' | 'settings' | 'notifications' | 'json';
@@ -198,7 +199,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
   });
   const [tab, setTab] = useState<EditorTab>('general');
   const [jsonText, setJsonText] = useState('');
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   const [extraArgsText, setExtraArgsText] = useState(() => joinTokens((task ?? initial)?.agent?.extraArgs ?? []));
   const [envText, setEnvText] = useState(() => envToLine((task ?? initial)?.env ?? {}));
   // Pins the Model dropdown on "Custom" even while the typed value matches a preset.
@@ -382,14 +383,12 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
 
   /** Throws when the extra-arguments or env line is malformed. */
   function assemble(): Record<string, unknown> {
-    const parsedArgs = tokenize(extraArgsText);
-    if (!parsedArgs.ok) throw new Error(`Extra command-line arguments: ${parsedArgs.error}`);
-    const parsedEnv = lineToEnv(envText);
-    if (typeof parsedEnv === 'string') throw new Error(`Extra environment variables: ${parsedEnv}`);
+    const parsed = parseArgsEnv({ label: 'Extra command-line arguments', text: extraArgsText }, { label: 'Extra environment variables', text: envText });
+    if ('problem' in parsed) throw new Error(parsed.problem);
     return {
       ...draft,
       id: draft.id?.trim() || slugify(draft.name),
-      env: parsedEnv,
+      env: parsed.env,
       // A step turned off with nothing configured is dropped rather than saved empty.
       check: draft.check && (checkOn || (draft.check.command ?? '').trim()) ? draft.check : undefined,
       classifier: draft.classifier && (clsOn || (draft.classifier.prompt ?? '').trim()) ? draft.classifier : undefined,
@@ -403,7 +402,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
       agent: {
         ...draft.agent,
         command: draft.agent.command?.trim() || undefined,
-        extraArgs: parsedArgs.tokens,
+        extraArgs: parsed.args,
       },
     };
   }
@@ -453,22 +452,14 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
       void window.looper.showError(mode === 'template' ? "Can't save the template." : "Can't save the task.", v.errors.join('\n'));
       return false;
     }
-    setSaving(true);
-    try {
-      if (mode === 'template') await window.looper.templates.save(v.task);
-      else await window.looper.tasks.save(v.task, builderId ? { builderId } : undefined);
-      // Later Apply/Save clicks in this window update the item just created.
-      if (derivedId) setDraft((d) => ({ ...d, id: v.task.id }));
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    if (mode === 'template') await window.looper.templates.save(v.task);
+    else await window.looper.tasks.save(v.task, builderId ? { builderId } : undefined);
+    // Later Apply/Save clicks in this window update the item just created.
+    if (derivedId) setDraft((d) => ({ ...d, id: v.task.id }));
+    return true;
   };
-  const save = async () => { if (await doSave()) onSaved({} as Task); };
-  const apply = async () => { await doSave(); };
+  const save = () => saver.save(doSave, onSaved);
+  const apply = () => void saver.apply(doSave);
 
   useDialogKeys<EditorTab>({ tabs: TABS.map(([id]) => id), tab, onTab: switchTab });
 
@@ -716,6 +707,21 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                       onChange={(n) => setWatcher({ debounceSec: n })}
                     />
                   </FieldRow>
+                  <InlineField>
+                    <CheckboxField
+                      label="Don’t hold an event longer than"
+                      checked={watcher?.maxWaitSec !== undefined}
+                      onChange={(on) => setWatcher({ maxWaitSec: on ? DEFAULT_MAX_WAIT_SEC : undefined })}
+                    />
+                    <NumberInput
+                      label="Longest an event is held"
+                      suffix="s"
+                      min={0}
+                      disabled={watcher?.maxWaitSec === undefined}
+                      value={watcher?.maxWaitSec ?? DEFAULT_MAX_WAIT_SEC}
+                      onChange={(n) => setWatcher({ maxWaitSec: n })}
+                    />
+                  </InlineField>
                   <CheckboxField
                     label="Run once when watching starts, to catch up on missed events"
                     checked={watcher?.runOnStart ?? false}
@@ -1080,7 +1086,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
         </div>
       </div>
       </TabBar>
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} cancel={onCancel} apply={{ run: () => void apply() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Save', run: save }} cancel={onCancel} apply={{ run: apply }} busy={saver.busy} />
     </div>
   );
 }

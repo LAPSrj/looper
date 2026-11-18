@@ -27,8 +27,25 @@ boolean `act` field, e.g.:
 - `act: true` moves the cycle on (to the classifier, or straight to the
   agent). `summary` and `context` are optional and get passed along.
 - `act: false` ends the cycle as **No action** — nothing else runs.
+- The last line can also be an array of these objects, one per item the check
+  found (a ticket, an issue):
+
+  ```json
+  [{"act": true, "summary": "Ticket 812", "context": {"id": 812}}, {"act": true, "summary": "Ticket 815", "context": {"id": 815}}]
+  ```
+
+  The run takes the first item with `act: true`, and every other acting item
+  starts a run of its own that goes through the classifier and the agent
+  without running the check again. Items with `act: false` are left out, and
+  an array without an acting item (an empty one too) is **No action**. The
+  run log notes how many items went to runs of their own. Past the task's
+  **Simultaneous runs**, those runs wait and start as runs finish. With
+  **Send new related events to the running agent** on, an item whose
+  `looper_related_id` matches a run in flight goes to that run's agent
+  instead, and items that share an id run together.
 - A non-zero exit code, a timeout, or output whose last line isn't valid JSON
-  with a boolean `act` is always an **error**, never a "nothing to do".
+  with a boolean `act` (in every item, for an array) is always an **error**,
+  never a "nothing to do".
   Errors count toward auto-pause (see [troubleshooting](troubleshooting.md));
   a deliberate no-op never should be signaled as one.
 - A failure caused by the computer being offline is recorded as a network

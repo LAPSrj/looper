@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AddonButton, AddonEventKind, AddonField, AddonNode, AddonProp, AddonScreen } from '@shared/addons';
 import { ADDON_WINDOW_VIEWS } from '@shared/commands/build';
 import type { AddonContext, CommandContext } from '@shared/commands/context';
+import { DetailView } from './DetailView';
 import { CommandBar } from './Toolbar';
 import { useCommandMenu, useCommandState } from './useCommands';
+import { PathField } from './form-blocks';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { PropertyList, type Property } from './PropertyList';
-import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
 
 type Value = string | number | boolean;
@@ -235,23 +237,20 @@ export function AddonScreenView({
       case 'file':
       case 'folder': {
         const input = f.input;
-        // A path box with Browse…, as the Windows guidelines give every box that takes a file or folder.
         return (
-          <Field key={f.id} label={f.label}>
-            <InputRow>
-              {text('text')}
-              <button
-                className="btn"
-                onClick={() =>
-                  void window.looper.addons.pickPath(addonId, input, f.accept).then((p) => {
-                    if (p) setValue(f.id, p);
-                  })
-                }
-              >
-                Browse…
-              </button>
-            </InputRow>
-          </Field>
+          <PathField
+            key={f.id}
+            label={f.label}
+            value={String(v)}
+            placeholder={f.placeholder}
+            autoFocus={f.autofocus}
+            onChange={(p) => setValue(f.id, p)}
+            onBrowse={() =>
+              void window.looper.addons.pickPath(addonId, input, f.accept).then((p) => {
+                if (p) setValue(f.id, p);
+              })
+            }
+          />
         );
       }
       case 'select':
@@ -402,12 +401,9 @@ export function AddonScreenView({
   if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || (screen && nodes(screen.body))}</div>;
   if (mode === 'main') {
     return (
-      <div className="detail addon-screen">
-        <div className="detail-bar">
-          <span className="pane-title">{screen?.title ?? ''}</span>
-        </div>
+      <DetailView title={screen?.title ?? ''} className="detail addon-screen">
         <div className="status-pane">{failed || (screen && nodes(screen.body))}</div>
-      </div>
+      </DetailView>
     );
   }
   return (

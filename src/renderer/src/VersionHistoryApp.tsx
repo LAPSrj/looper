@@ -1,46 +1,39 @@
 import { useEffect, useState } from 'react';
-import type { Task } from '@shared/types';
 import { changeLabels, sourceLabel, type VersionSummary } from '@shared/versions';
+import { windowTitle } from '@shared/window-title';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
+import { TASKS, useLiveItem } from './components/hooks';
+import { keptSelection } from './components/selection';
 import { fmtDateTime } from './format';
 import { subscribe } from './events';
+import { restoreVersion, useBuilderOpen } from './version-restore';
 
 /** Version History window (Task → Version History…): a task's saved versions, newest first. */
 export function VersionHistoryApp({ taskId }: { taskId: string }) {
   const [versions, setVersions] = useState<VersionSummary[]>([]);
-  const [task, setTask] = useState<Task | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const { item: task } = useLiveItem(TASKS, taskId);
 
   useEffect(() => {
-    const loadTask = () =>
-      void window.looper.tasks.list().then((tasks) => {
-        const t = tasks.find((x) => x.id === taskId) ?? null;
-        setTask(t);
-        document.title = t ? `Version History – ${t.name}` : 'Version History';
-      });
+    document.title = windowTitle('Version History', task?.name);
+  }, [task?.name]);
+
+  useEffect(() => {
     const loadVersions = () =>
       void window.looper.versions.list(taskId).then((list) => {
         const newestFirst = [...list].reverse();
         setVersions(newestFirst);
-        setSelected((s) => (s !== null && newestFirst.some((v) => v.n === s) ? s : (newestFirst[0]?.n ?? null)));
+        setSelected((s) => keptSelection(s, newestFirst, (v) => v.n));
       });
-    loadTask();
     loadVersions();
     return subscribe((e) => {
       if (e.type === 'versions' && e.taskId === taskId) loadVersions();
-      else if (e.type === 'tasks') loadTask();
     });
   }, [taskId]);
 
   // With a task builder open on the task, a version is loaded into it (unsaved, undoable) instead of restored.
-  const [builderOpen, setBuilderOpen] = useState(false);
-  useEffect(() => {
-    const check = () => void window.looper.builder.forTask(taskId).then((id) => setBuilderOpen(id !== null));
-    check();
-    window.addEventListener('focus', check);
-    return () => window.removeEventListener('focus', check);
-  }, [taskId]);
+  const builderOpen = useBuilderOpen(taskId);
 
   const version = versions.find((v) => v.n === selected);
   const current = versions[0]?.n;
@@ -51,23 +44,8 @@ export function VersionHistoryApp({ taskId }: { taskId: string }) {
   const compare = (target = version) => {
     if (target) void window.looper.versions.openDetail(taskId, target.n, true);
   };
-  const restore = async (target = version) => {
-    if (target && builderOpen) {
-      try {
-        await window.looper.builder.loadVersion(taskId, target.n);
-      } catch (e) {
-        void window.looper.showError((e as Error).message);
-      }
-      return;
-    }
-    if (!target || !task || target.n === current) return;
-    const files = target.files.length > 0 ? ' and the files it recorded' : '';
-    if (!(await window.looper.confirm(`Restore version ${target.n} of "${task.name}"? Its definition${files} replace the current ones, and the restore is saved as a new version.`))) return;
-    try {
-      await window.looper.versions.restore(taskId, target.n);
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    }
+  const restore = (target = version) => {
+    if (target && (builderOpen || target.n !== current)) void restoreVersion(taskId, target);
   };
 
   const subOf = (v: VersionSummary): string => {

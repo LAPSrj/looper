@@ -9,6 +9,8 @@ export interface CheckResult {
   summary?: string;
   context?: unknown;
   relatedId?: string;
+  /** The acting items of a check that printed a list, past the first: each one starts a run of its own. */
+  more?: CheckOutput[];
   error?: string;
   /** The error was a network failure: no connection, DNS, refused, timed out. */
   network?: boolean;
@@ -21,9 +23,25 @@ export interface CheckResult {
   stdoutTail: string;
 }
 
-export type ParsedCheck = { ok: true; value: CheckOutput } | { ok: false; error: string };
+export type ParsedCheck = { ok: true; value: CheckOutput; more?: CheckOutput[] } | { ok: false; error: string };
 
-/** Contract: the last non-empty stdout line is JSON with a boolean `act`. */
+function parseItem(obj: unknown, what: string): CheckOutput | string {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return `${what} must be an object`;
+  const rec = obj as Record<string, unknown>;
+  if (typeof rec.act !== 'boolean') return `${what} needs boolean "act"`;
+  const value: CheckOutput = { act: rec.act };
+  if (rec.summary !== undefined) value.summary = String(rec.summary);
+  if (rec.context !== undefined) value.context = rec.context;
+  const relatedId = relatedIdIn(rec);
+  if (relatedId !== undefined) value.relatedId = relatedId;
+  return value;
+}
+
+/**
+ * Contract: the last non-empty stdout line is JSON with a boolean `act`, or an
+ * array of such objects. The run takes the array's first acting item and each
+ * other acting item starts a run of its own (`more`).
+ */
 export function parseCheckOutput(stdout: string): ParsedCheck {
   const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const last = lines[lines.length - 1];
@@ -34,17 +52,23 @@ export function parseCheckOutput(stdout: string): ParsedCheck {
   } catch {
     return { ok: false, error: `last stdout line is not JSON: ${tail(last, 200)}` };
   }
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-    return { ok: false, error: 'check JSON must be an object' };
+  if (!Array.isArray(obj)) {
+    const value = parseItem(obj, 'check JSON');
+    return typeof value === 'string' ? { ok: false, error: value } : { ok: true, value };
   }
-  const rec = obj as Record<string, unknown>;
-  if (typeof rec.act !== 'boolean') return { ok: false, error: 'check JSON needs boolean "act"' };
-  const value: CheckOutput = { act: rec.act };
-  if (rec.summary !== undefined) value.summary = String(rec.summary);
-  if (rec.context !== undefined) value.context = rec.context;
-  const relatedId = relatedIdIn(rec);
-  if (relatedId !== undefined) value.relatedId = relatedId;
-  return { ok: true, value };
+  const items: CheckOutput[] = [];
+  for (const [i, raw] of obj.entries()) {
+    const item = parseItem(raw, `item ${i + 1} of the check's JSON array`);
+    if (typeof item === 'string') return { ok: false, error: item };
+    items.push(item);
+  }
+  const acting = items.filter((item) => item.act);
+  if (!acting.length) {
+    const summary = items.map((item) => item.summary).filter(Boolean).join('; ');
+    return { ok: true, value: { act: false, ...(summary ? { summary } : {}) } };
+  }
+  const [value, ...more] = acting;
+  return more.length ? { ok: true, value, more } : { ok: true, value };
 }
 
 export async function runCheck(ctx: RunContext): Promise<CheckResult> {
@@ -91,6 +115,7 @@ export async function runCheck(ctx: RunContext): Promise<CheckResult> {
     summary: parsed.value.summary,
     context: parsed.value.context,
     relatedId: parsed.value.relatedId,
+    ...(parsed.more ? { more: parsed.more } : {}),
     ...base,
   };
 }

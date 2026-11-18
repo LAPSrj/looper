@@ -1,4 +1,5 @@
 import type { PushKeyResponse } from '../../../shared/remote-access';
+import { appleDevice } from './device-name';
 import { requestHeaders } from './request';
 
 /**
@@ -17,7 +18,7 @@ export const PUSH_HINTS: Partial<Record<PushState, string>> = {
 
 const FLAG = 'looper.push';
 
-export const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+export const isIos = (): boolean => appleDevice(navigator.userAgent, navigator.maxTouchPoints) !== null;
 
 /** Running as a Home Screen (installed) app. */
 export const isStandalone = (): boolean =>

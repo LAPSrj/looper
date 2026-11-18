@@ -11,12 +11,14 @@ import {
   type GitStatus,
   type GitStatusResult,
 } from '@shared/git';
+import { baseName, dirName } from '@shared/paths';
 import { fmtDateTime } from '../format';
 import { RowList, type PhoneRowModel } from './DataTable';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { Group } from './phone/PhoneList';
 import { DiffView } from './ToolContent';
 import { TabBar } from './ui';
+import { reportError } from '../report-error';
 
 type Tab = 'changes' | 'history';
 
@@ -24,9 +26,6 @@ const PAGE = 200;
 const WORKING_POLL_MS = 5000;
 const IDLE_POLL_MS = 60_000;
 
-const baseName = (p: string) => p.split('/').pop() || p;
-const dirName = (p: string) => p.slice(0, Math.max(0, p.length - baseName(p).length - 1));
-const fail = (e: unknown) => void window.looper.showError((e as Error).message);
 
 interface FileLine {
   path: string;
@@ -91,7 +90,7 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
     window.looper.git
       .changeDiff(projectId, { path: current.path, origPath: current.origPath, kind: current.kind }, status.initial)
       .then((d) => live && setDiff({ key, diff: d }))
-      .catch((e) => live && fail(e));
+      .catch((e) => live && reportError(e));
     return () => {
       live = false;
     };
@@ -183,7 +182,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
         setCommits(page);
         setMore(page.length === PAGE);
       })
-      .catch(fail);
+      .catch(reportError);
     return () => {
       live = false;
     };
@@ -198,7 +197,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
         setCommits((prev) => [...prev, ...page.filter((c) => !prev.some((p) => p.hash === c.hash))]);
         setMore(page.length === PAGE);
       })
-      .catch(fail)
+      .catch(reportError)
       .finally(() => {
         loading.current = false;
       });
@@ -213,7 +212,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
     window.looper.git
       .commit(projectId, current.hash)
       .then((d) => live && setDetail(d))
-      .catch((e) => live && fail(e));
+      .catch((e) => live && reportError(e));
     return () => {
       live = false;
     };
@@ -227,7 +226,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
     window.looper.git
       .commitDiff(projectId, detail.hash, file.path, file.origPath)
       .then((d) => live && setDiff({ key: diffKey, diff: d }))
-      .catch((e) => live && fail(e));
+      .catch((e) => live && reportError(e));
     return () => {
       live = false;
     };

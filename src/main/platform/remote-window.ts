@@ -81,7 +81,7 @@ export class RemoteWebContents extends EventEmitter {
 
   send(channel: string, ...args: unknown[]): void {
     if (this.win.isDestroyed()) return;
-    this.win.client.send({ t: 'event', w: this.win.w, channel, args: encodeBytes(args) as unknown[] });
+    this.win.client.sendPage({ t: 'event', w: this.win.w, channel, args: encodeBytes(args) as unknown[] });
   }
 
   isDestroyed(): boolean {
@@ -93,7 +93,7 @@ export class RemoteWebContents extends EventEmitter {
   }
 
   reload(): void {
-    if (!this.win.isDestroyed()) this.win.client.send({ t: 'reload', w: this.win.w });
+    if (!this.win.isDestroyed()) this.win.client.sendPage({ t: 'reload', w: this.win.w });
   }
 
   /** Links in a remote window open on the device; nothing to handle here. */
@@ -321,7 +321,14 @@ interface PendingDialog {
   resolve: (r: DialogResult) => void;
 }
 
-type Send = (msg: ServerMessage) => boolean;
+/** A message to the tab; a string is one already serialized. */
+type Send = (msg: ServerMessage | string) => boolean;
+
+/** A message for a window's page, numbered as it's sent. */
+type PageMessage = Omit<Extract<ServerMessage, { t: 'event' }>, 'seq'> | Omit<Extract<ServerMessage, { t: 'reload' }>, 'seq'>;
+
+/** About how many bytes of a client's latest page messages are kept, for a page that missed them while away. */
+export const PAGE_BACKLOG_BYTES = 2 * 1024 * 1024;
 
 /**
  * One browser tab (kept across its reconnects): its windows, the menus and
@@ -329,8 +336,17 @@ type Send = (msg: ServerMessage) => boolean;
  */
 export class RemoteClient {
   private sendFn: Send | null = null;
+  /** The last page message's number. */
+  private pageSeq = 0;
+  /** The latest page messages as sent, oldest first from `backlogHead`: a dead socket can look open for a minute, so they're kept while connected too. */
+  private backlog: { seq: number; text: string }[] = [];
+  private backlogHead = 0;
+  private backlogBytes = 0;
+  /** While away: the last page message numbered before it left. */
+  private awayFrom: number | null = null;
   private readonly windows = new Map<string, RemoteWindow>();
-  private readonly popups = new Map<string, { window: RemoteWindow; byId: Map<string, MenuItemLike> }>();
+  /** Open popups; `closed` is Electron's popup callback, which tells the caller the menu went away (picked or not). */
+  private readonly popups = new Map<string, { window: RemoteWindow; byId: Map<string, MenuItemLike>; closed?: () => void }>();
   private readonly dialogs = new Map<string, PendingDialog>();
   private readonly deliveries = new Set<SaveDelivery>();
   private seq = 0;
@@ -357,12 +373,68 @@ export class RemoteClient {
   /** Attach the tab's current connection, or null while it's away. */
   setConnection(send: Send | null): void {
     this.sendFn = send;
-    if (!send) this.popups.clear();
+    this.awayFrom = send ? null : this.pageSeq;
+    if (!send) for (const id of [...this.popups.keys()]) this.closePopup(id);
+  }
+
+  private closePopup(menuId: string): void {
+    const p = this.popups.get(menuId);
+    this.popups.delete(menuId);
+    p?.closed?.();
   }
 
   /** False when it wasn't sent (no connection, or too large). */
   send(msg: ServerMessage): boolean {
     return this.sendFn?.(msg) ?? false;
+  }
+
+  /** The number of the last event or reload sent to a page. */
+  get lastPageSeq(): number {
+    return this.pageSeq;
+  }
+
+  /** An event or reload for a window's page: numbered, and kept so a page that misses it gets it when it reconnects. */
+  sendPage(msg: PageMessage): void {
+    const seq = this.pageSeq + 1;
+    // Away, and already missing what was sent since it left: its pages load again on its return, so nothing more is kept.
+    if (!this.sendFn && this.awayFrom !== null && !this.canReplay(this.awayFrom)) {
+      this.pageSeq = seq;
+      this.dropBacklog();
+      return;
+    }
+    let text: string;
+    try {
+      text = JSON.stringify({ ...msg, seq });
+    } catch (err) {
+      this.opts.log.warn(`remote access: can't send a ${msg.t} message to ${this.device.name}: ${String(err)}`);
+      return;
+    }
+    this.pageSeq = seq;
+    this.backlog.push({ seq, text });
+    this.backlogBytes += text.length;
+    while (this.backlogBytes > PAGE_BACKLOG_BYTES && this.backlogHead < this.backlog.length) this.backlogBytes -= this.backlog[this.backlogHead++].text.length;
+    if (this.backlogHead > 1024 && this.backlogHead * 2 > this.backlog.length) {
+      this.backlog = this.backlog.slice(this.backlogHead);
+      this.backlogHead = 0;
+    }
+    this.sendFn?.(text);
+  }
+
+  private dropBacklog(): void {
+    this.backlog = [];
+    this.backlogHead = 0;
+    this.backlogBytes = 0;
+  }
+
+  /** Whether every page message after `seq` (the last one a page got) is still kept. */
+  canReplay(seq: number): boolean {
+    const first = this.backlogHead < this.backlog.length ? this.backlog[this.backlogHead].seq : this.pageSeq + 1;
+    return seq <= this.pageSeq && seq + 1 >= first;
+  }
+
+  /** Send the page messages after `seq` again (check canReplay first). */
+  replay(seq: number): void {
+    for (let i = this.backlogHead; i < this.backlog.length; i++) if (this.backlog[i].seq > seq) this.sendFn?.(this.backlog[i].text);
   }
 
   window(w: string): RemoteWindow | undefined {
@@ -384,7 +456,7 @@ export class RemoteClient {
   /** Called by RemoteWindow.destroy. */
   windowGone(win: RemoteWindow): void {
     this.windows.delete(win.w);
-    for (const [id, p] of this.popups) if (p.window === win) this.popups.delete(id);
+    for (const [id, p] of [...this.popups]) if (p.window === win) this.closePopup(id);
     for (const [id, d] of this.dialogs) if (d.window === win) this.cancelDialog(id);
     if (this.main === win) this.main = null;
     this.send({ t: 'window-close', w: win.w });
@@ -415,38 +487,42 @@ export class RemoteClient {
 
   // ---------- menus ----------
 
-  popup(win: RemoteWindow, menu: MenuLike, x?: number, y?: number, button?: PopupButton): void {
+  popup(win: RemoteWindow, menu: MenuLike, x?: number, y?: number, button?: PopupButton, closed?: () => void): void {
     const { items, byId } = serializeMenu(menu, this.uiPlatform);
-    if (items.length === 0 || win.isDestroyed()) return;
+    if (items.length === 0 || win.isDestroyed()) {
+      closed?.();
+      return;
+    }
     // One popup at a time, as on the desktop: a new one replaces the last.
-    this.popups.clear();
+    for (const id of [...this.popups.keys()]) this.closePopup(id);
     const menuId = `m${++this.seq}`;
-    this.popups.set(menuId, { window: win, byId });
+    this.popups.set(menuId, { window: win, byId, closed });
     this.send({ t: 'menu', menuId, w: win.w, items, ...(typeof x === 'number' ? { x } : {}), ...(typeof y === 'number' ? { y } : {}), ...(button ? { button } : {}) });
   }
 
   /** A pick from a popup (its menuId) or from a window's menu bar (menuId = the window's w). */
   pick(menuId: string, itemId: string, checked: boolean | undefined): void {
     const bar = this.windows.get(menuId);
-    let target: { window: RemoteWindow; byId: Map<string, MenuItemLike> } | undefined;
+    let target: { window: RemoteWindow; byId: Map<string, MenuItemLike>; closed?: () => void } | undefined;
     if (bar?.menuBar) target = { window: bar, byId: bar.menuBar.byId };
     else {
       target = this.popups.get(menuId);
       this.popups.delete(menuId);
     }
     const item = target?.byId.get(itemId);
-    if (!target || !item || target.window.isDestroyed()) return;
-    const win = target.window;
     try {
+      if (!target || !item || target.window.isDestroyed()) return;
+      const win = target.window;
       runAs({ client: this, window: win }, () => pickItem(item, win, win.webContents, checked));
     } finally {
       // The click may have set checkmarks of its own (a radio group, Filter…): the bar shows what's true.
       if (bar?.menuBar) bar.refreshMenu();
+      target?.closed?.();
     }
   }
 
   dismiss(menuId: string): void {
-    this.popups.delete(menuId);
+    this.closePopup(menuId);
   }
 
   // ---------- dialogs ----------

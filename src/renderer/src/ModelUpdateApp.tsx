@@ -1,11 +1,13 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import type { Environment, Harness, Settings, Task } from '@shared/types';
+import { Fragment, useEffect, useState } from 'react';
+import type { Environment, Harness, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
+import { capFirst, plural } from '@shared/format';
 import { applyModelUpdate, buildUpdateRows, hasModelChange, type ModelAction, type ModelUpdateRow } from '@shared/model-update';
 import { GroupHeader } from './components/GroupHeader';
+import { groupKeys } from './components/group-keys';
 import { EmptyWindow, Field, FormGroup, SelectInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { subscribe } from './events';
+import { useLiveSettings, useSave } from './components/hooks';
 
 interface Group {
   envId: string;
@@ -42,14 +44,11 @@ function usageCounts(tasks: Task[], env: Environment, harness: Harness): Record<
   return counts;
 }
 
-/** An error message starts with a capital, like the rest of the window's text. */
-const sentence = (s = ''): string => s.charAt(0).toUpperCase() + s.slice(1);
-
 function rowNote(row: ModelUpdateRow, used: number): string {
   const parts: string[] = [];
   if (!row.inList) parts.push(row.main ? 'new' : 'available');
   if (row.inList && !row.supported) parts.push('no longer supported');
-  if (row.inList && used > 0) parts.push(used === 1 ? 'used by 1 task' : `used by ${used} tasks`);
+  if (row.inList && used > 0) parts.push(`used by ${plural(used, 'task')}`);
   return parts.join(' · ');
 }
 
@@ -60,18 +59,15 @@ function rowNote(row: ModelUpdateRow, used: number): string {
  * is scoped to one harness (Harness editor → Models → Update…).
  */
 export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId?: string }) {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { live: settings } = useLiveSettings();
   const [groups, setGroups] = useState<Group[]>([]);
-  const [saving, setSaving] = useState(false);
-  const settingsRef = useRef<Settings | null>(null);
-  settingsRef.current = settings;
+  const saver = useSave();
 
   useEffect(() => {
     document.title = 'Update Models';
     let disposed = false;
     void Promise.all([window.looper.info(), window.looper.tasks.list()]).then(([info, tasks]) => {
       if (disposed) return;
-      setSettings(info.settings);
       const scoped: Group[] = [];
       for (const env of info.settings.environments) {
         for (const h of env.harnesses) {
@@ -107,12 +103,8 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
           });
       }
     });
-    const offSettings = subscribe((e) => {
-      if (e.type === 'settings') setSettings(e.settings);
-    });
     return () => {
       disposed = true;
-      offSettings();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [envId, harnessId]);
@@ -121,9 +113,8 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
     setGroups((gs) => gs.map((x) => (x.envId === g.envId && x.harnessId === g.harnessId ? { ...x, ...p } : x)));
 
   const doUpdate = async () => {
-    const s = settingsRef.current;
-    if (!s) return;
-    const environments = s.environments.map((env) => ({
+    if (!settings) return false;
+    const environments = settings.environments.map((env) => ({
       ...env,
       harnesses: env.harnesses.map((h) => {
         const g = groups.find((x) => x.envId === env.id && x.harnessId === h.id && x.status === 'ready');
@@ -133,15 +124,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
         return { ...h, models };
       }),
     }));
-    setSaving(true);
-    try {
-      await window.looper.updateSettings({ environments });
-      window.close();
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
+    await window.looper.updateSettings({ environments });
   };
 
   if (!settings || groups.length === 0) return <EmptyWindow gone={settings && 'No Claude Code or Codex harnesses.'} />;
@@ -165,19 +148,12 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
                   tabIndex={0}
                   aria-disabled={!expandable || undefined}
                   onToggle={() => toggle(!g.open)}
-                  onKeyDown={(e) => {
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') toggle(!g.open);
-                    else if (e.key === 'ArrowRight') toggle(true);
-                    else if (e.key === 'ArrowLeft') toggle(false);
-                    else return;
-                    e.preventDefault();
-                  }}
+                  onKeyDown={groupKeys(g.open, toggle)}
                 >
                   {g.status === 'loading' && <span className="mu-group-note">checking…</span>}
                   {g.status === 'error' && (
                     <>
-                      <span className="mu-group-note">{sentence(g.error)}</span>
+                      <span className="mu-group-note">{capFirst(g.error ?? '')}</span>
                       <button
                         className="link"
                         onClick={(e) => {
@@ -215,10 +191,10 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
       <WindowActions
         confirm={{
           label: 'Update',
-          run: () => void doUpdate(),
+          run: () => saver.save(doUpdate),
           disabled: loading || !groups.some((g) => g.status === 'ready' && hasModelChange(g.rows, g.actions)),
         }}
-        busy={saving}
+        busy={saver.busy}
       />
     </div>
   );

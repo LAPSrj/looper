@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fileImageId, type MessageImage } from '@shared/messages';
+import { baseName } from '@shared/paths';
 import { StatusBar } from './components/StatusBar';
 import { Toolbar } from './components/Toolbar';
 import { NumberInput } from './components/ui';
@@ -26,7 +27,7 @@ function scrollbarWidth(): number {
 /** The window's title for a sent image's row id: "Image – name". */
 const sentTitle = (key: string): string | null => {
   const file = fileImageId(key);
-  return file === null ? null : `Image – ${file.replace(/\\/g, '/').split('/').pop()}`;
+  return file === null ? null : `Image – ${baseName(file)}`;
 };
 
 /**

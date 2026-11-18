@@ -31,7 +31,14 @@ export interface Fact {
   value: string;
   /** The value's color, by how close a limit is. */
   tone?: 'warning' | 'error';
+  /** A status bar's words for it, where they aren't its label and value. */
+  line?: string;
+  /** It counts down, so it's shown only while the page is current (`live-only`). */
+  live?: boolean;
 }
+
+/** A fact as a status bar shows it: "5-hour limit 40%", "Last reply 5 min ago". */
+export const factLine = (f: Fact): string => f.line ?? `${f.label} ${f.value}`;
 
 const toneOf = (used: number): Fact['tone'] => {
   const t = usageTone(used);
@@ -75,12 +82,15 @@ export interface SessionFactsInput {
 /** The session's own facts, one per row; a fact that doesn't apply (no reply yet, no cache) has no row. */
 export function sessionFacts(s: SessionFactsInput, now: number, clock: (ts: number, now: number) => string): Fact[] {
   const facts: Fact[] = [];
-  if (s.harness) facts.push({ label: 'Harness', value: s.harness });
+  if (s.harness) facts.push({ label: 'Harness', value: s.harness, line: s.harness });
   if (s.model) facts.push({ label: 'Model', value: s.model });
-  if (s.context) facts.push({ label: 'Context', value: contextValue(s.context) });
+  if (s.context) facts.push({ label: 'Context', value: contextValue(s.context), line: contextText(s.context) });
   if (s.lastReplyAt) {
     facts.push({ label: 'Last reply', value: clock(s.lastReplyAt, now) });
-    if (s.cacheUntil !== undefined) facts.push({ label: 'Prompt cache', value: cacheText(s.cacheUntil, now) });
+    if (s.cacheUntil !== undefined) {
+      const cache = cacheText(s.cacheUntil, now);
+      facts.push({ label: 'Prompt cache', value: cache, line: cache, live: true });
+    }
   }
   return facts;
 }

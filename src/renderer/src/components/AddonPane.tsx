@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem } from '@shared/addons';
 import { contextMenu } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
+import { useAddonList } from '../live-state';
 import { isPhone } from '../web/page-nav';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
-import { useListNav } from './hooks';
+import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
-import { listContextMenu } from './list-nav';
-import { selectsOnMenu } from './ListDetail';
+import { Row } from './phone/PhoneList';
 import { InfoBar } from './ui';
 
 export type AddonPaneState = { status: 'ready'; content: AddonPaneContent } | { status: 'error'; error: string };
@@ -23,9 +23,7 @@ export interface AddonSelection {
 
 /** The installed addons and their panes' items, kept current as addons start, stop and ask for a redraw. */
 export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonPaneState>; reload: (addonId: string) => void; loaded: boolean } {
-  const [addons, setAddons] = useState<AddonInfo[]>([]);
-  // False until the first list answers: an empty list before that is a placeholder, not "no addons".
-  const [loaded, setLoaded] = useState(false);
+  const { addons, loaded } = useAddonList();
   const [panes, setPanes] = useState<Record<string, AddonPaneState>>({});
   const current = useRef<AddonInfo[]>([]);
 
@@ -40,30 +38,24 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
     }
   }, []);
 
+  // The panes of an addon load when it first shows running, and again when it asks for a redraw.
   useEffect(() => {
-    void window.looper.addons
-      .list()
-      .then((list) => {
-        current.current = list;
-        setAddons(list);
-        list.forEach(load);
-      })
-      .finally(() => setLoaded(true));
-    return window.looper.addons.onEvent((e) => {
-      if (e.type === 'addons') {
-        const prev = current.current;
-        current.current = e.addons;
-        setAddons(e.addons);
-        setLoaded(true);
-        for (const a of e.addons) {
-          if (prev.find((x) => x.id === a.id)?.status !== 'running') load(a);
-        }
-      } else if (e.type === 'refresh') {
+    const prev = current.current;
+    current.current = addons;
+    for (const a of addons) {
+      if (prev.find((x) => x.id === a.id)?.status !== 'running') load(a);
+    }
+  }, [addons, load]);
+
+  useEffect(
+    () =>
+      window.looper.addons.onEvent((e) => {
+        if (e.type !== 'refresh') return;
         const a = current.current.find((x) => x.id === e.addonId);
         if (a) load(a);
-      }
-    });
-  }, [load]);
+      }),
+    [load],
+  );
 
   const reload = useCallback((addonId: string) => {
     const a = current.current.find((x) => x.id === addonId);
@@ -125,7 +117,7 @@ export function AddonPaneList({
       return new Set();
     }
   });
-  const toggleGroup = (name: string) =>
+  const toggleGroup = ({ name }: { name: string }) =>
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (!next.delete(name)) next.add(name);
@@ -148,66 +140,23 @@ export function AddonPaneList({
     if (g) g.items.push(it);
     else groups.push({ name: it.group, items: [it] });
   }
-  // What the arrow keys move through: the rows that show.
-  const isCollapsed = (name: string) => !searching && collapsed.has(name);
-  const rowId = (id: string) => `addon-${addon.id}-${pane}-${id}`;
-  const groupRowId = (name: string) => `addon-${addon.id}-${pane}-group-${groups.findIndex((g) => g.name === name)}`;
-  const open = (it: AddonPaneItem) =>
-    void window.looper.addons.event(addon.id, { source: { pane }, kind: 'open', id: it.id, item: it.id });
-  // The rows the keyboard visits, in the order they show: the loose items, then each group's header and its items while it's open.
-  type NavRow = { kind: 'group'; name: string } | { kind: 'item'; it: AddonPaneItem };
-  const rows: NavRow[] = [
-    ...loose.map((it) => ({ kind: 'item' as const, it })),
-    ...groups.flatMap((g): NavRow[] => [
-      { kind: 'group', name: g.name },
-      ...(isCollapsed(g.name) ? [] : g.items.map((it) => ({ kind: 'item' as const, it }))),
-    ]),
+  const prefix = `addon-${addon.id}-${pane}`;
+  const item = (it: AddonPaneItem, depth: number): PaneRow => ({ kind: 'item', key: it.id, id: `${prefix}-${it.id}`, depth, item: it });
+  // The rows in the order they show: the loose items at the top level, then each group's header and its items while it's open.
+  const rows: PaneRow[] = [
+    ...loose.map((it) => item(it, 0)),
+    ...groups.flatMap((g, gi): PaneRow[] => {
+      const open = searching || !collapsed.has(g.name);
+      return [{ kind: 'group', key: g.name, id: `${prefix}-group-${gi}`, depth: 0, open, group: g }, ...(open ? g.items.map((it) => item(it, 1)) : [])];
+    }),
   ];
-  // The active row is the selected item, or the header the keyboard last stopped on.
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const groupAt = activeGroup === null ? -1 : rows.findIndex((r) => r.kind === 'group' && r.name === activeGroup);
-  const index = groupAt >= 0 ? groupAt : selected === null ? -1 : rows.findIndex((r) => r.kind === 'item' && r.it.id === selected);
-  const idAt = (r: NavRow) => (r.kind === 'group' ? groupRowId(r.name) : rowId(r.it.id));
-  const pick = (it: AddonPaneItem) => {
-    setActiveGroup(null);
-    onSelect(it);
-  };
-  const showItemMenu = (it: AddonPaneItem) => onMenu(it);
-  const nav = useListNav({
-    count: rows.length,
-    index,
-    onIndex: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') return setActiveGroup(r.name);
-      pick(r.it);
-    },
-    onActivate: (i) => {
-      const r = rows[i];
-      if (r.kind === 'group') toggleGroup(r.name);
-      else open(r.it);
-    },
-    onMenu: (i) => {
-      const r = rows[i];
-      if (r.kind === 'item') showItemMenu(r.it);
-    },
-    tree: {
-      expanded: (i) => {
-        const r = rows[i];
-        return r.kind === 'group' ? !isCollapsed(r.name) : undefined;
-      },
-      set: (i, wanted) => {
-        const r = rows[i];
-        if (r.kind === 'group' && !isCollapsed(r.name) !== wanted) toggleGroup(r.name);
-      },
-      // Loose items sit at the top level; a grouped item is inside the header above it.
-      parent: (i) => {
-        const r = rows[i];
-        if (r.kind === 'group') return -1;
-        for (let j = i - 1; j >= 0; j--) if (rows[j].kind === 'group') return loose.some((l) => l.id === r.it.id) ? -1 : j;
-        return -1;
-      },
-    },
-    scrollToId: index >= 0 ? idAt(rows[index]) : null,
+  const t = useGroupedTree({
+    rows,
+    selected,
+    onSelect,
+    toggle: toggleGroup,
+    onOpen: (it) => void window.looper.addons.event(addon.id, { source: { pane }, kind: 'open', id: it.id, item: it.id }),
+    itemMenu: onMenu,
   });
 
   if (addon.status === 'stopped') {
@@ -257,78 +206,71 @@ export function AddonPaneList({
     );
   }
 
-  const row = (it: AddonPaneItem, grouped: boolean) => (
-        <li
-          key={it.id}
-          id={rowId(it.id)}
-          role="treeitem"
-          aria-level={grouped ? 2 : 1}
-          aria-selected={it.id === selected}
-          className={`task-item${it.id === selected ? ' selected' : ''}${it.dimmed ? ' disabled' : ''}`}
-          style={grouped ? { marginLeft: GROUP_INDENT } : undefined}
-          onClick={() => pick(it)}
-          onDoubleClick={() => open(it)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            // A phone's selection opens the item: its long press shows the menu alone.
-            if (selectsOnMenu) pick(it);
-            showItemMenu(it);
-          }}
-        >
-          <div className="task-item-row">
-            <span className="task-name">{it.label}</span>
-          </div>
-          {!compact && it.description && (
-            <div className="task-item-sub" title={it.description}>
-              {it.description}
-            </div>
-          )}
-        </li>
+  const header = (r: Extract<PaneRow, { kind: 'group' }>) => (
+    <GroupHeader
+      key={`group:${r.key}`}
+      {...t.groupProps(r)}
+      as={isPhone ? 'div' : 'li'}
+      inTree={!isPhone}
+      name={r.group.name}
+      count={r.group.items.length}
+      className={`task-folder${t.activeGroup === r.key ? ' active' : ''}`}
+    />
   );
+
+  // A phone draws its rows as the system's list rows; a tap opens the item, a long press shows its menu.
+  if (isPhone) {
+    return (
+      <>
+        {searchBox}
+        <div>
+          {rows.map((r) =>
+            r.kind === 'group' ? (
+              header(r)
+            ) : (
+              <Row
+                key={r.key}
+                title={r.item.label}
+                sub={r.item.description || undefined}
+                tone={r.item.dimmed ? 'muted' : undefined}
+                chevron
+                selected={r.key === selected}
+                onOpen={() => t.pick(r.item)}
+                onMenu={() => onMenu(r.item)}
+              />
+            ),
+          )}
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
-    {searchBox}
-    <ul
-      className={`task-list${compact ? ' compact' : ''}`}
-      role="tree"
-      aria-label={addon.name}
-      tabIndex={0}
-      onKeyDown={nav}
-      aria-activedescendant={index >= 0 ? idAt(rows[index]) : undefined}
-      // The keyboard's menu request (Shift+F10, the Menu key) lands on the list: it opens the active item's menu.
-      onContextMenu={(e) =>
-        listContextMenu(e, index, (i) => {
-          const r = rows[i];
-          if (r.kind === 'item') showItemMenu(r.it);
-        })
-      }
-    >
-      {loose.map((it) => row(it, false))}
-      {groups.map((g) => {
-        const open = !isCollapsed(g.name);
-        return [
-          <GroupHeader
-            key={`group:${g.name}`}
-            id={groupRowId(g.name)}
-            as="li"
-            name={g.name}
-            open={open}
-            count={g.items.length}
-            className={`task-folder${activeGroup === g.name ? ' active' : ''}`}
-            onToggle={() => {
-              setActiveGroup(g.name);
-              toggleGroup(g.name);
-            }}
-          />,
-          ...(open ? g.items.map((it) => row(it, true)) : []),
-        ];
-      })}
-    </ul>
+      {searchBox}
+      <ul className={`task-list${compact ? ' compact' : ''}`} role="tree" aria-label={addon.name} {...t.listProps}>
+        {rows.map((r) =>
+          r.kind === 'group' ? (
+            header(r)
+          ) : (
+            <li
+              key={r.key}
+              {...t.itemProps(r)}
+              role="treeitem"
+              aria-level={r.depth + 1}
+              className={`task-item${r.key === selected ? ' selected' : ''}${r.item.dimmed ? ' disabled' : ''}`}
+              style={r.depth ? { marginLeft: GROUP_INDENT } : undefined}
+            >
+              <ItemText name={r.item.label} sub={compact ? undefined : r.item.description} />
+            </li>
+          ),
+        )}
+      </ul>
     </>
   );
 }
+
+type PaneRow = TreeRow<{ name: string; items: AddonPaneItem[] }, AddonPaneItem>;
 
 /**
  * An instant Search box as the Windows guidelines draw one: a prompt inside

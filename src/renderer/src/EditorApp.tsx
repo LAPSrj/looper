@@ -5,6 +5,7 @@ import { windowTitle } from '@shared/window-title';
 
 import { TaskEditor } from './components/TaskEditor';
 import { EmptyWindow } from './components/ui';
+import { TASKS, TEMPLATES, useLiveItem } from './components/hooks';
 
 interface EditorAppProps {
   taskId?: string;
@@ -24,8 +25,12 @@ interface EditorAppProps {
 /** Standalone editor window (opened from the menu or the + New button). */
 export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task', projectId }: EditorAppProps) {
   const editId = mode === 'template' ? templateId : taskId;
+  // The editor keeps its draft; the item is only watched for its deletion.
+  const { item, missing } = useLiveItem(mode === 'template' ? TEMPLATES : TASKS, editId, (found) => {
+    document.title = windowTitle(mode === 'template' ? 'Edit Template' : 'Edit Task', found.name);
+  });
   // undefined = still loading; null = new task/template
-  const [task, setTask] = useState<Task | null | undefined>(editId ? undefined : null);
+  const task: Task | null | undefined = editId ? (item ?? undefined) : null;
   const [environments, setEnvironments] = useState<Environment[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [defaultEnvironmentId, setDefaultEnvironmentId] = useState<string | undefined>(undefined);
@@ -48,13 +53,9 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
       setHost(i.host);
       return i;
     });
-    if (mode === 'template' && templateId) {
-      void window.looper.templates.list().then((templates) => {
-        const found = templates.find((t) => t.id === templateId) ?? null;
-        setTask(found);
-        if (found) document.title = windowTitle('Edit Template', found.name);
-      });
-    } else if (fromTemplateId) {
+    // A template being edited comes from useLiveItem.
+    if (mode === 'template' && templateId) return;
+    if (fromTemplateId) {
       void window.looper.templates.list().then((templates) => {
         const found = templates.find((t) => t.id === fromTemplateId);
         if (found) setInitial({ ...found, id: '' });
@@ -85,15 +86,10 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
         }
         setInitialReady(true);
       });
-    } else if (taskId) {
-      void window.looper.tasks.list().then((tasks) => {
-        const found = tasks.find((t) => t.id === taskId) ?? null;
-        setTask(found);
-        if (found) document.title = windowTitle('Edit Task', found.name);
-      });
     }
   }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode]);
 
+  if (missing) return <EmptyWindow gone={mode === 'template' ? 'This template no longer exists.' : 'This task no longer exists.'} />;
   if (task === undefined || !environments || !projects || !initialReady) return <EmptyWindow />;
   return (
     <div className="editor-window">

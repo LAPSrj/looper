@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { baseName } from '@shared/paths';
 import { Markdown } from './components/Markdown';
 import { Toolbar } from './components/Toolbar';
 
@@ -9,7 +10,7 @@ const pages: Record<string, () => Promise<string>> = {};
 for (const [file, load] of Object.entries(
   import.meta.glob<string>('../../../docs/*.md', { query: '?raw', import: 'default', eager: false }),
 )) {
-  pages[file.split('/').pop()!] = load;
+  pages[baseName(file)] = load;
 }
 
 // Every image the guide references, bundled too; keyed by the docs-relative
@@ -18,7 +19,7 @@ const images: Record<string, string> = {};
 for (const [file, url] of Object.entries(
   import.meta.glob('../../../docs/img/*', { query: '?url', import: 'default', eager: true }),
 )) {
-  images['img/' + file.split('/').pop()!] = url as string;
+  images['img/' + baseName(file)] = url as string;
 }
 
 /** Standalone window browsing the user guide in docs/ (Help → Instructions). */

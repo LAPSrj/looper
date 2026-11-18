@@ -114,17 +114,22 @@ interface KeyLike {
   metaKey?: boolean;
 }
 
+/** How a tab list runs (its aria-orientation): a strip across, or a column down. */
+export type TabOrientation = 'horizontal' | 'vertical';
+
 /**
  * The tab a key in the strip moves to (and selects, as Windows tab controls
- * do): Left and Right, wrapping, Home and End. Null for any other key.
+ * do): Left and Right (Up and Down down a column), wrapping, Home and End.
+ * Null for any other key.
  */
-export function tabKeyTarget(ids: readonly string[], active: string, e: KeyLike): string | null {
+export function tabKeyTarget(ids: readonly string[], active: string, e: KeyLike, orientation: TabOrientation = 'horizontal'): string | null {
   if (ids.length === 0 || e.ctrlKey || e.altKey || e.metaKey) return null;
   const at = Math.max(0, ids.indexOf(active));
+  const [next, prev] = orientation === 'vertical' ? ['ArrowDown', 'ArrowUp'] : ['ArrowRight', 'ArrowLeft'];
   switch (e.key) {
-    case 'ArrowRight':
+    case next:
       return ids[(at + 1) % ids.length];
-    case 'ArrowLeft':
+    case prev:
       return ids[(at - 1 + ids.length) % ids.length];
     case 'Home':
       return ids[0];

@@ -1,22 +1,51 @@
-import type { MainTabDef } from '@shared/main-tabs';
 import type { View } from '@shared/types';
+import { phoneTabForm, type PhoneTabForm } from '../phone-nav';
+import { platform } from '../platform';
 import { Icon } from './Icon';
 import { ICONS, iconNode } from './icons';
+import { NavBar } from './NavBar';
+import { TabIcon } from './phone/tab-icons';
 import { Tabs } from './Tabs';
-import { tabStop } from './tabs-model';
+import { tabKeyTarget, tabStop } from './tabs-model';
 
 type TabsView = View['tabs'];
 
-const iconOf = (t: MainTabDef) => <Icon>{iconNode(t.icon) ?? ICONS.window}</Icon>;
+/** One of the main window's views: its id, its name, and the icon the desktop draws (an iconNode key). */
+export interface ViewTab {
+  id: string;
+  label: string;
+  icon?: string;
+}
 
 /**
- * The main window's tabs: one per view (Dashboard, Projects, Tasks, Chats,
- * then the addons'). Below the toolbar or above the status bar they are the
- * shared Tabs strip, each name after its icon unless View → Tabs → Icons is
- * off. Down the window's left side they are a column of icons, each above its
- * name unless View → Tabs → Labels is off.
+ * Where the tabs go: on the desktop the View → Tabs choice (top, bottom or
+ * left), on a phone or tablet the form its system gives them
+ * (`phoneViewTabsForm`).
  */
-export function ViewTabs({ tabs, active, onSelect, layout }: { tabs: MainTabDef[]; active: string; onSelect: (id: string) => void; layout: TabsView }) {
+export type ViewTabsLayout = TabsView | PhoneTabForm;
+
+/** The form the main window's tabs take on this phone or tablet, `width` px wide, `split` when it shows a list beside its screen. */
+export const phoneViewTabsForm = (width: number, split: boolean): PhoneTabForm => phoneTabForm(platform === 'android' ? 'android' : 'ios', width, split);
+
+const iconOf = (t: ViewTab) => <Icon>{iconNode(t.icon ?? '') ?? ICONS.window}</Icon>;
+
+/**
+ * The main window's view switcher, one per window on every device: one tab
+ * per view (Dashboard, Projects, Tasks, Chats, then the addons' on the
+ * desktop, More on a phone).
+ *
+ * - Desktop, below the toolbar or above the status bar: the shared Tabs strip,
+ *   each name after its icon unless View → Tabs → Icons is off. Down the
+ *   window's left side: a column of icons, each above its name unless View →
+ *   Tabs → Labels is off.
+ * - Phone: the tab bar at the bottom; an Android tablet's rail beside the
+ *   content.
+ * - iPad: the tabs go to the frame (NavBar), which draws iPadOS's tab bar near
+ *   the top of the screen.
+ */
+export function ViewTabs({ tabs, active, onSelect, layout }: { tabs: readonly ViewTab[]; active: string; onSelect: (id: string) => void; layout: ViewTabsLayout }) {
+  if (layout === 'top') return <NavBar tabs={{ items: tabs.map((t) => [t.id, t.label] as const), value: active, select: onSelect }} />;
+  if (layout === 'bar' || layout === 'rail') return <PhoneTabBar tabs={tabs} active={active} onSelect={onSelect} rail={layout === 'rail'} />;
   if (layout.position !== 'left') {
     return (
       <Tabs
@@ -32,16 +61,13 @@ export function ViewTabs({ tabs, active, onSelect, layout }: { tabs: MainTabDef[
   return <TabRail tabs={tabs} active={active} onSelect={onSelect} labels={layout.labels} />;
 }
 
-function TabRail({ tabs, active, onSelect, labels }: { tabs: MainTabDef[]; active: string; onSelect: (id: string) => void; labels: boolean }) {
+function TabRail({ tabs, active, onSelect, labels }: { tabs: readonly ViewTab[]; active: string; onSelect: (id: string) => void; labels: boolean }) {
   const ids = tabs.map((t) => t.id);
   const stop = tabStop(ids, active);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.altKey || e.metaKey || ids.length === 0) return;
-    const at = Math.max(0, ids.indexOf(active));
-    const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
-    const to = step ? ids[(at + step + ids.length) % ids.length] : e.key === 'Home' ? ids[0] : e.key === 'End' ? ids[ids.length - 1] : null;
-    if (!to) return;
+    const to = tabKeyTarget(ids, active, e, 'vertical');
+    if (to === null) return;
     e.preventDefault();
     onSelect(to);
     e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[ids.indexOf(to)]?.focus();
@@ -67,5 +93,28 @@ function TabRail({ tabs, active, onSelect, labels }: { tabs: MainTabDef[]; activ
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * A phone's tab bar at the bottom (iOS's glass capsule, Material's navigation
+ * bar), or an Android tablet's navigation rail beside the content. The bar
+ * owns the bottom safe area, so the frame leaves it to the page.
+ */
+function PhoneTabBar({ tabs, active, onSelect, rail }: { tabs: readonly ViewTab[]; active: string; onSelect: (id: string) => void; rail: boolean }) {
+  return (
+    <>
+      {!rail && <NavBar ownsBottom />}
+      <nav className={`phone-tabbar${rail ? ' rail' : ''}`} aria-label="Looper">
+        {tabs.map((t) => (
+          <button key={t.id} className={`phone-tab${active === t.id ? ' active' : ''}`} aria-current={active === t.id ? 'page' : undefined} onClick={() => onSelect(t.id)}>
+            <span className="phone-tab-icon">
+              <TabIcon id={t.id} />
+            </span>
+            <span className="phone-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </nav>
+    </>
   );
 }

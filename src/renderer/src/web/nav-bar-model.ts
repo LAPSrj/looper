@@ -1,4 +1,5 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
+import { noMnemonic } from '../../../shared/commands/command';
 import type { UsageRing } from '../../../shared/sessions';
 import type { Presentation } from './nav-stack';
 
@@ -39,9 +40,6 @@ export interface NavCommand {
   disabled?: boolean;
   run: () => void;
 }
-
-/** Electron's &-mnemonics don't belong on a phone. */
-export const plainLabel = (label: string | undefined): string => (label ?? '').replace(/&(&?)/g, (_m, amp: string) => amp);
 
 /** The button at a bar's leading edge. */
 export type BarLead =
@@ -98,13 +96,13 @@ export function barModel(i: BarInput): BarModel {
   const lead: BarLead | null = back
     ? { kind: 'back', label: 'Back', run: back }
     : cancel
-      ? { kind: 'cancel', label: plainLabel(cancel.label ?? 'Cancel'), disabled: cancel.disabled, run: cancel.run }
+      ? { kind: 'cancel', label: noMnemonic(cancel.label ?? 'Cancel'), disabled: cancel.disabled, run: cancel.run }
       : i.dismiss
         ? i.dismiss.kind === 'back'
           ? { kind: 'back', label: 'Back', run: i.dismiss.run }
           : { kind: 'close', label: 'Close', run: i.dismiss.run }
         : null;
-  const confirm = i.confirm ? { label: plainLabel(i.confirm.label ?? 'Save'), disabled: i.confirm.disabled, run: i.confirm.run } : null;
+  const confirm = i.confirm ? { label: noMnemonic(i.confirm.label ?? 'Save'), disabled: i.confirm.disabled, run: i.confirm.run } : null;
   const subtitle = (typeof i.subtitle === 'string' ? [i.subtitle] : (i.subtitle ?? [])).filter(Boolean);
-  return { lead, title: plainLabel(i.title), subtitle: subtitle.length ? subtitle : null, actions: i.actions ?? [], confirm };
+  return { lead, title: noMnemonic(i.title), subtitle: subtitle.length ? subtitle : null, actions: i.actions ?? [], confirm };
 }

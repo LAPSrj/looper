@@ -1,5 +1,12 @@
 import { Icon } from './Icon';
 
+/** The arrow of a button that opens a menu beside its command (a split button's half). */
+export const MENU_ARROW = (
+  <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
+  </svg>
+);
+
 /**
  * An icon button of a toolbar, with its tooltip; `pressed` makes it a toggle.
  * `labeled` shows the title beside the icon instead of as a tooltip.
@@ -66,9 +73,7 @@ export function SplitToolButton({
         <Icon>{icon}</Icon>
       </button>
       <button className="split-arrow" title={menuTitle} aria-label={menuTitle} aria-haspopup="menu" disabled={!enabled} onClick={(e) => menuAt(e.currentTarget)}>
-        <svg width="8" height="16" viewBox="0 0 8 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m1.5 6.8 2.5 2.5 2.5-2.5" />
-        </svg>
+        {MENU_ARROW}
       </button>
     </span>
   );

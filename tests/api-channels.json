@@ -582,6 +582,50 @@
   ],
   "result": {}
  },
+ "builder.attachFiles": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "builder:attach",
+    [
+     "id",
+     [
+      {
+       "name": "f1.png",
+       "path": "/p/f1.png"
+      },
+      {
+       "name": "pasted-image.png",
+       "data": {
+        "u8": [
+         1,
+         2
+        ]
+       }
+      }
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'builder:attach': Error: boom builder:attach"
+  }
+ },
+ "builder.showContextMenu": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "context-menu:builderTerminal",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "recycleBin.list": {
   "arity": 0,
   "calls": [
@@ -1029,6 +1073,79 @@
   ],
   "result": {
    "err": "Error invoking remote method 'runs:messageImage': Error: boom runs:messageImage"
+  }
+ },
+ "runs.pickFiles": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runs:pickFiles",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom runs:pickFiles"
+  }
+ },
+ "runs.attachFiles": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runs:attach",
+    [
+     "id",
+     [
+      {
+       "name": "f1.png",
+       "path": "/p/f1.png"
+      },
+      {
+       "name": "pasted-image.png",
+       "data": {
+        "u8": [
+         1,
+         2
+        ]
+       }
+      }
+     ]
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:attach': Error: boom runs:attach"
+  }
+ },
+ "runs.runCommand": {
+  "arity": 4,
+  "calls": [["invoke", "runs:runCommand", ["a0", "a1", "a2", "a3"]]],
+  "result": {
+   "err": "boom runs:runCommand"
+  }
+ },
+ "runs.stopCommand": {
+  "arity": 3,
+  "calls": [["invoke", "runs:stopCommand", ["a0", "a1", "a2"]]],
+  "result": {
+   "err": "Error invoking remote method 'runs:stopCommand': Error: boom runs:stopCommand"
+  }
+ },
+ "runs.sendNow": {
+  "arity": 2,
+  "calls": [["invoke", "runs:sendNow", ["a0", "a1"]]],
+  "result": {
+   "err": "Error invoking remote method 'runs:sendNow': Error: boom runs:sendNow"
+  }
+ },
+ "runs.unqueue": {
+  "arity": 2,
+  "calls": [["invoke", "runs:unqueue", ["a0", "a1"]]],
+  "result": {
+   "err": "Error invoking remote method 'runs:unqueue': Error: boom runs:unqueue"
   }
  },
  "restState": {
@@ -1640,6 +1757,13 @@
    "err": "Error invoking remote method 'sessions:activity': Error: boom sessions:activity"
   }
  },
+ "sessions.commands": {
+  "arity": 1,
+  "calls": [["invoke", "sessions:commands", ["a0"]]],
+  "result": {
+   "err": "Error invoking remote method 'sessions:commands': Error: boom sessions:commands"
+  }
+ },
  "sessions.show": {
   "arity": 1,
   "calls": [
@@ -1819,14 +1943,15 @@
   "result": {}
  },
  "sessions.send": {
-  "arity": 2,
+  "arity": 3,
   "calls": [
    [
     "send",
     "sessions:send",
     [
      "a0",
-     "a1"
+     "a1",
+     "a2"
     ]
    ]
   ],
@@ -2499,7 +2624,7 @@
   }
  },
  "sendGuidance": {
-  "arity": 3,
+  "arity": 4,
   "calls": [
    [
     "invoke",
@@ -2507,7 +2632,8 @@
     [
      "a0",
      "a1",
-     "a2"
+     "a2",
+     "a3"
     ]
    ]
   ],
@@ -2934,20 +3060,6 @@
     "context-menu:folder",
     [
      "a0"
-    ]
-   ]
-  ],
-  "result": {}
- },
- "showListContextMenu": {
-  "arity": 2,
-  "calls": [
-   [
-    "send",
-    "context-menu:list",
-    [
-     "a0",
-     "a1"
     ]
    ]
   ],

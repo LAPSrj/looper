@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { describeEnvironment } from '@shared/environments';
+import { plural } from '@shared/format';
 import { COMPACTION_RESULT_TOKENS, type CompactionResultTokens } from '@shared/compact';
-import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar, TextInput } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { FolderOptions } from './components/form-blocks';
+import { FolderOptions, PathField, newHarness } from './components/form-blocks';
 import { rid } from './rid';
-import { useDialogKeys } from './components/hooks';
+import { useDialogKeys, useSave } from './components/hooks';
+import { keptSelection } from './components/selection';
 import { SelectList, ListActions } from './components/SelectList';
 import { subscribe } from './events';
+import { reportError } from './report-error';
 
 type SettingsTab = 'general' | 'chats' | 'rest' | 'environments' | 'advanced';
 
@@ -59,7 +62,7 @@ export function SettingsApp() {
   const [moveTemplatesOnSave, setMoveTemplatesOnSave] = useState(false);
   const [tab, setTab] = useState<SettingsTab>('general');
   const [selected, setSelected] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const saver = useSave();
   const initTasksFile = useRef<string | undefined>(undefined);
   const initTemplatesFile = useRef<string | undefined>(undefined);
   const initStartWithSystem = useRef<boolean | undefined>(undefined);
@@ -108,7 +111,7 @@ export function SettingsApp() {
       if (e.type === 'settings') {
         setLive(e.settings);
         setDefaultEnvId((v) => (v && e.settings.environments.some((x) => x.id === v) ? v : e.settings.defaultEnvironmentId));
-        setSelected((s) => (s && e.settings.environments.some((x) => x.id === s) ? s : e.settings.environments[0]?.id ?? null));
+        setSelected((s) => keptSelection(s, e.settings.environments, (x) => x.id));
       } else if (e.type === 'tasks') {
         setTasks(e.tasks);
       } else if (e.type === 'folders') {
@@ -133,14 +136,14 @@ export function SettingsApp() {
       id: `env-${rid()}`,
       name: 'New environment',
       kind: 'local',
-      harnesses: [{ id: `h-${rid()}`, name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} }],
+      harnesses: [newHarness()],
     };
     try {
       await window.looper.updateSettings({ environments: [...envs, created] });
       setSelected(created.id);
       void window.looper.openEnvironmentEditor(created.id, true);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -157,14 +160,14 @@ export function SettingsApp() {
       await window.looper.updateSettings({ environments: [...envs, copy] });
       setSelected(copy.id);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
   const removeEnv = async (target: Environment | undefined = env) => {
     if (!target || envs.length <= 1) return;
     const n = usedBy(target.id);
-    const warning = n > 0 ? ` ${n} task${n === 1 ? '' : 's'} still use${n === 1 ? 's' : ''} it and will fail until reassigned.` : '';
+    const warning = n > 0 ? ` ${plural(n, 'task')} still ${n === 1 ? 'uses' : 'use'} it and will fail until reassigned.` : '';
     if (!(await window.looper.confirm(`Remove environment "${target.name}"?${warning}`))) return;
     const rest = envs.filter((e) => e.id !== target.id);
     const patch: Partial<Settings> = { environments: rest };
@@ -172,7 +175,7 @@ export function SettingsApp() {
     try {
       await window.looper.updateSettings(patch);
     } catch (e) {
-      void window.looper.showError((e as Error).message);
+      reportError(e);
     }
   };
 
@@ -204,63 +207,52 @@ export function SettingsApp() {
 
   // ---------- Save / Apply ----------
 
-  const doSave = async (): Promise<boolean> => {
-    setSaving(true);
-    try {
-      const tasksFileChanged = tasksFile !== initTasksFile.current;
-      const templatesFileChanged = templatesFile !== initTemplatesFile.current;
-      if (tasksFileChanged && moveTasksOnSave) {
-        await window.looper.moveStoreFile('tasks', tasksFile ?? defaultFile('tasks'));
-      }
-      if (templatesFileChanged && moveTemplatesOnSave) {
-        await window.looper.moveStoreFile('templates', templatesFile ?? defaultFile('templates'));
-      }
-      if (startWithSystem !== initStartWithSystem.current) {
-        await window.looper.setStartWithSystem(startWithSystem);
-        initStartWithSystem.current = startWithSystem;
-      }
-      await window.looper.updateSettings({
-        defaultEnvironmentId: defaultEnvId,
-        completedFolderId: completedFolderId || undefined,
-        closeToTray,
-        confirmQuit: { runs: confirmQuitRuns, watchers: confirmQuitWatchers },
-        notificationsEnabled,
-        staggerFirstRun: {
-          enabled: staggerEnabled,
-          minDelaySec: staggerMin,
-          maxDelaySec: staggerMax,
-          minIntervalSec: staggerInterval,
-        },
-        tasksFile,
-        templatesFile,
-        runRetentionDays: retentionDays,
-        engineLogRetentionDays: engineLogDays,
-        completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
-        recycleBinDays: binDays,
-        promptRunOptions,
-        terminal,
-        chats,
-        builder: { view: builderView },
-        rest: {
-          minSleepMin: restMinSleep,
-          graceSec: restGrace,
-          disarmOnUserWake: restDisarmOnWake,
-        },
-      });
-      initTasksFile.current = tasksFile;
-      initTemplatesFile.current = templatesFile;
-      setMoveTasksOnSave(false);
-      setMoveTemplatesOnSave(false);
-      return true;
-    } catch (e) {
-      void window.looper.showError((e as Error).message);
-      return false;
-    } finally {
-      setSaving(false);
+  const doSave = async () => {
+    const tasksFileChanged = tasksFile !== initTasksFile.current;
+    const templatesFileChanged = templatesFile !== initTemplatesFile.current;
+    if (tasksFileChanged && moveTasksOnSave) {
+      await window.looper.moveStoreFile('tasks', tasksFile ?? defaultFile('tasks'));
     }
+    if (templatesFileChanged && moveTemplatesOnSave) {
+      await window.looper.moveStoreFile('templates', templatesFile ?? defaultFile('templates'));
+    }
+    if (startWithSystem !== initStartWithSystem.current) {
+      await window.looper.setStartWithSystem(startWithSystem);
+      initStartWithSystem.current = startWithSystem;
+    }
+    await window.looper.updateSettings({
+      defaultEnvironmentId: defaultEnvId,
+      completedFolderId: completedFolderId || undefined,
+      closeToTray,
+      confirmQuit: { runs: confirmQuitRuns, watchers: confirmQuitWatchers },
+      notificationsEnabled,
+      staggerFirstRun: {
+        enabled: staggerEnabled,
+        minDelaySec: staggerMin,
+        maxDelaySec: staggerMax,
+        minIntervalSec: staggerInterval,
+      },
+      tasksFile,
+      templatesFile,
+      runRetentionDays: retentionDays,
+      engineLogRetentionDays: engineLogDays,
+      completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
+      recycleBinDays: binDays,
+      promptRunOptions,
+      terminal,
+      chats,
+      builder: { view: builderView },
+      rest: {
+        minSleepMin: restMinSleep,
+        graceSec: restGrace,
+        disarmOnUserWake: restDisarmOnWake,
+      },
+    });
+    initTasksFile.current = tasksFile;
+    initTemplatesFile.current = templatesFile;
+    setMoveTasksOnSave(false);
+    setMoveTemplatesOnSave(false);
   };
-  const save = async () => { if (await doSave()) window.close(); };
-  const apply = async () => { await doSave(); };
 
   return (
     <div className="editor">
@@ -451,8 +443,8 @@ export function SettingsApp() {
                 const n = usedBy(e.id);
                 return (
                   <>
-                    {describeEnvironment(e)} · {e.harnesses.length === 1 ? '1 harness' : `${e.harnesses.length} harnesses`}
-                    {n > 0 ? ` · ${n} task${n === 1 ? '' : 's'}` : ''}
+                    {describeEnvironment(e)} · {plural(e.harnesses.length, 'harness', 'harnesses')}
+                    {n > 0 ? ` · ${plural(n, 'task')}` : ''}
                   </>
                 );
               }}
@@ -482,20 +474,12 @@ export function SettingsApp() {
         {tab === 'advanced' && (
           <div className="form">
             <FormGroup>
-              <Field label="Tasks file">
-                <InputRow>
-                  <TextInput type="text" readOnly value={tasksFile ?? defaultFile('tasks')} />
-                  <button className="btn" onClick={() => void browseStoreFile('tasks')}>Browse…</button>
-                  {tasksFile && <button className="btn" onClick={() => void resetStoreFile('tasks')}>Reset</button>}
-                </InputRow>
-              </Field>
-              <Field label="Templates file">
-                <InputRow>
-                  <TextInput type="text" readOnly value={templatesFile ?? defaultFile('templates')} />
-                  <button className="btn" onClick={() => void browseStoreFile('templates')}>Browse…</button>
-                  {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
-                </InputRow>
-              </Field>
+              <PathField label="Tasks file" value={tasksFile ?? defaultFile('tasks')} onBrowse={() => void browseStoreFile('tasks')}>
+                {tasksFile && <button className="btn" onClick={() => void resetStoreFile('tasks')}>Reset</button>}
+              </PathField>
+              <PathField label="Templates file" value={templatesFile ?? defaultFile('templates')} onBrowse={() => void browseStoreFile('templates')}>
+                {templatesFile && <button className="btn" onClick={() => void resetStoreFile('templates')}>Reset</button>}
+              </PathField>
             </FormGroup>
             <FormGroup>
               <NumberField label="Run log retention" suffix="days" min={1} value={retentionDays} onChange={setRetentionDays} />
@@ -523,7 +507,7 @@ export function SettingsApp() {
 
       </div>
       </TabBar>
-      <WindowActions confirm={{ label: 'Save', run: () => void save() }} apply={{ run: () => void apply() }} busy={saving} />
+      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

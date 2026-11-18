@@ -274,6 +274,7 @@ interface Session {
   delivered: number;
   question: string | null;
   answers: string[];
+  turnStops: number;
 }
 
 const end = (reason: AgentEnd['reason'], headline?: string, body?: string, doneStatus?: AgentEnd['doneStatus']): AgentEnd => ({
@@ -343,7 +344,7 @@ describe('Scheduler with delegated agents', () => {
         startAgent: async (ctx, cb) => {
           let resolve!: (e: AgentEnd) => void;
           const finished = new Promise<AgentEnd>((r) => (resolve = r));
-          const s: Session = { ctx: { ...ctx, resume: ctx.resume && { ...ctx.resume } }, cb, end: resolve, delivered: 0, question: null, answers: [] };
+          const s: Session = { ctx: { ...ctx, resume: ctx.resume && { ...ctx.resume } }, cb, end: resolve, delivered: 0, question: null, answers: [], turnStops: 0 };
           sessions.push(s);
           const handle: AgentHandle = {
             runId: ctx.runId,
@@ -361,6 +362,8 @@ describe('Scheduler with delegated agents', () => {
             write: () => undefined,
             resize: () => undefined,
             deliverGuidance: () => void s.delivered++,
+            stopTurn: () => void s.turnStops++,
+            turnOver: false,
             stop: async (reason = 'stopped', headline) => resolve(end(reason, headline)),
             finished,
           };
@@ -419,10 +422,13 @@ describe('Scheduler with delegated agents', () => {
     expect(parent.cb.delegate!.busy()).toBe(true);
     expect(fs.readFileSync(busyFile(parent), 'utf8')).toContain(id);
     expect((await delegate(parent, 'list')).text).toContain(`${id}  running  "Fix the form"  ${childDir}`);
+    // The Chats list shows it on the task it runs as.
+    expect(sched.childTask(id)).toBe(child.ctx.task);
 
     child.end(end('done', 'Fixed the form', 'Commits: abc', 'success'));
     await flush();
     expect(sched.get('t1')!.children).toEqual([]);
+    expect(sched.childTask(id)).toBeUndefined();
     expect(parent.cb.delegate!.busy()).toBe(false);
     expect(fs.existsSync(busyFile(parent))).toBe(false);
     const waiting = JSON.parse(fs.readFileSync(path.join(parent.ctx.runDir, DELEGATE_FILE), 'utf8')) as string;
@@ -445,7 +451,10 @@ describe('Scheduler with delegated agents', () => {
     expect(p.details).toBe('Replied in Slack');
     expect(c.parentRunId).toBe(parent.ctx.runId);
     expect(c.title).toBe('Fix the form');
+    expect(c.folder).toBe(childDir);
     expect(c.details).toBe('Fixed the form');
+    // The summaries kept a record at a time say the same.
+    expect(runs.summaries('t1').find((s) => s.runId === id)).toMatchObject({ parentRunId: parent.ctx.runId, title: 'Fix the form', folder: childDir });
   });
 
   it('waits while another session works in the folder, and starts once it is free', async () => {
@@ -624,6 +633,57 @@ describe('Scheduler with delegated agents', () => {
     expect(sched.get('t1')!.children).toEqual([]);
     expect(records().find((r) => r.runId === id && r.phase === 'agent' && r.result !== 'started')!.result).toBe('stopped');
     expect(records().findLast((r) => r.runId === parent.ctx.runId && r.phase === 'agent')!.result).toBe('stopped');
+  });
+
+  it("Stop in a headless run's message box ends its turn: the run waits, and the next guidance resumes its conversation", async () => {
+    await setup({ mode: 'headless' });
+    const run = await startParent();
+    fs.writeFileSync(path.join(run.ctx.runDir, 'session.json'), JSON.stringify({ session_id: 'conv-1' }));
+    await sched.stopTurn('t1', run.ctx.runId);
+    await flush();
+    expect(sessions).toHaveLength(1);
+    expect(sched.get('t1')!.runs).toHaveLength(1);
+    expect(sched.turnOver(run.ctx.runId)).toBe(true);
+    expect(sched.canGuideRun('t1', run.ctx.runId)).toBe(true);
+    sched.sendGuidance('t1', run.ctx.runId, 'use the staging database');
+    await new Promise((r) => setTimeout(r, 50));
+    await flush();
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1].ctx.runId).toBe(run.ctx.runId);
+    expect(sessions[1].ctx.agentSession).toEqual({ id: 'conv-1', resume: true });
+    expect(guidanceText(sessions[1].ctx.resume!.prompt)).toBe('use the staging database');
+    expect(sched.turnOver(run.ctx.runId)).toBe(false);
+    sessions[1].end(end('done', 'Switched', 'ok', 'success'));
+    await flush();
+    expect(records().findLast((r) => r.runId === run.ctx.runId && r.phase === 'agent')!.result).toBe('success');
+  });
+
+  it('a headless run whose turn was stopped ends at its idle limit when no message comes', async () => {
+    await setup({ mode: 'headless', idleGraceMin: 0.001 });
+    const run = await startParent();
+    fs.writeFileSync(path.join(run.ctx.runDir, 'session.json'), JSON.stringify({ session_id: 'conv-1' }));
+    await sched.stopTurn('t1', run.ctx.runId);
+    await new Promise((r) => setTimeout(r, 150));
+    await flush();
+    expect(sessions).toHaveLength(1);
+    expect(sched.get('t1')!.runs).toEqual([]);
+    expect(records().findLast((r) => r.runId === run.ctx.runId && r.phase === 'agent')!.result).toBe('idle-timeout');
+  });
+
+  it("Stop in an interactive run's message box ends only the turn, and taken-back guidance never reaches the agent", async () => {
+    await setup({ mode: 'interactive' });
+    const run = await startParent();
+    await sched.stopTurn('t1', run.ctx.runId);
+    expect(run.turnStops).toBe(1);
+    expect(sched.get('t1')!.runs).toHaveLength(1);
+    sched.sendGuidance('t1', run.ctx.runId, 'first');
+    sched.sendGuidance('t1', run.ctx.runId, 'second');
+    expect(sched.unqueueGuidance('t1', run.ctx.runId)).toBe('first\n\nsecond');
+    expect(sched.unqueueGuidance('t1', run.ctx.runId)).toBeNull();
+    expect(records().findLast((r) => r.runId === run.ctx.runId && r.phase === 'guidance')!.summary).toBe('taken back before the agent read it');
+    run.end(end('done', 'Done', 'ok', 'success'));
+    await flush();
+    expect(records().some((r) => r.runId === run.ctx.runId && r.phase === 'guidance' && r.result === 'delivered')).toBe(false);
   });
 
   it("starts the first agent in its parent's slot when the environment allows one task at a time", async () => {

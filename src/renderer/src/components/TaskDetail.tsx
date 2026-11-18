@@ -2,17 +2,17 @@ import type { ReactNode } from 'react';
 import type { RunFilter } from '@shared/runs';
 import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
 import { watcherOf } from '@shared/types';
-import { EFFORT_LEVELS, describeEnvironment, harnessKindLabel, harnessModels, resolveEffort, withKind } from '@shared/environments';
-import { cronToForm, nextWindowOpen } from '@shared/cron';
-import { capFirst, fmtCountdown, fmtDate, fmtDateTime, fmtTime, resultLabel, stateLabel } from '../format';
+import { describeEnvironment, effortLabel, harnessKindLabel, harnessModels, resolveEffort, withKind } from '@shared/environments';
+import { describeCron, describeRunWindow, nextWindowOpen } from '@shared/cron';
+import { capFirst, fmtClock, fmtCountdown, fmtDate, fmtDateTime, resultLabel, stateLabel } from '../format';
 import { tickFor, useNow } from '../useNow';
-import { PropertyList } from './PropertyList';
+import { DetailStatus, DetailView } from './DetailView';
 import { RunLog } from './RunLog';
-import { TabBar } from './ui';
 
 export type DetailTab = 'status' | 'runs';
 
-const TABS: [DetailTab, string][] = [
+/** A task's tabs, in order (Ctrl+Tab steps through them). */
+export const TASK_TABS: readonly (readonly [DetailTab, string])[] = [
   ['status', 'Status'],
   ['runs', 'Runs'],
 ];
@@ -33,24 +33,12 @@ interface Props {
   untitled?: boolean;
 }
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const hhmm = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
-function fmtDays(days: number[]): string {
-  const d = [...days].sort((a, b) => a - b);
-  const contiguous = d.length > 1 && d.every((x, i) => i === 0 || x === d[i - 1] + 1);
-  return contiguous ? `${DAY_NAMES[d[0]]} to ${DAY_NAMES[d[d.length - 1]]}` : d.map((x) => DAY_NAMES[x]).join(', ');
-}
-
 function describeTrigger(task: Task): string {
   if (task.trigger.mode === 'manual') return 'Manual';
   if (task.trigger.mode === 'watcher') {
     const w = task.trigger.watcher;
-    const parts = ['On events'];
-    if (w?.days) parts.push(fmtDays(w.days));
-    if (w?.activeHours) parts.push(`from ${w.activeHours.from}h to ${w.activeHours.to}h`);
-    const tz = (w?.days || w?.activeHours) && w?.timezone ? ` (${w.timezone})` : '';
-    return parts.join(', ') + tz;
+    const within = w ? describeRunWindow(w) : '';
+    return `On events${within}${within && w?.timezone ? ` (${w.timezone})` : ''}`;
   }
   const schedule = task.trigger.schedule;
   if (!schedule) return 'Not configured';
@@ -61,32 +49,6 @@ function describeTrigger(task: Task): string {
 /** The watcher process's own state, shown while it is up instead of "Idle". */
 function watcherLabel(runtime: TaskRuntime | undefined): string {
   return runtime?.watcher === 'watching' ? 'Watching' : 'Watcher restarting';
-}
-
-function describeCron(cron: string): string {
-  const f = cronToForm(cron);
-  switch (f.mode) {
-    case 'minutes':
-    case 'hours': {
-      const base =
-        f.mode === 'minutes'
-          ? f.step === 1
-            ? 'Every minute'
-            : `Every ${f.step} minutes`
-          : (f.step === 1 ? 'Hourly' : `Every ${f.step} hours`) +
-            (f.minute ? ` at :${String(f.minute).padStart(2, '0')}` : '');
-      const win = f.from !== undefined && f.to !== undefined ? `, from ${f.from}h to ${f.to}h` : '';
-      return base + win + (f.days ? `, ${fmtDays(f.days)}` : '');
-    }
-    case 'daily':
-      return `Daily at ${f.times.map((t) => hhmm(t.hour, t.minute)).join(', ')}`;
-    case 'weekly':
-      return `${fmtDays(f.days)} at ${hhmm(f.hour, f.minute)}`;
-    case 'monthly':
-      return `Monthly on day${f.days.length === 1 ? '' : 's'} ${[...f.days].sort((a, b) => a - b).join(', ')} at ${hhmm(f.hour, f.minute)}`;
-    case 'custom':
-      return `Cron ${f.cron}`;
-  }
 }
 
 function statusDetail(runtime: TaskRuntime | undefined): string {
@@ -113,7 +75,7 @@ function NextAt({ at }: { at: number }): ReactNode {
   // The countdown only means something live: a phone showing what it kept greys it out.
   return (
     <>
-      {fmtTime(new Date(at).toISOString())} <span className="live-only">(in {countdown})</span>
+      {fmtClock(at, now)} <span className="live-only">(in {countdown})</span>
     </>
   );
 }
@@ -144,16 +106,13 @@ export function TaskDetail({
   untitled = false,
 }: Props) {
   const env = environments.find((e) => e.id === task.environmentId);
-  const harness = env ? (env.harnesses.find((h) => h.id === task.agent.harnessId) ?? env.harnesses[0]) : undefined;
+  // As a run resolves it (resolveHarness): the environment's first only when the task names none.
+  const harness = env ? (task.agent.harnessId ? env.harnesses.find((h) => h.id === task.agent.harnessId) : env.harnesses[0]) : undefined;
   // What a run will actually emit: the task's pin, or the model's default.
   const resolvedEffort = harness ? resolveEffort(task.agent, harness) : task.agent.effort;
-  const effort = resolvedEffort
-    ? ((harness && harness.kind !== 'custom'
-        ? EFFORT_LEVELS[harness.kind].find(([v]) => v === resolvedEffort)?.[1]
-        : undefined) ?? resolvedEffort)
-    : null;
+  const effort = resolvedEffort ? effortLabel(harness?.kind, resolvedEffort) : null;
 
-  const lastRun = runtime?.lastRunAt ? fmtTime(new Date(runtime.lastRunAt).toISOString()) : 'Never';
+  const lastRun = runtime?.lastRunAt ? fmtClock(runtime.lastRunAt, Date.now()) : 'Never';
   const detail = statusDetail(runtime);
   // An idle watcher task with its watcher up is watching, not idle; with the
   // watcher down (outside its run window) it reads Idle like a scheduled task.
@@ -166,67 +125,66 @@ export function TaskDetail({
     : `${idleLabel}${detail ? ` (${detail})` : ''}`;
 
   return (
-    <div className="detail">
-      {!untitled && (
-        <div className="detail-bar">
-          <span className="pane-title">{task.name}</span>
-        </div>
+    <DetailView title={task.name} untitled={untitled} tabs={{ items: TASK_TABS, active: tab, onSelect: onTab }}>
+      {tab === 'status' && (
+        <DetailStatus
+          items={[
+            { label: 'Status', value: status },
+            !!task.completedAt && { label: 'Completed', value: `${fmtDate(task.completedAt)}${task.completedReason ? ` — ${task.completedReason}` : ''}` },
+            { label: 'Trigger', value: describeTrigger(task) },
+            task.trigger.mode === 'watcher' && { label: 'Watcher command', value: task.trigger.watcher?.command ?? 'None', className: 'mono' },
+            {
+              label: 'Next run',
+              value: task.completedAt ? (
+                'Never: the task is completed'
+              ) : task.trigger.mode === 'schedule' ? (
+                <NextRun runtime={runtime} />
+              ) : task.trigger.mode === 'watcher' ? (
+                runtime?.watcher === 'watching' ? (
+                  'When the watcher fires'
+                ) : runtime?.watcher === 'restarting' ? (
+                  'Watcher restarting'
+                ) : (
+                  <NextWatch task={task} runtime={runtime} />
+                )
+              ) : (
+                'When triggered manually'
+              ),
+            },
+            !task.completedAt && task.trigger.mode !== 'manual' && !!task.trigger.stopOn?.enabled && { label: 'Stops running on', value: fmtDateTime(task.trigger.stopOn.at) },
+            !!task.note && { label: 'Next run guidance', value: `${task.note.text}${task.note.runsLeft > 1 ? ` (next ${task.note.runsLeft} runs)` : ''}` },
+            { label: 'Last run', value: lastRun },
+            { label: 'Last run result', value: runtime?.lastResult ? resultLabel(runtime.lastResult) : 'None' },
+            { label: 'Last run details', value: runtime?.lastDetail ? capFirst(runtime.lastDetail) : 'None' },
+            { label: 'Check command', value: task.check?.enabled ? task.check.command : 'None (always runs)', className: task.check?.enabled ? 'mono' : '' },
+            { label: 'Classifier', value: task.classifier?.enabled ? 'Yes' : 'No' },
+            {
+              label: 'Harness',
+              value: harness ? (
+                withKind(harness.name, harnessKindLabel(harness.kind))
+              ) : env && task.agent.harnessId ? (
+                <span className="warn">Unknown harness "{task.agent.harnessId}"</span>
+              ) : (
+                'None'
+              ),
+            },
+            {
+              label: 'Model',
+              value: `${task.agent.model ? (harness ? (harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model) : task.agent.model) : 'Default'}${effort ? `, ${effort.toLowerCase()} effort` : ''}`,
+            },
+            { label: 'Session type', value: capFirst(task.agent.mode) },
+            { label: 'Project', value: project?.name ?? task.projectId ?? 'None' },
+            {
+              label: 'Environment',
+              value: env ? withKind(env.name, describeEnvironment(env)) : <span className="warn">Unknown environment "{task.environmentId}"</span>,
+            },
+            { label: 'Working directory', value: task.cwd, className: 'mono' },
+          ]}
+        />
       )}
-      <TabBar tabs={TABS} active={tab} onSelect={onTab} />
-      <section className="tab-body">
-        {tab === 'status' && (
-          <div className="status-pane">
-            <PropertyList
-              items={[
-                { label: 'Status', value: status },
-                !!task.completedAt && { label: 'Completed', value: `${fmtDate(task.completedAt)}${task.completedReason ? ` — ${task.completedReason}` : ''}` },
-                { label: 'Trigger', value: describeTrigger(task) },
-                task.trigger.mode === 'watcher' && { label: 'Watcher command', value: task.trigger.watcher?.command ?? 'None', className: 'mono' },
-                {
-                  label: 'Next run',
-                  value: task.completedAt ? (
-                    'Never: the task is completed'
-                  ) : task.trigger.mode === 'schedule' ? (
-                    <NextRun runtime={runtime} />
-                  ) : task.trigger.mode === 'watcher' ? (
-                    runtime?.watcher === 'watching' ? (
-                      'When the watcher fires'
-                    ) : runtime?.watcher === 'restarting' ? (
-                      'Watcher restarting'
-                    ) : (
-                      <NextWatch task={task} runtime={runtime} />
-                    )
-                  ) : (
-                    'When triggered manually'
-                  ),
-                },
-                !task.completedAt && task.trigger.mode !== 'manual' && !!task.trigger.stopOn?.enabled && { label: 'Stops running on', value: fmtDateTime(task.trigger.stopOn.at) },
-                !!task.note && { label: 'Next run guidance', value: `${task.note.text}${task.note.runsLeft > 1 ? ` (next ${task.note.runsLeft} runs)` : ''}` },
-                { label: 'Last run', value: lastRun },
-                { label: 'Last run result', value: runtime?.lastResult ? resultLabel(runtime.lastResult) : 'None' },
-                { label: 'Last run details', value: runtime?.lastDetail ? capFirst(runtime.lastDetail) : 'None' },
-                { label: 'Check command', value: task.check?.enabled ? task.check.command : 'None (always runs)', className: task.check?.enabled ? 'mono' : '' },
-                { label: 'Classifier', value: task.classifier?.enabled ? 'Yes' : 'No' },
-                { label: 'Harness', value: harness ? withKind(harness.name, harnessKindLabel(harness.kind)) : 'None' },
-                {
-                  label: 'Model',
-                  value: `${task.agent.model ? (harness ? (harnessModels(harness).find((m) => m.id === task.agent.model)?.name ?? task.agent.model) : task.agent.model) : 'Default'}${effort ? `, ${effort.toLowerCase()} effort` : ''}`,
-                },
-                { label: 'Session type', value: capFirst(task.agent.mode) },
-                { label: 'Project', value: project?.name ?? task.projectId ?? 'None' },
-                {
-                  label: 'Environment',
-                  value: env ? withKind(env.name, describeEnvironment(env)) : <span className="warn">Unknown environment "{task.environmentId}"</span>,
-                },
-                { label: 'Working directory', value: task.cwd, className: 'mono' },
-              ]}
-            />
-          </div>
-        )}
-        {tab === 'runs' && (
-          <RunLog records={records} runtime={runtime} filter={runFilter} focusRun={focusRun} />
-        )}
-      </section>
-    </div>
+      {tab === 'runs' && (
+        <RunLog records={records} runtime={runtime} filter={runFilter} focusRun={focusRun} />
+      )}
+    </DetailView>
   );
 }

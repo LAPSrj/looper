@@ -293,9 +293,11 @@ describe('attachments', () => {
     const store = new RunStore(tmp());
     const src = path.join(tmp(), 'notes.txt');
     fs.writeFileSync(src, 'hello');
-    const a = store.saveAttachment('t1', 'notes.txt', { file: src });
-    const b = store.saveAttachment('t1', 'bad:name?.png', { data: Buffer.from('img') });
+    const a = await store.saveAttachment('t1', 'notes.txt', { file: src });
+    const b = await store.saveAttachment('t1', 'bad:name?.png', { data: Buffer.from('img') });
     expect(fs.readFileSync(a, 'utf8')).toBe('hello');
+    expect(fs.readFileSync(b, 'utf8')).toBe('img');
+    expect(path.basename(a)).toMatch(/^\d{8}-\d{6}-[0-9a-z]{4}-notes\.txt$/);
     expect(RunStore.attachmentName(a)).toBe('notes.txt');
     expect(RunStore.attachmentName(b)).toBe('bad_name_.png');
     expect(path.dirname(a)).toBe(store.attachmentsDir('t1'));
@@ -306,7 +308,7 @@ describe('attachments', () => {
 
   it('keeps attachments newer than the cutoff', async () => {
     const store = new RunStore(tmp());
-    store.saveAttachment('t1', 'a.png', { data: Buffer.from('x') });
+    await store.saveAttachment('t1', 'a.png', { data: Buffer.from('x') });
     expect(await store.pruneAttachments('t1', Date.now() - 3_600_000)).toBe(0);
   });
 });

@@ -4,9 +4,9 @@ import { taskEntries } from '../task-tree';
 import type { MainWindow } from '../useMainWindow';
 import { isPhone } from '../web/page-nav';
 import { EmptyRow, Group, LargeTitle, Row } from './phone/PhoneList';
+import { PhoneFolderRows, PhoneListScreen } from './PhoneFolders';
 import { showProjectMenu, showProjectsListMenu } from './row-menus';
 import { ProjectsSidebar } from './Sidebar';
-import { FOLDER_ICON } from './TaskCollection';
 
 /** Where a phone's project list is: one folder level a screen. */
 export interface PhoneProjectsPlace {
@@ -63,34 +63,18 @@ function PhoneProjects({ m, current, place }: { m: MainWindow; current: string |
       </Group>
     );
   } else if (groupBy === 'none' && place) {
-    const entries = projectEntries(m, container);
     body = (
-      <Group>
-        {entries.length === 0 ? (
-          <EmptyRow>This folder is empty.</EmptyRow>
-        ) : (
-          entries.map((e) =>
-            e.kind === 'folder' ? (
-              <Row
-                key={`folder-${e.folder.id}`}
-                lead={FOLDER_ICON}
-                title={e.folder.name}
-                value={e.count}
-                chevron
-                selected={e.folder.id === current}
-                onOpen={() => place.onOpenFolder(e.folder.id)}
-                onMenu={() => window.looper.projects.showFolderMenu(e.folder.id)}
-              />
-            ) : (
-              row(e.task)
-            ),
-          )
-        )}
-      </Group>
+      <PhoneFolderRows
+        entries={projectEntries(m, container)}
+        current={current}
+        onOpenFolder={place.onOpenFolder}
+        onFolderMenu={(id) => window.looper.projects.showFolderMenu(id)}
+        item={row}
+      />
     );
   } else {
     // Grouped by harness or environment: each group a section, as the desktop's headers.
-    const groups = groupProjects(m.projects, groupBy, m.info?.settings.environments ?? [], m.projectFolders).filter((g) => g.projects.length > 0);
+    const groups = groupProjects(m.projects, groupBy, m.info?.settings.environments ?? []).filter((g) => g.projects.length > 0);
     body = groups.map((g) => (
       <Group key={g.key} title={g.title || undefined} onTitleMenu={projectsMenu}>
         {g.projects.map(row)}
@@ -98,17 +82,10 @@ function PhoneProjects({ m, current, place }: { m: MainWindow; current: string |
     ));
   }
   return (
-    <div
-      className="pg-scroll"
-      // A long press between the rows: the list's menu (New Project, Group By), at the top level.
-      onContextMenu={(e) => {
-        if (container !== '' || (e.target as HTMLElement).closest('.pg-row, .pg-group-title')) return;
-        e.preventDefault();
-        projectsMenu();
-      }}
-    >
+    // A long press between the rows: the list's menu (New Project, Group By).
+    <PhoneListScreen top={container === ''} onMenu={projectsMenu}>
       {container === '' && <LargeTitle>Projects</LargeTitle>}
       {body}
-    </div>
+    </PhoneListScreen>
   );
 }

@@ -1,15 +1,12 @@
-import { Fragment, lazy, Suspense, useRef } from 'react';
+import { Fragment, useRef } from 'react';
 import type { HostDirEntry } from '../../../shared/remote-access';
-import { Markdown } from '../components/Markdown';
-import { CodeBlock } from '../components/ToolContent';
 import { ZoomImage, type ZoomSwipe } from '../components/ZoomImage';
-import { fmtDateTime } from '../format';
+import { fmtDateTime, fmtSize } from '../format';
 import { groupPlaces } from './dialog-flows';
 import type { FileView, HostBrowser } from './file-flows';
+import { FileViewContent, viewerLayout } from './file-view';
 import type { PhoneOs } from './nav-stack';
 import { PlaceGlyph } from './places';
-
-const fmtSize = (n: number | undefined): string => (n === undefined ? '' : n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.ceil(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 export const FOLDER_GLYPH = (
   <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
@@ -32,9 +29,6 @@ export const CHECK = (
   </svg>
 );
 
-/** pdf.js is over a megabyte, so it loads the first time a PDF is shown. */
-const PdfPages = lazy(() => import('./PdfPages'));
-
 /** A message's images either side of the shown one. */
 export interface ViewSteps {
   index: number;
@@ -50,32 +44,28 @@ export interface ViewSteps {
  * a PDF's pages, code in its syntax colors, Markdown formatted, or text.
  */
 export function FileViewBody({ view, name, steps }: { view: FileView; name: string; steps?: ViewSteps | null }) {
-  const loading = <div className="ph-viewer-note">Loading…</div>;
-  let body;
-  if (view.error) body = <div className="ph-viewer-note">{view.error}</div>;
-  else if (view.kind === 'image') {
-    const swipe: ZoomSwipe | undefined = steps
-      ? {
-          can: (step) => steps.index + step >= 0 && steps.index + step < steps.count,
-          src: steps.src,
-          go: (step) => steps.go(steps.index + step),
-        }
-      : undefined;
-    body = view.url ? <ZoomImage src={view.url} alt={name} swipe={swipe} /> : loading;
-  } else if (view.kind === 'pdf') {
-    body = view.pdf ? (
-      <Suspense fallback={loading}>
-        <PdfPages data={view.pdf} name={name} />
-      </Suspense>
-    ) : (
-      loading
-    );
-  } else if (view.text === null) body = loading;
-  else if (view.kind === 'markdown') body = <Markdown text={view.text} breaks={false} />;
-  else if (view.kind === 'code') body = <CodeBlock text={view.text} file={name} />;
-  else body = <pre className="ph-viewer-text">{view.text}</pre>;
-  const layout = view.kind === 'image' || view.kind === 'pdf' || view.kind === 'code' ? ` ${view.kind}` : '';
-  return <div className={`ph-viewer ph-scroll${layout}`}>{body}</div>;
+  const swipe: ZoomSwipe | undefined = steps
+    ? {
+        can: (step) => steps.index + step >= 0 && steps.index + step < steps.count,
+        src: steps.src,
+        go: (step) => steps.go(steps.index + step),
+      }
+    : undefined;
+  return (
+    <div className={`ph-viewer ph-scroll${viewerLayout(view)}`}>
+      <FileViewContent view={view} name={name} classes={{ note: 'ph-viewer-note', text: 'ph-viewer-text' }} image={(url) => <ZoomImage src={url} alt={name} swipe={swipe} />} />
+    </div>
+  );
+}
+
+/** An on/off switch: iOS's knob, or Material's handle with a check when on. */
+export function Switch({ os, on, disabled, label, onChange }: { os: PhoneOs; on: boolean; disabled?: boolean; label: string; onChange: (on: boolean) => void }) {
+  const ios = os === 'ios';
+  return (
+    <button role="switch" aria-checked={on} aria-label={label} className={`${ios ? 'ios-switch' : 'md-switch'}${on ? ' on' : ''}`} disabled={disabled} onClick={() => onChange(!on)}>
+      {ios ? <span className="ios-switch-knob" /> : <span className="md-switch-handle">{on ? CHECK : null}</span>}
+    </button>
+  );
 }
 
 /** What a tap on a row does: a folder opens (a push); a file is picked, toggled or named. */
@@ -113,7 +103,7 @@ export function FileRows({ os, browser, onFile, emptyText, query }: { os: PhoneO
                 <span className="ph-file-text">
                   <span className="ph-file-name">{entry.name}</span>
                   {!entry.dir && (entry.modifiedAt || entry.size !== undefined) && (
-                    <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
+                    <span className="ph-file-detail">{[entry.modifiedAt ? fmtDateTime(entry.modifiedAt) : '', entry.size === undefined ? '' : fmtSize(entry.size)].filter(Boolean).join(' – ')}</span>
                   )}
                 </span>
                 <span className="ph-file-end">{entry.dir ? (os === 'ios' ? CHEVRON_RIGHT : null) : selected ? CHECK : null}</span>
