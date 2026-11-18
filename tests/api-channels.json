@@ -2641,6 +2641,24 @@
    "err": "boom run:guide"
   }
  },
+ "answerRunPermission": {
+  "arity": 4,
+  "calls": [
+   [
+    "invoke",
+    "run:permission",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'run:permission': Error: boom run:permission"
+  }
+ },
  "openTaskWorkFolder": {
   "arity": 1,
   "calls": [

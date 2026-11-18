@@ -53,6 +53,8 @@ function fakeAgent(starts: RunContext[], ends: (AgentEnd & { doneStatus?: string
       held: false,
       question: null,
       answer: () => false,
+      permission: null,
+      answerPermission: () => false,
       write: () => undefined,
       resize: () => undefined,
       deliverGuidance: () => undefined,

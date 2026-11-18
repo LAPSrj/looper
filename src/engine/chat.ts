@@ -44,7 +44,9 @@ import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, compactedFile, findCodexRollout, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
-import { childEnv, writeLauncher, type RunContext } from './steps/common';
+import { childEnv, SOCKET_FILE, writeLauncher, type RunContext } from './steps/common';
+import { mergeClaudeSettings, readUserSettings, readUserSettingsSync } from './claude-settings';
+import { takeFlagValues } from '../shared/claude-args';
 import { endingError, usageLimitOf } from './sessions';
 import { LOGIN_FAILED_RE } from '../shared/logins';
 import { recordCodexHome, usageLimitReset } from './steps/session';
@@ -522,6 +524,8 @@ class ChatSession {
   private readonly harnesses: { id: string; name: string }[];
   /** The task's extra arguments: only a harness of the task's own kind gets them, since they're flags for that CLI. */
   private readonly extraArgs: string[];
+  /** Claude: the harness's and the chat's arguments without their --settings, which join the chat's settings file. */
+  private userArgs: string[] = [];
   /** How the chat opened: a chat that moves to another harness opens the same way. */
   readonly opening: ChatOpening;
   private readonly target: Target;
@@ -778,13 +782,16 @@ class ChatSession {
       const pipe = (file: string) => [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile(file)) }] }];
       writeText(path.join(this.dir, 'bin', this.target.subagentHookFile), this.target.renderSubagentHook(this.targetFile(SUBAGENT_INBOX)), 0o755);
       const toSubagents = (event: string) => [{ type: 'command', command: `${this.target.stopHookCommand(this.targetFile('bin', this.target.subagentHookFile))} ${event}` }];
-      writeJsonAtomic(path.join(this.dir, 'settings.json'), {
+      const settings = {
         ...projectMcpApproval(this.harness),
         hooks: {
           // With Remote Control: each message and finished turn, from here or the Claude app, for its Conversations list.
           ...(this.remoteName ? { UserPromptSubmit: pipe('prompt.json'), Stop: pipe('stop.json') } : {}),
-          // As in a run: the payload names the session and its transcript, which the run window and Continue read.
-          SessionStart: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('session.json')) }] }],
+          // As in a run: the payload names the session and its transcript, which the run window and Continue read,
+          // and the session's socket keeps a claude started inside it from the chat's helpers.
+          SessionStart: [
+            { hooks: [{ type: 'command', command: this.target.renderSessionStartHook(this.targetFile('session.json'), this.targetFile(SOCKET_FILE)) }] },
+          ],
           // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
           Notification: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('notification.json')) }] }],
           // The user's messages for a running subagent, with its next tool result.
@@ -803,16 +810,36 @@ class ChatSession {
             },
           ],
         },
-      });
+      };
       this.timers.push(
         setInterval(() => {
           this.pollPermissions();
           this.pollSubagentMessages();
         }, 300),
       );
-      // A chat opened again at Looper's start runs nothing until its next message (writeClaude starts claude then).
-      if (this.restored) this.setStatus('ready');
-      else this.startClaude();
+      // The user's --settings join the chat's (Claude Code keeps only the last one given).
+      const args = [...this.harness.args, ...this.extraArgs];
+      const place = { target: this.target, cwd: this.task.cwd };
+      const go = ({ rest, settings: user }: { rest: string[]; settings: Record<string, unknown>[] }): void => {
+        writeJsonAtomic(path.join(this.dir, 'settings.json'), mergeClaudeSettings(settings, user));
+        this.userArgs = rest;
+        if (this.closed) return;
+        // A chat opened again at Looper's start runs nothing until its next message (writeClaude starts claude then).
+        if (this.restored) this.setStatus('ready');
+        else this.startClaude();
+      };
+      const fail = (e: unknown): void => {
+        if (!this.closed) this.end(`The chat can't start: ${errMsg(e)}`);
+      };
+      // Only a settings file needs reading; JSON given inline merges at once.
+      if (takeFlagValues(args).values.some((v) => !v.trim().startsWith('{'))) void readUserSettings(args, place).then(go).catch(fail);
+      else {
+        try {
+          go(readUserSettingsSync(args, place));
+        } catch (e) {
+          fail(e);
+        }
+      }
     } else {
       if (this.sessionId) writeJsonAtomic(path.join(this.dir, 'codex-session.json'), { thread_id: this.sessionId });
       this.setStatus('ready');
@@ -1232,9 +1259,8 @@ class ChatSession {
     parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages');
     // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
     parts.push('--thinking-display', 'summarized');
-    for (const arg of this.harness.args) parts.push(q(arg));
-    for (const extra of this.extraArgs) parts.push(q(extra));
-    this.launched = { model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
+    for (const arg of this.userArgs) parts.push(q(arg));
+    this.launched ={ model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
     this.spawnProc(this.launcher('chat', parts.join(' ')), (_code, stderr) => {
       // The one process is the whole conversation: once it is gone, so is the chat.
       this.end(exitText('The session ended.', stderr));

@@ -4,6 +4,7 @@ import { folderName } from '@shared/projects';
 import { windowTitle } from '@shared/window-title';
 import { defaultEnvironment } from '@shared/environments';
 import { envToLine, joinTokens } from '@shared/cmdline';
+import { claudeArgsProblem } from '@shared/claude-args';
 import { AgentFields } from './components/RemoteFields';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
@@ -57,6 +58,11 @@ export function ProjectEditorApp({ id }: { id?: string }) {
     const parsed = parseArgsEnv({ label: 'Extra command-line arguments', text: argsText }, { label: 'Extra environment variables', text: envText });
     if ('problem' in parsed) {
       void window.looper.showError(parsed.problem);
+      return false;
+    }
+    const argsProblem = harness?.kind === 'claude-code' ? claudeArgsProblem(parsed.args, 'Extra command-line arguments') : null;
+    if (argsProblem) {
+      void window.looper.showError(argsProblem);
       return false;
     }
     await window.looper.projects.save({

@@ -902,6 +902,8 @@ export interface ActiveRun {
   held: boolean;
   /** The question the agent asked with `looper-ask` and is waiting on an answer to. */
   question: string | null;
+  /** Interactive Claude Code: the tool call waiting for the user's permission, which the run's terminal asks too. */
+  permission?: { id: string; tool: string; input: unknown };
   startedAt: number;
   trigger: 'timer' | 'manual' | 'watcher';
   /** The related events this run handles (trigger.sendRelatedEvents): later ones with this id go to its agent. */

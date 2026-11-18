@@ -5,6 +5,13 @@ import type { WorkflowRun } from './workflows';
 /** A chat, a terminal session, or a task run's agent (a delegated agent's always, the others with Show Task Runs on), in the Chats window. */
 export type SessionKind = 'chat' | 'terminal' | 'run';
 
+/** A tool call a task run's agent waits for the user to allow (ActiveRun.permission). */
+export interface RunPermission {
+  id: string;
+  tool: string;
+  input: unknown;
+}
+
 /** Why a session waits for the user: a tool call to allow, a finished turn not looked at, the agent's notification, or an error. */
 export type WaitReason = 'permission' | 'turn' | 'notification' | 'error';
 
@@ -34,6 +41,8 @@ export interface SessionSummary {
   permissionId?: string;
   /** A task run's agent asked this with looper-ask and waits for the answer. */
   question?: string;
+  /** A task run's agent waits for the user to allow this tool call, which its terminal asks too. */
+  permission?: RunPermission;
   /** One line: the agent's latest text message since the user's last one (never a tool call). */
   latest?: string;
   /** The agent's messages since the user's last one, as plain text, the newest last (the dashboard's cards). */

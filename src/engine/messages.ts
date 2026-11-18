@@ -364,6 +364,10 @@ export class TranscriptAccumulator {
   private byBackgroundId = new Map<string, MessageRow>();
   /** The agent rows StructuredOutput calls became, by the call's tool_use id, until their results arrive. */
   private structuredAnswers = new Map<string, MessageRow>();
+  /** Code Mode: the REPL calls Claude Code dispatched, by their eval number, until a Poll delivers their result. */
+  private replByEval = new Map<string, MessageRow>();
+  /** Code Mode: the Poll calls (plumbing that delivers dispatched results), by tool_use id. */
+  private pollIds = new Set<string>();
   /** The id of the record addLine is folding: its rows get it. */
   private recordUuid: string | undefined;
   /** Claude's own name for the session (its ai-title records), the latest. */
@@ -399,6 +403,8 @@ export class TranscriptAccumulator {
     this.nextId = 0;
     this.byToolId.clear();
     this.structuredAnswers.clear();
+    this.replByEval.clear();
+    this.pollIds.clear();
     this.byBackgroundId.clear();
     this.images.clear();
   }
@@ -475,6 +481,10 @@ export class TranscriptAccumulator {
       if (att?.type === 'hook_additional_context' && Array.isArray(att.content)) {
         for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
       }
+      // Looper's mod hands guidance over mid-turn as a note of its own (claude-mod.ts, claude 2.1.327).
+      if (att?.type === 'plugin_note' && att.plugin === 'looper' && Array.isArray(att.content)) {
+        for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
+      }
       // A background command or subagent ended: Claude queues its notification for the agent.
       if (att?.type === 'queued_command' && att.commandMode === 'task-notification' && typeof att.prompt === 'string') {
         this.takeNotification(att.prompt);
@@ -517,7 +527,9 @@ export class TranscriptAccumulator {
       }
       if (!Array.isArray(content)) return;
       for (const block of content as Rec[]) {
-        if (block?.type === 'tool_result') {
+        if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string' && this.pollIds.delete(block.tool_use_id)) {
+          this.takeReplResults(resultText(block.content));
+        } else if (block?.type === 'tool_result') {
           // A StructuredOutput call already became the agent's reply; a rejected one (schema mismatch) is retried, so its reply goes.
           const answer = typeof block.tool_use_id === 'string' ? this.structuredAnswers.get(block.tool_use_id) : undefined;
           if (answer) {
@@ -532,6 +544,12 @@ export class TranscriptAccumulator {
           if (!row) continue;
           row.result = cap(resultText(block.content), MAX_TEXT);
           if (block.is_error === true) row.resultError = true;
+          // Code Mode ran the script in the background: its result comes with a later Poll.
+          const dispatched = row.tool === 'REPL' ? /^\(dispatched #(\d+)\)$/.exec(row.result.trim()) : null;
+          if (dispatched) {
+            delete row.result;
+            this.replByEval.set(dispatched[1], row);
+          }
           this.takeImage(row, block.content);
           const patch = takePatch(rec.toolUseResult);
           if (patch) row.patch = patch;
@@ -572,6 +590,9 @@ export class TranscriptAccumulator {
         this.push({ kind: 'agent', ts, text: block.text });
       } else if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
         this.push({ kind: 'thinking', ts, text: block.thinking });
+      } else if (block?.type === 'tool_use' && block.name === 'Poll' && typeof block.id === 'string') {
+        // Code Mode's Poll only delivers the results of scripts it dispatched: they go to their REPL rows.
+        this.pollIds.add(block.id);
       } else if (block?.type === 'tool_use' && block.name === 'StructuredOutput' && structuredOutputText(block.input)) {
         // A workflow agent's answer: the script reads this call, and the conversation shows it as the agent's reply.
         const row = this.push({ kind: 'agent', ts, text: structuredOutputText(block.input) });
@@ -670,6 +691,23 @@ export class TranscriptAccumulator {
     else {
       const row = this.push({ kind: 'prompt', ts, text, preview: text || !commands.length ? undefined : previewOf(commands.map((c) => `! ${c.input}`).join(', ')) });
       if (commands.length) row.attachments = commands.map(commandAttachment);
+    }
+  }
+
+  /**
+   * A Code Mode Poll's delivery: each authentic `repl-eval` event (its nonce is
+   * in the delivery's list; any other is text quoted inside a result) settles
+   * the REPL row it names by eval number (claude 2.1.327).
+   */
+  private takeReplResults(text: string): void {
+    const listed = /authentic event nonces for this delivery: ([^—\n<]+)/.exec(text)?.[1] ?? '';
+    const nonces = new Set(listed.split(/[\s,]+/).filter(Boolean));
+    for (const m of text.matchAll(/<event nonce="([^"]+)" kind="repl-eval"([^>]*)>\s*<result>([\s\S]*?)<\/result>\s*<\/event>/g)) {
+      const evalNo = /\beval="(\d+)"/.exec(m[2])?.[1];
+      const row = evalNo !== undefined && nonces.has(m[1]) ? this.replByEval.get(evalNo) : undefined;
+      if (!row) continue;
+      this.replByEval.delete(evalNo!);
+      row.result = cap(m[3].trim(), MAX_TEXT);
     }
   }
 

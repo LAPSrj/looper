@@ -394,6 +394,8 @@ export interface Engine {
   continueRun(id: string, runId: string, guidance: string): boolean;
   /** Whether a run in flight takes guidance now: its agent is running on Claude Code or Codex. */
   canGuideRun(id: string, runId: string): boolean;
+  /** Allow or deny the tool call a run's agent waits on; false when it no longer waits. */
+  answerRunPermission(id: string, runId: string, requestId: string, allow: boolean): boolean;
   /** Send guidance to a run in flight, with the paths of the attached files; the agent gets it mid-run. Throws when the run cannot take it. */
   sendGuidance(id: string, runId: string, text: string, attachments?: Attachment[]): void;
   /** Copies of the given files in the task's attachments, ready to go with guidance to one of its runs. */
@@ -899,7 +901,15 @@ export function createEngine(opts: EngineOptions): Engine {
           ? rt.runs
               // A run open in a chat is listed as its chat.
               .filter((r) => r.state === 'running' && !r.chat)
-              .map((r) => ({ id: r.runId, taskId: rt.taskId, startedAt: r.startedAt, held: r.held, question: r.question, turnOver: scheduler.turnOver(r.runId) }))
+              .map((r) => ({
+                id: r.runId,
+                taskId: rt.taskId,
+                startedAt: r.startedAt,
+                held: r.held,
+                question: r.question,
+                ...(r.permission ? { permission: r.permission } : {}),
+                turnOver: scheduler.turnOver(r.runId),
+              }))
           : []),
         // A delegated agent's run is listed with Show Task Runs off too, once it has started: nobody else watches its conversation.
         ...rt.children.flatMap((r) => {
@@ -2233,6 +2243,7 @@ export function createEngine(opts: EngineOptions): Engine {
       return scheduler.continueRun(id, runId, guidance);
     },
     canGuideRun: (id, runId) => scheduler.canGuideRun(id, runId),
+    answerRunPermission: (_id, runId, requestId, allow) => scheduler.answerPermission(runId, requestId, allow),
     sendGuidance(id: string, runId: string, text: string, attachments: Attachment[] = []): void {
       // The paths as the run's agent sees them: a delegated agent's environment may not be its parent's.
       const task = scheduler.childTask(runId) ?? lookup(id);

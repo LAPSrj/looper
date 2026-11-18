@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
-import type { RunAgent, SlashCommand, SubagentInfo } from '@shared/sessions';
+import type { RunAgent, RunPermission, SlashCommand, SubagentInfo } from '@shared/sessions';
+import { PermissionCard } from './PermissionCard';
 import { commandAttachment, parseCommands } from '@shared/bash-mode';
 import { showRowContextMenu, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
@@ -176,6 +177,7 @@ export function RunGuidance({
   taskId,
   runId,
   question,
+  permission,
   recheck,
   onSent,
   stop,
@@ -188,6 +190,8 @@ export function RunGuidance({
   taskId: string;
   runId: string;
   question: string | null;
+  /** The tool call the agent waits for the user to allow (the run's terminal asks too). */
+  permission?: RunPermission;
   recheck?: string;
   onSent?: () => void;
   stop?: MessageBoxStop;
@@ -205,10 +209,19 @@ export function RunGuidance({
       live = false;
     };
   }, [taskId, runId, question, recheck]);
-  if (!canGuide) return null;
+  const permissionCard = permission && (
+    <PermissionCard
+      key={permission.id}
+      harnessKind="claude-code"
+      p={permission}
+      answer={(allow) => void window.looper.answerRunPermission(taskId, runId, permission.id, allow)}
+    />
+  );
+  if (!canGuide) return permissionCard || null;
   const placeholder = question !== null ? 'Your answer' : 'Guidance for the agent';
   return (
     <>
+      {permissionCard}
       {question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
       <Composer key={runId} run={{ taskId, runId, placeholder, commands, agent, working, queued, rows, stop, onSent }} />
     </>

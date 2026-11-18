@@ -168,6 +168,8 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
             question = null;
             return true;
           },
+          permission: null,
+          answerPermission: () => false,
           write: () => undefined,
           resize: () => undefined,
           deliverGuidance: () => undefined,

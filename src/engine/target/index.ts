@@ -69,6 +69,12 @@ export interface Target {
   renderStatusHelper(status: string, fallback: string): string;
   /** Command for a claude hook: dump the hook's stdin JSON into the given file. */
   renderPipeHook(targetPath: string): string;
+  /**
+   * Command for claude's SessionStart hook: the payload into `sessionJson`, and
+   * the session's own messaging socket into `socketFile`, which the helpers
+   * check they run under (SOCKET_FILE_VAR).
+   */
+  renderSessionStartHook(sessionJson: string, socketFile: string): string;
   /** File name of the Stop-hook gate script in the run's bin/ dir. */
   readonly stopHookFile: string;
   /**
@@ -108,18 +114,6 @@ export interface Target {
    * (codex trusts a hook only while its command stays the same).
    */
   renderGuideHook(format: GuideHookFormat, files?: GuideFiles): string;
-  /** File name of the subagent guard script in the run's bin/ dir. */
-  readonly guardHookFile: string;
-  /**
-   * Script for the claude PreToolUse guard on Bash: deny a subagent's call
-   * whose input names one of `commands` (the step's signal helpers), with
-   * `message` as the reason.
-   */
-  renderSubagentGuard(commands: readonly string[], message: string): string;
-  /** File name of the claude PreToolUse script that refuses every call of a tool. */
-  readonly refusalHookFile: string;
-  /** Script that refuses the tool call, with `message` as the reason the agent gets. */
-  renderRefusal(message: string): string;
   /**
    * Shell command a codex hook definition runs: the script at `targetPath`,
    * unquoted so it fits a TOML literal string. Null when the path would need

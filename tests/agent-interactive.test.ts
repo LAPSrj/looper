@@ -163,8 +163,9 @@ describe('the idle clock of an interactive session', () => {
   it('starts again at a turn the session starts by itself, so the work after it is not cut off', async () => {
     const ctx = makeCtx(SELF_STARTED, { idleGraceMin: 0.05 });
     const handle = await startAgent(ctx, { onData: () => {} });
-    const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
-    expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(path.join(ctx.runDir, 'turn.json'));
+    // The mod records each turn's start where the idle clock reads it.
+    const mod = fs.readFileSync(path.join(ctx.runDir, 'looper-mod', 'hooks', 'register.js'), 'utf8');
+    expect(mod).toContain(JSON.stringify(path.join(ctx.runDir, 'turn.json')));
     const end = await handle.finished;
     expect(end.reason).toBe('done');
     expect(end.headline).toBe('worked after the wake-up');

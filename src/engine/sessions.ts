@@ -9,6 +9,7 @@ import {
   limitsKey,
   type BackgroundTask,
   type RunAgent,
+  type RunPermission,
   type SessionActivity,
   type SlashCommand,
   type SessionSummary,
@@ -50,6 +51,8 @@ export interface RunEntry {
   held: boolean;
   /** The question the agent asked with looper-ask, while it waits for the answer. */
   question: string | null;
+  /** The tool call the agent waits for the user to allow. */
+  permission?: RunPermission;
   /** The agent isn't in a turn: its next guidance starts one (Scheduler.turnOver). */
   turnOver?: boolean;
   /** A delegated agent's run (looper-delegate): the title its parent gave it, and the task it runs as in its own folder. */
@@ -731,11 +734,13 @@ export class SessionHub {
     const { projectId, groupName } = e.delegate ? this.folderPlace(e.delegate.task.cwd, projects) : placed;
     const harness = own ? this.d.harnessOf(own) : { kind: 'custom' as const, name: 'Agent' };
     const asksUser = e.question !== null && !e.delegate;
-    const waits = asksUser || e.held;
+    const waits = asksUser || e.held || !!e.permission;
     t.permissionAt = waits ? (t.permissionAt ?? this.now()) : undefined;
-    const waiting: SessionSummary['waiting'] = waits
-      ? { reason: 'notification', text: asksUser ? 'Waiting for your answer' : 'Waiting for you', since: t.permissionAt! }
-      : undefined;
+    const waiting: SessionSummary['waiting'] = e.permission
+      ? { reason: 'permission', text: permissionText(e.permission.tool), since: t.permissionAt! }
+      : waits
+        ? { reason: 'notification', text: asksUser ? 'Waiting for your answer' : 'Waiting for you', since: t.permissionAt! }
+        : undefined;
     const latest = latestLine(t.rows);
     const recent = recentMessages(t.rows);
     return {
@@ -752,6 +757,7 @@ export class SessionHub {
       status: waits || e.turnOver ? 'ready' : 'working',
       ...(waiting ? { waiting } : {}),
       ...(e.question !== null ? { question: e.question } : {}),
+      ...(e.permission ? { permission: e.permission } : {}),
       ...(latest ? { latest } : {}),
       ...(recent.length ? { recent } : {}),
       ...(t.context ? { context: t.context } : {}),

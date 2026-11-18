@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
-import { CRON_REFUSAL, stopHookMessages, subagentGuardMessage } from '../src/engine/target/stop-hook';
+import { NESTED_REFUSAL, SESSION_SOCKET_VAR, SOCKET_FILE_VAR, stopHookMessages } from '../src/engine/target/stop-hook';
+import { SOCKET_FILE } from '../src/engine/steps/common';
 import {
   DELEGATE_FILE,
   EVENTS_FILE,
@@ -366,53 +367,64 @@ describe('restart helper', () => {
   });
 });
 
-describe('subagent guard', () => {
-  const commands = ['looper-done', 'looper-complete'];
-  const message = subagentGuardMessage(commands);
-  const sub = (command: string) => ({
-    session_id: 's1',
-    agent_id: 'a025a5695c64b4a2a',
-    agent_type: 'general-purpose',
-    hook_event_name: 'PreToolUse',
-    tool_name: 'Bash',
-    tool_input: { command },
-  });
+describe('helpers run by a nested session', () => {
+  // A claude started inside the run inherits its variables and PATH, but Claude Code gives it its own socket.
+  const run = (script: string, env: Record<string, string>) => spawnSync('bash', [script, 'success', 'Fixed it'], { env: { ...process.env, ...env }, encoding: 'utf8' });
 
-  it('bash: denies a subagent running a signal command, allows everything else', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-guard-'));
+  it("bash: the done helper refuses under another session's socket and writes under its own", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-nested-'));
     dirs.push(dir);
     const t = new BashTarget({ host: 'wsl' }, undefined);
-    const script = path.join(dir, t.guardHookFile);
-    fs.writeFileSync(script, t.renderSubagentGuard(commands, message), { mode: 0o755 });
-    const run = (payload: unknown) => spawnSync('bash', [script], { input: JSON.stringify(payload), encoding: 'utf8' });
+    const helper = path.join(dir, 'looper-done');
+    fs.writeFileSync(helper, t.renderDoneHelper(['success', 'warning', 'error']), { mode: 0o755 });
+    const done = path.join(dir, 'done');
+    const socketFile = path.join(dir, SOCKET_FILE);
+    fs.writeFileSync(socketFile, '/run/user/1000/cc-socks/1.sock');
+    const env = { LOOPER_DONE_FILE: done, [SOCKET_FILE_VAR]: socketFile };
 
-    const denied = run(sub('looper-done success "Fixed it"'));
-    expect(denied.status).toBe(2);
-    expect(denied.stderr.trim()).toBe(message);
-    expect(run(sub('cd x && looper-complete "all done"')).status).toBe(2);
-    expect(run(sub('npm test')).status).toBe(0);
-    // The agent itself may run them.
-    const { agent_id: _id, agent_type: _type, ...own } = sub('looper-done success "ok"');
-    expect(run(own).status).toBe(0);
+    const nested = run(helper, { ...env, [SESSION_SOCKET_VAR]: '/run/user/1000/cc-socks/2.sock' });
+    expect(nested.status).toBe(1);
+    expect(nested.stderr.trim()).toBe(NESTED_REFUSAL);
+    expect(fs.existsSync(done)).toBe(false);
+
+    expect(run(helper, { ...env, [SESSION_SOCKET_VAR]: '/run/user/1000/cc-socks/1.sock' }).status).toBe(0);
+    expect(fs.readFileSync(done, 'utf8')).toBe('success\nFixed it\n');
   });
 
-  it('bash: the tool refusal fails every call with its message', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-refuse-'));
+  it('bash: without a recorded socket (Codex, a custom harness) the helper runs as before', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-nested-'));
     dirs.push(dir);
     const t = new BashTarget({ host: 'wsl' }, undefined);
-    const script = path.join(dir, t.refusalHookFile);
-    fs.writeFileSync(script, t.renderRefusal(CRON_REFUSAL), { mode: 0o755 });
-    const r = spawnSync('bash', [script], { input: '{"tool_name":"CronCreate"}', encoding: 'utf8' });
-    expect(r.status).toBe(2);
-    expect(r.stderr.trim()).toBe(CRON_REFUSAL);
+    const helper = path.join(dir, 'looper-done');
+    fs.writeFileSync(helper, t.renderDoneHelper(['success']), { mode: 0o755 });
+    const done = path.join(dir, 'done');
+    const r = run(helper, { LOOPER_DONE_FILE: done, [SOCKET_FILE_VAR]: path.join(dir, SOCKET_FILE), [SESSION_SOCKET_VAR]: '/x.sock' });
+    expect(r.status).toBe(0);
+    expect(fs.readFileSync(done, 'utf8')).toBe('success\nFixed it\n');
   });
 
-  it('windows: renders the same guard for PowerShell', () => {
+  it('bash: the SessionStart hook records the payload and the socket', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-nested-'));
+    dirs.push(dir);
+    const t = new BashTarget({ host: 'wsl' }, undefined);
+    const hook = t.renderSessionStartHook(path.join(dir, 'session.json'), path.join(dir, SOCKET_FILE));
+    const r = spawnSync('bash', ['-c', hook], { input: '{"session_id":"s1"}', env: { ...process.env, [SESSION_SOCKET_VAR]: '/s.sock' } });
+    expect(r.status).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'session.json'), 'utf8')).toBe('{"session_id":"s1"}');
+    expect(fs.readFileSync(path.join(dir, SOCKET_FILE), 'utf8')).toBe('/s.sock');
+  });
+
+  it('windows: every helper checks the socket first', () => {
     const t = new WindowsTarget({ host: 'windows' });
-    const script = t.renderSubagentGuard(commands, message);
-    expect(script).toContain(`if (-not (($payload -split '"tool_input"', 2)[0] -match '"agent_id"\\s*:')) { exit 0 }`);
-    expect(script).toContain("foreach ($c in @('looper-done', 'looper-complete')) {");
-    expect(script).toContain('exit 2');
+    for (const script of [t.renderDoneHelper(['success']), t.renderStatusHelper('restart', 'x'), t.renderTextHelper('LOOPER_COMPLETE_FILE', 'x')]) {
+      expect(script).toContain(`if not defined ${SESSION_SOCKET_VAR} goto looper_owned`);
+      expect(script.indexOf(':looper_owned')).toBeLessThan(script.indexOf('set "msg='));
+    }
+    const ps = Object.values(t.renderRequestHelpers({ 'looper-ask': 'ask' }, { dirVar: 'LOOPER_ASK_DIR', script: 'looper-ask-request', hint: 'x' }))[0];
+    expect(ps).toContain(`[IO.File]::ReadAllText($env:${SOCKET_FILE_VAR}) -ne $env:${SESSION_SOCKET_VAR}`);
+    const hook = t.renderSessionStartHook('C:\\data\\r1\\session.json', 'C:\\data\\r1\\session-socket');
+    expect(hook).not.toContain('$');
+    expect(hook).toContain(`GetEnvironmentVariable('${SESSION_SOCKET_VAR}')`);
   });
 });
 
@@ -434,11 +446,6 @@ describe('windows Stop-hook gate', () => {
     );
   });
 
-  it('renders the tool refusal for PowerShell', () => {
-    const t = new WindowsTarget({ host: 'windows' });
-    expect(t.renderRefusal(CRON_REFUSAL)).toContain(`[Console]::Error.WriteLine('${CRON_REFUSAL}')`);
-    expect(t.renderRefusal(CRON_REFUSAL)).toContain('exit 2');
-  });
 
   it('renders the guidance hooks for PowerShell', () => {
     const t = new WindowsTarget({ host: 'windows' });

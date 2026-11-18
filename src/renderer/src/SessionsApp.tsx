@@ -27,7 +27,8 @@ import { StatusBar } from './components/StatusBar';
 import { Toolbar } from './components/Toolbar';
 import { commandToolbar, phoneNav } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
-import { ChatView, PermissionButtons } from './components/ChatView';
+import { ChatView } from './components/ChatView';
+import { PermissionButtons } from './components/PermissionCard';
 import { useDragResize } from './components/hooks';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
@@ -188,10 +189,11 @@ function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (i
   }, [s.id, s.status]);
   const keep = (e: React.MouseEvent) => e.stopPropagation();
   let bottom: React.ReactNode = null;
-  if (s.permissionId) {
+  const permissionId = s.permissionId;
+  if (permissionId) {
     bottom = (
       <div className="overview-actions" onClick={keep}>
-        <PermissionButtons chatId={s.id} permissionId={s.permissionId} />
+        <PermissionButtons answer={(allow) => window.looper.chat.answer(s.id, permissionId, allow)} />
       </div>
     );
   } else if (s.status !== 'ended') {
@@ -391,6 +393,7 @@ function RunConversation({ s, activity, embedded = false }: { s: SessionSummary;
           taskId={s.taskId}
           runId={s.id}
           question={s.question ?? null}
+          permission={s.permission}
           recheck={`${s.status}\n${s.latest ?? ''}`}
           stop={stopOf(s)}
           commands={activity?.commands}
@@ -433,13 +436,14 @@ function LiveCard({
   // The card's title changes with every status and minute; the conversation only with its own events.
   const chatView = useMemo(() => chat && <ChatView state={chat} embedded />, [chat]);
   const question = s.question ?? null;
+  const permissionId = s.permission?.id;
   const recheck = `${s.status}\n${s.latest ?? ''}`;
   const stoppable = canStop(s);
   const runView = useMemo(
     () => activity && <RunConversation s={s} activity={activity} embedded />,
     // The card's run reads only these of the summary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activity, s.taskId, s.id, question, recheck, stoppable],
+    [activity, s.taskId, s.id, question, permissionId, recheck, stoppable],
   );
   const view = chatView ?? runView;
   // Working in a card is looking at it: a finished turn or a notification stops waiting,

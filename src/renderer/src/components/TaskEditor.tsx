@@ -6,6 +6,7 @@ import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
 import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@shared/projects';
 import { envToLine, joinTokens } from '@shared/cmdline';
+import { claudeArgsProblem } from '@shared/claude-args';
 import { EXAMPLE_TASK } from '@shared/example-task';
 import { CheckboxField, Field, FieldRow, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons } from './ui';
 import { WindowActions } from './WindowActions';
@@ -385,6 +386,8 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
   function assemble(): Record<string, unknown> {
     const parsed = parseArgsEnv({ label: 'Extra command-line arguments', text: extraArgsText }, { label: 'Extra environment variables', text: envText });
     if ('problem' in parsed) throw new Error(parsed.problem);
+    const argsProblem = isClaude ? claudeArgsProblem(parsed.args, 'Extra command-line arguments') : null;
+    if (argsProblem) throw new Error(argsProblem);
     return {
       ...draft,
       id: draft.id?.trim() || slugify(draft.name),

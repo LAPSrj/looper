@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Harness } from '@shared/types';
 import { DEFAULT_MODELS, HARNESS_KINDS, harnessKindLabel, harnessOptions, sameModels } from '@shared/environments';
 import { envToLine, joinTokens } from '@shared/cmdline';
+import { claudeArgsProblem } from '@shared/claude-args';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ConcurrencyLimit, parseArgsEnv } from './components/form-blocks';
@@ -86,6 +87,11 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
     const parsed = parseArgsEnv({ label: 'Arguments', text: argsText }, { label: 'Environment variables', text: envText });
     if ('problem' in parsed) {
       void window.looper.showError(parsed.problem);
+      return false;
+    }
+    const argsProblem = draft.kind === 'claude-code' ? claudeArgsProblem(parsed.args, 'Default arguments') : null;
+    if (argsProblem) {
+      void window.looper.showError(argsProblem);
       return false;
     }
     const folded: Harness = {

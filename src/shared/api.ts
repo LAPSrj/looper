@@ -446,6 +446,8 @@ export interface LooperApi {
   canGuideRun(taskId: string, runId: string): Promise<boolean>;
   /** Send guidance to a run in flight, with the paths of `attachments`; the agent gets it mid-run. Rejects with the reason when the run cannot take it. */
   sendGuidance(taskId: string, runId: string, text: string, attachments?: Attachment[]): Promise<void>;
+  /** Allow or deny the tool call a run's agent waits on (SessionSummary.permission); false when it no longer waits. */
+  answerRunPermission(taskId: string, runId: string, requestId: string, allow: boolean): Promise<boolean>;
   /** Open the task's working directory in the file manager (WSL paths cross via wslpath). */
   openTaskWorkFolder(taskId: string): Promise<void>;
   /** Open a run's window (its step records and conversation), or a subagent's conversation when agentId is set. */

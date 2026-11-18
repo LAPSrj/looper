@@ -18,6 +18,7 @@ import { runCheck } from '../steps/check';
 import { AGENT_DONE, childEnv, writeLauncher, type RunContext } from '../steps/common';
 import { spawnPty, startSession, type SessionHandle, type SessionProc } from '../steps/session';
 import { copyAttachment, writeJsonAtomic, writeText } from '../store/fsutil';
+import { mergeClaudeSettings, mergeSystemPrompt, readUserSettingsSync } from '../claude-settings';
 import type { FileContent, VersionStore } from '../store/versions';
 import { createTarget, type Target } from '../target';
 import { killHostTree } from '../target/kill';
@@ -102,6 +103,8 @@ class BuilderSession {
   private queued: string[] = [];
   private closed = false;
   private timers: NodeJS.Timeout[] = [];
+  /** Claude: the harness's arguments without their --settings and --append-system-prompt, which join the builder's. */
+  private userArgs: string[] = [];
   private emitTimer: NodeJS.Timeout | null = null;
   private readonly testAborts = new Set<AbortController>();
   private readonly probes = new Set<SessionHandle>();
@@ -199,15 +202,27 @@ class BuilderSession {
     writeJsonAtomic(this.draftHostPath(), initial);
     this.steps = [{ draft: fs.readFileSync(this.draftHostPath(), 'utf8'), files: new Map() }];
     this.readDraft(true);
-    writeText(path.join(this.dir, 'system.txt'), this.systemPrompt());
     if (this.harness.kind === 'claude-code') {
-      writeJsonAtomic(path.join(this.dir, 'settings.json'), {
-        // The helpers must never wait on a permission prompt nobody can answer.
-        permissions: { allow: Object.keys(HELPERS).flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
-        sandbox: { excludedCommands: Object.keys(HELPERS) },
-        // An access test can outlast the Bash tool's 2-minute default; its answer must reach the agent.
-        env: { BASH_DEFAULT_TIMEOUT_MS: String(HELPER_TIMEOUT_MS), BASH_MAX_TIMEOUT_MS: String(HELPER_TIMEOUT_MS) },
-      });
+      // The harness's --settings and --append-system-prompt join the builder's: Claude Code keeps only the last of each.
+      const user = readUserSettingsSync(this.harness.args, { target: this.target, cwd: this.setup.cwd });
+      const prompt = mergeSystemPrompt(this.systemPrompt(), user.rest);
+      this.userArgs = prompt.rest;
+      writeText(path.join(this.dir, 'system.txt'), prompt.text ?? '');
+      writeJsonAtomic(
+        path.join(this.dir, 'settings.json'),
+        mergeClaudeSettings(
+          {
+            // The helpers must never wait on a permission prompt nobody can answer.
+            permissions: { allow: Object.keys(HELPERS).flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
+            sandbox: { excludedCommands: Object.keys(HELPERS) },
+            // An access test can outlast the Bash tool's 2-minute default; its answer must reach the agent.
+            env: { BASH_DEFAULT_TIMEOUT_MS: String(HELPER_TIMEOUT_MS), BASH_MAX_TIMEOUT_MS: String(HELPER_TIMEOUT_MS) },
+          },
+          user.settings,
+        ),
+      );
+    } else {
+      writeText(path.join(this.dir, 'system.txt'), this.systemPrompt());
     }
     this.timers.push(setInterval(() => this.readDraft(false), 1000));
     this.timers.push(setInterval(() => void this.pollRequests(), 500));
@@ -290,7 +305,7 @@ class BuilderSession {
     if (this.setup.model) parts.push('--model', q(this.setup.model));
     const effort = this.effort();
     if (effort) parts.push('--effort', q(effort));
-    for (const arg of this.harness.args) parts.push(q(arg));
+    for (const arg of this.userArgs) parts.push(q(arg));
     return parts;
   }
 

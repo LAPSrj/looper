@@ -674,7 +674,7 @@ export class Scheduler extends EventEmitter {
     const saved = this.chatRestores.get(runId);
     this.chatRestores.delete(runId);
     let run: ActiveRun;
-    if (saved?.chat === chatId) run = { ...saved, state: 'running', held: false, question: null };
+    if (saved?.chat === chatId) run = { ...saved, state: 'running', held: false, question: null, permission: undefined };
     else {
       let relatedId: string | undefined;
       try {
@@ -854,6 +854,7 @@ export class Scheduler extends EventEmitter {
         exitCode: end.exitCode,
         network: end.network,
         environment: end.environment,
+        ...(end.costUsd !== undefined ? { detail: { costUsd: end.costUsd } } : {}),
       });
       if (end.headline || end.body) this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
       errored = end.reason === 'error' || end.doneStatus === 'error' || !!end.network || !!end.environment;
@@ -1167,6 +1168,7 @@ export class Scheduler extends EventEmitter {
       exitCode: end.exitCode,
       network: end.network,
       environment: end.environment,
+      ...(end.costUsd !== undefined ? { detail: { costUsd: end.costUsd } } : {}),
     });
     if (end.headline || end.body) this.record(child.taskId, run.runId, 'result', outcome, { summary: end.headline, body: end.body });
     const watch = this.guidanceWatches.get(run.runId);
@@ -1582,6 +1584,24 @@ export class Scheduler extends EventEmitter {
     run.question = question;
     this.recompute(rt);
     this.emitRuntime(rt);
+  }
+
+  /** A run's agent waits for the user to allow a tool call, or (null) no longer does. */
+  private setPermission(rt: TaskRuntime, runId: string, request: ActiveRun['permission'] | null): void {
+    const run = rt.runs.find((r) => r.runId === runId);
+    if (!run || (run.permission?.id ?? null) === (request?.id ?? null)) return;
+    if (request) run.permission = request;
+    else delete run.permission;
+    this.emitRuntime(rt);
+  }
+
+  /** Allow or deny the tool call a run's agent waits on; false when it no longer waits. */
+  answerPermission(runId: string, requestId: string, allow: boolean): boolean {
+    const handle = this.agents.get(runId);
+    if (!handle?.answerPermission(requestId, allow)) return false;
+    const taskId = [...this.runtimes.values()].find((rt) => rt.runs.some((r) => r.runId === runId))?.taskId;
+    if (taskId) this.record(taskId, runId, 'agent', 'sent', { summary: allow ? 'the user allowed the tool call' : 'the user denied the tool call' });
+    return true;
   }
 
   /** Why a start was refused at the cap; a cap of 1 keeps the plain wording. */
@@ -2440,7 +2460,7 @@ export class Scheduler extends EventEmitter {
           exitCode: end.exitCode,
           network: end.network,
           environment: end.environment,
-          detail: { wasHeld: end.wasHeld },
+          detail: { wasHeld: end.wasHeld, ...(end.costUsd !== undefined ? { costUsd: end.costUsd } : {}) },
         });
         if (end.headline || end.body) {
           this.record(task.id, runId, 'result', outcome, { summary: end.headline, body: end.body });
@@ -2859,6 +2879,10 @@ export class Scheduler extends EventEmitter {
             summary: `no answer within ${Number(task.agent.ask.waitMin.toFixed(2))} min`,
           });
         },
+        onPermission: (request) => {
+          this.setPermission(rt, ctx.runId, request);
+          if (request && task.notifications.held) this.notify(task, ctx.runId, 'held', `The agent asks permission to use ${request.tool}`);
+        },
         onContext: (tokens, limit) =>
           this.record(task.id, ctx.runId, 'agent', 'sent', {
             summary: `context at ${Math.round(tokens / 1000)}k tokens, past the limit of ${Math.round(limit / 1000)}k: asked the agent to restart`,
@@ -2874,6 +2898,7 @@ export class Scheduler extends EventEmitter {
       const end = await handle.finished;
       // A question still waiting has nobody left to read the answer.
       this.setQuestion(rt, ctx.runId, null);
+      this.setPermission(rt, ctx.runId, null);
       elapsedMs += end.durationMs;
       wasHeld ||= end.wasHeld;
       // Stop in the message box ended a headless agent's turn: the run waits for the next message, which resumes the conversation.
@@ -3034,7 +3059,9 @@ export class Scheduler extends EventEmitter {
 
   private persist(): void {
     const snapshot: Record<string, TaskRuntime> = {};
-    for (const [id, rt] of this.runtimes) snapshot[id] = this.snapshot(rt);
+    // A permission request waits on a session, which a restart doesn't bring back.
+    const saved = ({ permission: _p, ...r }: ActiveRun): ActiveRun => r;
+    for (const [id, rt] of this.runtimes) snapshot[id] = { ...rt, runs: rt.runs.map(saved), children: rt.children.map(saved) };
     this.d.state.save(snapshot);
   }
 }

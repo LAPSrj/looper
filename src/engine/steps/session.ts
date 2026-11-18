@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Harness } from '../../shared/types';
+import type { ChatPermissionRequest } from '../../shared/chat';
 import { autoTrustWorkspace, codexPermissionArgs, projectMcpApproval } from '../../shared/environments';
 import { TerminalHost } from '../terminal-host';
 import { delegateMessage, eventsMessage, guidanceMessage } from '../../shared/messages';
@@ -27,12 +28,15 @@ import { writeJsonAtomic, writeText } from '../store/fsutil';
 import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
 import { CRON_REFUSAL, stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
+import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings } from '../claude-settings';
+import { MOD_DIR, MOD_FILES, MOD_MISSING_TEXT, toolKey, writeClaudeMod } from '../claude-mod';
 import {
   ASK_DIR,
   childEnv,
   DELEGATE_BUSY_FILE,
   DELEGATE_DIR,
   runDirTarget,
+  SOCKET_FILE,
   stripShellNoise,
   targetFile,
   writeLauncher,
@@ -101,6 +105,10 @@ export interface SessionHandle {
   readonly question: string | null;
   /** Hand the user's answer to the waiting question; false when none waits. */
   answer(text: string): boolean;
+  /** Interactive Claude Code: the tool call waiting for the user's permission, as its terminal asks too; null when none waits. */
+  readonly permission: ChatPermissionRequest | null;
+  /** Allow or deny the waiting tool call `id`; false when it no longer waits (answered in the terminal, or timed out). */
+  answerPermission(id: string, allow: boolean): boolean;
   stop(reason?: SessionEndReason, headline?: string): Promise<void>;
   finished: Promise<SessionEnd>;
   readonly held: boolean;
@@ -116,6 +124,8 @@ export interface SessionCallbacks {
   onQuestion?: (question: string) => void;
   /** Nobody answered the question in time, and the agent got the session's no-answer text. */
   onNoAnswer?: (question: string) => void;
+  /** A tool call started waiting for the user's permission, or (null) stopped waiting. */
+  onPermission?: (request: ChatPermissionRequest | null) => void;
 }
 
 /** The done-file status of a session that ended for a context restart (written by the restart helper). */
@@ -123,6 +133,31 @@ export const RESTART_STATUS = 'restart';
 
 /** How often the context of a session with a limit is read off its transcript, in signal polls (5 s by default). */
 const CONTEXT_POLLS = 5;
+
+/** The run-dir folder (after the step's prefix) where permission requests wait for Looper's answer. */
+const PERMISSIONS_DIR = 'permissions';
+
+/** The PermissionRequest hook's answer: allow the call, or deny it with what the agent is told. */
+export function permissionDecision(allow: boolean, message: string): string {
+  const decision = allow ? { behavior: 'allow' } : { behavior: 'deny', message };
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } });
+}
+
+/** Where a Claude Code session's StopFailure hook records the turn that ended on an API error. */
+export const STOP_FAILURE_FILE = 'stop-failure.json';
+
+/** How much longer than the answer wait the ask helper waits for Looper's response, in seconds. */
+const ASK_HELPER_MARGIN_S = 120;
+
+/** Claude Code's own ceiling on a Bash call's timeout. */
+const BASH_MAX_DEFAULT_MS = 600_000;
+
+/**
+ * How long a Claude Code session that has started (its SessionStart hook ran)
+ * may go without its mod reporting in before the run ends as an environment
+ * error (claude-mod.ts).
+ */
+const MOD_READY_MS = 20_000;
 
 export interface SessionOpts {
   /** The step behind the session, deciding the stop-hook wording and log labels. */
@@ -174,6 +209,13 @@ export interface SessionOpts {
    * waits. Unset = the session cannot ask.
    */
   ask?: { command: string; waitMs: number; noAnswer: string };
+  /**
+   * Interactive Claude Code: each permission request also goes to Looper
+   * (`onPermission`), which answers it from the run window or a phone while
+   * the terminal asks too, whichever answers first. Unanswered after `waitMs`,
+   * the call is denied and the agent told `noAnswer`.
+   */
+  permissions?: { waitMs: number; noAnswer: string };
   /**
    * The delegate command on the session's PATH (looper-delegate). Its
    * requests come in through the run dir's delegate folder, and `handle`
@@ -617,30 +659,51 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     path.join(ctx.runDir, f('prompt.txt')),
     claude || !opts.footer ? opts.prompt : opts.footer + '\n\n' + opts.prompt,
   );
+  // The user's arguments, and with Claude Code those left once their --settings and --append-system-prompt join Looper's.
+  let userArgs: string[] = [...harness.args, ...opts.extraArgs];
+  let userSettings: Record<string, unknown>[] = [];
+  let systemPrompt: string | undefined = opts.footer || undefined;
   if (claude) {
-    if (opts.footer) writeText(path.join(ctx.runDir, f('system.txt')), opts.footer);
-    const hooks: Record<string, unknown> = {
-      // The SessionStart payload names the session's transcript file: the Messages view reads it live.
-      SessionStart: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('session.json'))) }] }],
-    };
-    if (!headless) {
-      // A turn Claude Code starts by itself (a wake-up, a background task's notification) restarts the idle clock.
-      hooks.UserPromptSubmit = [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f('turn.json'))) }] }];
+    const read = await readUserSettings(userArgs, { target, cwd: task.cwd });
+    userSettings = read.settings;
+    const merged = mergeSystemPrompt(opts.footer, read.rest);
+    systemPrompt = merged.text;
+    userArgs = merged.rest;
+  }
+  // The ask helper waits the answer wait plus ASK_HELPER_MARGIN_S; its Bash call outlasts it.
+  const askWaitS = opts.ask ? Math.ceil(opts.ask.waitMs / 1000) + ASK_HELPER_MARGIN_S : 0;
+  const askBashMs = opts.ask ? (askWaitS + 30) * 1000 : 0;
+  /** Interactive Claude Code: its permission requests go to Looper too. */
+  const relayPermissions = claude && !headless && !!opts.permissions;
+  if (claude) {
+    if (systemPrompt) writeText(path.join(ctx.runDir, f('system.txt')), systemPrompt);
+    for (const name of [MOD_FILES.ready, MOD_FILES.control, MOD_FILES.turnEnd, MOD_FILES.usage, MOD_FILES.toolEnd, STOP_FAILURE_FILE]) {
+      fs.rmSync(path.join(ctx.runDir, f(name)), { force: true });
     }
-    if (opts.guidance) {
-      // Guidance the user sends mid-run (and related events, and Looper's own notice) reaches the agent with its next tool result.
-      writeText(
-        path.join(ctx.runDir, 'bin', target.guideHookFile),
-        target.renderGuideHook('claude', {
-          guidance: targetFile(ctx, GUIDANCE_FILE),
-          events: targetFile(ctx, EVENTS_FILE),
-          delegate: targetFile(ctx, DELEGATE_FILE),
-          notice: targetFile(ctx, NOTICE_FILE),
-        }),
-        0o755,
-      );
-      hooks.PostToolUse = [
-        { hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', target.guideHookFile)) }] },
+    const hooks: Record<string, unknown> = {
+      // The SessionStart payload names the session's transcript file (the Messages view reads it live), and the
+      // session's own socket tells the helpers' caller from a session started inside the run.
+      SessionStart: [
+        { hooks: [{ type: 'command', command: target.renderSessionStartHook(targetFile(ctx, f('session.json')), targetFile(ctx, f(SOCKET_FILE))) }] },
+      ],
+      // A turn that ended on an API error (a usage limit, no login, no network): no Stop hook runs for it.
+      StopFailure: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f(STOP_FAILURE_FILE))) }] }],
+    };
+    if (relayPermissions && opts.permissions) {
+      // Each permission request waits for Looper's answer too (the poll below), while the terminal asks.
+      fs.rmSync(path.join(ctx.runDir, f(PERMISSIONS_DIR)), { recursive: true, force: true });
+      writeText(path.join(ctx.runDir, 'bin', f(target.permissionHookFile)), target.renderPermissionHook(targetFile(ctx, f(PERMISSIONS_DIR))), 0o755);
+      hooks.PermissionRequest = [
+        {
+          matcher: '',
+          hooks: [
+            {
+              type: 'command',
+              command: target.stopHookCommand(targetFile(ctx, 'bin', f(target.permissionHookFile))),
+              timeout: Math.ceil(opts.permissions.waitMs / 1000) + 60,
+            },
+          ],
+        },
       ];
     }
     if (opts.stopGate) {
@@ -667,36 +730,41 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       );
       hooks.Stop = [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', stopHookFile)) }] }];
     }
-    // A subagent shares the session's PATH and environment, so only a hook can
-    // keep it from ending the session with a signal command.
-    writeText(
-      path.join(ctx.runDir, 'bin', f(target.guardHookFile)),
-      target.renderSubagentGuard(signalCommands, subagentGuardMessage(signalCommands)),
-      0o755,
-    );
-    const preToolUse = [
-      {
-        matcher: 'Bash',
-        hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', f(target.guardHookFile))) }],
+    // The mod hands guidance over, records each turn and keeps subagents from the signal helpers (engine/claude-mod.ts).
+    writeClaudeMod(path.join(ctx.runDir, f(MOD_DIR)), {
+      files: {
+        ready: targetFile(ctx, f(MOD_FILES.ready)),
+        control: targetFile(ctx, f(MOD_FILES.control)),
+        turnEnd: targetFile(ctx, f(MOD_FILES.turnEnd)),
+        usage: targetFile(ctx, f(MOD_FILES.usage)),
+        turn: targetFile(ctx, f('turn.json')),
+        ...(relayPermissions ? { toolEnd: targetFile(ctx, f(MOD_FILES.toolEnd)) } : {}),
       },
-    ];
-    if (headless) {
-      writeText(path.join(ctx.runDir, 'bin', target.refusalHookFile), target.renderRefusal(CRON_REFUSAL), 0o755);
-      preToolUse.push({
-        matcher: 'CronCreate',
-        hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', target.refusalHookFile)) }],
-      });
-    }
-    hooks.PreToolUse = preToolUse;
-    writeJsonAtomic(path.join(ctx.runDir, f('settings.json')), {
-      // A helper command must never be blocked by a permission prompt, and the
-      // Bash sandbox must never confine it: the run dir sits outside the
-      // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
-      permissions: { allow: helperCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
-      sandbox: { excludedCommands: helperCommands },
-      ...projectMcpApproval(harness),
-      hooks,
+      inbox: opts.guidance ? [GUIDANCE_FILE, EVENTS_FILE, DELEGATE_FILE, NOTICE_FILE].map((name) => targetFile(ctx, name)) : [],
+      signalCommands,
+      guardMessage: subagentGuardMessage(signalCommands),
+      ...(askBashMs ? { ask: { command: opts.ask!.command, timeoutMs: askBashMs } } : {}),
+      ...(headless ? { cronRefusal: CRON_REFUSAL } : {}),
+      headless,
+      windows: target.kind === 'windows',
     });
+    writeJsonAtomic(
+      path.join(ctx.runDir, f('settings.json')),
+      mergeClaudeSettings(
+        {
+          // A helper command must never be blocked by a permission prompt, and the
+          // Bash sandbox must never confine it: the run dir sits outside the
+          // sandbox's writable set (EROFS), e.g. on /mnt/c for a WSL agent.
+          permissions: { allow: helperCommands.flatMap((c) => [`Bash(${c}:*)`, `Bash(${c})`]) },
+          sandbox: { excludedCommands: helperCommands },
+          // The ask helper's Bash call waits in the foreground for the whole answer wait: the mod gives it that timeout.
+          ...(askBashMs ? { env: { BASH_MAX_TIMEOUT_MS: String(Math.max(BASH_MAX_DEFAULT_MS, askBashMs)) } } : {}),
+          ...projectMcpApproval(harness),
+          hooks,
+        },
+        userSettings,
+      ),
+    );
   }
   if (headless && opts.jsonSchema) {
     writeJsonAtomic(path.join(ctx.runDir, f('schema.json')), opts.jsonSchema);
@@ -719,8 +787,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (opts.effort) parts.push('--effort', q(opts.effort));
     if (opts.permissionMode) parts.push('--permission-mode', q(opts.permissionMode));
     if (opts.session) parts.push(opts.session.resume ? '--resume' : '--session-id', q(opts.session.id));
-    if (opts.footer) parts.push('--append-system-prompt', target.catFile(targetFile(ctx, f('system.txt'))));
+    if (systemPrompt) parts.push('--append-system-prompt', target.catFile(targetFile(ctx, f('system.txt'))));
     parts.push('--settings', q(targetFile(ctx, f('settings.json'))));
+    parts.push('--plugin-dir', q(targetFile(ctx, f(MOD_DIR))));
     if (headless) {
       parts.push('-p', '--output-format', 'stream-json', '--verbose');
       // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
@@ -763,8 +832,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       parts.push('-c', q(`notify=[${notifyCmd.map((c) => `'${c}'`).join(',')}]`));
     }
   }
-  for (const arg of harness.args) parts.push(q(arg));
-  for (const extra of opts.extraArgs) parts.push(q(extra));
+  for (const arg of userArgs) parts.push(q(arg));
   // claude's variadic options (--allowedTools, --disallowedTools, ...) swallow
   // the following positional, eating the prompt when such a flag comes last:
   // terminate option parsing so the prompt always lands as the prompt.
@@ -783,7 +851,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     doneStatuses,
     completeCommand: opts.completeCommand,
     // The helper outwaits Looper's own deadline, so the no-answer text is what it prints.
-    ask: opts.ask ? { command: opts.ask.command, waitS: Math.ceil(opts.ask.waitMs / 1000) + 120 } : undefined,
+    ask: opts.ask ? { command: opts.ask.command, waitS: askWaitS } : undefined,
     delegateCommand: opts.delegate?.command,
   });
   const askDir = path.join(ctx.runDir, f(ASK_DIR));
@@ -859,6 +927,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let recentOut = '';
   /** Latest last_assistant_message seen from the Stop/notify hook (interactive). */
   let lastMessage: string | undefined;
+  /** The last turn end the Stop/notify hook recorded: when, and its final message. */
+  let lastStop: { mtime: number; message: string | undefined } | null = null;
   /** codex interactive: the thread id the notify hook reported. */
   let notifySessionId: string | undefined;
   /** codex: the Messages view locates the rollout transcript from this ref
@@ -926,6 +996,103 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     claude && !headless ? path.join(ctx.runDir, f('turn.json')) : undefined,
   );
 
+  /** Claude Code: the mod reported in this session (mod.json), so it hands messages over and Stop goes through it. */
+  let modReady = false;
+  /** Each Stop sent through the mod raises this (MOD_FILES.control). */
+  let abortSeq = 0;
+  let modTimer: NodeJS.Timeout | null = null;
+  const runFile = (name: string): string => path.join(ctx.runDir, f(name));
+  const mtimeOf = (name: string): Promise<number | null> =>
+    fs.promises.stat(runFile(name)).then(
+      (s) => s.mtimeMs,
+      () => null,
+    );
+  const readJsonFile = async (name: string): Promise<Record<string, unknown> | null> => {
+    try {
+      const v: unknown = JSON.parse(await fs.promises.readFile(runFile(name), 'utf8'));
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  /** `$.session.usage()` as the mod last saved it. */
+  const modUsage = () => readJsonFile(MOD_FILES.usage);
+  /** The final answer of a turn that ended at or after `since`, as the mod recorded it. */
+  const answerSince = async (since: number): Promise<string | undefined> => {
+    const at = await mtimeOf(MOD_FILES.turnEnd);
+    if (at === null || at < since) return undefined;
+    const answer = (await readJsonFile(MOD_FILES.turnEnd))?.answer;
+    return typeof answer === 'string' && answer.trim() ? answer.trim() : undefined;
+  };
+  /** When the usage the mod saw says a limit is used up: the latest reset among the full windows. */
+  const usageResetMs = async (): Promise<number | null> => {
+    const limits = (await modUsage())?.rateLimits;
+    if (!Array.isArray(limits)) return null;
+    const resets = limits
+      .filter((l: { percentUsed?: unknown }) => typeof l?.percentUsed === 'number' && l.percentUsed >= 100)
+      .map((l: { resetsAt?: unknown }) => (typeof l.resetsAt === 'string' ? Date.parse(l.resetsAt) : NaN))
+      .filter((ms) => Number.isFinite(ms));
+    return resets.length ? Math.max(...resets) : null;
+  };
+  let stopFailureAt = 0;
+  /**
+   * Interactive Claude Code: a turn ended on an API error (StopFailure). A usage
+   * limit retries after its reset, a lost login or network is the machine's
+   * error, and any other API error ends the run with Claude Code's message.
+   */
+  const checkStopFailure = async (): Promise<void> => {
+    const at = await mtimeOf(STOP_FAILURE_FILE);
+    if (at === null || at <= stopFailureAt) return;
+    stopFailureAt = at;
+    const payload = await readJsonFile(STOP_FAILURE_FILE);
+    if (!payload || ended || doneMtime !== null) return;
+    const error = typeof payload.error === 'string' ? payload.error : '';
+    const text = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message.trim() : '';
+    const headline = headlineOf(text) ?? (error ? `API error: ${error}` : 'API error');
+    if (error === 'max_output_tokens') return;
+    if (/rate_limit/.test(error) || USAGE_LIMIT_RE.test(text)) {
+      const now = Date.now();
+      const resetMs = parseUsageLimitReset(text, now) ?? (await usageResetMs()) ?? now + USAGE_LIMIT_FALLBACK_MS;
+      ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(resetMs).toISOString()}`);
+      await finish('error', headline, undefined, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
+    } else if (/authentication/.test(error) || LOGIN_FAILED_RE.test(text)) {
+      ctx.log.error(`[${task.id}] Claude Code needs you to log in again`);
+      noLogin = true;
+      await finish('error', 'Claude Code needs you to log in again', text || undefined, undefined, undefined, true);
+    } else if (CLAUDE_NETWORK_RE.test(text) || looksLikeNetworkError(text)) {
+      ctx.log.error(`[${task.id}] ${headline}`);
+      await finish('error', headline, text || undefined, undefined, true);
+    } else {
+      ctx.log.error(`[${task.id}] the turn ended on an API error (${error || 'unknown'}): ${headline}`);
+      await finish('error', headline, text || undefined);
+    }
+  };
+  if (claude) {
+    let checking = false;
+    modTimer = setInterval(() => {
+      if (checking || ended) return;
+      checking = true;
+      void (async () => {
+        if (!modReady) {
+          if ((await mtimeOf(MOD_FILES.ready)) !== null) {
+            modReady = true;
+            ctx.log.info(`[${task.id}] ${opts.step}: Looper's mod is running in the session`);
+          } else {
+            const startedAt = await mtimeOf('session.json');
+            if (startedAt !== null && startedAt >= started - 1000 && Date.now() - startedAt > MOD_READY_MS && !ended) {
+              ctx.log.error(`[${task.id}] ${MOD_MISSING_TEXT}`);
+              await finish('error', MOD_MISSING_TEXT, undefined, undefined, undefined, true);
+              return;
+            }
+          }
+        }
+        if (!headless) await checkStopFailure();
+      })()
+        .catch((e: Error) => ctx.log.warn(`[${task.id}] cannot read the session's state: ${e.message}`))
+        .finally(() => (checking = false));
+    }, 1000);
+  }
+
   let trustHandled = headless || !autoTrustWorkspace(harness);
   let promptSince: number | null = null;
   /** SessionStart fired for this session (its hook wrote session.json after the spawn). */
@@ -976,6 +1143,13 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     if (askTimer) clearInterval(askTimer);
     if (delegateTimer) clearInterval(delegateTimer);
     if (doneTimer) clearTimeout(doneTimer);
+    if (modTimer) clearInterval(modTimer);
+    if (permissionTimer) clearInterval(permissionTimer);
+    settlePermission();
+    // Interactive Claude Code's cost and a report the Stop hook never brought: the mod's record, read before the session goes.
+    const usage = claude && stream.costUsd === undefined ? await modUsage() : null;
+    const modCost = (usage?.cost as { usd?: unknown } | undefined)?.usd;
+    if (reason === 'done' && !body && claude && doneMtime !== null) body = await answerSince(doneMtime);
     if (!exited) await killTree();
     out.end();
     // output.txt is read the moment `finished` resolves (run log, tests): let it land.
@@ -989,7 +1163,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       body,
       sessionLost: sessionLost() || undefined,
       structured: stream.structured,
-      costUsd: stream.costUsd,
+      costUsd: stream.costUsd ?? (typeof modCost === 'number' ? modCost : undefined),
       sessionId: notifySessionId ?? stream.sessionId,
       retryAtMs,
       network: network || undefined,
@@ -1068,6 +1242,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let pendingAsk: { rid: string; question: string; at: number } | null = null;
   /** The delegate poll (see below); unset when the session cannot start agents. */
   let delegateTimer: NodeJS.Timeout | null = null;
+  /** The permission poll (see below); unset when Looper doesn't relay the session's permission requests. */
+  let permissionTimer: NodeJS.Timeout | null = null;
   const maxTimer = setTimeout(
     () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
     opts.maxRuntimeMs,
@@ -1173,6 +1349,11 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         const parsed = parseDoneText(msg, parseStatuses);
         doneStatus = parsed.status ?? opts.implicitDoneStatus;
         doneHeadline = headlineOf(parsed.message) ?? 'done';
+        // The done file is read once two polls agree, so the turn's Stop may have come in between: it carries the report.
+        if (lastStop && lastStop.mtime >= mtime) {
+          void finish('done', doneHeadline, lastStop.message);
+          return;
+        }
         ctx.log.info(`[${task.id}] ${doneCommand} ${doneStatus ?? '(no status)'} "${doneHeadline}"; waiting for the final message`);
         doneTimer = setTimeout(() => void finish('done', doneHeadline), DONE_GRACE_MS);
       },
@@ -1197,6 +1378,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         const raw = payload.last_assistant_message ?? payload['last-assistant-message'];
         const msg = typeof raw === 'string' ? raw.trim() : '';
         if (msg) lastMessage = msg;
+        lastStop = { mtime, message: msg || undefined };
         // The turn that ran the done command ends after it: that Stop carries the report.
         if (doneMtime !== null && mtime >= doneMtime) {
           void finish('done', doneHeadline, msg || undefined);
@@ -1233,34 +1415,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           }
         }
         if (screenEnabled && host && claude) {
-          // The usage-limit banner: the request was rejected, the model never got
-          // the prompt. End as an error (so a one-off note is not consumed) and
-          // retry after the advertised reset — or in an hour when none is shown.
-          const limit = host.screenMatch(USAGE_LIMIT_RE);
-          if (limit) {
-            const headline = limit[0].replace(/\s+/g, ' ').trim();
-            const resetMs = parseUsageLimitReset(headline, now) ?? now + USAGE_LIMIT_FALLBACK_MS;
-            ctx.log.error(`[${task.id}] ${headline}; retrying after ${new Date(resetMs).toISOString()}`);
-            void finish('error', headline, undefined, resetMs + USAGE_LIMIT_RETRY_MARGIN_MS);
-            return;
-          }
-          // Claude Code has no login: the prompt never got an answer, and the environment needs the user.
-          if (host.screenMatch(LOGIN_FAILED_RE)) {
-            const headline = 'Claude Code needs you to log in again';
-            ctx.log.error(`[${task.id}] ${headline}`);
-            noLogin = true;
-            void finish('error', headline, undefined, undefined, undefined, true);
-            return;
-          }
-          // The API is out of reach (claude gives up after its retries): the
-          // prompt never landed, so this is an engine error, not a failed job.
-          const netErr = host.screenMatch(CLAUDE_NETWORK_RE);
-          if (netErr) {
-            const headline = netErr[0].replace(/\s+/g, ' ').trim();
-            ctx.log.error(`[${task.id}] ${headline}`);
-            void finish('error', headline, undefined, undefined, true);
-            return;
-          }
+          // A usage limit, a lost login or network end the turn through StopFailure (checkStopFailure).
           // A prompt visible on screen, or a session that never started = the session is waiting for a human; treat as idle.
           const blocked = startupBlocked(now);
           if (blocked || host.screenContains(WAITING_PROMPT_RE)) {
@@ -1273,7 +1428,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             ctx.log.info(`[${task.id}] prompt resolved; ${opts.step} continues`);
           }
         }
-        if (held || pendingAsk || opts.delegate?.busy()) return;
+        // A question or a permission request has a wait of its own, which ends it.
+        if (held || pendingAsk || pendingPermission || opts.delegate?.busy()) return;
         const since = (waiting ? null : idleSince) ?? promptSince;
         if (since === null) return;
         if (now - since < opts.idleGraceMs) return;
@@ -1314,6 +1470,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
    */
   function deliverIdleGuidance(): void {
     if (!opts.guidance || headless || ended || doneMtime !== null) return;
+    // Claude Code's mod starts the next turn with it, unless someone is typing in the terminal.
+    if (claude && modReady) return;
     if (idleSince === null && !held) return;
     const text = takePendingGuidance(ctx.runDir);
     // Related events wait behind the user's guidance, the delegated agents' messages behind them, and Looper's own notice last.
@@ -1357,9 +1515,14 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       if (busy || ended || doneMtime !== null) return;
       busy = true;
       void (async () => {
-        transcript ??= await findStepTranscript(ctx.runDir, opts.prefix, (p) => transcriptHostPath(p, ctx.host, distro));
-        if (!transcript) return; // not written yet
-        const tokens = await readContextTokens(transcript.file, transcript.kind);
+        // Claude Code's mod saves the live context every few seconds; the transcript is read only without it.
+        const live = modReady ? ((await modUsage())?.context as { tokens?: unknown } | undefined)?.tokens : undefined;
+        let tokens: number | null = typeof live === 'number' ? live : null;
+        if (tokens === null) {
+          transcript ??= await findStepTranscript(ctx.runDir, opts.prefix, (p) => transcriptHostPath(p, ctx.host, distro));
+          if (!transcript) return; // not written yet
+          tokens = await readContextTokens(transcript.file, transcript.kind);
+        }
         if (tokens === null || tokens < limit || ended || doneMtime !== null) return;
         const step = 1 + Math.floor((tokens - limit) / stepSize);
         if (step <= asked) return;
@@ -1433,6 +1596,82 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }, ctx.settings.signalPollMs);
   }
 
+  /**
+   * The permission poll: the oldest request waiting goes to Looper. It stops
+   * waiting when its file goes (the hook removes it once answered, the terminal
+   * answered it and the hook ended), or Looper denies it once `waitMs` passes.
+   */
+  let pendingPermission: (ChatPermissionRequest & { at: number }) | null = null;
+  const permissionDir = path.join(ctx.runDir, f(PERMISSIONS_DIR));
+  const answerRequest = (id: string, json: string): void => {
+    const file = path.join(permissionDir, `${id}.ans`);
+    try {
+      // Whole or not at all: the hook prints the answer as soon as the file exists.
+      fs.writeFileSync(`${file}.tmp`, json);
+      fs.renameSync(`${file}.tmp`, file);
+    } catch (e) {
+      ctx.log.warn(`[${task.id}] cannot answer permission request ${id}: ${(e as Error).message}`);
+    }
+  };
+  /** Requests already answered, denied or let go: their files stay until their hook ends. */
+  const settledPermissions = new Set<string>();
+  const settlePermission = (): void => {
+    if (!pendingPermission) return;
+    settledPermissions.add(pendingPermission.id);
+    pendingPermission = null;
+    cb.onPermission?.(null);
+  };
+  if (relayPermissions && opts.permissions) {
+    const { waitMs, noAnswer } = opts.permissions;
+    let polling = false;
+    permissionTimer = setInterval(() => {
+      if (ended || polling) return;
+      polling = true;
+      void (async () => {
+        const names = (await fs.promises.readdir(permissionDir).catch(() => [] as string[])).filter((n) => n.endsWith('.req')).sort();
+        if (pendingPermission) {
+          const { id, at, tool, input } = pendingPermission;
+          // Answered in the terminal: the call ran (or was refused) and the mod saw it end, but Claude Code leaves the hook waiting.
+          const last = await readJsonFile(MOD_FILES.toolEnd);
+          const answeredThere = typeof last?.at === 'number' && last.at >= at && last.tool === tool && last.key === toolKey(input);
+          if (!names.includes(`${id}.req`)) {
+            settlePermission();
+          } else if (answeredThere) {
+            ctx.log.info(`[${task.id}] the agent's ${tool} call was answered in its terminal`);
+            try {
+              fs.writeFileSync(path.join(permissionDir, `${id}.cancel`), '');
+            } catch {
+              /* the hook ends at its timeout instead */
+            }
+            settlePermission();
+          } else if (Date.now() - at >= waitMs) {
+            ctx.log.info(`[${task.id}] nobody allowed the agent's ${pendingPermission.tool} call in time: denied`);
+            answerRequest(id, permissionDecision(false, noAnswer));
+            settlePermission();
+          }
+          return;
+        }
+        const name = names.find((n) => !settledPermissions.has(n.slice(0, -'.req'.length)));
+        if (!name) return;
+        const id = name.slice(0, -'.req'.length);
+        try {
+          const req = JSON.parse((await fs.promises.readFile(path.join(permissionDir, name), 'utf8')).replace(/^﻿/, '')) as Record<string, unknown>;
+          if (ended) return;
+          pendingPermission = { id, tool: String(req.tool_name ?? 'tool'), input: req.tool_input ?? {}, at: Date.now() };
+          ctx.log.info(`[${task.id}] the agent asks permission for ${pendingPermission.tool}`);
+          cb.onPermission?.({ id, tool: pendingPermission.tool, input: pendingPermission.input });
+        } catch (e) {
+          // Unreadable: refuse it rather than leave the agent waiting for nobody.
+          ctx.log.warn(`[${task.id}] unreadable permission request ${name}: ${(e as Error).message}`);
+          answerRequest(id, permissionDecision(false, noAnswer));
+          settledPermissions.add(id);
+        }
+      })()
+        .catch((e: Error) => ctx.log.warn(`[${task.id}] cannot read permission requests: ${e.message}`))
+        .finally(() => (polling = false));
+    }, ctx.settings.signalPollMs);
+  }
+
   /** The delegate poll: answers each request in order, one at a time. */
   if (opts.delegate) {
     const { command, handle } = opts.delegate;
@@ -1496,6 +1735,18 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       pendingAsk = null;
       return true;
     },
+    get permission() {
+      if (!pendingPermission) return null;
+      const { id, tool, input } = pendingPermission;
+      return { id, tool, input };
+    },
+    answerPermission(id: string, allow: boolean) {
+      if (ended || pendingPermission?.id !== id) return false;
+      answerRequest(id, permissionDecision(allow, 'The user denied this in Looper.'));
+      ctx.log.info(`[${task.id}] the user ${allow ? 'allowed' : 'denied'} the agent's ${pendingPermission.tool} call`);
+      settlePermission();
+      return true;
+    },
     write: input,
     deliverGuidance: deliverIdleGuidance,
     get turnOver() {
@@ -1503,6 +1754,15 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     },
     stopTurn() {
       if (headless || ended || doneMtime !== null) return;
+      if (claude && modReady) {
+        // The mod ends the turn (no Stop hook runs for it), then starts the next one with the guidance waiting.
+        if (idleSince === null && !held) {
+          writeJsonAtomic(runFile(MOD_FILES.control), { abort: ++abortSeq });
+          idleSince = Date.now();
+          waiting = false;
+        }
+        return;
+      }
       if (idleSince === null && !held) {
         // The turn is over from here, whether or not the harness runs its Stop hook for an interrupted turn.
         proc.write('\x1b');

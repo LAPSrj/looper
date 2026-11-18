@@ -79,6 +79,20 @@ export function subagentGuardMessage(commands: readonly string[]): string {
 export const CRON_REFUSAL =
   'Looper: CronCreate is turned off in this unattended session. Its jobs live only as long as the session, and the session closes when your turn ends with nothing left running, so a job would never fire. To be woken later, call ScheduleWakeup with delaySeconds and a prompt saying what to do then: it works in this session, and the session stays open until the wake-up. To wait for a command, run it in the background or watch it with Monitor, and its result starts your next turn.';
 
+/**
+ * The environment variable naming the file where a run's Claude Code session
+ * records its own messaging socket (SessionStart). A helper run under another
+ * socket comes from a session started inside the run (a nested `claude`),
+ * which inherited the run's variables and PATH: it refuses with NESTED_REFUSAL.
+ */
+export const SOCKET_FILE_VAR = 'LOOPER_SOCKET_FILE';
+
+/** The variable Claude Code gives each session's commands, one value per session. */
+export const SESSION_SOCKET_VAR = 'CLAUDE_CODE_MESSAGING_SOCKET';
+
+export const NESTED_REFUSAL =
+  "looper: this command belongs to the Looper run that started this session's parent, so this session can't run it. Report back to the session that started you instead.";
+
 /** The Stop-hook decision around a guidance message literal: block, and continue with the guidance. */
 export const STOP_GUIDANCE_JSON = { before: '{"decision":"block","reason":', after: '}' };
 

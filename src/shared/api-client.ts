@@ -248,6 +248,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     continueRun: (taskId, runId, guidance) => t.invoke('run:continue', taskId, runId, guidance).catch(plainError),
     canGuideRun: (taskId, runId) => t.invoke('run:canGuide', taskId, runId),
     sendGuidance: (taskId, runId, text, attachments) => t.invoke('run:guide', taskId, runId, text, attachments ?? []).catch(plainError),
+    answerRunPermission: (taskId, runId, requestId, allow) => t.invoke('run:permission', taskId, runId, requestId, allow),
     openTaskWorkFolder: (taskId) => t.invoke('task:openWorkFolder', taskId),
     openMessages: (taskId, runId, agentId, label) => t.invoke('messages:open', taskId, runId, agentId, label),
     openEditor: (taskId) => t.invoke('editor:open', taskId),

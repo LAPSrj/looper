@@ -21,6 +21,12 @@ afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
+/** The configuration the session baked into its Claude Code mod (src/engine/claude-mod.ts). */
+function modConfig(runDir: string): Record<string, any> {
+  const source = fs.readFileSync(path.join(runDir, 'looper-mod', 'hooks', 'register.js'), 'utf8');
+  return JSON.parse(/^const CONFIG = (\{[\s\S]*?\n\})$/m.exec(source)![1]);
+}
+
 /** A one-line "final message" far longer than any terminal width, in real stream-json key order. */
 const REPORT = 'Fixed the divider\n\n' + 'Details: ' + 'x'.repeat(20_000) + ' end.';
 
@@ -351,11 +357,14 @@ describe('headless agent over pipes', () => {
     const gate = path.join(ctx.runDir, 'bin', 'looper-stop-hook');
     expect(settings.hooks.Stop[0].hooks[0].command).toBe(`bash '${gate}'`);
     expect(fs.existsSync(gate)).toBe(true);
-    // A CronCreate job would die with the session: the call is refused with what to use instead.
-    const refusal = path.join(ctx.runDir, 'bin', 'looper-refuse');
-    expect(settings.hooks.PreToolUse.find((h: { matcher: string }) => h.matcher === 'CronCreate').hooks[0].command).toBe(`bash '${refusal}'`);
-    expect(fs.readFileSync(refusal, 'utf8')).toContain('call ScheduleWakeup');
-    // The idle clock is interactive only, and so is the hook that restarts it.
+    // A CronCreate job would die with the session: the mod refuses the call with what to use instead.
+    const mod = modConfig(ctx.runDir);
+    expect(mod.cronRefusal).toContain('call ScheduleWakeup');
+    expect(mod.headless).toBe(true);
+    // A subagent can't end the run, and the session's own socket is recorded for the helpers.
+    expect(mod.signalCommands).toEqual(['looper-done']);
+    expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(`> '${path.join(ctx.runDir, 'session-socket')}'`);
+    expect(settings.hooks.PreToolUse).toBeUndefined();
     expect(settings.hooks.UserPromptSubmit).toBeUndefined();
     // Looper trusts the folder for the user, so its project MCP servers need no dialog either.
     expect(settings.enableAllProjectMcpServers).toBe(true);
@@ -620,14 +629,19 @@ describe('headless agent over pipes', () => {
     expect(launcher.indexOf(flag)).toBeLessThan(launcher.indexOf("resume 'thread-1'"));
   });
 
-  it('claude: the agent gets the PostToolUse guidance hook and a Stop gate that takes guidance', async () => {
+  it('claude: the mod takes the guidance mid-turn, and the Stop gate takes what arrives at the turn end', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
     dirs.push(root);
     const harness = fakeHarness(root, `echo '{"type":"result","result":"ok"}'`);
     const ctx = makeCtx(harness);
     await (await startAgent(ctx, { onData: () => {} })).finished;
     const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
-    expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe(`bash '${path.join(ctx.runDir, 'bin', 'looper-guide-hook')}'`);
+    // No hook process for every tool call: the mod reads the inbox, the user's guidance first.
+    expect(settings.hooks.PostToolUse).toBeUndefined();
+    expect(modConfig(ctx.runDir).inbox).toEqual(
+      ['guidance.json', 'events-waiting.json', 'delegate-waiting.json', 'notice.json'].map((n) => path.join(ctx.runDir, n)),
+    );
+    expect(fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8')).toContain(`--plugin-dir '${path.join(ctx.runDir, 'looper-mod')}'`);
     expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-stop-hook'), 'utf8')).toContain(
       `g='${path.join(ctx.runDir, 'guidance.json')}'`,
     );
@@ -668,7 +682,7 @@ describe('headless agent over pipes', () => {
     // The helper is one of the signal commands a subagent can't run.
     const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
     expect(settings.permissions.allow).toContain('Bash(looper-restart:*)');
-    expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-subagent-guard'), 'utf8')).toContain("*'looper-restart'*");
+    expect(modConfig(ctx.runDir).signalCommands).toContain('looper-restart');
   });
 
   it('context limit: a session after a restart gets the handoff, and none past the last restart', async () => {
@@ -743,7 +757,11 @@ describe('headless agent over pipes', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'settings.json'), 'utf8'));
     expect(settings.permissions.allow).toContain('Bash(looper-ask:*)');
     expect(settings.sandbox.excludedCommands).toContain('looper-ask');
-    expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-subagent-guard'), 'utf8')).not.toContain('looper-ask');
+    const mod = modConfig(ctx.runDir);
+    expect(mod.signalCommands).not.toContain('looper-ask');
+    // Its Bash call waits in the foreground for the whole answer wait, past Claude Code's own ceiling if it must.
+    expect(mod.ask).toEqual({ command: 'looper-ask', timeoutMs: (Math.ceil(0.02 * 60) + 120 + 30) * 1000 });
+    expect(settings.env.BASH_MAX_TIMEOUT_MS).toBe('600000');
   });
 
   it('ask: a task that does not allow it gives the agent no looper-ask and no word about it', async () => {

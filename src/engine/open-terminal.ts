@@ -10,6 +10,7 @@ import { recordCodexHome } from './steps/session';
 import { harnessCommand } from './logins';
 import { createEnvTarget, createTarget, type Target } from './target';
 import { writeJsonAtomic, writeText } from './store/fsutil';
+import { mergeClaudeSettings, mergeSystemPrompt, readUserSettingsSync } from './claude-settings';
 
 /** The hooks that record a terminal session's conversation, as target paths. */
 export interface TerminalHooks {
@@ -32,6 +33,8 @@ export function terminalHarnessCommand(
   harness: Harness,
   resumeSessionId?: string,
   hooks: TerminalHooks = {},
+  /** The harness's and the task's arguments, when Looper took some of them out (its settings merge the user's --settings). */
+  userArgs: readonly string[] = [...harness.args, ...agentArgs(task)],
 ): string {
   const q = (s: string) => target.quote(s);
   const a = task.agent;
@@ -51,8 +54,7 @@ export function terminalHarnessCommand(
     if (hooks.codexNotify) parts.push('-c', q(`notify=[${hooks.codexNotify.map((c) => `'${c}'`).join(',')}]`));
     if (resumeSessionId) parts.push('resume', q(resumeSessionId));
   }
-  for (const arg of harness.args) parts.push(q(arg));
-  for (const extra of agentArgs(task)) parts.push(q(extra));
+  for (const arg of userArgs) parts.push(q(arg));
   return parts.join(' ');
 }
 
@@ -242,32 +244,44 @@ export function writeTerminalLauncher(
   const t = (...parts: string[]) => target.toTargetPath(path.join(dir, ...parts));
   const hooks: TerminalHooks = {};
   let prelude: string | undefined;
+  let userArgs = [...harness.args, ...agentArgs(task)];
+  let systemPrompt = remote?.systemPrompt;
   if (record && harness.kind === 'claude-code') {
     const pipe = (file: string) => [{ hooks: [{ type: 'command', command: target.renderPipeHook(t(file)) }] }];
-    writeJsonAtomic(path.join(dir, 'settings.json'), {
-      // A Remote Control session has nobody at the computer to answer the MCP servers dialog.
-      ...projectMcpApproval(harness),
-      ...remote?.settings,
-      hooks: {
-        SessionStart: pipe('session.json'),
-        // Each finished turn: the session becomes a run with its first one.
-        Stop: pipe('stop.json'),
-        // A turn starting, and the agent asking for permission or notifying: the Sessions window shows them.
-        UserPromptSubmit: pipe('prompt.json'),
-        Notification: pipe('notification.json'),
-      },
-    });
+    // The user's --settings and --append-system-prompt join Looper's: Claude Code keeps only the last of each.
+    const user = readUserSettingsSync(userArgs, { target, cwd: task.cwd });
+    userArgs = user.rest;
+    if (systemPrompt) ({ text: systemPrompt, rest: userArgs } = mergeSystemPrompt(systemPrompt, userArgs));
+    writeJsonAtomic(
+      path.join(dir, 'settings.json'),
+      mergeClaudeSettings(
+        {
+          // A Remote Control session has nobody at the computer to answer the MCP servers dialog.
+          ...projectMcpApproval(harness),
+          ...remote?.settings,
+          hooks: {
+            SessionStart: pipe('session.json'),
+            // Each finished turn: the session becomes a run with its first one.
+            Stop: pipe('stop.json'),
+            // A turn starting, and the agent asking for permission or notifying: the Sessions window shows them.
+            UserPromptSubmit: pipe('prompt.json'),
+            Notification: pipe('notification.json'),
+          },
+        },
+        user.settings,
+      ),
+    );
     hooks.claudeSettings = t('settings.json');
   } else if (record && harness.kind === 'codex') {
     writeText(path.join(dir, 'bin', target.notifyHookFile), target.renderNotifyHook(t('stop.json')), 0o755);
     hooks.codexNotify = target.notifyCommand(t('bin', target.notifyHookFile));
     prelude = recordCodexHome(target.kind, target.quote(t('codex-home')));
   }
-  let command = terminalHarnessCommand(task, target, harness, resumeSessionId, hooks);
+  let command = terminalHarnessCommand(task, target, harness, resumeSessionId, hooks, userArgs);
   if (remote && harness.kind === 'claude-code') {
     command += ` --remote-control ${target.quote(remote.name)}`;
-    if (remote.systemPrompt) {
-      writeText(path.join(dir, 'system.txt'), remote.systemPrompt);
+    if (systemPrompt) {
+      writeText(path.join(dir, 'system.txt'), systemPrompt);
       command += ` --append-system-prompt ${target.catFile(t('system.txt'))}`;
     }
     for (const arg of remote.args ?? []) command += ` ${arg}`;

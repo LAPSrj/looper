@@ -758,6 +758,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.continueRun(id, runId, guidance),
   );
   ipc.handle('run:canGuide', (_e, id: string, runId: string) => engine.canGuideRun(id, runId));
+  ipc.handle('run:permission', (_e, id: string, runId: string, requestId: string, allow: boolean) =>
+    engine.answerRunPermission(String(id), String(runId), String(requestId), !!allow),
+  );
   ipc.handle('run:guide', (_e, id: string, runId: string, text: string, attachments?: unknown) =>
     engine.sendGuidance(String(id), String(runId), String(text ?? ''), takeAttachments(attachments)),
   );

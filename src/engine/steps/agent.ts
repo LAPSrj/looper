@@ -101,9 +101,14 @@ export function noAnswerText(ask: AskSettings, who: AskWho = 'user'): string {
   return `No answer from ${who === 'user' ? 'the user' : 'the agent that started you'} within ${minutes(ask.waitMin)}. Don't ask again; ${NO_ANSWER_INSTRUCTION}.`;
 }
 
+/** What the agent is told when nobody allowed or denied its tool call within the task's answer wait. */
+export function permissionNoAnswerText(ask: AskSettings): string {
+  return `Nobody answered this permission request within ${minutes(ask.waitMin)}, so it was denied. Don't try the same call again; find another way to do it, or say in your report what you needed.`;
+}
+
 /** The part on running looper-ask so the shell tool doesn't give up on it first. */
 function askWait(ask: AskSettings, nobody: string): string {
-  return `The command waits up to ${minutes(ask.waitMin)} for the answer and prints it. Run it so your shell tool doesn't time out first (in Claude Code, in the background with run_in_background, then wait for it to finish). If ${nobody} answers in time, it says so, and you ${NO_ANSWER_INSTRUCTION}.`;
+  return `The command waits up to ${minutes(ask.waitMin)} for the answer and prints it. Run it so your shell tool doesn't time out first (in Claude Code, run it in the foreground: Looper gives that call the time it needs). If ${nobody} answers in time, it says so, and you ${NO_ANSWER_INSTRUCTION}.`;
 }
 
 /** The footer's part about asking the user: a last resort, with what makes a good question. */
@@ -304,6 +309,11 @@ export async function startAgent(ctx: RunContext, cb: AgentCallbacks): Promise<A
       ask: a.ask.allowed
         ? { command: AGENT_ASK, waitMs: a.ask.waitMin * 60_000, noAnswer: noAnswerText(a.ask, ctx.delegatedBy ? 'parent' : 'user') }
         : undefined,
+      // Its permission prompts go to the run window and phones too; a delegated agent's stay in its terminal, since its parent agent can't answer them.
+      permissions:
+        harness.kind === 'claude-code' && !headless && !ctx.delegatedBy
+          ? { waitMs: a.ask.waitMin * 60_000, noAnswer: permissionNoAnswerText(a.ask) }
+          : undefined,
       delegate,
       context: limit ? { limit, notice: (tokens, again) => contextNotice(tokens, limit, again) } : undefined,
       continued: ctx.restart !== undefined || ctx.resume !== undefined,

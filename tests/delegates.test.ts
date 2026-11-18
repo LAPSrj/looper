@@ -359,6 +359,8 @@ describe('Scheduler with delegated agents', () => {
               s.question = null;
               return true;
             },
+            permission: null,
+            answerPermission: () => false,
             write: () => undefined,
             resize: () => undefined,
             deliverGuidance: () => void s.delivered++,

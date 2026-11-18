@@ -8,7 +8,7 @@ import type { HostKind } from '../host';
 import type { Logger } from '../log';
 import type { SpawnSpec, Target } from '../target';
 import { joinTarget } from '../target/paths';
-import { DELEGATE_BUSY_VAR } from '../target/stop-hook';
+import { DELEGATE_BUSY_VAR, SOCKET_FILE_VAR } from '../target/stop-hook';
 import { killHostTree } from '../target/kill';
 import { writeText } from '../store/fsutil';
 
@@ -93,6 +93,7 @@ export function baseEnv(ctx: RunContext, prefix = ''): Record<string, string> {
     LOOPER_RUN_DIR: runDirTarget(ctx),
     LOOPER_DONE_FILE: targetFile(ctx, prefix + 'done'),
     LOOPER_STOP_FILE: targetFile(ctx, prefix + 'stop.json'),
+    [SOCKET_FILE_VAR]: targetFile(ctx, prefix + SOCKET_FILE),
     ...(typeof ctx.vars.trigger === 'string' ? { LOOPER_TRIGGER: ctx.vars.trigger } : {}),
     // Watcher-triggered runs: the batch of event lines, one per line, in the run dir.
     ...(typeof ctx.vars.events === 'string' ? { LOOPER_EVENTS_FILE: targetFile(ctx, 'events.jsonl') } : {}),
@@ -103,6 +104,9 @@ export interface Launcher {
   hostPath: string;
   spec: SpawnSpec;
 }
+
+/** The run-dir file (after the step's prefix) where its Claude Code session records its messaging socket. */
+export const SOCKET_FILE = 'session-socket';
 
 /** The done command of the agent step (and of plain check launchers). */
 export const AGENT_DONE = { command: 'looper-done', statuses: ['success', 'warning', 'error'] as const };

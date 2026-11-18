@@ -2,8 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { FindBar, useFindFocus, useFindHighlights, type FindState } from './FindBar';
 import { atEnd } from './newest-first';
 import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './Conversation';
-import { continueAt, continueSkipped, forkPoint, type ChatPermissionRequest, type ChatState } from '@shared/chat';
-import { harnessKindLabel } from '@shared/environments';
+import { continueAt, continueSkipped, forkPoint, type ChatState } from '@shared/chat';
 import { LOGIN_FAILED_RE } from '@shared/logins';
 import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
@@ -15,66 +14,8 @@ import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
 import { onUi } from '../events';
 import { useChatsSettings } from './hooks';
-import { ToolInputView } from './ToolContent';
+import { PermissionCard } from './PermissionCard';
 import { reportError } from '../report-error';
-
-const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
-
-/** What the agent asks to do, in words. */
-function requestText(harnessName: string, p: ChatPermissionRequest): string {
-  const input = (p.input ?? {}) as Record<string, unknown>;
-  const file = str(input.file_path) ?? str(input.notebook_path);
-  switch (p.tool) {
-    case 'Bash':
-    case 'PowerShell':
-      return `${harnessName} wants to run a command.`;
-    case 'Write':
-      return `${harnessName} wants to write ${file ?? 'a file'}.`;
-    case 'Edit':
-    case 'MultiEdit':
-    case 'NotebookEdit':
-      return `${harnessName} wants to change ${file ?? 'a file'}.`;
-    case 'WebFetch':
-      return `${harnessName} wants to fetch ${str(input.url) ?? 'a web page'}.`;
-    default:
-      return `${harnessName} wants to use ${p.tool}.`;
-  }
-}
-
-/** A tool call waiting for the user: what it does, then Allow or Deny. */
-export function PermissionCard({ state, p }: { state: ChatState; p: ChatPermissionRequest }) {
-  const row: MessageRow = {
-    id: `permission-${p.id}`,
-    kind: 'tool',
-    tool: p.tool,
-    input: p.input,
-    text: JSON.stringify(p.input, null, 2),
-    preview: '',
-  };
-  return (
-    <div className="chat-card chat-permission">
-      <div>{requestText(harnessKindLabel(state.harnessKind), p)}</div>
-      <div className="chat-tool-body">
-        <ToolInputView row={row} />
-      </div>
-      <PermissionButtons chatId={state.id} permissionId={p.id} />
-    </div>
-  );
-}
-
-/** Allow and Deny on a chat's permission request: in the chat, and on its dashboard card. */
-export function PermissionButtons({ chatId, permissionId }: { chatId: string; permissionId: string }) {
-  return (
-    <div className="chat-permission-actions">
-      <button className="btn primary" onClick={() => window.looper.chat.answer(chatId, permissionId, true)}>
-        Allow
-      </button>
-      <button className="btn" onClick={() => window.looper.chat.answer(chatId, permissionId, false)}>
-        Deny
-      </button>
-    </div>
-  );
-}
 
 /** Under the usage limit's message: whether Looper continues the chat at the reset, and the button that changes it. */
 function LimitNotice({ state }: { state: ChatState }) {
@@ -357,7 +298,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           {state.limit && state.status === 'ready' && <LimitNotice state={state} />}
           {state.harnessKind === 'claude-code' && state.status !== 'working' && endsOnLogin(state.rows) && <LoginNotice state={state} />}
           {state.permissions.map((p) => (
-            <PermissionCard key={p.id} state={state} p={p} />
+            <PermissionCard key={p.id} harnessKind={state.harnessKind} p={p} answer={(allow) => window.looper.chat.answer(state.id, p.id, allow)} />
           ))}
           {/* Queued messages close the conversation, outlined until the agent reads them; Edit and Cancel until they've gone to it. */}
           {state.queued.map((m) => (
