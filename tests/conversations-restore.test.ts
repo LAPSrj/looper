@@ -105,7 +105,7 @@ describe('conversations across a restart of Looper', { timeout: 30_000 }, () => 
         env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command }] } : env,
       ),
     });
-    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd, agent: { harnessId: 'fake', prompt: 'x' } }));
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
   };
 
   it('keeps a chat with its settings, draft and history, and starts its agent only with the next message', async () => {

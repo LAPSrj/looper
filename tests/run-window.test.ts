@@ -72,6 +72,15 @@ describe('tool groups in a chat', () => {
     expect(toolGroupLabel([tool('a'), thinking('b'), tool('c', true), tool('d'), tool('e'), tool('f')])).toEqual({ text: 'Thinking and 5 tool uses', failed: 1 });
     expect(toolGroupLabel([thinking('a')])).toEqual({ text: 'Thinking', failed: 0 });
     expect(toolGroupLabel([tool('a'), tool('b')])).toEqual({ text: '2 tool uses', failed: 0 });
+    const earlier = msg('r', 'agent', 'x', { superseded: true });
+    expect(toolGroupLabel([thinking('a'), tool('b'), tool('c'), earlier])).toEqual({ text: 'Thinking, 2 tool uses and 1 earlier reply', failed: 0 });
+    expect(toolGroupLabel([earlier, earlier])).toEqual({ text: '2 earlier replies', failed: 0 });
+  });
+
+  it('puts a superseded reply in the group, even with thinking apart', () => {
+    const rows = [msg('p', 'prompt', 'go'), thinking('t'), msg('r1', 'agent', 'old', { superseded: true }), msg('r2', 'agent', 'new')];
+    expect(groupRows(rows).map((i) => (i.kind === 'tools' ? i.rows.map((r) => r.id).join('+') : i.row.id))).toEqual(['p', 't+r1', 'r2']);
+    expect(groupRows(rows, true).map((i) => (i.kind === 'tools' ? i.rows.map((r) => r.id).join('+') : i.row.id))).toEqual(['p', 't', 'r1', 'r2']);
   });
 
   it('puts thinking in the groups unless it shows apart', () => {

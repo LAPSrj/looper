@@ -452,7 +452,7 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     settings.environments = settings.environments.map((e) =>
       e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fake.command, args: [], env: {} }] } : e,
     );
-    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x', model: 'opus' } });
+    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x', model: 'opus' } });
     const transcript = write(join(dir, 'outside.jsonl'), claudeTranscript(dir, [['old question', 'old answer']]));
     const infos: ChatInfo[] = [];
     manager = new ChatManager({
@@ -507,7 +507,7 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
         e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fake.command }] } : e,
       ),
     });
-    const project = engine.saveProject({ name: 'Work', environmentId: 'local', cwd: dir, harnessId: 'fake' });
+    const project = engine.saveProject({ name: 'Work', environmentId: 'local', cwd: dir, harnessId: 'fake', mode: 'headless' });
     const file = write(join(claudeDir, 'projects', claudeProjectFolder(dir), 'outside-2.jsonl'), claudeTranscript(dir, [['plan the release', 'here is the plan']], [{ type: 'ai-title', aiTitle: 'Release plan' }]));
     utimesSync(file, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
 

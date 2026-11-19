@@ -82,6 +82,8 @@ export interface EngineOptions {
   powerOps?: PowerOps;
   /** Hold or release the app's sleep blocker (Electron's powerSaveBlocker); without it Prevent Sleep is unavailable (CLI serve). */
   keepAwake?: (on: boolean) => void;
+  /** Show a chat in a window (`looper chat --open`); without it the chat is only listed (CLI serve). */
+  showChat?: (chatId: string) => void;
   /** Tests replace the terminal sessions' pty. */
   spawnTerminal?: TerminalSessionsDeps['spawn'];
   /** Tests answer for `claude auth status`, instead of asking each environment. */
@@ -316,6 +318,14 @@ export interface Engine {
   runChatCommand(chatId: string, command: string, commandId: string): Promise<CommandOutput>;
   /** Stop under a running "!" command: that one alone ends. */
   stopChatCommand(chatId: string, commandId: string): Promise<void>;
+  /**
+   * A running "!" command's terminal, in a chat or a task run (`ownerId`, the
+   * chat's or the run's id): its output so far (null once it has ended), what
+   * the user types into it, and the size the window shows it at.
+   */
+  commandScreen(ownerId: string, commandId: string): string | null;
+  writeCommand(ownerId: string, commandId: string, data: string): void;
+  resizeCommand(ownerId: string, commandId: string, cols: number, rows: number): void;
   /** Chat menu: the chat's own model, effort or permission mode. */
   configureChat(chatId: string, patch: Partial<ChatSettings>): Promise<void>;
   /** Harness menu: a chat nothing has been said in moves to another harness of the task's environment. Throws with the reason. */
@@ -1430,11 +1440,13 @@ export function createEngine(opts: EngineOptions): Engine {
     const commands = new UserCommands(ctx, {
       label: `run ${runId}`,
       onChange: () => undefined,
-      onOutput: (id, stdout, stderr) => emit({ type: 'chat:command', chatId: runId, id, stdout, stderr }),
+      onOutput: (id, data) => emit({ type: 'chat:command', chatId: runId, id, data }),
     });
     runCommands.set(runId, commands);
     return commands;
   };
+  /** The "!" commands of a chat or a task run, by the chat's or the run's id. */
+  const commandsOf = (ownerId: string): UserCommands | undefined => chats.commands(ownerId) ?? runCommands.get(ownerId);
   /**
    * The guidance waiting for each run's agent as the user sent it (text and
    * attachments), so Edit puts it back in the box as it was; the run folder's
@@ -1595,6 +1607,19 @@ export function createEngine(opts: EngineOptions): Engine {
             scheduler.sendGuidance(cmd.taskId, cmd.runId, cmd.text ?? '');
             break;
         }
+      },
+      onChat: (cmd) => {
+        const base = taskOrProject(folderTaskId(cmd.folder));
+        if (!base) throw new Error(`Looper can't read the settings for ${cmd.folder}.`);
+        const agent = { ...base.agent, ...(cmd.model ? { model: cmd.model } : {}), ...(cmd.effort ? { effort: cmd.effort } : {}) };
+        const chat = chats.start({ ...base, agent }, { kind: 'new' });
+        if (cmd.title?.trim()) chats.rename(chat.id, cmd.title);
+        if (!chats.send(chat.id, cmd.text, [])) throw new Error('The chat ended before it got the message.');
+        const where = `Started a chat in ${base.name}${base.name === base.cwd ? '' : ` (${base.cwd})`}`;
+        if (!cmd.open) return `${chat.id}\n${where}.`;
+        if (!opts.showChat) return `${chat.id}\n${where}. This Looper has no windows (looper serve), so it isn't shown.`;
+        opts.showChat(chat.id);
+        return `${chat.id}\n${where}, and showed it.`;
       },
     },
     log,
@@ -1957,9 +1982,11 @@ export function createEngine(opts: EngineOptions): Engine {
       saveConversations();
       return sessionId;
     },
-    writeTerminalSession: (sessionId, data) => terminalsOf(sessionId).write(sessionId, data),
-    resizeTerminalSession: (sessionId, cols, rows) => terminalsOf(sessionId).resize(sessionId, cols, rows),
-    terminalSessionOutput: (sessionId) => terminalsOf(sessionId).output(sessionId),
+    // An interactive chat's terminal shows as a terminal session's does.
+    writeTerminalSession: (sessionId, data) => (chats.taskOf(sessionId) ? chats.writeTerminal(sessionId, data) : terminalsOf(sessionId).write(sessionId, data)),
+    resizeTerminalSession: (sessionId, cols, rows) =>
+      chats.taskOf(sessionId) ? chats.resizeTerminal(sessionId, cols, rows) : terminalsOf(sessionId).resize(sessionId, cols, rows),
+    terminalSessionOutput: (sessionId) => chats.terminalOutput(sessionId) ?? terminalsOf(sessionId).output(sessionId),
     logins: () => logins.state(),
     logIn(environmentId: string, harnessId: string): string {
       const env = settings.environments.find((e) => e.id === environmentId);
@@ -1991,7 +2018,8 @@ export function createEngine(opts: EngineOptions): Engine {
     usedRemoteConversations: () => remote.usedCount(),
     taskName: (id) => lookup(id)?.name,
     async attachToTerminal(sessionId: string, files: AttachmentInput[]): Promise<string> {
-      const taskId = terminals.taskOf(sessionId);
+      // An interactive chat's terminal, or a terminal session.
+      const taskId = chats.taskOf(sessionId) ?? terminals.taskOf(sessionId);
       const task = taskId ? lookup(taskId) : undefined;
       if (!task) throw new Error('This terminal session is closed.');
       return pastedPaths(
@@ -2094,6 +2122,9 @@ export function createEngine(opts: EngineOptions): Engine {
     stopChat: (chatId) => chats.stop(chatId),
     runChatCommand: (chatId, command, commandId) => chats.runCommand(chatId, command, commandId),
     stopChatCommand: (chatId, commandId) => chats.stopCommand(chatId, commandId),
+    commandScreen: (ownerId, commandId) => commandsOf(ownerId)?.screen(commandId) ?? null,
+    writeCommand: (ownerId, commandId, data) => commandsOf(ownerId)?.write(commandId, data),
+    resizeCommand: (ownerId, commandId, cols, rows) => commandsOf(ownerId)?.resize(commandId, cols, rows),
     configureChat: (chatId, patch) => chats.configure(chatId, patch),
     async setChatHarness(chatId: string, harnessId: string): Promise<void> {
       const taskId = chats.taskOf(chatId);

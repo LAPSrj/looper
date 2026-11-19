@@ -1,4 +1,5 @@
 import { Component, useLayoutEffect, type ReactNode } from 'react';
+import { EmptyState } from './components/EmptyState';
 
 /**
  * Rendered beside a window's lazy app inside the same Suspense boundary: its
@@ -27,12 +28,12 @@ export class WindowBoundary extends Component<{ onFailed: () => void; children: 
   render(): ReactNode {
     if (!this.state.failed) return this.props.children;
     return (
-      <div className="empty window-failed">
+      <EmptyState>
         <p>This window couldn't load.</p>
         <button className="btn" onClick={() => location.reload()}>
           Reload
         </button>
-      </div>
+      </EmptyState>
     );
   }
 }

@@ -6,8 +6,10 @@ import type { TerminalIn, TerminalOut } from './terminal-worker';
 const CLOSE_TIMEOUT_MS = 10_000;
 
 export interface TerminalHostOpts {
-  /** Host path of the clean log (output.txt). */
+  /** Host path of the clean log (output.txt); unused with `onText`. */
   file: string;
+  /** The output as text instead of a clean log (CommandText): each part as its lines become final, the rest by close(). */
+  onText?: (text: string) => void;
   cols: number;
   rows: number;
   /** Also keep a screen model, so screenContains() can answer. */
@@ -25,6 +27,8 @@ export interface TerminalHostOpts {
  * load from; electron-builder's asarUnpack puts a real copy next to it.
  */
 function defaultWorkerFile(): string {
+  // Tests run the engine from its sources, where there's no bundled worker: they build one and name it here.
+  if (process.env.LOOPER_TERMINAL_WORKER) return process.env.LOOPER_TERMINAL_WORKER;
   const file = path.join(__dirname, 'terminal-worker.js');
   if (file.includes('app.asar.unpacked')) return file;
   return file.includes('app.asar') ? file.replace('app.asar', 'app.asar.unpacked') : file;
@@ -68,6 +72,7 @@ export class TerminalHost {
   private shared: SharedWorker | null = null;
   private readonly file: string;
   private readonly onError?: (err: Error) => void;
+  private readonly onText?: (text: string) => void;
   private dead = false;
   private closing = false;
   private closePromise: Promise<void> | null = null;
@@ -76,6 +81,7 @@ export class TerminalHost {
 
   constructor(opts: TerminalHostOpts) {
     this.onError = opts.onError;
+    this.onText = opts.onText;
     this.file = opts.workerFile ?? defaultWorkerFile();
     try {
       this.shared = sharedWorker(this.file);
@@ -84,12 +90,13 @@ export class TerminalHost {
       return;
     }
     this.shared.hosts.set(this.id, this);
-    this.post({ type: 'init', id: this.id, file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen, append: opts.append });
+    this.post({ type: 'init', id: this.id, file: opts.file, cols: opts.cols, rows: opts.rows, screen: opts.screen, append: opts.append, text: !!opts.onText });
   }
 
   /** A message from the worker for this terminal. */
   receive(msg: TerminalOut): void {
     if (msg.type === 'screen') this.screenText = msg.text;
+    else if (msg.type === 'text') this.onText?.(msg.text);
     else if (msg.type === 'closed') this.resolveClosed();
     else if (msg.type === 'failed') this.fail(new Error(msg.message));
   }

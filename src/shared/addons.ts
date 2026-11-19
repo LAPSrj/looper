@@ -499,10 +499,16 @@ const FieldSchema = z
     type: z.literal('field'),
     id,
     label: z.string().min(1),
-    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'file', 'folder']),
+    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'list', 'file', 'folder']),
     value: z.union([z.string(), z.number(), z.boolean()]).optional(),
-    options: z.array(z.object({ value: z.string(), label: z.string() }).strict()).optional(),
+    /** `list`: its rows, each with `description` as the line under it. `select`: the chosen option's `description` shows under it. */
+    options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() }).strict()).optional(),
+    /** `list`: what it shows with no options. */
     placeholder: z.string().optional(),
+    /** `list`: the commands on its selected row, as buttons under it and in the row's menu. */
+    buttons: z.array(ButtonSchema).optional(),
+    /** `list`: it only shows its rows (the accounts an import changes): none can be chosen, and it has no `buttons`. */
+    readOnly: z.boolean().optional(),
     /** A unit shown inside the input, at its right ("s", "min"). */
     suffix: z.string().min(1).optional(),
     /** `file` (not `folder`): the kinds of file Browse… offers, such as `{ label: 'CSV files', extensions: ['csv'] }`. */
@@ -527,7 +533,21 @@ export type AddonNode =
   | { type: 'section'; title: string; body: AddonNode[] }
   /** Looper's tab control: one tab's body shows at a time, and the selected tab outlasts redraws. */
   | { type: 'tabs'; id: string; items: { id: string; title: string; body: AddonNode[] }[] }
-  | { type: 'footer'; primary: AddonButton; apply?: AddonButton };
+  | { type: 'footer'; primary: AddonButton; apply?: AddonButton }
+  | { type: 'footer'; wizard: AddonWizard };
+
+/**
+ * A wizard page's buttons, Back | Next | Cancel. `back` and `next` are the ids
+ * their clicks send; with no `back` (the first page) Back is off. The page that
+ * does the task has `commit` in Next's place, named by its verb (Import,
+ * Create), or Finish when the task changes a setting.
+ */
+export type AddonWizard = { back?: string } & ({ next: string; commit?: never } | { commit: AddonButton; next?: never });
+
+const WizardSchema = z
+  .object({ back: id.optional(), next: id.optional(), commit: ButtonSchema.optional() })
+  .strict()
+  .refine((w) => !w.next !== !w.commit, { error: 'a wizard has "next" or "commit", not both' }) as z.ZodType<AddonWizard>;
 
 export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
   z.discriminatedUnion('type', [
@@ -551,7 +571,10 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
           .refine((items) => new Set(items.map((t) => t.id)).size === items.length, 'tab ids must differ'),
       })
       .strict(),
-    z.object({ type: z.literal('footer'), primary: ButtonSchema, apply: ButtonSchema.optional() }).strict(),
+    z
+      .object({ type: z.literal('footer'), primary: ButtonSchema.optional(), apply: ButtonSchema.optional(), wizard: WizardSchema.optional() })
+      .strict()
+      .refine((f) => (f.wizard ? !f.primary && !f.apply : !!f.primary), { error: 'a footer has "primary" (and "apply") or "wizard"' }),
   ]),
 ) as z.ZodType<AddonNode>;
 
@@ -560,6 +583,7 @@ export const ADDON_ICONS = [
   'add',
   'edit',
   'delete',
+  'recycleBin',
   'copy',
   'refresh',
   'open',
@@ -586,6 +610,8 @@ export function addonIconKey(a: Pick<AddonInfo, 'icons'>, name: string | undefin
 export const AddonScreenSchema = z
   .object({
     title: z.string().optional(),
+    /** The page's main instruction, drawn at its top: what to do there, or the question it asks. */
+    instruction: z.string().min(1).optional(),
     /** How the addon's commands are while the screen shows (placed in `screen`, or anywhere else it shows). */
     commands: CommandStatesSchema.optional(),
     body: z.array(AddonNodeSchema),
@@ -624,7 +650,7 @@ export const AddonPaneContentSchema = z
     commands: CommandStatesSchema.optional(),
     /** Shown instead of the list when it has no items. */
     empty: z.string().optional(),
-    /** A search box above the list; Looper filters the items as the user types. */
+    /** The items can be searched: the window's Search box (one for the addon's panes) filters them as the user types. */
     search: z.object({ placeholder: z.string().min(1).optional() }).strict().optional(),
   })
   .strict();

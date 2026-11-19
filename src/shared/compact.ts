@@ -47,10 +47,10 @@ const listInput = (s: string, chars = LIST_INPUT_CHARS) => s.replace(/\s+/g, ' '
  * out: the user's messages, the agent's (not Looper's notes or the
  * classifier's), files the agent sent, each subagent's final report, and
  * every other tool call with its input and (up to RESULT_MAX_CHARS) result.
- * Thinking, errors and raw records go.
+ * Thinking, errors, raw records and replies a later one superseded go.
  */
 export function compactRow(r: MessageRow): MessageRow | null {
-  if (r.source === 'classifier' || r.note) return null;
+  if (r.source === 'classifier' || r.note || r.superseded) return null;
   const base = { id: r.id, ...(r.ts ? { ts: r.ts } : {}), ...(r.layer !== undefined ? { layer: r.layer } : {}) };
   if (r.kind === 'prompt' || r.kind === 'guidance') {
     return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.attachments?.length ? { attachments: r.attachments } : {}) };

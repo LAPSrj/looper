@@ -86,42 +86,63 @@ export function useKeepPlace(chat: string, where: () => Pick<Place, 'item' | 'of
 const OWN_CHANGE_MS = 500;
 
 /**
- * Keeps a reader who is at the end there while anything changes size: a reply growing as it streams, an image or
- * a highlighted block drawn late, the keyboard or the message box taking room. What the reader opens themselves
- * stays where they opened it. `stays` is the conversation's own at-the-end flag, which its scroll handler keeps.
+ * Keeps a reader who is at the end of a scroller there: as new content comes (`endKey` changes), and while anything
+ * changes size: a reply growing as it streams, an image or a highlighted block drawn late, the keyboard or the message
+ * box taking room. What the reader opens themselves stays where they opened it. `stays` is the scroller's own
+ * at-the-end flag, which its scroll handler keeps (atEnd). `on`: false while it follows nothing (a table with its Auto
+ * Scroll off). The scroller can come and go, as an output shown and hidden does.
  */
-export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, stays: RefObject<boolean>): void {
-  useEffect(() => {
+export function useStayAtEnd(scrollRef: RefObject<HTMLElement | null>, stays: RefObject<boolean>, endKey: unknown, on = true): void {
+  useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    let input = -Infinity;
-    const own = () => {
-      input = performance.now();
-    };
-    const ro = new ResizeObserver(() => {
-      if (performance.now() - input < OWN_CHANGE_MS) stays.current = atEnd(el);
-      else if (stays.current) el.scrollTop = el.scrollHeight;
-    });
-    // The border box: on iOS the message box sets the scroller's padding from a ResizeObserver of its own, which
-    // keeps the reader at the end itself, and a content box seen here would be a loop the browser reports as an error.
-    ro.observe(el, { box: 'border-box' });
-    for (const child of el.children) ro.observe(child);
-    const mo = new MutationObserver((records) => {
-      for (const r of records) {
-        for (const n of r.addedNodes) if (n instanceof Element) ro.observe(n);
-        for (const n of r.removedNodes) if (n instanceof Element) ro.unobserve(n);
-      }
-    });
-    mo.observe(el, { childList: true });
-    el.addEventListener('pointerdown', own);
-    el.addEventListener('keydown', own);
-    return () => {
-      ro.disconnect();
-      mo.disconnect();
-      el.removeEventListener('pointerdown', own);
-      el.removeEventListener('keydown', own);
-    };
-  }, [scrollRef, stays]);
+    if (on && el && stays.current) el.scrollTop = el.scrollHeight;
+  }, [scrollRef, stays, endKey, on]);
+  // The scroller there now, checked after each render.
+  const watched = useRef<{ el: HTMLElement; stop: () => void } | null>(null);
+  useLayoutEffect(() => {
+    const el = on ? scrollRef.current : null;
+    if (watched.current?.el === el) return;
+    watched.current?.stop();
+    watched.current = el ? { el, stop: followSize(el, stays) } : null;
+  });
+  useLayoutEffect(
+    () => () => {
+      watched.current?.stop();
+      watched.current = null;
+    },
+    [],
+  );
+}
+
+/** Scrolls `el` to its end while `stays` as anything in it changes size; returns what stops it. */
+function followSize(el: HTMLElement, stays: RefObject<boolean>): () => void {
+  let input = -Infinity;
+  const own = () => {
+    input = performance.now();
+  };
+  const ro = new ResizeObserver(() => {
+    if (performance.now() - input < OWN_CHANGE_MS) stays.current = atEnd(el);
+    else if (stays.current) el.scrollTop = el.scrollHeight;
+  });
+  // The border box: on iOS the message box sets the scroller's padding from a ResizeObserver of its own, which
+  // keeps the reader at the end itself, and a content box seen here would be a loop the browser reports as an error.
+  ro.observe(el, { box: 'border-box' });
+  for (const child of el.children) ro.observe(child);
+  const mo = new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of r.addedNodes) if (n instanceof Element) ro.observe(n);
+      for (const n of r.removedNodes) if (n instanceof Element) ro.unobserve(n);
+    }
+  });
+  mo.observe(el, { childList: true });
+  el.addEventListener('pointerdown', own);
+  el.addEventListener('keydown', own);
+  return () => {
+    ro.disconnect();
+    mo.disconnect();
+    el.removeEventListener('pointerdown', own);
+    el.removeEventListener('keydown', own);
+  };
 }
 
 /**

@@ -15,6 +15,11 @@ import { SettingsSchema, TaskSchema } from '../src/shared/types';
 const row = (r: Partial<MessageRow> & Pick<MessageRow, 'kind' | 'text'>): MessageRow => ({ id: 'x', preview: r.text.slice(0, 40), ...r });
 
 describe('compactRows', () => {
+  it('leaves out a reply a later one superseded', () => {
+    const rows = compactRows([row({ kind: 'agent', text: 'found nothing', superseded: true }), row({ kind: 'agent', text: "didn't find anything" })]);
+    expect(rows.map((r) => r.text)).toEqual(["didn't find anything"]);
+  });
+
   it('keeps the messages, sent files, subagent reports and tool calls, and leaves out thinking, errors and notes', () => {
     const rows = compactRows([
       row({ kind: 'prompt', text: 'fix the build', attachments: [{ name: 'log.txt', path: '/a/log.txt', image: false }] }),
@@ -343,7 +348,7 @@ describe.skipIf(process.platform === 'win32')('Compact into New Chat', { timeout
     settings.environments = settings.environments.map((e) =>
       e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, log), args: [], env: {} }] } : e,
     );
-    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } });
+    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } });
     const runDir = (taskId: string, runId: string) => join(dataDir, 'runs', taskId, runId);
     manager = new ChatManager({
       dataDir,

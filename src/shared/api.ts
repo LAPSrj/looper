@@ -256,6 +256,17 @@ export interface LooperApi {
     runCommand(id: string, command: string, commandId: string): Promise<CommandOutput>;
     /** Stop under a running "!" command: that one alone ends. */
     stopCommand(id: string, commandId: string): Promise<void>;
+    /**
+     * A running "!" command's terminal, a chat's or a task run's (`ownerId`, the
+     * chat's or the run's id): its output so far, null once it has ended (then
+     * `chat:command` events bring the rest), what the user types into it, and
+     * the size it's shown at.
+     */
+    commandScreen(ownerId: string, commandId: string): Promise<string | null>;
+    writeCommand(ownerId: string, commandId: string, data: string): void;
+    resizeCommand(ownerId: string, commandId: string, cols: number, rows: number): void;
+    /** A running "!" command's terminal's right-click menu (Copy, Paste), whose choice comes back as a terminal-copy or terminal-paste ui event. */
+    showCommandMenu(hasSelection: boolean): void;
     /** The chat's model, effort or permission mode; rejects with the reason. */
     configure(id: string, patch: Partial<ChatSettings>): Promise<void>;
     /** The chat's harness, until its first message; rejects with the reason. */
@@ -469,8 +480,8 @@ export interface LooperApi {
   openModelUpdate(envId?: string, harnessId?: string): Promise<void>;
   /** Query a harness's CLI/API for its current model catalog. */
   discoverModels(envId: string, harnessId: string): Promise<DiscoveredModel[]>;
-  /** Open the template editor (no id = new template). */
-  openTemplateEditor(templateId?: string): Promise<void>;
+  /** Open the template editor in its own window (isNew: delete the template when closed unsaved). */
+  openTemplateEditor(templateId: string, isNew?: boolean): Promise<void>;
   /** Open the template picker, then the task editor prefilled with the chosen template. */
   openTemplatePicker(): Promise<void>;
   /** Open the task editor prefilled from a template. */
@@ -544,8 +555,8 @@ export interface LooperApi {
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   /** `selectText`: as in chat.showContextMenu. */
   showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }): void;
-  /** Filter window only: apply this filter to the parent conversation window and close. */
-  applyMessagesFilter(value: string): void;
+  /** Filter window only: apply this filter to the window that opened it and close. */
+  applyFilter(value: string): void;
   /** Export-options window only: confirm the Save-as-Markdown choice and close. */
   applyMarkdownExport(opts: { includeThinking: boolean; includeTools: boolean; plain: boolean }): void;
   /** Run-options window only: start the manual run with these steps (true = run the step) and close. */
@@ -558,6 +569,8 @@ export interface LooperApi {
     render(id: string, view: string, params: Record<string, unknown>): Promise<AddonScreen>;
     /** Log a screen that took `ms` from being asked for to being drawn. */
     reportSlowDraw(id: string, view: string, ms: number): void;
+    /** Log a window screen's page (its tab `tab`, '' without tabs) that scrolls: `height` is the page height it needs. */
+    reportOverflow(id: string, view: string, tab: string, height: number): void;
     /**
      * Send an event and carry out the actions it answers with (an error the
      * addon reports shows in a dialog). `confirm` is asked first. Returns a
@@ -611,7 +624,7 @@ export type UiEvent =
   /** A notification was clicked, or another window shows a task in the main window: select the task and show the right view (`runId` '' for none). */
   | { type: 'open-task'; taskId: string; runId: string; view: 'status' | 'runs' }
   /** The filter window applied a filter (empty = cleared). */
-  | { type: 'messages-filter'; value: string }
+  | { type: 'filter'; value: string }
   /** Terminal window right-click menu: copy the selection, paste the clipboard. */
   | { type: 'terminal-copy' | 'terminal-paste' }
   /** Terminal window: Attach Files… copied the files; paste their paths. */

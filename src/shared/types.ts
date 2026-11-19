@@ -630,7 +630,7 @@ export const ProjectSchema = z
   .object({
     ...SessionPlaceShape,
     cwd: z.string().min(1),
-    /** Its tasks' session type; sessions are always interactive. */
+    /** Its tasks' and chats' session type; terminal sessions are always interactive. */
     mode: z.enum(['interactive', 'headless']).default('interactive'),
     /** Appended to the harness command line of its tasks' agents and its sessions; a task's own follow them. */
     extraArgs: z.array(z.string()).default([]),
@@ -1090,6 +1090,19 @@ export interface InboxCommand {
   text?: string;
 }
 
+/** `looper chat`: a new chat in a folder (its project's, when one has it), with its first message. */
+export interface InboxChat {
+  op: 'chat';
+  /** The folder as the app's host sees it. */
+  folder: string;
+  text: string;
+  title?: string;
+  model?: string;
+  effort?: string;
+  /** Show the chat on the desktop too. */
+  open?: boolean;
+}
+
 // ---------- Engine events (also the IPC contract) ----------
 
 /** What a `notify` event is about; it decides where a click on the toast lands. */
@@ -1099,8 +1112,8 @@ export type EngineEvent =
   | { type: 'runtime'; runtime: TaskRuntime }
   | { type: 'record'; record: RunRecord }
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
-  /** A chat's running "!" command: its output so far (the newest part once it's long), sent as it comes in batches. */
-  | { type: 'chat:command'; chatId: string; id: string; stdout: string; stderr: string }
+  /** A running "!" command of a chat or a task run (`chatId`, the run's id for a run): what its terminal printed since the last batch. */
+  | { type: 'chat:command'; chatId: string; id: string; data: string }
   /** problem: the run ended with an error or warning; a click opens its run window on the report. */
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }

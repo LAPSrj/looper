@@ -48,7 +48,7 @@ export const HOST_COMMANDS = [
   'run-folder',
   'run-copy-folder',
   'run-work-folder',
-  'messages-filter',
+  'filter',
 ] as const;
 export type HostCommand = (typeof HOST_COMMANDS)[number];
 
@@ -73,6 +73,9 @@ export interface ChatsContext {
   /** The Activity pane or sheet shows. */
   activityOpen: boolean;
   toggleActivity(): void;
+  /** An interactive chat shows its terminal instead of its conversation. */
+  terminal?: boolean;
+  showTerminal?(on: boolean): void;
   /** Step through the list (F8, F9). */
   step(dir: 1 | -1, waiting: boolean): void;
   focusPane(dir: 1 | -1): void;
@@ -129,7 +132,15 @@ export interface AddonContext {
   /** The pane item picked, or the row right-clicked; null while none is. */
   item?: { pane: string; id: string; state?: AddonCommandStates } | null;
   /** One of its screens shows: which, its state, and how a command reaches it (with the screen's field values). */
-  screen?: { view: string; state?: AddonCommandStates; run(command: string, confirm?: string): void };
+  screen?: {
+    view: string;
+    state?: AddonCommandStates;
+    run(command: string, confirm?: string): void;
+    /** It shows passwords or other secrets: what they are, whether they show, and Show's toggle. */
+    secrets?: { label: string; shown: boolean; toggle(): void };
+  };
+  /** One of its panes can be searched: what the window's Search box holds, and Filter's way to it. */
+  search?: { query: string; open(): void };
 }
 
 /** The Engine Log window's state. */

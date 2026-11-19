@@ -14,7 +14,7 @@ import {
 } from '@shared/card-grid';
 import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
-import type { ChatState } from '@shared/chat';
+import { chatInteractive, type ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SessionActivity, SessionSummary, SlashCommand, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
@@ -30,6 +30,7 @@ import { useCommandMenu, useCommandState } from './components/useCommands';
 import { ChatView } from './components/ChatView';
 import { PermissionButtons } from './components/PermissionCard';
 import { useDragResize } from './components/hooks';
+import { atEnd, useStayAtEnd } from './components/newest-first';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
 import { Composer } from './components/Composer';
@@ -44,6 +45,7 @@ import { useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { NO_CHATS, SessionIcon, SessionList, SessionStatus, sessionKind } from './components/SessionList';
+import { EmptyState } from './components/EmptyState';
 import { runningText, subagentTabs } from './components/subagents';
 import { SubagentTabs } from './components/SubagentIcon';
 import { contextFraction, factLine, limitFacts, sessionFacts, sessionLimits, usageLabel, type Fact } from './components/usage';
@@ -101,15 +103,20 @@ export function SessionsStatusBar({ summary, chat, limits, children }: { summary
   );
 }
 
-/** A card's messages: those since the user's last one, scrolled to the newest, on a phone as on the desktop. */
+/** A card's messages: those since the user's last one, following the newest unless scrolled up, on a phone as on the desktop. */
 function CardMessages({ s }: { s: SessionSummary }) {
   const ref = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true);
   const key = s.recent?.join('\n') ?? s.latest ?? '';
-  useLayoutEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [key]);
+  useStayAtEnd(ref, atBottom, key);
   return (
-    <div className="overview-messages" ref={ref}>
+    <div
+      className="overview-messages"
+      ref={ref}
+      onScroll={(e) => {
+        atBottom.current = atEnd(e.currentTarget);
+      }}
+    >
       {s.recent?.length ? (
         s.recent.map((m, i) => (
           <div key={i} className="overview-msg">
@@ -243,7 +250,7 @@ export function PhoneOverview({
   // Only the cards near the screen show their conversation, as on the desktop's dashboard.
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const [inView, track] = useCardsInView(root);
-  if (sessions.length === 0) return <div className="empty">{NO_CHATS}</div>;
+  if (sessions.length === 0) return <EmptyState>{NO_CHATS}</EmptyState>;
   const big = shown.bigCards;
   const toggleBig = (id: string) => {
     const others = big.filter((x) => x !== id && sessions.some((c) => c.id === x));
@@ -604,7 +611,7 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   // A layout effect, so the window takes the chats' and runs' events before the cards read them.
   useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
-  if (sessions.length === 0) return <div className="empty">{NO_CHATS}</div>;
+  if (sessions.length === 0) return <EmptyState>{NO_CHATS}</EmptyState>;
   const big = s.shown.bigCards;
   const cards = dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst);
   const widths = columnWidths(grid.sizes.columns, box.width);
@@ -697,12 +704,14 @@ function ConversationTabs({ s }: { s: SessionsWindow }) {
       workflows={s.workflows}
       openRun={s.workflow?.run.runId ?? null}
       onWorkflow={s.showWorkflow}
+      terminal={s.chat && chatInteractive(s.chat) ? { open: s.terminal, onOpen: () => s.showTerminal(true) } : undefined}
     />
   );
 }
 
-/** The conversation's tab strip, once there's more than the conversation to show. */
-const hasTabs = (s: SessionsWindow): boolean => subagentTabs(s.subagents, s.follow).length + s.workflows.length > 0;
+/** The conversation's tab strip, once there's more than the conversation to show: an interactive chat's terminal, subagents or workflows. */
+const hasTabs = (s: SessionsWindow): boolean =>
+  (!!s.chat && chatInteractive(s.chat)) || subagentTabs(s.subagents, s.follow).length + s.workflows.length > 0;
 
 /** The Chats window's toolbar; a single chat's window has only its conversation's buttons. */
 function SessionsToolbar({ c, single }: { c: CommandContext; single: boolean }) {
@@ -784,6 +793,7 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
       setUsage(false);
     } else if (workflow) s.showWorkflow(workflow.agent ? workflow.run.runId : null);
     else if (s.follow) s.setFollow(null);
+    else if (s.terminal) s.showTerminal(false);
     else s.setSelected(null);
   };
   const title = workflow
@@ -799,7 +809,7 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
   const processes = (s.activity?.background ?? []).filter((b) => b.kind === 'command' && b.status === 'running').length;
   const subtitle =
     summary && !workflow && !s.follow ? (runningText(s.subagents.map((a) => a.status), s.workflows.map((r) => tabStatus(r.status)), processes) ?? undefined) : undefined;
-  const pageBack = summary && (!closesWindow || sheet || workflow || s.follow) ? back : undefined;
+  const pageBack = summary && (!closesWindow || sheet || workflow || s.follow || s.terminal) ? back : undefined;
   const bar = (
     <NavBar
       {...(split
@@ -896,7 +906,7 @@ interface PhoneChats {
 function SessionCenter({ s }: { s: SessionsWindow }) {
   const { summary, follow, followed, chat, workflow } = s;
   // A conversation on its way (a new or compacted chat) isn't listed for a moment: the dashboard would flash up meanwhile.
-  if (!summary) return s.single || s.selected ? <div className="empty">Loading…</div> : <ChatsDashboard s={s} />;
+  if (!summary) return s.single || s.selected ? <EmptyState>Loading…</EmptyState> : <ChatsDashboard s={s} />;
   if (workflow) {
     const { run, agent } = workflow;
     return (
@@ -917,7 +927,8 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
     }
     return <TranscriptView taskId={summary.taskId} runId={summary.id} rows={s.subRows} waitingText="Waiting for the subagent's first message…" />;
   }
-  if (summary.kind === 'terminal') {
+  // A terminal session, or an interactive chat's Terminal tab.
+  if (summary.kind === 'terminal' || (s.terminal && summary.kind === 'chat')) {
     return (
       <Suspense fallback={null}>
         <TerminalView key={summary.id} id={summary.id} />
@@ -925,7 +936,7 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
     );
   }
   if (summary.kind === 'run') return <RunConversation key={summary.id} s={summary} activity={s.activity} />;
-  return chat ? <ChatView key={chat.id} state={chat} /> : <div className="empty">Loading…</div>;
+  return chat ? <ChatView key={chat.id} state={chat} /> : <EmptyState>Loading…</EmptyState>;
 }
 
 /**
@@ -957,7 +968,7 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
       open={single || !!summary || starting}
       onClose={phone?.back}
       detailTitle={phone?.title}
-      empty="No Chat Selected"
+      empty="Select a chat"
       list={
         !single &&
         (phone ? phone.list : (

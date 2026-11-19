@@ -4,6 +4,7 @@ import { baseName } from '@shared/paths';
 import type { Project } from '@shared/types';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
+import { EmptyState } from './EmptyState';
 import { GroupHeader } from './GroupHeader';
 import { useGroupedTree, type TreeRow } from './GroupedTree';
 import { SessionRow } from './SessionList';
@@ -84,9 +85,9 @@ export function HistoryList({
         </div>
       ))}
       {groups.length === 0 && (
-        <div className="empty session-empty" role="treeitem" aria-disabled="true" aria-selected={false}>
+        <EmptyState at="row" list="tree">
           {emptyText}
-        </div>
+        </EmptyState>
       )}
       {more && (
         <div className="history-more">

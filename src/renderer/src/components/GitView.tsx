@@ -14,6 +14,7 @@ import {
 import { baseName, dirName } from '@shared/paths';
 import { fmtDateTime } from '../format';
 import { RowList, type PhoneRowModel } from './DataTable';
+import { EmptyState } from './EmptyState';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { Group } from './phone/PhoneList';
 import { DiffView } from './ToolContent';
@@ -54,10 +55,9 @@ const filePhoneRow = ({ path, origPath, status }: FileLine): PhoneRowModel => ({
 });
 
 /** A file's diff, or why there's none to show. */
-function DiffPane({ title, subtitle, diff, loading }: { title?: string; subtitle?: string; diff: GitFileDiff | null; loading: boolean }) {
-  if (!title) return <div className="empty">Select a file to see its changes.</div>;
+function DiffPane({ title, subtitle, diff }: { title: string; subtitle?: string; diff: GitFileDiff | null }) {
   let body;
-  if (!diff) body = <div className="muted git-diff-note">{loading ? 'Loading…' : ''}</div>;
+  if (!diff) body = <div className="muted git-diff-note">Loading…</div>;
   else if (diff.binary) body = <div className="muted git-diff-note">This is a binary file, so there are no lines to compare.</div>;
   else if (diff.hunks.length === 0) body = <div className="muted git-diff-note">No changed lines.</div>;
   else body = <DiffView hunks={diff.hunks} file={title} />;
@@ -100,7 +100,7 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
     return (
       <>
         {note}
-        <div className="empty">There are no uncommitted changes.</div>
+        <EmptyState>There are no uncommitted changes.</EmptyState>
       </>
     );
   }
@@ -132,7 +132,7 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
           phoneRow={(c) => filePhoneRow(line(c))}
         />
       }
-      detail={<DiffPane title={current?.path} subtitle={current ? changeText(current) : undefined} diff={diff && diff.key === key ? diff.diff : null} loading={!!current} />}
+      detail={current && <DiffPane title={current.path} subtitle={changeText(current)} diff={diff && diff.key === key ? diff.diff : null} />}
     />
   );
 }
@@ -233,8 +233,8 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffKey, projectId]);
 
-  if (loaded && commits.length === 0) return <div className="empty">The branch has no commits yet.</div>;
-  const pending = <div className="empty">{current ? 'Loading…' : ''}</div>;
+  if (loaded && commits.length === 0) return <EmptyState>The branch has no commits yet.</EmptyState>;
+  const pending = <EmptyState>{current ? 'Loading…' : ''}</EmptyState>;
   return (
     <ListDetail
       panes={{ axis: narrow ? 'y' : 'x', initial: narrow ? 150 : 360 }}
@@ -311,15 +311,16 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
             )
           }
           detail={
-            detail ? (
-              <DiffPane
-                title={file?.path}
-                subtitle={file ? (file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]) : undefined}
-                diff={diff && diff.key === diffKey ? diff.diff : null}
-                loading={!!file}
-              />
-            ) : (
+            !detail ? (
               pending
+            ) : (
+              file && (
+                <DiffPane
+                  title={file.path}
+                  subtitle={file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]}
+                  diff={diff && diff.key === diffKey ? diff.diff : null}
+                />
+              )
             )
           }
         />
@@ -408,11 +409,11 @@ export function GitView({ projectId, watch, narrow: narrowPane = false }: { proj
   const [detailOpen, setDetailOpen] = useState(false);
   const { status, refreshKey } = watch;
   const className = `git-view${narrow ? ' narrow' : ''}`;
-  if (!status) return <div className={className}><div className="empty">Loading…</div></div>;
+  if (!status) return <div className={className}><EmptyState>Loading…</EmptyState></div>;
   if (!status.repo) {
     return (
       <div className={className}>
-        <div className="empty">{status.error ?? "The project's folder isn't in a git repository."}</div>
+        <EmptyState>{status.error ?? "The project's folder isn't in a git repository."}</EmptyState>
       </div>
     );
   }

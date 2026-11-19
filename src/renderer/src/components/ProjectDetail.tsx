@@ -12,7 +12,7 @@ import { DataTable, type DataCol } from './DataTable';
 import { GitView, useGitStatus } from './GitView';
 import { DetailStatus, DetailView } from './DetailView';
 import { useDialogKeys, useGitRepo } from './hooks';
-import { useSessionsState } from './phone/useSessionsState';
+import { useSessionsState } from '../live-state';
 import { RunLog } from './RunLog';
 import { useRunRecords } from '../useRunRecords';
 

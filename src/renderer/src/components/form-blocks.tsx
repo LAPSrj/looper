@@ -2,8 +2,10 @@ import type { ReactNode } from 'react';
 import type { Harness, Task, TaskFolder } from '@shared/types';
 import { folderTree } from '@shared/folders';
 import { lineToEnv, tokenize } from '@shared/cmdline';
-import { CheckboxField, Field, FormGroup, InputRow, NumberField, StepFields, TextArea, TextInput } from './ui';
+import { CheckboxField, Field, FormGroup, InputRow, NumberField, onIos, StepFields, TextArea, TextInput } from './ui';
+import { Icon } from './Icon';
 import { WindowActions } from './WindowActions';
+import { isPhone } from '../web/page-nav';
 import { rid } from '../rid';
 
 /** A new environment's harness, and the one Add Harness starts from. */
@@ -45,23 +47,53 @@ export function PathField({
   autoFocus?: boolean;
   children?: ReactNode;
 }) {
-  return (
-    <Field label={label}>
-      <InputRow>
-        <TextInput
-          code={code}
-          placeholder={placeholder}
-          autoFocus={autoFocus}
-          disabled={disabled}
-          readOnly={!onChange}
-          value={value}
-          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-        />
-        <button className="btn" disabled={disabled} onClick={onBrowse}>
-          Browse…
+  // A phone picks the file instead of typing it, and shows only its name (a file from the phone has a path in Looper's uploads).
+  const name = value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+  // An iPhone picks a path as Settings picks a value: the whole row opens the picker, the name at its end (ios.md: Lists).
+  if (onIos) {
+    return (
+      <>
+        <button type="button" className="field path-row" disabled={disabled} autoFocus={autoFocus} onClick={onBrowse}>
+          <span className="field-label">{label}</span>
+          <span className={`path-row-value${value ? '' : ' empty'}${code ? ' mono' : ''}`}>{name || placeholder || 'Not Set'}</span>
         </button>
         {children}
-      </InputRow>
+      </>
+    );
+  }
+  const input = isPhone ? (
+    <TextInput code={code} placeholder={placeholder} disabled={disabled} readOnly value={name} onClick={onBrowse} />
+  ) : (
+    <TextInput
+      code={code}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      disabled={disabled}
+      readOnly={!onChange}
+      value={value}
+      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+    />
+  );
+  return (
+    <Field label={label}>
+      {isPhone ? (
+        // Android: Material's text field with a trailing icon button.
+        <InputRow className="path-input">
+          {input}
+          <button type="button" className="path-browse" aria-label="Browse" disabled={disabled} onClick={onBrowse}>
+            <Icon name="openFolder" size={24} box={16} />
+          </button>
+          {children}
+        </InputRow>
+      ) : (
+        <InputRow>
+          {input}
+          <button className="btn" disabled={disabled} onClick={onBrowse}>
+            Browse…
+          </button>
+          {children}
+        </InputRow>
+      )}
     </Field>
   );
 }

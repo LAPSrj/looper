@@ -3,6 +3,7 @@ import type { Task } from '@shared/types';
 import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
 import { rid } from './rid';
+import { blankDraft } from './components/blank-draft';
 import { subscribe } from './events';
 import { keptSelection } from './components/selection';
 import { reportError } from './report-error';
@@ -27,6 +28,18 @@ export function TemplatesApp() {
   const tpl = templates.find((t) => t.id === selected);
 
   // Each command takes the template it acts on (the selected one for a button, the clicked row for the menu).
+  // The template exists from the click, so its editor can open on it; closing the editor without Create deletes it.
+  const add = async () => {
+    try {
+      const { settings } = await window.looper.info();
+      const created = await window.looper.templates.save({ ...blankDraft(settings.defaultEnvironmentId), id: `tpl-${rid()}`, name: 'New template' });
+      setSelected(created.id);
+      void window.looper.openTemplateEditor(created.id, true);
+    } catch (e) {
+      reportError(e);
+    }
+  };
+
   const duplicate = async (from: Task | undefined = tpl) => {
     if (!from) return;
     const copy = {
@@ -91,7 +104,7 @@ export function TemplatesApp() {
           />
           <ListActions
             item="Template"
-            onAdd={() => void window.looper.openTemplateEditor()}
+            onAdd={() => void add()}
             onEdit={() => tpl && void window.looper.openTemplateEditor(tpl.id)}
             editDisabled={!tpl}
             onDuplicate={() => void duplicate()}

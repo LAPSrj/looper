@@ -23,7 +23,8 @@ describe('V3 live check fixes', () => {
   });
 
   it('the empty Chats list holds a treeitem (a tree must own one)', () => {
-    expect(read('components/SessionList.tsx')).toMatch(/session-empty" role="treeitem" aria-disabled="true"/);
+    expect(read('components/SessionList.tsx')).toContain('<EmptyState at="row" list="tree">');
+    expect(read('components/EmptyState.tsx')).toMatch(/list === 'tree' \? 'treeitem'[\s\S]{0,300}aria-disabled=\{at === 'row' \? true/);
   });
 
   it('the phone segmented control has one Tab stop and arrow keys, like Tabs', () => {

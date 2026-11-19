@@ -135,6 +135,12 @@ export function slashCommandText(text: string): string | null {
 /** A "completed" task notification of a subagent that still waits on work it started itself. */
 const WAITING_ON_OWN_WORK = /waiting on its own background work|background work of its own still running/;
 
+/** How a blocking Stop hook's reason reaches the agent: a meta user message (claude 2.1.x). */
+const STOP_HOOK_FEEDBACK = 'Stop hook feedback:';
+
+/** Rows of what the agent was given: a turn that starts with one of them isn't the one before going on. */
+const INPUT_KINDS = new Set<MessageRow['kind']>(['prompt', 'guidance', 'events', 'delegate', 'task']);
+
 /** A message's text: the string itself, or its text blocks joined by newlines. */
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -370,6 +376,12 @@ export class TranscriptAccumulator {
   private pollIds = new Set<string>();
   /** The id of the record addLine is folding: its rows get it. */
   private recordUuid: string | undefined;
+  /**
+   * The newest agent message's reply rows, by the API message's id, while no tool call of that message and no
+   * input came after them. A message without a tool call ended its turn, so a Stop hook that makes the agent go
+   * on, or a reply that comes before any new input, supersedes these rows.
+   */
+  private turnEnd: { messageId: string; rows: MessageRow[] } | undefined;
   /** Claude's own name for the session (its ai-title records), the latest. */
   aiTitle = '';
   /** The name the user gave it in Claude Code (/rename, or a host's rename_session), the latest; '' takes it away. */
@@ -407,6 +419,7 @@ export class TranscriptAccumulator {
     this.pollIds.clear();
     this.byBackgroundId.clear();
     this.images.clear();
+    this.turnEnd = undefined;
   }
 
   /**
@@ -435,6 +448,7 @@ export class TranscriptAccumulator {
    * resume and notify again, claude 2.1.316), but it's still running.
    */
   private takeNotification(text: string): void {
+    this.turnEnd = undefined;
     const n = parseTaskNotification(text);
     const row = n ? this.byBackgroundId.get(n.id) : undefined;
     if (!n || !row?.background) return;
@@ -478,12 +492,16 @@ export class TranscriptAccumulator {
     // hook as a meta user message ("Stop hook feedback:\n…").
     if (rec.type === 'attachment') {
       const att = rec.attachment as Rec | undefined;
+      // A message queued for the agent (the user's, another session's, a subagent's report) or Looper's mod's starts a turn.
+      if (att?.type === 'queued_command' || att?.type === 'plugin_note') this.turnEnd = undefined;
       if (att?.type === 'hook_additional_context' && Array.isArray(att.content)) {
         for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
+        // A Stop hook's context makes the agent go on, as a block does (claude 2.1.328).
+        if (att.hookEvent === 'Stop' || att.hookEvent === 'SubagentStop') this.supersedeTurnEnd();
       }
       // Looper's mod hands guidance over mid-turn as a note of its own (claude-mod.ts, claude 2.1.327).
       if (att?.type === 'plugin_note' && att.plugin === 'looper' && Array.isArray(att.content)) {
-        for (const c of att.content) if (typeof c === 'string') this.pushGuidance(c, ts);
+        for (const c of att.content) if (typeof c === 'string') this.takeModNote(c, ts);
       }
       // A background command or subagent ended: Claude queues its notification for the agent.
       if (att?.type === 'queued_command' && att.commandMode === 'task-notification' && typeof att.prompt === 'string') {
@@ -500,9 +518,13 @@ export class TranscriptAccumulator {
       if (rec.type !== 'user') return;
       if (this.takeSkill(rec, content)) return;
       const text = textOf(content);
+      const stopBlock = text.trimStart().startsWith(STOP_HOOK_FEEDBACK);
+      // A wake-up or another session's message starts a turn. Mid-turn meta text (an image's size) follows a tool call.
+      if (this.rows.at(-1)?.kind !== 'tool' && !stopBlock) this.turnEnd = undefined;
       // A background job's end can come as a meta record too (a stream's isSynthetic).
       if (text.trimStart().startsWith('<task-notification>')) this.takeNotification(text);
       else if (text) this.pushGuidance(text, ts);
+      if (stopBlock) this.supersedeTurnEnd();
       return;
     }
 
@@ -585,9 +607,11 @@ export class TranscriptAccumulator {
       this.push({ kind: 'error', ts, text });
       return;
     }
+    const messageId = typeof (msg as Rec).id === 'string' ? ((msg as Rec).id as string) : undefined;
     for (const block of content as Rec[]) {
+      if (block?.type === 'tool_use' && this.turnEnd?.messageId === messageId) this.turnEnd = undefined;
       if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-        this.push({ kind: 'agent', ts, text: block.text });
+        this.takeReply(this.push({ kind: 'agent', ts, text: block.text }), messageId);
       } else if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
         this.push({ kind: 'thinking', ts, text: block.thinking });
       } else if (block?.type === 'tool_use' && block.name === 'Poll' && typeof block.id === 'string') {
@@ -619,6 +643,26 @@ export class TranscriptAccumulator {
         if (typeof block.id === 'string') this.byToolId.set(block.id, row);
       }
     }
+  }
+
+  /** A reply of message `messageId`: it supersedes the replies of the message before when that one ended its turn (see turnEnd). */
+  private takeReply(row: MessageRow, messageId: string | undefined): void {
+    if (!messageId) {
+      this.turnEnd = undefined;
+      return;
+    }
+    if (this.turnEnd?.messageId === messageId) {
+      this.turnEnd.rows.push(row);
+      return;
+    }
+    this.supersedeTurnEnd();
+    this.turnEnd = { messageId, rows: [row] };
+  }
+
+  /** The agent went on past the reply that ended its turn: that reply stays superseded, whatever comes before its next one. */
+  private supersedeTurnEnd(): void {
+    for (const r of this.turnEnd?.rows ?? []) r.superseded = true;
+    this.turnEnd = undefined;
   }
 
   /** Raw mode: the record as pretty-printed JSON, typed by its transcript `type`. */
@@ -739,6 +783,11 @@ export class TranscriptAccumulator {
   }
 
   /** A row of its own when `text` is a guidance, events or delegated agents' message (see GUIDANCE_PREFIX, EVENTS_PREFIX, DELEGATE_PREFIX); false when it is none. */
+  /** A message Looper's mod handed the agent mid-turn: a run's guidance, related events or delegated agents' messages show; its notice doesn't. */
+  protected takeModNote(text: string, ts?: string): void {
+    this.pushGuidance(text, ts);
+  }
+
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
     if (g !== null) {
@@ -775,6 +824,7 @@ export class TranscriptAccumulator {
       text: cap(r.text, MAX_TEXT),
     };
     if (this.recordUuid) row.uuid = this.recordUuid;
+    if (INPUT_KINDS.has(r.kind)) this.turnEnd = undefined;
     this.rows.push(row);
     if (this.rows.length > MAX_ROWS) {
       // A call this far back never wins a result's place in a compaction, so it keeps only its line.
@@ -922,10 +972,28 @@ export class TranscriptReader {
   private offset = 0;
   private remainder: Buffer = Buffer.alloc(0);
 
-  /** Several candidate paths may be given (e.g. a subagent under either parent transcript): the first that exists wins. */
-  constructor(file: string | string[], opts: AccumulatorOpts = {}, format: 'claude' | 'codex' = 'claude') {
+  /**
+   * Several candidate paths may be given (e.g. a subagent under either parent
+   * transcript): the first that exists wins. `sink`: each line goes there
+   * instead of into `acc` (an interactive chat folds them into its own).
+   */
+  constructor(
+    file: string | string[],
+    opts: AccumulatorOpts = {},
+    format: 'claude' | 'codex' = 'claude',
+    private readonly sink?: (line: string) => void,
+  ) {
     this.candidates = Array.isArray(file) ? file : [file];
     this.acc = format === 'codex' ? new CodexAccumulator(opts) : new TranscriptAccumulator(opts);
+  }
+
+  /** Read from the transcript's end as it is now: what it already holds is left out (none yet: all of it). */
+  async skipExisting(): Promise<void> {
+    try {
+      this.offset = (await fs.promises.stat(await this.resolve())).size;
+    } catch {
+      this.offset = 0;
+    }
   }
 
   /** The candidate that exists, kept once found. Throws (like stat) when none does yet. */
@@ -944,16 +1012,16 @@ export class TranscriptReader {
     throw lastErr ?? new Error('no transcript');
   }
 
-  /** Reads one at a time: two overlapping ones would both start at the same offset and add the new lines twice. */
-  private queue: Promise<void> = Promise.resolve();
+  /** Reads one at a time: two overlapping ones would both start at the same offset and add the new lines twice. Resolves with whether the file grew. */
+  private queue: Promise<unknown> = Promise.resolve();
 
-  read(): Promise<void> {
+  read(): Promise<boolean> {
     const next = this.queue.then(() => this.readNew());
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  private async readNew(): Promise<void> {
+  private async readNew(): Promise<boolean> {
     const file = await this.resolve();
     const st = await fs.promises.stat(file);
     if (st.size < this.offset) {
@@ -962,7 +1030,7 @@ export class TranscriptReader {
       this.remainder = Buffer.alloc(0);
       this.acc.reset();
     }
-    if (st.size === this.offset) return;
+    if (st.size === this.offset) return false;
     const fh = await fs.promises.open(file, 'r');
     try {
       const buf = Buffer.alloc(st.size - this.offset);
@@ -973,12 +1041,15 @@ export class TranscriptReader {
       while ((nl = data.indexOf(0x0a)) !== -1) {
         const line = data.subarray(0, nl).toString('utf8').trim();
         data = data.subarray(nl + 1);
-        if (line) this.acc.addLine(line);
+        if (!line) continue;
+        if (this.sink) this.sink(line);
+        else this.acc.addLine(line);
       }
       this.remainder = Buffer.from(data);
     } finally {
       await fh.close();
     }
+    return true;
   }
 }
 

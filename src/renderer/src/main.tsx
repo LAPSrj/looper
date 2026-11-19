@@ -75,7 +75,7 @@ const hash = window.location.hash.replace(/^#\/?/, '');
 const editorMatch = /^editor(?:\/(.+))?$/.exec(hash);
 const editorInMatch = /^editor-in\/([^/]+)$/.exec(hash);
 const projectMatch = /^project\/([^/]+)$/.exec(hash);
-const templateEditorMatch = /^template-editor(?:\/(.+))?$/.exec(hash);
+const templateEditorMatch = /^template-editor\/([^/]+)(\/new)?$/.exec(hash);
 const fromTemplateMatch = /^editor-from-template\/(.+)$/.exec(hash);
 const importMatch = /^editor-import\/([^/]+)(\/update)?(?:\/builder\/([^/]+))?$/.exec(hash);
 const builderMatch = /^builder\/([^/]+)$/.exec(hash);
@@ -89,7 +89,7 @@ const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runOptionsMatch = /^run-options\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(\/report)?$/.exec(hash);
 const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(hash);
-const filterMatch = /^messages-filter(?:\/(.*))?$/.exec(hash);
+const filterMatch = /^filter\/([^/]*)\/(.*)$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
 const continueRunMatch = /^(continue-run|send-guidance)\/([^/]+)\/([^/]+)$/.exec(hash);
@@ -145,10 +145,7 @@ function pickRoot() {
   if (editorInMatch) return <EditorApp projectId={decodeURIComponent(editorInMatch[1])} />;
   if (templateEditorMatch) {
     return (
-      <EditorApp
-        mode="template"
-        templateId={templateEditorMatch[1] ? decodeURIComponent(templateEditorMatch[1]) : undefined}
-      />
+      <EditorApp mode="template" templateId={decodeURIComponent(templateEditorMatch[1])} isNew={!!templateEditorMatch[2]} />
     );
   }
   if (fromTemplateMatch) return <EditorApp fromTemplateId={decodeURIComponent(fromTemplateMatch[1])} />;
@@ -251,7 +248,7 @@ function pickRoot() {
       />
     );
   }
-  if (filterMatch) return <FilterApp current={decodeURIComponent(filterMatch[1] ?? '')} />;
+  if (filterMatch) return <FilterApp label={decodeURIComponent(filterMatch[1])} current={decodeURIComponent(filterMatch[2])} />;
   if (markdownExportMatch) {
     return (
       <MarkdownExportApp

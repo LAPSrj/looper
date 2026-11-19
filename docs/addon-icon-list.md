@@ -13,6 +13,7 @@ Write the name as it is, such as `"icon": "key"`.
 | `add` | A plus |
 | `edit` | A pencil |
 | `delete` | A trash can |
+| `recycleBin` | A trash can with slats, for a Recycle Bin of deleted items |
 | `copy` | Two overlapping sheets |
 | `refresh` | A circular arrow |
 | `open` | An arrow out of a box |

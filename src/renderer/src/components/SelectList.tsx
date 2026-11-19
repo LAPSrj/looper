@@ -24,16 +24,17 @@ interface SelectListProps<T> {
   itemKey: (item: T, i: number) => string;
   itemName: (item: T, i: number) => ReactNode;
   itemSub?: (item: T, i: number) => ReactNode;
-  onSelect: (item: T, i: number) => void;
+  /** Without it the list only shows its items: none can be chosen. */
+  onSelect?: (item: T, i: number) => void;
   /** Double-click or Enter opens the item's editor window. */
   onOpen?: (item: T, i: number) => void;
   /** Makes rows draggable; called with the full key list in its new order. */
   onReorder?: (keys: string[]) => void;
   /** Shown as a single muted row when there are no items. */
   empty?: ReactNode;
+  /** A heading above the list, one of a window's parts. */
+  title?: string;
 }
-
-const EMPTY_ROW = { className: 'env-item muted', style: { textAlign: 'center', cursor: 'default' } as const };
 
 /**
  * A list of items, adapted to the platform from the same props: a RowList of a name and a line under it. On a
@@ -42,17 +43,18 @@ const EMPTY_ROW = { className: 'env-item muted', style: { textAlign: 'center', c
  * shows the menu of, and a swipe offers the menu's destructive command; one without is a choice of one, with a
  * check on the chosen row.
  */
-export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty }: SelectListProps<T>) {
+export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty, title }: SelectListProps<T>) {
   const rows = items.map((item, i) => ({ item, i }));
   return (
     <RowList
       section
+      title={title}
       rows={rows}
       rowKey={({ item, i }) => itemKey(item, i)}
       idPrefix={idPrefix}
       label={label}
       selected={selectedKey}
-      onSelect={({ item, i }) => onSelect(item, i)}
+      onSelect={onSelect && (({ item, i }) => onSelect(item, i))}
       onOpen={onOpen && (({ item, i }) => onOpen(item, i))}
       menu={menu && (({ item, i }) => menu(item, i))}
       onDelete={onDelete && (({ item, i }) => onDelete(item, i))}
@@ -60,7 +62,6 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
       onReorder={onReorder}
       autoFocus={autoFocus}
       empty={empty}
-      emptyRow={EMPTY_ROW}
       listClass="env-list boxed"
       rowClass="env-item"
       row={({ item, i }) => {

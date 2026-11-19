@@ -27,6 +27,9 @@ html[data-platform='ios'] {
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.4), 0 0 0 0.5px #e8e8e8;
   /* The kit's glass shadow is faint (2%, 4% dark): darker, two controls side by side draw a gray band. */
   --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.02);
+  /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
+  --ios-glass-label2: #727272;
+  --ios-glass-placeholder: #bfbfbf;
 }
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
@@ -50,6 +53,8 @@ html[data-platform='ios'] {
     --ios-glass-edge: inset 1px 1px 1px -0.5px rgba(255, 255, 255, 0.35), inset -1px -1px 1px -0.5px rgba(255, 255, 255, 0.18),
       inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.4);
     --ios-glass-shadow: 0 8px 15px rgba(0, 0, 0, 0.04);
+    --ios-glass-label2: #8a8a8a;
+    --ios-glass-placeholder: #404040;
   }
 }
 

@@ -88,7 +88,7 @@ export interface IpcHost {
   openHarnessEditor: (envId: string, harnessId: string, isNew?: boolean, parent?: AppWindow | null) => void;
   openModelEditor: (envId: string, harnessId: string, index?: number, parent?: AppWindow | null, copyOf?: number) => void;
   openModelUpdate: (envId?: string, harnessId?: string, parent?: AppWindow | null) => void;
-  openTemplateEditor: (templateId?: string, parent?: AppWindow | null) => void;
+  openTemplateEditor: (templateId: string, isNew?: boolean, parent?: AppWindow | null) => void;
   openTemplatePicker: () => void;
   openEditorFromTemplate: (templateId: string) => void;
   /** The task's Version History window (one per task). */
@@ -385,33 +385,41 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.resizeTerminalSession(id, cols, rows),
   );
   ipc.handle('terminalSession:attach', (_e, id: string, files: unknown) => engine.attachToTerminal(id, attachmentInputs(files)));
-  /** A terminal's right-click menu (a terminal session's, the task builder's): `attach` copies the files and gives their paths as it pastes them. */
-  const showTerminalMenu = (e: Electron.IpcMainEvent, hasSelection: boolean, attach: (files: AttachmentInput[]) => string | Promise<string>) => {
+  /**
+   * A terminal's right-click menu (a terminal session's, the task builder's, a "!" command's): `attach` copies the
+   * files and gives their paths as it pastes them; without it (a command's), no Attach Files.
+   */
+  const showTerminalMenu = (e: Electron.IpcMainEvent, hasSelection: boolean, attach?: (files: AttachmentInput[]) => string | Promise<string>) => {
     const sender = windowOf(e);
     if (!sender) return;
     const send = (payload: unknown) => {
       if (!sender.isDestroyed()) sender.webContents.send('ui:event', payload);
     };
-    const attachFiles = async () => {
+    const attachFiles = async (to: NonNullable<typeof attach>) => {
       const r = await showOpenDialog(sender, { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
       if (r.canceled || r.filePaths.length === 0) return;
       const files = r.filePaths.map((p) => ({ name: p.split(/[\\/]/).pop() ?? p, path: p }));
-      send({ type: 'terminal-attached', text: await attach(files) });
+      send({ type: 'terminal-attached', text: await to(files) });
     };
     popupMenu(Menu.buildFromTemplate([
       { label: 'Copy', enabled: !!hasSelection, click: () => send({ type: 'terminal-copy' }) },
       { label: 'Paste', click: () => send({ type: 'terminal-paste' }) },
-      { type: 'separator' },
-      {
-        label: 'Attach Files…',
-        click: () =>
-          void attachFiles().catch((err: unknown) => {
-            void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 });
-          }),
-      },
+      ...(attach
+        ? ([
+            { type: 'separator' },
+            {
+              label: 'Attach Files…',
+              click: () =>
+                void attachFiles(attach).catch((err: unknown) => {
+                  void showMessageBox(sender, { type: 'error', title: 'Looper', message: (err as Error).message, buttons: ['OK'], defaultId: 0, cancelId: 0 });
+                }),
+            },
+          ] satisfies Electron.MenuItemConstructorOptions[])
+        : []),
     ]), { window: sender });
   };
   ipc.on('context-menu:terminal', (e, id: string, hasSelection: boolean) => showTerminalMenu(e, hasSelection, (files) => engine.attachToTerminal(id, files)));
+  ipc.on('context-menu:commandTerminal', (e, hasSelection: boolean) => showTerminalMenu(e, !!hasSelection));
 
   ipc.handle('task:openChat', (_e, id: string, runId?: string) => host.openChat(id, runId));
   ipc.handle('chat:get', (_e, id: string) => {
@@ -440,109 +448,113 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     engine.runChatCommand(String(id), String(command ?? ''), String(commandId ?? '')),
   );
   ipc.handle('chat:stopCommand', (_e, id: string, commandId: string) => engine.stopChatCommand(String(id), String(commandId ?? '')));
+  ipc.handle('command:screen', (_e, ownerId: string, commandId: string) => engine.commandScreen(String(ownerId), String(commandId)));
+  ipc.on('command:write', (_e, ownerId: string, commandId: string, data: string) => engine.writeCommand(String(ownerId), String(commandId), String(data ?? '')));
+  ipc.on('command:resize', (_e, ownerId: string, commandId: string, cols: number, rows: number) =>
+    engine.resizeCommand(String(ownerId), String(commandId), Number(cols), Number(rows)),
+  );
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
   ipc.on('chat:setAutoContinue', (_e, id: string, on: boolean) => engine.setChatAutoContinue(String(id), !!on));
   ipc.on('chat:continueAnyway', (_e, id: string) => engine.setChatContinueAnyway(String(id)));
   ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
-  // A chat message's right-click menu; Quote and Edit as New Message hand text back to the window's message box.
-  ipc.on(
-    'context-menu:chat',
-    (
-      e,
-      info: {
-        chatId: string;
-        taskId: string;
-        selection?: string;
-        quote?: boolean;
-        text?: string;
-        textLabel?: string;
-        result?: string;
-        file?: string;
-        resend?: { text: string; attachments: Attachment[] };
-        fork?: number;
-        selectText?: string;
-        /** A Task or Agent call's subagent, whose conversation the menu opens (`label` names it). */
-        agentId?: string;
-        label?: string;
-      },
-    ) => {
-      const sender = windowOf(e);
-      if (!sender) return;
-      const groups: Electron.MenuItemConstructorOptions[][] = [];
-      if (info.selection) {
-        const selection = info.selection;
-        groups.push([
-          { label: 'Copy', click: () => writeClipboard(selection) },
-          {
-            label: 'Quote',
-            // The chat window handles the key itself (ChatView), so a selection is quoted without the menu.
-            accelerator: 'CmdOrCtrl+Shift+Q',
-            registerAccelerator: false,
-            enabled: !!info.quote,
-            click: () => sender.webContents.send('ui:event', { type: 'chat-quote', chatId: String(info.chatId), text: selection }),
-          },
-        ]);
-      }
-      const copies: Electron.MenuItemConstructorOptions[] = [];
-      if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => writeClipboard(info.text!) });
-      if (info.result) copies.push({ label: 'Copy Result', click: () => writeClipboard(info.result!) });
-      if (info.selectText && !info.selection) copies.push(selectTextItem(sender, info.selectText));
-      if (copies.length) groups.push(copies);
-      if (info.file) {
-        const file = info.file;
-        groups.push([
-          {
-            label: 'Open File',
-            click: () =>
-              void openTargetPath(info.taskId, file).catch((err: unknown) => {
-                void showMessageBox(sender, {
-                  type: 'error',
-                  title: 'Looper',
-                  message: `Could not open ${file}.`,
-                  detail: err instanceof Error ? err.message : String(err),
-                  buttons: ['OK'],
-                  defaultId: 0,
-                  cancelId: 0,
-                });
-              }),
-          },
-          { label: 'Copy Path', click: () => writeClipboard(file) },
-        ]);
-      }
-      if (info.agentId) {
-        const agentId = info.agentId;
-        groups.push([{ label: 'Open Subagent Conversation', click: () => host.openMessages(info.taskId, String(info.chatId), agentId, info.label) }]);
-      }
-      const again: Electron.MenuItemConstructorOptions[] = [];
-      if (info.resend) {
-        const resend = info.resend;
-        again.push({ label: 'Edit as New Message', click: () => sender.webContents.send('ui:event', { type: 'chat-edit', chatId: String(info.chatId), ...resend }) });
-      }
-      if (typeof info.fork === 'number') {
-        const index = info.fork;
-        again.push({
-          label: 'Fork from Here',
-          click: () => {
-            try {
-              host.forkChat(String(info.chatId), index);
-            } catch (err) {
+  // A message's right-click menu, in a chat, a run's transcript or any other list of an agent's messages; Quote and Edit as New Message hand text back to the window's message box.
+  const showMessageMenu = (
+    sender: NonNullable<ReturnType<typeof windowOf>>,
+    info: {
+      chatId: string;
+      taskId: string;
+      selection?: string;
+      quote?: boolean;
+      text?: string;
+      textLabel?: string;
+      result?: string;
+      file?: string;
+      resend?: { text: string; attachments: Attachment[] };
+      fork?: number;
+      selectText?: string;
+      /** A Task or Agent call's subagent, whose conversation the menu opens (`label` names it). */
+      agentId?: string;
+      label?: string;
+    },
+  ): void => {
+    const groups: Electron.MenuItemConstructorOptions[][] = [];
+    if (info.selection) {
+      const selection = info.selection;
+      groups.push([
+        { label: 'Copy', click: () => writeClipboard(selection) },
+        {
+          label: 'Quote',
+          // The chat window handles the key itself (ChatView), so a selection is quoted without the menu.
+          accelerator: 'CmdOrCtrl+Shift+Q',
+          registerAccelerator: false,
+          enabled: !!info.quote,
+          click: () => sender.webContents.send('ui:event', { type: 'chat-quote', chatId: String(info.chatId), text: selection }),
+        },
+      ]);
+    }
+    const copies: Electron.MenuItemConstructorOptions[] = [];
+    if (info.text) copies.push({ label: info.textLabel ?? 'Copy Message', click: () => writeClipboard(info.text!) });
+    if (info.result) copies.push({ label: 'Copy Result', click: () => writeClipboard(info.result!) });
+    if (info.selectText && !info.selection) copies.push(selectTextItem(sender, info.selectText));
+    if (copies.length) groups.push(copies);
+    if (info.file) {
+      const file = info.file;
+      groups.push([
+        {
+          label: 'Open File',
+          click: () =>
+            void openTargetPath(info.taskId, file).catch((err: unknown) => {
               void showMessageBox(sender, {
                 type: 'error',
                 title: 'Looper',
-                message: err instanceof Error ? err.message : String(err),
+                message: `Could not open ${file}.`,
+                detail: err instanceof Error ? err.message : String(err),
                 buttons: ['OK'],
                 defaultId: 0,
                 cancelId: 0,
               });
-            }
-          },
-        });
-      }
-      if (again.length) groups.push(again);
-      const items = groups.flatMap((g, i) => (i ? [{ type: 'separator' } as const, ...g] : g));
-      if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
-    },
-  );
+            }),
+        },
+        { label: 'Copy Path', click: () => writeClipboard(file) },
+      ]);
+    }
+    if (info.agentId) {
+      const agentId = info.agentId;
+      groups.push([{ label: 'Open Subagent Conversation', click: () => host.openMessages(info.taskId, String(info.chatId), agentId, info.label) }]);
+    }
+    const again: Electron.MenuItemConstructorOptions[] = [];
+    if (info.resend) {
+      const resend = info.resend;
+      again.push({ label: 'Edit as New Message', click: () => sender.webContents.send('ui:event', { type: 'chat-edit', chatId: String(info.chatId), ...resend }) });
+    }
+    if (typeof info.fork === 'number') {
+      const index = info.fork;
+      again.push({
+        label: 'Fork from Here',
+        click: () => {
+          try {
+            host.forkChat(String(info.chatId), index);
+          } catch (err) {
+            void showMessageBox(sender, {
+              type: 'error',
+              title: 'Looper',
+              message: err instanceof Error ? err.message : String(err),
+              buttons: ['OK'],
+              defaultId: 0,
+              cancelId: 0,
+            });
+          }
+        },
+      });
+    }
+    if (again.length) groups.push(again);
+    const items = groups.flatMap((g, i) => (i ? [{ type: 'separator' } as const, ...g] : g));
+    if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
+  };
+  ipc.on('context-menu:chat', (e, info: Parameters<typeof showMessageMenu>[1]) => {
+    const sender = windowOf(e);
+    if (sender) showMessageMenu(sender, info);
+  });
   ipc.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
   /** The message box's Attach Files: pick files, then copy them in like dropped ones. */
   ipc.handle('chat:pickFiles', async (e, id: string) => {
@@ -1021,8 +1033,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (!env || !harness) throw new Error('This harness no longer exists.');
     return discoverHarnessModels(env, harness, engine.host);
   });
-  ipc.handle('templateEditor:open', (e, templateId?: string) =>
-    host.openTemplateEditor(templateId, windowOf(e)),
+  ipc.handle('templateEditor:open', (e, templateId: string, isNew?: boolean) =>
+    host.openTemplateEditor(String(templateId), !!isNew, windowOf(e)),
   );
   ipc.handle('templatePicker:open', () => host.openTemplatePicker());
   ipc.handle('editorFromTemplate:open', (_e, templateId: string) =>
@@ -1441,52 +1453,17 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }) => {
       const sender = windowOf(e);
       if (!sender) return;
-      const items: Electron.MenuItemConstructorOptions[] = [];
-      if (info.file) {
-        const file = info.file;
-        items.push({
-          label: 'Open File',
-          click: () =>
-            void openTargetPath(info.taskId, file).catch((err: unknown) => {
-              void showMessageBox(sender, {
-                type: 'error',
-                title: 'Looper',
-                message: `Could not open ${file}.`,
-                detail: err instanceof Error ? err.message : String(err),
-                buttons: ['OK'],
-                defaultId: 0,
-                cancelId: 0,
-              });
-            }),
-        });
-        items.push({ label: 'Copy Path', click: () => writeClipboard(file) });
-      }
-      if (info.agentId) {
-        if (items.length) items.push({ type: 'separator' });
-        items.push({
-          label: 'Open Subagent Conversation',
-          click: () => host.openMessages(info.taskId, info.runId, info.agentId, info.label),
-        });
-      }
-      if (info.text) {
-        const text = info.text;
-        if (items.length) items.push({ type: 'separator' });
-        items.push({ label: 'Copy Content', click: () => writeClipboard(text) });
-      }
-      if (info.selectText) {
-        if (items.length && !info.text) items.push({ type: 'separator' });
-        items.push(selectTextItem(sender, info.selectText));
-      }
-      if (items.length > 0) popupMenu(Menu.buildFromTemplate(items), { window: sender });
+      const { runId, ...rest } = info;
+      showMessageMenu(sender, { ...rest, chatId: String(runId), textLabel: 'Copy Content' });
     },
   );
 
-  // The filter window hands its value to the parent conversation window and closes.
-  ipc.on('messages:filter-apply', (e, value: string) => {
+  // The filter window hands its value to the window that opened it and closes.
+  ipc.on('filter:apply', (e, value: string) => {
     const win = windowOf(e);
     const parent = win?.getParentWindow();
     if (parent && !parent.isDestroyed()) {
-      parent.webContents.send('ui:event', { type: 'messages-filter', value: String(value ?? '') });
+      parent.webContents.send('ui:event', { type: 'filter', value: String(value ?? '') });
     }
     win?.close();
   });

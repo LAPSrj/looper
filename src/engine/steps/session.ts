@@ -182,7 +182,12 @@ export interface SessionOpts {
   extraArgs: readonly string[];
   /** System footer (claude: --append-system-prompt; others: prepended). Empty = none. */
   footer: string;
+  /** Empty: the session starts at its prompt, and its messages come through `inbox` (an interactive chat's). */
   prompt: string;
+  /** Claude Code: the run-dir files the mod takes messages from, in this order, in place of the guidance ones (`guidance`). */
+  inbox?: readonly string[];
+  /** Claude Code: more settings for the session, after Looper's and before the user's --settings. */
+  settings?: Record<string, unknown>;
   /** Headless: schema for claude's --json-schema / codex's --output-schema; the end then carries `structured`. */
   jsonSchema?: object;
   /** Done command defined on the session's PATH and the statuses it accepts. */
@@ -237,6 +242,7 @@ export interface SessionOpts {
   stopGate: boolean;
   /** The session takes the user's guidance mid-run (engine/guidance.ts): the agent step does. */
   guidance?: boolean;
+  /** Infinity: no limit. */
   maxRuntimeMs: number;
   /** Headline when the max runtime kills the session. */
   maxRuntimeText: string;
@@ -292,7 +298,7 @@ export function headlineOf(text: string | undefined): string | undefined {
 const DONE_GRACE_MS = 120_000;
 
 /** Retry margin past the advertised usage-limit reset, so the retry lands safely after it. */
-const USAGE_LIMIT_RETRY_MARGIN_MS = 60_000;
+export const USAGE_LIMIT_RETRY_MARGIN_MS = 60_000;
 
 /** The workspace-trust dialog claude shows on first interactive use of a directory. */
 export const TRUST_PROMPT_RE = /trust\s+this\s+folder/i;
@@ -655,10 +661,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   // Claude Code gets its instructions as a system prompt; other harnesses have
   // no equivalent flag, so the footer is prepended to the prompt itself.
-  writeText(
-    path.join(ctx.runDir, f('prompt.txt')),
-    claude || !opts.footer ? opts.prompt : opts.footer + '\n\n' + opts.prompt,
-  );
+  if (opts.prompt) {
+    writeText(
+      path.join(ctx.runDir, f('prompt.txt')),
+      claude || !opts.footer ? opts.prompt : opts.footer + '\n\n' + opts.prompt,
+    );
+  }
   // The user's arguments, and with Claude Code those left once their --settings and --append-system-prompt join Looper's.
   let userArgs: string[] = [...harness.args, ...opts.extraArgs];
   let userSettings: Record<string, unknown>[] = [];
@@ -740,12 +748,13 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         turn: targetFile(ctx, f('turn.json')),
         ...(relayPermissions ? { toolEnd: targetFile(ctx, f(MOD_FILES.toolEnd)) } : {}),
       },
-      inbox: opts.guidance ? [GUIDANCE_FILE, EVENTS_FILE, DELEGATE_FILE, NOTICE_FILE].map((name) => targetFile(ctx, name)) : [],
+      inbox: (opts.inbox ?? (opts.guidance ? [GUIDANCE_FILE, EVENTS_FILE, DELEGATE_FILE, NOTICE_FILE] : [])).map((name) => targetFile(ctx, name)),
       signalCommands,
       guardMessage: subagentGuardMessage(signalCommands),
       ...(askBashMs ? { ask: { command: opts.ask!.command, timeoutMs: askBashMs } } : {}),
       ...(headless ? { cronRefusal: CRON_REFUSAL } : {}),
       headless,
+      prompted: !!opts.prompt,
       windows: target.kind === 'windows',
     });
     writeJsonAtomic(
@@ -762,7 +771,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
           ...projectMcpApproval(harness),
           hooks,
         },
-        userSettings,
+        [...(opts.settings ? [opts.settings] : []), ...userSettings],
       ),
     );
   }
@@ -833,11 +842,13 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     }
   }
   for (const arg of userArgs) parts.push(q(arg));
-  // claude's variadic options (--allowedTools, --disallowedTools, ...) swallow
-  // the following positional, eating the prompt when such a flag comes last:
-  // terminate option parsing so the prompt always lands as the prompt.
-  if (claude) parts.push('--');
-  parts.push(target.catFile(targetFile(ctx, f('prompt.txt'))));
+  if (opts.prompt) {
+    // claude's variadic options (--allowedTools, --disallowedTools, ...) swallow
+    // the following positional, eating the prompt when such a flag comes last:
+    // terminate option parsing so the prompt always lands as the prompt.
+    if (claude) parts.push('--');
+    parts.push(target.catFile(targetFile(ctx, f('prompt.txt'))));
+  }
   let body = (target.kind === 'windows' ? '' : 'exec ') + parts.join(' ');
   if (codex) {
     // Record the target-native codex home before the CLI starts: the rollout
@@ -1244,10 +1255,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let delegateTimer: NodeJS.Timeout | null = null;
   /** The permission poll (see below); unset when Looper doesn't relay the session's permission requests. */
   let permissionTimer: NodeJS.Timeout | null = null;
-  const maxTimer = setTimeout(
-    () => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()),
-    opts.maxRuntimeMs,
-  );
+  const maxTimer = Number.isFinite(opts.maxRuntimeMs)
+    ? setTimeout(() => void finish('max-runtime', opts.maxRuntimeText, undefined, undefined, stalledOnNetwork()), opts.maxRuntimeMs)
+    : undefined;
 
   /** Headless stream to the live output: pipes carry bare LF, a terminal needs CRLF; blank runs collapse. */
   const showHeadless = (d: string): void => {

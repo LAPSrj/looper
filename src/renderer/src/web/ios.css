@@ -13,9 +13,6 @@ html[data-platform='ios'] {
   --ios-fill2: rgba(120, 120, 128, 0.16);
   /* The larger glass surfaces' shadow (alerts, menus, a medium sheet). */
   --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.25);
-  /* Text on glass: secondary (a subtitle) and a placeholder (the kit's Labels - Liquid Glass). */
-  --ios-glass-label2: #727272;
-  --ios-glass-placeholder: #bfbfbf;
   /* A menu's separator and its pressed control-group tile (kit: Menu). The kit multiplies #E6E6E6 and #EDEDED
      over the glass in light and adds #1A1A1A and #121212 in dark: these give the same colors on any glass. */
   --ios-menu-sep: rgba(0, 0, 0, 0.1);
@@ -41,8 +38,6 @@ html[data-platform='ios'] {
     --ios-bar-line: rgba(0, 0, 0, 0.1);
     --ios-fill2: rgba(120, 120, 128, 0.32);
     --ios-glass-lift: 0 8px 48px rgba(0, 0, 0, 0.45);
-    --ios-glass-label2: #8a8a8a;
-    --ios-glass-placeholder: #404040;
     --ios-menu-sep: rgba(255, 255, 255, 0.11);
     --ios-menu-press: rgba(255, 255, 255, 0.08);
     --ios-folder: #39a8f0;

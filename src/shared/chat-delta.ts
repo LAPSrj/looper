@@ -34,6 +34,7 @@ export function rowSignature(r: MessageRow): string {
     tail(r.result),
     tail(r.preview),
     r.resultError ? 1 : 0,
+    r.superseded ? 1 : 0,
     r.background ? `${r.background.status}:${tail(r.background.summary)}:${r.background.outputFile ?? ''}` : '',
     r.agentId ?? '',
     r.patch?.length ?? '',

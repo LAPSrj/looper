@@ -92,7 +92,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
         env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
       ),
     });
-    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual', sendRelatedEvents: true }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } }));
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual', sendRelatedEvents: true }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
     const event = (id: string) => {
       fs.mkdirSync(path.join(data, 'inbox'), { recursive: true });
       fs.writeFileSync(path.join(data, 'inbox', `${Date.now()}-${id}.json`), JSON.stringify({ op: 'run', taskId: 't1', event: JSON.stringify({ looper_related_id: id }) }));

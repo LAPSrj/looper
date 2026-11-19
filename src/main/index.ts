@@ -144,6 +144,7 @@ if (!app.requestSingleInstanceLock()) {
       dataDir,
       ...(process.platform === 'win32' ? { power: createPowerAdapter() } : {}),
       keepAwake: createKeepAwake(),
+      showChat,
     });
     engine.start();
     mark('engine');
@@ -1476,10 +1477,10 @@ function openModelUpdateWindow(envId?: string, harnessId?: string, parent?: AppW
   openChildWindow(hash, 'Update Models', 560, 560, parent ?? win, { role: 'tool' });
 }
 
-function openTemplateEditorWindow(templateId?: string, _parent?: AppWindow | null): void {
+function openTemplateEditorWindow(templateId: string, isNew?: boolean, _parent?: AppWindow | null): void {
   openChildWindow(
-    templateId ? `template-editor/${encodeURIComponent(templateId)}` : 'template-editor',
-    templateId ? 'Edit Template' : 'New Template',
+    `template-editor/${encodeURIComponent(templateId)}${isNew ? '/new' : ''}`,
+    isNew ? 'New Template' : 'Edit Template',
     780,
     800,
     undefined,
@@ -3051,8 +3052,8 @@ const HOST: Record<HostCommand, (w: AppWindow | null, ...args: string[]) => void
     const cwd = engine?.workFolder(taskId, runId);
     return cwd ? openHostPath(cwd) : undefined;
   },
-  'messages-filter': (w, value) => {
-    openChildWindow(`messages-filter/${encodeURIComponent(value)}`, 'Filter', 420, 240, w, { role: 'prompt', minWidth: 360, minHeight: 220, resizable: false });
+  filter: (w, label, value) => {
+    openChildWindow(`filter/${encodeURIComponent(label)}/${encodeURIComponent(value)}`, 'Filter', 420, 240, w, { role: 'prompt', minWidth: 360, minHeight: 220, resizable: false });
   },
 };
 

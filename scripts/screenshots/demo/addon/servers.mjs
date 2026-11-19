@@ -77,7 +77,7 @@ function render({ view, params }) {
             { label: 'Host', value: s.host, copy: true },
             { label: 'User', value: s.user, copy: true },
             { label: 'Password', secret: 'password' },
-            { label: 'Port', value: String(s.port), mono: true },
+            { label: 'Port', value: String(s.port), mono: true, copy: true },
           ],
         },
         ...(s.notes ? [{ type: 'section', title: 'Notes', body: [{ type: 'text', text: s.notes }] }] : []),

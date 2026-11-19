@@ -160,6 +160,31 @@ export function takeDelegateMessages(runDir: string): string | null {
   return claim(runDir, DELEGATE_FILE, dest) ? readDelegateFile(dest) : null;
 }
 
+/**
+ * An interactive chat's messages wait here for Looper's mod, which hands them
+ * to the agent as the user's own: the whole text, without a header.
+ */
+export const CHAT_MESSAGE_FILE = 'message.json';
+
+/** Leave the chat's waiting messages for the agent, replacing what waited (the caller writes all of them). */
+export function writeChatMessage(runDir: string, text: string): void {
+  const file = path.join(runDir, CHAT_MESSAGE_FILE);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, asciiJson(text), 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+/** Take back the chat's waiting messages before the mod takes them; false when it already has. */
+export function takeChatMessage(runDir: string): boolean {
+  const dest = path.join(runDir, `message-${Date.now()}-taken.json`);
+  if (!claim(runDir, CHAT_MESSAGE_FILE, dest)) return false;
+  fs.rmSync(dest, { force: true });
+  return true;
+}
+
+/** Whether the chat's messages still wait for the mod. */
+export const chatMessageWaiting = (runDir: string): boolean => fs.existsSync(path.join(runDir, CHAT_MESSAGE_FILE));
+
 /** Add guidance for the agent, after whatever is still waiting from earlier. */
 export function queueGuidance(runDir: string, text: string): void {
   const merging = path.join(runDir, `guidance-merging-${process.pid}.json`);

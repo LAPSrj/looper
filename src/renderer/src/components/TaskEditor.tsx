@@ -31,6 +31,8 @@ interface Props {
   mode?: 'task' | 'template';
   /** The definition came from a task builder: saving records the agent's version. */
   builderId?: string;
+  /** The item was created for this window and isn't kept until Create: the button says Create, and there's no Apply. */
+  isNew?: boolean;
   onSaved: () => void;
   onCancel: () => void;
 }
@@ -193,12 +195,14 @@ function ActiveHours({ value, onChange }: { value: Hours | undefined; onChange: 
   return <RangeField label="Active hours" mode={mode} on={!!value} box={(bound, label) => value && box(bound, value, label)} fromLabel="From hour" toLabel="To hour" />;
 }
 
-export function TaskEditor({ task, initial, environments, projects, projectId, defaultEnvironmentId, host, mode = 'task', builderId, onSaved, onCancel }: Props) {
+export function TaskEditor({ task, initial, environments, projects, projectId, defaultEnvironmentId, host, mode = 'task', builderId, isNew, onSaved, onCancel }: Props) {
   const [draft, setDraft] = useState<Draft>(() => {
     const d = task ? toDraft(task) : initial ? (JSON.parse(JSON.stringify(initial)) as Draft) : blankDraft(defaultEnvironmentId);
     return placeDraft(!task && !initial && projectId ? { ...d, projectId } : d, projects, environments);
   });
   const [tab, setTab] = useState<EditorTab>('general');
+  // The name box takes the focus when the window opens, not each time General is drawn again (it would take it from the tab strip).
+  const [switched, setSwitched] = useState(false);
   const [jsonText, setJsonText] = useState('');
   const saver = useSave();
   const [extraArgsText, setExtraArgsText] = useState(() => joinTokens((task ?? initial)?.agent?.extraArgs ?? []));
@@ -422,6 +426,9 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
 
   const switchTab = (next: EditorTab) => {
     if (next === tab) return;
+    // A box still focused when its tab closes gets no blur: leave it now, so its on-blur normalizing (hours, numbers) runs.
+    const focused = document.activeElement as HTMLElement | null;
+    if (focused?.closest('.editor-body')) focused.blur();
     try {
       if (tab === 'json') applyJson(jsonText);
       if (next === 'json') setJsonText(JSON.stringify(assemble(), null, 2));
@@ -430,6 +437,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
       return;
     }
     setTab(next);
+    setSwitched(true);
   };
 
   const doSave = async (): Promise<boolean> => {
@@ -470,11 +478,13 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
     <div className="editor">
       <TabBar tabs={TABS} active={tab} onSelect={switchTab} className="editor-tabs" label="Task" sections>
       <div className="editor-body">
-        <div className={`editor-panel${tab !== 'general' ? ' hidden' : ''}`}>
+        {/* Only the open tab is drawn; every field's value lives in the draft or the state above, so none is lost when a tab closes. */}
+        {tab === 'general' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <Field label="Task name">
-                <TextInput autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} />
+                <TextInput autoFocus={!switched} selectWhen={isNew && !switched} value={draft.name} onChange={(e) => set('name', e.target.value)} />
               </Field>
               <FieldRow>
                 <Field label="Status">
@@ -535,8 +545,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'trigger' ? ' hidden' : ''}`}>
+        {tab === 'trigger' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <Field label="Run this task">
@@ -771,8 +783,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             )}
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'check' ? ' hidden' : ''}`}>
+        {tab === 'check' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <CheckboxField
@@ -789,8 +803,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'classifier' ? ' hidden' : ''}`}>
+        {tab === 'classifier' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <CheckboxField
@@ -862,8 +878,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'agent' ? ' hidden' : ''}`}>
+        {tab === 'agent' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <Field
@@ -943,8 +961,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'settings' ? ' hidden' : ''}`}>
+        {tab === 'settings' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <FieldRow>
@@ -1038,8 +1058,10 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'notifications' ? ' hidden' : ''}`}>
+        {tab === 'notifications' && (
+        <div className="editor-panel">
           <div className="form">
             <FormGroup>
               <CheckboxField label="Notify when a run starts" checked={notif.runStart ?? false} onChange={(on) => setNotif('runStart', on)} />
@@ -1083,13 +1105,16 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             </FormGroup>
           </div>
         </div>
+        )}
 
-        <div className={`editor-panel${tab !== 'json' ? ' hidden' : ''}`}>
+        {tab === 'json' && (
+        <div className="editor-panel">
           <TextArea code className="json-editor" aria-label="Task JSON" value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
         </div>
+        )}
       </div>
       </TabBar>
-      <WindowActions confirm={{ label: 'Save', run: save }} cancel={onCancel} apply={{ run: apply }} busy={saver.busy} />
+      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: save }} cancel={onCancel} apply={isNew ? undefined : { run: apply }} busy={saver.busy} />
     </div>
   );
 }

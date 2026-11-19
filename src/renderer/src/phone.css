@@ -226,6 +226,8 @@ html.phone-window .pg-group-footer {
   line-height: calc(18 * var(--u));
   color: var(--pg-label-2);
 }
+/* EmptyState at="section" is its list section's row (it was Row, with its text as the title). */
+html.phone-window .empty-section,
 html.phone-window .pg-row {
   display: flex;
   align-items: center;
@@ -297,7 +299,7 @@ html.phone-window .pg-row-value {
 html.phone-window .pg-row.tone-warning .pg-row-sub {
   color: var(--pg-orange);
 }
-html.phone-window .pg-empty {
+html.phone-window .empty-section {
   color: var(--pg-label-2);
 }
 /* A row that is a command, tinted as a button is; a destructive one is red. */
@@ -357,7 +359,9 @@ html.phone-window .pg-popup-mark {
 }
 
 /* iOS: inset grouped sections, 16 pt from the edges, rounded, 52 pt rows, hairlines inset on both sides. */
-html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .form section h3, .addon-screen section h3, .picker-body > .field > .field-label) {
+/* The picker's label is outside the :is(), which takes its most specific selector's weight and would outrank the form's inset below. */
+html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .form section h3, .addon-screen section h3),
+html.phone-window[data-platform='ios'] .picker-body > .field > .field-label {
   display: block;
   margin: 0;
   padding: 0 32px 9px;
@@ -375,7 +379,8 @@ html.phone-window[data-platform='ios'] :is(.form, .addon-screen, .picker-body) :
 html.phone-window[data-platform='ios'] .picker-body > .field > .field-label {
   padding-inline: 16px;
 }
-html.phone-window :is(.form, .picker-body) .pg-list {
+/* Inside a form's own margin; [data-platform] outranks the platforms' .pg-list margins below. */
+html.phone-window[data-platform] :is(.form, .picker-body) .pg-list {
   margin-inline: 0;
 }
 html.phone-window[data-platform='ios'] :is(.form, .picker-body) .pg-group-footer {
@@ -394,11 +399,13 @@ html.phone-window[data-platform='ios'] .pg-list {
 html.phone-window[data-platform='ios'] .pg-group-footer {
   margin: 7px 32px 0;
 }
+html.phone-window[data-platform='ios'] .empty-section,
 html.phone-window[data-platform='ios'] .pg-row {
   position: relative;
   min-height: var(--pg-row-min);
   padding: var(--pg-row-y) 16px;
 }
+html.phone-window[data-platform='ios'] .empty-section,
 html.phone-window[data-platform='ios'] .pg-row-title {
   line-height: var(--pg-body-lh);
 }
@@ -407,7 +414,7 @@ html.phone-window[data-platform='ios'] .pg-row-check {
   color: var(--pg-tint);
 }
 /* A hairline between rows, from the text's start to as far from the right edge. */
-html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .pg-sessions .session-row + .session-row, .pg-swipe + .pg-swipe > .pg-swipe-content > .pg-row)::before {
+html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .empty-section + .pg-row, .pg-sessions .session-row + .session-row, .pg-swipe + .pg-swipe > .pg-swipe-content > .pg-row)::before {
   content: '';
   position: absolute;
   top: 0;
@@ -448,6 +455,7 @@ html.phone-window[data-platform='android'] .pg-group-title {
   letter-spacing: 0.1px;
   color: var(--pg-tint);
 }
+html.phone-window[data-platform='android'] .empty-section,
 html.phone-window[data-platform='android'] .pg-row {
   min-height: 56px;
   padding: 10px 16px;
@@ -458,11 +466,11 @@ html.phone-window[data-platform='android'] .pg-row {
 html.phone-window[data-platform='android'] .pg-row.tappable:active {
   background: color-mix(in srgb, var(--md-on-surface) 10%, var(--pg-container));
 }
-html.phone-window[data-platform='android'] .pg-list > .pg-row:first-child {
+html.phone-window[data-platform='android'] .pg-list > :is(.pg-row, .empty-section):first-child {
   border-top-left-radius: 16px;
   border-top-right-radius: 16px;
 }
-html.phone-window[data-platform='android'] .pg-list > .pg-row:last-child {
+html.phone-window[data-platform='android'] .pg-list > :is(.pg-row, .empty-section):last-child {
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
@@ -478,6 +486,7 @@ html.phone-window[data-platform='android'] .pg-addon-pane > div > :is(.pg-row:la
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
+html.phone-window[data-platform='android'] .empty-section,
 html.phone-window[data-platform='android'] .pg-row-title {
   font-size: calc(16 * var(--u));
   line-height: calc(24 * var(--u));
@@ -848,6 +857,10 @@ html.phone-window[data-platform='ios'] .builder-props {
   border-radius: 26px;
   background: var(--pg-cell);
 }
+/* A card after it keeps the gap between sections, as a FormGroup's card does. */
+html.phone-window[data-platform='ios'] .addon-screen .props:not(:last-child) {
+  margin-bottom: var(--pg-section-gap);
+}
 html.phone-window[data-platform='android'] .status-pane {
   padding-left: 0;
   padding-right: 0;
@@ -858,6 +871,11 @@ html.phone-window[data-platform='android'] .builder-props {
   margin: 0 16px;
   border-radius: 16px;
   background: var(--pg-container);
+}
+/* A window's form has the inset already: the card lines up with the instruction and the fields. */
+html.phone-window[data-platform='android'] .form .addon-screen .props,
+html.phone-window[data-platform='android'] .addon-screen .form .props {
+  margin-inline: 0;
 }
 
 /* ---------- tables become lists ---------- */
@@ -1071,11 +1089,12 @@ html.phone-window .pg-sessions .session-icon {
   width: 22px;
   height: 22px;
 }
-html.phone-window .pg-sessions .session-empty {
+html.phone-window .pg-sessions .empty-row {
   padding: 16px;
   background: var(--pg-cell);
+  text-align: start;
 }
-html.phone-window[data-platform='ios'] .pg-sessions .session-empty {
+html.phone-window[data-platform='ios'] .pg-sessions .empty-row {
   min-height: 52px;
   padding: 13px 16px;
   border-radius: 26px;
@@ -1165,7 +1184,7 @@ html.phone-window[data-platform='android'] .pg-addon-pane .task-folder {
   letter-spacing: 0.1px;
   color: var(--pg-tint);
 }
-html.phone-window[data-platform='android'] .pg-sessions .session-empty {
+html.phone-window[data-platform='android'] .pg-sessions .empty-row {
   border-radius: 16px;
   background: var(--pg-container);
 }
@@ -1236,9 +1255,6 @@ html.phone-window .phone-sessions .overview-meta {
 html.phone-window[data-platform='android'] .phone-sessions .overview-card {
   border-radius: 16px;
   background: var(--pg-container);
-}
-html.phone-window .phone-sessions .empty {
-  padding: 24px 16px;
 }
 
 /* ---------- a session's screen ---------- */
@@ -1841,24 +1857,13 @@ html.phone-window[data-platform='android'] .term-key {
   box-shadow: none;
   height: 44px;
 }
-/* A terminal with nothing to show yet: "Starting…" over its screen. */
-html.phone-window .terminal-empty {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px;
+/* What covers content on its way (a terminal's "Starting…"): the page's colors. */
+html.phone-window .empty-overlay {
   background: var(--pg-bg, var(--bg));
   color: var(--pg-label-2, var(--fg-muted));
-  text-align: center;
 }
-html.phone-window .terminal-empty-title {
+html.phone-window .empty-state-title {
   font-size: calc(20 * var(--u));
-  font-weight: 600;
   color: var(--pg-label, var(--fg));
 }
 /* A conversation on its way, before the list has it. */
@@ -2367,7 +2372,7 @@ html.phone-window .picker-body {
 }
 
 /* ---------- the rest ---------- */
-html.phone-window .empty {
+html.phone-window .empty-pane {
   padding: 24px 16px;
 }
 html.phone-window .markdown {
@@ -2410,7 +2415,8 @@ html.phone-window .addon-prop-actions .addon-reveal {
   flex: 1;
   margin: 0;
 }
-html.phone-window[data-platform='android'] .addon-screen section {
+/* An addon's own sections; a list's rows (.pg-group) line up with the fields. */
+html.phone-window[data-platform='android'] .addon-screen section:not(.pg-group) {
   margin-inline: 16px;
 }
 html.phone-window .addon-search input {
@@ -2422,9 +2428,35 @@ html.phone-window .addon-search-bar {
   padding: 8px 16px calc(8px + var(--looper-safe-bottom, 0px));
   background: var(--pg-bg);
 }
-html.phone-window .addon-search-bar .addon-search {
-  width: auto;
-  margin: 0;
+/* An addon's search over its panes: it stays under the bar while the list scrolls. */
+html.phone-window .pg-search {
+  flex: none;
+  padding: 4px 16px 0;
+  background: var(--pg-bg);
+}
+html.phone-window[data-platform='android'] .pg-search {
+  padding: 8px 16px 0;
+}
+/* An iPhone's (the tab bar under the screen): it floats over the content just above the tab bar, as wide as
+   the tab bar, and above the keyboard while it's up. The list scrolls clear of both. */
+html.phone-window[data-platform='ios'] .phone-main > .phone-screen > .pg-search {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tabbar-h) + 8px);
+  padding: 0 21px;
+  background: none;
+}
+html.phone-window.keyboard-up[data-platform='ios'] .phone-main > .phone-screen > .pg-search {
+  bottom: 8px;
+}
+html.phone-window[data-platform='ios'] .phone-main:not(.pushed) > .phone-screen > .pg-scroll.has-search {
+  padding-bottom: calc(var(--tabbar-h) + 48px + 8px + 24px);
+}
+/* The soft scroll edge reaches up behind the field too. */
+html.phone-window:not(.tablet)[data-platform='ios'] .phone-main:has(> .phone-screen > .pg-search)::after {
+  height: calc(var(--tabbar-h) + 48px + 8px + 16px);
 }
 html.phone-window .addon-search {
   display: flex;
@@ -2437,49 +2469,114 @@ html.phone-window .addon-search-field {
   flex: 1;
   min-width: 0;
 }
+/* An iPhone's Cancel: a 44 pt glass circle with an xmark (ios.md, Navigation bar), 48 beside a field at the
+   bottom. An iPad has none (UIKit ignores showsCancelButton there). */
 html.phone-window .addon-search-cancel {
   flex: none;
-  min-height: 44px;
-  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border: none;
-  background: none;
-  color: var(--pg-tint);
-  font: inherit;
-  font-size: calc(17 * var(--u));
+  border-radius: 22px;
+  background: var(--pg-glass);
+  -webkit-backdrop-filter: var(--pg-glass-filter);
+  backdrop-filter: var(--pg-glass-filter);
+  box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
+  color: var(--pg-label);
 }
-/* iOS's search field: a filled capsule without a border, the magnifying glass at its start (HIG: Search fields). */
+html.phone-window .phone-main > .phone-screen > .pg-search .addon-search-cancel {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+}
+html.phone-window.tablet .addon-search-cancel {
+  display: none;
+}
+/* iOS's search field (ios.md, kit: _Search): a Small glass capsule, 44 high under a bar and 48 at the bottom,
+   the magnifier in label on glass, 17 pt medium text, the placeholder in placeholder on glass, 11 in on the
+   left and 10 on the right. */
 html.phone-window[data-platform='ios'] .addon-search input {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: 0 34px 0 36px;
+  padding: 0 42px 0 32px;
   border: none;
   border-radius: 22px;
-  background: var(--pg-fill);
+  background: var(--pg-glass);
+  -webkit-backdrop-filter: var(--pg-glass-filter);
+  backdrop-filter: var(--pg-glass-filter);
+  box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
   color: var(--pg-label);
   font-size: calc(17 * var(--u));
+  font-weight: 500;
+}
+html.phone-window[data-platform='ios'] :is(.addon-search-bar, .phone-main > .phone-screen > .pg-search) .addon-search input {
+  min-height: 48px;
+  border-radius: 24px;
 }
 html.phone-window[data-platform='ios'] .addon-search input:focus {
   outline: none;
 }
 html.phone-window[data-platform='ios'] .addon-search input::placeholder {
   font-style: normal;
-  color: var(--pg-label-2);
+  color: var(--ios-glass-placeholder);
 }
 html.phone-window[data-platform='ios'] .addon-search-icon {
-  left: 12px;
+  left: 11px;
   right: auto;
   width: 17px;
   height: 17px;
-  color: var(--pg-label-2);
+  color: var(--pg-label);
 }
 html.phone-window[data-platform='ios'] .addon-search .addon-search-clear {
-  right: 8px;
+  right: 10px;
   width: 22px;
   height: 22px;
   border-radius: 11px;
   background: var(--pg-label-3);
   color: var(--pg-cell);
+}
+/* Material's search bar (md.comp.search-bar): 56 high and fully round on surface container high, no shadow,
+   the 24 dp leading icon in on-surface 16 dp in and 16 dp from the text, body large text, the hint and the
+   trailing icon in on-surface variant. */
+html.phone-window[data-platform='android'] .addon-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  padding: 0 56px;
+  border: none;
+  border-radius: 28px;
+  background: var(--pg-container-high);
+  color: var(--pg-label);
+  font-size: calc(16 * var(--u));
+}
+html.phone-window[data-platform='android'] .addon-search input:focus {
+  outline: none;
+}
+html.phone-window[data-platform='android'] .addon-search input::placeholder {
+  font-style: normal;
+  color: var(--pg-label-2);
+}
+html.phone-window[data-platform='android'] .addon-search-icon {
+  left: 16px;
+  right: auto;
+  width: 24px;
+  height: 24px;
+  color: var(--pg-label);
+}
+html.phone-window[data-platform='android'] .addon-search .addon-search-clear {
+  right: 4px;
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  color: var(--pg-label-2);
+}
+html.phone-window[data-platform='android'] .addon-search .addon-search-clear svg {
+  width: 14px;
+  height: 14px;
 }
 /* A 22 pt button, a 44 pt target. */
 html.phone-window[data-platform='ios'] .addon-search .addon-search-clear::after {
@@ -2534,15 +2631,102 @@ html.phone-window[data-platform='ios'] .tab-page .form {
 }
 
 /* Text loose in a form lines up with the rows' text, as a section's footer does. */
-html.phone-window[data-platform='ios'] :is(.form, .addon-screen) > :is(p, .muted),
-html.phone-window[data-platform='ios'] .agent-perms > .muted,
-html.phone-window[data-platform='ios'] .ra-setup-title {
+html.phone-window[data-platform='ios'] :is(.form, .addon-screen) > :is(p, .muted, .addon-markdown),
+html.phone-window[data-platform='ios'] .agent-perms > .muted {
   margin: 0 0 8px;
   padding-inline: 16px;
   color: var(--pg-label-2);
   font-size: calc(13 * var(--u));
   font-weight: 400;
   line-height: calc(18 * var(--u));
+}
+html.phone-window[data-platform='ios'] :is(.form, .addon-screen) > .addon-markdown .markdown {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+/* A path on an iPhone: a row that opens the picker, the file's name at its trailing end in secondary label. */
+html.phone-window[data-platform='ios'] .form-group .path-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--pg-label);
+  font: inherit;
+  text-align: left;
+}
+html.phone-window[data-platform='ios'] .form-group .path-row:active:not(:disabled) {
+  background: var(--pg-press);
+}
+html.phone-window[data-platform='ios'] .path-row .field-label {
+  flex: none;
+  padding: 0;
+}
+html.phone-window[data-platform='ios'] .path-row-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pg-label-2);
+}
+html.phone-window[data-platform='ios'] .path-row-value.empty {
+  color: var(--pg-label-3);
+}
+html.phone-window[data-platform='ios'] .path-row:disabled .path-row-value {
+  color: var(--pg-label-3);
+}
+/* A path on Android: Material's text field with a trailing icon button inside it. */
+html.phone-window .path-input {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+html.phone-window .path-input input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 52px;
+}
+html.phone-window .path-browse {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-left: -52px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--pg-label-2);
+}
+html.phone-window .path-browse:active:not(:disabled) {
+  background: var(--pg-press);
+}
+html.phone-window .path-browse:disabled {
+  color: var(--pg-label-3);
+}
+/* A page's main instruction: Title 2 emphasized, in label, lined up with the rows' text (ios.md: Type). */
+html.phone-window[data-platform='ios'] .main-instruction {
+  margin: 4px 0 20px;
+  padding-inline: 16px;
+  color: var(--pg-label);
+  font-size: calc(22 * var(--u));
+  line-height: calc(28 * var(--u));
+  font-weight: 590;
+  letter-spacing: normal;
+}
+/* Material's headline small, in on-surface. */
+html.phone-window[data-platform='android'] .main-instruction {
+  margin: 8px 0 20px;
+  color: var(--md-on-surface);
+  font-size: calc(24 * var(--u));
+  line-height: calc(32 * var(--u));
+  font-weight: 400;
+  letter-spacing: 0;
 }
 /* A file's text is a card of its own. */
 html.phone-window[data-platform='ios'] .form .json-editor {
@@ -2943,12 +3127,14 @@ html.phone-window.tablet[data-platform='ios'] .pg-sheet {
   width: min(704px, calc(100% - 48px));
   border-radius: 28px 28px 0 0;
 }
-html.phone-window .pg-split-empty {
+/* The detail column with no row chosen: its sentence in the middle. */
+html.phone-window .empty-detail {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
+  background: none;
   color: var(--pg-label-2);
   font-size: calc(17 * var(--u));
 }
@@ -3011,8 +3197,8 @@ html.phone-window.tablet[data-platform='ios'] :is(.pg-scroll, .pg-rows) {
 html.phone-window.tablet[data-platform='ios'] .form {
   max-width: 700px;
 }
-/* A task's Status card: as wide as a list's cards (700 less their 16 pt insets). */
-html.phone-window.tablet[data-platform='ios'] .phone-detail .status-pane {
+/* A task's Status card and a list's search field: as wide as a list's cards (700 less their 16 pt insets). */
+html.phone-window.tablet[data-platform='ios'] :is(.phone-detail .status-pane, .pg-search) {
   padding-inline: max(16px, calc((100% - 668px) / 2));
 }
 html.phone-window.tablet[data-platform='ios'] .chat-scroll {

@@ -1427,6 +1427,66 @@
    "err": "Error invoking remote method 'chat:stopCommand': Error: boom chat:stopCommand"
   }
  },
+ "chat.commandScreen": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "command:screen",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'command:screen': Error: boom command:screen"
+  }
+ },
+ "chat.writeCommand": {
+  "arity": 3,
+  "calls": [
+   [
+    "send",
+    "command:write",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.showCommandMenu": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "context-menu:commandTerminal",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.resizeCommand": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "command:resize",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "chat.stop": {
   "arity": 1,
   "calls": [
@@ -2821,13 +2881,14 @@
   }
  },
  "openTemplateEditor": {
-  "arity": 1,
+  "arity": 2,
   "calls": [
    [
     "invoke",
     "templateEditor:open",
     [
-     "a0"
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -3109,12 +3170,12 @@
   ],
   "result": {}
  },
- "applyMessagesFilter": {
+ "applyFilter": {
   "arity": 1,
   "calls": [
    [
     "send",
-    "messages:filter-apply",
+    "filter:apply",
     [
      "a0"
     ]
@@ -3204,6 +3265,22 @@
      "a0",
      "a1",
      "a2"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "addons.reportOverflow": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "addons:overflow",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
     ]
    ]
   ],

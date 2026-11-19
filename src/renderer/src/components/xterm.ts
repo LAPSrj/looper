@@ -26,6 +26,9 @@ function openXterm(el: HTMLElement): { term: XTerm; fit: FitAddon } {
   return { term, fit };
 }
 
+/** The terminal whose right-click menu opened last in this window. */
+let menuOwner: XTerm | null = null;
+
 /** What a terminal shows and where its keys and size go. */
 export interface TerminalIO {
   /** Writes the output so far to `term`; live output is written once it resolves. */
@@ -38,6 +41,8 @@ export interface TerminalIO {
   attachFiles?(files: File[]): Promise<string>;
   /** The right-click menu (Copy, Paste, Attach Files…), whose choice comes back as a terminal-copy, terminal-paste or terminal-attached ui event. */
   showMenu?(hasSelection: boolean): void;
+  /** Whether it takes the focus as it opens; unset: it does. */
+  takesFocus?(): boolean;
 }
 
 
@@ -71,6 +76,23 @@ export function useXterm(key: string, io: TerminalIO): { ref: RefObject<HTMLDivE
     // The replay includes what came before it.
     const unsub = subscribe((e) => loaded && latest.current.live(e, term));
     const onData = term.onData((d) => latest.current.write(phone.typed(d)));
+    // Copy and paste as Windows Terminal does: Ctrl+C with a selection (without one it stays the interrupt), Ctrl+Shift+C
+    // and Ctrl+Insert copy; Ctrl+V, Ctrl+Shift+V and Shift+Insert paste. xterm would send Ctrl+V as ^V: the browser's own
+    // paste runs instead, so a pasted image comes in as a file (the paste listener below) and text as xterm pastes it.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || e.altKey || e.metaKey) return true;
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey && key === 'v') || (e.shiftKey && !e.ctrlKey && key === 'insert')) return false;
+      if (!e.ctrlKey) return true;
+      const copyKey = (key === 'c' && (e.shiftKey || term.hasSelection())) || (key === 'insert' && !e.shiftKey);
+      if (!copyKey) return true;
+      e.preventDefault();
+      if (term.hasSelection()) {
+        void navigator.clipboard.writeText(term.getSelection()).catch(reportError);
+        if (key === 'c' && !e.shiftKey) term.clearSelection();
+      }
+      return false;
+    });
     const cleanups = [detachPhone, unsub, () => onData.dispose()];
     const listen = <K extends keyof HTMLElementEventMap>(type: K, fn: (e: HTMLElementEventMap[K]) => void, capture = false) => {
       el.addEventListener(type, fn, capture);
@@ -117,10 +139,13 @@ export function useXterm(key: string, io: TerminalIO): { ref: RefObject<HTMLDivE
     if (showMenu) {
       listen('contextmenu', (e) => {
         e.preventDefault();
+        menuOwner = term;
         showMenu(term.hasSelection());
       });
       cleanups.push(
         window.looper.onUi((e) => {
+          // The choice comes to the whole window: the terminal whose menu it was carries it out (a chat can show two commands' terminals).
+          if (menuOwner !== term) return;
           if (e.type === 'terminal-copy') {
             void navigator.clipboard.writeText(term.getSelection());
           } else if (e.type === 'terminal-paste') {
@@ -134,10 +159,11 @@ export function useXterm(key: string, io: TerminalIO): { ref: RefObject<HTMLDivE
 
     const ro = new ResizeObserver(refit);
     ro.observe(el);
-    term.focus();
+    if (latest.current.takesFocus?.() ?? true) term.focus();
     return () => {
       for (const c of cleanups) c();
       ro.disconnect();
+      if (menuOwner === term) menuOwner = null;
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

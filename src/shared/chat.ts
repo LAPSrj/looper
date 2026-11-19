@@ -36,7 +36,7 @@ export interface ChatPermissionRequest {
   input: unknown;
 }
 
-/** The chat's own model, effort and permission mode: the task's to start with (on the task's harness), then the Chat menu's. */
+/** The chat's own model, effort, permission mode and session type: the task's to start with (on the task's harness), then the Chat menu's. */
 export interface ChatSettings {
   /** Unset: the CLI's default model. */
   model?: string;
@@ -44,10 +44,20 @@ export interface ChatSettings {
   effort?: string;
   /** A PERMISSION_MODES value; '' passes no mode. */
   permissionMode: string;
+  /**
+   * Interactive: Claude Code in a terminal, its conversation read from its
+   * transcript; headless: Claude Code's stream-json, or Codex. Unset: the
+   * task's session type. A Codex chat is always headless.
+   */
+  mode?: 'interactive' | 'headless';
 }
 
 /** The menus above a chat's message box, each one of the Chat menu's lists. */
-export type ChatSettingMenu = 'harness' | 'model' | 'effort' | 'permission';
+export type ChatSettingMenu = 'harness' | 'model' | 'effort' | 'permission' | 'mode';
+
+/** Whether the chat runs its agent in a terminal (ChatSettings.mode). */
+export const chatInteractive = (chat: Pick<ChatState, 'harnessKind' | 'settings'>): boolean =>
+  chat.harnessKind === 'claude-code' && chat.settings.mode === 'interactive';
 
 /** How full the conversation is: tokens in context, and the model's window when the CLI reports it. */
 export interface ChatContext {
@@ -57,7 +67,8 @@ export interface ChatContext {
 
 /**
  * A task chat (Open Project in Chat, Continue in Chat, Fork from Here): the
- * task's harness without a terminal, in a Looper chat window. Once the user
+ * task's harness in a Looper chat window, headless or (Claude Code) in a
+ * terminal the chat shows beside its conversation. Once the user
  * sends a message it is a run of the task: its id is the run id, its folder
  * the run folder, and it shows in the run list. It has no time limits and no
  * dashboard row.
@@ -126,6 +137,8 @@ export interface ChatState {
   autoContinue: boolean;
   /** Continue Anyway: this limit's continue goes even though the cache has expired (Settings → Chats). */
   continueAnyway?: boolean;
+  /** The conversation is in Claude Code's Code Mode, which Claude Code goes on with only in a terminal: the chat stays interactive. */
+  codeMode?: boolean;
 }
 
 /** A turn that failed on the usage limit: when, and when the limit resets (ms since the epoch) when the harness said. */
@@ -212,6 +225,8 @@ export interface ChatInfo {
   compactedFrom?: string;
   /** Continue in Chat on a conversation from outside Looper (the History window): the Claude Code session or Codex thread it went on with. */
   resumedSession?: string;
+  /** The conversation is in Claude Code's Code Mode (ChatState.codeMode). */
+  codeMode?: boolean;
 }
 
 /**

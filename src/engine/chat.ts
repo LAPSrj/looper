@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { stripAnsi } from '../shared/ansi';
 import { agentArgs } from '../shared/projects';
 import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
 import { UserCommands } from './command-output';
@@ -37,19 +39,21 @@ import {
 import { compactRows, compactedText, layered, proseRows } from '../shared/compact';
 import type { MessageRow } from '../shared/messages';
 import type { EngineEvent, Harness, RunRecord, Settings, Task } from '../shared/types';
-import { queueGuidance, readPendingGuidance, takePendingGuidance } from './guidance';
+import { CHAT_MESSAGE_FILE, chatMessageWaiting, queueGuidance, readPendingGuidance, takeChatMessage, takePendingGuidance, writeChatMessage } from './guidance';
+import { MOD_FILES } from './claude-mod';
 import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream';
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { COMPACTED_FILE, compactedFile, findCodexRollout, transcriptHostPath } from './messages';
+import { COMPACTED_FILE, compactedFile, findCodexRollout, TranscriptReader, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
-import { childEnv, SOCKET_FILE, writeLauncher, type RunContext } from './steps/common';
+import { AGENT_DONE, childEnv, SOCKET_FILE, writeLauncher, type RunContext } from './steps/common';
 import { mergeClaudeSettings, readUserSettings, readUserSettingsSync } from './claude-settings';
 import { takeFlagValues } from '../shared/claude-args';
 import { endingError, usageLimitOf } from './sessions';
 import { LOGIN_FAILED_RE } from '../shared/logins';
-import { recordCodexHome, usageLimitReset } from './steps/session';
+import { recordCodexHome, startSession, USAGE_LIMIT_RETRY_MARGIN_MS, usageLimitReset, type SessionEnd, type SessionHandle } from './steps/session';
+import { REMOTE_LINK_RE } from './remote';
 import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
 import type { OpenConversation } from './store/state';
@@ -75,6 +79,21 @@ export const MAX_INLINE_IMAGE = 3_750_000;
 
 /** How long a permission hook may wait for the user: the chat window stays open meanwhile. */
 const PERMISSION_TIMEOUT_SEC = 86_400;
+
+/** Bytes of an interactive chat's terminal output kept for a window that shows it after it started. */
+const SCREEN_BYTES = 262_144;
+
+/** Bytes of an interactive chat's latest terminal output searched for its Remote Control link. */
+const REMOTE_SCAN_BYTES = 8192;
+
+/** Claude Code's refusal to resume a Code Mode session headless (2.1.327: "This session was started in Code Mode (experimental), …"). */
+const CODE_MODE_RESUME_RE = /session was started in Code Mode/i;
+
+/** Why a Code Mode chat stays interactive. */
+const CODE_MODE_TEXT = "This conversation is in Claude Code's Code Mode, which Claude Code goes on with only in a terminal, so the chat stays interactive. Compact into New Chat to go on headless.";
+
+/** What an interactive chat's agent is told about a permission request nobody answered. */
+const NO_PERMISSION_ANSWER = 'Nobody answered this permission request in Looper within a day, so it was denied.';
 
 /** The chat folder's folder of subagent inboxes, one per agent id. */
 const SUBAGENT_INBOX = 'subagent-inbox';
@@ -304,17 +323,44 @@ export function claudeContextWindow(result: Rec, model: string | undefined): num
 }
 
 /**
- * Claude runs one process for the whole chat, and only the permission mode
- * changes while it runs (Bypass excepted: the CLI refuses it unless started
- * with it). A new model, effort or Bypass needs a new process that resumes
- * the conversation.
+ * The account's usage limits in the mod's usage record ($.session.usage(),
+ * Claude Code 2.1.327): `rateLimits` lists each window by its kind, with the
+ * share used as a percentage and its reset as an ISO time. Null when it has
+ * neither the 5-hour nor the 7-day window.
  */
-export function needsNewProcess(
-  launched: { model?: string; effort?: string; bypass: boolean },
-  next: ChatSettings,
-  nextEffort: string | undefined,
-): boolean {
-  return launched.model !== next.model || launched.effort !== nextEffort || (next.permissionMode === 'bypassPermissions' && !launched.bypass);
+export function modUsageLimits(usage: Rec): UsageLimits | null {
+  const out: UsageLimits = {};
+  for (const l of Array.isArray(usage.rateLimits) ? usage.rateLimits : []) {
+    const w = obj(l);
+    const resetsAt = typeof w?.resetsAt === 'string' ? Date.parse(w.resetsAt) : NaN;
+    if (typeof w?.percentUsed !== 'number' || !Number.isFinite(resetsAt)) continue;
+    const window = { used: w.percentUsed / 100, resetsAt };
+    if (w.kind === 'five_hour') out.fiveHour = window;
+    else if (w.kind === 'seven_day') out.sevenDay = window;
+  }
+  return out.fiveHour || out.sevenDay ? out : null;
+}
+
+/** What a Claude chat's running process was started with. */
+export interface Launched {
+  model?: string;
+  effort?: string;
+  permissionMode: string;
+  interactive: boolean;
+}
+
+/**
+ * Claude runs one process for the whole chat. Headless, only the permission
+ * mode changes while it runs (Bypass excepted: the CLI refuses it unless
+ * started with it); in a terminal, Looper can't change it. A new model,
+ * effort, session type, Bypass, or an interactive chat's new permission mode
+ * needs a new process that resumes the conversation.
+ */
+export function needsNewProcess(launched: Launched, next: ChatSettings, nextEffort: string | undefined): boolean {
+  const interactive = next.mode === 'interactive';
+  if (launched.model !== next.model || launched.effort !== nextEffort || launched.interactive !== interactive) return true;
+  if (interactive) return launched.permissionMode !== next.permissionMode;
+  return next.permissionMode === 'bypassPermissions' && launched.permissionMode !== 'bypassPermissions';
 }
 
 export interface ChatDeps {
@@ -577,7 +623,36 @@ class ChatSession {
   /** Claude: each model's context window its result records named (ChatState.modelWindows). */
   private modelWindows: Record<string, number> = {};
   /** Claude: what the running process was started with. */
-  private launched?: { model?: string; effort?: string; bypass: boolean };
+  private launched?: Launched;
+  /** Claude: Looper's settings for a headless process, and the user's --settings that join them. */
+  private streamSettings: Record<string, unknown> = {};
+  private userSettings: Record<string, unknown>[] = [];
+  /** Claude: the chat's own hooks, which an interactive session gets beside the session step's. */
+  private chatHooks: Record<string, unknown> = {};
+  /** Interactive: Claude Code in a terminal, while it runs, and while it starts. */
+  private session: SessionHandle | null = null;
+  private sessionStart: Promise<SessionHandle | null> | null = null;
+  /** Each interactive session's number: the callbacks of one Looper ended go quiet. */
+  private sessionSeq = 0;
+  /** Sessions Looper ended (Stop, a restart, the other session type): their end isn't the chat's. */
+  private readonly retiredSessions = new WeakSet<SessionHandle>();
+  private sessionStartedAt = 0;
+  /** Interactive: the transcript the conversation is read from, from where it stood when the chat started reading it. */
+  private transcript: { file: string; reader: TranscriptReader } | null = null;
+  /** Interactive: the queued messages are in the mod's inbox, which it hasn't taken yet: these ones. */
+  private inboxWritten = false;
+  private inboxIds: string[] = [];
+  /** Interactive: the conversation the running session is on, which becomes the chat's once something is said in it. */
+  private liveSessionId?: string;
+  /** Interactive: the size the window shows the terminal at. */
+  private termSize?: { cols: number; rows: number };
+  /** The conversation is in Claude Code's Code Mode (its transcript's repl-mode record): Claude Code resumes it only in a terminal. */
+  private codeMode = false;
+  /** Interactive: the mod's and the session's files as last read (their mtimes). */
+  private seen = { session: 0, turnEnd: 0, usage: 0 };
+  private polling = false;
+  /** Interactive: the terminal's output, its newest part (SCREEN_BYTES). */
+  private screen = '';
   private status: ChatState['status'] = 'starting';
   private error?: string;
   private history: MessageRow[] = [];
@@ -604,8 +679,8 @@ class ChatSession {
   private queueSeq = 0;
   /** The user's messages waiting for a subagent to read them, by its agent id. */
   private readonly subagentWaiting = new Map<string, string>();
-  /** Each message written to claude that it hasn't replayed yet, in order: a queued one's id, or null for a message sent at once. */
-  private unreplayed: (string | null)[] = [];
+  /** Each message written to claude that it hasn't replayed yet, in order: a queued one's id, or a message sent at once and its row. */
+  private unreplayed: (string | { sent: Pending; row: MessageRow })[] = [];
   /** Claude's tool calls of this turn without a result yet. */
   private readonly toolsRunning = new Set<string>();
   private permissions: ChatPermissionRequest[] = [];
@@ -615,6 +690,10 @@ class ChatSession {
   private controlSeq = 0;
   /** Remote Control: the name the Claude app lists the chat under, while it's on. */
   private remoteName?: string;
+  /** The interactive session started with Remote Control (`--remote-control`). */
+  private remoteLaunched = false;
+  /** Its latest terminal output, while the chat looks there for its Remote Control link; null when it isn't looking. */
+  private remoteScan: string | null = null;
   private commands: SlashCommand[] = [];
   /** The commands the user ran from the message box that are still running, by id. */
   private readonly shellCommands: UserCommands;
@@ -666,12 +745,15 @@ class ChatSession {
       this.limit = info?.limit;
       this.continueAnyway = !!info?.continueAnyway;
     }
-    const taskSettings: ChatSettings = { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '' };
+    const taskSettings: ChatSettings = { model: task.agent.model, effort: task.agent.effort, permissionMode: task.agent.permissionMode ?? '', mode: task.agent.mode };
     this.settings = saved
       ? (info?.settings ?? saved.settings)
       : choice
         ? chatSettingsOn(harness, choice.from, { id: own.id, settings: taskSettings })
         : (info?.settings ?? (opening.kind === 'fork' || opening.kind === 'compact' ? (opening.settings ?? taskSettings) : taskSettings));
+    // Codex runs headless; a Claude chat without a session type of its own takes the task's.
+    this.settings = { ...this.settings, mode: this.claude ? (this.settings.mode ?? task.agent.mode) : 'headless' };
+    this.codeMode = !!info?.codeMode;
     this.context = info?.context;
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
@@ -732,8 +814,8 @@ class ChatSession {
     this.shellCommands = new UserCommands(this.ctx, {
       label: `chat ${this.id}`,
       onChange: () => this.scheduleEmit(),
-      onOutput: (id, stdout, stderr) => {
-        if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, stdout, stderr });
+      onOutput: (id, data) => {
+        if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, data });
       },
     });
   }
@@ -782,21 +864,27 @@ class ChatSession {
       const pipe = (file: string) => [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile(file)) }] }];
       writeText(path.join(this.dir, 'bin', this.target.subagentHookFile), this.target.renderSubagentHook(this.targetFile(SUBAGENT_INBOX)), 0o755);
       const toSubagents = (event: string) => [{ type: 'command', command: `${this.target.stopHookCommand(this.targetFile('bin', this.target.subagentHookFile))} ${event}` }];
-      const settings = {
+      const own = {
+        // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
+        Notification: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('notification.json')) }] }],
+        // The user's messages for a running subagent, with its next tool result.
+        SubagentStart: [{ hooks: toSubagents('start') }],
+        PostToolUse: [{ matcher: '', hooks: toSubagents('post') }],
+      };
+      // With Remote Control: each message and finished turn, from here or the Claude app, for its Conversations list.
+      const remoteHooks = this.remoteName ? { UserPromptSubmit: pipe('prompt.json'), Stop: pipe('stop.json') } : {};
+      // An interactive session gets these beside the session step's own hooks.
+      this.chatHooks = { hooks: { ...remoteHooks, ...own } };
+      this.streamSettings = {
         ...projectMcpApproval(this.harness),
         hooks: {
-          // With Remote Control: each message and finished turn, from here or the Claude app, for its Conversations list.
-          ...(this.remoteName ? { UserPromptSubmit: pipe('prompt.json'), Stop: pipe('stop.json') } : {}),
+          ...remoteHooks,
           // As in a run: the payload names the session and its transcript, which the run window and Continue read,
           // and the session's socket keeps a claude started inside it from the chat's helpers.
           SessionStart: [
             { hooks: [{ type: 'command', command: this.target.renderSessionStartHook(this.targetFile('session.json'), this.targetFile(SOCKET_FILE)) }] },
           ],
-          // The agent's own notifications: the Sessions window puts the chat in Waiting for you.
-          Notification: [{ hooks: [{ type: 'command', command: this.target.renderPipeHook(this.targetFile('notification.json')) }] }],
-          // The user's messages for a running subagent, with its next tool result.
-          SubagentStart: [{ hooks: toSubagents('start') }],
-          PostToolUse: [{ matcher: '', hooks: toSubagents('post') }],
+          ...own,
           PermissionRequest: [
             {
               matcher: '',
@@ -813,7 +901,9 @@ class ChatSession {
       };
       this.timers.push(
         setInterval(() => {
-          this.pollPermissions();
+          // An interactive session's permission requests come through the session step (startSession).
+          if (this.interactive) void this.pollInteractive();
+          else this.pollPermissions();
           this.pollSubagentMessages();
         }, 300),
       );
@@ -821,12 +911,13 @@ class ChatSession {
       const args = [...this.harness.args, ...this.extraArgs];
       const place = { target: this.target, cwd: this.task.cwd };
       const go = ({ rest, settings: user }: { rest: string[]; settings: Record<string, unknown>[] }): void => {
-        writeJsonAtomic(path.join(this.dir, 'settings.json'), mergeClaudeSettings(settings, user));
+        writeJsonAtomic(path.join(this.dir, 'settings.json'), mergeClaudeSettings(this.streamSettings, user));
+        this.userSettings = user;
         this.userArgs = rest;
         if (this.closed) return;
-        // A chat opened again at Looper's start runs nothing until its next message (writeClaude starts claude then).
+        // A chat opened again at Looper's start runs nothing until its next message (send starts its agent then).
         if (this.restored) this.setStatus('ready');
-        else this.startClaude();
+        else this.startAgent();
       };
       const fail = (e: unknown): void => {
         if (!this.closed) this.end(`The chat can't start: ${errMsg(e)}`);
@@ -891,6 +982,17 @@ class ChatSession {
     const child = this.proc;
     this.proc = null;
     if (child) this.retired.add(child);
+    // A session still starting stops itself once it has (startInteractive).
+    this.sessionStart = null;
+    const session = this.session;
+    this.session = null;
+    this.sessionSeq++;
+    if (session) {
+      this.retiredSessions.add(session);
+      this.takeBackInbox();
+      await session.stop('stopped');
+      this.endScreen();
+    }
     const pid = await child?.spawned;
     if (pid) await killHostTree(pid).catch(() => undefined);
     await this.target.killLeftovers(this.ctx.runId).catch(() => undefined);
@@ -909,6 +1011,11 @@ class ChatSession {
     return this.shellCommands.stop(id);
   }
 
+  /** The commands running from the message box: their terminals' output, keys and size. */
+  get userCommands(): UserCommands {
+    return this.shellCommands;
+  }
+
   /**
    * Stop: end the agent's turn. The conversation goes on with the next
    * message. Claude ends the turn when asked and keeps its process; one that
@@ -920,6 +1027,15 @@ class ChatSession {
   }
 
   private async stopTurn(): Promise<void> {
+    if (this.interactive) {
+      // The mod ends the turn; a message waiting in its inbox starts the next one.
+      if (!this.session || this.closed || this.killing || this.status !== 'working') return;
+      for (const p of this.permissions) this.session.answerPermission(p.id, false);
+      this.permissions = [];
+      this.session.stopTurn();
+      this.scheduleEmit();
+      return;
+    }
     // An idle agent has no turn to end: its process stays for the next message.
     if (!this.proc || this.closed || this.killing || this.status !== 'working') return;
     // A tool call waiting for an answer would hold the turn: it's refused.
@@ -966,6 +1082,11 @@ class ChatSession {
   /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
   async sendNow(): Promise<void> {
     if (this.queued.length === 0) return;
+    if (this.interactive) {
+      // The mod starts the next turn with them once this one has ended.
+      if (this.status === 'working') await this.stopTurn();
+      return;
+    }
     if (this.status === 'working') {
       // Claude goes on with the written messages as soon as its turn stops.
       this.writeQueued();
@@ -977,7 +1098,10 @@ class ChatSession {
   unqueue(messageId: string): QueuedMessage | undefined {
     const m = this.queued.find((q) => q.id === messageId);
     if (!m || m.sent) return undefined;
+    // Interactive: the messages come back out of the mod's inbox, unless it has handed them over already.
+    if (this.inboxWritten && !this.takeBackInbox()) return undefined;
     this.queued = this.queued.filter((q) => q !== m);
+    this.writeInbox();
     this.scheduleEmit();
     return m;
   }
@@ -1008,7 +1132,7 @@ class ChatSession {
     this.error = undefined;
     this.status = 'ready';
     if (wasWorking) this.turnEnded();
-    if (this.claude) this.startClaude();
+    if (this.claude) this.startAgent();
     this.acc.addNote(`Restarted ${harnessKindLabel(this.harness.kind)}.`);
     this.save();
     this.scheduleEmit();
@@ -1020,7 +1144,7 @@ class ChatSession {
    * message starts a new one on the conversation. Returns whether it ended one.
    */
   async stopIdleAgent(): Promise<boolean> {
-    if (!this.claude || !this.proc || this.closed || this.killing || this.busy() || this.queued.length > 0) return false;
+    if (!this.claude || !this.agentRunning() || this.closed || this.killing || this.busy() || this.queued.length > 0) return false;
     this.killing = true;
     await this.kill();
     this.killing = false;
@@ -1052,7 +1176,7 @@ class ChatSession {
     this.reporting = true;
     this.acc.addNote('Writing the run’s report.');
     this.scheduleEmit();
-    if (this.proc) {
+    if (this.agentRunning()) {
       this.killing = true;
       await this.kill();
       this.killing = false;
@@ -1071,7 +1195,7 @@ class ChatSession {
 
   /** Whether the harness's process runs now (Claude's lives between turns; Codex's only during one). */
   agentRunning(): boolean {
-    return !!this.proc;
+    return !!this.proc || !!this.session || !!this.sessionStart;
   }
 
   /** Claude: a new process with the chat's settings that resumes the conversation. */
@@ -1082,8 +1206,348 @@ class ChatSession {
     this.killing = false;
     if (this.closed || this.status === 'ended') return;
     this.unsendQueued();
-    this.startClaude();
+    this.startAgent();
     this.drainQueue();
+  }
+
+  /**
+   * Claude Code refused to go on with a Code Mode conversation headless (one
+   * whose repl-mode record the chat didn't read): the chat goes back to its
+   * terminal, and the messages written to the refused process wait for it.
+   */
+  private backToTerminal(): void {
+    const lost = this.unreplayed.filter((u) => typeof u !== 'string');
+    for (const { row } of lost) {
+      const at = this.acc.rows.indexOf(row);
+      if (at !== -1) this.acc.rows.splice(at, 1);
+    }
+    this.unsendQueued();
+    this.queued = [...lost.map(({ sent }) => ({ id: `q${++this.queueSeq}`, text: sent.text, attachments: sent.attachments })), ...this.queued];
+    this.codeMode = true;
+    this.settings = { ...this.settings, mode: 'interactive' };
+    this.acc.addNote(CODE_MODE_TEXT);
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: Claude Code goes on with this Code Mode conversation only in a terminal`);
+    this.save();
+    this.startAgent();
+    this.drainQueue();
+  }
+
+  /** Claude's process in the chat's session type. */
+  private startAgent(): void {
+    if (this.interactive) this.startInteractive();
+    else this.startClaude();
+  }
+
+  // ---------- the interactive session (claude) ----------
+
+  private get interactive(): boolean {
+    return this.claude && this.settings.mode === 'interactive';
+  }
+
+  /**
+   * Claude Code in a terminal, with Looper's mod (startSession): the chat's
+   * messages wait in the mod's inbox, which hands them over as the user's, the
+   * conversation comes from the transcript, and Stop goes through the mod. It
+   * starts without a prompt, waiting for the first message.
+   */
+  private startInteractive(): void {
+    if (this.session || this.sessionStart || this.closed) return;
+    const s = this.settings;
+    const effort = resolveEffort(s, this.harness);
+    const fork = !this.sessionId && this.fork && 'claudeAt' in this.fork ? this.fork : undefined;
+    // A new conversation gets its id from Looper, so a restart before the first message can't lose it.
+    const session = this.sessionId ? { id: this.sessionId, resume: true } : fork ? undefined : { id: randomUUID(), resume: false };
+    const seq = ++this.sessionSeq;
+    const live = () => seq === this.sessionSeq && !this.closed;
+    this.sessionStartedAt = Date.now();
+    this.launched = { model: s.model, effort, permissionMode: s.permissionMode, interactive: true };
+    const remote = this.remoteName;
+    this.remoteLaunched = !!remote;
+    this.remoteScan = remote ? '' : null;
+    this.setStatus('starting');
+    const started: Promise<SessionHandle | null> = startSession(
+      this.ctx,
+      {
+        step: 'agent',
+        prefix: '',
+        launcherName: 'chat',
+        harness: this.harness,
+        headless: false,
+        model: s.model,
+        effort,
+        permissionMode: s.permissionMode || undefined,
+        session,
+        // As headless: a question form needs answers Looper can't collect, so the agent asks in the conversation.
+        extraArgs: [
+          ...(fork ? ['--resume', fork.sessionId, '--fork-session', '--resume-session-at', fork.claudeAt] : []),
+          '--disallowedTools',
+          'AskUserQuestion',
+          ...(remote ? ['--remote-control', remote] : []),
+          ...this.extraArgs,
+        ],
+        footer: '',
+        prompt: '',
+        inbox: [CHAT_MESSAGE_FILE],
+        settings: this.chatHooks,
+        doneCommand: AGENT_DONE.command,
+        doneStatuses: AGENT_DONE.statuses,
+        stopGate: false,
+        permissions: { waitMs: PERMISSION_TIMEOUT_SEC * 1000, noAnswer: NO_PERMISSION_ANSWER },
+        maxRuntimeMs: Infinity,
+        maxRuntimeText: '',
+        idleGraceMs: Infinity,
+        idleText: '',
+        onIdleTimeout: 'hold',
+      },
+      {
+        onData: (d) => live() && this.onScreen(d),
+        onPermission: (p) => {
+          if (!live()) return;
+          this.permissions = p ? [p] : [];
+          this.scheduleEmit();
+        },
+      },
+    ).then(
+      (handle) => {
+        if (this.sessionStart !== started) {
+          // Ended while it started (Stop, close, the other session type).
+          this.retiredSessions.add(handle);
+          void handle.stop('stopped');
+          return null;
+        }
+        this.sessionStart = null;
+        this.session = handle;
+        if (this.termSize) handle.resize(this.termSize.cols, this.termSize.rows);
+        void handle.finished.then((end) => this.sessionEnded(handle, end));
+        return handle;
+      },
+      (err: unknown) => {
+        if (this.sessionStart !== started) return null;
+        this.sessionStart = null;
+        this.acc.addNote(`Couldn't start ${this.harness.name}: ${errMsg(err)}`);
+        this.setStatus('ready');
+        return null;
+      },
+    );
+    this.sessionStart = started;
+  }
+
+  /** The interactive session ended by itself: Claude Code exited, or an API error or the usage limit ended it. */
+  private sessionEnded(handle: SessionHandle, end: SessionEnd): void {
+    if (this.retiredSessions.has(handle) || this.closed) return;
+    this.session = null;
+    this.sessionSeq++;
+    this.endScreen();
+    this.permissions = [];
+    this.takeBackInbox();
+    if (end.login) this.d.onLogin?.(this.environmentId, this.harness.id, false);
+    // As a headless chat's: the process was the conversation, so the chat ends with it.
+    if (end.reason === 'exited') {
+      this.end(end.headline ? `The session ended: ${end.headline}.` : 'The session ended.');
+      return;
+    }
+    // An API error, the usage limit, or a start that failed: the next message starts Claude Code again on the conversation.
+    const text = end.headline ?? 'The session ended.';
+    this.acc.addNote(end.body && end.body !== text ? `${text}\n${end.body}` : text);
+    if (end.retryAtMs !== undefined) {
+      this.limit = { at: Date.now(), resetsAt: end.retryAtMs - USAGE_LIMIT_RETRY_MARGIN_MS };
+      this.syncContinue();
+    }
+    this.turnEnded();
+    this.save();
+  }
+
+  private async pollInteractive(): Promise<void> {
+    if (this.polling || this.closed) return;
+    this.polling = true;
+    try {
+      await this.readInteractive();
+    } catch (err) {
+      this.d.log.warn(`chat ${this.id}: cannot read the session: ${errMsg(err)}`);
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  /** What the interactive session wrote since the last poll: its start, the conversation, its turns, its usage. */
+  private async readInteractive(): Promise<void> {
+    const file = (name: string) => path.join(this.dir, name);
+    const mtime = (name: string) =>
+      fs.promises.stat(file(name)).then(
+        (st) => st.mtimeMs,
+        () => 0,
+      );
+    const json = async (name: string): Promise<Rec | null> => {
+      try {
+        return obj(JSON.parse(await fs.promises.readFile(file(name), 'utf8')));
+      } catch {
+        return null;
+      }
+    };
+    const running = this.agentRunning();
+    // The session's start names its conversation and transcript; the messages go to the mod once the chat reads it.
+    const started = await mtime('session.json');
+    if (running && started >= this.sessionStartedAt - 1000 && started !== this.seen.session) {
+      const ref = await json('session.json');
+      this.seen.session = started;
+      if (typeof ref?.session_id === 'string') this.liveSessionId = ref.session_id;
+      if (typeof ref?.transcript_path === 'string') await this.follow(ref.transcript_path);
+      if (this.status === 'starting') this.setStatus('ready');
+      this.writeInbox();
+    }
+    // A conversation is the chat's once something has been said in it, here or in the terminal.
+    if (this.liveSessionId && this.recorded && this.sessionId !== this.liveSessionId) this.setSession(this.liveSessionId);
+    // A new conversation's transcript appears with its first message.
+    const grew = this.transcript ? await this.transcript.reader.read().catch((err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? false : Promise.reject(err))) : false;
+    if (grew) {
+      if (this.acc.sessionName) this.nameFromHarness(this.acc.sessionName);
+      this.scheduleEmit();
+    }
+    if (this.inboxWritten && !chatMessageWaiting(this.dir)) this.inboxTaken();
+    if (!running) return;
+    // The mod records each turn's start and end.
+    const [turnStart, turnEnd] = await Promise.all([mtime('turn.json'), mtime(MOD_FILES.turnEnd)]);
+    if (turnStart >= this.sessionStartedAt - 1000 && turnStart > turnEnd && this.status === 'ready') this.setStatus('working');
+    else if (turnEnd > this.seen.turnEnd && turnEnd >= turnStart) {
+      this.seen.turnEnd = turnEnd;
+      if (this.status === 'working') {
+        // Stop ended it (the mod's abort): the conversation says so, as a headless chat's does.
+        if ((await json(MOD_FILES.turnEnd))?.aborted === true) this.acc.addNote('Stopped.');
+        this.turnEnded();
+        this.takeLimit();
+        this.save();
+      }
+    }
+    // The mod's record of the session's usage: the context and its window, and the account's limits.
+    const usageAt = await mtime(MOD_FILES.usage);
+    if (usageAt > this.seen.usage) {
+      this.seen.usage = usageAt;
+      const usage = await json(MOD_FILES.usage);
+      const context = obj(usage?.context);
+      if (typeof context?.tokens === 'number') {
+        const tokens = context.tokens;
+        const window = typeof context.window === 'number' && context.window > 0 ? context.window : this.activeModel ? sharedWindows.pick(this.activeModel, tokens) : undefined;
+        this.context = { tokens, window: window ?? this.context?.window };
+      }
+      const limits = usage ? modUsageLimits(usage) : null;
+      if (limits) this.d.onLimits(limitsKey(this.environmentId, this.harness.id), limits);
+      this.scheduleEmit();
+    }
+    // Remote Control turned off during a turn, or while the session started.
+    this.dropRemote();
+  }
+
+  /** Read the session's transcript (a target path) into the conversation, from its end as it is now: the rows before are already shown. */
+  private async follow(transcriptPath: string): Promise<void> {
+    const env = resolveEnvironment(this.task, this.d.settings);
+    const file = await transcriptHostPath(transcriptPath, this.d.host, env.kind === 'wsl' ? env.distro : undefined);
+    if (!file || this.transcript?.file === file) return;
+    const reader = new TranscriptReader(file, {}, 'claude', (line) => this.onTranscriptLine(line));
+    await reader.skipExisting();
+    this.transcript = { file, reader };
+  }
+
+  private onTranscriptLine(line: string): void {
+    let rec: Rec | null;
+    try {
+      rec = obj(JSON.parse(line));
+    } catch {
+      return;
+    }
+    if (!rec) return;
+    if (rec.type === 'repl-mode' && typeof rec.replMode === 'boolean' && rec.replMode !== this.codeMode) {
+      this.codeMode = rec.replMode;
+      this.save();
+    }
+    if (isInterruptedRecord(rec)) this.acc.addNote('Stopped.');
+    else this.acc.addLine(line);
+    if (rec.type === 'assistant' && rec.isSidechain !== true) {
+      const model = obj(rec.message)?.model;
+      if (typeof model === 'string' && !model.startsWith('<')) this.activeModel = model;
+    }
+    // Something said in the terminal makes the chat a run, as a message sent from here does.
+    if (this.openedAt === undefined && this.acc.rows.some((r) => r.kind === 'prompt')) this.markOpened();
+  }
+
+  /**
+   * The queued messages, as one, into the mod's inbox, once the chat reads the
+   * session's transcript, so the conversation shows them when the agent has them.
+   */
+  private writeInbox(): void {
+    if (!this.interactive || !this.transcript || this.closed || this.killing || this.reporting) return;
+    this.takeBackInbox();
+    if (this.queued.length === 0) return;
+    const text = this.queued
+      .map((m) => withFileList(withCommands(m.text, m.attachments), fileAttachments(m.attachments).map((a) => this.target.toTargetPath(a.path))))
+      .join('\n\n');
+    // A compacted chat's first message takes the earlier conversation to the agent, once; the rows leave it out.
+    const compacted = this.compacted ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x) }) : undefined;
+    writeChatMessage(this.dir, compacted ? `${compacted}\n\n${text}` : text);
+    this.inboxWritten = true;
+    this.inboxIds = this.queued.map((m) => m.id);
+  }
+
+  /** The mod handed the inbox's messages to the agent: the transcript shows them from now on. */
+  private inboxTaken(): void {
+    const taken = new Set(this.inboxIds);
+    this.queued = this.queued.filter((q) => !taken.has(q.id));
+    this.inboxIds = [];
+    this.inboxWritten = false;
+    this.compacted = undefined;
+    this.scheduleEmit();
+  }
+
+  /** Take the inbox's messages back before the mod hands them over; false when it already has. */
+  private takeBackInbox(): boolean {
+    if (!this.inboxWritten) return true;
+    if (takeChatMessage(this.dir)) {
+      this.inboxWritten = false;
+      this.inboxIds = [];
+      return true;
+    }
+    this.inboxTaken();
+    return false;
+  }
+
+  private onScreen(data: string): void {
+    this.screen = (this.screen + data).slice(-SCREEN_BYTES);
+    this.d.emit({ type: 'terminal:data', id: this.id, data });
+    if (this.remoteScan !== null) this.findRemoteLink(data);
+  }
+
+  /** Claude Code prints its claude.ai address once Remote Control connects: each session start gets a new one. */
+  private findRemoteLink(data: string): void {
+    this.remoteScan = ((this.remoteScan ?? '') + data).slice(-REMOTE_SCAN_BYTES);
+    const link = REMOTE_LINK_RE.exec(stripAnsi(this.remoteScan))?.[0];
+    if (!link || !this.remoteName) return;
+    this.remoteScan = null;
+    this.d.onRemote?.({ id: this.id, taskId: this.taskId, name: this.remoteName, cwd: this.task.cwd, dir: this.dir, link });
+  }
+
+  /** Remote Control was turned off: a terminal's Claude Code can't drop it while running, so it starts again without it once no turn is running. */
+  private dropRemote(): void {
+    if (!this.remoteLaunched || this.remoteName || !this.session || this.busy() || this.killing || this.closed) return;
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: Remote Control was turned off, starting Claude Code again without it`);
+    void this.restart();
+  }
+
+  private endScreen(): void {
+    this.d.emit({ type: 'terminal:end', id: this.id });
+  }
+
+  /** The terminal's output so far, and whether its session has ended (the next message starts another). */
+  terminalOutput(): { data: string; ended: boolean } {
+    return { data: this.screen, ended: !this.session && !this.sessionStart };
+  }
+
+  writeTerminal(data: string): void {
+    this.session?.write(data);
+  }
+
+  /** The size the window shows the terminal at: a session that starts later gets it too. */
+  resizeTerminal(cols: number, rows: number): void {
+    this.termSize = { cols, rows };
+    this.session?.resize(cols, rows);
   }
 
   // ---------- names ----------
@@ -1195,18 +1659,20 @@ class ChatSession {
 
   // ---------- settings ----------
 
-  /** Chat menu: a new model, effort or permission mode for this chat (the task keeps its own). */
+  /** Chat menu: a new model, effort, permission mode or session type for this chat (the task keeps its own). */
   async configure(patch: Partial<ChatSettings>): Promise<void> {
     if (this.closed || this.status === 'ended' || this.killing) return;
     const prev = this.settings;
     const next: ChatSettings = { ...prev, ...patch };
+    if (!this.claude && next.mode !== 'headless') throw new Error('A Codex chat runs headless.');
+    if (this.codeMode && next.mode === 'headless') throw new Error(CODE_MODE_TEXT);
     // An effort the new model doesn't offer falls back to its default, as in the task editor.
     if ('model' in patch && next.effort) {
       const entry = harnessModels(this.harness).find((m) => m.id === next.model);
       if (entry?.efforts && !entry.efforts.includes(next.effort)) next.effort = undefined;
     }
     // Codex starts a process per turn, and a stopped claude starts one with the next message: both take the settings then.
-    if (this.claude && this.proc && this.launched) {
+    if (this.claude && this.agentRunning() && this.launched) {
       if (needsNewProcess(this.launched, next, resolveEffort(next, this.harness))) {
         // The Chat menu keeps these off during a turn: a new process would cut it short.
         if (this.busy()) return;
@@ -1215,7 +1681,7 @@ class ChatSession {
         await this.restart();
         return;
       }
-      if (next.permissionMode !== prev.permissionMode) {
+      if (next.permissionMode !== prev.permissionMode && this.proc) {
         const id = `mode-${++this.controlSeq}`;
         this.modeRequests.set(id, prev.permissionMode);
         this.proc.stdin?.write(permissionModeRequest(id, next.permissionMode) + '\n');
@@ -1240,6 +1706,8 @@ class ChatSession {
 
   /** The chat's model, effort and permission mode, as a run would pass the task's. */
   private startClaude(): void {
+    // The stream brings the conversation from now on: an interactive session's transcript is read from its end again next time.
+    this.transcript = null;
     const q = (s: string) => this.target.quote(s);
     const s = this.settings;
     const parts = [this.harness.command];
@@ -1252,6 +1720,8 @@ class ChatSession {
       // A new session holding the conversation up to the message; init names it.
       parts.push('--resume', q(this.fork.sessionId), '--fork-session', '--resume-session-at', q(this.fork.claudeAt));
     }
+    // An interactive session of the chat's writes settings of its own to the same file.
+    writeJsonAtomic(path.join(this.dir, 'settings.json'), mergeClaudeSettings(this.streamSettings, this.userSettings));
     parts.push('--settings', q(this.targetFile('settings.json')));
     // A question form needs answers Looper can't collect: the agent asks in the conversation instead.
     parts.push('--disallowedTools', 'AskUserQuestion');
@@ -1260,8 +1730,12 @@ class ChatSession {
     // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
     parts.push('--thinking-display', 'summarized');
     for (const arg of this.userArgs) parts.push(q(arg));
-    this.launched ={ model: s.model, effort, bypass: s.permissionMode === 'bypassPermissions' };
+    this.launched = { model: s.model, effort, permissionMode: s.permissionMode, interactive: false };
     this.spawnProc(this.launcher('chat', parts.join(' ')), (_code, stderr) => {
+      if (CODE_MODE_RESUME_RE.test(stderr)) {
+        this.backToTerminal();
+        return;
+      }
       // The one process is the whole conversation: once it is gone, so is the chat.
       this.end(exitText('The session ended.', stderr));
     });
@@ -1280,7 +1754,9 @@ class ChatSession {
   remoteOff(): void {
     if (!this.remoteName) return;
     this.remoteName = undefined;
+    this.remoteScan = null;
     this.proc?.stdin?.write(remoteControlRequest(`rc-${++this.controlSeq}`, undefined) + '\n');
+    this.dropRemote();
   }
 
   /** One codex turn: `codex exec`, resuming the thread after the first. */
@@ -1370,7 +1846,14 @@ class ChatSession {
 
   /** Send what waited, all of it as one message, once the agent isn't working. */
   private drainQueue(): void {
-    if (this.queued.length === 0 || this.killing || this.reporting || this.status === 'working' || this.status === 'ended' || this.closed) return;
+    if (this.queued.length === 0 || this.killing || this.reporting || this.status === 'ended' || this.closed) return;
+    if (this.interactive) {
+      // The mod takes the messages in whenever the agent can read them.
+      if (!this.agentRunning()) this.startAgent();
+      this.writeInbox();
+      return;
+    }
+    if (this.status === 'working') return;
     const next: Pending = {
       text: this.queued.map((x) => x.text).filter(Boolean).join('\n\n'),
       attachments: this.queued.flatMap((x) => x.attachments),
@@ -1480,7 +1963,7 @@ class ChatSession {
       } else if (rec.isReplay === true) {
         // Claude read a message: a queued one joins the conversation here.
         const id = this.unreplayed.shift();
-        const m = id ? this.queued.find((q) => q.id === id) : undefined;
+        const m = typeof id === 'string' ? this.queued.find((q) => q.id === id) : undefined;
         if (m) {
           this.queued = this.queued.filter((q) => q !== m);
           this.acc.addPrompt(m.text, m.attachments);
@@ -1581,7 +2064,7 @@ class ChatSession {
     const t = text.trim();
     if (this.closed || this.status === 'ended' || (!t && attachments.length === 0)) return false;
     this.d.onTalk?.({ id: this.id, taskId: this.taskId });
-    if (this.killing || this.reporting || this.status === 'working') {
+    if (this.killing || this.reporting || (this.status === 'working' && !this.interactive)) {
       this.queued.push({ id: `q${++this.queueSeq}`, text: t, attachments });
       // A tool is running: the agent reads it with that tool's result.
       if (!this.killing && this.toolsRunning.size > 0) this.writeQueued();
@@ -1598,23 +2081,30 @@ class ChatSession {
     this.turnLimit = undefined;
     this.continueAnyway = false;
     this.syncContinue();
-    this.acc.addPrompt(p.text, p.attachments);
+    if (this.interactive) {
+      // It waits for the mod, whatever the agent is doing: its transcript shows it once the agent has it, and the chat becomes a run then.
+      this.queued.push({ id: `q${++this.queueSeq}`, text: p.text, attachments: p.attachments });
+      this.drainQueue();
+      this.scheduleEmit();
+      return;
+    }
+    const row = this.acc.addPrompt(p.text, p.attachments);
     this.markOpened();
     // A compacted chat's first message takes the earlier conversation to the agent, once.
     const compacted = this.compacted
       ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x) })
       : undefined;
     this.compacted = undefined;
-    if (this.claude) this.writeClaude(p, compacted);
+    if (this.claude) this.writeClaude(p, row, compacted);
     else this.startCodexTurn(p, compacted);
   }
 
-  private writeClaude(p: Pending, compacted?: string): void {
+  private writeClaude(p: Pending, row: MessageRow, compacted?: string): void {
     // After a Stop the process is gone: a new one resumes the conversation.
     if (!this.proc) this.startClaude();
     const msg = claudeUserMessage(p.text, p.attachments, (x) => this.target.toTargetPath(x), undefined, compacted);
     this.proc?.stdin?.write(JSON.stringify(msg) + '\n');
-    this.unreplayed.push(null);
+    this.unreplayed.push({ sent: p, row });
     this.setStatus('working');
   }
 
@@ -1806,6 +2296,7 @@ class ChatSession {
         ...(this.forkedFrom ? { forkedFrom: this.forkedFrom } : {}),
         ...(this.compactedFrom ? { compactedFrom: this.compactedFrom } : {}),
         ...(this.resumedSession ? { resumedSession: this.resumedSession } : {}),
+        ...(this.codeMode ? { codeMode: true } : {}),
       });
     } catch (err) {
       this.d.log.warn(`chat ${this.id}: cannot save: ${errMsg(err)}`);
@@ -1932,7 +2423,8 @@ class ChatSession {
       permissions: this.permissions,
       queued: this.queued,
       ...(this.subagentWaiting.size ? { subagentMessages: Object.fromEntries(this.subagentWaiting) } : {}),
-      commands: this.commands,
+      // An interactive session's skills come from its transcript.
+      commands: this.interactive && this.acc.commands.length ? this.acc.commands : this.commands,
       commandPrefix: this.claude ? '/' : '$',
       runningCommands: this.shellCommands.size,
       ...(this.turnEndedAt !== undefined ? { turnEndedAt: this.turnEndedAt } : {}),
@@ -1941,6 +2433,7 @@ class ChatSession {
       ...(this.limit ? { limit: this.limit } : {}),
       autoContinue: this.autoContinue,
       ...(this.continueAnyway ? { continueAnyway: true } : {}),
+      ...(this.codeMode ? { codeMode: true } : {}),
     };
   }
 }
@@ -2079,6 +2572,19 @@ export class ChatManager {
     return this.sessions.get(id)?.taskId;
   }
 
+  /** An interactive chat's terminal, as a terminal session's (TerminalView): undefined for an id that isn't an open chat. */
+  terminalOutput(id: string): { data: string; ended: boolean } | undefined {
+    return this.sessions.get(id)?.terminalOutput();
+  }
+
+  writeTerminal(id: string, data: string): void {
+    this.sessions.get(id)?.writeTerminal(data);
+  }
+
+  resizeTerminal(id: string, cols: number, rows: number): void {
+    this.sessions.get(id)?.resizeTerminal(cols, rows);
+  }
+
   /** The chats with a window open: run-log pruning leaves their runs alone. */
   openIds(): Set<string> {
     return new Set(this.sessions.keys());
@@ -2115,6 +2621,11 @@ export class ChatManager {
   /** Stop under a running command: that command alone ends. */
   async stopCommand(id: string, commandId: string): Promise<void> {
     await this.sessions.get(id)?.stopCommands(commandId);
+  }
+
+  /** The commands running from a chat's message box, while the chat is open. */
+  commands(id: string): UserCommands | undefined {
+    return this.sessions.get(id)?.userCommands;
   }
 
   async restartAgent(id: string): Promise<void> {

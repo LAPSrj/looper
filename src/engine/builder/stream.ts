@@ -14,7 +14,8 @@ function parse(line: string): Rec | null {
 }
 
 /**
- * Claude's stream-json lines are transcript records under other names: a tool
+ * A Claude chat's conversation: its stream-json lines, or (interactive) its
+ * transcript's, which pass through unchanged. Stream-json lines are transcript records under other names: a tool
  * result's details ride `tool_use_result` instead of `toolUseResult`, and the
  * transcript's `isMeta` (a skill's content, hook feedback), `isCompactSummary`
  * and `isVisibleInTranscriptOnly` all become `isSynthetic: true` (claude
@@ -44,10 +45,16 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
     super.addLine(line);
   }
 
+  /** An interactive chat's message the mod handed over mid-turn is the user's own: it has no guidance header. */
+  protected takeModNote(text: string, ts?: string): void {
+    if (!this.pushGuidance(text, ts)) this.pushPrompt(text, ts);
+  }
+
   /** The user's message as a prompt row: Looper adds it itself, and drops Claude's replay of it. */
-  addPrompt(text: string, attachments?: Attachment[]): void {
+  addPrompt(text: string, attachments?: Attachment[]): MessageRow {
     const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
     if (attachments?.length) row.attachments = attachments;
+    return row;
   }
 
   /** Looper's own line in the conversation (why a turn failed). */
@@ -78,9 +85,10 @@ export class CodexExecAccumulator extends TranscriptAccumulator {
     this.byItem.clear();
   }
 
-  addPrompt(text: string, attachments?: Attachment[]): void {
+  addPrompt(text: string, attachments?: Attachment[]): MessageRow {
     const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
     if (attachments?.length) row.attachments = attachments;
+    return row;
   }
 
   /** Looper's own line in the conversation (why a turn failed). */

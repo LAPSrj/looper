@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AddonButton, AddonEventKind, AddonField, AddonNode, AddonProp, AddonScreen } from '@shared/addons';
 import { ADDON_WINDOW_VIEWS } from '@shared/commands/build';
 import type { AddonContext, CommandContext } from '@shared/commands/context';
@@ -9,8 +9,10 @@ import { PathField } from './form-blocks';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { PropertyList, type Property } from './PropertyList';
-import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputSuffix, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
+import { ListActions, ListButton, SelectList } from './SelectList';
+import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, MainInstruction, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
+import { isPhone } from '../web/page-nav';
 
 type Value = string | number | boolean;
 type Values = Record<string, Value>;
@@ -30,11 +32,20 @@ function fieldsOf(nodes: AddonNode[]): AddonField[] {
   );
 }
 
-/** A screen's nodes in order: each run of fields and rows together (a FormGroup), every other node alone. */
+/** Every property of a screen, inside sections and tabs too. */
+function propsOf(nodes: AddonNode[]): AddonProp[] {
+  return nodes.flatMap((n) =>
+    n.type === 'props' ? n.items : n.type === 'section' ? propsOf(n.body) : n.type === 'tabs' ? n.items.flatMap((t) => propsOf(t.body)) : [],
+  );
+}
+
+const isList = (n: AddonNode) => n.type === 'field' && n.input === 'list';
+
+/** A screen's nodes in order: each run of fields and rows together (a FormGroup), every other node alone. A list is a section of its own. */
 function fieldRuns(nodes: AddonNode[]): { at: number; fields: boolean; nodes: AddonNode[] }[] {
   const runs: { at: number; fields: boolean; nodes: AddonNode[] }[] = [];
   nodes.forEach((n, at) => {
-    const fields = n.type === 'field' || n.type === 'row';
+    const fields = (n.type === 'field' && !isList(n)) || n.type === 'row';
     const last = runs[runs.length - 1];
     if (fields && last?.fields) last.nodes.push(n);
     else runs.push({ at, fields, nodes: [n] });
@@ -42,12 +53,19 @@ function fieldRuns(nodes: AddonNode[]): { at: number; fields: boolean; nodes: Ad
   return runs;
 }
 
-const emptyValue = (f: AddonField): Value => (f.input === 'checkbox' ? false : f.input === 'number' ? 0 : '');
+const emptyValue = (f: AddonField): Value =>
+  f.input === 'checkbox' ? false : f.input === 'number' ? 0 : f.input === 'list' ? (f.options?.[0]?.value ?? '') : '';
 
-/** Fields keep what the user typed across redraws; only fields new to the screen take the addon's value. */
+/**
+ * Fields keep what the user typed across redraws; only fields new to the screen take the addon's value.
+ * A list whose selected row is gone selects the addon's value again, or its first row.
+ */
 function mergeValues(prev: Values, fields: AddonField[]): Values {
   const next: Values = {};
-  for (const f of fields) next[f.id] = f.id in prev ? prev[f.id] : (f.value ?? emptyValue(f));
+  for (const f of fields) {
+    const kept = f.id in prev && (f.input !== 'list' || !!f.options?.some((o) => o.value === prev[f.id]));
+    next[f.id] = kept ? prev[f.id] : (f.value ?? emptyValue(f));
+  }
   return next;
 }
 
@@ -152,11 +170,11 @@ export function AddonScreenView({
     return () => clearTimeout(t);
   }, [screen, load]);
 
-  const send = async (kind: AddonEventKind, id: string, confirm?: string) => {
+  const send = async (kind: AddonEventKind, id: string, confirm?: string, changed?: Values) => {
     const { view: v, params: p } = source.current;
     setBusy(true);
     try {
-      const r = await window.looper.addons.event(addonId, { source: { view: v, params: p }, kind, id, values }, confirm);
+      const r = await window.looper.addons.event(addonId, { source: { view: v, params: p }, kind, id, values: { ...values, ...changed } }, confirm);
       if (r.values) setValues((prev) => ({ ...prev, ...r.values }));
       if (kind === 'reveal' && r.value !== undefined) setRevealed((m) => ({ ...m, [id]: r.value! }));
     } finally {
@@ -164,17 +182,37 @@ export function AddonScreenView({
     }
   };
 
+  // The screen's passwords and other secrets: its window's Show command reveals them all, and hides them again.
+  const secretProps = screen ? propsOf(screen.body).filter((p) => p.secret) : [];
+  const secretIds = [...new Set(secretProps.map((p) => p.secret!))];
+  const secretLabels = [...new Set(secretProps.map((p) => p.label))];
+  const secretsShown = secretIds.length > 0 && secretIds.every((id) => revealed[id] !== undefined);
+  const toggleSecrets = () => {
+    if (secretsShown) setRevealed({});
+    else for (const id of secretIds) if (revealed[id] === undefined) void send('reveal', id);
+  };
+  const secrets = secretIds.length ? { label: secretLabels.length === 1 ? secretLabels[0] : 'Secrets', shown: secretsShown } : null;
+
   // The commands placed on the screen reach it through its window, with the fields' values as they are then.
   const sendRef = useRef(send);
   sendRef.current = send;
+  const toggleRef = useRef(toggleSecrets);
+  toggleRef.current = toggleSecrets;
   const reportRef = useRef(onScreen);
   reportRef.current = onScreen;
   const commandState = screen?.commands;
   const stateKey = JSON.stringify(commandState ?? null);
+  const secretsKey = JSON.stringify(secrets);
   const shown = !!screen;
   useEffect(() => {
-    if (shown) reportRef.current?.({ view, state: commandState, run: (id, confirm) => void sendRef.current('command', id, confirm) });
-  }, [view, stateKey, shown]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!shown) return;
+    reportRef.current?.({
+      view,
+      state: commandState,
+      run: (id, confirm) => void sendRef.current('command', id, confirm),
+      ...(secrets ? { secrets: { ...secrets, toggle: () => toggleRef.current() } } : {}),
+    });
+  }, [view, stateKey, secretsKey, shown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => reportRef.current?.(null), []);
 
   const fields = screen ? fieldsOf(screen.body) : [];
@@ -186,6 +224,20 @@ export function AddonScreenView({
   const selectTab = (n: TabsNode) => (id: string) => setTabSel((m) => ({ ...m, [n.id]: id }));
   // A window's top-level tabs go across the top of the window, as in Looper's own editors.
   const windowTabs = mode === 'window' ? (screen?.body.find((n) => n.type === 'tabs') as TabsNode | undefined) : undefined;
+
+  // A desktop window's page that scrolls is one the manifest made too small: the Engine Log says the height it needs, once per tab.
+  const pageRef = useRef<HTMLDivElement>(null);
+  const overflowSeen = useRef(new Set<string>());
+  const shownTab = windowTabs ? activeTab(windowTabs) : '';
+  useLayoutEffect(() => {
+    const page = pageRef.current;
+    if (isPhone || mode !== 'window' || !screen || !page) return;
+    const over = page.scrollHeight - page.clientHeight;
+    const key = `${view}\n${shownTab}`;
+    if (over <= 1 || overflowSeen.current.has(key)) return;
+    overflowSeen.current.add(key);
+    window.looper.addons.reportOverflow(addonId, view, shownTab, document.documentElement.clientHeight + over);
+  }, [screen, shownTab, addonId, view, mode]);
 
   useDialogKeys({
     tabs: windowTabs?.items.map((t) => t.id),
@@ -255,7 +307,7 @@ export function AddonScreenView({
       }
       case 'select':
         return (
-          <Field key={f.id} label={f.label}>
+          <Field key={f.id} label={f.label} help={f.options?.find((o) => o.value === String(v))?.description}>
             <SelectInput value={String(v)} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, e.target.value)}>
               {(f.options ?? []).map((o) => (
                 <option key={o.value} value={o.value}>
@@ -265,6 +317,52 @@ export function AddonScreenView({
             </SelectInput>
           </Field>
         );
+      case 'list': {
+        const options = f.options ?? [];
+        const selected = options.find((o) => o.value === v);
+        const rowButtons = f.readOnly ? [] : (f.buttons ?? []);
+        const act = (b: AddonButton, value: string) => void send('click', b.id, b.confirm, { [f.id]: value });
+        return (
+          <Fragment key={f.id}>
+            <SelectList
+              items={options}
+              label={f.label}
+              title={f.label}
+              idPrefix={`addon-${f.id}`}
+              selectedKey={f.readOnly ? null : (selected?.value ?? null)}
+              itemKey={(o) => o.value}
+              itemName={(o) => o.label}
+              itemSub={(o) => o.description}
+              empty={f.placeholder}
+              autoFocus={f.autofocus}
+              onSelect={f.readOnly ? undefined : (o) => setValue(f.id, o.value)}
+              menu={
+                rowButtons.length
+                  ? (o) =>
+                      rowButtons.map((b) => ({
+                        label: b.label,
+                        enabled: !b.disabled && !busy,
+                        ...(b.danger ? { destructive: true as const } : {}),
+                        run: () => {
+                          setValue(f.id, o.value);
+                          act(b, o.value);
+                        },
+                      }))
+                  : undefined
+              }
+            />
+            {rowButtons.length > 0 && (
+              <ListActions>
+                {rowButtons.map((b) => (
+                  <ListButton key={b.id} row danger={b.danger} disabled={!selected || b.disabled || busy} onClick={() => selected && act(b, selected.value)}>
+                    {b.label}
+                  </ListButton>
+                ))}
+              </ListActions>
+            )}
+          </Fragment>
+        );
+      }
       case 'number':
         return (
           <Field key={f.id} label={f.label}>
@@ -280,9 +378,27 @@ export function AddonScreenView({
     }
   };
 
+  // A screen in a window with a toolbar: Show is the window's command, and a value with Copy is a read-only text box.
+  const boxed = !isPhone && mode !== 'inline';
   const prop = (p: AddonProp): Property => {
     const secret = p.secret;
     const shown = secret ? revealed[secret] : undefined;
+    const copy = secret ? () => void send('copy', secret) : p.copy && p.value ? () => void navigator.clipboard.writeText(p.value!) : null;
+    if (boxed && copy) {
+      return {
+        label: p.label,
+        className: 'addon-prop-box',
+        value: (
+          <InputRow>
+            <TextInput readOnly code={p.mono || !!secret} aria-label={p.label} value={secret ? (shown ?? SECRET_MASK) : (p.value ?? '')} />
+            <button className="btn" disabled={busy} onClick={copy}>
+              Copy
+            </button>
+          </InputRow>
+        ),
+        note: p.note,
+      };
+    }
     return {
       label: p.label,
       value: (
@@ -380,7 +496,17 @@ export function AddonScreenView({
       }
       case 'footer':
         // In the main window a footer is an ordinary button row.
-        return mode === 'window' ? null : (
+        if (mode === 'window') return null;
+        if ('wizard' in n) {
+          const w = n.wizard;
+          return (
+            <div key={i} className="env-actions">
+              {button({ id: w.back ?? 'back', label: 'Back', disabled: !w.back })}
+              {w.commit ? button({ ...w.commit, disabled: missing || w.commit.disabled }) : button({ id: w.next!, label: 'Next', disabled: missing })}
+            </div>
+          );
+        }
+        return (
           <div key={i} className="env-actions">
             {[n.primary, ...(n.apply ? [n.apply] : [])].map(button)}
           </div>
@@ -398,14 +524,23 @@ export function AddonScreenView({
     <InfoBar stacked title={`${addonName} couldn't show this screen`} message={error} action={<button className="btn" onClick={load}>Try Again</button>} />
   );
 
-  if (mode === 'inline') return <div className="addon-screen addon-inline">{failed || (screen && nodes(screen.body))}</div>;
+  const page = failed || (screen && (
+    <>
+      {screen.instruction && <MainInstruction>{screen.instruction}</MainInstruction>}
+      {nodes(screen.body)}
+    </>
+  ));
+
+  if (mode === 'inline') return <div className="addon-screen addon-inline">{page}</div>;
   if (mode === 'main') {
     return (
       <DetailView title={screen?.title ?? ''} className="detail addon-screen">
-        <div className="status-pane">{failed || (screen && nodes(screen.body))}</div>
+        <div className="status-pane">{page}</div>
       </DetailView>
     );
   }
+  const wizard = footer?.type === 'footer' && 'wizard' in footer ? footer.wizard : null;
+  const click = (b: { id: string; confirm?: string }) => () => void send('click', b.id, b.confirm);
   return (
     <div className="editor addon-screen">
       {toolbar}
@@ -418,12 +553,26 @@ export function AddonScreenView({
         />
       )}
       <div className="editor-body">
-        <div className="form">{failed || (screen && nodes(screen.body))}</div>
+        {/* A list fills the window, as in Looper's own list windows (the Recycle Bin). */}
+        <div className={`form${screen?.body.some(isList) ? ' env-tab' : ''}`} ref={pageRef}>
+          {page}
+        </div>
       </div>
-      {footer?.type === 'footer' ? (
+      {wizard ? (
         <WindowActions
-          confirm={{ label: footer.primary.label, disabled: missing || footer.primary.disabled, run: () => void send('click', footer.primary.id, footer.primary.confirm) }}
-          apply={footer.apply && { label: footer.apply.label, disabled: footer.apply.disabled, run: () => void send('click', footer.apply!.id, footer.apply!.confirm) }}
+          wizard={{
+            back: { disabled: !wizard.back, run: click({ id: wizard.back ?? '' }) },
+            next: wizard.commit
+              ? { disabled: missing || wizard.commit.disabled, run: click(wizard.commit) }
+              : { disabled: missing, run: click({ id: wizard.next! }) },
+            commit: wizard.commit?.label,
+          }}
+          busy={busy}
+        />
+      ) : footer?.type === 'footer' && 'primary' in footer ? (
+        <WindowActions
+          confirm={{ label: footer.primary.label, disabled: missing || footer.primary.disabled, run: click(footer.primary) }}
+          apply={footer.apply && { label: footer.apply.label, disabled: footer.apply.disabled, run: click(footer.apply) }}
           busy={busy}
         />
       ) : (

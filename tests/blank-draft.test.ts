@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blankDraft } from '../src/renderer/src/components/blank-draft';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
+import { validateTask } from '../src/shared/validate';
 
 describe('blankDraft', () => {
   it('starts a new task with no guidance note and no folder', () => {
@@ -27,6 +28,13 @@ describe('blankDraft', () => {
     const d = blankDraft();
     for (const key of Object.keys(example) as (keyof typeof example)[]) expect(d[key]).toEqual(example[key]);
     expect(d.agent).toEqual({ ...agent, prompt: '' });
+  });
+
+  it("is a valid template as it stands, which the Templates window's Add saves before the editor opens", () => {
+    for (const environmentId of [undefined, 'local']) {
+      const v = validateTask({ ...blankDraft(environmentId), id: 'tpl-1', name: 'New template' }, undefined, undefined, { template: true });
+      expect(v.ok).toBe(true);
+    }
   });
 
   it('gives each draft its own objects', () => {

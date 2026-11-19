@@ -67,7 +67,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ios-glass-label2, var(--ios-label2));
+  color: var(--ios-glass-label2);
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;

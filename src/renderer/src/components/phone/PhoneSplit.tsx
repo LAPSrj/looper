@@ -100,8 +100,3 @@ export function SplitView({
     </div>
   );
 }
-
-/** The detail column with nothing chosen yet. */
-export function SplitEmpty({ children }: { children: ReactNode }) {
-  return <div className="pg-split-empty">{children}</div>;
-}

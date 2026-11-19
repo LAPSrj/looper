@@ -712,9 +712,46 @@ html:not(.phone-window) .session-group ~ .session-row {
   min-height: 0;
   position: relative;
 }
-.empty {
-  padding: 40px;
+/* A screen's text for nothing to show (components/EmptyState); `.empty-<at>` is where it sits, and phone.css
+   restyles each place for iOS and Android. */
+.empty-state {
   color: var(--fg-muted);
+}
+.empty-pane {
+  padding: 40px;
+}
+/* The detail beside a list, with no row chosen or nothing in the row. */
+.empty-detail {
+  padding: 20px 14px;
+  overflow: auto;
+  background: var(--bg-2);
+}
+/* The only row of an empty listbox or tree. */
+.empty-row {
+  padding: 16px 8px;
+  text-align: center;
+  cursor: default;
+}
+.empty-section {
+  padding: 6px 10px;
+}
+/* Over content on its way (a terminal starting). */
+.empty-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--bg);
+  text-align: center;
+}
+.empty-state-title {
+  font-weight: 600;
+  color: var(--fg);
 }
 .detail {
   display: flex;
@@ -740,9 +777,6 @@ html:not(.phone-window) .session-group ~ .session-row {
 .dashboard-list:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
-}
-.dashboard-section .section-empty {
-  padding: 6px 10px;
 }
 
 /* A pane's titled part (components/Section): its heading, with a state or a command at its end. */
@@ -1168,8 +1202,7 @@ html:not(.phone-window) .session-group ~ .session-row {
 .messages-detail-body > .output {
   height: 100%;
 }
-/* Nothing selected, or nothing to show. */
-.runlog-result-empty,
+/* An image whose file is gone. */
 .image-missing {
   padding: 20px 14px;
 }
@@ -1412,7 +1445,6 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
   font-size: var(--font-caption);
 }
 .chat-find .addon-search {
-  margin: 0;
   width: 240px;
 }
 ::highlight(chat-find) {
@@ -1512,6 +1544,14 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
   inset: 0;
   padding: 6px;
 }
+/*
+ * xterm 6 scrolls in its own element and leaves the old viewport empty behind the screen, where xterm.css still gives it a
+ * native scrollbar and a black background that show past the last whole row and column.
+ */
+.terminal .xterm .xterm-viewport {
+  overflow: hidden;
+  background-color: var(--term-bg);
+}
 .banner {
   padding: 6px 14px;
   font-size: var(--font-caption);
@@ -1557,10 +1597,23 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
   display: block;
   margin: 12px 0 0;
 }
+/* Warning and error severities: WinUI's caution and critical backgrounds (SystemFillColorCautionBackgroundBrush, ...CriticalBackgroundBrush). */
+.infobar-warning {
+  background: #fff4ce;
+}
+.infobar-error {
+  background: #fde7e9;
+}
 @media (prefers-color-scheme: dark) {
   .infobar {
     border-color: rgba(0, 0, 0, 0.1);
     background: rgba(255, 255, 255, 0.03);
+  }
+  .infobar-warning {
+    background: #433519;
+  }
+  .infobar-error {
+    background: #442726;
   }
 }
 .banner.muted {
@@ -1600,10 +1653,6 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
   flex-direction: column;
   min-height: 0;
 }
-.editor-panel.hidden {
-  visibility: hidden;
-  pointer-events: none;
-}
 .editor-footer {
   display: flex;
   justify-content: flex-end;
@@ -1628,6 +1677,13 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
 .form section,
 .addon-screen section {
   margin: 22px 0 6px;
+}
+/* A page's main instruction (ui.tsx MainInstruction): Win32's 12 pt main instruction, in Looper's text color. */
+.main-instruction {
+  margin: 18px 0 14px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
 }
 .form section h3,
 .addon-screen section h3 {
@@ -1810,6 +1866,7 @@ details[open] > summary::before {
 /* The text box: every text control. :where() keeps the specificity of `.field input`, so component rules after this still win. */
 .field input:where(:not([type='checkbox'], [type='radio'])),
 :where(.inline-field) .input-suffix input,
+.addon-prop-box input,
 .field select,
 .field textarea,
 .json-editor,
@@ -1827,8 +1884,17 @@ details[open] > summary::before {
 .pair-source {
   height: var(--control-height);
 }
+.addon-prop-box input {
+  height: var(--control-height);
+}
+/* A box that can't be edited has no fill. */
+.field input:where(:not([type='checkbox'], [type='radio']))[readonly],
+.addon-prop-box input[readonly] {
+  background: transparent;
+}
 .field input:where(:not([type='checkbox'], [type='radio'])):focus,
 :where(.inline-field) .input-suffix input:focus,
+.addon-prop-box input:focus,
 .field select:focus,
 .field textarea:focus,
 .chat-composer textarea:focus,
@@ -2100,6 +2166,10 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
   border-radius: var(--radius-overlay);
   border: 1px solid var(--border);
   background: var(--bg-2);
+}
+/* A reply a later one superseded, inside its tool group. */
+.chat-superseded {
+  color: var(--fg-muted);
 }
 .chat-agent-group {
   align-self: flex-start;
@@ -2377,7 +2447,7 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
 .sbs .add {
   background: var(--green-bg);
 }
-.sbs .empty {
+.sbs .sbs-blank {
   background: var(--bg-2);
 }
 /* ---------- environments list (settings) ---------- */
@@ -2399,6 +2469,12 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
 }
 .env-list.boxed {
   margin-top: 14px;
+}
+.list-title {
+  margin: 14px 0 4px;
+}
+.list-title + .env-list.boxed {
+  margin-top: 0;
 }
 .env-item {
   padding: 7px 10px;
@@ -2981,6 +3057,15 @@ button:focus-visible,
   min-height: 28px;
 }
 
+/* A value with Copy: a read-only text box across the column, with its button. */
+.addon-screen .props dd.addon-prop-box {
+  overflow: visible;
+}
+.addon-prop-box .input-row {
+  flex: 1;
+  min-width: 0;
+}
+
 .addon-prop-value {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3032,12 +3117,11 @@ button:focus-visible,
 /* The Windows instant Search box: a prompt inside, the search symbol (or the clear "x") at the right. */
 .addon-search {
   position: relative;
-  margin: 6px 6px 0;
   flex: none;
 }
 
 .toolbar .addon-search {
-  margin: 0 0 0 auto;
+  margin-left: auto;
   width: 240px;
 }
 
@@ -3185,9 +3269,6 @@ button:focus-visible,
 }
 .session-row.unread .session-title {
   font-weight: 600;
-}
-.session-empty {
-  padding: 16px 8px;
 }
 .session-sub.error-text {
   color: var(--red);
@@ -4054,6 +4135,14 @@ button:focus-visible,
 .chat-pending .chat-command-output {
   max-height: 160px;
 }
+
+/* A running command's terminal, typed into while it asks for something; its text replaces it once it ends. */
+.chat-command-terminal {
+  display: flex;
+  flex-direction: column;
+  height: 160px;
+  padding: 0 4px 4px;
+}
 /* Output too long to send: the line about the file it was saved to, under the preview, with its Open link light on the dark. */
 .chat-command-saved {
   flex: none;
@@ -4294,9 +4383,6 @@ html.phone-window .workflow-text {
 }
 .workflow-phase .subagent-list {
   padding: 4px 0 0;
-}
-.workflow-phase .section-empty {
-  padding: 8px 10px 4px;
 }
 .workflow-log {
   margin: 6px 0 0;
@@ -5411,12 +5497,6 @@ html.phone-window .workflow-text {
   font-size: var(--font-caption);
   color: var(--fg-muted);
   overflow-wrap: anywhere;
-}
-
-.ra-setup-title {
-  margin: 18px 0 12px;
-  font-size: 15px;
-  font-weight: 600;
 }
 
 .ra-setup p {

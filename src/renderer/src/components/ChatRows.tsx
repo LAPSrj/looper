@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useThumbnail } from './hooks';
 import { onUi } from '../events';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
@@ -6,7 +7,7 @@ import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type S
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
 import { MessageBody, PromptBody } from './Markdown';
-import { atEnd } from './newest-first';
+import { atEnd, useStayAtEnd } from './newest-first';
 import { ToolInputView, ToolResultView } from './ToolContent';
 import { reportError } from '../report-error';
 
@@ -57,12 +58,12 @@ function ThumbButton({ name, src, onOpen }: { name: string; src: string | null; 
 
 /** An image attachment as a thumbnail; clicking it opens the file in the default viewer. */
 function Thumbnail({ a }: { a: Attachment }) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    void window.looper.attachment.thumbnail(a.path).then(setSrc);
-  }, [a.path]);
-  return <ThumbButton name={a.name} src={src} onOpen={() => openAttachment(a)} />;
+  const src = useThumbnail(() => window.looper.attachment.thumbnail(a.path), [a.path]);
+  return <ThumbButton name={a.name} src={src ?? null}onOpen={() => openAttachment(a)} />;
 }
+
+/** xterm loads with the first command that runs. */
+const CommandTerminal = lazy(() => import('./CommandTerminal'));
 
 /** What a command's line says after it: still running, stopped, or its exit code when it failed. */
 function commandStatus(c: CommandOutput): string {
@@ -98,13 +99,15 @@ function SavedLine({ what, saved, files }: { what: string; saved: SavedOutput; f
 
 /**
  * A command the user ran from the message box ("!"), as a terminal: its
- * command line first, a green "!" for the shell's prompt, fixed at the top
- * while the output (stdout, then stderr) scrolls under it, following the
- * newest output as it comes unless scrolled up. A click on the command line
- * shows or hides the output: open while it runs or waits in the message box
- * (`onRemove`), closed in the conversation. Under the box, as under an image:
- * Stop while it runs (`onStop`), Remove once it has ended. Output too long to
- * send shows its preview and a line for the file it was saved to.
+ * command line first, a green "!" for the shell's prompt, fixed at the top.
+ * While it runs, its terminal shows under it and takes what's typed (a
+ * password, a y/n); once it has ended, its output as text scrolls under it,
+ * following the newest output unless scrolled up. A click on the command
+ * line shows or hides the output: open while it runs or waits in the message
+ * box (`onRemove`), closed in the conversation. Under the box, as under an
+ * image: Stop while it runs (`onStop`), Remove once it has ended. Output too
+ * long to send shows its preview and a line for the file it was saved to.
+ * `files.runId` is the chat's or the run's id, whose command it is.
  */
 function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemove?: () => void; onStop?: () => void; files?: FileCtx }) {
   const [open, setOpen] = useState(!!onRemove || !!c.running);
@@ -113,16 +116,14 @@ function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemov
   const savedLines = [c.saved?.stdout && ['output', c.saved.stdout] as const, c.saved?.stderr && ['error output', c.saved.stderr] as const].filter(
     (x): x is readonly ['output' | 'error output', SavedOutput] => !!x,
   );
-  const shows = open && !(c.running && !output);
+  const terminal = open && c.running && files;
+  const shows = open && !c.running;
   const outRef = useRef<HTMLPreElement>(null);
   const atBottom = useRef(true);
-  useLayoutEffect(() => {
-    const el = outRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [output, shows]);
+  useStayAtEnd(outRef, atBottom, output, shows);
   return (
     <div className="chat-command">
-      <div className={`chat-command-box${shows ? ' open' : ''}`}>
+      <div className={`chat-command-box${shows || terminal ? ' open' : ''}`}>
         <button className="chat-command-line" aria-expanded={open} title={open ? 'Hide the output' : 'Show the output'} onClick={() => setOpen((o) => !o)}>
           <span className="chat-command-prompt">!</span>
           <span className="chat-command-input">{c.input}</span>
@@ -140,6 +141,11 @@ function CommandItem({ c, onRemove, onStop, files }: { c: CommandOutput; onRemov
           >
             {output || '(no output)'}
           </pre>
+        )}
+        {terminal && (
+          <Suspense fallback={<div className="chat-command-terminal" />}>
+            <CommandTerminal ownerId={files.runId} id={c.id} />
+          </Suspense>
         )}
         {open && savedLines.map(([what, saved]) => <SavedLine key={what} what={what} saved={saved} files={files} />)}
       </div>
@@ -218,19 +224,7 @@ export function AttachmentList({
 
 /** What the computer knows about a file the agent sent: undefined while it loads, null when the file is gone. */
 function useSentFile(taskId: string, path: string): SentFileInfo | null | undefined {
-  const [info, setInfo] = useState<SentFileInfo | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    setInfo(undefined);
-    window.looper.sessions.sentFile(taskId, path).then(
-      (i) => live && setInfo(i),
-      () => live && setInfo(null),
-    );
-    return () => {
-      live = false;
-    };
-  }, [taskId, path]);
-  return info;
+  return useThumbnail<SentFileInfo>(() => window.looper.sessions.sentFile(taskId, path), [taskId, path]);
 }
 
 /**
@@ -414,7 +408,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
       return <UserMessage text={row.text} attachments={row.attachments} files={ctx} onContextMenu={onContextMenu} />;
     case 'agent':
       return (
-        <div className="chat-msg chat-agent" onContextMenu={onContextMenu}>
+        <div className={row.superseded ? 'chat-msg chat-agent chat-superseded' : 'chat-msg chat-agent'} onContextMenu={onContextMenu}>
           <MessageBody text={row.text} />
         </div>
       );

@@ -3,7 +3,8 @@ import type { Project } from '@shared/types';
 import { taskEntries } from '../task-tree';
 import type { MainWindow } from '../useMainWindow';
 import { isPhone } from '../web/page-nav';
-import { EmptyRow, Group, LargeTitle, Row } from './phone/PhoneList';
+import { EmptyState } from './EmptyState';
+import { Group, LargeTitle, Row } from './phone/PhoneList';
 import { PhoneFolderRows, PhoneListScreen } from './PhoneFolders';
 import { showProjectMenu, showProjectsListMenu } from './row-menus';
 import { ProjectsSidebar } from './Sidebar';
@@ -59,7 +60,9 @@ function PhoneProjects({ m, current, place }: { m: MainWindow; current: string |
   if (m.projects.length === 0) {
     body = (
       <Group onTitleMenu={projectsMenu}>
-        <EmptyRow onMenu={projectsMenu}>No projects yet.</EmptyRow>
+        <EmptyState at="section" onMenu={projectsMenu}>
+          No projects yet.
+        </EmptyState>
       </Group>
     );
   } else if (groupBy === 'none' && place) {

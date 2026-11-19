@@ -193,6 +193,15 @@ This is a Windows-first Electron app. Follow native Windows UX patterns:
   classic, efficient Win32 look and behavior. Use WinUI's guidance only where
   Win32 says nothing on the subject, and say so where you apply it.
 
+- **Follow Win32's principles in Looper's own style.** Looper is a modern
+  reading of Win32: let the guide decide how things work (where a command is,
+  what a dialog holds, the keyboard, commit buttons, no scrolling dialogs), but
+  don't copy its look, and never add something that doesn't match Looper's
+  style. These differ from the guide on purpose, as Leandro chose: 32 px
+  controls (`--control-height`, the guide says 23), text boxes that fill their
+  column, semibold field labels without colons, small uppercase section
+  headings, tab pages without a frame, and red text on destructive buttons.
+
 - **Native dialogs for errors and confirmations** — use `dialog.showMessageBox`
   (type: error/question), not inline error lists or browser `alert()`/`confirm()`.
 - **Standard button order:** Save | Cancel | Apply (left to right).

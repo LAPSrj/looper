@@ -32,7 +32,8 @@ const LINK_WAIT_MS = 30_000;
 const MAX_PAST = 200;
 /** How much of a conversation's last message the list keeps. */
 const MESSAGE_MAX = 300;
-const LINK_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
+/** The claude.ai address Claude Code prints in its terminal once Remote Control connects. */
+export const REMOTE_LINK_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
 const HELPER_COMMAND = 'looper-remote';
 /** In a helper's run folder: its environment's home and Claude Code config folders, written by its launcher. */
 const HOME_FILE = 'home.txt';
@@ -556,7 +557,7 @@ export class RemoteControl {
     if (!out) return;
     const text = stripAnsi(out.data.slice(-32768));
     if (!l.conv.link) {
-      const m = LINK_RE.exec(text);
+      const m = REMOTE_LINK_RE.exec(text);
       if (m) l.conv.link = m[0];
     }
     if (!l.trustAnswered && text.replace(/\s+/g, '').toLowerCase().includes('trustthisfolder')) {

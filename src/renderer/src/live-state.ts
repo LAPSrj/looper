@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import type { AddonInfo } from '@shared/addons';
 import type { AppInfo } from '@shared/api';
 import type { RemoteState } from '@shared/remote';
+import type { SessionsState } from '@shared/sessions';
 import type { PreventSleepState, Project, ProjectFolder, RestState, TaskFolder, View } from '@shared/types';
 import { subscribe } from './events';
 import { reportError } from './report-error';
@@ -37,45 +38,65 @@ let state: LiveState = {
 const listeners = new Set<() => void>();
 let started = false;
 let layouts = false;
+/** The entries an event has set: a read that answers after one is older than it, and is dropped. */
+const fromEvents = new Set<keyof LiveState>();
+/** Settings an event brought before the app's info was read, which they are newer than. */
+let earlySettings: AppInfo['settings'] | null = null;
 
 function update(patch: Partial<LiveState>): void {
   state = { ...state, ...patch };
   for (const l of listeners) l();
 }
 
+/** An entry read once, unless an event has set it first. */
+function read<K extends keyof LiveState>(key: K, load: () => Promise<LiveState[K]>): void {
+  void load().then((value) => {
+    if (!fromEvents.has(key)) update({ [key]: value } as Pick<LiveState, K>);
+  });
+}
+
+function fromEvent(patch: Partial<LiveState>): void {
+  for (const key of Object.keys(patch) as (keyof LiveState)[]) fromEvents.add(key);
+  update(patch);
+}
+
 function start(): void {
   started = true;
   const api = window.looper;
-  void api.info().then((info) => update({ info }));
-  void api.projects.list().then((projects) => update({ projects }));
-  void api.projects.folders().then((projectFolders) => update({ projectFolders }));
-  void api.projects.layout().then((projectLayout) => update({ projectLayout }));
-  void api.folders.list().then((taskFolders) => update({ taskFolders }));
-  void api.restState().then((rest) => update({ rest }));
-  void api.preventSleepState().then((preventSleep) => update({ preventSleep }));
-  void api.remote.state().then((remote) => update({ remote }));
+  void api.info().then((info) => update({ info: earlySettings ? { ...info, settings: earlySettings } : info }));
+  read('projects', () => api.projects.list());
+  read('projectFolders', () => api.projects.folders());
+  read('projectLayout', () => api.projects.layout());
+  read('taskFolders', () => api.folders.list());
+  read('rest', () => api.restState());
+  read('preventSleep', () => api.preventSleepState());
+  read('remote', () => api.remote.state());
   subscribe((e) => {
     switch (e.type) {
       case 'settings':
         if (state.info) update({ info: { ...state.info, settings: e.settings } });
+        else earlySettings = e.settings;
         break;
       case 'projects':
-        update({ projects: e.projects });
+        fromEvent({ projects: e.projects });
         break;
       case 'project-folders':
-        update({ projectFolders: e.folders, projectLayout: e.layout });
+        fromEvent({ projectFolders: e.folders, projectLayout: e.layout });
         break;
       case 'folders':
-        update(layouts ? { taskFolders: e.folders, taskLayout: e.layout } : { taskFolders: e.folders });
+        fromEvent(layouts ? { taskFolders: e.folders, taskLayout: e.layout } : { taskFolders: e.folders });
         break;
       case 'rest':
-        update({ rest: e.rest });
+        fromEvent({ rest: e.rest });
         break;
       case 'prevent-sleep':
-        update({ preventSleep: e.state });
+        fromEvent({ preventSleep: e.state });
         break;
       case 'remote':
-        update({ remote: e.state });
+        fromEvent({ remote: e.state });
+        break;
+      case 'sessions':
+        if (sessionsWanted) setSessions(e.state);
         break;
     }
   });
@@ -90,7 +111,7 @@ function watch(onChange: () => void): () => void {
 function loadTaskLayout(): void {
   if (layouts) return;
   layouts = true;
-  void window.looper.folders.layout().then((taskLayout) => update({ taskLayout }));
+  read('taskLayout', () => window.looper.folders.layout());
 }
 
 /** The page's live state; `withLayouts`: the task folders' row orders too, which only the main window lists by. */
@@ -99,6 +120,37 @@ export function useLiveState(withLayouts = false): LiveState {
     if (withLayouts) loadTaskLayout();
   }, [withLayouts]);
   return useSyncExternalStore(watch, () => state);
+}
+
+/**
+ * Every chat and terminal session, kept apart from LiveState: it changes with every chat's status, which the
+ * pages reading only LiveState would render again for, and only the pages that list chats read it.
+ */
+let sessions: SessionsState | null = null;
+const sessionListeners = new Set<() => void>();
+let sessionsWanted = false;
+
+function setSessions(next: SessionsState): void {
+  sessions = next;
+  for (const l of sessionListeners) l();
+}
+
+function watchSessions(onChange: () => void): () => void {
+  if (!started) start();
+  if (!sessionsWanted) {
+    sessionsWanted = true;
+    // An event that came first is newer than what was read.
+    void window.looper.sessions.state().then((s) => {
+      if (!sessions) setSessions(s);
+    });
+  }
+  sessionListeners.add(onChange);
+  return () => sessionListeners.delete(onChange);
+}
+
+/** Every chat and terminal session, kept current: read once a page, the first time something asks; null until then. */
+export function useSessionsState(): SessionsState | null {
+  return useSyncExternalStore(watchSessions, () => sessions);
 }
 
 /** The installed addons; `loaded` is false until the first list answers, so an empty list before that isn't "no addons". */

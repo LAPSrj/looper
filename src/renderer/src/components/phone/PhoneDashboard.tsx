@@ -3,11 +3,11 @@ import { splitAttention, waitingForYou } from '../../phone-lists';
 import type { MainWindow } from '../../useMainWindow';
 import { StatusIcon, dashboardOpeners } from '../Dashboard';
 import { WaitedFor } from '../Live';
-import { statusText } from '../SessionList';
+import { NO_CHATS, statusText } from '../SessionList';
 import { AttentionGroup, RecentGroup, RunningGroup, taskRowMenu } from './overview-rows';
 import { Section } from '../Section';
 import { LargeTitle, Row } from './PhoneList';
-import { useSessionsState } from './useSessionsState';
+import { useSessionsState } from '../../live-state';
 
 /**
  * The main window's dashboard on a phone, in the order of what needs a
@@ -55,7 +55,7 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
       <AttentionGroup m={m} rows={attention} />
       <RunningGroup m={m} rows={running} />
       {sessions && (
-        <Section title="Chats" empty={chats.length === 0 && (waitingChats.size ? 'No other chats are open.' : 'No chats are open.')}>
+        <Section title="Chats" empty={chats.length === 0 && (waitingChats.size ? 'No other chats are open.' : NO_CHATS)}>
           {chats.map((s) => (
             <Row
               key={s.id}

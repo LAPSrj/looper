@@ -81,7 +81,7 @@ describe('a chat on a harness that starts conversations with Remote Control', { 
       remote: { ...e.settings.remote, enabled: true },
     });
     e.saveTask(
-      TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } }),
+      TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }),
     );
     const chatId = e.startChat('t1').id;
     await until(() => e.getChat(chatId)?.status === 'ready', 'the chat to start');

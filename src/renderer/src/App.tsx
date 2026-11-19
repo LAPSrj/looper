@@ -7,12 +7,14 @@ import { addonPaneKey } from '@shared/addons';
 import { sidebarHasPanes } from '@shared/panes';
 import { remoteAccessStatusItems } from '@shared/remote-access';
 import { AddonScreenView, type AddonScreenReport } from './components/AddonScreen';
-import { useSessionsState } from './components/phone/useSessionsState';
-import { AddonPaneList, showPaneItemMenu, showPaneMenu } from './components/AddonPane';
+import { useSessionsState } from './live-state';
+import { AddonPaneList, AddonSearchBox, addonSearch, showPaneItemMenu, showPaneMenu } from './components/AddonPane';
+import { useFindFocus } from './components/FindBar';
 import { commandToolbar, popupEntries } from './components/command-surfaces';
 import { setRowMenuContext } from './components/row-menus';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { Dashboard } from './components/Dashboard';
+import { EmptyState } from './components/EmptyState';
 import { RestStatusText } from './components/Live';
 import { PhoneMain } from './components/phone/PhoneMain';
 import { ProjectCollection } from './components/ProjectCollection';
@@ -109,7 +111,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const tabDef = tabs.find((t) => t.id === picked);
   // The addon screen showing (a tab's, or a pane item's), for the commands its addon placed on it.
   const [addonScreen, setAddonScreen] = useState<AddonScreenReport | null>(null);
-  const [addonQueries, setAddonQueries] = useState<Record<string, string>>({});
+  const searchField = useFindFocus();
   const memory = useRef<TabMemory>({ projects: null, tasks: null });
   const pickedRef = useRef(picked);
   pickedRef.current = picked;
@@ -172,6 +174,24 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
 
   const tab = tabDef?.id ?? picked;
   const onChats = tab === 'chats';
+  // An addon's panes tab: its Search box, at the toolbar's right end (Windows: "locate Search in the upper-right corner").
+  const paneAddon = tabDef?.addon && !tabDef.addon.tab ? addons.find((a) => a.id === tabDef.addon!.id) : undefined;
+  const search = paneAddon ? addonSearch(paneAddon, m.addonPanes) : null;
+  const query = paneAddon ? (m.addonQueries[paneAddon.id] ?? '') : '';
+  // View > Filter: the Search box takes the focus, or with the toolbar hidden the Filter dialog asks for the text.
+  const openSearch = () => (toolbarShown ? searchField.focus() : commands.host('filter', 'Show items containing', query));
+
+  // The Filter dialog's text is the shown addon's search.
+  const searchAddon = useRef<string | null>(null);
+  searchAddon.current = search ? paneAddon!.id : null;
+  useEffect(
+    () =>
+      window.looper.onUi((e) => {
+        if (e.type === 'filter' && searchAddon.current) m.setAddonQuery(searchAddon.current, e.value);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   const environments = m.info?.settings.environments ?? [];
   // A view window other than the Tasks one has no Tasks tab: its tasks open in the main window.
   const openTask = (id: string, at: DetailTab) => (fixed && fixed !== 'tasks' ? window.looper.showTaskInMain(id, at) : m.openFromDashboard(id, at));
@@ -183,11 +203,12 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     item: !!item,
     ...(fixed ? {} : { openTab: pick }),
     ...(onChats ? { chats: s.chatsContext() } : {}),
-    addon: m.addonContext(tab, addonScreen),
+    addon: m.addonContext(tab, addonScreen, openSearch),
   };
   useCommandMenu(mainWindowViews(tab, !!fixed, !!item), commands);
   setRowMenuContext(commands);
   const toolbarGroups: ToolbarGroup[] = commandToolbar(mainToolbarViews(tab, !!fixed, !!item), commands);
+  const toolbarShown = (view?.toolbar ?? true) && (toolbarGroups.length > 0 || tab !== 'dashboard');
 
   const alone = (content: React.ReactNode) => (
     <div className="app single">
@@ -228,7 +249,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               untitled={!!item}
             />
           ) : (
-            <div className="empty">{item ? 'Loading…' : 'No project selected.'}</div>
+            <EmptyState>{item ? 'Loading…' : 'No project selected.'}</EmptyState>
           )}
         </main>
       </WithSidebar>
@@ -255,7 +276,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               untitled={!!item}
             />
           ) : item ? (
-            <div className="empty">Loading…</div>
+            <EmptyState>Loading…</EmptyState>
           ) : (
             // No task selected: the tasks' dashboard, as the Chats tab shows its own.
             <Dashboard
@@ -295,8 +316,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
                 state={state}
                 selected={m.addonSel?.addonId === addon!.id && m.addonSel.pane === p.id ? m.addonSel.item : null}
                 compact={view?.taskList === 'compact'}
-                query={addonQueries[p.id] ?? ''}
-                onQuery={(q) => setAddonQueries((all) => ({ ...all, [p.id]: q }))}
+                query={query}
                 onSelect={(it) => m.selectAddon({ addonId: addon!.id, pane: p.id, item: it.id })}
                 onMenu={(it) => showPaneItemMenu(commands, addon!.id, p.id, state, it)}
                 onRetry={() => m.reloadAddon(addon!.id)}
@@ -320,7 +340,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
               onScreen={setAddonScreen}
             />
           ) : (
-            <div className="empty">Nothing selected.</div>
+            <EmptyState>Nothing selected.</EmptyState>
           )}
         </main>
       </WithSidebar>
@@ -339,7 +359,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
       />,
     );
   } else {
-    body = alone(m.addonsLoaded ? <div className="empty">The addon this tab comes from isn’t started.</div> : null);
+    body = alone(m.addonsLoaded ? <EmptyState>The addon this tab comes from isn’t started.</EmptyState> : null);
   }
 
   const computerStatus = (
@@ -376,14 +396,17 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
 
   return (
     <div className="app-shell">
-      {(view?.toolbar ?? true) && (toolbarGroups.length > 0 || tab !== 'dashboard') && (
+      {toolbarShown && (
         <Toolbar
           groups={toolbarGroups}
           onContextMenu={(e) => {
+            if ((e.target as Element).closest('input')) return;
             e.preventDefault();
             popupEntries(commands, 'addon-toolbars', addonToolbarEntries(commands));
           }}
-        />
+        >
+          {search && <AddonSearchBox value={query} onChange={(q) => m.setAddonQuery(paneAddon!.id, q)} placeholder={search.prompt} inputRef={searchField.inputRef} />}
+        </Toolbar>
       )}
       {position === 'top' && strip}
       <div className="app-views">

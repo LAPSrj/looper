@@ -11,7 +11,7 @@ import { showLoginMenu, showTaskMenu } from './row-menus';
 import { StatusGlyph } from './icons';
 import { Elapsed } from './Live';
 import { Section } from './Section';
-import { statusText } from './SessionList';
+import { NO_CHATS, statusText } from './SessionList';
 import { reportError } from '../report-error';
 
 /** A row the user picked on the dashboard; the menus act on its task. */
@@ -217,7 +217,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
         </Section>
 
         {chats && (
-          <Section className="dashboard-section" title="Chats" empty={chats.length === 0 && 'No chats are open.'}>
+          <Section className="dashboard-section" title="Chats" empty={chats.length === 0 && NO_CHATS}>
             <DataTable
               wrapClass="dashboard-list"
               label="Chats"

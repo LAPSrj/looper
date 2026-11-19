@@ -101,11 +101,7 @@ export function Conversation({
     if (el && kept) el.scrollTop += kept.getBoundingClientRect().top - viewTop(el) + place!.offset;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [scrollRef, endKey]);
-  useStayAtEnd(scrollRef, atBottom);
+  useStayAtEnd(scrollRef, atBottom, endKey);
 
   const total = parts.reduce((n, p) => n + p.items.length, 0);
   const { hidden, newer, onScroll: showMore, toEnd } = useNewestFirst(

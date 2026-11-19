@@ -2,6 +2,7 @@ import type { HTMLAttributes, ReactNode } from 'react';
 import type { SessionSummary } from '@shared/sessions';
 import { sessionGroupKey, waitingOf } from '@shared/sessions';
 import { StatusRing } from './ContextRing';
+import { EmptyState } from './EmptyState';
 import { GroupHeader } from './GroupHeader';
 import { useGroupedTree, type TreeRow } from './GroupedTree';
 import { itemWindows } from './ListDetail';
@@ -195,9 +196,9 @@ export function SessionList({
         </div>
       ))}
       {sessions.length === 0 && (
-        <div className="empty session-empty" role="treeitem" aria-disabled="true" aria-selected={false}>
+        <EmptyState at="row" list="tree">
           {NO_CHATS}
-        </div>
+        </EmptyState>
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useThumbnail } from './hooks';
 import { toolImageKey, type MessageRow, type PatchHunk } from '@shared/messages';
 import { stripAnsi } from '../format';
 import { isPhone } from '../web/page-nav';
@@ -103,27 +104,17 @@ export function CodeText({ html, text, className }: { html?: string; text: strin
  * again from disk (as a thumbnail).
  */
 export function ToolImage({ row, taskId, runId, agentId }: { row: MessageRow; taskId: string; runId: string; agentId?: string }) {
-  const [src, setSrc] = useState<string | null | 'none'>(null);
   const hasImage = !!row.image;
-  useEffect(() => {
-    let live = true;
-    setSrc(null);
-    void (async () => {
-      const img =
-        hasImage && row.toolUseId
-          ? await window.looper.runs.messageImage(taskId, runId, toolImageKey(row.toolUseId), agentId).catch(() => null)
-          : null;
-      if (img) {
-        if (live) setSrc(`data:${img.mediaType};base64,${img.data}`);
-        return;
-      }
-      const thumb = row.file ? await window.looper.sessions.fileThumbnail(taskId, row.file).catch(() => null) : null;
-      if (live) setSrc(thumb ?? 'none');
-    })();
-    return () => {
-      live = false;
-    };
+  const loaded = useThumbnail(async () => {
+    const img =
+      hasImage && row.toolUseId
+        ? await window.looper.runs.messageImage(taskId, runId, toolImageKey(row.toolUseId), agentId).catch(() => null)
+        : null;
+    if (img) return `data:${img.mediaType};base64,${img.data}`;
+    const thumb = row.file ? await window.looper.sessions.fileThumbnail(taskId, row.file).catch(() => null) : null;
+    return thumb ?? 'none';
   }, [taskId, runId, agentId, row.toolUseId, row.file, hasImage]);
+  const src: string | null | 'none' = loaded ?? null;
   if (src === null) return <div className="muted tc-image-note">Loading the image…</div>;
   if (src === 'none') return <div className="muted tc-image-note">The image can’t be shown.</div>;
   return <img className="tc-image" src={src} alt={row.file ?? ''} />;
@@ -223,8 +214,8 @@ export function SideBySideDiff({
       </>
     ) : (
       <>
-        <td className="sbs-num empty" />
-        <td className="sbs-text empty">{first && gone ? <span className="muted">{placeholder}</span> : null}</td>
+        <td className="sbs-num sbs-blank" />
+        <td className="sbs-text sbs-blank">{first && gone ? <span className="muted">{placeholder}</span> : null}</td>
       </>
     );
   return (
@@ -399,7 +390,7 @@ function FileList({ files, ctx }: { files: string[]; ctx: FileCtx }) {
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            window.looper.showMessageContextMenu({ taskId: ctx.taskId, runId: ctx.runId, file: f, text: f });
+            window.looper.showMessageContextMenu({ taskId: ctx.taskId, runId: ctx.runId, file: f });
           }}
         >
           {f}

@@ -3,26 +3,45 @@ import path from 'node:path';
 import { MAX_COMMAND_OUTPUT, OUTPUT_PREVIEW, type CommandOutput, type SavedOutput } from '../shared/bash-mode';
 import { joinTarget } from './target/paths';
 import { killHostTree } from './target/kill';
-import { spawnOffThread, type OffThreadChild } from './exec-worker';
-import { childEnv, stripShellNoise, writeLauncher, type RunContext } from './steps/common';
+import { TerminalHost } from './terminal-host';
+import { writeLauncher, type RunContext } from './steps/common';
+import { spawnPty, type SessionProc } from './steps/session';
 
 /** Where in a conversation's folder the output of the user's "!" commands too long to send is saved. */
 const COMMANDS_DIR = 'commands';
 /** A running "!" command's output goes to the window at most this often. */
 const COMMAND_OUTPUT_MS = 100;
+/** The terminal a command starts in, until the window shows it at its own size. */
+const COLS = 100;
+const ROWS = 12;
+/** What a window that opens a running command gets of its terminal's output so far: its newest part. */
+const MAX_SCREEN = 200_000;
+
+interface Running {
+  proc: SessionProc;
+  marker: string;
+  stopped: boolean;
+  /** The terminal's output so far (its newest MAX_SCREEN characters), for a window that shows it now. */
+  screen: string;
+  text: TerminalHost;
+}
 
 /**
  * The commands the user runs from a message box ("!"), in a conversation's
  * working directory on its target (a WSL or remote one runs them there),
- * through a launcher as the agent's own processes start: each one's stdout
- * and stderr once it ends, and its output as it comes (`onOutput`, a batch at
- * most every COMMAND_OUTPUT_MS). They run whatever the agent is doing. Each
- * one's processes carry a run marker of their own, so stopping it leaves the
- * agent's alone. `ctx` is the conversation's: its task's folder and target,
- * and its folder (`ctx.runDir`), where long output is saved.
+ * through a launcher as the agent's own processes start. Each runs in a
+ * terminal of its own, so a command that asks for something (sudo's or ssh's
+ * password, a y/n) gets what the user types into it (`write`). The window
+ * shows the terminal as it runs (`onOutput`, a batch at most every
+ * COMMAND_OUTPUT_MS, and `screen` for one that opens it later); once it
+ * ends, its output as text (CommandText, in the terminal worker) is what the
+ * agent gets. They run whatever the agent is doing. Each one's processes
+ * carry a run marker of their own, so stopping it leaves the agent's alone.
+ * `ctx` is the conversation's: its task's folder and target, and its folder
+ * (`ctx.runDir`), where long output is saved.
  */
 export class UserCommands {
-  private readonly running = new Map<string, { child: OffThreadChild; marker: string; stopped: boolean }>();
+  private readonly running = new Map<string, Running>();
   private seq = 0;
 
   constructor(
@@ -30,7 +49,8 @@ export class UserCommands {
     private readonly o: {
       /** A command started or ended. */
       onChange: () => void;
-      onOutput: (id: string, stdout: string, stderr: string) => void;
+      /** What the command's terminal printed since the last batch. */
+      onOutput: (id: string, data: string) => void;
       /** Who runs them, in the log. */
       label: string;
     },
@@ -51,58 +71,75 @@ export class UserCommands {
     const spec = writeLauncher({ ...ctx, runId: marker }, `command-${n}`, command).spec;
     // Output too long to send goes whole to a file in the folder, which the agent reads by its own path.
     const dirT = joinTarget(ctx.target.kind, ctx.target.toTargetPath(ctx.runDir), COMMANDS_DIR);
-    const stream = (name: 'stdout' | 'stderr', clean?: (s: string) => string) =>
-      new CommandStream(path.join(ctx.runDir, COMMANDS_DIR, `${id}-${name}.txt`), joinTarget(ctx.target.kind, dirT, `${id}-${name}.txt`), clean);
-    const stdout = stream('stdout');
-    // The launcher's interactive bash warns that it has no job control: that's the shell's, not the command's.
-    const stderr = stream('stderr', stripShellNoise);
+    const out = new CommandStream(path.join(ctx.runDir, COMMANDS_DIR, `${id}-stdout.txt`), joinTarget(ctx.target.kind, dirT, `${id}-stdout.txt`));
+    let failed: string | undefined;
+    const text = new TerminalHost({
+      file: '',
+      cols: COLS,
+      rows: ROWS,
+      screen: false,
+      onText: (t) => out.push(t),
+      onError: (e) => (failed = `Looper couldn't read the command's output: ${e.message}`),
+    });
     return new Promise((resolve) => {
-      const child = spawnOffThread(spec.command, spec.args, { cwd: ctx.runDir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-      const entry = { child, marker, stopped: false };
+      const proc = spawnPty(spec, ctx.runDir, (e) => (failed = `Couldn't run the command: ${e.message}`));
+      const entry: Running = { proc, marker, stopped: false, screen: '', text };
       this.running.set(id, entry);
       this.o.onChange();
+      let batch = '';
       let timer: NodeJS.Timeout | null = null;
       const show = () => {
         timer = null;
-        this.o.onOutput(id, stdout.live(), stderr.live());
+        const d = batch;
+        batch = '';
+        if (d) this.o.onOutput(id, d);
       };
-      const took = () => {
+      proc.onStdout((d) => {
+        entry.screen = keepNewest(entry.screen + d);
+        text.write(d);
+        batch += d;
         if (!timer) timer = setTimeout(show, COMMAND_OUTPUT_MS);
-      };
-      child.stdout?.setEncoding('utf8');
-      child.stderr?.setEncoding('utf8');
-      child.stdout?.on('data', (d: string) => {
-        stdout.push(d);
-        took();
       });
-      child.stderr?.on('data', (d: string) => {
-        stderr.push(d);
-        took();
+      proc.onExit((code) => {
+        void (async () => {
+          if (timer) clearTimeout(timer);
+          show();
+          await text.close();
+          const res = await out.finish();
+          this.running.delete(id);
+          this.o.onChange();
+          resolve({
+            id,
+            input: command,
+            stdout: res.text,
+            stderr: failed ?? '',
+            exitCode: entry.stopped ? null : code,
+            ...(entry.stopped ? { stopped: true } : {}),
+            ...(res.saved ? { saved: { stdout: res.saved } } : {}),
+          });
+        })();
       });
-      let done = false;
-      const end = async (exitCode: number | null, error?: string) => {
-        if (done) return;
-        done = true;
-        if (timer) clearTimeout(timer);
-        const [out, err] = await Promise.all([stdout.finish(), stderr.finish()]);
-        this.running.delete(id);
-        this.o.onChange();
-        const errText = error ? (err.text ? `${err.text}\n${error}` : error) : err.text;
-        const saved = out.saved || err.saved ? { ...(out.saved ? { stdout: out.saved } : {}), ...(err.saved ? { stderr: err.saved } : {}) } : undefined;
-        resolve({
-          id,
-          input: command,
-          stdout: out.text,
-          stderr: errText,
-          exitCode: entry.stopped ? null : exitCode,
-          ...(entry.stopped ? { stopped: true } : {}),
-          ...(saved ? { saved } : {}),
-        });
-      };
-      child.on('error', (e) => void end(null, `Couldn't run the command: ${e.message}`));
-      child.on('close', (code) => void end(code));
       ctx.log.info(`[${ctx.task.id}] ${this.o.label}: running the user's command ${id}`);
     });
+  }
+
+  /** A running command's terminal output so far, for a window that shows it; null once it has ended. */
+  screen(id: string): string | null {
+    return this.running.get(id)?.screen ?? null;
+  }
+
+  /** What the user typed into a running command's terminal. */
+  write(id: string, data: string): void {
+    this.running.get(id)?.proc.write(data);
+  }
+
+  /** The window shows a running command's terminal at this size. */
+  resize(id: string, cols: number, rows: number): void {
+    const c = this.running.get(id);
+    if (!c || !(cols > 0 && rows > 0)) return;
+    const size = [Math.min(500, Math.floor(cols)), Math.min(200, Math.floor(rows))] as const;
+    c.proc.resize(...size);
+    c.text.resize(...size);
   }
 
   /** Stop: the commands still running end (`id`: that one alone), with what they printed so far. */
@@ -113,12 +150,21 @@ export class UserCommands {
         .map(async ([, c]) => {
           c.stopped = true;
           // The launcher's shell first, and for good: an interactive bash ignores SIGTERM, and would go on to the command's next line.
-          const pid = await c.child.spawned;
+          const pid = await c.proc.spawned;
           if (pid) await killHostTree(pid, 'SIGKILL').catch(() => undefined);
+          c.proc.kill();
           await this.ctx.target.killLeftovers(c.marker).catch(() => undefined);
         }),
     );
   }
+}
+
+/** The newest MAX_SCREEN characters of a terminal's output, from the start of a line so it doesn't begin inside an escape. */
+function keepNewest(s: string): string {
+  if (s.length <= MAX_SCREEN) return s;
+  const cut = s.length - MAX_SCREEN;
+  const nl = s.indexOf('\n', cut);
+  return nl === -1 ? s.slice(cut) : s.slice(nl + 1);
 }
 
 /**

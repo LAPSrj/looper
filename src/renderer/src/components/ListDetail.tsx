@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { SplitLayout } from '../web/nav-stack';
 import { isPhone } from '../web/page-nav';
+import { EmptyState } from './EmptyState';
 import { NavBar } from './NavBar';
-import { SplitEmpty, SplitView, useContainerSplit } from './phone/PhoneSplit';
+import { SplitView, useContainerSplit } from './phone/PhoneSplit';
 import { Segmented } from './phone/PhoneList';
 import { SplitPane, Splitter, useSideWidths, type PaneSize, type SideSplitter, type SideWidth } from './SplitPane';
 import { TabBar } from './ui';
@@ -116,7 +117,7 @@ function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLa
       {detail}
     </Depth.Provider>
   ) : empty === undefined || typeof empty === 'string' ? (
-    <SplitEmpty>{empty}</SplitEmpty>
+    <EmptyState at="detail">{empty}</EmptyState>
   ) : (
     empty
   );
@@ -149,14 +150,7 @@ function Desktop(props: ListDetailProps) {
     detail === null || detail === undefined || detail === false
       ? {
           ...props,
-          detail:
-            typeof empty === 'string' ? (
-              <div className="runlog-result">
-                <div className="runlog-result-empty muted">{empty}</div>
-              </div>
-            ) : (
-              empty
-            ),
+          detail: typeof empty === 'string' ? <EmptyState at="detail">{empty}</EmptyState> : empty,
         }
       : props;
   return p.sides ? <DesktopSides {...p} sides={p.sides} /> : <DesktopPanes {...p} />;

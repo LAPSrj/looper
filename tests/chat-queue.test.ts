@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { toolUseIds } from '../src/engine/chat';
 import { guidanceText } from '../src/shared/messages';
 import { OUTPUT_PREVIEW, commandAttachment, sizeText } from '../src/shared/bash-mode';
@@ -101,7 +101,7 @@ async function setUp(): Promise<{ engine: Engine; dir: string; dataDir: string; 
     ),
   });
   engine.saveTask(
-    TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } }),
+    TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }),
   );
   const chatId = engine.startChat('t1').id;
   await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
@@ -214,16 +214,27 @@ describe('a chat queue on Claude', { timeout: 30_000 }, () => {
 
 describe('commands the user runs from the message box ("!")', { timeout: 30_000 }, () => {
   let engine: Engine | null = null;
+  beforeAll(async () => {
+    // The engine turns a command's terminal into text in the terminal worker, which runs from a bundle.
+    const file = join(mkdtempSync(join(tmpdir(), 'looper-worker-')), 'terminal-worker.js');
+    const esbuild = await import('esbuild');
+    esbuild.buildSync({ entryPoints: [join(process.cwd(), 'src/engine/terminal-worker.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: file });
+    process.env.LOOPER_TERMINAL_WORKER = file;
+  }, 60_000);
+  afterAll(() => {
+    delete process.env.LOOPER_TERMINAL_WORKER;
+  });
   afterEach(async () => {
     await engine?.stop();
     engine = null;
   });
 
-  it('runs a command in the chat’s working directory, with its stdout, stderr and exit code, without a turn of the agent', async () => {
+  it('runs a command in the chat’s working directory in a terminal, with its output and exit code, without a turn of the agent', async () => {
     const s = await setUp();
     engine = s.engine;
     const out = await s.engine.runChatCommand(s.chatId, 'pwd; echo oops >&2; exit 3', 'run-1');
-    expect(out).toMatchObject({ id: 'run-1', input: 'pwd; echo oops >&2; exit 3', stdout: `${s.dir}\n`, stderr: 'oops\n', exitCode: 3 });
+    // A terminal shows stdout and stderr together, as they came.
+    expect(out).toMatchObject({ id: 'run-1', input: 'pwd; echo oops >&2; exit 3', stdout: `${s.dir}\noops\n`, stderr: '', exitCode: 3 });
     expect(out.stopped).toBeUndefined();
     expect(out.saved).toBeUndefined();
     // Nothing went to the agent, and the conversation is as it was.
@@ -246,14 +257,16 @@ describe('commands the user runs from the message box ("!")', { timeout: 30_000 
   it('Stop under one command ends that one alone, and its output comes as it runs, in batches', async () => {
     const s = await setUp();
     engine = s.engine;
-    const live: { id: string; stdout: string }[] = [];
+    const live = new Map<string, string>();
     s.engine.on((e) => {
-      if (e.type === 'chat:command' && e.chatId === s.chatId) live.push({ id: e.id, stdout: e.stdout });
+      if (e.type === 'chat:command' && e.chatId === s.chatId) live.set(e.id, (live.get(e.id) ?? '') + e.data);
     });
     const began = join(s.dir, 'began');
     const one = s.engine.runChatCommand(s.chatId, `echo first; touch '${began}'; sleep 30`, 'run-1');
     const two = s.engine.runChatCommand(s.chatId, 'sleep 2; echo second', 'run-2');
-    await until(() => existsSync(began) && live.some((l) => l.id === 'run-1' && l.stdout === 'first\n'), 'the first command’s output, live');
+    await until(() => existsSync(began) && !!live.get('run-1')?.includes('first\r\n'), 'the first command’s output, live');
+    // A window that opens it now gets the same terminal output.
+    expect(s.engine.commandScreen(s.chatId, 'run-1')).toContain('first\r\n');
     await s.engine.stopChatCommand(s.chatId, 'run-1');
     await expect(one).resolves.toMatchObject({ stopped: true, stdout: 'first\n' });
     const second = await two;
@@ -261,16 +274,38 @@ describe('commands the user runs from the message box ("!")', { timeout: 30_000 
     expect(second.stopped).toBeUndefined();
     // A command's name is the window's, and two can't share one.
     await expect(s.engine.runChatCommand(s.chatId, 'true', '../x')).rejects.toThrow('no usable id');
+    expect(s.engine.commandScreen(s.chatId, 'run-1')).toBeNull();
+  });
+
+  it('takes what the user types: a hidden password, an answer read from the terminal as sudo and ssh read theirs, and the size it shows at', async () => {
+    const s = await setUp();
+    engine = s.engine;
+    const screen = () => s.engine.commandScreen(s.chatId, 'run-1') ?? '';
+    const running = s.engine.runChatCommand(
+      s.chatId,
+      `read -s -p 'Password: ' pw; echo; echo "got $pw"; read -p 'Go on? ' yn < /dev/tty; echo "answer $yn"; read -s; stty size`,
+      'run-1',
+    );
+    await until(() => screen().includes('Password: '), 'the password prompt');
+    s.engine.writeCommand(s.chatId, 'run-1', 'secret\r');
+    await until(() => screen().includes('Go on? '), 'the question');
+    s.engine.writeCommand(s.chatId, 'run-1', 'yes\r');
+    await until(() => screen().includes('answer yes'), 'the answer');
+    s.engine.resizeCommand(s.chatId, 'run-1', 50, 7);
+    s.engine.writeCommand(s.chatId, 'run-1', '\r');
+    const out = await running;
+    // The password wasn't shown as it was typed; the answer was.
+    expect(out).toMatchObject({ stdout: 'Password:\ngot secret\nGo on? yes\nanswer yes\n7 50\n', exitCode: 0 });
   });
 
   it('saves output too long to send to a file in the chat’s folder, and the agent gets its preview and the file’s path', async () => {
     const s = await setUp();
     engine = s.engine;
     const out = await s.engine.runChatCommand(s.chatId, 'seq 1 20000; echo short >&2', 'run-1');
-    const full = Array.from({ length: 20000 }, (_, i) => `${i + 1}\n`).join('');
+    const full = Array.from({ length: 20000 }, (_, i) => `${i + 1}\n`).join('') + 'short\n';
     expect(out.saved?.stdout?.bytes).toBe(Buffer.byteLength(full));
     expect(out.saved?.stderr).toBeUndefined();
-    expect(out.stderr).toBe('short\n');
+    expect(out.stderr).toBe('');
     // The preview is the output's start; the file holds all of it, in the chat's own folder (a local chat's path is the host's).
     expect(out.stdout).toBe(full.slice(0, OUTPUT_PREVIEW));
     const file = out.saved!.stdout!.path;
@@ -283,7 +318,7 @@ describe('commands the user runs from the message box ("!")', { timeout: 30_000 
     expect(received.startsWith(
       `<bash-input>seq 1 20000; echo short >&2</bash-input>\n<bash-stdout><persisted-output>\nOutput too large (${sizeText(Buffer.byteLength(full))}). Full output saved to: ${file}\n\nPreview (first 2KB):\n1\n2\n3\n`,
     )).toBe(true);
-    expect(received).toContain('\n</persisted-output></bash-stdout><bash-stderr>short</bash-stderr>\n\nlook\n');
+    expect(received).toContain('\n</persisted-output></bash-stdout><bash-stderr></bash-stderr>\n\nlook\n');
   });
 
   it('sends the commands with the next message, ahead of its text, in Claude Code’s format, and shows them as its attachments', async () => {
@@ -296,7 +331,7 @@ describe('commands the user runs from the message box ("!")', { timeout: 30_000 
     await until(() => existsSync(join(s.dir, 'received')), 'the message');
     expect(readFileSync(join(s.dir, 'received'), 'utf8')).toBe(
       '<bash-input>echo one</bash-input>\n<bash-stdout>one</bash-stdout><bash-stderr></bash-stderr>\n\n' +
-        '<bash-input>echo bad >&2; exit 2</bash-input>\n<bash-stdout></bash-stdout><bash-stderr>bad\nExit code 2</bash-stderr>\n\n' +
+        '<bash-input>echo bad >&2; exit 2</bash-input>\n<bash-stdout>bad</bash-stdout><bash-stderr>Exit code 2</bash-stderr>\n\n' +
         'what failed?\n',
     );
     const prompt = s.engine.getChat(s.chatId)!.rows.find((r) => r.kind === 'prompt')!;
@@ -344,7 +379,7 @@ describe("a chat's harness", { timeout: 30_000 }, () => {
       ),
     });
     engine.saveTask(
-      TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: ownDir, agent: { harnessId: 'own', prompt: 'x' } }),
+      TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: ownDir, agent: { harnessId: 'own', mode: 'headless', prompt: 'x' } }),
     );
     const e = engine;
     const chatId = e.startChat('t1').id;

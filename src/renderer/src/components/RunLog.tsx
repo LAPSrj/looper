@@ -4,6 +4,7 @@ import type { RunRecord, TaskRuntime } from '@shared/types';
 import { fmtDate, fmtHourMinute, fmtTime, formatDuration, resultLabel } from '../format';
 import { resultTone, timeAndDuration } from '../phone-lists';
 import { DataTable, type DataCol } from './DataTable';
+import { EmptyState } from './EmptyState';
 import { ListDetail } from './ListDetail';
 import { Markdown } from './Markdown';
 
@@ -111,7 +112,7 @@ export function RunLog({ records, runtime, sessions = false, filter = SHOW_ALL, 
         detail={
           selectedGroup && (
             <div className="runlog-result">
-              {selectedGroup.resultText ? <Markdown text={selectedGroup.resultText} /> : <div className="runlog-result-empty muted">No result</div>}
+              {selectedGroup.resultText ? <Markdown text={selectedGroup.resultText} /> : <EmptyState at="detail">No result</EmptyState>}
             </div>
           )
         }

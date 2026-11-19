@@ -1,5 +1,5 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
-import { chatCanCompact } from '../chat';
+import { chatCanCompact, chatInteractive } from '../chat';
 import { chatSettingEntries } from '../chat-settings';
 import { folderTree, siblingOrder } from '../folders';
 import { mainTabs } from '../main-tabs';
@@ -841,14 +841,24 @@ export const COMMANDS: readonly Command[] = [
     run: (c) => summaryOf(c) && void c.looper.sessions.restart(summaryOf(c)!.id).catch(failed(c)),
     in: { conversation: { menu: 'chat', toolbar: true } },
   },
-  ...(['harness', 'model', 'effort', 'permission'] as const).map((which): Command => ({
+  ...(['harness', 'model', 'effort', 'permission', 'mode'] as const).map((which): Command => ({
     id: `chat-${which}`,
-    label: { harness: '&Harness', model: '&Model', effort: '&Effort', permission: '&Permission Mode' }[which],
+    label: { harness: '&Harness', model: '&Model', effort: '&Effort', permission: '&Permission Mode', mode: 'Session T&ype' }[which],
     group: 'settings',
     hide: [{ if: (c) => !isChat(c), why: 'Only a chat has these settings.' }, { on: ON_PHONE, why: 'The Usage sheet has them, beside the usage facts.' }],
     entries: (c) => (c.chats?.chat ? chatSettingEntries(c.chats.chat, c.looper)[which] : []),
     in: { conversation: { menu: 'chat' } },
   })),
+  {
+    id: 'chatTerminal',
+    label: 'Show &Terminal',
+    group: 'settings',
+    checked: (c) => !!c.chats?.terminal,
+    enabled: (c) => !!c.chats?.chat && chatInteractive(c.chats.chat),
+    hide: [{ if: (c) => !isChat(c), why: 'Only an interactive chat has a terminal beside its conversation.' }],
+    run: (c) => c.chats?.showTerminal?.(!c.chats.terminal),
+    in: { conversation: { menu: 'chat' } },
+  },
   {
     id: 'compact',
     label: '&Compact into New Chat',
@@ -1471,7 +1481,7 @@ export const COMMANDS: readonly Command[] = [
     accelerator: 'CmdOrCtrl+F',
     checked: (c) => !!c.run?.filter.trim(),
     hide: [{ on: ON_PHONE, why: 'The list has a search field under its rows.' }],
-    run: (c) => c.run && c.host('messages-filter', c.run.filter),
+    run: (c) => c.run && c.host('filter', 'Show messages containing', c.run.filter),
     in: { run: { menu: 'view' } },
   },
   {
@@ -1483,6 +1493,38 @@ export const COMMANDS: readonly Command[] = [
     hide: [{ on: ON_PHONE, if: (c) => !c.run?.message, why: 'It searches the open message; the list has its own search field.' }],
     run: (c) => c.run?.findInMessage?.(),
     in: { run: { menu: 'view' } },
+  },
+
+  // ---------- an addon's panes tab ----------
+  {
+    id: 'addonFilter',
+    label: '&Filter…',
+    group: 'addon-filter',
+    accelerator: 'CmdOrCtrl+F',
+    checked: (c) => !!c.addon?.search?.query.trim(),
+    hide: [
+      { on: ON_PHONE, why: 'The list has a search field over its rows.' },
+      { if: (c) => !c.addon?.search, why: 'None of the addon’s panes can be searched.' },
+    ],
+    run: (c) => c.addon?.search?.open(),
+    in: { addonPanes: { menu: 'view', context: false } },
+  },
+
+  // ---------- an addon's screen ----------
+  {
+    id: 'addonShowSecrets',
+    // Windows keeps a toolbar button's label as it is and shows its state by pressing it.
+    label: (c) => `&Show ${c.addon?.screen?.secrets?.label ?? 'Password'}`,
+    group: 'addon-secrets',
+    icon: 'eye',
+    labeled: true,
+    checked: (c) => !!c.addon?.screen?.secrets?.shown,
+    hide: [
+      { on: ON_PHONE, why: 'Each secret has a Show check box beside it.' },
+      { if: (c) => !c.addon?.screen?.secrets, why: 'The screen shows no password or other secret.' },
+    ],
+    run: (c) => c.addon?.screen?.secrets?.toggle(),
+    in: { addonScreen: { menu: 'view', toolbar: true, context: false } },
   },
 
   // ---------- the Engine Log window ----------

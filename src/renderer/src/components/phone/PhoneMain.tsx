@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { addonPaneKey, matchesSearch } from '@shared/addons';
+import { addonPaneKey } from '@shared/addons';
 import { addonCommandId } from '@shared/commands/addon-commands';
 import { commandSpec, moreViewCommands, runCommand } from '@shared/commands/build';
 import { plainLabel, type Command } from '@shared/commands/command';
@@ -35,7 +35,7 @@ import { DEFAULT_SHOWN } from '../../useSessionsWindow';
 import type { MoreMenuInput } from '../../web/more-menu';
 import type { PageNavAction } from '../../web/nav-bar-model';
 import { NavBar } from '../NavBar';
-import { AddonPaneList, showPaneItemMenu, showPaneMenu } from '../AddonPane';
+import { AddonPaneList, AddonSearchBox, addonSearch, showPaneItemMenu, showPaneMenu, shownItems } from '../AddonPane';
 import { AddonScreenView, type AddonScreenReport } from '../AddonScreen';
 import { phoneNav, popupCommands } from '../command-surfaces';
 import { setRowMenuContext, showProjectMenu, showTaskMenu } from '../row-menus';
@@ -55,7 +55,7 @@ import { usePageWidth, useSplit } from './PhoneSplit';
 import { TaskCollection } from '../TaskCollection';
 import { ViewTabs, phoneViewTabsForm, type ViewTab } from '../ViewTabs';
 import { TasksOverview } from './TasksOverview';
-import { useSessionsState } from './useSessionsState';
+import { useSessionsState } from '../../live-state';
 import { reportError } from '../../report-error';
 
 const KEPT_NAV_KEY = 'looper.phone-nav';
@@ -609,41 +609,54 @@ function MoreView({ m, c, allTabs }: { m: MainWindow; c: CommandContext; allTabs
 }
 
 /** An addon with only panes: its panes as a list, a tap opens the item's screen. */
+/**
+ * An addon's panes, one group each, with the addon's search field, which stays put as the list scrolls: at the
+ * top on Android (Material) and an iPad (the top of the list), at the bottom over the tab bar on an iPhone
+ * (HIG: "Place search at the bottom if there's room").
+ */
 function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; addonId: string }) {
-  const [queries, setQueries] = useState<Record<string, string>>({});
   const addon = m.addons.find((a) => a.id === addonId);
   if (!addon) return <div className="pg-scroll" />;
+  const search = addonSearch(addon, m.addonPanes);
+  const query = m.addonQueries[addon.id] ?? '';
   return (
-    <div className="pg-scroll">
-      {addon.panes.map((pane) => {
-        const key = addonPaneKey(addon.id, pane.id);
-        const state = m.addonPanes[key];
-        const items = state?.status === 'ready' ? state.content.items : [];
-        const query = queries[key] ?? '';
-        return (
-          <Group
-            key={key}
-            title={`${pane.title}${addon.status === 'running' && state?.status === 'ready' ? ` (${query.trim() ? `${items.filter((it) => matchesSearch(it, query)).length} of ${items.length}` : items.length})` : ''}`}
-            onTitleMenu={() => showPaneMenu(c, addon.id, pane.id, state)}
-          >
-            <div className="pg-addon-pane">
-              <AddonPaneList
-                addon={addon}
-                pane={pane.id}
-                state={state}
-                selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === pane.id ? m.addonSel.item : null}
-                compact={false}
-                query={query}
-                onQuery={(q) => setQueries((s) => ({ ...s, [key]: q }))}
-                onSelect={(item) => m.selectAddon({ addonId: addon.id, pane: pane.id, item: item.id })}
-                onMenu={(item) => showPaneItemMenu(c, addon.id, pane.id, state, item)}
-                onRetry={() => m.reloadAddon(addon.id)}
-              />
-            </div>
-          </Group>
-        );
-      })}
-    </div>
+    <>
+      {search && (
+        <div className="pg-search">
+          <AddonSearchBox value={query} onChange={(q) => m.setAddonQuery(addon.id, q)} placeholder={search.prompt} />
+        </div>
+      )}
+      <div className={`pg-scroll${search ? ' has-search' : ''}`}>
+        {addon.panes.map((pane) => {
+          const key = addonPaneKey(addon.id, pane.id);
+          const state = m.addonPanes[key];
+          const ready = addon.status === 'running' && state?.status === 'ready' ? state : null;
+          const total = ready?.content.items.length ?? 0;
+          const filtered = ready?.content.search && query.trim() ? shownItems(ready, query).length : null;
+          return (
+            <Group
+              key={key}
+              title={`${pane.title}${ready ? ` (${filtered === null ? total : `${filtered} of ${total}`})` : ''}`}
+              onTitleMenu={() => showPaneMenu(c, addon.id, pane.id, state)}
+            >
+              <div className="pg-addon-pane">
+                <AddonPaneList
+                  addon={addon}
+                  pane={pane.id}
+                  state={state}
+                  selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === pane.id ? m.addonSel.item : null}
+                  compact={false}
+                  query={query}
+                  onSelect={(item) => m.selectAddon({ addonId: addon.id, pane: pane.id, item: item.id })}
+                  onMenu={(item) => showPaneItemMenu(c, addon.id, pane.id, state, item)}
+                  onRetry={() => m.reloadAddon(addon.id)}
+                />
+              </div>
+            </Group>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

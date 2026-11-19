@@ -4,9 +4,10 @@ import type { ChangeEvent, ComponentProps, MouseEvent as ReactMouseEvent, ReactE
 import './phone/keyboard';
 import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
+import { EmptyState } from './EmptyState';
 import { NavBar } from './NavBar';
 import { bindField, textOptions, type TextOptions } from './field-model';
-import { StatusGlyph } from './icons';
+import { StatusGlyph, type StatusLevel } from './icons';
 import { Group, Row, Segmented } from './phone/PhoneList';
 import { Tabs } from './Tabs';
 import { WindowActions } from './WindowActions';
@@ -125,24 +126,27 @@ function CheckRows<T extends string>({
 }
 
 /**
- * A WinUI InfoBar at its informational severity: a status that needs the
- * user, shown inline until it's resolved, with no close button. `stacked`
- * puts the title on its own line, as WinUI does when the text doesn't fit one.
+ * A WinUI InfoBar: a status that needs the user, shown inline until it's
+ * resolved, with no close button. `level` is its severity (informational
+ * unless set). `stacked` puts the title on its own line, as WinUI does when
+ * the text doesn't fit one.
  */
 export function InfoBar({
   title,
   message,
   action,
   stacked,
+  level = 'info',
 }: {
   title: string;
   message: ReactNode;
   action?: ReactNode;
   stacked?: boolean;
+  level?: StatusLevel;
 }) {
   return (
-    <div className={`infobar${stacked ? ' infobar-stacked' : ''}`} role="status">
-      <StatusGlyph level="info" />
+    <div className={`infobar${level !== 'info' ? ` infobar-${level}` : ''}${stacked ? ' infobar-stacked' : ''}`} role="status">
+      <StatusGlyph level={level} />
       <div className="infobar-text">
         <span className="infobar-title">{title}</span>
         <span className="infobar-message">{message}</span>
@@ -150,6 +154,11 @@ export function InfoBar({
       </div>
     </div>
   );
+}
+
+/** A page's main instruction, at its top: what to do there or the question it asks (a wizard's step). One per page. */
+export function MainInstruction({ children }: { children: ReactNode }) {
+  return <h2 className="main-instruction">{children}</h2>;
 }
 
 /** A label and its control, tied together so the control is named by the label (and a click on the label focuses it). */
@@ -691,7 +700,7 @@ export function EmptyWindow({ gone }: { gone?: string | false | null }) {
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="empty">{gone || 'Loading…'}</div>
+        <EmptyState>{gone || 'Loading…'}</EmptyState>
       </div>
       <WindowActions close />
     </div>

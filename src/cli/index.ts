@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
@@ -7,7 +8,7 @@ import { EXAMPLE_CHECK_SCRIPT, EXAMPLE_TASK } from '../shared/example-task';
 import { FILE_KINDS, readLooperFile, wrapLooperFile } from '../shared/files';
 import { DEFINITION_VERSION, migrateDefinition } from '../shared/migrate';
 import { taskSchemaDoc } from '../shared/schema-doc';
-import { SettingsSchema, type Environment, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
+import { SettingsSchema, type Environment, type InboxChat, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
 import { importTaskDraft, slugify, validateTask } from '../shared/validate';
 import { waitForInbox } from './inbox-wait';
 
@@ -187,11 +188,19 @@ Then:
                              import heuristics); each change is printed as "fixed: <path>"
   To change a stored task: looper export <id> --out <dir>, edit the file, looper add --update.
 
+A chat instead of a task:
+  looper chat <folder> "<first message>"
+                             start a chat in the folder (its project's settings when one has
+                             it) and send it the message; it shows in the app's chat list for
+                             the user to carry on, and nothing comes back to you. Prints the
+                             chat's id. --message-file <file> (or -) for a long message,
+                             --title, --model, --effort, and --open to show it on the desktop.
+
 Notes:
   - add and validate accept plain JSON or a .loopertask document; "-" as the file reads
     it from stdin, e.g. looper add - <<'EOF' … EOF
   - Exit codes: 0 ok; 1 invalid task, id conflict, or rejected by the app; 2 unreadable
-    input or missing settings; 3 (add only) queued, but no running app picked it up.
+    input or missing settings; 3 (add and chat) queued, but no running app picked it up.
   - Results go to stdout; errors, warnings and fixes go to stderr.
   - Point LOOPER_HOME (or --data-dir) at the data dir of the Looper app that should run
     the task.
@@ -477,6 +486,100 @@ program
     const file = dropInbox({ op: 'guide', taskId, runId: opts.run, text: words.join(' ') } satisfies InboxCommand, 'guide');
     console.log(`queued guide ${taskId} -> ${file}`);
   });
+
+/**
+ * The folder as the app's host sees it. From WSL, an app whose data dir is on
+ * a Windows drive is the Windows one, which opens WSL folders as
+ * \\wsl.localhost\<distro>\… and drive folders as C:\….
+ */
+function appFolder(folder: string): string {
+  const abs = path.resolve(folder);
+  let isDir = false;
+  try {
+    isDir = fs.statSync(abs).isDirectory();
+  } catch {
+    /* reported below */
+  }
+  if (!isDir) {
+    console.error(`${abs} isn't a folder`);
+    process.exit(2);
+  }
+  if (!process.env.WSL_DISTRO_NAME) return abs;
+  const windowsPath = (p: string) => execFileSync('wslpath', ['-w', p], { encoding: 'utf8' }).trim();
+  try {
+    return /^[A-Za-z]:\\/.test(windowsPath(dataDir())) ? windowsPath(abs) : abs;
+  } catch (e) {
+    console.error(`wslpath can't convert ${abs}: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(2);
+  }
+}
+
+program
+  .command('chat <folder> [message...]')
+  .description("start a chat in a folder (its project's settings when one has it) with a first message; it shows in the app's chat list")
+  .option('--message-file <file>', 'read the first message from a file ("-" reads stdin) instead of the arguments')
+  .option('--title <title>', "the chat's name (default: from the first message)")
+  .option('--model <model>', 'the model (default: the project\'s, or the harness\'s)')
+  .option('--effort <effort>', 'the effort (default: the project\'s, or the model\'s)')
+  .option('--open', 'also show the chat on the desktop')
+  .option('--timeout <s>', 'seconds to wait for the running app to start it', '30')
+  .action(
+    async (
+      folder: string,
+      words: string[],
+      opts: { messageFile?: string; title?: string; model?: string; effort?: string; open?: boolean; timeout: string },
+    ) => {
+      const timeoutSec = Number(opts.timeout);
+      if (!(timeoutSec >= 0)) {
+        console.error(`--timeout must be a number of seconds, got "${opts.timeout}"`);
+        process.exit(2);
+      }
+      if (opts.messageFile !== undefined && words.length) {
+        console.error('give the first message as arguments or with --message-file, not both');
+        process.exit(2);
+      }
+      let text = words.join(' ');
+      if (opts.messageFile !== undefined) {
+        try {
+          text = fs.readFileSync(opts.messageFile === '-' ? 0 : opts.messageFile, 'utf8');
+        } catch {
+          console.error(`cannot read the message from ${opts.messageFile === '-' ? 'stdin' : opts.messageFile}`);
+          process.exit(2);
+        }
+      }
+      if (!text.trim()) {
+        console.error('the chat needs a first message: give it as arguments or with --message-file');
+        process.exit(2);
+      }
+      const cmd: InboxChat = {
+        op: 'chat',
+        folder: appFolder(folder),
+        text,
+        ...(opts.title ? { title: opts.title } : {}),
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.effort ? { effort: opts.effort } : {}),
+        ...(opts.open ? { open: true } : {}),
+      };
+      const dest = dropInbox(cmd, 'chat');
+      const outcome = await waitForInbox(dest, timeoutSec * 1000);
+      if (outcome.status === 'rejected') {
+        console.error(`no chat started: ${outcome.reason}`);
+        process.exit(1);
+      }
+      if (outcome.status === 'pending') {
+        console.error(
+          `queued the chat -> ${dest}, but no running Looper app picked it up within ${timeoutSec}s; ` +
+            'it starts when the app starts, or delete the file to cancel',
+        );
+        process.exit(3);
+      }
+      if (outcome.status === 'vanished' || !outcome.result) {
+        console.error(`the chat left the inbox without a result; check ${path.join(dataDir(), 'engine.log')}`);
+        process.exit(1);
+      }
+      console.log(outcome.result);
+    },
+  );
 
 program
   .command('logs <taskId>')

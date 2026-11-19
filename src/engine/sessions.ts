@@ -436,7 +436,7 @@ export class SessionHub {
       harnessName: h.name,
       harnessKind: h.kind,
       models: h.models ?? [],
-      settings: { ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}), permissionMode: a.permissionMode ?? '' },
+      settings: { ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}), permissionMode: a.permissionMode ?? '', mode: a.mode },
       ...(t.activeModel ? { activeModel: t.activeModel } : {}),
       commandPrefix: h.kind === 'codex' ? '$' : '/',
     };

@@ -19,6 +19,8 @@ export interface MessageRow {
   source?: 'classifier';
   /** An agent row that is Looper's own line in a chat ("Stopped.", why a turn failed), not the agent's. */
   note?: boolean;
+  /** An agent reply that ended its turn, and another reply followed it before any new input (a Stop hook refused it). */
+  superseded?: boolean;
   /** Tool rows: the tool name (Bash, Read, Task…). Raw rows: the record's type. */
   tool?: string;
   /** One line for the table. */

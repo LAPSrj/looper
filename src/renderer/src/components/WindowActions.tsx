@@ -52,14 +52,14 @@ interface CancelWindow extends Common {
   cancel: () => void;
 }
 
-/** A wizard: Back | Next | Cancel, the last step's Next saying Finish. */
+/** A wizard: Back | Next | Cancel, the commit step's Next named for what it does. */
 interface WizardWindow extends Common {
   wizard: {
     /** Disabled on the first step. */
     back: WindowAction;
     next: WindowAction;
-    /** The last step: Next is Finish. */
-    last: boolean;
+    /** The step that does the task: Next's label there, a verb (Import, Create), or Finish for a setting. */
+    commit?: string;
     cancel?: () => void;
   };
 }
@@ -123,7 +123,7 @@ export function WindowActions(props: WindowActionsProps) {
       {wizard ? (
         <>
           {btn('Back', wizard.back.run, { disabled: wizard.back.disabled })}
-          {btn(wizard.last ? 'Finish' : 'Next', wizard.next.run, { primary: true, disabled: wizard.next.disabled })}
+          {btn(wizard.commit ?? 'Next', wizard.next.run, { primary: true, disabled: wizard.next.disabled })}
           {btn('Cancel', cancel)}
         </>
       ) : confirm ? (
@@ -145,7 +145,8 @@ export function WindowActions(props: WindowActionsProps) {
  * A phone: Cancel is the bar's xmark (Cancel alone too), Confirm its checkmark,
  * Apply isn't shown and Close is the frame's own xmark or Back. A lone Extra with an icon is a bar
  * button; any other Extras are in More. A wizard's later steps have Back in
- * Cancel's place, Next as a text button and Finish as the checkmark.
+ * Cancel's place, Next as a text button and the commit step's button as the
+ * confirming one (iOS's checkmark, Android's text button).
  */
 function PhoneActions({ props, extras, busy, cancel }: { props: WindowActionsProps; extras: WindowExtra[]; busy?: boolean; cancel: () => void }) {
   const lone = extras.length === 1 && extras[0].icon ? extras[0] : null;
@@ -157,12 +158,12 @@ function PhoneActions({ props, extras, busy, cancel }: { props: WindowActionsPro
   if ('wizard' in props) {
     const w = props.wizard;
     const first = !!w.back.disabled;
-    const next = w.last ? undefined : { id: 'wizard-next', label: 'Next', disabled: busy || w.next.disabled, run: w.next.run };
+    const next = w.commit ? undefined : { id: 'wizard-next', label: 'Next', disabled: busy || w.next.disabled, run: w.next.run };
     return (
       <NavBar
         cancel={first ? { disabled: busy, run: cancel } : undefined}
         back={first ? undefined : w.back.run}
-        confirm={w.last ? { label: 'Finish', disabled: busy || w.next.disabled, run: w.next.run } : undefined}
+        confirm={w.commit ? { label: w.commit, disabled: busy || w.next.disabled, run: w.next.run } : undefined}
         actions={next ? [...actions, next] : actions}
         toolbar={toolbar}
         order={2}

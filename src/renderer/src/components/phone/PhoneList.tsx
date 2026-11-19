@@ -257,11 +257,6 @@ export function SwipeRow({ action, className, children }: { action?: { label: st
   );
 }
 
-/** A list's only row when it has nothing to show. */
-export function EmptyRow({ children, onMenu }: { children: ReactNode; onMenu?: () => void }) {
-  return <Row title={<span className="pg-empty">{children}</span>} onMenu={onMenu} />;
-}
-
 /** On a phone or tablet, a tree list (Chats, History) as a scrolling list section; on the desktop the list scrolls itself. */
 export function TreeListSection({ children }: { children: ReactNode }) {
   if (platform !== 'ios' && platform !== 'android') return <>{children}</>;

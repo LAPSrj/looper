@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, DragEvent, HTMLAttributes, KeyboardEvent, ReactNode, Ref, UIEvent } from 'react';
+import type { DragEvent, HTMLAttributes, KeyboardEvent, ReactNode, Ref, UIEvent } from 'react';
 import type { MenuItemSpec } from '@shared/remote-access';
 import { dayGroups } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
+import { EmptyState } from './EmptyState';
 import { useListNav } from './hooks';
 import { listContextMenu } from './list-nav';
-import { EmptyRow, Group, Row, SwipeRow } from './phone/PhoneList';
+import { Group, Row, SwipeRow } from './phone/PhoneList';
 import { ReorderSheet } from './phone/ReorderSheet';
 
 /** One command of a row's context menu: the same as the button of that name under the list. */
@@ -122,8 +123,6 @@ export interface RowListProps<T> extends Rows<T> {
   /** The list's and a row's classes on the desktop. */
   listClass: string;
   rowClass: string;
-  /** The desktop's row for `empty`: its class (`empty` without this) and style. */
-  emptyRow?: { className: string; style?: CSSProperties };
   onListScroll?: (e: UIEvent<HTMLDivElement>) => void;
   /** Only the rows, for a Section around them: on a phone, its section's rows; the desktop's listbox is the same. Its `empty` shows nothing. */
   bare?: boolean;
@@ -147,6 +146,8 @@ export interface RowListProps<T> extends Rows<T> {
    * a `menu` it's a choice of one: a tap selects, and the selected row has a check.
    */
   section?: boolean;
+  /** A heading for the list among a window's other parts: a phone section's header, a label above the desktop's listbox. */
+  title?: string;
 }
 
 /** A list of selectable multi-line rows: a listbox on the desktop, list rows on a phone or tablet. */
@@ -198,7 +199,7 @@ function useRowDrag<T>(rows: readonly T[], rowKey: (row: T, index: number) => st
 }
 
 function DesktopRowList<T>(props: RowListProps<T>) {
-  const { rows, rowKey, idPrefix, selected, onSelect, onOpen, label, row, listClass, rowClass, emptyRow, onListScroll, activateOnClick, autoFocus, empty, menu } = props;
+  const { rows, rowKey, idPrefix, selected, onSelect, onOpen, label, row, listClass, rowClass, onListScroll, activateOnClick, autoFocus, empty, menu } = props;
   const onMenu = menu ? (r: T) => showRowMenu(menu(r)) : props.onMenu;
   const { index, onKeyDown } = useRowKeys({ ...props, onMenu });
   const drag = useRowDrag(rows, rowKey, props.onReorder);
@@ -209,7 +210,7 @@ function DesktopRowList<T>(props: RowListProps<T>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   if (props.bare && rows.length === 0) return null;
-  return (
+  const list = (
     <div
       ref={ref}
       className={listClass}
@@ -221,11 +222,7 @@ function DesktopRowList<T>(props: RowListProps<T>) {
       onScroll={onListScroll}
       onContextMenu={onMenu && ((e) => listContextMenu(e, index, (i) => onMenu(rows[i])))}
     >
-      {rows.length === 0 && shown(empty) && (
-        <div role="option" aria-disabled="true" aria-selected={false} className={emptyRow?.className ?? 'empty'} style={emptyRow?.style}>
-          {empty}
-        </div>
-      )}
+      {rows.length === 0 && shown(empty) && <EmptyState at="row">{empty}</EmptyState>}
       {rows.map((r, i) => {
         const key = rowKey(r, i);
         const click = activateOnClick && onOpen ? () => onOpen(r) : onSelect && (() => onSelect(r, i));
@@ -255,6 +252,15 @@ function DesktopRowList<T>(props: RowListProps<T>) {
       })}
     </div>
   );
+  if (!props.title) return list;
+  return (
+    <>
+      <div className="field-label list-title" aria-hidden="true">
+        {props.title}
+      </div>
+      {list}
+    </>
+  );
 }
 
 /** A scrolling list of PhoneList rows in sections, for a phone or tablet: a tap opens, a long press shows the menu. */
@@ -278,7 +284,7 @@ export function PhoneRows<T>(props: RowsOnPhone<T> & Pick<Rows<T>, 'empty' | 'no
       {note && <p className="pg-group-footer">{note}</p>}
       {rows.length === 0 ? (
         <Group title={sectionTitle?.('', 0)}>
-          <EmptyRow>{empty}</EmptyRow>
+          <EmptyState at="section">{empty}</EmptyState>
         </Group>
       ) : (
         sections.map((s) => (
@@ -293,12 +299,12 @@ export function PhoneRows<T>(props: RowsOnPhone<T> & Pick<Rows<T>, 'empty' | 'no
 
 /** A section of a dialog's rows on a phone: a choice of one, or rows with their commands, and a Reorder row. */
 function PhoneSection<T>(props: RowListProps<T>) {
-  const { rows, rowKey, label, empty, onReorder, phoneRow, menu } = props;
+  const { rows, rowKey, label, empty, onReorder, phoneRow, menu, title } = props;
   const [reordering, setReordering] = useState(false);
   return (
-    <div role={menu ? undefined : 'radiogroup'} aria-label={label}>
-      <Group>
-        {rows.length === 0 && shown(empty) && <EmptyRow>{empty}</EmptyRow>}
+    <div role={menu ? undefined : props.onSelect ? 'radiogroup' : 'group'} aria-label={label}>
+      <Group title={title}>
+        {rows.length === 0 && shown(empty) && <EmptyState at="section">{empty}</EmptyState>}
         <PhoneRowItems {...props} items={rows.map((row, index) => ({ row, index }))} />
         {onReorder && rows.length > 1 && <Row title="Reorder" tone="action" onOpen={() => setReordering(true)} />}
       </Group>

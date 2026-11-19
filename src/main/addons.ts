@@ -40,7 +40,7 @@ export interface AddonUiDeps {
     width: number,
     height: number,
     modalParent: AppWindow | null,
-    opts: { role: WindowRole; minWidth: number; minHeight: number; contentSize: boolean },
+    opts: { role: WindowRole; minWidth: number; minHeight: number; contentSize: boolean; resizable?: boolean },
   ) => AppWindow;
 }
 
@@ -116,11 +116,13 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
     case 'openWindow': {
       const width = a.width ?? 520;
       const height = a.height ?? 460;
+      // A modal window is a dialog: fixed, so it opens at the addon's size every time instead of a saved one.
       const child = deps.openWindow(addonWindowHash(addonId, a.view, a.params ?? {}, a.title), a.title, width, height, a.modal ? sender : null, {
         role: addonWindowRole(width, height),
         minWidth: Math.min(width, 520),
         minHeight: Math.min(height, 420),
         contentSize: true,
+        resizable: !a.modal,
       });
       if (sender) openers.set(child, openers.get(sender) ?? sender);
       trackWindow(addonId, child);
@@ -255,6 +257,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
   ipc.handle('addons:pane', (_e, id: string, pane: string) => host.pane(id, pane));
   ipc.handle('addons:render', (_e, id: string, view: string, params: Record<string, unknown>) => host.render(id, view, params));
   ipc.on('addons:slowDraw', (_e, id: string, view: string, ms: number) => host.logSlowDraw(id, view, ms));
+  ipc.on('addons:overflow', (_e, id: string, view: string, tab: string, height: number) => host.logOverflow(id, view, tab, height));
   ipc.handle('addons:event', (e, id: string, ev: AddonEvent, confirm?: string) =>
     runEvent(deps, windowOf(e), id, ev, confirm),
   );

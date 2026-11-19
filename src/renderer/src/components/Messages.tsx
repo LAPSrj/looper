@@ -16,7 +16,7 @@ import { useCommandMenu, useCommandState } from './useCommands';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
 import { Markdown } from './Markdown';
-import { atEnd } from './newest-first';
+import { atEnd, useStayAtEnd } from './newest-first';
 import { Group } from './phone/PhoneList';
 import { TranscriptView } from './Transcript';
 
@@ -191,7 +191,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   useEffect(
     () =>
       window.looper.onUi((e) => {
-        if (e.type === 'messages-filter') setFilter(e.value);
+        if (e.type === 'filter') setFilter(e.value);
       }),
     [],
   );
@@ -237,6 +237,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
         if (patch.raw !== undefined) setRaw(patch.raw);
         if (patch.rawOutput !== undefined) setRawOutput(patch.rawOutput);
         if (patch.autoScroll !== undefined) setAutoScroll(patch.autoScroll);
+        // A phone's list goes to its end as Auto Scroll comes on.
+        if (patch.autoScroll && !selectsFirstRow) atBottomRef.current = true;
       },
     },
   };
@@ -298,10 +300,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   }, [rows, filter]);
 
   // Follow the table while the reader is at its bottom. A phone's list stays where it's read, unless Auto Scroll is on.
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (wrap && (selectsFirstRow ? atBottomRef.current : autoScroll)) wrap.scrollTop = wrap.scrollHeight;
-  }, [visible.length, autoScroll]);
+  useStayAtEnd(wrapRef, atBottomRef, visible.length, selectsFirstRow || autoScroll);
 
   // Auto Scroll: while the last row is selected (or none is), a new last row
   // takes the selection and the table scrolls to the bottom. Selecting an

@@ -8,7 +8,7 @@ import { addonPaneKey } from '@shared/addons';
 import { loginRowKey, loginRows, type ClaudeLogin, type LoginRow } from '@shared/logins';
 import { subscribe } from './events';
 import { fmtHourMinute } from './format';
-import { useAddons, type AddonSelection } from './components/AddonPane';
+import { addonSearch, useAddons, type AddonSelection } from './components/AddonPane';
 import type { DashboardPick } from './components/Dashboard';
 import { TASK_TABS, type DetailTab } from './components/TaskDetail';
 import { useDialogKeys } from './components/hooks';
@@ -54,6 +54,9 @@ export function useMainWindow(menuTab?: string) {
   const { addons, panes: addonPanes, reload: reloadAddon, loaded: addonsLoaded } = useAddons();
   // The addon pane item whose screen shows; picking a task clears it.
   const [addonSel, setAddonSel] = useState<AddonSelection | null>(null);
+  // What each addon's Search box holds, by addon: one box filters all of an addon's searchable panes.
+  const [addonQueries, setAddonQueries] = useState<Record<string, string>>({});
+  const setAddonQuery = useCallback((addonId: string, query: string) => setAddonQueries((all) => ({ ...all, [addonId]: query })), []);
   const runningAddons = addons.filter((a) => a.status === 'running').length;
 
   const allAttention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
@@ -255,13 +258,15 @@ export function useMainWindow(menuTab?: string) {
   /**
    * The addon a tab of the window is (its panes tab, or one its screen fills),
    * for the commands it placed there: the pane picked from (or its first), the
-   * item picked, and the screen showing.
+   * item picked, and the screen showing. `openSearch`: what Filter does where
+   * the window has the command (the desktop).
    */
-  const addonContext = (tab: string | undefined, screen: NonNullable<AddonContext['screen']> | null): AddonContext | undefined => {
+  const addonContext = (tab: string | undefined, screen: NonNullable<AddonContext['screen']> | null, openSearch?: () => void): AddonContext | undefined => {
     const addon = tab ? mainTabs(addons).find((t) => t.id === tab)?.addon : undefined;
     if (!addon) return undefined;
-    const own = { id: addon.id, ...(screen ? { screen } : {}) };
-    if (addon.tab) return own;
+    if (addon.tab) return { id: addon.id, ...(screen ? { screen } : {}) };
+    const searchable = openSearch && addonSearch(addons.find((a) => a.id === addon.id), addonPanes);
+    const own = { id: addon.id, ...(screen ? { screen } : {}), ...(searchable ? { search: { query: addonQueries[addon.id] ?? '', open: openSearch } } : {}) };
     const sel = addonSel?.addonId === addon.id ? addonSel : null;
     const pane = sel?.pane ?? addons.find((a) => a.id === addon.id)?.panes[0]?.id;
     if (!pane) return own;
@@ -320,6 +325,8 @@ export function useMainWindow(menuTab?: string) {
     addons,
     addonsLoaded,
     addonPanes,
+    addonQueries,
+    setAddonQuery,
     runningAddons,
     reloadAddon,
     // What is selected and shown.

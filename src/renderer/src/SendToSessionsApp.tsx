@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { sessionGroupKey, type SessionSummary } from '@shared/sessions';
-import { subscribe } from './events';
+import { useSessionsState } from './live-state';
+import { EmptyState } from './components/EmptyState';
 import { sendsOnEnterHere } from './components/MessageBox';
+import { NO_CHATS } from './components/SessionList';
 import { CheckboxField, FormGroup, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 
@@ -21,7 +23,8 @@ const idsIn = (sessions: SessionSummary[], group: string) => new Set(sessions.fi
  * `group` (a list group's right-click menu): its chats start checked.
  */
 export function SendToSessionsApp({ group }: { group?: string }) {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const all = useSessionsState();
+  const sessions = useMemo(() => (all ? sendable(all.sessions) : []), [all]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
   const shown = useRef(sessions);
@@ -29,26 +32,22 @@ export function SendToSessionsApp({ group }: { group?: string }) {
 
   useEffect(() => {
     document.title = 'Send to Chats';
-    void window.looper.sessions.state().then((s) => {
-      const open = sendable(s.sessions);
-      setSessions(open);
-      if (group !== undefined) setPicked(idsIn(open, group));
-    });
-    const offUi = window.looper.onUi((e) => {
+    return window.looper.onUi((e) => {
       if (e.type === 'send-to-sessions-pick') setPicked(idsIn(shown.current, e.group));
     });
-    const offEvents = subscribe((e) => {
-      if (e.type !== 'sessions') return;
-      const open = sendable(e.state.sessions);
-      setSessions(open);
-      // A session that closed can't be sent to.
-      setPicked((p) => new Set([...p].filter((id) => open.some((s) => s.id === id))));
+  }, []);
+  // The group's chats start checked once the list is in.
+  const loaded = all !== null;
+  useEffect(() => {
+    if (loaded && group !== undefined) setPicked(idsIn(shown.current, group));
+  }, [loaded, group]);
+  // A session that closed can't be sent to.
+  useEffect(() => {
+    setPicked((p) => {
+      const open = [...p].filter((id) => sessions.some((s) => s.id === id));
+      return open.length === p.size ? p : new Set(open);
     });
-    return () => {
-      offUi();
-      offEvents();
-    };
-  }, [group]);
+  }, [sessions]);
 
   // By the Chats list's groups: two projects of the same name are two groups.
   const byKey = new Map<string, { key: string; name: string; items: SessionSummary[] }>();
@@ -125,7 +124,7 @@ export function SendToSessionsApp({ group }: { group?: string }) {
             ))}
           </FormGroup>
         ))}
-        {sessions.length === 0 && <div className="empty">No chats are open.</div>}
+        {sessions.length === 0 && <EmptyState>{NO_CHATS}</EmptyState>}
       </div>
       <TextArea
         className="send-sessions-text"

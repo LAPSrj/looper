@@ -3,6 +3,7 @@ import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, typ
 import { contextMenu } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { useAddonList } from '../live-state';
+import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
@@ -65,6 +66,27 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
   return { addons, panes, reload, loaded };
 }
 
+/**
+ * An addon's Search box, while one of its panes can be searched: its prompt, the panes' own when
+ * they agree. Null while none can.
+ */
+export function addonSearch(addon: AddonInfo | undefined, panes: Record<string, AddonPaneState>): { prompt?: string } | null {
+  if (!addon) return null;
+  const searches = addon.panes.flatMap((p) => {
+    const state = panes[addonPaneKey(addon.id, p.id)];
+    return state?.status === 'ready' && state.content.search ? [state.content.search] : [];
+  });
+  if (!searches.length) return null;
+  const prompts = new Set(searches.map((s) => s.placeholder));
+  return prompts.size === 1 ? { prompt: searches[0].placeholder } : {};
+}
+
+/** The items a pane shows for the addon's search: all of them in a pane that can't be searched. */
+export function shownItems(state: AddonPaneState | undefined, query: string): AddonPaneItem[] {
+  if (state?.status !== 'ready') return [];
+  return state.content.search ? state.content.items.filter((it) => matchesSearch(it, query)) : state.content.items;
+}
+
 const paneState = (state: AddonPaneState | undefined) => (state?.status === 'ready' ? state.content.commands : undefined);
 
 /** A pane header's right-click, or a long press on its title: the addon's commands placed in its panes. */
@@ -87,7 +109,6 @@ export function AddonPaneList({
   selected,
   compact,
   query,
-  onQuery,
   onSelect,
   onMenu,
   onRetry,
@@ -97,18 +118,17 @@ export function AddonPaneList({
   state: AddonPaneState | undefined;
   selected: string | null;
   compact: boolean;
-  /** What the pane's search box holds (a pane with `search`). */
+  /** What the addon's Search box holds; it filters a pane with `search`. */
   query: string;
-  onQuery: (query: string) => void;
   onSelect: (item: AddonPaneItem) => void;
   /** A right-click or long press on an item: the commands placed on items, for that one (it's selected first on the desktop). */
   onMenu: (item: AddonPaneItem) => void;
   onRetry: () => void;
 }) {
   const total = state?.status === 'ready' ? state.content.items.length : 0;
-  const all = state?.status === 'ready' ? state.content.items.filter((it) => matchesSearch(it, query)) : [];
+  const all = shownItems(state, query);
   // While searching, every group with a match is open.
-  const searching = query.trim() !== '';
+  const searching = state?.status === 'ready' && !!state.content.search && query.trim() !== '';
   const groupsKey = `addon-groups:${addonPaneKey(addon.id, pane)}`;
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
@@ -194,17 +214,7 @@ export function AddonPaneList({
   }
   if (!total) return <div className="addon-pane-note muted">{state.content.empty ?? 'Nothing here.'}</div>;
 
-  const searchBox = state.content.search && (
-    <AddonSearchBox value={query} onChange={onQuery} placeholder={state.content.search.placeholder} />
-  );
-  if (!all.length) {
-    return (
-      <>
-        {searchBox}
-        <div className="addon-pane-note muted">No matches.</div>
-      </>
-    );
-  }
+  if (!all.length) return <div className="addon-pane-note muted">No matches.</div>;
 
   const header = (r: Extract<PaneRow, { kind: 'group' }>) => (
     <GroupHeader
@@ -221,52 +231,46 @@ export function AddonPaneList({
   // A phone draws its rows as the system's list rows; a tap opens the item, a long press shows its menu.
   if (isPhone) {
     return (
-      <>
-        {searchBox}
-        <div>
-          {rows.map((r) =>
-            r.kind === 'group' ? (
-              header(r)
-            ) : (
-              <Row
-                key={r.key}
-                title={r.item.label}
-                sub={r.item.description || undefined}
-                tone={r.item.dimmed ? 'muted' : undefined}
-                chevron
-                selected={r.key === selected}
-                onOpen={() => t.pick(r.item)}
-                onMenu={() => onMenu(r.item)}
-              />
-            ),
-          )}
-        </div>
-      </>
-    );
-  }
-
-  return (
-    <>
-      {searchBox}
-      <ul className={`task-list${compact ? ' compact' : ''}`} role="tree" aria-label={addon.name} {...t.listProps}>
+      <div>
         {rows.map((r) =>
           r.kind === 'group' ? (
             header(r)
           ) : (
-            <li
+            <Row
               key={r.key}
-              {...t.itemProps(r)}
-              role="treeitem"
-              aria-level={r.depth + 1}
-              className={`task-item${r.key === selected ? ' selected' : ''}${r.item.dimmed ? ' disabled' : ''}`}
-              style={r.depth ? { marginLeft: GROUP_INDENT } : undefined}
-            >
-              <ItemText name={r.item.label} sub={compact ? undefined : r.item.description} />
-            </li>
+              title={r.item.label}
+              sub={r.item.description || undefined}
+              tone={r.item.dimmed ? 'muted' : undefined}
+              chevron
+              selected={r.key === selected}
+              onOpen={() => t.pick(r.item)}
+              onMenu={() => onMenu(r.item)}
+            />
           ),
         )}
-      </ul>
-    </>
+      </div>
+    );
+  }
+
+  return (
+    <ul className={`task-list${compact ? ' compact' : ''}`} role="tree" aria-label={addon.name} {...t.listProps}>
+      {rows.map((r) =>
+        r.kind === 'group' ? (
+          header(r)
+        ) : (
+          <li
+            key={r.key}
+            {...t.itemProps(r)}
+            role="treeitem"
+            aria-level={r.depth + 1}
+            className={`task-item${r.key === selected ? ' selected' : ''}${r.item.dimmed ? ' disabled' : ''}`}
+            style={r.depth ? { marginLeft: GROUP_INDENT } : undefined}
+          >
+            <ItemText name={r.item.label} sub={compact ? undefined : r.item.description} />
+          </li>
+        ),
+      )}
+    </ul>
   );
 }
 
@@ -292,7 +296,7 @@ export function AddonSearchBox({
   const ref = useRef<HTMLInputElement | null>(null);
   // A click that focuses the box would undo the select-on-focus on mouse up.
   const justFocused = useRef(false);
-  // A phone's search field (iOS's look): the magnifying glass stays at its start, and Cancel shows beside it while it has the focus.
+  // A phone's search field keeps the magnifying glass at its start; on an iPhone, Cancel (an xmark in a glass circle) shows beside it while it has the focus.
   const [focused, setFocused] = useState(false);
   const prompt = placeholder ?? (isPhone ? 'Search' : 'Type to search');
   const glass = (
@@ -336,6 +340,8 @@ export function AddonSearchBox({
           type="button"
           className="addon-search-clear"
           aria-label="Clear"
+          // The field keeps the focus: losing it would take Cancel away and move this button from under the finger.
+          onPointerDown={(e) => e.preventDefault()}
           onClick={() => {
             onChange('');
             ref.current?.focus();
@@ -354,10 +360,11 @@ export function AddonSearchBox({
   return (
     <div className="addon-search">
       <span className="addon-search-field">{field}</span>
-      {focused && (
+      {focused && platform === 'ios' && (
         <button
           type="button"
           className="addon-search-cancel"
+          aria-label="Cancel"
           // Before the field's blur, which would take the button away first.
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => {
@@ -365,7 +372,7 @@ export function AddonSearchBox({
             ref.current?.blur();
           }}
         >
-          Cancel
+          <Icon size={17}>{ICONS.close}</Icon>
         </button>
       )}
     </div>

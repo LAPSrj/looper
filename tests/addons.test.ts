@@ -451,6 +451,37 @@ describe('the fields lapm asked for', () => {
     const noExtensions = { body: [{ type: 'field', id: 'f', label: 'F', input: 'file', accept: [{ label: 'X', extensions: [] }] }] };
     expect(AddonScreenSchema.safeParse(noExtensions).success).toBe(false);
   });
+
+  it('takes a list with its rows, its empty text and the buttons on its selected row', () => {
+    const list = (extra: object) => ({ body: [{ type: 'field', id: 'deleted', label: 'Deleted accounts', input: 'list', ...extra }] });
+    const ok = list({
+      options: [{ value: 'a1', label: 'github.com · me', description: 'Deleted Nov 18' }],
+      placeholder: 'The Recycle Bin is empty',
+      buttons: [{ id: 'restore', label: 'Restore' }],
+    });
+    expect(AddonScreenSchema.safeParse(ok).success).toBe(true);
+    expect(AddonScreenSchema.safeParse(list({ buttons: [{ id: 'restore' }] })).success).toBe(false);
+    expect(AddonScreenSchema.safeParse(list({ options: [{ value: 'a1', label: 'github.com' }], readOnly: true })).success).toBe(true);
+    expect(AddonScreenSchema.safeParse(list({ readOnly: 'yes' })).success).toBe(false);
+  });
+
+  it('takes a main instruction and a wizard’s Back, Next or named commit button', () => {
+    const page = (footer: object, instruction: unknown = 'Choose the file Edge exported') =>
+      AddonScreenSchema.safeParse({ instruction, body: [{ type: 'footer', ...footer }] }).success;
+    expect(page({ wizard: { next: 'check' } })).toBe(true);
+    expect(page({ wizard: { back: 'back', commit: { id: 'run', label: 'Import' } } })).toBe(true);
+    expect(page({ primary: { id: 'save', label: 'Save' } })).toBe(true);
+    expect(page({ wizard: { back: 'back' } })).toBe(false);
+    expect(page({ wizard: { next: 'check', commit: { id: 'run', label: 'Import' } } })).toBe(false);
+    expect(page({ wizard: { back: 'back', commit: { id: 'run' } } })).toBe(false);
+    expect(page({ wizard: { next: 'check' }, primary: { id: 'save', label: 'Save' } })).toBe(false);
+    expect(page({ wizard: { next: 'check' } }, '')).toBe(false);
+  });
+
+  it('takes a description for each option of a drop-down list', () => {
+    const select = { type: 'field', id: 'browser', label: 'Browser', input: 'select', value: 'edge', options: [{ value: 'edge', label: 'Microsoft Edge', description: 'Go to edge://settings/passwords.' }] };
+    expect(AddonScreenSchema.safeParse({ body: [select] }).success).toBe(true);
+  });
 });
 
 describe('AddonPaneContentSchema', () => {

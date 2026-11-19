@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { useThumbnail } from './hooks';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import type { Attachment } from '@shared/chat';
 import { effortLabel } from '@shared/environments';
@@ -16,6 +17,7 @@ import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
 import { RowList } from './DataTable';
+import { EmptyState } from './EmptyState';
 import { Markdown, MessageBody } from './Markdown';
 import { Section } from './Section';
 import { newestFirst } from './subagents';
@@ -432,11 +434,7 @@ function NowScreen({
 
 /** A file's thumbnail when it's an image. */
 function FileThumb({ path, taskId }: { path: string; taskId: string }) {
-  const [thumb, setThumb] = useState<string | null>(null);
-  useEffect(() => {
-    if (!IMAGE_RE.test(path)) return;
-    void window.looper.sessions.fileThumbnail(taskId, path).then(setThumb);
-  }, [taskId, path]);
+  const thumb = useThumbnail(IMAGE_RE.test(path) ? () => window.looper.sessions.fileThumbnail(taskId, path) : null, [taskId, path]);
   return thumb ? <img className="file-thumb" src={thumb} alt="" /> : null;
 }
 
@@ -640,7 +638,7 @@ export function ActivityPanel({
           onSelect={([p]) => setSel((s) => ({ ...s, file: p }))}
           onOpen={([, f]) => showFile(f.index)}
           activateOnClick
-          onMenu={([p]) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: p, text: p })}
+          onMenu={([p]) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: p })}
           empty={null}
           row={([p]) => (
             <>
@@ -718,7 +716,7 @@ export function ActivityPanel({
               )}
             </>
           ) : (
-            <div className="empty">The agent hasn't used a tool yet.</div>
+            <EmptyState>The agent hasn't used a tool yet.</EmptyState>
           ))}
         {tab === 'background' && (
           <div className="background-tab">
@@ -780,7 +778,7 @@ export function ActivityPanel({
                 />
               </Section>
             )}
-            {subagents.length === 0 && !workflowRun?.phases.some((p) => p.agents.length > 0) && <div className="empty">{working ? 'No subagents yet.' : 'No subagents.'}</div>}
+            {subagents.length === 0 && !workflowRun?.phases.some((p) => p.agents.length > 0) && <EmptyState>{working ? 'No subagents yet.' : 'No subagents.'}</EmptyState>}
           </div>
         )}
         {tab === 'files' && (
@@ -797,7 +795,7 @@ export function ActivityPanel({
                 <AttachmentList items={attachments} />
               </Section>
             )}
-            {files.size === 0 && attachments.length === 0 && received.length === 0 && <div className="empty">No files yet.</div>}
+            {files.size === 0 && attachments.length === 0 && received.length === 0 && <EmptyState>No files yet.</EmptyState>}
           </div>
         )}
         {tab === 'git' && gitProject && <GitView projectId={gitProject} watch={git} narrow />}

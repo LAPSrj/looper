@@ -133,20 +133,24 @@ export function useLiveItem<T extends { id: string }>(
   onLoadRef.current = onLoad;
   useEffect(() => {
     let live = true;
-    const take = (list: T[], first: boolean) => {
+    let got = false;
+    const take = (list: T[]) => {
+      const first = !got;
+      got = true;
       setItems(list);
       if (id === undefined) return;
       const found = list.find((x) => x.id === id);
       if (!found) setMissing(true);
       else if (first) onLoadRef.current?.(found);
     };
+    // An event that came first is newer than what was read.
     void source.list().then(
-      (list) => live && take(list, true),
-      (e: unknown) => live && source.onError?.(e),
+      (list) => live && !got && take(list),
+      (e: unknown) => live && !got && source.onError?.(e),
     );
     const off = subscribe((e) => {
       const list = source.from(e);
-      if (list) take(list, false);
+      if (list) take(list);
     });
     return () => {
       live = false;
@@ -308,6 +312,30 @@ export function useDragResize({ axis, containerRef, onDrag, onEnd }: DragResizeO
     },
     [axis, containerRef],
   );
+}
+
+/**
+ * What `load` returns (a thumbnail, or a file's details): undefined while it
+ * loads, null when it has nothing or fails. It loads again when `deps` change,
+ * and a result that arrives after that or after unmounting is dropped. Without
+ * a `load` nothing loads.
+ */
+export function useThumbnail<T>(load: (() => Promise<T | null>) | null, deps: readonly unknown[]): T | null | undefined {
+  const [value, setValue] = useState<T | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    setValue(undefined);
+    if (load) {
+      load().then(
+        (v) => live && setValue(v),
+        () => live && setValue(null),
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, deps);
+  return value;
 }
 
 /** Which kind of window this is, so a box's height is remembered for each: a single chat's window, the Chats window, any other. */

@@ -2,7 +2,7 @@ import { TaskSchema, type Environment, type Project, type Settings, type Task, t
 
 /** What a session needs to know about where it runs: a project's or a Remote Control helper's values. */
 export type SessionPlace = Pick<Project, 'name' | 'environmentId' | 'harnessId' | 'cwd' | 'model' | 'effort' | 'permissionMode'> &
-  Partial<Pick<Project, 'env' | 'extraArgs'>>;
+  Partial<Pick<Project, 'env' | 'extraArgs' | 'mode'>>;
 
 /**
  * The task-like stand-in a session that no task supplies runs as, under the
@@ -27,6 +27,7 @@ export function sessionTask(place: SessionPlace, settings: Settings, id: string,
       ...(place.model && harnessId === own?.id ? { model: place.model } : {}),
       ...(place.effort && harnessId === own?.id ? { effort: place.effort } : {}),
       permissionMode: harnessId === own?.id ? place.permissionMode : 'auto',
+      ...(place.mode ? { mode: place.mode } : {}),
       prompt: '-',
     },
   });

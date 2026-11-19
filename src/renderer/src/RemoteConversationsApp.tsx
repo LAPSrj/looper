@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RemoteConversation, RemoteMessage, RemoteState } from '@shared/remote';
 import { DataTable, type DataCol } from './components/DataTable';
+import { EmptyState } from './components/EmptyState';
 import { ListDetail } from './components/ListDetail';
 import { Markdown } from './components/Markdown';
 import { EmptyWindow } from './components/ui';
@@ -97,7 +98,7 @@ export function RemoteConversationsApp() {
                     <Markdown text={message.text} />
                   </>
                 ) : (
-                  <div className="runlog-result-empty muted">No message yet</div>
+                  <EmptyState at="detail">No message yet</EmptyState>
                 )}
               </div>
             )

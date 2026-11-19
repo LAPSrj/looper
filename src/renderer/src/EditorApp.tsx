@@ -5,7 +5,7 @@ import { windowTitle } from '@shared/window-title';
 
 import { TaskEditor } from './components/TaskEditor';
 import { EmptyWindow } from './components/ui';
-import { TASKS, TEMPLATES, useLiveItem } from './components/hooks';
+import { TASKS, TEMPLATES, useDiscardUnsaved, useLiveItem } from './components/hooks';
 
 interface EditorAppProps {
   taskId?: string;
@@ -20,13 +20,19 @@ interface EditorAppProps {
   mode?: 'task' | 'template';
   /** A new task in this project (a project's New Task…). */
   projectId?: string;
+  /** A template the Templates window's Add just created: closing without Create deletes it again. */
+  isNew?: boolean;
 }
 
 /** Standalone editor window (opened from the menu or the + New button). */
-export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task', projectId }: EditorAppProps) {
+export function EditorApp({ taskId, templateId, fromTemplateId, importKey, importUpdate, builderId, mode = 'task', projectId, isNew }: EditorAppProps) {
   const editId = mode === 'template' ? templateId : taskId;
+  const savedRef = useDiscardUnsaved(isNew, () => {
+    if (templateId) void window.looper.templates.remove(templateId);
+  });
   // The editor keeps its draft; the item is only watched for its deletion.
   const { item, missing } = useLiveItem(mode === 'template' ? TEMPLATES : TASKS, editId, (found) => {
+    if (isNew) return;
     document.title = windowTitle(mode === 'template' ? 'Edit Template' : 'Edit Task', found.name);
   });
   // undefined = still loading; null = new task/template
@@ -42,7 +48,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
 
   useEffect(() => {
     if (mode === 'template') {
-      document.title = templateId || importUpdate ? 'Edit Template' : 'New Template';
+      document.title = (templateId && !isNew) || importUpdate ? 'Edit Template' : 'New Template';
     } else {
       document.title = taskId || importUpdate ? 'Edit Task' : 'New Task';
     }
@@ -87,7 +93,7 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
         setInitialReady(true);
       });
     }
-  }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode]);
+  }, [taskId, templateId, fromTemplateId, importKey, importUpdate, mode, isNew]);
 
   if (missing) return <EmptyWindow gone={mode === 'template' ? 'This template no longer exists.' : 'This task no longer exists.'} />;
   if (task === undefined || !environments || !projects || !initialReady) return <EmptyWindow />;
@@ -103,7 +109,11 @@ export function EditorApp({ taskId, templateId, fromTemplateId, importKey, impor
         host={host}
         mode={mode}
         builderId={builderId}
-        onSaved={() => window.close()}
+        isNew={isNew}
+        onSaved={() => {
+          savedRef.current = true;
+          window.close();
+        }}
         onCancel={() => window.close()}
       />
     </div>

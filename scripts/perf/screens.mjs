@@ -60,7 +60,7 @@ export const WINDOWS = [
   { name: 'Send Guidance', hash: 'send-guidance/{task}/{run}', size: [560, 420] },
   { name: 'Run conversation', hash: 'messages/{task}/{run}/-/Run', size: [1000, 720] },
   { name: 'Run report', hash: 'messages/{task}/{run}/-/Run/report', size: [1000, 720] },
-  { name: 'Message filter', hash: 'messages-filter', size: [420, 240], fits: true },
+  { name: 'Message filter', hash: 'filter/Show%20messages%20containing/', size: [420, 240], fits: true },
   { name: 'Save as Markdown', hash: 'markdown-export/1/1/0', size: [480, 300] },
   { name: 'Image', hash: 'image/{task}/{run}/-/{imageRow}/Image', size: [900, 700] },
   { name: 'Environment', hash: 'env-editor/{env}', size: [684, 427], contentSize: true, fits: true },

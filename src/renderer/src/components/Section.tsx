@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { isPhone } from '../web/page-nav';
-import { EmptyRow, Group, Row } from './phone/PhoneList';
+import { EmptyState } from './EmptyState';
+import { Group, Row } from './phone/PhoneList';
 
 /**
  * A titled part of a pane: the desktop's heading over its content, a phone's
@@ -31,7 +32,7 @@ export function Section({
   if (isPhone) {
     return (
       <Group title={title && (state ? `${title} · ${state.text}` : title)} footer={detail}>
-        {empty ? <EmptyRow>{empty}</EmptyRow> : children}
+        {empty ? <EmptyState at="section">{empty}</EmptyState> : children}
         {action && !action.disabled && <Row title={action.label} tone="action" onOpen={action.run} />}
       </Group>
     );
@@ -50,7 +51,7 @@ export function Section({
         </div>
       )}
       {detail && <div className="muted section-detail">{detail}</div>}
-      {empty ? <div className="muted section-empty">{empty}</div> : children}
+      {empty ? <EmptyState at="section">{empty}</EmptyState> : children}
     </section>
   );
 }

@@ -9,10 +9,10 @@ import { writeJsonAtomic, writeText } from './store/fsutil';
  * the same files in the run folder:
  *
  * - Guidance, related events, the delegated agents' messages and Looper's
- *   notice reach the agent while a tool of its runs, as a message its next
- *   request reads, instead of a hook process for every tool call. With no
- *   turn running, they start one, as if typed, but never over a draft someone
- *   is typing in the terminal.
+ *   notice (an interactive chat's messages, in a chat) reach the agent while a
+ *   tool of its runs, as a message its next request reads, instead of a hook
+ *   process for every tool call. With no turn running, they start one, as if
+ *   typed, but never over a draft someone is typing in the terminal.
  * - Stop ends the running turn ($.turn.abort) instead of an Esc typed in.
  * - Each turn's start and end, its final answer and the session's usage (the
  *   context, the cost, the rate limits and when they reset) go to files the
@@ -68,6 +68,8 @@ export interface ModConfig {
   /** Headless: CronCreate is refused with this reason. */
   cronRefusal?: string;
   headless: boolean;
+  /** The session started with a prompt of its own: messages wait for its first turn to end. */
+  prompted: boolean;
   windows: boolean;
 }
 
@@ -158,8 +160,8 @@ async function poll($) {
     await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     return
   }
-  // Idle: the message starts the next turn, unless the first one hasn't run yet or someone is typing.
-  if (CONFIG.headless || turns === 0) return
+  // Idle: the message starts the next turn, unless the session's own prompt hasn't run yet or someone is typing.
+  if (CONFIG.headless || (CONFIG.prompted && turns === 0)) return
   const box = await $.prompt.read()
   if (box.text) return
   const text = await takeMessage($)

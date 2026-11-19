@@ -3,7 +3,8 @@ import type { Filed } from '@shared/folders';
 import type { TaskEntry } from '../task-tree';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
-import { EmptyRow, Group, Row } from './phone/PhoneList';
+import { EmptyState } from './EmptyState';
+import { Group, Row } from './phone/PhoneList';
 
 /** A folder row's symbol on a phone. */
 export const FOLDER_ICON = (
@@ -38,7 +39,9 @@ export function PhoneFolderRows<T extends Filed>({
   return (
     <Group>
       {entries.length === 0 ? (
-        <EmptyRow onMenu={onEmptyMenu}>{empty}</EmptyRow>
+        <EmptyState at="section" onMenu={onEmptyMenu}>
+          {empty}
+        </EmptyState>
       ) : (
         entries.map((e) =>
           e.kind === 'folder' ? (

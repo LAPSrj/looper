@@ -127,6 +127,7 @@ const TASK_CHECKS = 'm1.8 3.8 1.2 1.2L5 3M1.8 8.3l1.2 1.2L5 7.5M1.8 12.8l1.2 1.2
 /** SVG paths of Looper's 16 px line icons (drawn by Icon), shared by the task toolbar and addon toolbars. */
 export const ICONS: Record<
   | AddonIconName
+  | 'eye'
   | 'dashboard'
   | 'resume'
   | 'power'
@@ -345,6 +346,13 @@ export const ICONS: Record<
     <>
       <circle cx="7" cy="7" r="4.5" />
       <path d="m10.3 10.3 3.2 3.2" />
+    </>
+  ),
+  // An open eye: Show Password, which shows what's hidden.
+  eye: (
+    <>
+      <path d="M1.5 8C3 5.2 5.3 3.5 8 3.5s5 1.7 6.5 4.5c-1.5 2.8-3.8 4.5-6.5 4.5S3 10.8 1.5 8Z" />
+      <circle cx="8" cy="8" r="2" />
     </>
   ),
   // A gear with eight teeth, as Windows draws Settings.

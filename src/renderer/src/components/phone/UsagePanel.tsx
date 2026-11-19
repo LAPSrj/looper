@@ -4,19 +4,14 @@ import { fmtClock } from '../../format';
 import { MINUTE, useNow } from '../../useNow';
 import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu } from '../chat-settings';
 import { limitFacts, sessionFacts } from '../usage';
+import { PropertyList } from '../PropertyList';
 import { Group, Row } from './PhoneList';
 
 /** The account's usage limits as an inset grouped list; nothing when the account reports none. */
 function AccountLimits({ limits }: { limits: UsageLimits }) {
   const facts = limitFacts(limits, useNow(MINUTE));
   if (facts.length === 0) return null;
-  return (
-    <Group title="Account Limits">
-      {facts.map((f) => (
-        <Row key={f.label} title={f.label} value={f.value} valueTone={f.tone} />
-      ))}
-    </Group>
-  );
+  return <PropertyList rows={{ title: 'Account Limits', atEnd: true }} items={facts.map((f) => ({ label: f.label, value: f.value, valueTone: f.tone }))} />;
 }
 
 /**
@@ -41,11 +36,10 @@ export function UsagePanel({ summary, chat, limits }: { summary: SessionSummary;
   return (
     <div className="usage-panel">
       {facts.length > 0 && (
-        <Group title="Session">
-          {facts.map((f) => (
-            <Row key={f.label} title={f.label} value={f.live ? <span className="live-only">{f.value}</span> : f.value} />
-          ))}
-        </Group>
+        <PropertyList
+          rows={{ title: 'Session', atEnd: true }}
+          items={facts.map((f) => ({ label: f.label, value: f.live ? <span className="live-only">{f.value}</span> : f.value }))}
+        />
       )}
       <AccountLimits limits={limits} />
       {chat && labels && (

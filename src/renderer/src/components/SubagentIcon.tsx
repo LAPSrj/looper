@@ -23,11 +23,14 @@ export const subagentTab = (a: SubagentInfo): TabItem => ({
   mark: <SubagentIcon a={a} />,
 });
 
+/** An interactive chat's tab after its conversation's: Claude Code's own terminal. */
+const TERMINAL_TAB: TabItem = { id: 'terminal', label: 'Terminal', dividerAfter: true };
+
 /**
- * The conversation's tabs: the conversation itself, a tab per subagent in
- * `agents` (`agent:<id>`), then one per workflow run (`run:<id>`). `closable`:
- * the followed subagent's tab, once it has finished, has a close button that
- * goes back to the conversation.
+ * The conversation's tabs: the conversation itself, an interactive chat's
+ * terminal (`terminal`), a tab per subagent in `agents` (`agent:<id>`), then
+ * one per workflow run (`run:<id>`). `closable`: the followed subagent's tab,
+ * once it has finished, has a close button that goes back to the conversation.
  */
 export function SubagentTabs({
   agents,
@@ -37,6 +40,7 @@ export function SubagentTabs({
   workflows = [],
   openRun = null,
   onWorkflow,
+  terminal,
 }: {
   agents: SubagentInfo[];
   follow: string | null;
@@ -45,17 +49,20 @@ export function SubagentTabs({
   workflows?: Pick<WorkflowRun, 'runId' | 'name' | 'status'>[];
   openRun?: string | null;
   onWorkflow?: (runId: string) => void;
+  /** An interactive chat: whether its terminal shows, and how to show it. */
+  terminal?: { open: boolean; onOpen: () => void };
 }) {
-  const active = openRun ? `run:${openRun}` : follow ? `agent:${follow}` : 'conversation';
+  const active = openRun ? `run:${openRun}` : follow ? `agent:${follow}` : terminal?.open ? 'terminal' : 'conversation';
   const tabs: TabItem[] = [
-    CONVERSATION_TAB,
+    ...(terminal ? [{ ...CONVERSATION_TAB, dividerAfter: false }, TERMINAL_TAB] : [CONVERSATION_TAB]),
     ...agents.map((a) => ({ ...subagentTab(a), onClose: closable && follow === a.agentId && a.status !== 'running' ? () => onFollow(null) : undefined })),
     ...workflows.map((run) => ({ id: `run:${run.runId}`, label: run.name, title: `${run.name} (workflow)`, status: tabStatus(run.status) })),
   ];
   const select = (id: string) => {
     if (id === 'conversation') onFollow(null);
+    else if (id === 'terminal') terminal?.onOpen();
     else if (id.startsWith('agent:')) onFollow(id.slice('agent:'.length));
     else onWorkflow?.(id.slice('run:'.length));
   };
-  return <Tabs tabs={tabs} active={active} onSelect={select} label="Conversation and agents" className="subagent-tabs" ctrlTab />;
+  return <Tabs tabs={tabs} active={active} onSelect={select} label={terminal ? 'Conversation, terminal and agents' : 'Conversation and agents'} className="subagent-tabs" ctrlTab />;
 }

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { InboxCommand, Task } from '../shared/types';
+import type { InboxChat, InboxCommand, Task } from '../shared/types';
 import { slugify } from '../shared/validate';
 import type { Logger } from './log';
 import { errMsg } from './log';
@@ -9,6 +9,21 @@ import { ensureDir } from './store/fsutil';
 export interface InboxHandlers {
   onTask: (input: unknown) => Task;
   onCommand: (cmd: InboxCommand) => Promise<void> | void;
+  /** The text the CLI prints: written to `<processed file>.result.txt`. */
+  onChat?: (cmd: InboxChat) => Promise<string> | string;
+}
+
+/** Where a processed file's result goes, which `looper chat` reads once the file has left the inbox. */
+export const RESULT_EXT = '.result.txt';
+
+function checkChat(raw: Record<string, unknown>): InboxChat {
+  const str = (k: string) => raw[k] === undefined || typeof raw[k] === 'string';
+  if (typeof raw.folder !== 'string' || !raw.folder.trim()) throw new Error('invalid chat command: folder must be a folder');
+  if (typeof raw.text !== 'string' || !raw.text.trim()) throw new Error('invalid chat command: text must be the first message');
+  if (!str('title') || !str('model') || !str('effort') || (raw.open !== undefined && typeof raw.open !== 'boolean')) {
+    throw new Error('invalid chat command: title, model and effort must be strings, open a boolean');
+  }
+  return raw as unknown as InboxChat;
 }
 
 const OPS = new Set(['run', 'pause', 'resume', 'stop', 'remove', 'enable', 'disable', 'complete', 'reopen', 'guide']);
@@ -75,6 +90,14 @@ export class Inbox {
       return;
     }
     try {
+      if (raw && typeof raw === 'object' && (raw as { op?: unknown }).op === 'chat') {
+        const cmd = checkChat(raw as Record<string, unknown>);
+        if (!this.handlers.onChat) throw new Error('this Looper starts no chats');
+        const result = await this.handlers.onChat(cmd);
+        this.log.info(`inbox: chat in ${cmd.folder} (${name})`);
+        this.moveTo(file, 'processed', name, result);
+        return;
+      }
       if (raw && typeof raw === 'object' && 'op' in raw) {
         const cmd = raw as InboxCommand;
         if (!OPS.has(cmd.op) || typeof cmd.taskId !== 'string') {
@@ -110,9 +133,17 @@ export class Inbox {
     }
   }
 
-  private moveTo(file: string, sub: string, name: string): string {
+  /** `result`: written beside the moved file before the move, so whoever waits for the file to leave finds it. */
+  private moveTo(file: string, sub: string, name: string, result?: string): string {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = path.join(this.dir, sub, `${stamp}-${name}`);
+    if (result !== undefined) {
+      try {
+        fs.writeFileSync(dest + RESULT_EXT, result.endsWith('\n') ? result : result + '\n', 'utf8');
+      } catch (e) {
+        this.log.warn(`inbox: cannot write the result of ${name}: ${errMsg(e)}`);
+      }
+    }
     try {
       fs.renameSync(file, dest);
     } catch {

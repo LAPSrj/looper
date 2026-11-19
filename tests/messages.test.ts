@@ -10,6 +10,7 @@ import {
   readRunSessionId,
   readTranscriptRef,
 } from '../src/engine/messages';
+import { ClaudeStreamAccumulator } from '../src/engine/builder/stream';
 import { Logger } from '../src/engine/log';
 import { endAgentSession } from '../src/engine/steps/agent';
 import { eventsMessage, guidanceMessage, toolImageKey } from '../src/shared/messages';
@@ -375,6 +376,81 @@ describe('TranscriptAccumulator', () => {
     acc.addLine(assistantBlock({ type: 'text', text: 'act: yes' }));
     expect(acc.rows.map((r) => r.id)).toEqual(['c0', 'c1']);
     expect(acc.rows.every((r) => r.source === 'classifier')).toBe(true);
+  });
+
+  describe('a reply the agent sent again after its turn ended', () => {
+    const block = (messageId: string, b: Record<string, unknown>) => rec({ type: 'assistant', message: { id: messageId, role: 'assistant', content: [b] } });
+    const text = (messageId: string, t: string) => block(messageId, { type: 'text', text: t });
+    const replies = (acc: TranscriptAccumulator) => acc.rows.filter((r) => r.kind === 'agent').map((r) => [r.text, !!r.superseded]);
+
+    it("is superseded when a Stop hook's context makes the agent reply again", () => {
+      const acc = new TranscriptAccumulator();
+      acc.addLine(userPrompt('send me a reply'));
+      acc.addLine(block('m1', { type: 'thinking', thinking: 'hmm' }));
+      acc.addLine(text('m1', 'The test found nothing wrong.'));
+      // As claude 2.1.327 records a Stop hook's additionalContext.
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'hook_additional_context', hookEvent: 'Stop', content: ['Rewrite it.'] } }));
+      expect(replies(acc)).toEqual([['The test found nothing wrong.', true]]);
+      acc.addLine(rec({ type: 'system', subtype: 'stop_hook_summary', hookAdditionalContext: ['Rewrite it.'] }));
+      acc.addLine(text('m2', "The test didn't find anything wrong."));
+      expect(replies(acc)).toEqual([
+        ['The test found nothing wrong.', true],
+        ["The test didn't find anything wrong.", false],
+      ]);
+    });
+
+    it('is superseded as a blocking Stop hook makes the agent work on, whatever comes before its next reply', () => {
+      const acc = new TranscriptAccumulator();
+      acc.addLine(text('m1', 'The research is done.'));
+      acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nFinish your research first.' } }));
+      expect(replies(acc)).toEqual([['The research is done.', true]]);
+      acc.addLine(block('m2', { type: 'tool_use', id: 't1', name: 'Agent', input: { prompt: 'search', run_in_background: true } }));
+      acc.addLine(toolResult('t1', 'started'));
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>x</task-id>\n<status>completed</status>\n</task-notification>' } }));
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', isMeta: true, prompt: 'Another Claude session sent a message' } }));
+      acc.addLine(text('m3', 'Done.'));
+      expect(replies(acc)).toEqual([
+        ['The research is done.', true],
+        ['Done.', false],
+      ]);
+    });
+
+    it('stays when the Stop hook brought guidance, which the agent answers as new input', () => {
+      const acc = new TranscriptAccumulator();
+      acc.addLine(text('m1', 'The research is done.'));
+      acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n${guidanceMessage('also check the docs')}` } }));
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'hook_additional_context', hookEvent: 'Stop', content: [guidanceMessage('and the tests')] } }));
+      acc.addLine(text('m2', 'The docs and tests agree.'));
+      expect(replies(acc).every(([, superseded]) => !superseded)).toBe(true);
+    });
+
+    it('is the same rule in a headless stream, whose lines have no stop_reason', () => {
+      const acc = new ClaudeStreamAccumulator();
+      acc.addLine(rec({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm1', stop_reason: null, content: [{ type: 'text', text: 'The sky is blue.' }] } }));
+      acc.addLine(rec({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm2', stop_reason: null, content: [{ type: 'text', text: 'The sky is red.' }] } }));
+      expect(replies(acc)).toEqual([
+        ['The sky is blue.', true],
+        ['The sky is red.', false],
+      ]);
+    });
+
+    it('stays when its message went on with a tool call, or new input came before the next reply', () => {
+      const acc = new TranscriptAccumulator();
+      acc.addLine(text('m1', "I'm checking the logs."));
+      acc.addLine(block('m1', { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }));
+      acc.addLine(toolResult('t1', 'ok'));
+      acc.addLine(text('m2', 'First answer.'));
+      acc.addLine(userPrompt('and then?'));
+      acc.addLine(text('m3', 'Second answer.'));
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>x</task-id>\n<status>completed</status>\n</task-notification>' } }));
+      acc.addLine(text('m4', 'The build finished.'));
+      // A ScheduleWakeup firing, as claude records it: a meta prompt.
+      acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: 'Continue: check the perf result.' } }));
+      acc.addLine(text('m5', 'Perf passes.'));
+      acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', isMeta: true, prompt: 'Another Claude session sent a message' } }));
+      acc.addLine(text('m6', 'Noted.'));
+      expect(replies(acc).every(([, superseded]) => !superseded)).toBe(true);
+    });
   });
 
   it('drops oldest rows past the cap and keeps ids stable', () => {

@@ -117,14 +117,23 @@ describe('chat settings', () => {
   });
 
   it('needs a new claude process for a new model, effort or Bypass, and not for another mode', () => {
-    const launched = { model: 'opus', effort: 'medium', bypass: false };
-    const s = { model: 'opus', effort: 'medium', permissionMode: 'auto' };
+    const launched = { model: 'opus', effort: 'medium', permissionMode: 'auto', interactive: false };
+    const s = { model: 'opus', effort: 'medium', permissionMode: 'auto', mode: 'headless' as const };
     expect(needsNewProcess(launched, { ...s, permissionMode: 'plan' }, 'medium')).toBe(false);
     expect(needsNewProcess(launched, { ...s, model: 'sonnet' }, 'medium')).toBe(true);
     expect(needsNewProcess(launched, s, 'high')).toBe(true);
     expect(needsNewProcess(launched, { ...s, permissionMode: 'bypassPermissions' }, 'medium')).toBe(true);
     // Started with Bypass, it switches to and from it in place.
-    expect(needsNewProcess({ ...launched, bypass: true }, { ...s, permissionMode: 'bypassPermissions' }, 'medium')).toBe(false);
+    expect(needsNewProcess({ ...launched, permissionMode: 'bypassPermissions' }, { ...s, permissionMode: 'bypassPermissions' }, 'medium')).toBe(false);
+  });
+
+  it('needs a new claude process for the other session type, and in a terminal for any other permission mode', () => {
+    const launched = { model: 'opus', effort: 'medium', permissionMode: 'auto', interactive: true };
+    const s = { model: 'opus', effort: 'medium', permissionMode: 'auto', mode: 'interactive' as const };
+    expect(needsNewProcess(launched, s, 'medium')).toBe(false);
+    expect(needsNewProcess(launched, { ...s, mode: 'headless' }, 'medium')).toBe(true);
+    expect(needsNewProcess({ ...launched, interactive: false }, s, 'medium')).toBe(true);
+    expect(needsNewProcess(launched, { ...s, permissionMode: 'plan' }, 'medium')).toBe(true);
   });
 
   it("takes the task's settings on its harness, keeps the chat's on the same kind, and the defaults on another kind", () => {

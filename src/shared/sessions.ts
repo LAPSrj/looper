@@ -147,7 +147,7 @@ export interface SessionActivity {
   workflows: WorkflowRun[];
 }
 
-/** A task run's harness, model, effort and permission mode, which its message box shows and can't change, and how it writes a skill. */
+/** A task run's harness, model, effort, permission mode and session type, which its message box shows and can't change, and how it writes a skill. */
 export type RunAgent = Pick<ChatState, 'harnessName' | 'harnessKind' | 'models' | 'settings' | 'activeModel' | 'commandPrefix'>;
 
 /** A slash command or skill the message box offers after "/". */

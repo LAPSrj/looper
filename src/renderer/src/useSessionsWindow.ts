@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChatState } from '@shared/chat';
+import { chatInteractive, type ChatState } from '@shared/chat';
 import type { ChatsContext } from '@shared/commands/context';
 import type { MessageRow } from '@shared/messages';
 import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
@@ -7,6 +7,7 @@ import { ViewSchema, type View } from '@shared/types';
 import { openWorkflow } from '@shared/workflows';
 import { useGitRepo } from './components/hooks';
 import { getChat, subscribe } from './events';
+import { useSessionsState } from './live-state';
 
 /**
  * F6 and Shift+F6, as in Windows apps: the focus moves to the next or
@@ -40,6 +41,9 @@ function focusPane(dir: 1 | -1): void {
 /** The Chats window's View menu before the settings arrive. */
 export const DEFAULT_SHOWN: View['sessions'] = ViewSchema.parse({}).sessions;
 
+/** The list before it's read: one object, so the window's memos keep it. */
+const NO_SESSIONS: SessionsState = { sessions: [], limits: {} };
+
 /** The session list's order, for F8/F9 and the other keys that step through it. */
 function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1, waiting: boolean): string | null {
   const list = waiting ? waitingOf(sessions) : sessions;
@@ -61,14 +65,17 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const active = tab?.active ?? true;
   const activeRef = useRef(active);
   activeRef.current = active;
-  const [state, setState] = useState<SessionsState>({ sessions: [], limits: {} });
-  const [loaded, setLoaded] = useState(false);
+  const live = useSessionsState();
+  const loaded = live !== null;
+  const state = live ?? NO_SESSIONS;
   const [selected, setSelected] = useState<string | null>(initial ?? null);
   const [chat, setChat] = useState<ChatState | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [follow, setFollowed] = useState<string | null>(null);
   // The workflow run whose tab is open, and the agent whose tab is open inside it (null: its Overview).
   const [workflowOpen, setWorkflowOpen] = useState<{ runId: string; agentId: string | null } | null>(null);
+  // An interactive chat's Terminal tab is open.
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const workflow = openWorkflow(activity?.workflows ?? [], workflowOpen);
   // The conversation shown instead of the session's, which Now follows: a subagent's or a workflow agent's.
   const watchedAgent = follow ?? workflow?.agent?.agentId ?? null;
@@ -76,11 +83,19 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const setFollow = (id: string | null) => {
     setFollowed(id);
     setWorkflowOpen(null);
+    setTerminalOpen(false);
   };
   /** Show a workflow run's tab, at its Overview or one of its agents (null: the conversation's). */
   const showWorkflow = (runId: string | null, agentId: string | null = null) => {
     setFollowed(null);
+    setTerminalOpen(false);
     setWorkflowOpen(runId ? { runId, agentId } : null);
+  };
+  /** Show an interactive chat's terminal, or (false) its conversation. */
+  const showTerminal = (on: boolean) => {
+    setFollowed(null);
+    setWorkflowOpen(null);
+    setTerminalOpen(on);
   };
   const [subRows, setSubRows] = useState<MessageRow[]>([]);
   // The tool call Now shows; null follows the latest.
@@ -94,14 +109,9 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
 
   useEffect(() => {
     if (!single && !tab) document.title = 'Chats';
-    void window.looper.sessions.state().then((s) => {
-      setState(s);
-      setLoaded(true);
-    });
     void window.looper.info().then((i) => setView(i.settings.view));
     const unsub = subscribe((e) => {
-      if (e.type === 'sessions') setState(e.state);
-      else if (e.type === 'chat' && e.state.id === selectedRef.current) setChat(e.state);
+      if (e.type === 'chat' && e.state.id === selectedRef.current) setChat(e.state);
       else if (e.type === 'session:activity' && e.activity.id === selectedRef.current) setActivity(e.activity);
       else if (e.type === 'settings') setView(e.settings.view);
     });
@@ -191,6 +201,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setActivity(null);
     setFollowed(null);
     setWorkflowOpen(null);
+    setTerminalOpen(false);
     if (selected && activeRef.current) window.looper.sessions.seen(selected);
   }, [selected]);
 
@@ -267,6 +278,8 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setShown({ cardOrder: placeCard(ids, id, target, after) });
   };
   const subagents = activity?.subagents ?? [];
+  // A chat that moves to headless shows its conversation again.
+  const terminal = terminalOpen && !!chat && chatInteractive(chat);
   const stoppable = canStop(summary, chat?.runningCommands);
   // The harness names its conversation once it has started it.
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -292,6 +305,8 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setSelected,
     activityOpen: !!summary && (single ? shown.windowActivityPane : shown.activityPane),
     toggleActivity: () => (single ? setShown({ windowActivityPane: !shown.windowActivityPane }) : setShown({ activityPane: !shown.activityPane })),
+    terminal,
+    showTerminal,
     step: (dir, waiting) => setSelected(stepTo(state.sessions, selected, dir, waiting)),
     focusPane,
     ...over,
@@ -310,6 +325,8 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     followed,
     workflow,
     showWorkflow,
+    terminal,
+    showTerminal,
     subRows,
     subagents,
     workflows: activity?.workflows ?? [],

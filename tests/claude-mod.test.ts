@@ -102,6 +102,7 @@ describe('the mod', () => {
       guardMessage: "a subagent can't",
       ask: { command: 'looper-ask', timeoutMs: 1000 },
       headless: false,
+      prompted: true,
       windows: false,
     });
     expect(source).toContain('"/r/guidance.json"');
@@ -241,8 +242,16 @@ describe('a Claude Code run on the mod', () => {
     const dir = tmp('looper-perm-');
     const ctx = makeCtx(ASKS(dir), { ask: { allowed: false, waitMin: 0.01 } });
     const handle = await startAgent(ctx, { onData: () => {} });
-    for (let i = 0; i < 100 && !fs.existsSync(path.join(dir, 'answer.json')); i++) await new Promise((r) => setTimeout(r, 50));
-    const decision = JSON.parse(fs.readFileSync(path.join(dir, 'answer.json'), 'utf8')).hookSpecificOutput.decision;
+    // The hook's redirect creates the file before it writes it: wait for the whole answer.
+    const answer = () => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(dir, 'answer.json'), 'utf8'));
+      } catch {
+        return null;
+      }
+    };
+    for (let i = 0; i < 100 && !answer(); i++) await new Promise((r) => setTimeout(r, 50));
+    const decision = answer().hookSpecificOutput.decision;
     expect(decision.behavior).toBe('deny');
     expect(decision.message).toContain("Nobody answered this permission request within");
     await handle.stop();

@@ -560,6 +560,13 @@ export class AddonHost {
     this.d.log.info(`addon ${id}: render ${view.slice(0, 100).replace(/\s+/g, ' ')} drawn after ${Math.round(ms)} ms`);
   }
 
+  /** A window screen whose page scrolls: the window its manifest opens is too small for it. */
+  logOverflow(id: string, view: string, tab: string, height: number): void {
+    if (!this.procs.has(id) || typeof view !== 'string' || typeof tab !== 'string' || !Number.isFinite(height)) return;
+    const where = `${view.slice(0, 100)}${tab ? ` tab ${tab.slice(0, 100)}` : ''}`.replace(/\s+/g, ' ');
+    this.d.log.warn(`addon ${id}: window ${where} scrolls; it needs a height of ${Math.ceil(height)}`);
+  }
+
   private proc(id: string): AddonProcess {
     const p = this.procs.get(id);
     if (!p) throw new Error(`The addon "${id}" isn't installed.`);

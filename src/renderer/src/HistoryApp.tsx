@@ -15,6 +15,7 @@ import { ViewSchema, type Project, type View } from '@shared/types';
 import { HISTORY_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { ActivityPanel } from './components/ActivityPanel';
+import { EmptyState } from './components/EmptyState';
 import { FindStrip, useFindFocus } from './components/FindBar';
 import { commandToolbar, phoneNav } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
@@ -274,10 +275,10 @@ export function HistoryApp() {
       <ListDetail
         sides={{ storageKey: WIDTHS_KEY, left: { initial: 320, min: 200, max: 560 }, right: { initial: 400, min: 280, max: 720 }, minDetail: 480 }}
         split={split}
-        open={selected !== null}
+        open={!!item}
         onClose={() => setSelected(null)}
         detailTitle={item?.title}
-        empty="No Conversation Selected"
+        empty="Select a conversation"
         list={
           <TreeListSection>
             <HistoryList
@@ -297,29 +298,29 @@ export function HistoryApp() {
           </TreeListSection>
         }
         detail={
-          <main className="sessions-center">
-            {!item ? (
-              <div className="empty">No conversation is selected.</div>
-            ) : !conv ? (
-              <div className="empty">Loading…</div>
-            ) : (
-              <>
-                {subagents.length > 0 && <SubagentTabs agents={subagents} follow={follow} onFollow={setFollow} />}
-                {follow && followed ? (
-                  <TranscriptView key={`${item.id}:${follow}`} taskId={ctx.taskId} runId={ctx.runId} rows={subRows} waitingText="The subagent has no messages." rowMenu={false} />
-                ) : (
-                  <TranscriptView key={item.id} taskId={ctx.taskId} runId={ctx.runId} rows={rows} waitingText="The conversation has no messages." rowMenu={false} />
-                )}
-                {commands.chat && (
-                  <div className="history-continue">
-                    <button className="btn primary" onClick={() => void window.looper.history.run(item.id, 'chat').catch(reportError)}>
-                      Continue in Chat
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </main>
+          item && (
+            <main className="sessions-center">
+              {!conv ? (
+                <EmptyState>Loading…</EmptyState>
+              ) : (
+                <>
+                  {subagents.length > 0 && <SubagentTabs agents={subagents} follow={follow} onFollow={setFollow} />}
+                  {follow && followed ? (
+                    <TranscriptView key={`${item.id}:${follow}`} taskId={ctx.taskId} runId={ctx.runId} rows={subRows} waitingText="The subagent has no messages." rowMenu={false} />
+                  ) : (
+                    <TranscriptView key={item.id} taskId={ctx.taskId} runId={ctx.runId} rows={rows} waitingText="The conversation has no messages." rowMenu={false} />
+                  )}
+                  {commands.chat && (
+                    <div className="history-continue">
+                      <button className="btn primary" onClick={() => void window.looper.history.run(item.id, 'chat').catch(reportError)}>
+                        Continue in Chat
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </main>
+          )
         }
         inspectorOpen={pane}
         inspector={

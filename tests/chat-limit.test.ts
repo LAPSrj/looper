@@ -79,7 +79,7 @@ async function setUp(resetsAt: number, firstError?: string): Promise<{ engine: E
       e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, resetsAt, firstError) }] } : e,
     ),
   });
-  engine.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', prompt: 'x' } }));
+  engine.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
   const chatId = engine.startChat('t1').id;
   await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
   return { engine, dir, dataDir, chatId };

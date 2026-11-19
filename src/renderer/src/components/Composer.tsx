@@ -11,17 +11,17 @@ import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from
 import { MENU_ARROW } from './ToolButton';
 import { Toolbar } from './Toolbar';
 import { isPhone } from '../web/page-nav';
-import { onUi, subscribe } from '../events';
+import { onUi } from '../events';
 import { reportError } from '../report-error';
 import { withShortcut } from '../shortcut';
 
 /**
  * The bar above the message box: Attach Files and the skill list on the left,
- * the harness, model, effort and permission mode on the right. A chat's are
- * menus (its harness changes only until the first message); a task run's
- * (`settings` without `menus`) are text, since they can't change while it
- * runs. A narrow box (a dashboard card) has one button instead, whose menu has
- * the four as submenus, or the model alone as text; the stylesheet shows one
+ * the harness, model, effort, permission mode and session type on the right.
+ * A chat's are menus (its harness changes only until the first message); a
+ * task run's (`settings` without `menus`) are text, since they can't change
+ * while it runs. A narrow box (a dashboard card) has one button instead, whose
+ * menu has the five as submenus, or the model alone as text; the stylesheet shows one
  * or the other by the composer's width.
  */
 function CommandBar({
@@ -631,23 +631,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     take,
   }));
 
-  // A running command's output as it comes: into its place among the files waiting (the engine keeps none of it until it ends).
-  useEffect(
-    () =>
-      subscribe((e) => {
-        if (e.type !== 'chat:command' || e.chatId !== id) return;
-        const live = (p: Attachment[]) =>
-          p.map((a) => (a.command?.id === e.id && a.command.running ? commandAttachment({ ...a.command, stdout: e.stdout, stderr: e.stderr }) : a));
-        setPendingState(live);
-        const d = drafts.get(id);
-        if (d) drafts.set(id, { ...d, pending: live(d.pending) });
-      }),
-    [id],
-  );
-
   // A message goes with the files and the commands that have ended; a command still running stays for a later one.
   const ready = pending.filter((a) => !a.command?.running);
   const running = pending.length - ready.length;
+  // A running command's terminal takes the focus as it shows; once it has ended and gone, the focus comes back here.
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    const ended = running < wasRunning.current;
+    wasRunning.current = running;
+    if (ended && (!document.activeElement || document.activeElement === document.body)) composerRef.current?.focus();
+  }, [running]);
   const canRun = !ended && bash && !!text.trim();
   const canSend = !ended && !bash && !sending && (!!text.trim() || ready.length > 0);
   /** Run the command line: it waits among the files as it runs (or goes to a terminal), and the box is empty, out of bash mode, for the message. */

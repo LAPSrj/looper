@@ -7,7 +7,7 @@ import { LOGIN_FAILED_RE } from '@shared/logins';
 import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
 import { MINUTE, useNow } from '../useNow';
-import { useSessionsState } from './phone/useSessionsState';
+import { useSessionsState } from '../live-state';
 import { showRowContextMenu, systemSelecting, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
 import { permissionLabel } from './chat-settings';

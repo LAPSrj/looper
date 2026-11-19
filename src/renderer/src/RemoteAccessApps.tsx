@@ -12,7 +12,7 @@ import {
   type RemoteAccessState,
 } from '@shared/remote-access';
 import type { RemoteAccessSettings } from '@shared/types';
-import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, NumberInput, SelectInput, TextInput } from './components/ui';
+import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, MainInstruction, NumberInput, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
 import { RenameWindow } from './components/RenameWindow';
@@ -410,7 +410,7 @@ export function RemoteAccessSetupApp() {
   if (step === 'sources') {
     body = (
       <>
-        <h2 className="ra-setup-title">How will devices reach this computer?</h2>
+        <MainInstruction>How will devices reach this computer?</MainInstruction>
         <FormGroup>
           <SourceRows sources={sources} onChange={toggle} note={(id) => SOURCE_USES[id]} autoFocus />
         </FormGroup>
@@ -419,7 +419,7 @@ export function RemoteAccessSetupApp() {
   } else if (step === 'machine') {
     body = (
       <>
-        <h2 className="ra-setup-title">Name this computer on your tailnet</h2>
+        <MainInstruction>Name this computer on your tailnet</MainInstruction>
         <FormGroup>
           <Field label="Machine name">
             <TextInput autoFocus value={hostname} verbatim onChange={(e) => setHostname(e.target.value.trim())} />
@@ -454,14 +454,14 @@ export function RemoteAccessSetupApp() {
     else status = <p className="muted">Starting Tailscale…</p>;
     body = (
       <>
-        <h2 className="ra-setup-title">Sign in to Tailscale</h2>
+        <MainInstruction>Sign in to Tailscale</MainInstruction>
         {status}
       </>
     );
   } else {
     body = (
       <>
-        <h2 className="ra-setup-title">Ready to turn on Remote Access</h2>
+        <MainInstruction>Ready to turn on Remote Access</MainInstruction>
         <ul className="ra-setup-summary">
           {sources.map((id) => (
             <li key={id}>
@@ -483,7 +483,7 @@ export function RemoteAccessSetupApp() {
         <div className="form ra-setup">{body}</div>
       </div>
       <WindowActions
-        wizard={{ back: { run: () => setStep(steps[at - 1]), disabled: at === 0 }, next: { run: next, disabled: !canNext }, last: step === 'finish' }}
+        wizard={{ back: { run: () => setStep(steps[at - 1]), disabled: at === 0 }, next: { run: next, disabled: !canNext }, commit: step === 'finish' ? 'Finish' : undefined }}
         busy={saver.busy}
       />
     </div>

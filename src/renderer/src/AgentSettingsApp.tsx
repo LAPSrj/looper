@@ -32,8 +32,9 @@ import {
   type McpServerMap,
   type McpTool,
 } from '@shared/agent-config';
-import { EmptyWindow, Field, FieldRow, FormGroup, SelectInput, TabBar, TextArea } from './components/ui';
+import { EmptyWindow, Field, FieldRow, FormGroup, InfoBar, SelectInput, TabBar, TextArea } from './components/ui';
 import { WindowActions } from './components/WindowActions';
+import { EmptyState } from './components/EmptyState';
 import { ListActions, SelectList } from './components/SelectList';
 import { GroupHeader } from './components/GroupHeader';
 import { groupKeys } from './components/group-keys';
@@ -378,7 +379,7 @@ export function AgentSettingsApp() {
       <TabBar tabs={TABS} active={tab} onSelect={setTab} className="editor-tabs" label="Agent Settings" />
       <div className="editor-body">
         {!data ? (
-          <div className="empty">{loadError ?? 'Loading…'}</div>
+          <EmptyState>{loadError ?? 'Loading…'}</EmptyState>
         ) : tab === 'settings' ? (
           <div className="form agent-file">
             <FormGroup>
@@ -409,9 +410,7 @@ export function AgentSettingsApp() {
         ) : tab === 'servers' ? (
           <div className="form env-tab">
             {problems.map((p) => (
-              <div key={p} className="muted">
-                {p}
-              </div>
+              <InfoBar key={p} stacked level="warning" title="A settings file has a problem" message={p} />
             ))}
             <SelectList
               items={servers}
@@ -458,9 +457,7 @@ export function AgentSettingsApp() {
               </FormGroup>
             )}
             {problems.map((p) => (
-              <div key={p} className="muted">
-                {p}
-              </div>
+              <InfoBar key={p} stacked level="warning" title="A settings file has a problem" message={p} />
             ))}
             <div className="agent-perms" role="tree" aria-label="MCP permissions">
               {permServers.length === 0 && <div className="muted">No MCP servers</div>}
