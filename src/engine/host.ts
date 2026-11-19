@@ -114,9 +114,10 @@ export function detectWslMountPrefix(distro?: string): Promise<string | undefine
  * (/home/x -> \\wsl.localhost\<distro>\home\x, /mnt/c/y -> C:\y) or to
  * 'posix' (C:\y -> /mnt/c/y). Without a distro name: the default distro from
  * a Windows host, looper's own distro from WSL. Undefined when wslpath fails.
- * `existing`: the path names a file that may not exist yet. wslpath resolves
- * links only in a path that exists, and Windows can't follow a WSL link over
- * \\wsl.localhost, so such a conversion is kept only once its result exists.
+ * `existing`: the path names a file that may not exist yet (a transcript Claude
+ * Code writes with its first message). wslpath resolves links only in a path
+ * that exists, and Windows can't follow a WSL link over \\wsl.localhost, so a
+ * file that isn't there yet is converted through the nearest folder that is.
  */
 export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: string, existing = false): Promise<string | undefined> {
   // Transcript polling and a Files tab convert the same paths again and again.
@@ -124,7 +125,7 @@ export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: stri
   const known = converted.get(key);
   if (known) return known;
   const local = !distro && detectHost() === 'wsl';
-  const result = local ? viaWslpath(p, to, distro) : mappedOrWslpath(p, to, distro);
+  const result = existing && to === 'windows' ? viaExistingFolder(p, distro, local) : local ? viaWslpath(p, to, distro) : mappedOrWslpath(p, to, distro);
   converted.set(key, result);
   void result.then(async (out) => {
     const forget = () => {
@@ -139,6 +140,20 @@ export function convertWslPath(p: string, to: 'windows' | 'posix', distro?: stri
 const converted = new Map<string, Promise<string | undefined>>();
 /** How long the conversion of a file that doesn't exist yet is kept before it's asked again. */
 const MISSING_RETRY_MS = 5_000;
+
+/** `p` to Windows through the nearest of it and its folders that exists, so a link on the way is resolved; the rest joined after. */
+async function viaExistingFolder(p: string, distro: string | undefined, local: boolean): Promise<string | undefined> {
+  const rest: string[] = [];
+  for (let at = p; ; ) {
+    const out = await (local ? viaWslpath(at, 'windows', distro) : mappedOrWslpath(at, 'windows', distro));
+    const parent = path.posix.dirname(at);
+    // From WSL a Windows path can't be checked, and its WSL path can.
+    const there = parent === at || (await fs.promises.stat(local ? at : (out ?? '')).then(() => true, () => false));
+    if (!out || there) return out && rest.length ? `${out.replace(/\\$/, '')}\\${rest.join('\\')}` : out;
+    rest.unshift(path.posix.basename(at));
+    at = parent;
+  }
+}
 
 /** `wslpath` run in the distro (from a Windows host, by starting wsl.exe). */
 function viaWslpath(p: string, to: 'windows' | 'posix', distro?: string): Promise<string | undefined> {

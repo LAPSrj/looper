@@ -52,6 +52,8 @@ describe('convertWslPath', () => {
       // Windows can't follow the link: wslpath's answer names the folder it points at.
       expect(await convertWslPath(`${dir}/link/f.txt`, 'windows', undefined, true)).toBe(plain);
       expect(await convertWslPath(`${dir}/missing.txt`, 'windows')).toBe(plain!.replace(/real\\f\.txt$/, 'missing.txt'));
+      // A file not written yet, behind the link: through the folder it will be in.
+      expect(await convertWslPath(`${dir}/link/new/later.txt`, 'windows', undefined, true)).toBe(plain!.replace(/f\.txt$/, 'new\\later.txt'));
       expect(await convertWslPath('C:\\Windows', 'posix')).toMatch(/^\/.+\/c\/Windows$/);
     } finally {
       execFileSync('wsl.exe', ['-e', 'rm', '-rf', dir]);
@@ -59,17 +61,14 @@ describe('convertWslPath', () => {
   });
 
   // wslpath resolves a link only in a path that exists, and Windows can't open the unresolved one over \\wsl.localhost:
-  // a transcript the Chats list asked for before Claude Code wrote it must not keep that path.
-  it.skipIf(detectHost() !== 'wsl')('converts a file behind a link again once it exists, when asked to', { timeout: 15_000 }, async () => {
+  // a chat follows its transcript from the session's start, before Claude Code has written it.
+  it.skipIf(detectHost() !== 'wsl')('converts a file behind a link before it exists, through the nearest folder that does', { timeout: 15_000 }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-wslpath-'));
     fs.mkdirSync(path.join(dir, 'real'));
     fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'));
-    const file = path.join(dir, 'link', 'session.jsonl');
-    const before = await convertWslPath(file, 'windows', undefined, true);
-    expect(before).toMatch(/\\link\\session\.jsonl$/);
-    // A conversion whose file is missing is kept 5 s, so polling doesn't start wsl.exe each time, then dropped.
-    await new Promise((r) => setTimeout(r, 5_300));
-    fs.writeFileSync(path.join(dir, 'real', 'session.jsonl'), '');
-    expect(await convertWslPath(file, 'windows', undefined, true)).toMatch(/\\real\\session\.jsonl$/);
+    expect(await convertWslPath(path.join(dir, 'link', 'session.jsonl'), 'windows', undefined, true)).toMatch(/\\real\\session\.jsonl$/);
+    expect(await convertWslPath(path.join(dir, 'link', 'project', 'session.jsonl'), 'windows', undefined, true)).toMatch(/\\real\\project\\session\.jsonl$/);
+    fs.writeFileSync(path.join(dir, 'real', 'here.jsonl'), '');
+    expect(await convertWslPath(path.join(dir, 'link', 'here.jsonl'), 'windows', undefined, true)).toMatch(/\\real\\here\.jsonl$/);
   });
 });
